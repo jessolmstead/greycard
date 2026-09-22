@@ -182,16 +182,16 @@ is in `roadmap.md`; nothing planned is counted as done.
 | Stacking | HDR, panorama | none | none | none | none | HDR, focus, panorama; planned |
 | License | subscription | subscription or perpetual | perpetual | GPL | GPL | GPL-3.0-or-later |
 | Linux | no | no | no | yes | yes | yes, first |
-| Windows and macOS | yes | yes | yes | yes | yes | intended, not yet built |
+| Windows and macOS | yes | yes | yes | yes | yes | yes |
 | Tests per operation | unknown | unknown | unknown | some | some | every operation has a CPU reference and a test |
 
 ## What greycard is for
 
 Photographers who want correct color without learning darktable,
 and who would rather their editor read their folders than own them.
-On Linux today, where there is nothing else like it; on Windows and
-macOS when the port is done, as an alternative that costs nothing
-and does not hold your catalog hostage. People who shoot Fujifilm GFX and Canon bodies, which are
+On Linux, where there is nothing else like it, and on Windows and
+macOS as an alternative that costs nothing and does not hold your
+catalog hostage. People who shoot Fujifilm GFX and Canon bodies, which are
 what it is developed against. Anyone who wants the camera's own
 rendering as a starting point rather than Adobe's, which the planned
 camera match is built to deliver from the JPEG already in every raw
@@ -202,13 +202,13 @@ schema in it.
 
 ## What it is not for, yet
 
-Anyone who needs Windows or macOS today. The interface toolkit and
-the GPU layer both run there and the port is intended, but it has
-not been built or tested. Anyone with a hundred thousand rated and keyworded frames in
-Lightroom, until the library and the catalog import exist. Anyone
-whose camera rawler does not decode; support goes upstream to rawler,
-not into a fork. Anyone who wants a phone app, cloud sync, or a
-preset marketplace, which are not planned.
+Anyone on an Intel Mac or on Windows for ARM: ort ships no WebGPU
+ONNX Runtime for either, so there is no build. Anyone with a hundred
+thousand rated and keyworded frames in Lightroom, until the library
+and the catalog import exist. Anyone whose camera rawler does not
+decode; support goes upstream to rawler, not into a fork. Anyone who
+wants a phone app, cloud sync, or a preset marketplace, which are not
+planned.
 
 ## Why it was possible
 
@@ -260,8 +260,10 @@ wrong way up, in every view; the shot's settings under the file name, with its
 size;
 frame registration and a focus stack merged to a linear DNG from
 the command line; the camera's own picture in the viewport the
-moment a frame is chosen, replaced by the develop when it lands. Six hundred and
-ninety-five tests.
+moment a frame is chosen, replaced by the develop when it lands;
+and a package for each of Linux, macOS and Windows that installs
+where that desktop expects, with the file types registered. Six
+hundred and ninety-seven tests.
 
 Planned, in order: the tone controls made to feel right; sky and people masks and a
 generative fill; a look fitted from the camera's JPEG; the library index, roots and

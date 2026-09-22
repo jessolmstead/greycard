@@ -1,8 +1,8 @@
 # Building greycard from source
 
-From a machine with nothing on it to a running editor. Linux or an
-Apple silicon Mac; Windows is intended and untried. Half an hour the
-first time, most of it the compiler working.
+From a machine with nothing on it to a running editor. Linux, an
+Apple silicon Mac, or Windows. Half an hour the first time, most
+of it the compiler working.
 
 If you only want to run it, there are tarballs on the [releases
 page](https://github.com/jessolmstead/greycard/releases) and
@@ -12,8 +12,9 @@ tarball does not suit, or to get a fix before it is released.
 
 ## What the machine needs
 
-- **A GPU.** Vulkan on Linux, Metal on a Mac. The viewport is wgpu
-  through Slint and there is no software renderer behind it.
+- **A GPU.** Vulkan on Linux and Windows, Metal on a Mac. The
+  viewport is wgpu through Slint and there is no software renderer
+  behind it.
 - **Disk.** A debug and a release build of the workspace together
   come to around ten gigabytes under `target/`.
 - **Network, once.** The build fetches around 700 crates and a
@@ -66,6 +67,35 @@ xcode-select --install
 Full Xcode is not needed. lcms2 builds from the source its crate
 carries, so there is no Homebrew step. macOS 13.4 or newer, and an
 Apple silicon Mac — there is no Intel build.
+
+### Windows
+
+The MSVC build tools, and a new enough toolset:
+
+```powershell
+winget install Microsoft.VisualStudio.BuildTools ^
+  --override "--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+The toolset version matters. `ort` links a prebuilt static
+`onnxruntime.lib`, and a toolset older than the one that library was
+compiled with fails at the very last step — `link.exe` reporting
+unresolved `__std_*` symbols, which are MSVC STL vector algorithms
+renamed between toolsets. Rust code compiles fine; only the link
+fails. As of `ort 2.0.0-rc.13` the floor is **14.51.36231**, which is
+the VS 2026 build tools; VS 2022 17.14's 14.44.35207 is too old, and
+rustc picks the newest toolset installed. To read the floor out of the
+library itself, under `%LOCALAPPDATA%\ort.pyke.io\dfbin\`:
+
+```sh
+grep -ao "VC.Tools.MSVC.14\.[0-9.]*" onnxruntime.lib | sort -u
+```
+
+lcms2 builds from the source its crate carries, so there is no
+vcpkg step, and nothing needs pkg-config. Windows 10 or newer.
+`ort` puts `webgpu_dawn.dll`, `dxcompiler.dll` and `dxil.dll` into
+`target/<profile>/` for you — there is no rpath on Windows, and the
+loader looks beside the executable.
 
 ## 2. Rust
 

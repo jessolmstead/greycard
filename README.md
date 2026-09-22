@@ -69,8 +69,9 @@ drive and nothing breaks.
   curves are being fitted so that a small move does what your hands
   expect. That work gets the same care as the color science under
   it.
-- It runs on Linux and on Apple silicon Macs. Windows is intended
-  and untried.
+- It runs on Linux, on Apple silicon Macs and on Windows. There is
+  no Intel Mac build and no Windows-on-ARM one: ort ships no WebGPU
+  ONNX Runtime for either.
 - Camera support is [rawler](https://github.com/dnglab/dnglab)'s.
   Fixes go upstream, not into a fork.
 
@@ -125,6 +126,20 @@ desktop database and icon cache. greycard then shows up in your
 application launcher. `uninstall.sh`, in the same tarball, takes it
 back out.
 
+**From a release, on Windows.** Download
+`greycard-<version>-x86_64-windows.zip` from the same page, right-click
+it, Extract All, and double-click `install.cmd` inside the folder it
+unpacked. That copies greycard to
+`%LOCALAPPDATA%\Programs\greycard`, adds a Start menu entry, puts the
+command line on your Path, gives `.gcd` sidecars their own icon and
+offers greycard in Explorer's Open with for raw files without taking
+any default away. Nothing needs administrator rights and nothing is
+written outside your own profile. The executable is not signed, so
+the first run may show a SmartScreen box: More info, then Run anyway.
+`uninstall.cmd`, in the same folder, takes it back out and leaves your
+settings and presets alone. If you would rather not install anything,
+`bin\greycard-ui.exe` runs where it is.
+
 **From source.** Step by step from a machine with nothing on it,
 Rust and the compiler included, is
 [docs/building.md](docs/building.md). In short: needs Rust 1.98 or
@@ -136,7 +151,9 @@ for Slint's backend, xkbcommon for its keyboard). On Fedora:
 pkgconf-pkg-config`. On Arch: `lcms2 fontconfig wayland libxkbcommon
 pkgconf`. On a Mac, Xcode's command line tools (`xcode-select
 --install`) and nothing else: lcms2 builds from the source its crate
-carries.
+carries. On Windows, the MSVC build tools, and the toolset has to be
+at least 14.51.36231 or the link fails on `__std_*` symbols —
+docs/building.md says why and how to check.
 
 ```sh
 cargo build --release
@@ -145,10 +162,12 @@ cargo build --release
 The first build fetches a prebuilt ONNX Runtime, so it needs a
 network connection once. It leaves `target/release/greycard-ui` and
 `target/release/greycard`, with `target/release/libwebgpu_dawn.so`
-(`.dylib` on a Mac) beside them; the binaries find it through an
-rpath, so keep the three together if you move them.
-`scripts/package.sh` rolls them into the release tarball for the
-machine it runs on, the app bundle included on a Mac.
+(`.dylib` on a Mac, `webgpu_dawn.dll` plus `dxcompiler.dll` and
+`dxil.dll` on Windows) beside them; the binaries find those through
+an rpath, or beside themselves on Windows, so keep them together if
+you move them. `scripts/package.sh` rolls them into the release
+package for the machine it runs on: a tarball on Linux, an app
+bundle in one on a Mac, a zip with install.cmd in it on Windows.
 
 Or run either straight from the workspace, for development:
 

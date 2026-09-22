@@ -1,5 +1,5 @@
 # Cut a release from a v* tag: build both binaries on each platform,
-# roll the tarball scripts/package.sh makes there, and attach them all
+# roll the package scripts/package.sh makes there, and attach them all
 # to one GitHub release.
 #
 # The Linux runner is the oldest Ubuntu GitHub still offers, because
@@ -10,6 +10,16 @@
 # turn. The macOS runner is Apple silicon, which is the only Mac the
 # tarball is for; the floor there is Dawn's 13.4, set in Info.plist,
 # not the runner's.
+#
+# The Windows runner has to carry an MSVC toolset at least as new as
+# the one ort's prebuilt onnxruntime.lib was compiled with, which for
+# ort 2.0.0-rc.13 is 14.51.36231: an older one fails at link with
+# unresolved __std_* symbols out of the MSVC STL and nowhere earlier.
+# windows-2025 took Visual Studio 2026, and that toolset with it, in
+# June 2026. The step below prints what is actually installed, so a
+# link failure is read off the log rather than guessed at; if the image
+# has gone backwards, windows-2025-vs2026 is the label that pins it.
+
 name: Release
 
 on:
@@ -53,17 +63,28 @@ jobs:
           esac
 
   build:
-    name: ${{ matrix.tarball }} tarball
+    name: ${{ matrix.package }} package
     needs: version
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: ubuntu-24.04
-            tarball: x86_64-linux
+            package: x86_64-linux
+            ext: tar.gz
           - os: macos-15
-            tarball: aarch64-macos
+            package: aarch64-macos
+            ext: tar.gz
+          - os: windows-2025
+            package: x86_64-windows
+            ext: zip
     runs-on: ${{ matrix.os }}
+    # package.sh is /bin/sh, and the Windows runner's default shell is
+    # PowerShell; Git Bash is there under this name and brings the tar,
+    # find and sort the script asks for.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -71,7 +92,8 @@ jobs:
         # The same set CI installs: lcms2 for the profiles, fontconfig
         # and wayland for Slint's backend, xkbcommon for its keyboard.
         # A Mac needs nothing beyond Xcode's tools, which the runner
-        # has: lcms2 builds from its own source there.
+        # has: lcms2 builds from its own source there, and so does
+        # Windows, which has no pkg-config to find one with.
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
@@ -79,12 +101,25 @@ jobs:
             liblcms2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev \
             pkg-config
 
+      - name: MSVC toolsets on this runner
+        # Printed before the build, not after it fails: the link error
+        # this guards against names a dozen __std_* symbols and not the
+        # toolset, and the header above says which version is wanted.
+        # package.sh takes the redistributable DLLs out of the same
+        # installation, so a missing one shows here too.
+        if: runner.os == 'Windows'
+        run: |
+          ls -d "/c/Program Files"*"/Microsoft Visual Studio"/*/*/VC/Tools/MSVC/*/ \
+            2>/dev/null || echo "no VC/Tools/MSVC directory found"
+          ls -d "/c/Program Files"*"/Microsoft Visual Studio"/*/*/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT \
+            2>/dev/null || echo "no VC redistributable directory found"
+
       - uses: dtolnay/rust-toolchain@stable
 
       # No build cache here, on purpose. target/release/libwebgpu_dawn.so
       # is a symlink into the ort download cache, which is not part of
       # any cache action; restoring a target directory without it would
-      # leave the link dangling and the tarball short a library. A
+      # leave the link dangling and the package short a library. A
       # release is rare enough to pay for a cold build.
       # --locked: the lockfile is committed, and one dependency is
       # pinned to a git revision. A release builds what it says it does.
@@ -96,16 +131,23 @@ jobs:
           VERSION: ${{ needs.version.outputs.version }}
         run: scripts/package.sh "$VERSION"
 
-      - name: What is in the tarball
+      - name: What is in the package
         env:
-          VERSION: ${{ needs.version.outputs.version }}
-          TARBALL: ${{ matrix.tarball }}
-        run: tar tzf "target/dist/greycard-$VERSION-$TARBALL.tar.gz"
+          ARCHIVE: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.package }}.${{ matrix.ext }}
+        # Git for Windows brings no unzip, so the zip is listed through
+        # PowerShell, the same way scripts/zip.ps1 wrote it.
+        run: |
+          case "$ARCHIVE" in
+          *.zip)
+            powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path '$ARCHIVE')).Entries | Select-Object Length, FullName | Format-Table -AutoSize"
+            ;;
+          *) tar tzf "$ARCHIVE" ;;
+          esac
 
       - uses: actions/upload-artifact@v4
         with:
-          name: tarball-${{ matrix.tarball }}
-          path: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.tarball }}.tar.gz
+          name: package-${{ matrix.package }}
+          path: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.package }}.${{ matrix.ext }}
           if-no-files-found: error
           # The release below is the copy that matters; this one only
           # has to outlive the workflow run.
@@ -120,7 +162,7 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          pattern: tarball-*
+          pattern: package-*
           path: target/dist
           merge-multiple: true
 
@@ -140,12 +182,14 @@ jobs:
             exit 1
           fi
           cat target/dist/release-notes.md
-          ls -l target/dist/*.tar.gz
+          ls -l target/dist/greycard-*
 
       - name: Release
         uses: softprops/action-gh-release@v2
         with:
-          files: target/dist/greycard-${{ needs.version.outputs.version }}-*.tar.gz
+          files: |
+            target/dist/greycard-${{ needs.version.outputs.version }}-*.tar.gz
+            target/dist/greycard-${{ needs.version.outputs.version }}-*.zip
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           fail_on_unmatched_files: true
           body_path: target/dist/release-notes.md

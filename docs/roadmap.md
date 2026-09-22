@@ -11,6 +11,9 @@ on and nothing more; the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] `assets/greycard.desktop` lists no `image/x-olympus-orf`,
+      although the browser has read `.orf` since it had a list, so
+      a Linux file manager does not offer greycard for one (§137)
 
 ## v0.1.0: browse, develop, export
 
@@ -20,25 +23,21 @@ went wrong.
 
 - [ ] There should still be the Open Folder button in grid mode
 - [ ] Grid mode background should probably not be pure black, it feels unpolished
-- [ ] The Windows build: the toolkit and wgpu run there; the linker
-      flags and the config and cache paths are per platform since
-      §106, the portal calls and colord degrade, and nobody has tried
-      it
-- [ ] The Windows package beside the other two, with Dawn and the
-      icon in it. Waits on the Windows build
-- [ ] The `.gcd` type registered on the Mac and on Windows: document
-      types and an exported type in `Info.plist` with an `.icns` from
-      the same SVG, so the Finder offers greycard for sidecars and raws
-      (§110 notes it declares none); a ProgId and the extension under
-      `HKCU\Software\Classes` written by the Windows installer or a
-      `register.cmd` beside the binary (§120). Waits on the Windows
-      package for its half
+- [ ] The `.gcd` type on the Mac: document types and an exported type
+      in `Info.plist` with an `.icns` from the same SVG, so the Finder
+      offers greycard for sidecars and raws (§110 notes it declares
+      none). Windows' half landed in §137
+- [ ] CI on Windows too: the third line in `ci.yml`'s matrix, so a
+      change that breaks the Windows build is caught on a push rather
+      than at a tag. The release workflow is the only thing that
+      builds there today (§137)
 - [ ] Report a problem… in the editor: opens the issue form with the
       version, the OS version and the GPU filled in, and says where
       the log is (§111)
 - [ ] The repo public, issues on, a `bug` label for the issue form
-- [ ] The first tag, which is the release workflow's first run, on
-      Linux and on the Mac runner both (§88, §110)
+- [ ] The first tag, which is the release workflow's first run, on all
+      three runners; the Windows one is the only part of §137 not
+      verified by running it (§88, §110, §137)
 
 ## v0.2.0: the feel
 

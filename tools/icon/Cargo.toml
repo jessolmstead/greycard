@@ -1,0 +1,13 @@
+# Detached from the workspace on purpose: this is a one-off generator,
+# not something `cargo test` at the root should build.
+[workspace]
+
+[package]
+name = "greycard-icon"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+resvg = "0.45"
+ico = "0.4"

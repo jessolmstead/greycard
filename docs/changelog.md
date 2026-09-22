@@ -7,6 +7,26 @@ release workflow puts a version's section into the GitHub release.
 
 ## 0.1.0, unreleased
 
+- There is a Windows package, `greycard-<version>-x86_64-windows.zip`,
+  beside the Linux and macOS tarballs: both binaries, Dawn and the two
+  DXC libraries it loads by name, the five Visual C++ runtime libraries
+  so a machine that has never carried a redistributable still starts,
+  and the icon and version in the executables themselves. `install.cmd`
+  puts it under `%LOCALAPPDATA%\Programs\greycard` with a Start menu
+  entry and the command line on the Path; `register.cmd` gives `.gcd`
+  its own document type and icon and offers greycard in Open with for
+  every raw extension the browser reads, taking no default away;
+  `uninstall.cmd` takes all of it back out. A `.zip` rather than a
+  tarball, since Windows 10's Explorer opens one and does not open the
+  other, and reproducible the same way the tarballs are (§137,
+  2026-09-22)
+- The Windows build runs. `cargo fmt`, `cargo clippy --all-targets`
+  and all 697 tests are clean on x86_64-pc-windows-msvc; the editor
+  comes up on a discrete NVIDIA card through Vulkan and develops a
+  45 MP Canon frame in 1.66 s with the CA correction and the sharpen
+  both on the GPU; the log lands in `%LOCALAPPDATA%\greycard\logs`.
+  The only thing above info in a first run is the storage-buffer limit
+  BiRefNet already hits everywhere else (§137, 2026-09-22)
 - Choosing a frame no longer flashes a dark viewport before its
   camera preview, and a frame with no camera JPEG, a picture file, or
   a develop that fails keeps the last picture on screen instead of a
