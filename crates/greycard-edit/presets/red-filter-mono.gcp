@@ -1,0 +1,46 @@
+{
+  "version": 3,
+  "name": "Red-Filter Mono",
+  "sections": [
+    "light",
+    "curves",
+    "black-and-white",
+    "grain"
+  ],
+  "edit": {
+    "version": 3,
+    "light": {
+      "enabled": true,
+      "exposure": 0.0,
+      "tone": {
+        "enabled": true,
+        "contrast": 1.2,
+        "highlights": -0.15,
+        "shadows": 0.0,
+        "whites": 0.0,
+        "blacks": 0.0
+      }
+    },
+    "curves": {
+      "enabled": true,
+      "parametric": {
+        "highlights": -0.12,
+        "lights": 0.0,
+        "darks": -0.08,
+        "shadows": 0.0,
+        "splits": [0.25, 0.5, 0.75]
+      }
+    },
+    "bw": {
+      "enabled": true,
+      "weights": [0.8, 0.6, 0.3, -0.4, -0.8, -1.0, -0.6, 0.2],
+      "strength": 1.2
+    },
+    "grain": {
+      "enabled": true,
+      "amount": 0.35,
+      "size": 0.5,
+      "kind": "cubic"
+    }
+  }
+}

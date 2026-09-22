@@ -1,0 +1,9 @@
+/target
+/testdata
+*.tiff
+*.png
+/CLAUDE.local.md
+/data/
+/.idea/
+/.claude/
+/private/

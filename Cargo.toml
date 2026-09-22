@@ -1,0 +1,37 @@
+[workspace]
+resolver = "3"
+members = ["crates/greycard-core", "crates/greycard-edit", "crates/greycard-cli", "crates/greycard-bench", "crates/greycard-ui", "crates/greycard-ai", "crates/greycard-lens", "crates/greycard-gpu"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+authors = ["Jess Olmstead"]
+repository = "https://github.com/jessolmstead/greycard"
+
+[workspace.dependencies]
+rawler = "0.8"
+rawcolor = "0.1.1"
+rayon = "1"
+thiserror = "2"
+image = { version = "0.25", default-features = false, features = ["tiff", "png", "jpeg"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+roxmltree = "0.21"
+# The platform's configuration and cache directories.
+dirs = "7"
+# Libraries say things through `log`; the binaries collect them with
+# tracing-subscriber, and tracing-log carries `log` records over.
+log = "0.4"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-log = "0.2"
+
+# rawler 0.8.0 reads the wrong ColorData word for the EOS R6 Mark II, R7,
+# R8, R10 and R50 and declares a white level 10-17% too low (notes §13j).
+# Fixed upstream in dnglab/dnglab#840; this pins a fork carrying the same
+# fix until a release has it, and comes out then.
+[patch.crates-io]
+rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "4b6164122c78f989c676cbcd517bd3897e6046fb" }

@@ -1,0 +1,54 @@
+{
+  "version": 3,
+  "name": "Muted Slide",
+  "sections": [
+    "light",
+    "color",
+    "curves",
+    "mixer",
+    "grading"
+  ],
+  "edit": {
+    "version": 3,
+    "light": {
+      "enabled": true,
+      "exposure": 0.0,
+      "tone": {
+        "enabled": true,
+        "contrast": 1.1,
+        "highlights": -0.35,
+        "shadows": -0.1,
+        "whites": 0.0,
+        "blacks": 0.0
+      }
+    },
+    "color": {
+      "enabled": true,
+      "saturation": -0.45,
+      "vibrance": 0.0
+    },
+    "curves": {
+      "enabled": true,
+      "parametric": {
+        "highlights": -0.25,
+        "lights": 0.05,
+        "darks": -0.05,
+        "shadows": -0.05,
+        "splits": [0.25, 0.5, 0.75]
+      }
+    },
+    "mixer": {
+      "enabled": true,
+      "hue": [0.0, 0.0, -4.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+      "saturation": [-0.25, -0.2, -0.15, -0.1, -0.05, -0.15, -0.15, -0.25],
+      "luminance": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    },
+    "grading": {
+      "enabled": true,
+      "shadows": { "hue": 200.0, "saturation": 0.03 },
+      "midtones": { "hue": 0.0, "saturation": 0.0 },
+      "highlights": { "hue": 55.0, "saturation": 0.015 },
+      "balance": 0.0
+    }
+  }
+}

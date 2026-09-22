@@ -1,0 +1,61 @@
+[package]
+name = "greycard-ui"
+version.workspace = true
+description = "The editor: a Slint front end over greycard-core with a wgpu viewport"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "greycard-ui"
+path = "src/main.rs"
+
+[dependencies]
+greycard-core = { path = "../greycard-core" }
+greycard-edit = { path = "../greycard-edit" }
+greycard-ai = { path = "../greycard-ai" }
+greycard-lens = { path = "../greycard-lens" }
+greycard-gpu = { path = "../greycard-gpu" }
+slint = { version = "1.18", features = ["unstable-wgpu-30", "renderer-femtovg-wgpu"] }
+bytemuck = { version = "1", features = ["derive"] }
+half = { version = "2", features = ["bytemuck"] }
+lcms2 = "6"
+rayon.workspace = true
+image.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true
+log.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-log.workspace = true
+
+[build-dependencies]
+slint-build = "1.18"
+
+[dev-dependencies]
+# The shader compiler wgpu already carries, named here so `cargo test`
+# can parse and validate the WGSL without a GPU. Same version wgpu 30
+# resolves, so this adds nothing to the tree.
+naga = { version = "30", features = ["wgsl-in"] }
+# A headless backend so the window's key handling can be tested.
+i-slint-backend-testing = "1.18"
+# For a device of our own in the worker's GPU fallback tests.
+pollster = "0.4"
+
+# The file chooser portal and colord are the desktop's on Linux.
+# zbus needs an async runtime named even where only its blocking API
+# is used; Slint's tray support happens to pull the same crate with
+# `async-io` on, and this does not lean on that.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus = { version = "5", default-features = false, features = ["blocking-api", "async-io"] }
+
+# Everywhere else the dialogs are the platform's own. Without the
+# default features rfd leaves out the GTK and portal backends, which
+# are Linux's and are not wanted here.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+rfd = { version = "0.17", default-features = false }

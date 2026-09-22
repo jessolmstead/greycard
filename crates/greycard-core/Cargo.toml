@@ -1,0 +1,17 @@
+[package]
+name = "greycard-core"
+version.workspace = true
+description = "RAW development engine: decode, white balance and camera color, correctly"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+log.workspace = true
+rawler.workspace = true
+image.workspace = true
+rawcolor.workspace = true
+rayon.workspace = true
+thiserror.workspace = true

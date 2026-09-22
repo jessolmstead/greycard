@@ -1,0 +1,42 @@
+[package]
+name = "greycard-ai"
+version.workspace = true
+description = "Learned models for greycard: the runtime, the model store, and the masks"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[features]
+default = ["webgpu"]
+# Which prebuilt ONNX Runtime the build fetches. WebGPU runs on any
+# Vulkan, Metal or DX12 device through Dawn; CUDA wants CUDA 13 and
+# cuDNN on the system at run time. Each also pulls in a way to name
+# the adapter it ran on, for the provider-outcome record (runtime.rs,
+# notes §97): `wgpu` for WebGPU (the same struct `greycard-ui` reads
+# off its own device), `nvidia-smi` at run time for CUDA, since
+# neither `ort` nor ONNX Runtime exposes the adapter it picked.
+webgpu = ["ort/webgpu", "dep:wgpu", "dep:pollster"]
+cuda = ["ort/cuda"]
+
+[dependencies]
+log.workspace = true
+greycard-core = { path = "../greycard-core" }
+rayon.workspace = true
+ort = { version = "=2.0.0-rc.13", features = ["half"] }
+half = "2"
+ureq = "3"
+sha2 = "0.10"
+thiserror.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+# Only to read `AdapterInfo` off a short-lived instance of our own for
+# the provider-outcome record; never used to render anything. Same
+# version `greycard-ui` gets through Slint.
+wgpu = { version = "30", optional = true }
+pollster = { version = "0.4", optional = true }
+
+[dev-dependencies]
+image.workspace = true

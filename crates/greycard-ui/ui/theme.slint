@@ -1,0 +1,67 @@
+// Design tokens: the palette, the type and spacing scales, the radii.
+// Everything in the panels reads from here and nowhere else.
+//
+// Contrast on the panel surface (#1e1e1e): text 12:1, text-secondary
+// 6.8:1, text-muted 3.6:1 (labels of disabled controls only), accent
+// 7:1. Layers step up in lightness as they come forward.
+
+export global Theme {
+    // Surfaces, back to front.
+    out property <color> canvas: #0f0f0f;
+    out property <color> base: #171717;
+    out property <color> surface: #1e1e1e;
+    out property <color> raised: #262626;
+    out property <color> hover: #2e2e2e;
+    out property <color> pressed: #353535;
+    out property <color> border: #303030;
+    out property <color> border-strong: #3d3d3d;
+
+    // Text.
+    out property <color> text: #ececec;
+    out property <color> text-secondary: #a9a9a9;
+    out property <color> text-muted: #737373;
+
+    // Accent.
+    out property <color> accent: #6ea8ff;
+    out property <color> accent-hover: #8dbbff;
+    out property <color> accent-pressed: #5b95ec;
+    out property <color> accent-muted: #6ea8ff40;
+    out property <color> selection: #6ea8ff26;
+    out property <color> focus-ring: #6ea8ff99;
+
+    // The color labels a frame can carry, in the browser's badges.
+    // Lightroom's five names, at this panel's lightness: saturated
+    // enough to tell apart over a thumbnail, dim enough that a shelf
+    // of them is not a fairground. Red is also the reject flag's.
+    out property <color> label-red: #e0645c;
+    out property <color> label-yellow: #dcb63c;
+    out property <color> label-green: #55b46e;
+    out property <color> label-blue: #5b9ce6;
+    out property <color> label-purple: #a179dd;
+
+    // Type scale.
+    out property <length> font-xs: 11px;
+    out property <length> font-sm: 12px;
+    out property <length> font-md: 13px;
+    out property <length> font-lg: 15px;
+    out property <length> font-xl: 18px;
+    out property <int> weight-regular: 400;
+    out property <int> weight-medium: 500;
+    out property <int> weight-semibold: 600;
+
+    // Spacing scale.
+    out property <length> space-1: 4px;
+    out property <length> space-2: 8px;
+    out property <length> space-3: 12px;
+    out property <length> space-4: 16px;
+    out property <length> space-5: 24px;
+    out property <length> space-6: 32px;
+
+    // Radii and control sizes.
+    out property <length> radius-sm: 4px;
+    out property <length> radius-md: 6px;
+    out property <length> radius-lg: 10px;
+    out property <length> control-height: 28px;
+    out property <length> icon: 16px;
+    out property <duration> quick: 80ms;
+}

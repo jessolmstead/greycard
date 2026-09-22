@@ -1,0 +1,19 @@
+[package]
+name = "greycard-lens"
+version.workspace = true
+description = "Lens profiles for greycard: the lensfun database read, fetched on first use, and matched to a file's lens"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+log.workspace = true
+greycard-core = { path = "../greycard-core" }
+roxmltree.workspace = true
+ureq = "3"
+bzip2 = "0.6"
+tar = "0.4"
+thiserror.workspace = true
+dirs.workspace = true

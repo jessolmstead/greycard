@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- The macOS app bundle's manifest. scripts/package.sh fills in
+     @VERSION@ from the workspace. The minimum system is Dawn's: the
+     prebuilt library ONNX Runtime brings is built for 13.4, and the
+     Rust binaries for 11.0, so the library sets the floor. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleName</key>
+	<string>greycard</string>
+	<key>CFBundleDisplayName</key>
+	<string>greycard</string>
+	<key>CFBundleIdentifier</key>
+	<string>org.greycard.greycard</string>
+	<key>CFBundleVersion</key>
+	<string>@VERSION@</string>
+	<key>CFBundleShortVersionString</key>
+	<string>@VERSION@</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleExecutable</key>
+	<string>greycard-ui</string>
+	<key>CFBundleIconFile</key>
+	<string>greycard</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>13.4</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.photography</string>
+	<key>NSHighResolutionCapable</key>
+	<true/>
+	<key>NSHumanReadableCopyright</key>
+	<string>GPL-3.0-or-later</string>
+</dict>
+</plist>

@@ -1,0 +1,18 @@
+[package]
+name = "greycard-edit"
+version.workspace = true
+description = "The edit: a typed, versioned description of a development in physical units, and its sidecar"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+log.workspace = true
+greycard-core = { path = "../greycard-core" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+roxmltree.workspace = true
+dirs.workspace = true

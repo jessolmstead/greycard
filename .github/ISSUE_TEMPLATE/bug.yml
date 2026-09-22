@@ -1,0 +1,66 @@
+name: Bug report
+description: Something in greycard is wrong or crashes.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+      description: What you did, and what went wrong.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: input
+    id: camera-lens
+    attributes:
+      label: Camera and lens
+      placeholder: "Canon EOS R6 Mark II, RF 24-105mm f/4L"
+    validations:
+      required: false
+  - type: textarea
+    id: raw-file
+    attributes:
+      label: The raw file
+      description: >
+        A link to the file if you can share it, otherwise its file
+        type and size. A raw that renders wrong is the single most
+        useful thing you can send.
+    validations:
+      required: false
+  - type: input
+    id: distro-desktop
+    attributes:
+      label: Distro and desktop
+      description: Your distribution, and whether it is Wayland or X11.
+      placeholder: "Fedora 41, Wayland"
+    validations:
+      required: true
+  - type: input
+    id: gpu
+    attributes:
+      label: GPU
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: greycard version
+      description: The output of `greycard --version` or `greycard-ui --version`.
+    validations:
+      required: true
+  - type: textarea
+    id: terminal-output
+    attributes:
+      label: Terminal output
+      description: >
+        Run greycard from a terminal and paste what it prints; there
+        is no log file.
+      render: shell
+    validations:
+      required: false

@@ -1,0 +1,26 @@
+[package]
+name = "greycard-cli"
+version.workspace = true
+description = "Command-line RAW pre-processor built on greycard-core"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "greycard"
+path = "src/main.rs"
+
+[dependencies]
+greycard-core = { path = "../greycard-core" }
+greycard-ai = { path = "../greycard-ai" }
+greycard-lens = { path = "../greycard-lens" }
+greycard-edit = { path = "../greycard-edit" }
+image.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+log.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tracing-log.workspace = true

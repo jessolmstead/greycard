@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+  <defs>
+    <linearGradient id="sheet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f6f6f6"/>
+      <stop offset="1" stop-color="#dcdcdc"/>
+    </linearGradient>
+  </defs>
+  <!-- the document -->
+  <rect x="9" y="3" width="46" height="58" rx="3" fill="url(#sheet)" stroke="#8a8a8a" stroke-width="1"/>
+  <!-- two of the app icon's cards, 160 by 290 scaled, the back one
+       fanned 18 degrees about the front card's foot as on the tile -->
+  <g transform="rotate(-18 32 55)">
+    <rect x="21" y="14" width="22" height="40" rx="2" fill="#0d0d0d" stroke="#ffffff" stroke-opacity="0.25" stroke-width="1"/>
+  </g>
+  <rect x="21" y="14" width="22" height="40" rx="2" fill="#000" fill-opacity="0.2" transform="translate(-1 1)"/>
+  <rect x="21" y="14" width="22" height="40" rx="2" fill="#777777"/>
+</svg>

@@ -1,0 +1,151 @@
+# Cut a release from a v* tag: build both binaries on each platform,
+# roll the tarball scripts/package.sh makes there, and attach them all
+# to one GitHub release.
+#
+# The Linux runner is the oldest Ubuntu GitHub still offers, because
+# the glibc a binary is linked against is the floor of what it will run
+# on and ubuntu-24.04's 2.39 is already newer than some desktops out
+# there. Ubuntu 22.04 went into deprecation on 2026-09-17 with brownouts
+# that fail jobs outright, so 24.04 is the floor until 26.04 takes its
+# turn. The macOS runner is Apple silicon, which is the only Mac the
+# tarball is for; the floor there is Dawn's 13.4, set in Info.plist,
+# not the runner's.
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  version:
+    name: version from the tag
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - id: version
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # A tag name reaches a shell further down, so it has to be a
+          # version and nothing else: starting with a digit, so that a
+          # tag like "victory" is not read as version "ictory".
+          case "$version" in
+            "" | "$GITHUB_REF_NAME" | [!0-9]* | *[!0-9A-Za-z.+-]*)
+              echo "tag $GITHUB_REF_NAME is not a v<version> tag" >&2
+              exit 1
+              ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # Anything below 1.0, and anything with a -rc or -beta on it,
+          # goes out marked as a pre-release.
+          case "$version" in
+            0.*|*-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)       echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+  build:
+    name: ${{ matrix.tarball }} tarball
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            tarball: x86_64-linux
+          - os: macos-15
+            tarball: aarch64-macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Native libraries
+        # The same set CI installs: lcms2 for the profiles, fontconfig
+        # and wayland for Slint's backend, xkbcommon for its keyboard.
+        # A Mac needs nothing beyond Xcode's tools, which the runner
+        # has: lcms2 builds from its own source there.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            liblcms2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev \
+            pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # No build cache here, on purpose. target/release/libwebgpu_dawn.so
+      # is a symlink into the ort download cache, which is not part of
+      # any cache action; restoring a target directory without it would
+      # leave the link dangling and the tarball short a library. A
+      # release is rare enough to pay for a cold build.
+      # --locked: the lockfile is committed, and one dependency is
+      # pinned to a git revision. A release builds what it says it does.
+      - name: Build
+        run: cargo build --locked --release -p greycard-ui -p greycard-cli
+
+      - name: Package
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: scripts/package.sh "$VERSION"
+
+      - name: What is in the tarball
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+          TARBALL: ${{ matrix.tarball }}
+        run: tar tzf "target/dist/greycard-$VERSION-$TARBALL.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball-${{ matrix.tarball }}
+          path: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.tarball }}.tar.gz
+          if-no-files-found: error
+          # The release below is the copy that matters; this one only
+          # has to outlive the workflow run.
+          retention-days: 7
+
+  release:
+    name: GitHub release
+    needs: [version, build]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tarball-*
+          path: target/dist
+          merge-multiple: true
+
+      # The release's text is the changelog's section for this version:
+      # from its "## <version>" heading to the next "## ". A version with
+      # no section fails here rather than shipping an empty release.
+      - name: Release notes from the changelog
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          awk -v v="$VERSION" '
+            /^## / { on = ($2 == v || $2 == v",") }
+            on && !/^## / { print }
+          ' docs/changelog.md > target/dist/release-notes.md
+          if ! grep -q '[^[:space:]]' target/dist/release-notes.md; then
+            echo "docs/changelog.md has no section for $VERSION" >&2
+            exit 1
+          fi
+          cat target/dist/release-notes.md
+          ls -l target/dist/*.tar.gz
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: target/dist/greycard-${{ needs.version.outputs.version }}-*.tar.gz
+          prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
+          fail_on_unmatched_files: true
+          body_path: target/dist/release-notes.md

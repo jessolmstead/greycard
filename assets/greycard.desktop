@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=greycard
+Comment=A raw editor that gets the light right
+Exec=greycard-ui %f
+Icon=greycard
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;Photography;
+MimeType=application/x-greycard-edit;image/x-canon-cr3;image/x-canon-cr2;image/x-fuji-raf;image/x-nikon-nef;image/x-sony-arw;image/x-panasonic-rw2;image/x-adobe-dng;image/jpeg;image/png;image/tiff;
+StartupWMClass=greycard-ui

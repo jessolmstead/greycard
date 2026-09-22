@@ -1,0 +1,15 @@
+[project]
+name = "greycard-denoise"
+version = "0.0.1"
+description = "Training and export of greycard's raw-domain denoiser"
+requires-python = ">=3.12"
+license = "GPL-3.0-or-later"
+dependencies = ["torch", "numpy", "onnx", "onnxruntime"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true

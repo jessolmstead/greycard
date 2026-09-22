@@ -1,0 +1,27 @@
+[package]
+name = "greycard-bench"
+version.workspace = true
+description = "Demosaic benchmark: score greycard-core's algorithms against reference images"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "greycard-bench"
+path = "src/main.rs"
+
+[[bin]]
+name = "greycard-denoise-data"
+path = "src/bin/denoise_data.rs"
+
+[dependencies]
+greycard-core = { path = "../greycard-core" }
+greycard-ai = { path = "../greycard-ai" }
+image.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+rayon.workspace = true
+serde_json.workspace = true
+half = "2"

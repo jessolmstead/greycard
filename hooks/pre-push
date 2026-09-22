@@ -1,0 +1,26 @@
+#!/bin/sh
+# Refuse a push that would not pass what CLAUDE.md asks of a change:
+# formatted, no clippy warnings, tests green. The ignored tests, which
+# want models or raw files, are not run.
+#
+# Turn it on once, in the working tree:
+#
+#     git config core.hooksPath hooks
+#
+# To push past it the once: GREYCARD_NO_HOOK=1 git push
+
+if [ -n "$GREYCARD_NO_HOOK" ]; then
+    echo "pre-push: skipped"
+    exit 0
+fi
+
+set -e
+cd "$(git rev-parse --show-toplevel)"
+
+echo "pre-push: cargo fmt"
+cargo fmt --check
+echo "pre-push: cargo clippy"
+cargo clippy --all-targets -- -D warnings
+echo "pre-push: cargo test"
+cargo test
+echo "pre-push: clean"

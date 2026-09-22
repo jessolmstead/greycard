@@ -1,0 +1,61 @@
+{
+  "version": 3,
+  "name": "Warm Negative",
+  "sections": [
+    "light",
+    "color",
+    "curves",
+    "mixer",
+    "grading",
+    "grain"
+  ],
+  "edit": {
+    "version": 3,
+    "light": {
+      "enabled": true,
+      "exposure": 0.0,
+      "tone": {
+        "enabled": true,
+        "contrast": 0.92,
+        "highlights": -0.2,
+        "shadows": 0.25,
+        "whites": -0.1,
+        "blacks": 0.1
+      }
+    },
+    "color": {
+      "enabled": true,
+      "saturation": -0.05,
+      "vibrance": 0.2
+    },
+    "curves": {
+      "enabled": true,
+      "parametric": {
+        "highlights": -0.1,
+        "lights": 0.0,
+        "darks": 0.0,
+        "shadows": 0.12,
+        "splits": [0.25, 0.5, 0.75]
+      }
+    },
+    "mixer": {
+      "enabled": true,
+      "hue": [0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+      "saturation": [0.0, 0.05, 0.0, 0.0, -0.15, -0.15, 0.0, 0.0],
+      "luminance": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+    },
+    "grading": {
+      "enabled": true,
+      "shadows": { "hue": 45.0, "saturation": 0.12 },
+      "midtones": { "hue": 0.0, "saturation": 0.0 },
+      "highlights": { "hue": 60.0, "saturation": 0.08 },
+      "balance": -0.1
+    },
+    "grain": {
+      "enabled": true,
+      "amount": 0.25,
+      "size": 0.45,
+      "kind": "cubic"
+    }
+  }
+}

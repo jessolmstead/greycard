@@ -1,0 +1,69 @@
+# What the pre-push hook in hooks/ asks of a change, run somewhere that
+# is not one machine: formatted, no clippy warnings, tests green. The
+# ignored tests want raw files and models and are not run here.
+#
+# On Linux and on a Mac both, since the file chooser and the monitor
+# profile have a Linux side and an everywhere-else side behind cfg,
+# and a change to one cannot be seen to compile from the other. The
+# Mac runner is Apple silicon and, on a private repo, costs ten Linux
+# minutes to the minute; drop it from the matrix if that is too dear.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+  # No debug info in CI: a test names its own file and line when it
+  # fails, and the debug sections for wgpu, ort, Slint and rawler are
+  # most of a build that filled the Linux runner's disk on 2026-09-21.
+  CARGO_PROFILE_DEV_DEBUG: 0
+
+jobs:
+  check:
+    name: fmt, clippy, test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Room to build
+        # The hosted image ships .NET, Android and Haskell toolchains
+        # this build never uses, some fourteen gigabytes of the disk
+        # the test build ran out of.
+        if: runner.os == 'Linux'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h / | tail -1
+
+      - name: Native libraries
+        # lcms2 for the profiles, fontconfig and wayland for Slint's
+        # backend, xkbcommon for its keyboard. A Mac needs nothing
+        # beyond Xcode's tools.
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            liblcms2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev \
+            pkg-config
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: cargo fmt
+        run: cargo fmt --check
+
+      - name: cargo clippy
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test
