@@ -14203,3 +14203,233 @@ plist parses and `package.sh` passes `sh -n`, but none of this has run
 on a Mac: the UTI spellings and the `.icns` step are for the first tag
 to check, with `public.camera-raw-image` there so a misspelled maker
 UTI leaves no raw type unreached.
+
+## 141. The default develop, 0.8 stops brighter (2026-09-22)
+
+The first two reference frames (§85) settled one number before any
+slider. Developed with nothing touched and read back as linear
+luminance, a Canon R6 II frame of a white watch dial came out with a
+median of 0.222 where the camera's embedded JPEG has 0.386 and
+Lightroom 0.402: 0.8 stops under both, top to bottom, the dial a
+middling grey. The raw's brightest sample sits 1.8 stops under the
+clip, so this is not §85's open question about the shoulder's white;
+it is where the picture is placed. Matching Lightroom's +0.8 took
++1.15 here and still left the mid-tones 0.44 stops short, and the
+slider itself responds the same in both editors, so the gap is the
+starting point and not the scale.
+
+**A baseline, added where the exposure becomes a gain.**
+`finish::BASELINE_EXPOSURE` is 0.8 stops, added to the exposure in
+`finish_pixel_with`, in `pick` and in the viewport's uniform, and
+nowhere else. The guide plane is the scene's before any exposure and
+the exposure is added to it at the pixel, so the baseline moves the
+tone equalizer's regions exactly as the slider does; the picture at
+zero is the picture the slider at +0.8 gave before, locals and all.
+It lives in the finish, not in core or the edit, because it is a
+choice about the display rendering, which is the consumer's.
+
+**Stored edits come up brighter, on purpose.** The number in a sidecar
+still means stops from the default develop; the default is what moved.
+No schema version for it: a migration that took 0.8 off every stored
+exposure would keep the old, dark default on every frame ever opened,
+which is the thing being fixed, and nothing has shipped.
+
+**Measured after.** The watch frame's mean encoded value is 142.1,
+Lightroom's 142.1, its median 0.398 against 0.402; its top is still a
+little short (0.555 against 0.597 at the 99.5th percentile) and its
+darkest tenth a little lifted (0.028 against 0.021), which is a flatter
+curve than Adobe Color and a question for the reference set. The GFX
+ferry frame, which was only 0.3 stops under its camera's JPEG, is now
+half a stop over Lightroom at the median (0.056 against 0.038) and
+still short of white at the top. One number for every camera is where
+the set of eight starts, not where it ends: if the makers' JPEGs keep
+disagreeing by camera, the baseline is a per-camera value like DNG's
+`BaselineExposure`, and the frames will say so.
+
+**The sliders at full, measured on the same two frames**, by
+percentile band of each editor's own picture so the lens geometry
+does not matter. Shadows +2 against Lightroom's +100 agrees within
+about 0.2 stops everywhere but the darkest tenth, where Lightroom
+lifts half a stop more. Highlights -2 against -100 is a different
+shape: Lightroom's reaches down to about the 25th percentile and is
+strongest from the 40th to the 95th, -0.7 stops on the watch, while
+greycard's does nothing under the median and is strongest at the very
+top, where it pulls harder than Lightroom's. That is why it reads as
+weak; the ramp is for after the baseline, since both ramps hang off
+mid grey and this change moves what sits there.
+
+## 142. Vignetting held at the edge of its calibration (2026-09-22)
+
+**What lensfun's radius is.** lensfun's `pa` vignetting model,
+1 + k1 r² + k2 r⁴ + k3 r⁶, puts r = 1 at the corner of the sensor the
+calibration was made on, half its diagonal whatever its shape:
+`modifier.cpp` says so ("For the vignetting model "pa", r = 1 is the
+corner of the image"), and `mod-color.cpp` rescales by
+`hypot(36, 24) / cropfactor / 2`. Distortion and TCA use Hugin's unit,
+half the shorter side, instead. `vignetting_scale`, the lens's crop
+factor over the body's, is that ratio of half diagonals, so a
+picture's corner lands at r = `vignetting_scale`.
+
+**Past the corner the fit is not a fit.** The polynomial is fitted to
+what the calibration sensor saw, which stops at r = 1. A full-frame
+lens on a GFX (crop 0.79 against 1.005) reaches r = 1.27, and the Sigma
+50mm f/1.4 Art at f/5.6 falls to 0.71 at r = 1, climbs back to 0.79 at
+1.2 and to 1.10 at 1.37: the correction brightened the GFX's extreme
+corners less than the full-frame corner, and would darken them further
+out, where they are the darkest part of the frame. Not rare: 10,198 of
+the database's 29,594 `pa` entries, on 599 lenses, rise somewhere
+between r = 1 and 1.4. lensfun itself evaluates the polynomial at any
+r.
+
+**Held, not extrapolated.** `Vignetting::falloff` takes min(r, 1), so
+past the calibration's corner the gain is the gain at it. That still
+under-corrects a real lens, whose light keeps falling, but it never
+corrects less towards the corner and never invents a brightening the
+data does not hold; extrapolating the slope would be a guess that grows
+with every step past the data. There is no GPU lens path to match: the
+correction runs on the CPU for the CLI and the editor alike. `greycard
+lenses` prints a `covers` line when the calibration's sensor is more
+than a percent smaller than the body's (the margin so a full-frame lens
+calibrated at 1.005 is not flagged on a 1.0 body), the develop logs it,
+and the LENS panel puts "measured on a smaller sensor" after the
+profile's name.
+
+**Distortion and CA are left alone.** Their calibrated range ends at
+the calibration's corner too, 1.80 half shorter sides for 3:2, and a
+full-frame calibration on a 44 by 33 sensor reaches 2.28. But holding
+a displacement at a radius puts a kink in the geometry, and the
+polynomials carry on smoothly: of 6,450 `poly3`, `poly5` and `ptlens`
+entries, 7 turn back before 2.28, fisheyes, phones and two wide zooms
+whose circle would not cover a bigger sensor anyway, and no TCA
+channel turns back before 3. The frame that raised this is a different
+matter: lensfun's calibration of this Sigma, made on a Canon 6D, has a
+distortion `k1` of exactly zero, so greycard corrects none where
+Adobe's profile straightens enough to crop the export by 6 percent.
+That is lensfun's data to fix, not a reason to guess here.
+
+**Measured.** On the GFX 100S II frame at f/5 the corner gain goes from
+1.24 to 1.44, +0.21 EV at the tip; before and after agree out to 79
+percent of the way to the corner, where the old gain peaked at 82
+percent and fell 14 percent by the tip. At patches 168 px in from each
+corner, about r = 1.23, the correction's own gain went from 1.31 to
+1.44, which is the model's 1.309 there before and its held 1.437 after.
+
+## 143. The reference set, measured (2026-09-22)
+
+Seven of §85's frames came back with Lightroom exports, one slider at
+its limit per export and everything else at the default, lens
+corrections on in both: the watch (R6 II), the ferry (GFX 100S II), a
+sunset over a city with 9 percent of the raw clipped (R5 II), the
+lighthouse at +1 EV in both (R5 II), a wedding couple in a white dress
+and a dark suit (R6 II), a backlit portrait on a mountain (R8) and a
+dim interior under lamps at ISO 800 (R6 II). greycard's side was
+rendered from copies of the raws with a sidecar written per variant,
+so no hand on a slider is in it. Everything is linear luminance read
+back from the JPEGs, and the slider responses are the median change
+in stops within percentile bands of each editor's own picture, which
+holds whatever the two editors' geometry does.
+
+**The baseline, by camera.** The median against Lightroom's, in stops:
+the watch -0.01, the sunset -0.02, the lighthouse +0.01, the wedding
++0.17, the portrait +0.22, the interior +0.26; the ferry +0.56. The
+Canon frames sit within about a tenth of a stop of Lightroom on
+average, so §141's 0.8 is right for them, and the GFX is the outlier;
+the flowers, also GFX, are +0.85 over their camera's JPEG with no
+Lightroom export to say more. The camera JPEGs are the worse target:
+they scatter about ±0.8 stops from Lightroom (the R8's is a full stop
+over both editors), which reads as the camera's scene-adaptive
+rendering. What Lightroom does per camera is Adobe's `BaselineExposure`,
+the value its DNG Converter writes for each body; that is the table a
+per-camera baseline wants.
+
+**The top never reaches white.** On every frame greycard's 99th
+percentile sits under Lightroom's: 0.55 against 0.60, 0.93 against
+0.99, 0.96 against 1.00, 0.74 against 0.86, 0.76 against 0.88, 0.69
+against 0.78, 0.70 against 0.84. greycard clips nothing anywhere;
+Lightroom puts 20 percent of the sunset at white and the camera 24,
+where greycard renders the sky round the sun as a flat pale grey.
+That is §85's shoulder, now with a number from every frame.
+
+**Highlights is stronger than Lightroom's, and narrower.** At -2
+against -100, in the bands from the 70th percentile up: the wedding
+-1.12 to -1.24 against -0.41 to -0.77, the portrait -1.24 to -1.34
+against -0.31 to -0.62, the lighthouse -1.22 to -1.34 against -0.33
+to -0.55, the sunset -0.37 to -1.04 against -0.06 to -0.42. Only the
+low-contrast watch had greycard's the weaker, which is where the
+roadmap's "does nothing" came from. Under the median greycard's does
+nothing and Lightroom's takes a gentle -0.1 to -0.2. Lightroom's also
+adapts to the frame: on the watch it was strongest in the bright
+mid-tones, on the sunset it leaves the clip alone. So greycard's -1 is
+roughly Lightroom's -100 at the top, and the ramp wants to reach under
+mid grey, lighter.
+
+**Shadows is close.** Within about 0.2 stops on the wedding, the
+portrait and the lighthouse. On the low-key interior greycard's lifts
+the 40th to 70th percentiles by three stops where Lightroom's lifts
+them by 1.3 to 2.3, and gives the darkest tenth less (+2.3 against
++4.0): the face comes up brighter and flatter.
+
+**Whites works on the mid-tones in Lightroom.** On the sunset
+Lightroom's -100 and +100 move the 25th to 85th percentiles most (up to
+-0.33 and +0.51) and leave the clip where it is; greycard's moves only
+the top thirty percent, and at +2 stretches a hard-edged, hueless
+white round the sun where Lightroom keeps a warm glow at the edge.
+
+**Blacks: the crush matches, the lift fogs.** On the interior,
+greycard's -0.3 against Lightroom's -100 is band for band the same,
+-1.5 to -6.9 stops. The lift is not: +0.3 raises the darkest tenth by
++7.4 stops where +100 raises it by +2.3, and the picture goes under a
+grey veil. The black point is an offset in scene light, a fraction of
+mid grey added to everything and scaled back at scene white; at +0.3
+that is 0.054 of scene light, 1.7 stops under grey, laid over a
+picture whose darkest tenth sits eight stops down. Lightroom's lift is
+a toe: +1.3 to +1.6 stops across the 10th to 70th percentiles of that
+dark frame, fading to nothing by the 90th.
+
+## 144. Blacks lifts a toe (2026-09-22)
+
+§143 found the lift fogging the frame: the black point was an offset in
+scene light, `-blacks` of mid grey, the same arithmetic both ways, and
+at +0.3 it laid 1.7-stops-under-grey of light over every pixel. The
+crush half of it matched Lightroom's -100 band for band and is kept as
+it was. The lift is now `black_point`'s other branch: a gain on the
+luminance, `BLACKS_LIFT` stops at the slider's top, full at and under
+5 stops below mid grey and faded out by a smoothstep to nothing 1.5
+stops over it. A gain and not an offset, so black stays black and a
+color keeps its channel ratios; a luminance and not a region, like the
+white point, since what it shapes is the curve's toe.
+
+**The numbers came from the interior frame.** Its bands of greycard's
+own picture, taken back through the shoulder to scene stops, sit at
+-7.2, -7.0, -5.1, -3.9, -3.0, -1.7, +0.2 and +1.7 against mid grey;
+Lightroom's +100 lifted them +2.3, +1.6, +1.3, +1.6, +1.5, +1.0, +0.3
+and nothing, in display stops. Divided by the toe's own log slope
+there, 1.2 to 1.6, that is about 1.1 stops of scene lift from -5 down,
+0.9 at -3, 0.6 at -1.7 and a tenth or two over grey. A lift of 1.2 over
+a ramp from -5 to +1.5 is that shape, and its peak slope is 0.28, so
+the curve cannot fold at any setting; the sixteen-corner sweep still
+holds. Blended with masks the value can pass 0.3, and at three masks'
+worth the slope is 0.84, still under one.
+
+**Measured after.** The interior at +0.3 against +100, in the bands
+from the 25th percentile up: +1.64, +1.67, +1.47, +0.89, +0.11 against
++1.33, +1.55, +1.46, +0.95, +0.27. The darkest quarter takes +1.4 and
++1.2 where Lightroom's takes +2.3 and +1.6; that is a few levels of an
+8-bit JPEG near black and Lightroom lifting its floor a little, and
+it is left. The frame's shadows open and it stays a photograph where
+it went under a veil before. The viewport draws the same lift: the fit
+view against the export scaled to it differs by 1.66 of 255 on
+average, -0.05 signed, where the same comparison with the slider at
+zero gives 1.14.
+
+**What else moved.** The Lightroom importer took `Blacks2012` at 0.2 per
+hundred and now takes 0.3, which is what the crush and the lift both
+measure. Warm Negative's `blacks: 0.1` was a matte black, a faded
+negative's grey floor, and it leaned on the veil; the veil is a
+legitimate look, but it is the point curve's to make, as every
+Lightroom preset makes it, so the preset has `blacks` at zero and its
+RGB curve starts at 0.07. The shipped-presets test, which asks that it
+render softer and less saturated than the picture, holds. A stored
+edit with a positive `blacks` renders its shadows lifted instead of
+veiled, which is the fix, and no schema version moves for it, the
+same call §141 made.

@@ -121,6 +121,14 @@ pub fn rasterize(
 pub const MAX_LOCALS: usize = 16;
 
 const MID_GREY: f32 = 0.18;
+
+/// Stops every picture is brightened by before its own exposure: the
+/// exposure slider at zero is this, so a picture with nothing done to
+/// it lands where the camera's JPEG and Lightroom put it rather than
+/// 0.8 stops under both (notes §141). Added where the exposure turns
+/// into a gain, here, in [`pick`] and in the viewport's uniform, so it
+/// acts exactly as the slider does, the guide plane included.
+pub const BASELINE_EXPOSURE: f32 = 0.8;
 /// Luminance weights of the working space, Rec.2020.
 const LUMA: [f32; 3] = [0.2627, 0.6780, 0.0593];
 
@@ -309,7 +317,7 @@ pub fn finish_pixel_with(
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
 ) -> [f32; 3] {
-    let mut exposure = global.light.exposure + stops;
+    let mut exposure = BASELINE_EXPOSURE + global.light.exposure + stops;
     let mut t = global.light.tone;
     let mut mixer = global.mixer.effective();
     let mut color = global.color.effective();
@@ -438,7 +446,7 @@ pub fn pick(
     // And the tint through the vector the finish blends looks with,
     // so the dropper reads the tint the render applies.
     let tint = Tint::from_vector(tint.vector());
-    let gain = 2f32.powf(light.exposure);
+    let gain = 2f32.powf(BASELINE_EXPOSURE + light.exposure);
     let mut c = px.map(|v| v * gain);
     let hue = oklab(c)[2].atan2(oklab(c)[1]).to_degrees();
     if mixer.enabled || color.enabled || bw.enabled || !tint.is_identity() {
@@ -746,9 +754,40 @@ fn shape(c: [f32; 3], t: &greycard_edit::Tone, guide: Option<f32>) -> [f32; 3] {
     let shift = t.shadows * (1.0 - smoothstep(SHADOWS_RAMP.0, SHADOWS_RAMP.1, g))
         + t.highlights * smoothstep(HIGHLIGHTS_RAMP.0, HIGHLIGHTS_RAMP.1, g);
     let gain = 2f32.powf(shift);
-    let c = white_point(c.map(|v| v * gain), t.whites);
-    let black = -t.blacks * MID_GREY;
-    c.map(|v| ((v - black) / (1.0 - black)).max(0.0))
+    black_point(white_point(c.map(|v| v * gain), t.whites), t.blacks)
+}
+
+/// The top of the blacks slider, where [`BLACKS_LIFT`] is reached.
+const BLACKS_TOP: f32 = 0.3;
+/// Stops a lift at the top of the slider gives the deep shadows, and
+/// where it fades, in stops over mid grey: full at and under the
+/// ramp's foot, nothing from its head. Measured against Lightroom's
+/// +100 on a low-key frame (§144), which lifts the deep shadows about
+/// 1.1 stops, the lower mid-tones about 0.6 and nothing a stop and a
+/// half over grey. A peak slope of `1.5 * 1.2 / 6.5`, 0.28, so it
+/// never turns the curve back.
+const BLACKS_LIFT: f32 = 1.2;
+const BLACKS_RAMP: (f32, f32) = (-5.0, 1.5);
+
+/// The black point. Crushing, `blacks` under zero, puts `-blacks` of
+/// mid grey at zero and holds scene white: an offset and a scale.
+/// Lifting is not the same offset the other way, which adds a fixed
+/// amount of light to every pixel and over a dark picture is a grey
+/// veil (§143). It is a toe instead, a gain on the luminance that is
+/// full in the deep shadows and fades out through the mid-tones, so
+/// the shadows open, the blacks keep their shape and a color keeps
+/// its hue.
+#[inline]
+fn black_point(c: [f32; 3], blacks: f32) -> [f32; 3] {
+    if blacks <= 0.0 {
+        let black = -blacks * MID_GREY;
+        return c.map(|v| ((v - black) / (1.0 - black)).max(0.0));
+    }
+    let y = LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2];
+    let u = (y.max(1e-9) / MID_GREY).log2();
+    let fade = 1.0 - smoothstep(BLACKS_RAMP.0, BLACKS_RAMP.1, u);
+    let gain = 2f32.powf(BLACKS_LIFT * blacks / BLACKS_TOP * fade);
+    c.map(|v| v.max(0.0) * gain)
 }
 
 fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
@@ -1078,9 +1117,11 @@ mod tests {
 
     #[test]
     fn mid_grey_and_white_land_where_the_curve_puts_them() {
+        // The curve itself, so the baseline is taken back out: a scene
+        // value here is where it meets the curve.
         let light = Light {
             enabled: true,
-            exposure: 0.0,
+            exposure: -BASELINE_EXPOSURE,
             tone: Tone::default(),
         };
         let m = crate::export::Space::Srgb.matrix();
@@ -1101,7 +1142,7 @@ mod tests {
         // Contrast leaves mid grey where it was and moves a stop above it.
         let hard = Light {
             enabled: true,
-            exposure: 0.0,
+            exposure: -BASELINE_EXPOSURE,
             tone: Tone {
                 contrast: 1.5,
                 ..Tone::default()
@@ -1114,7 +1155,7 @@ mod tests {
         assert!(up2[1] > up[1] + 0.02, "{up:?} {up2:?}");
         // A stop of exposure is a stop.
         let plus = Light {
-            exposure: 1.0,
+            exposure: 1.0 - BASELINE_EXPOSURE,
             ..light
         };
         let a = fp([MID_GREY; 3], &plus, &no_mix, &id, &m);
@@ -1122,7 +1163,7 @@ mod tests {
         // Curve off: a clip at one, plain encoding below it.
         let flat = Light {
             enabled: true,
-            exposure: 0.0,
+            exposure: -BASELINE_EXPOSURE,
             tone: Tone {
                 enabled: false,
                 ..Tone::default()
@@ -1131,6 +1172,27 @@ mod tests {
         let c = fp([MID_GREY; 3], &flat, &no_mix, &id, &m);
         assert!((c[1] - encode(MID_GREY)).abs() < 2e-3, "{c:?}");
         assert!((fp([5.0; 3], &flat, &no_mix, &id, &m)[1] - 1.0).abs() < 1e-5);
+    }
+
+    /// The slider at zero is the baseline: a picture with nothing done
+    /// to it is the one the slider at +0.8 gave before, and the slider
+    /// still moves it by the stops it says (§141).
+    #[test]
+    fn the_default_develop_is_the_baseline_brighter() {
+        let m = crate::export::Space::Srgb.matrix();
+        let (no_mix, id) = (Mixer::default(), identity());
+        let at = |exposure: f32, px: f32| {
+            let light = Light {
+                enabled: true,
+                exposure,
+                tone: Tone::default(),
+            };
+            fp([px; 3], &light, &no_mix, &id, &m)[1]
+        };
+        let lifted = MID_GREY * 2f32.powf(BASELINE_EXPOSURE);
+        assert!((at(0.0, MID_GREY) - at(-BASELINE_EXPOSURE, lifted)).abs() < 1e-5);
+        assert!(at(0.0, MID_GREY) > at(-BASELINE_EXPOSURE, MID_GREY) + 0.05);
+        assert!((at(1.0, MID_GREY) - at(0.0, MID_GREY * 2.0)).abs() < 1e-5);
     }
 
     fn grey_at(stops: f32) -> [f32; 3] {
@@ -1182,19 +1244,57 @@ mod tests {
             "{c:?}"
         );
         // The black point: crushing puts that value at zero and holds
-        // scene white; lifting raises zero and holds scene white.
+        // scene white.
         let crush = Tone {
             blacks: -0.2,
             ..base
         };
         assert_eq!(shape([MID_GREY * 0.2; 3], &crush, None)[1], 0.0);
         assert!((shape([1.0; 3], &crush, None)[1] - 1.0).abs() < 1e-6);
+    }
+
+    /// Lifting the blacks is a toe, not a veil (§143, §144): black
+    /// stays black, the deep shadows take the full lift in stops, the
+    /// lift fades through the mid-tones and is gone a stop and a half
+    /// over grey, and a color keeps its channel ratios.
+    #[test]
+    fn a_blacks_lift_opens_the_shadows_without_a_veil() {
         let lift = Tone {
-            blacks: 0.2,
-            ..base
+            blacks: BLACKS_TOP,
+            ..Tone::default()
         };
-        assert!(shape([0.0; 3], &lift, None)[1] > 0.03);
-        assert!((shape([1.0; 3], &lift, None)[1] - 1.0).abs() < 1e-6);
+        let stops = |at: f32| {
+            let v = MID_GREY * 2f32.powf(at);
+            (shape([v; 3], &lift, None)[1] / v).log2()
+        };
+        assert_eq!(shape([0.0; 3], &lift, None), [0.0; 3]);
+        for deep in [-12.0, -8.0, -5.0] {
+            assert!(
+                (stops(deep) - BLACKS_LIFT).abs() < 1e-4,
+                "{deep}: {}",
+                stops(deep)
+            );
+        }
+        assert!(
+            stops(-3.0) > 0.8 && stops(-3.0) < BLACKS_LIFT,
+            "{}",
+            stops(-3.0)
+        );
+        assert!(stops(-1.7) > 0.4 && stops(-1.7) < 0.8, "{}", stops(-1.7));
+        assert!(stops(BLACKS_RAMP.1).abs() < 1e-5);
+        assert!(stops(2.47).abs() < 1e-5, "scene white is held");
+        let half = Tone {
+            blacks: BLACKS_TOP / 2.0,
+            ..Tone::default()
+        };
+        let v = MID_GREY / 64.0;
+        let at_half = (shape([v; 3], &half, None)[1] / v).log2();
+        assert!((at_half - BLACKS_LIFT / 2.0).abs() < 1e-4, "{at_half}");
+        let c = shape([0.012, 0.006, 0.003], &lift, None);
+        assert!(
+            (c[0] / c[1] - 2.0).abs() < 1e-4 && (c[1] / c[2] - 2.0).abs() < 1e-4,
+            "{c:?}"
+        );
     }
 
     #[test]
@@ -1445,12 +1545,18 @@ mod tests {
                 0.0,
             ),
         ] {
-            let image = flat(stops, 64, 48);
+            let image = flat(stops - BASELINE_EXPOSURE, 64, 48);
             let guide = guide_plane(&image);
             let shifted = at(&image, Some(&guide), tone, 32, 24);
             // In stops, read back through the finish: a flat field of
             // `stops + want` under no slider is what it should equal.
-            let expect = at(&flat(stops + want, 64, 48), None, Tone::default(), 32, 24);
+            let expect = at(
+                &flat(stops + want - BASELINE_EXPOSURE, 64, 48),
+                None,
+                Tone::default(),
+                32,
+                24,
+            );
             assert!(
                 (shifted - expect).abs() < 2e-3,
                 "{stops} stops, {tone:?}: {shifted}, wanted {expect}"
@@ -1466,7 +1572,9 @@ mod tests {
         // 0.07 of a stop, which is the roadmap's "whites do basically
         // nothing". Through the whole finish, with the guide plane
         // present, since whites reads the pixel and not the plane.
-        let image = flat(SCENE_WHITE_STOPS, 128, 96);
+        // Each field is placed where it meets the curve, the baseline
+        // taken back out.
+        let image = flat(SCENE_WHITE_STOPS - BASELINE_EXPOSURE, 128, 96);
         let guide = guide_plane(&image);
         let tone = Tone {
             whites: -1.0,
@@ -1474,14 +1582,18 @@ mod tests {
         };
         let pulled = at(&image, Some(&guide), tone, 64, 48);
         let old = at(
-            &flat(SCENE_WHITE_STOPS - 0.066, 128, 96),
+            &flat(SCENE_WHITE_STOPS - 0.066 - BASELINE_EXPOSURE, 128, 96),
             None,
             Tone::default(),
             64,
             48,
         );
         let new = at(
-            &flat(SCENE_WHITE_STOPS * SCENE_WHITE_STOPS / 3.47, 128, 96),
+            &flat(
+                SCENE_WHITE_STOPS * SCENE_WHITE_STOPS / 3.47 - BASELINE_EXPOSURE,
+                128,
+                96,
+            ),
             None,
             Tone::default(),
             64,
@@ -1811,7 +1923,14 @@ mod tests {
             &Tint::OFF,
             &curves,
         );
-        let expect = encode(tone(shape([MID_GREY; 3], &light.tone, None)[0]));
+        // The baseline is in the pick as it is in the render.
+        let expect = encode(tone(
+            shape(
+                [MID_GREY * 2f32.powf(BASELINE_EXPOSURE); 3],
+                &light.tone,
+                None,
+            )[0],
+        ));
         for k in 0..3 {
             assert!((grey.encoded[k] - expect).abs() < 1e-5, "{grey:?}");
         }
@@ -1846,8 +1965,10 @@ mod tests {
         );
         assert!((red2.hue - red.hue).abs() < 1e-3, "{red:?} {red2:?}");
         assert!(red2.encoded[0] > red.encoded[0], "{red:?} {red2:?}");
-        // With the tone curve off, the encoded value is the input's.
+        // With the tone curve off, the encoded value is the input.s,
+        // the baseline taken back out.
         let flat = Light {
+            exposure: -BASELINE_EXPOSURE,
             tone: Tone {
                 enabled: false,
                 ..Default::default()

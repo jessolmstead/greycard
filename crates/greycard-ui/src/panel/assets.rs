@@ -136,10 +136,20 @@ pub(crate) fn show_lens(report: &LensReport, app: &App) {
             LensReport::NoDatabase => "no lens profiles on this machine".to_string(),
             LensReport::NoLensName => "the file names no lens".to_string(),
             LensReport::Unknown(name) => format!("no profile for {name}"),
-            LensReport::Found { lens, camera: true } => lens.clone(),
+            LensReport::Found {
+                lens,
+                camera: true,
+                smaller_sensor: false,
+            } => lens.clone(),
+            LensReport::Found {
+                lens,
+                camera: true,
+                smaller_sensor: true,
+            } => format!("{lens} (measured on a smaller sensor)"),
             LensReport::Found {
                 lens,
                 camera: false,
+                ..
             } => format!("{lens} (body unknown, its own format assumed)"),
         }
         .into(),

@@ -20,6 +20,15 @@
 //! is used through [`LensCorrection::radius_scale`], which the
 //! consumer sets from the two sensors' crop factors and shapes.
 //!
+//! A calibration made on a smaller sensor than the picture's knows
+//! nothing past its own corner. The vignetting is held there: its
+//! polynomial, fit only out to the corner, bends back up past it (see
+//! [`Vignetting::falloff`]). The distortion and CA polynomials are
+//! evaluated as they are: holding a displacement at a radius would put
+//! a kink in the picture's geometry there, and all but a handful of
+//! the database's distortions (fisheyes, phones) keep moving outward
+//! past the corner of a full-frame calibration on a 44 by 33 sensor.
+//!
 //! Where the geometry changes the picture is resampled once, cubic,
 //! from the working image, each channel at its own place; the
 //! vignetting gain is taken at the place sampled. A correction that
@@ -141,17 +150,28 @@ impl ChromaticAberration {
 }
 
 /// Vignetting: the light that reached the sensor as a fraction of what
-/// left the lens, `1 + k1 r² + k2 r⁴ + k3 r⁶`, `r` in half diagonals.
+/// left the lens, `1 + k1 r² + k2 r⁴ + k3 r⁶`, `r` in half diagonals
+/// of the sensor the calibration was made on.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Vignetting {
     pub k: [f32; 3],
 }
 
 impl Vignetting {
+    /// The radius the model was fit out to: the calibration sensor's
+    /// corner, one half diagonal (lensfun's `pa` convention).
+    pub const CALIBRATED_RADIUS: f32 = 1.0;
+
     /// The fall-off at a radius: what a pixel there recorded of the
-    /// scene, one at the center.
+    /// scene, one at the center. Past [`Self::CALIBRATED_RADIUS`] it is
+    /// the fall-off there. A sixth-order fit is a fit only where it was
+    /// measured, and the database's bend back up past the corner: the
+    /// Sigma 50 Art's at f/5.6 falls to 0.71 at the corner and climbs
+    /// to 1.10 by 1.37, which would brighten a bigger sensor's corners
+    /// less than the calibration's, or darken them.
     #[inline]
     pub fn falloff(&self, r: f32) -> f32 {
+        let r = r.min(Self::CALIBRATED_RADIUS);
         let r2 = r * r;
         1.0 + self.k[0] * r2 + self.k[1] * r2 * r2 + self.k[2] * r2 * r2 * r2
     }
@@ -211,6 +231,15 @@ pub struct LensStats {
 }
 
 impl LensCorrection {
+    /// Where the vignetting calibration ends on this picture, as a
+    /// fraction of the way from its center to its corner, when that is
+    /// short of the corner: the calibration was made on a smaller
+    /// sensor, and the gain past it is held at its value there.
+    pub fn vignetting_edge(&self) -> Option<f32> {
+        (self.vignetting.is_some() && self.vignetting_scale > Vignetting::CALIBRATED_RADIUS)
+            .then(|| Vignetting::CALIBRATED_RADIUS / self.vignetting_scale)
+    }
+
     /// Whether the geometry changes: the distortion or the CA moves
     /// something.
     pub fn moves(&self) -> bool {
@@ -550,6 +579,69 @@ mod tests {
         };
         let (out2, _) = correct(&image, &smaller);
         assert!(out2.data[2] < corner && out2.data[2] > 1.0);
+    }
+
+    #[test]
+    fn vignetting_is_held_at_the_calibrated_corner() {
+        // The Sigma 50mm f/1.4 DG HSM Art at f/5.6, a full-frame
+        // calibration, on a GFX 100S II: the picture's corner is 1.27
+        // of the calibration's half diagonal.
+        let k = [-0.3879, -0.0701, 0.1637];
+        let v = Vignetting { k };
+        let poly = |r: f32| {
+            let s = r * r;
+            1.0 + k[0] * s + k[1] * s * s + k[2] * s * s * s
+        };
+        // The polynomial itself climbs back past the corner, to more
+        // than one by 1.37; the model does not.
+        assert!(poly(1.2) > poly(1.0) && poly(1.37) > 1.0);
+        let edge = v.falloff(1.0);
+        assert!((edge - poly(1.0)).abs() < 1e-6 && edge < 0.72);
+        for r in [1.0001, 1.1, 1.2722, 1.37, 2.0] {
+            assert_eq!(v.falloff(r), edge, "{r}");
+        }
+        // Across a picture whose corner is past the calibration's, the
+        // gain never falls from the center out along the diagonal, and
+        // is the edge's from where the calibration ends to the corner.
+        let c = LensCorrection {
+            vignetting: Some(v),
+            vignetting_scale: 1.2722,
+            ..Default::default()
+        };
+        let (w, h) = (4000.0, 3000.0);
+        let steps = 400;
+        let mut last = 0.0;
+        for i in 0..=steps {
+            let t = i as f32 / steps as f32;
+            let g = c.gain_at(w / 2.0 * (1.0 - t), h / 2.0 * (1.0 - t), w, h);
+            assert!(g >= last, "gain fell at {t}: {g} after {last}");
+            last = g;
+        }
+        let at_edge = 1.0 / edge;
+        assert!((last - at_edge).abs() < 1e-5);
+        let t = c.vignetting_edge().unwrap();
+        assert!((t - 1.0 / 1.2722).abs() < 1e-6);
+        let past = t + 0.01;
+        let g = c.gain_at(w / 2.0 * (1.0 - past), h / 2.0 * (1.0 - past), w, h);
+        assert!((g - at_edge).abs() < 1e-5);
+        // The same calibration on its own sensor, or a smaller one:
+        // no edge short of the corner.
+        assert!(
+            LensCorrection {
+                vignetting_scale: 1.0,
+                ..c
+            }
+            .vignetting_edge()
+            .is_none()
+        );
+        assert!(
+            LensCorrection {
+                vignetting: None,
+                ..c
+            }
+            .vignetting_edge()
+            .is_none()
+        );
     }
 
     #[test]

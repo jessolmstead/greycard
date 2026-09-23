@@ -11,6 +11,9 @@ on and nothing more; the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] Not a bug per say, but the histogram should stay pinned at the
+      top of the pane
+
 ## v0.1.0: browse, develop, export
 
 A user on Linux, macOS or Windows can install it,
@@ -27,6 +30,7 @@ went wrong.
       three runners; the Windows package, the Mac's UTI spellings and
       sidecar `.icns` are the parts not verified by running them (§88,
       §110, §137, §140)
+- [ ] A small user guide for testers
 
 ## v0.2.0: the feel
 
@@ -37,10 +41,20 @@ sliders feel like the ones people learned on.
       each and the greycard values that match, a check of the default
       develop's brightness against the embedded JPEG, a slider response
       weighted to the first third of the travel, an Auto from the
-      histogram (§85)
-- [ ] The shoulder's own white: scene white renders at 231 of 255 where
-      every camera JPEG puts it at 255 (§85). A change to the default
-      look; waits on the reference frames
+      histogram (§85). Seven frames in and measured (§143); the
+      baseline landed from them (§141). Still wanted: Lightroom bases
+      for the forest, the torii, the pagoda and the flowers
+- [ ] The shoulder's own white: every frame's top sits under
+      Lightroom's and greycard clips nothing, where Lightroom puts 20
+      percent of the sunset at white (§85, §143)
+- [ ] The baseline per camera, from Adobe's `BaselineExposure` per
+      body: the Canons land within a tenth of a stop of Lightroom, the
+      GFX half a stop over (§141, §143)
+- [ ] Highlights, whites and shadows reshaped against the set:
+      highlights at -2 pulls the top twice as hard as Lightroom's -100
+      and nothing under the median; whites moves only the top where
+      Lightroom's moves the mid-tones; shadows over-lifts the mid-tones
+      of a low-key frame (§143)
 - [ ] The guided plane's halo at a hard edge, measured; darktable's
       exposure-independent guided filter if it shows (§85)
 - [ ] The contrast filters weighted by chroma through the whole range,
@@ -283,6 +297,10 @@ release when the wait clears.
       carrying dnglab/dnglab#840 (§13j)
 - [ ] The makers' embedded lens corrections, exact where a file carries
       them. Waits on rawler surfacing them (and the Panasonic lens name)
+- [ ] lensfun calibrates the Sigma 50mm f/1.4 DG HSM Art with a
+      distortion k1 of exactly zero (made on a Canon 6D), so it gets no
+      distortion correction where Adobe's profile straightens it; measure
+      it and contribute the entry to lensfun (§142)
 - [ ] rawler's lens database lacks the Sigma 28mm F1.4 DG HSM Art on
       the Canon mounts and the Sony FE 24-70mm F2.8 GM II, and finds
       two definitions for one Canon ID; each decode of such a file

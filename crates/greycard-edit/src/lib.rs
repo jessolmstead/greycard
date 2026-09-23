@@ -354,8 +354,11 @@ pub struct Tone {
     /// out and compresses the top towards mid grey. Global, not by
     /// region: `white_point` in `finish.rs`. The slider runs ±2.
     pub whites: f32,
-    /// The black point, as a fraction of mid grey, with scene white
-    /// held: negative crushes, positive lifts. Zero is the scene's own.
+    /// The black point, ±0.3. Negative crushes: that fraction of mid
+    /// grey goes to zero, with scene white held. Positive lifts the
+    /// toe: the deep shadows up by as much as 1.2 stops at 0.3, fading
+    /// out through the mid-tones (`black_point` in `finish.rs`). Zero
+    /// is the scene's own.
     pub blacks: f32,
 }
 

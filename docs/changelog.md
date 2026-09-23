@@ -7,6 +7,22 @@ release workflow puts a version's section into the GitHub release.
 
 ## 0.1.0, unreleased
 
+- Blacks lifts the shadows instead of laying a grey veil over the
+  picture: up to 1.2 stops in the deep shadows, fading out through the
+  mid-tones, where Lightroom's +100 lands. Lowering it is unchanged.
+  Lightroom presets bring their Blacks across at the same scale, and
+  Warm Negative's faded black now comes from its curve (§144,
+  2026-09-22)
+- The default develop is 0.8 stops brighter, where the camera's JPEG
+  and Lightroom put a picture; the exposure slider at zero is that
+  baseline and moves from it as before, so edits already written come
+  up 0.8 stops brighter too (§141, 2026-09-22)
+- A lens profile measured on a smaller sensor than the camera's no
+  longer darkens the corners it was never measured over: the
+  vignetting is held at its value at the calibration's corner, and
+  the LENS panel and `greycard lenses` say when that is happening.
+  A full-frame lens on a GFX gets +0.21 EV more at the corner tip
+  (§142, 2026-09-22)
 - Report a problem… at the foot of the left panel opens the bug form
   in the browser with the version, the OS and its version, and the GPU
   filled in, and shows the log selected in the file manager beside it,

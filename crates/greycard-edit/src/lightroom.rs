@@ -139,7 +139,8 @@ fn map(
         edit.light.tone.highlights = (highlights.unwrap_or(0.0) / 100.0).clamp(-2.0, 2.0);
         edit.light.tone.shadows = (shadows.unwrap_or(0.0) / 100.0).clamp(-2.0, 2.0);
         edit.light.tone.whites = (whites.unwrap_or(0.0) / 100.0 * 0.75).clamp(-2.0, 2.0);
-        edit.light.tone.blacks = (blacks.unwrap_or(0.0) / 100.0 * 0.2).clamp(-0.3, 0.3);
+        // Lightroom's ±100 is the slider's ±0.3 both ways, measured (§143).
+        edit.light.tone.blacks = (blacks.unwrap_or(0.0) / 100.0 * 0.3).clamp(-0.3, 0.3);
     }
 
     // White balance: a named one at its kelvin, a custom one as it
@@ -564,7 +565,7 @@ mod tests {
         assert!((e.light.tone.highlights + 0.4).abs() < 1e-6);
         assert!((e.light.tone.shadows - 0.3).abs() < 1e-6);
         assert!((e.light.tone.whites - 0.075).abs() < 1e-6);
-        assert!((e.light.tone.blacks + 0.05).abs() < 1e-6);
+        assert!((e.light.tone.blacks + 0.075).abs() < 1e-6);
         match e.white_balance {
             WhiteBalance::Custom { temperature, tint } => {
                 assert_eq!(temperature, 4800.0);

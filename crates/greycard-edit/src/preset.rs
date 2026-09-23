@@ -542,8 +542,8 @@ impl Store {
 ///   picture, a hard shoulder on the highlights, crushed blacks and
 ///   cyan shadows.
 /// - **Warm Negative**, a color negative scanned and left warm: soft
-///   contrast, lifted blacks, a warm shadow and highlight wheel, fine
-///   grain.
+///   contrast, a matte black from the point curve, a warm shadow and
+///   highlight wheel, fine grain.
 /// - **Red-Filter Mono**, a panchromatic black and white through a
 ///   red filter: a dark sky, light skin, coarse grain.
 pub const SHIPPED: [(&str, &str); 3] = [
@@ -611,8 +611,9 @@ mod tests {
         // negative `blacks` is a clip, not a shade — -0.12 puts it at
         // 41 of 255 and once took half a frame to pure black — and
         // where the black sits is a per-picture decision a shipped
-        // preset has no business making. A positive one only lifts,
-        // which is what a faded negative is, and clips nothing.
+        // preset has no business making. A positive one opens the
+        // shadows and clips nothing; a faded negative's matte black is
+        // the point curve's, as Warm Negative has it.
         //
         // What each preset does to a picture beyond that is measured
         // on the render, in `greycard-ui`'s `shipped_presets`: the

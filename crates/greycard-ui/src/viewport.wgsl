@@ -634,9 +634,25 @@ fn shape(x: vec3<f32>, look: Look, g: f32, has_guide: bool) -> vec3<f32> {
     let l = select(log2(max(dot(LUMA, c), 1e-6) / MID_GREY), g, has_guide);
     let shift = look.shadows * (1.0 - smoothstep(SHADOWS_RAMP.x, SHADOWS_RAMP.y, l))
         + look.highlights * smoothstep(HIGHLIGHTS_RAMP.x, HIGHLIGHTS_RAMP.y, l);
-    let w = white_point(c * exp2(shift), look.whites);
-    let black = -look.blacks * MID_GREY;
-    return max((w - black) / (1.0 - black), vec3<f32>(0.0));
+    return black_point(white_point(c * exp2(shift), look.whites), look.blacks);
+}
+
+// The blacks, as `black_point` in `finish.rs`: a crush is an offset
+// and a scale that hold scene white; a lift is a gain on the luminance,
+// `BLACKS_LIFT` stops at the slider's top, full in the deep shadows and
+// fading out over `BLACKS_RAMP`, so it opens them without a veil.
+const BLACKS_TOP: f32 = 0.3;
+const BLACKS_LIFT: f32 = 1.2;
+const BLACKS_RAMP: vec2<f32> = vec2<f32>(-5.0, 1.5);
+
+fn black_point(c: vec3<f32>, blacks: f32) -> vec3<f32> {
+    if (blacks <= 0.0) {
+        let black = -blacks * MID_GREY;
+        return max((c - black) / (1.0 - black), vec3<f32>(0.0));
+    }
+    let u = log2(max(dot(LUMA, c), 1e-9) / MID_GREY);
+    let fade = 1.0 - smoothstep(BLACKS_RAMP.x, BLACKS_RAMP.y, u);
+    return max(c, vec3<f32>(0.0)) * exp2(BLACKS_LIFT * blacks / BLACKS_TOP * fade);
 }
 
 fn band_value(v0: vec4<f32>, v1: vec4<f32>, i: u32) -> f32 {

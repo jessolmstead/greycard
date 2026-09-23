@@ -1035,6 +1035,9 @@ fn lenses(
             };
             let c = p.correction(frame.width, frame.height, shot, greycard_lens::Wanted::ALL);
             println!("correction    {}", correction_words(&c));
+            if let Some(line) = coverage_words(&p, &c) {
+                println!("covers        {line}");
+            }
         }
         None => println!("profile       none"),
     }
@@ -1371,6 +1374,28 @@ fn correction_words(c: &greycard_core::develop::lens::LensCorrection) -> String 
     )
 }
 
+/// What a profile measured on a smaller sensor leaves out of this
+/// picture, in words; nothing when it covers it.
+fn coverage_words(
+    p: &greycard_lens::Profile,
+    c: &greycard_core::develop::lens::LensCorrection,
+) -> Option<String> {
+    if !p.measured_on_smaller_sensor() {
+        return None;
+    }
+    Some(match c.vignetting_edge() {
+        Some(edge) => format!(
+            "the profile was measured on a smaller sensor; the corners reach r={:.2}, and the vignetting past r=1 ({:.0}% of the way to the corner) is held at its edge",
+            p.reach(),
+            edge * 100.0
+        ),
+        None => format!(
+            "the profile was measured on a smaller sensor; the corners reach r={:.2}",
+            p.reach()
+        ),
+    })
+}
+
 /// The camera profile a run asks for: nothing for the file's own, a
 /// path to a DCP, or a name in the profile directory. Unlike a develop
 /// from a sidecar, which falls back to the file's own calibrations and
@@ -1429,6 +1454,14 @@ fn correct_lens(
         match (l.lens, l.camera) {
             (Some(lens), camera) => {
                 tracing::info!("lens profile {}", lens.name());
+                let p = greycard_lens::Profile { lens, camera };
+                if p.measured_on_smaller_sensor() {
+                    tracing::info!(
+                        "{}: measured on a smaller sensor, the corners reach r={:.2}; the vignetting is held at its edge past r=1",
+                        lens.name(),
+                        p.reach()
+                    );
+                }
                 if camera.is_none() {
                     tracing::warn!(
                         "{}: body not in the lens database, the lens's own format assumed",

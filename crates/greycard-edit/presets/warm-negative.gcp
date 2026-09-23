@@ -20,7 +20,7 @@
         "highlights": -0.2,
         "shadows": 0.25,
         "whites": -0.1,
-        "blacks": 0.1
+        "blacks": 0.0
       }
     },
     "color": {
@@ -36,7 +36,8 @@
         "darks": 0.0,
         "shadows": 0.12,
         "splits": [0.25, 0.5, 0.75]
-      }
+      },
+      "rgb": [[0.0, 0.07], [1.0, 1.0]]
     },
     "mixer": {
       "enabled": true,

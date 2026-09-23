@@ -8,7 +8,7 @@ use crate::display::Lut3d;
 use crate::worker::Halves;
 use anyhow::{Context, Result};
 
-use crate::finish::{Local, MAX_LOCALS, RasterRef};
+use crate::finish::{BASELINE_EXPOSURE, Local, MAX_LOCALS, RasterRef};
 use crate::gpu;
 use crate::scope::{self, Scope};
 use greycard_core::lut;
@@ -1200,7 +1200,7 @@ impl Renderer {
             ],
             clip: [v.warn.bits() as f32, 0.0, 0.0, 0.0],
             zoom: v.zoom,
-            exposure: v.light.exposure,
+            exposure: BASELINE_EXPOSURE + v.light.exposure,
             curve: if v.light.tone.enabled { 1.0 } else { 0.0 },
             contrast: v.light.tone.contrast,
             highlights: v.light.tone.highlights,

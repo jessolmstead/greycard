@@ -134,6 +134,22 @@ impl Profile<'_> {
         self.camera.map_or(self.lens.crop_factor, |c| c.crop_factor)
     }
 
+    /// How far the picture's corner reaches in the calibration's half
+    /// diagonals: the vignetting's radius scale, one when the two
+    /// sensors are one size.
+    pub fn reach(&self) -> f32 {
+        self.lens.crop_factor / self.crop_factor()
+    }
+
+    /// Whether the calibration was made on a sensor smaller than the
+    /// picture's, so the picture's corners are past where the profile
+    /// was measured and its vignetting is held at its edge there. A
+    /// percent over is the database's rounding (a full-frame lens
+    /// calibrated at 1.005), not a smaller sensor.
+    pub fn measured_on_smaller_sensor(&self) -> bool {
+        self.reach() > 1.01
+    }
+
     /// Which corrections the profile can make.
     pub fn offers(&self) -> Wanted {
         Wanted {
@@ -165,7 +181,10 @@ impl Profile<'_> {
         let shorter =
             |crop: f32, aspect: f32| FULL_FRAME_DIAGONAL / crop / (1.0 + aspect * aspect).sqrt();
         let radius_scale = shorter(crop, aspect) / shorter(lens.crop_factor, lens.aspect_ratio);
-        let vignetting_scale = lens.crop_factor / crop;
+        // lensfun's `pa` radius is one at the calibration sensor's
+        // corner whatever its shape: the half diagonals, from the crop
+        // factors alone.
+        let vignetting_scale = self.reach();
         let focal = shot
             .focal_length
             .unwrap_or_else(|| lens.focal_range().map_or(50.0, |(lo, hi)| (lo + hi) / 2.0));
@@ -467,6 +486,33 @@ mod tests {
             c.radius_scale
         );
         assert!((c.vignetting_scale - 1.0 / 1.6).abs() < 1e-4);
+        assert!(!p.measured_on_smaller_sensor() && c.vignetting_edge().is_none());
+        // The other way, a calibration made at 1.6 on a full frame:
+        // the picture's corner is 1.6 of the calibration's, and the
+        // vignetting ends short of it.
+        let mut small = p.lens.clone();
+        small.crop_factor = 1.6;
+        let full = db
+            .profile(&frame("EOS R6", "RF50mm F1.8 STM", 50.0, 2.5))
+            .unwrap();
+        let q = Profile {
+            lens: &small,
+            camera: full.camera,
+        };
+        assert!(q.measured_on_smaller_sensor() && (q.reach() - 1.6).abs() < 1e-6);
+        let e = q
+            .correction(6000, 4000, &f.shot, Wanted::ALL)
+            .vignetting_edge();
+        assert!(e.is_some_and(|e| (e - 1.0 / 1.6).abs() < 1e-6), "{e:?}");
+        // A percent over is rounding, not a smaller sensor.
+        small.crop_factor = 1.005;
+        assert!(
+            !Profile {
+                lens: &small,
+                camera: full.camera
+            }
+            .measured_on_smaller_sensor()
+        );
         // At f/2.5 exactly, the calibration's own values, the ten
         // meter one for a file without a distance.
         assert_eq!(c.vignetting.unwrap().k, [-0.2789, -0.7487, 0.3534]);

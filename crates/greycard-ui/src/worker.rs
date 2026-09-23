@@ -205,8 +205,13 @@ pub enum LensReport {
     NoLensName,
     /// The lens is not in the database.
     Unknown(String),
-    /// The lens found, and whether the body was.
-    Found { lens: String, camera: bool },
+    /// The lens found, whether the body was, and whether the profile
+    /// was measured on a smaller sensor than the body's.
+    Found {
+        lens: String,
+        camera: bool,
+        smaller_sensor: bool,
+    },
 }
 
 /// What kind of file is open.
@@ -1187,17 +1192,26 @@ fn lens_report(db: Option<&greycard_lens::Database>, input: &Input) -> LensRepor
     match db.profile_for(make, model, shot) {
         Some(p) => {
             tracing::info!(
-                "lens {name}: {}{}",
+                "lens {name}: {}{}{}",
                 p.name(),
                 if p.camera.is_some() {
                     ""
                 } else {
                     ", body not in the database"
+                },
+                if p.measured_on_smaller_sensor() {
+                    format!(
+                        ", measured on a smaller sensor (the corners reach r={:.2}; the vignetting is held at its edge past r=1)",
+                        p.reach()
+                    )
+                } else {
+                    String::new()
                 }
             );
             LensReport::Found {
                 lens: p.name().to_string(),
                 camera: p.camera.is_some(),
+                smaller_sensor: p.measured_on_smaller_sensor(),
             }
         }
         None => {
