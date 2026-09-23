@@ -136,7 +136,8 @@ fn map(
         sections.push(Section::Light);
         edit.light.exposure = exposure.unwrap_or(0.0).clamp(-5.0, 5.0);
         edit.light.tone.contrast = (1.0 + contrast.unwrap_or(0.0) / 100.0 * 0.5).clamp(0.5, 2.0);
-        edit.light.tone.highlights = (highlights.unwrap_or(0.0) / 100.0).clamp(-2.0, 2.0);
+        // Lightroom's ±100 is about the slider's ±2 at the top (§146).
+        edit.light.tone.highlights = (highlights.unwrap_or(0.0) / 100.0 * 2.0).clamp(-2.0, 2.0);
         edit.light.tone.shadows = (shadows.unwrap_or(0.0) / 100.0).clamp(-2.0, 2.0);
         edit.light.tone.whites = (whites.unwrap_or(0.0) / 100.0 * 0.75).clamp(-2.0, 2.0);
         // Lightroom's ±100 is the slider's ±0.3 both ways, measured (§143).
@@ -562,7 +563,7 @@ mod tests {
         let e = &preset.edit;
         assert_eq!(e.light.exposure, 0.5);
         assert!((e.light.tone.contrast - 1.1).abs() < 1e-6);
-        assert!((e.light.tone.highlights + 0.4).abs() < 1e-6);
+        assert!((e.light.tone.highlights + 0.8).abs() < 1e-6);
         assert!((e.light.tone.shadows - 0.3).abs() < 1e-6);
         assert!((e.light.tone.whites - 0.075).abs() < 1e-6);
         assert!((e.light.tone.blacks + 0.075).abs() < 1e-6);

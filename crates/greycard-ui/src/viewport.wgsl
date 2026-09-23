@@ -596,6 +596,17 @@ fn mask_at(l: Local, uv: vec2<f32>) -> f32 {
 // Where each shift acts, in stops over mid grey, as `finish.rs` has them.
 const SHADOWS_RAMP: vec2<f32> = vec2<f32>(-3.5, 0.0);
 const HIGHLIGHTS_RAMP: vec2<f32> = vec2<f32>(-1.0, 2.5);
+// The highlights' share by stops over grey, as `highlights_weight` in
+// `finish.rs`: rising to a peak over the ramp, easing back towards
+// display white. `DISPLAY_WHITE_STOPS` is the shoulder's, below.
+const HIGHLIGHTS_PEAK: f32 = 0.55;
+const HIGHLIGHTS_EASE_FROM: f32 = 2.0;
+const HIGHLIGHTS_EASE_DEPTH: f32 = 0.4;
+
+fn highlights_weight(g: f32) -> f32 {
+    return HIGHLIGHTS_PEAK * smoothstep(HIGHLIGHTS_RAMP.x, HIGHLIGHTS_RAMP.y, g)
+        * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE_FROM, DISPLAY_WHITE_STOPS, g));
+}
 // Scene white in stops over mid grey, which the white point is named
 // against (`SCENE_WHITE_STOPS` in `finish.rs`).
 const SCENE_WHITE_STOPS: f32 = 2.47;
@@ -633,7 +644,7 @@ fn shape(x: vec3<f32>, look: Look, g: f32, has_guide: bool) -> vec3<f32> {
     let c = MID_GREY * pow(max(x, vec3<f32>(0.0)) / MID_GREY, vec3<f32>(look.contrast));
     let l = select(log2(max(dot(LUMA, c), 1e-6) / MID_GREY), g, has_guide);
     let shift = look.shadows * (1.0 - smoothstep(SHADOWS_RAMP.x, SHADOWS_RAMP.y, l))
-        + look.highlights * smoothstep(HIGHLIGHTS_RAMP.x, HIGHLIGHTS_RAMP.y, l);
+        + look.highlights * highlights_weight(l);
     return black_point(white_point(c * exp2(shift), look.whites), look.blacks);
 }
 
@@ -962,16 +973,24 @@ fn look_at(c: vec3<f32>) -> vec3<f32> {
     return c + p.look.x * (back - c);
 }
 
-// A display curve for a linear scene: Narkowicz's fit of the ACES
-// output transform, per channel. Mid grey rises by about half a stop,
-// the top rolls off instead of clipping, and a channel near its limit
-// loses saturation rather than hue. Not the engine's business (§5): a
-// consumer's choice, and this consumer's default.
+// A display curve for a linear scene, as `tone` in `finish.rs`:
+// Narkowicz's fit of the ACES output transform, per channel, untouched
+// up to mid grey; over it a gain eased in by a smoothstep in stops
+// until the fit reaches exactly one at the sensor's clip, where the
+// baseline puts it, and clipped past that. Mid grey rises by about
+// half a stop and a channel the raw clipped is white. Not the engine's
+// business (§5): a consumer's choice, and this consumer's default.
+const DISPLAY_WHITE_STOPS: f32 = 3.27;
+const SHOULDER_GAIN: f32 = 1.114332;
+
 fn tone(x: vec3<f32>) -> vec3<f32> {
     let a = 2.51;
     let b = 0.03;
     let c = 2.43;
     let d = 0.59;
     let e = 0.14;
-    return clamp((x * (a * x + b)) / (x * (c * x + d) + e), vec3<f32>(0.0), vec3<f32>(1.0));
+    let fit = (x * (a * x + b)) / (x * (c * x + d) + e);
+    let u = log2(max(x, vec3<f32>(1e-9)) / MID_GREY);
+    let gain = 1.0 + (SHOULDER_GAIN - 1.0) * smoothstep(vec3<f32>(0.0), vec3<f32>(DISPLAY_WHITE_STOPS), u);
+    return clamp(fit * gain, vec3<f32>(0.0), vec3<f32>(1.0));
 }

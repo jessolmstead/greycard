@@ -661,6 +661,27 @@ pub fn shade_by(c: [f32; 3], shift: impl Fn(f32) -> [f32; 2]) -> [f32; 3] {
 const SHADOWS_RAMP: (f32, f32) = (-3.5, 0.0);
 const HIGHLIGHTS_RAMP: (f32, f32) = (-1.0, 2.5);
 
+/// How much of the highlights slider a region takes, by its stops over
+/// mid grey: rising over [`HIGHLIGHTS_RAMP`] to [`HIGHLIGHTS_PEAK`], and
+/// easing back by [`HIGHLIGHTS_EASE_DEPTH`] of that over
+/// [`HIGHLIGHTS_EASE`], so the brightest tones, whose place is display
+/// white, take less than the bright mid-tones do. Measured against
+/// Lightroom's -100 on the reference set (§146): the slider's -2 is
+/// about that, -1.1 stops at the peak and -0.66 at scene white, where
+/// §85's ramp gave the top two full stops, twice Lightroom's. In
+/// fixed stops of light, not the frame's own range, for now (§146).
+/// A peak slope of 0.47 at the slider's limit, rising, and 0.52
+/// easing, so the sweep of every corner still holds.
+const HIGHLIGHTS_PEAK: f32 = 0.55;
+const HIGHLIGHTS_EASE: (f32, f32) = (2.0, DISPLAY_WHITE_STOPS);
+const HIGHLIGHTS_EASE_DEPTH: f32 = 0.4;
+
+fn highlights_weight(g: f32) -> f32 {
+    HIGHLIGHTS_PEAK
+        * smoothstep(HIGHLIGHTS_RAMP.0, HIGHLIGHTS_RAMP.1, g)
+        * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE.0, HIGHLIGHTS_EASE.1, g))
+}
+
 /// Scene white, in stops over mid grey: where a channel at the
 /// sensor's clip lands after the white balance and the matrix, on the
 /// cameras measured (§19). The white point is named against it.
@@ -752,7 +773,7 @@ fn shape(c: [f32; 3], t: &greycard_edit::Tone, guide: Option<f32>) -> [f32; 3] {
         (y.max(1e-6) / MID_GREY).log2()
     });
     let shift = t.shadows * (1.0 - smoothstep(SHADOWS_RAMP.0, SHADOWS_RAMP.1, g))
-        + t.highlights * smoothstep(HIGHLIGHTS_RAMP.0, HIGHLIGHTS_RAMP.1, g);
+        + t.highlights * highlights_weight(g);
     let gain = 2f32.powf(shift);
     black_point(white_point(c.map(|v| v * gain), t.whites), t.blacks)
 }
@@ -795,9 +816,41 @@ fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Narkowicz's fit of the ACES output transform, per channel.
+/// Where the display curve reaches white, in stops over mid grey: the
+/// sensor's clip, scene white, where the baseline puts it. A channel
+/// the raw clipped shows as white, as a camera's JPEG and Lightroom
+/// show it, and not as the pale grey Narkowicz's fit gives it (§145).
+const DISPLAY_WHITE_STOPS: f32 = SCENE_WHITE_STOPS + BASELINE_EXPOSURE;
+/// `MID_GREY * 2^DISPLAY_WHITE_STOPS`, and the gain that takes the fit
+/// there to one. Constants because `powf` is not `const`; a test holds
+/// them to what they name.
+const DISPLAY_WHITE: f32 = 1.736_363;
+const SHOULDER_GAIN: f32 = 1.114_332;
+
+/// Narkowicz's fit of the ACES output transform.
+fn aces(x: f32) -> f32 {
+    (x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)
+}
+
+/// The display curve, per channel: Narkowicz's fit of the ACES output
+/// transform up to mid grey, untouched, and over it a gain eased in by
+/// a smoothstep in stops until it is [`SHOULDER_GAIN`] at
+/// [`DISPLAY_WHITE`], where the fit reaches exactly one; clipped past
+/// it. The fit alone reaches one only 5.3 stops over grey, two stops
+/// past anything the sensor records, so the top of every picture sat
+/// at 0.9 of white. Both factors rise, so the curve does; the slope it
+/// meets white with is the fit's there, a tenth of a display stop per
+/// scene stop, so the clip is a soft corner.
 fn tone(x: f32) -> f32 {
-    ((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14)).clamp(0.0, 1.0)
+    if x <= MID_GREY {
+        return aces(x).max(0.0);
+    }
+    if x >= DISPLAY_WHITE {
+        return 1.0;
+    }
+    let u = (x / MID_GREY).log2();
+    let gain = 1.0 + (SHOULDER_GAIN - 1.0) * smoothstep(0.0, DISPLAY_WHITE_STOPS, u);
+    (aces(x) * gain).min(1.0)
 }
 
 pub fn encode(v: f32) -> f32 {
@@ -1136,9 +1189,11 @@ mod tests {
         // The curve lifts mid grey about half a stop: 0.18 linear is
         // 0.46 encoded; the curve gives about 0.56.
         assert!(g[1] > 0.53 && g[1] < 0.60, "{g:?}");
-        // Well above white the curve rolls off toward, and short of, one.
+        // Past display white the curve is white; a stop under it, not.
         let w = fp([4.0; 3], &light, &no_mix, &id, &m);
-        assert!(w[1] > 0.95 && w[1] < 1.0, "{w:?}");
+        assert!((w[1] - 1.0).abs() < 1e-6, "{w:?}");
+        let under = fp([DISPLAY_WHITE / 2.0; 3], &light, &no_mix, &id, &m);
+        assert!(under[1] > 0.9 && under[1] < 0.99, "{under:?}");
         // Contrast leaves mid grey where it was and moves a stop above it.
         let hard = Light {
             enabled: true,
@@ -1202,23 +1257,25 @@ mod tests {
     #[test]
     fn the_shifts_act_where_they_say() {
         let base = Tone::default();
-        // Where each is full, where it is nothing, and the share of it
-        // mid grey takes: a fifth for highlights, whose ramp starts a
-        // stop under grey so the mid-tones are in its reach (§98), and
-        // none for shadows.
-        for (field, at, elsewhere, at_grey) in [
-            ("highlights", 2.5, -1.0, 0.198),
-            ("shadows", -3.5, 0.0, 0.0),
+        // What each gives where it is strongest, where it is nothing,
+        // and the share of it mid grey takes: highlights peaks in the
+        // bright mid-tones and eases back towards white (§146), and
+        // reaches a stop under grey so the mid-tones are in its reach
+        // (§98); shadows is full three and a half stops under grey and
+        // nothing at it.
+        for (field, at, peak, elsewhere, at_grey) in [
+            ("highlights", 2.3, 0.514, -1.0, 0.109),
+            ("shadows", -3.5, 1.0, 0.0, 0.0),
         ] {
             let mut t = base;
             match field {
                 "highlights" => t.highlights = 1.0,
                 _ => t.shadows = 1.0,
             }
-            // A stop of shift where the control is full.
+            // Its strongest, in stops, at a slider of one.
             let full = shape(grey_at(at), &t, None)[1];
             assert!(
-                (full / shape(grey_at(at), &base, None)[1] - 2.0).abs() < 1e-4,
+                ((full / shape(grey_at(at), &base, None)[1]).log2() - peak).abs() < 0.01,
                 "{field}: {full}"
             );
             // Nothing beyond its reach.
@@ -1229,7 +1286,7 @@ mod tests {
             );
             let grey = shape(grey_at(0.0), &t, None)[1] / shape(grey_at(0.0), &base, None)[1];
             assert!(
-                (grey.log2() - at_grey).abs() < 1e-3,
+                (grey.log2() - at_grey).abs() < 2e-3,
                 "{field} at grey: {grey}"
             );
         }
@@ -1251,6 +1308,31 @@ mod tests {
         };
         assert_eq!(shape([MID_GREY * 0.2; 3], &crush, None)[1], 0.0);
         assert!((shape([1.0; 3], &crush, None)[1] - 1.0).abs() < 1e-6);
+    }
+
+    /// The shoulder reaches white where the raw clips, with the baseline
+    /// in: nothing moves up to mid grey, the curve rises all the way,
+    /// and the constants are what they name (§145).
+    #[test]
+    fn the_shoulder_reaches_white_at_the_sensors_clip() {
+        let white = MID_GREY * 2f32.powf(DISPLAY_WHITE_STOPS);
+        assert!((DISPLAY_WHITE - white).abs() < 1e-4, "{white}");
+        assert!((aces(DISPLAY_WHITE) * SHOULDER_GAIN - 1.0).abs() < 1e-5);
+        assert!((tone(DISPLAY_WHITE * 0.9999) - 1.0).abs() < 1e-3);
+        for x in [0.0, 0.001, 0.02, 0.1, MID_GREY] {
+            assert_eq!(tone(x), aces(x), "{x}");
+        }
+        // The raw's clip under the default develop: what the fit alone
+        // showed as 0.90 of white is white.
+        let clip = MID_GREY * 2f32.powf(SCENE_WHITE_STOPS) * 2f32.powf(BASELINE_EXPOSURE);
+        assert!(aces(clip) < 0.9 && (tone(clip) - 1.0).abs() < 1e-3);
+        let mut last = 0.0;
+        for i in 0..=2000 {
+            let x = MID_GREY * 2f32.powf(-10.0 + i as f32 * 0.01);
+            let y = tone(x);
+            assert!(y >= last, "turns back at {x}");
+            last = y;
+        }
     }
 
     /// Lifting the blacks is a toe, not a veil (§143, §144): black
@@ -1517,7 +1599,7 @@ mod tests {
     fn a_flat_field_takes_the_gain_the_slider_says_and_nothing_else() {
         // The whole point of a gain by region: over a field with no
         // region boundary the tone equalizer is the plain shift, the
-        // same one §19 gave, so the slider still reads in stops.
+        // same one §19 gave: the slider times its weight there, in stops.
         for (stops, tone, want) in [
             (
                 2.5f32,
@@ -1525,7 +1607,7 @@ mod tests {
                     highlights: -1.0,
                     ..Tone::default()
                 },
-                -1.0f32,
+                -0.4746f32,
             ),
             (
                 -2.0,
@@ -1648,11 +1730,11 @@ mod tests {
             (with / plain - 1.0).abs() < 0.05,
             "the detail's ratio {with} against {plain}"
         );
-        // The surround, a stop over grey, takes six tenths of the
-        // slider itself under §98's ramp, so the flattening is the
-        // other four tenths: 0.58 of the ratio at minus two.
+        // The surround, a stop over grey, takes 0.33 of the slider and
+        // the detail 0.47 (§146), so the flattening is the difference:
+        // 0.82 of the ratio at minus two.
         assert!(
-            without < plain * 0.65,
+            without < plain * 0.85,
             "the pixel's own luminance should flatten it: {without} against {plain}"
         );
         // And the guide really did read one region: the detail moved it
@@ -1691,8 +1773,10 @@ mod tests {
         };
         let lit = shape([bright; 3], &tone, Some(lit_g))[1] / bright;
         let shade = shape([dark; 3], &tone, Some(shade_g))[1] / dark;
+        // The lit side takes the slider times the weight 2.5 stops over
+        // grey gives it, 0.47 (§146).
         assert!(
-            (lit.log2() + 1.0).abs() < 0.05,
+            (lit.log2() + 0.4746).abs() < 0.05,
             "the lit side {}",
             lit.log2()
         );

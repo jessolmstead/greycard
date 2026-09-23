@@ -11,8 +11,7 @@ on and nothing more; the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] Not a bug per say, but the histogram should stay pinned at the
-      top of the pane
+None at present
 
 ## v0.1.0: browse, develop, export
 
@@ -20,6 +19,7 @@ A user on Linux, macOS or Windows can install it,
 open a shoot, get to any frame, edit it, export it, and report what
 went wrong.
 
+- [ ] The histogram should stay pinned at the top of the pane
 - [ ] A file opened from the Finder opens in the editor: the Apple
       Event turned into the same open the command line's path gets.
       Finder now offers greycard for a `.gcd` and a raw and launches
@@ -30,7 +30,6 @@ went wrong.
       three runners; the Windows package, the Mac's UTI spellings and
       sidecar `.icns` are the parts not verified by running them (§88,
       §110, §137, §140)
-- [ ] A small user guide for testers
 
 ## v0.2.0: the feel
 
@@ -44,17 +43,20 @@ sliders feel like the ones people learned on.
       histogram (§85). Seven frames in and measured (§143); the
       baseline landed from them (§141). Still wanted: Lightroom bases
       for the forest, the torii, the pagoda and the flowers
-- [ ] The shoulder's own white: every frame's top sits under
-      Lightroom's and greycard clips nothing, where Lightroom puts 20
-      percent of the sunset at white (§85, §143)
-- [ ] The baseline per camera, from Adobe's `BaselineExposure` per
-      body: the Canons land within a tenth of a stop of Lightroom, the
-      GFX half a stop over (§141, §143)
-- [ ] Highlights, whites and shadows reshaped against the set:
-      highlights at -2 pulls the top twice as hard as Lightroom's -100
-      and nothing under the median; whites moves only the top where
-      Lightroom's moves the mid-tones; shadows over-lifts the mid-tones
-      of a low-key frame (§143)
+- [ ] The baseline exposure per camera, from Adobe's `BaselineExposure`
+      per body: the Canons land within a tenth of a stop of Lightroom,
+      the GFX half a stop over (§141, §143). Waits on one DNG exported
+      from Lightroom per body (R6 II, R5 II, R8, GFX 100S II)
+- [ ] Highlights and whites by the frame's own range or in fixed stops:
+      fixed stops for now (§146); ask testers which feels right and
+      decide before this release. The frame's range is what would
+      reach under the median, give the watch its full pull and bring a
+      clipped sky under white as Lightroom does
+- [ ] Whites and shadows reshaped against the set: whites moves only
+      the top where Lightroom's moves the mid-tones; shadows over-lifts
+      the mid-tones of a low-key frame; the tops still sit 0.1 to 0.2
+      stops under Lightroom's where they are not the sensor's clip
+      (§143, §145)
 - [ ] The guided plane's halo at a hard edge, measured; darktable's
       exposure-independent guided filter if it shows (§85)
 - [ ] The contrast filters weighted by chroma through the whole range,
@@ -65,6 +67,7 @@ sliders feel like the ones people learned on.
       editor mixes the channels, so None starts flatter across hues than
       people expect (§87). A change to the default look and to every
       mono edit written; waits on the reference frames
+- [ ] No lens corrections on first install is a gotcha
 
 ## v0.3.0: speed
 

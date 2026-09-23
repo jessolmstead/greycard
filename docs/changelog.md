@@ -7,6 +7,18 @@ release workflow puts a version's section into the GitHub release.
 
 ## 0.1.0, unreleased
 
+- A short guide for testers, `docs/user-guide.md`: installing on each
+  system, the basics, culling, the keys, and how to report a problem
+  (2026-09-22)
+- Highlights pulls about as hard as Lightroom's: -2 is Lightroom's
+  -100, strongest in the bright mid-tones and easing off towards
+  white, where it used to pull the very top twice as hard. Lightroom
+  presets bring their Highlights across at the same scale (§146,
+  2026-09-22)
+- What the sensor clipped is white: the display curve reaches white at
+  the raw's clip instead of 0.9 of the way there, so a blown sky is
+  white as the camera and Lightroom show it, and the mid-tones do not
+  move (§145, 2026-09-22)
 - Blacks lifts the shadows instead of laying a grey veil over the
   picture: up to 1.2 stops in the deep shadows, fading out through the
   mid-tones, where Lightroom's +100 lands. Lowering it is unchanged.
