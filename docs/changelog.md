@@ -7,6 +7,25 @@ release workflow puts a version's section into the GitHub release.
 
 ## 0.1.0, unreleased
 
+- Report a problem… at the foot of the left panel opens the bug form
+  in the browser with the version, the OS and its version, and the GPU
+  filled in, and shows the log selected in the file manager beside it,
+  its path written without the account name; the form's fields are
+  now OS and the log rather than a Linux distro and terminal output
+  (§138, 2026-09-22)
+- The grid has its own Open folder button, first in its header, where
+  before only Ctrl+O reached one there; and its background is a dark
+  grey sheet rather than the near-black behind the loupe (§139,
+  2026-09-22)
+- CI builds and tests on Windows beside Linux and macOS, so a change
+  that breaks the Windows build shows on a push rather than at a tag
+  (§140, 2026-09-22)
+- On Linux the file manager offers greycard for `.orf`, which the
+  browser has read all along (§140, 2026-09-22)
+- On the Mac the `.gcd` is a document type of greycard's own with its
+  own icon, and the raw types offer greycard without taking a
+  default; a double-click launches greycard but does not yet open the
+  file (§140, 2026-09-22)
 - The editor no longer opens a console window beside itself on
   Windows. It is built for the GUI subsystem now, where a Rust binary
   is a console one by default and Windows hands every console binary a

@@ -262,8 +262,10 @@ frame registration and a focus stack merged to a linear DNG from
 the command line; the camera's own picture in the viewport the
 moment a frame is chosen, replaced by the develop when it lands;
 and a package for each of Linux, macOS and Windows that installs
-where that desktop expects, with the file types registered. Six
-hundred and ninety-seven tests.
+where that desktop expects, with the file types registered; and a
+Report a problem button that opens the bug form with the version,
+the OS and the GPU filled in and the log beside it. Seven hundred and
+five tests.
 
 Planned, in order: the tone controls made to feel right; sky and people masks and a
 generative fill; a look fitted from the camera's JPEG; the library index, roots and

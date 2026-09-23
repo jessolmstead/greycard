@@ -14067,3 +14067,139 @@ rather than bundled into it. And `assets/greycard.desktop` lists no
 `image/x-olympus-orf` although the browser has read `.orf` since it
 had a list, which is Linux's half of the same oversight and a
 one-line fix.
+
+## 138. Report a problem… (2026-09-22)
+
+§111 left one piece for the roadmap: an item in the editor that opens
+the issue form with what a tester cannot be expected to know already
+filled in, and that says where the log is. It is a button at the foot
+of the left panel, "Report a problem...", where it is looked for and
+away from the work. It opens the bug form in the browser, shows the
+log selected in the file manager beside it, and the status line says
+to drag `greycard-ui.log` into the form.
+
+**The URL is the whole mechanism.** GitHub fills an issue form's
+fields from query parameters named by the fields' ids, so
+`?template=bug.yml&version=…&os=…&gpu=…&log=…` is all there is to it.
+Nothing is sent from the editor: the tester reads the form, adds to
+it, and submits it or does not. That makes the ids in `bug.yml` a
+contract with `report.rs`, and the form says so in a comment at its
+top. The form needed two changes anyway. "Distro and desktop" assumed
+Linux, so it is `os` now. "Terminal output … there is no log file" had
+been wrong since the log landed, so it is `log` now, with no `render:`
+key, because a rendered field refuses attachments. Each value is
+percent-encoded as UTF-8 and held to a kilobyte once encoded, cut at a
+whole character, so a driver string can say what it likes and the URL
+stays far inside what browsers and GitHub take.
+
+**What is filled in, and from where.** The version is the crate's. The
+GPU is the line the log's start already wrote, from the adapter Slint's
+rendering setup found, kept on the state; when the API is not wgpu it
+says so, which is the black-viewport report's answer. The OS is each
+platform's own account of itself. On Windows that is `RtlGetVersion`,
+because `GetVersionEx` answers 6.2 to a program without a compatibility
+manifest, and Windows 11 still calls itself 10.0 and is told apart by
+build 22000 onwards. On macOS it is `sw_vers`. On Linux it is
+`PRETTY_NAME` from os-release, the kernel, and the desktop and session,
+the last being what the old form asked a tester to know. The
+architecture goes on the end of all three, which on a Mac is the Apple
+silicon question. No new crate: the Windows call is a `raw-dylib`
+extern of a dozen lines, and `webbrowser` was already in the tree
+under Slint's winit backend.
+
+**The log's path, without the name in it.** The form is public and the
+path carries the account name, so it is written as
+`%LOCALAPPDATA%\greycard\logs\greycard-ui.log` or
+`~/Library/Logs/greycard/greycard-ui.log`. The field also names the
+`.1`: a tester whose editor vanished opens it again to press this
+button, and that start moved the run that went wrong to
+`greycard-ui.log.1`. The file that matters most is the one they would
+not think to send.
+
+**Showing the file, not only the folder.** Explorer's `/select`,
+Finder's `open -R`, and on Linux the file manager's `ShowItems` over
+D-Bus, which Nautilus, Dolphin, Nemo and Thunar answer, with `xdg-open`
+on the folder when none does. Explorer parses its own command line and
+wants the quote after the comma, so the argument goes in raw. The
+browser and the file manager are asked off the event loop, since
+`xdg-open` waits.
+
+**Checked, and not.** Seven tests on the URL's shape and escaping, the
+cut at a whole character, a 10,000-character field staying under
+8 KiB, the path's abbreviation, and the three OS parsers on fixed
+input; `os()` on the Windows machine returned "Windows 11 10.0.26200,
+x86_64", which it is. The button is drawn and the GPU line unchanged
+in a snapshot run. The button was not pressed, since that opens
+github.com, and the macOS and Linux branches were not compiled here;
+the first CI run on those runners is their check. And it works only
+once the repository is public with issues on and a `bug` label, and
+the new `bug.yml` is on the default branch: until then the button
+opens a 404 for anyone but the owner.
+
+## 139. The grid's own button and its own grey (2026-09-22)
+
+**Open folder in the grid.** The button lived at the top of the left
+panel, and the grid is drawn over the whole window, panels included,
+so in the one view where a folder is looked at as a whole there was no
+button to ask for the next one. Ctrl+O always worked there, because
+the window's key handler sees it with the grid open or shut, which is
+what made the gap easy to miss. The grid's header now starts with the
+same button calling the same `open-folder` callback, first in the row
+as the panel has it, handing focus back to the grid's keys as Cull and
+Loupe do. Nothing on the Rust side changed: opening a folder replaces
+`thumbs`, and the grid already lays itself out again when that
+changes.
+
+**A sheet, not a hole.** The grid painted `Theme.canvas`, the #0f0f0f
+behind everything and the loupe's default surround, and under a
+panel-grey header it read as a hole cut in the window. A contact sheet
+is a surface worked on rather than a frame's surround, so it has its
+own token, `Theme.sheet`, #232323, between the panels' #1e1e1e and a
+control's #262626. It stays a dark neutral, because a lighter grey
+starts to change how shadows read in a view made for judging frames
+side by side, and a cell's hover and its selection still step up from
+it. The loupe keeps its surround; only the grid changed. Checked in a
+snapshot of the grid on eight CR3s.
+
+## 140. The Windows runner in CI, and the types the platforms are told (2026-09-22)
+
+**The third runner.** `ci.yml` gains `windows-2025`, so a change that
+breaks the Windows build is caught on a push rather than at a tag, the
+gap §137 left. The job's shell is Git Bash on every runner
+(`defaults: run: shell: bash`), which changes nothing on Linux or macOS
+and lets Windows print its MSVC toolsets before the build as
+`release.yml` does, since the failure that guards against, unresolved
+`__std_*` symbols against a toolset older than 14.51.36231, is at link
+time and `cargo test` links as much as a release build does. The disk
+cleanup and the apt install stay Linux-only.
+
+**The `.orf` in the desktop entry.** `assets/greycard.desktop` was the
+one list missing `image/x-olympus-orf`. The browser's
+`raw_extensions`, the desktop entry and the Windows registration
+scripts now name the same eight. Two lists outside the shipped ones
+differ and were left: an ignored preview-timing test in
+`decode/mod.rs` that skips `.orf` and `.rw2`, and a bench tool that
+also takes `.pef`.
+
+**The `.gcd` on the Mac.** `Info.plist` exports `org.greycard.gcd`,
+conforming to `public.data` and `public.content`, the same
+non-committal shape §120 gave it on Linux, and claims it as Editor and
+Owner, so Finder offers greycard first for a sidecar. The raw types
+join as Viewer and Alternate, offered and not taken, the shape
+`register.cmd` gives them on Windows: `public.camera-raw-image` as the
+floor, plus the maker's UTI for each of the eight, from
+`com.canon.cr3-raw-image` to `com.adobe.raw-image` for DNG.
+`package.sh` folds the sidecar's SVG into its own `.icns` by the same
+`sips` and `iconutil` steps as the app icon, so the document gets the
+two-cards mark rather than a blank page.
+
+That makes Finder offer greycard and launch it; it does not make a
+double-click open the file. Finder delivers the file as an Apple Event,
+not on the command line, and nothing in the tree turns one into an
+open, which §110 already said of Open with. Declaring the types is
+still worth doing alone, since it is what puts greycard in Get Info and
+the Dock's menu; wiring the event is its own line on the roadmap. The
+plist parses and `package.sh` passes `sh -n`, but none of this has run
+on a Mac: the UTI spellings and the `.icns` step are for the first tag
+to check, with `public.camera-raw-image` there so a misspelled maker
+UTI leaves no raw type unreached.

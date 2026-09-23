@@ -11,33 +11,22 @@ on and nothing more; the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] `assets/greycard.desktop` lists no `image/x-olympus-orf`,
-      although the browser has read `.orf` since it had a list, so
-      a Linux file manager does not offer greycard for one (§137)
-
 ## v0.1.0: browse, develop, export
 
 A user on Linux, macOS or Windows can install it,
 open a shoot, get to any frame, edit it, export it, and report what
 went wrong.
 
-- [ ] There should still be the Open Folder button in grid mode
-- [ ] Grid mode background should probably not be pure black, it feels unpolished
-- [ ] The `.gcd` type on the Mac: document types and an exported type
-      in `Info.plist` with an `.icns` from the same SVG, so the Finder
-      offers greycard for sidecars and raws (§110 notes it declares
-      none). Windows' half landed in §137
-- [ ] CI on Windows too: the third line in `ci.yml`'s matrix, so a
-      change that breaks the Windows build is caught on a push rather
-      than at a tag. The release workflow is the only thing that
-      builds there today (§137)
-- [ ] Report a problem… in the editor: opens the issue form with the
-      version, the OS version and the GPU filled in, and says where
-      the log is (§111)
-- [ ] The repo public, issues on, a `bug` label for the issue form
+- [ ] A file opened from the Finder opens in the editor: the Apple
+      Event turned into the same open the command line's path gets.
+      Finder now offers greycard for a `.gcd` and a raw and launches
+      it, but with no file (§110, §140)
+- [ ] The repo public, issues on, a `bug` label for the issue form;
+      Report a problem… opens a 404 for anyone else until then (§138)
 - [ ] The first tag, which is the release workflow's first run, on all
-      three runners; the Windows one is the only part of §137 not
-      verified by running it (§88, §110, §137)
+      three runners; the Windows package, the Mac's UTI spellings and
+      sidecar `.icns` are the parts not verified by running them (§88,
+      §110, §137, §140)
 
 ## v0.2.0: the feel
 
