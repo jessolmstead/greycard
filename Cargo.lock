@@ -1946,7 +1946,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-ai"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dirs",
  "greycard-core",
@@ -1966,7 +1966,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-bench"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1980,7 +1980,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -1998,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
  "log",
@@ -2010,7 +2010,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-edit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "dirs",
  "greycard-core",
@@ -2023,7 +2023,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-gpu"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -2038,7 +2038,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-lens"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "bzip2",
  "dirs",
@@ -2052,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "greycard-ui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bytemuck",

@@ -236,6 +236,20 @@ if [ "$os" = macos ]; then
     echo "shared libraries:"
     otool -L "$app/MacOS/greycard-ui" | sed 's/^/  ui  /'
     otool -L "$app/MacOS/greycard" | sed 's/^/  cli /'
+    # A Mac has no package manager to fill in a missing library, so
+    # anything outside the system and the bundle stops the package.
+    # v0.1.0 went out linked to Homebrew's lcms2 and ran only on Macs
+    # that happened to have it.
+    stray=$(for f in "$app/MacOS/greycard-ui" "$app/MacOS/greycard" \
+        "$app/MacOS/libwebgpu_dawn.dylib"; do
+        otool -L "$f" | tail -n +2 | awk '{ print $1 }'
+    done | grep -Ev '^(/usr/lib/|/System/Library/|@rpath/|@executable_path/)' |
+        sort -u) || true
+    if [ -n "$stray" ]; then
+        echo "package.sh: the bundle links libraries a Mac will not have:" >&2
+        printf '  %s\n' $stray >&2
+        exit 1
+    fi
 elif command -v ldd >/dev/null 2>&1; then
     echo "shared libraries:"
     ldd "$stage/bin/greycard-ui$exe" | sed 's/^/  ui  /'

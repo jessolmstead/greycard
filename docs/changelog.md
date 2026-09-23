@@ -8,6 +8,13 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
+## 0.1.1, 2026-09-22
+
+- Fix the macOS package failing at launch with "Library not loaded:
+  liblcms2.2.dylib" on any Mac without Homebrew's little-cms2. lcms2 is
+  now built into the app, and packaging refuses a Mac build that links
+  a library outside the system and the bundle (notes §151).
+
 ## 0.1.0, 2026-09-22
 
 The first test build of greycard, a raw editor for Linux, macOS and

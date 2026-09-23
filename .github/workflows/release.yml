@@ -91,15 +91,25 @@ jobs:
       - name: Native libraries
         # The same set CI installs: lcms2 for the profiles, fontconfig
         # and wayland for Slint's backend, xkbcommon for its keyboard.
-        # A Mac needs nothing beyond Xcode's tools, which the runner
-        # has: lcms2 builds from its own source there, and so does
-        # Windows, which has no pkg-config to find one with.
+        # A Mac and Windows build lcms2 from lcms2-sys's own source
+        # instead; see the next step.
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             liblcms2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev \
             pkg-config
+
+      - name: Static lcms2
+        # lcms2-sys asks pkg-config first and only builds its vendored
+        # copy when that finds nothing. The macOS image has Homebrew's
+        # pkg-config and little-cms2 on it, so v0.1.0 linked
+        # /opt/homebrew/opt/little-cms2/lib/liblcms2.2.dylib and failed
+        # at launch on every Mac without it. LCMS2_STATIC skips the
+        # probe; it is read as set-or-not, so it goes into the
+        # environment only here rather than as an empty value elsewhere.
+        if: runner.os != 'Linux'
+        run: echo "LCMS2_STATIC=1" >> "$GITHUB_ENV"
 
       - name: MSVC toolsets on this runner
         # Printed before the build, not after it fails: the link error
