@@ -4440,7 +4440,7 @@ export component App inherits Window {
     // texture, and everything named inside it, stays where the rest
     // of the window can reach it.
     if root.grid-open: Rectangle {
-        background: Theme.canvas;
+        background: Theme.sheet;
         // Nothing may fall through to the viewport behind, the wheel
         // over the header least of all: it would zoom a picture that
         // is not on screen, or size the brush in hand.
@@ -4471,6 +4471,15 @@ export component App inherits Window {
                     spacing: Theme.space-2;
                     HorizontalLayout {
                         spacing: Theme.space-3;
+                        // The left panel's first button, here where the
+                        // grid covers it: the grid is where a folder is
+                        // looked over, so it is where the next is asked
+                        // for. Ctrl+O reaches the same callback.
+                        PanelButton {
+                            text: "Open folder...";
+                            icon: @image-url("icons/folder-open.svg");
+                            clicked => { keys.focus(); root.open-folder(); }
+                        }
                         Text {
                             text: root.selected >= 0 && root.selected < root.thumbs.length
                                 ? root.thumbs[root.selected].name : "";
