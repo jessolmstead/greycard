@@ -18,6 +18,7 @@ mod display;
 mod export;
 mod files;
 mod filter;
+mod finder;
 mod finish;
 mod geometry;
 mod grid;

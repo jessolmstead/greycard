@@ -1,7 +1,7 @@
 use crate::panel::assets::show_presets;
 use crate::panel::browser::{
-    grid_filled, load_sidecars, open_folder, rebuild_browser, row_of, show_thumb, thumb_for,
-    time_select,
+    grid_filled, load_sidecars, open_folder, open_paths, rebuild_browser, row_of, show_thumb,
+    thumb_for, time_select,
 };
 use crate::panel::color::{preview_white, white_key};
 use crate::panel::cull::{cull_frame, develop_landed, show_filter, standing_in};
@@ -77,6 +77,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         .require_wgpu_30(WGPUConfiguration::Automatic(settings))
         .select()
         .context("selecting Slint's wgpu backend")?;
+    // The event loop is built now and not yet running: the moment to
+    // hear the Finder, whose launch event comes as the loop starts.
+    #[cfg(target_os = "macos")]
+    finder::install();
 
     let app = App::new()?;
     // Which curve the panel shows at the start, for a dump of its
@@ -379,12 +383,43 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // A file the filter hides opens the nearest one
                     // shown; a filter that hides them all says so, and
                     // ends a batch run that would wait for a picture.
+                    // What the Finder sent before now, which a
+                    // launch by double-click did, over the folder the
+                    // settings remembered; and from here on, whatever
+                    // it sends is opened as it comes.
+                    let from_finder = {
+                        let app_weak = app_weak.clone();
+                        finder::ready(move |paths| {
+                            let (Some(app), Some(state), Some(worker)) = (
+                                app_weak.upgrade(),
+                                STATE.with(|s| s.borrow().clone()),
+                                WORKER.with(|w| w.borrow().clone()),
+                            ) else {
+                                return;
+                            };
+                            open_paths(&state, &app, &worker, &paths);
+                        })
+                    };
                     let row = {
                         let mut st = state.borrow_mut();
-                        st.select_at_start
-                            .take()
+                        let at_start = st.select_at_start.take();
+                        at_start
+                            .filter(|_| from_finder.is_empty())
                             .map(|i| row_of(&st, i).or_else(|| cull::nearest_row(&st.shown, i)))
                     };
+                    if !from_finder.is_empty() {
+                        let app_weak = app_weak.clone();
+                        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                            let (Some(app), Some(state), Some(worker)) = (
+                                app_weak.upgrade(),
+                                STATE.with(|s| s.borrow().clone()),
+                                WORKER.with(|w| w.borrow().clone()),
+                            ) else {
+                                return;
+                            };
+                            open_paths(&state, &app, &worker, &from_finder);
+                        });
+                    }
                     match row {
                         Some(Some(row)) => {
                             let app_weak = app_weak.clone();
@@ -905,32 +940,40 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         // with its Open folder button.
         let app_weak = app.as_weak();
         let start = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
-        export::choose_folder("Open a folder", start, move |chosen| {
-            let app_weak = app_weak.clone();
-            // The state and the worker through their thread locals:
-            // this runs on the chooser's own thread, which an `Rc`
-            // cannot cross.
-            let _ = slint::invoke_from_event_loop(move || {
-                let Some(app) = app_weak.upgrade() else {
-                    return;
-                };
-                let (Some(state), Some(worker)) = (
-                    STATE.with(|s| s.borrow().clone()),
-                    WORKER.with(|w| w.borrow().clone()),
-                ) else {
-                    return;
-                };
-                match chosen {
-                    Ok(Some(dir)) => open_folder(&state, &app, &worker, &dir),
-                    Ok(None) => {}
-                    // In the window as well as in the log, in the
-                    // Open folder button's words: the log is not
-                    // where the empty editor's user is looking.
-                    Err(e) => {
-                        tracing::warn!("file chooser: {e:#}");
-                        app.set_status("the desktop offered no file chooser".into());
+        // From a timer, which fires once the loop runs: a launch from
+        // the Finder has handed over its files by then, and the
+        // chooser is not wanted over them.
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+            if finder::arrived() {
+                return;
+            }
+            export::choose_folder("Open a folder", start, move |chosen| {
+                let app_weak = app_weak.clone();
+                // The state and the worker through their thread locals:
+                // this runs on the chooser's own thread, which an `Rc`
+                // cannot cross.
+                let _ = slint::invoke_from_event_loop(move || {
+                    let Some(app) = app_weak.upgrade() else {
+                        return;
+                    };
+                    let (Some(state), Some(worker)) = (
+                        STATE.with(|s| s.borrow().clone()),
+                        WORKER.with(|w| w.borrow().clone()),
+                    ) else {
+                        return;
+                    };
+                    match chosen {
+                        Ok(Some(dir)) => open_folder(&state, &app, &worker, &dir),
+                        Ok(None) => {}
+                        // In the window as well as in the log, in the
+                        // Open folder button's words: the log is not
+                        // where the empty editor's user is looking.
+                        Err(e) => {
+                            tracing::warn!("file chooser: {e:#}");
+                            app.set_status("the desktop offered no file chooser".into());
+                        }
                     }
-                }
+                });
             });
         });
     }

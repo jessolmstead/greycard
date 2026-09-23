@@ -14531,3 +14531,171 @@ comes down to 11.6 percent at white where Lightroom's leaves 2.5, and
 the GFX ferry takes half of Lightroom's, which is its baseline half a
 stop too bright putting its lights further up the ramp's ease. Each of
 those is the frame's own range at work, which is (a)'s argument.
+
+## 147. The scopes stay at the top of the panel (2026-09-22)
+
+The file's name, the shot's three lines and the scopes moved out of
+the panel's ScrollView into a layout of their own above it, so the
+sections scroll under them and the histogram stays in sight of a
+slider far down the Develop tab. The tabs stay with the sections:
+pinned too, they would take another row from a panel that is short
+of height on a laptop, and they are one scroll away.
+`panel-scroll` is still the ScrollView's `content-y`, so
+`--panel-scroll` measures from the tabs now rather than from the
+file's name. A snapshot at 600 px shows the header unmoved and
+Exposure under it.
+
+## 148. The Finder's open (2026-09-22)
+
+§140 left the Finder launching greycard with no file. The Finder
+sends the file as an Apple Event, and AppKit turns the event into
+`application:openURLs:` on the application's delegate. That delegate
+is winit's, and winit 0.30 does not implement the method, so AppKit
+drops the files. Slint gives no way to supply a delegate, and
+replacing winit's would lose its launch and termination handling.
+So `finder::install` adds the one method to winit's
+`WinitApplicationDelegate` class at run time, with `class_addMethod`,
+after Slint has built its event loop and before the loop runs. It
+then sets the same delegate again, because AppKit may note which
+methods a delegate implements when it is set. If a later winit
+implements the method itself, `install` sees that, leaves winit's
+method in place and logs a warning, so an upgrade cannot silently
+replace one handler with the other.
+
+The paths wait in a queue on the main thread. The launch's event
+arrives before `applicationDidFinishLaunching:`, which is before the
+window has a device to develop on. The rendering setup takes the
+queue and, when it holds anything, opens those paths instead of the
+folder the settings remembered. After that, each arrival is opened
+from a zero-length timer, so the open never runs inside a borrow
+that was held when the event came. The folder chooser at startup now
+waits for the same kind of timer and does not appear when a file has
+already arrived. On the other platforms that timer changes nothing
+but the order.
+
+An open goes through `open_paths`, which lists each path as the
+command line's path is listed: a raw on its own, a sidecar as its
+raw, and a folder as its pictures. A selection of several files
+becomes one list in the Finder's order, with each file kept once;
+`open_folder` and `open_paths` then share `open_files`. The objc
+part type-checks and passes clippy against the real objc2 crates
+for `aarch64-apple-darwin`, but nothing here has run on a Mac: the
+first Mac build has to confirm a double-click, Open With and a drop
+on the Dock icon, both at launch and while greycard is running.
+
+## 149. Whites aims at display white (2026-09-22)
+
+The white point brings a luminance `whites` stops under its target to
+the target, by a power about mid grey. Its target was scene white,
+2.47 stops over grey, which was where the raw clips when §85 wrote it.
+§141's baseline moved the clip to 3.27 stops in the curve's terms, and
+§145 put display white there, so whites was still aiming at a point
+that was neither: whites +1 brought the top to 2.47 stops, a pale grey
+under the new shoulder, and neither direction lined up with the clip.
+It aims at `DISPLAY_WHITE_STOPS` now, on both paths: +1 makes a
+luminance a stop under the clip white, -1 puts white a stop further
+out and compresses the top 3.27 stops evenly towards grey.
+
+The range holds: the slider's +2 is 1.27 stops short of the pole,
+where the exponent is 2.6, and the floor's -3.5 gives an exponent of
+0.48, over the 0.41 where the eased curve would fold. On the sunset
+-2 now takes the top five percent down 0.17 to 0.22 stops and leaves
+0.17 percent at white, and +2 puts 28.2 percent at white against
+Lightroom's 27.9; the fit view against the export at +2 differs by
+1.99 of 255. Whites' shape, the top thirty percent where Lightroom's
+moves the mid-tones, is unchanged and waits with §150's questions.
+
+## 150. The feel: where it stands, and how to pick it up (2026-09-22)
+
+§141 to §149 were one afternoon's work against Lightroom, and v0.2.0
+starts from here. This section is the state of it and the way back in.
+
+**The reference set** is `E:\Photos\greycard_comparison` on the Windows
+machine, not in the repo: nine raws and Lightroom's exports under
+`lightroom_export/<stem>_<variant>.jpg`, one slider at its limit per
+export, every other setting at Lightroom's default (Adobe Color, as
+shot), lens corrections on.
+
+| stem | body | frame | Lightroom exports |
+|---|---|---|---|
+| 5M0A0021 | R6 II | white watch dial, low contrast | base, exposure +0.8, highlights -100, shadows +100 |
+| DSCF0195 | GFX 100S II | ferry interior, window | base, highlights -100, shadows +100 |
+| 4Z4A2623 | R5 II | sunset over a city, 9% clipped | base, highlights -100, whites ±100 |
+| 4Z4A3521 | R5 II | lighthouse, under-exposed | all at +1 EV: base, highlights -100, shadows +100 |
+| 5M0A6341 | R6 II | wedding, white dress, dark suit | base, highlights -100, shadows +100 |
+| IMG_3509 | R8 | backlit portrait, mountain | base, highlights -100, shadows +100 |
+| 5M0A4134 | R6 II | dim interior under lamps, ISO 800 | base, shadows +100, blacks ±100 |
+| 4Z4A2465, 4Z4A2520, 5M0A3202, DSCF0011 | R5 II, R5 II, R6 II, GFX | forest, torii, pagoda, flowers | none yet: bases wanted |
+
+The variant names are the files' own (`highlights_down`,
+`plusone_shadows_up`, `highlights_pulled_down` on the watch,
+`shadows_pushed` on the ferry, `base_plusone` on the lighthouse).
+Lightroom's XMP could not be saved from the catalog, so the values are
+as given above, not read from a file.
+
+**The tools** are `tools/reference/`. `render.sh` exports a variant
+through the editor with a sidecar it writes on a copy of the raw, so no
+hand is on a slider and the set's own sidecars are never touched;
+`measure.py base` prints each frame's brightness against the camera's
+JPEG and Lightroom's, `measure.py sliders` the median change in stops
+by percentile band of each editor's own base with a side-by-side
+sheet, `measure.py view` the viewport's shader against the export.
+Bands of each editor's own picture because the two editors' lens
+geometry differs (Lightroom corrects distortion lensfun has as zero,
+§142) and a frame's pixels do not line up. A release build: a debug one
+takes minutes a frame, the release twelve seconds.
+
+**What the Lightroom side taught about itself.** Check every export's
+size against the raw's before measuring: a crop or a mask left from an
+earlier edit is invisible in the numbers until it is not (the wedding
+came in 4:3 the first time, the lighthouse's variants a stop over its
+base). The camera's JPEG is a poor target: it scatters ±0.8 stops from
+Lightroom by frame, the R8's a stop over both editors, which reads as
+its scene-adaptive rendering. Lightroom's highlights and whites adapt
+to the frame's range; its shadows and blacks behave as fixed curves.
+
+**Where each control stands**, greycard at its limit against
+Lightroom's ±100, measured on the set:
+
+- Brightness: the Canons within about a tenth of a stop of Lightroom at
+  the median (§141, §143); the GFX half a stop over.
+- The top: what the raw clipped is white (§145); a top that is not the
+  clip sits 0.1 to 0.2 stops under Lightroom's, which is the shape of
+  Adobe's curve between grey and white.
+- Highlights: within a tenth or two of a stop on four frames of six
+  from the 55th percentile up (§146); nothing under the median where
+  Lightroom takes -0.1 to -0.2; two thirds of Lightroom's on the watch.
+- Shadows: within about 0.2 stops on three frames; over-lifts the
+  mid-tones of the low-key interior (+3 against +1.3 to +2.3) and gives
+  the darkest tenth less (+2.3 against +4.0) (§143).
+- Whites: aimed right (§149); moves only the top thirty percent where
+  Lightroom's moves the 25th to 85th percentiles, one frame measured.
+- Blacks: the crush band for band; the lift within about 0.3 stops from
+  the 25th percentile up (§144).
+- Exposure: the same response as Lightroom's once the start is the
+  same.
+
+**Open, in the order they want deciding.**
+
+1. Fixed stops or the frame's range for highlights and whites (§146).
+   Fixed for now; ask testers. The frame's range is what would give the
+   watch its full pull, reach under the median and bring a clipped sky
+   under white as Lightroom does. It would read the guide plane's
+   percentiles, which the tone equalizer already makes.
+2. The baseline per camera. Adobe's `BaselineExposure` is what
+   Lightroom uses per body; one DNG exported from Lightroom per body
+   (R6 II, R5 II, R8, GFX 100S II) gives the four numbers. Until then
+   0.8 for everything, right for the Canons.
+3. Whites' shape, with two more frames of whites exports; and whether
+   shadows should give the deepest tones more. Both wait on 1.
+4. The curve between grey and white, if the tops still sit short once
+   the rest is settled: a steeper upper mid-tone, which is a change to
+   every picture's look.
+5. The watch's `exposure_pluspoint8` export and §141's +1.15 are before
+   the baseline; re-measure against it rather than read them.
+
+**Re-measuring after a change.** Build the release, render every
+variant with `render.sh` into one work folder, and run `measure.py base`
+on all nine and `measure.py sliders` on the five slider frames; compare
+against the numbers in §141 to §149, and run `measure.py view` on one
+screenshot for any change to the shader.

@@ -684,7 +684,8 @@ fn highlights_weight(g: f32) -> f32 {
 
 /// Scene white, in stops over mid grey: where a channel at the
 /// sensor's clip lands after the white balance and the matrix, on the
-/// cameras measured (§19). The white point is named against it.
+/// cameras measured (§19). Display white, where the shoulder reaches
+/// one and the white point aims, is it with the baseline added.
 const SCENE_WHITE_STOPS: f32 = 2.47;
 
 /// How far the whites that reaches [`white_point`] may go either way.
@@ -693,33 +694,32 @@ const SCENE_WHITE_STOPS: f32 = 2.47;
 /// is not the slider's: a local adjustment's whites is added to the
 /// picture's in `finish_pixel_with`, so the global look at plus one
 /// under two masks at plus one hands this a three. The exponent
-/// `SCENE_WHITE_STOPS / (SCENE_WHITE_STOPS - whites)` has a pole at
-/// scene white itself — a white point asked to sit where the scene's
-/// white already is, which is a division by zero and, past it, a
+/// `DISPLAY_WHITE_STOPS / (DISPLAY_WHITE_STOPS - whites)` has a pole at
+/// display white itself — a white point asked to sit where the white
+/// already is, which is a division by zero and, past it, a
 /// negative exponent that turns the top of the scale over. Unheld, a
-/// blended whites of 2.4 takes a pixel two stops over grey to 3e20,
-/// which is an infinity in the shoulder's square and quantizes to
-/// black; at 2.47 it is an infinity outright.
+/// blended whites near the pole takes a pixel a few stops over grey
+/// to an infinity in the shoulder, which quantizes to black.
 ///
-/// So: the slider's own top, two stops, which is 0.47 short of the
-/// pole, where the exponent is 5.3 and the top of the scale is very
-/// steep but still a curve — a luminance half a stop over mid grey
-/// is brought to scene white; and, the other way, where the eased
-/// exponent's slope first reaches zero, which the monotonic test's
-/// arithmetic puts at 0.407, an exponent a whites of -3.59 gives.
-/// Held at -3.5.
+/// So: the slider's own top, two stops, which is 1.27 short of the
+/// pole, where the exponent is 2.6 — a luminance 1.27 stops over mid
+/// grey is brought to white; and, the other way, short of where the
+/// eased exponent's slope first reaches zero, which the monotonic
+/// test's arithmetic puts at 0.407, an exponent a whites of -4.76
+/// gives. Held at -3.5, where it is 0.48.
 const WHITES_RANGE: (f32, f32) = (-3.5, 2.0);
 
 /// The whites control: a white point pivoted at mid grey, before the
-/// shoulder. A luminance `whites` stops under scene white is brought to
-/// scene white, and everything over mid grey with it, by a power about
-/// mid grey on the luminance: nothing below mid grey, and above it the
-/// stops over grey scaled by `2.47 / (2.47 - whites)`. So whites at
-/// minus one puts the clip a stop further out and compresses the top
-/// two and a half stops evenly towards mid grey, which is highlight
+/// shoulder. A luminance `whites` stops under display white, where the
+/// raw clips and the shoulder reaches white (§145), is brought to
+/// display white, and everything over mid grey with it, by a power
+/// about mid grey on the luminance: nothing below mid grey, and above
+/// it the stops over grey scaled by `3.27 / (3.27 - whites)` (§149).
+/// So whites at minus one puts the clip a stop further out and
+/// compresses the top three and a quarter stops evenly towards grey, which is highlight
 /// compression with no halo because it is global; whites at plus one
-/// clips a stop earlier and stretches the top. The shoulder then rolls
-/// off as it always has, so a zeroed edit renders as it did.
+/// clips a stop earlier and stretches the top. A zeroed edit is not
+/// touched.
 ///
 /// Not a stretch in linear light: pivoted at mid grey that leaves a
 /// knee whose slope ratio is 0.45 at minus one, which shows on a
@@ -727,8 +727,7 @@ const WHITES_RANGE: (f32, f32) = (-3.5, 2.0);
 /// the exponent runs from one at mid grey to its value a stop above,
 /// by a smoothstep, so the curve is smooth through grey and exact from
 /// a stop over it, which is everywhere the white point can be at the
-/// slider's range. Monotonic while the exponent is over 0.41, which is
-/// whites over minus three and a half stops.
+/// slider's range. Monotonic while the exponent is over 0.41.
 ///
 /// A gain on the luminance rather than a power per channel, as the
 /// shifts are, so a color keeps its hue and its channel ratios.
@@ -746,7 +745,7 @@ fn white_point(c: [f32; 3], whites: f32) -> [f32; 3] {
     }
     let w = whites.clamp(WHITES_RANGE.0, WHITES_RANGE.1);
     let u = (y / MID_GREY).log2();
-    let p = SCENE_WHITE_STOPS / (SCENE_WHITE_STOPS - w);
+    let p = DISPLAY_WHITE_STOPS / (DISPLAY_WHITE_STOPS - w);
     let p = 1.0 + (p - 1.0) * smoothstep(0.0, 1.0, u);
     let gain = 2f32.powf(u * (p - 1.0));
     c.map(|v| v * gain)
@@ -1419,19 +1418,20 @@ mod tests {
     }
 
     #[test]
-    fn whites_puts_the_stop_it_names_at_scene_white_and_leaves_grey() {
-        // Whites at plus one: a luminance a stop under scene white lands
-        // at scene white. At minus one: scene white lands where a stop
-        // over it would land, at 2.47 stops of a 3.47-stop scale.
+    fn whites_puts_the_stop_it_names_at_display_white_and_leaves_grey() {
+        // Whites at plus one: a luminance a stop under display white
+        // lands at display white, where the raw clips (§149). At minus
+        // one: display white lands where a stop over it would land, at
+        // 3.27 stops of a 4.27-stop scale.
         // Mid grey and below do not move, in either direction.
-        let scene_white = MID_GREY * 2f32.powf(SCENE_WHITE_STOPS);
+        let white = MID_GREY * 2f32.powf(DISPLAY_WHITE_STOPS);
         for whites in [1.0f32, -1.0] {
             let t = Tone {
                 whites,
                 ..Tone::default()
             };
-            let from = shape(grey_at(SCENE_WHITE_STOPS - whites), &t, None)[1];
-            assert!((from / scene_white - 1.0).abs() < 1e-4, "{whites}: {from}");
+            let from = shape(grey_at(DISPLAY_WHITE_STOPS - whites), &t, None)[1];
+            assert!((from / white - 1.0).abs() < 1e-4, "{whites}: {from}");
             for stops in [0.0f32, -0.5, -2.0, -6.0] {
                 assert_eq!(
                     shape(grey_at(stops), &t, None),
@@ -1458,8 +1458,8 @@ mod tests {
             "{below} under, {above} over"
         );
         // And a stop over grey the exponent is in full: the value is
-        // the power's, 0.712 stops for one.
-        let want = MID_GREY * 2f32.powf(SCENE_WHITE_STOPS / 3.47);
+        // the power's, 0.766 stops for one.
+        let want = MID_GREY * 2f32.powf(DISPLAY_WHITE_STOPS / (DISPLAY_WHITE_STOPS + 1.0));
         assert!((at(&t, 1.0) / want - 1.0).abs() < 1e-3, "{}", at(&t, 1.0));
         // Hue held: a color's channel ratios survive.
         let c = shape([0.9, 0.5, 0.2], &t, None);
@@ -1535,9 +1535,9 @@ mod tests {
         // peaks at u = 0.75, where the bracket is 1.6875, so the curve
         // holds while p is over 1 - 1/1.6875. That is the number
         // `WHITES_RANGE`'s floor is chosen against.
-        let p = SCENE_WHITE_STOPS / (SCENE_WHITE_STOPS - WHITES_RANGE.0);
+        let p = DISPLAY_WHITE_STOPS / (DISPLAY_WHITE_STOPS - WHITES_RANGE.0);
         assert!(p > 1.0 - 1.0 / 1.6875, "the floor's exponent is {p}");
-        assert!(WHITES_RANGE.1 < SCENE_WHITE_STOPS, "the pole is not held");
+        assert!(WHITES_RANGE.1 < DISPLAY_WHITE_STOPS, "the pole is not held");
     }
 
     /// A picture of one luminance everywhere, `stops` over mid grey.
@@ -1647,16 +1647,16 @@ mod tests {
     }
 
     #[test]
-    fn whites_at_minus_one_pulls_the_clip_by_seven_tenths_of_a_stop_through_the_finish() {
-        // Scene white is 2.47 stops over mid grey (§19). Under whites at
-        // minus one it lands where 1.76 stops lands with no slider: the
-        // top 2.47 stops scaled to 3.47. §19's placement brought it down
+    fn whites_at_minus_one_pulls_the_clip_by_three_quarters_of_a_stop_through_the_finish() {
+        // Display white is 3.27 stops over mid grey, scene white with the
+        // baseline (§145). Under whites at minus one it lands where 2.50
+        // stops lands with no slider: the top 3.27 stops scaled to 4.27. §19's placement brought it down
         // 0.07 of a stop, which is the roadmap's "whites do basically
         // nothing". Through the whole finish, with the guide plane
         // present, since whites reads the pixel and not the plane.
         // Each field is placed where it meets the curve, the baseline
         // taken back out.
-        let image = flat(SCENE_WHITE_STOPS - BASELINE_EXPOSURE, 128, 96);
+        let image = flat(DISPLAY_WHITE_STOPS - BASELINE_EXPOSURE, 128, 96);
         let guide = guide_plane(&image);
         let tone = Tone {
             whites: -1.0,
@@ -1664,7 +1664,7 @@ mod tests {
         };
         let pulled = at(&image, Some(&guide), tone, 64, 48);
         let old = at(
-            &flat(SCENE_WHITE_STOPS - 0.066 - BASELINE_EXPOSURE, 128, 96),
+            &flat(DISPLAY_WHITE_STOPS - 0.066 - BASELINE_EXPOSURE, 128, 96),
             None,
             Tone::default(),
             64,
@@ -1672,7 +1672,8 @@ mod tests {
         );
         let new = at(
             &flat(
-                SCENE_WHITE_STOPS * SCENE_WHITE_STOPS / 3.47 - BASELINE_EXPOSURE,
+                DISPLAY_WHITE_STOPS * DISPLAY_WHITE_STOPS / (DISPLAY_WHITE_STOPS + 1.0)
+                    - BASELINE_EXPOSURE,
                 128,
                 96,
             ),
@@ -1682,7 +1683,9 @@ mod tests {
             48,
         );
         assert!((pulled - new).abs() < 3e-3, "{pulled} wanted {new}");
-        assert!(pulled < old - 0.05, "{pulled} against {old} under \u{a7}19");
+        // Near white the shoulder is flat, so three quarters of a stop
+        // there is a few hundredths of display value.
+        assert!(pulled < old - 0.03, "{pulled} against {old} under \u{a7}19");
     }
 
     #[test]

@@ -44,6 +44,28 @@ pub fn sidecar_to_raw(p: PathBuf) -> PathBuf {
     }
 }
 
+/// Several paths opened at once, as the Finder sends a selection:
+/// each listed as `list_files` lists it, in the order given, a file
+/// named twice (or a sidecar beside its raw) kept once, and the
+/// paths that list nothing returned with why.
+pub fn list_paths(paths: &[PathBuf]) -> (Vec<PathBuf>, Vec<anyhow::Error>) {
+    let mut files: Vec<PathBuf> = Vec::new();
+    let mut refused = Vec::new();
+    for path in paths {
+        match list_files(path) {
+            Ok(listed) => {
+                for f in listed {
+                    if !files.contains(&f) {
+                        files.push(f);
+                    }
+                }
+            }
+            Err(e) => refused.push(e),
+        }
+    }
+    (files, refused)
+}
+
 pub fn list_files(path: &std::path::Path) -> Result<Vec<PathBuf>> {
     // Before the extension: a name with the right ending but no file
     // behind it used to pass and open a blank window that never said
@@ -144,6 +166,33 @@ mod tests {
         std::fs::write(&missing, b"not a raw, but a file").unwrap();
         assert_eq!(list_files(&missing).unwrap(), vec![missing.clone()]);
         std::fs::remove_file(&missing).unwrap();
+    }
+
+    #[test]
+    fn list_paths_keeps_each_file_once_and_says_what_it_refused() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-list-paths-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b) = (dir.join("a.CR3"), dir.join("b.RAF"));
+        for p in [&a, &b] {
+            std::fs::write(p, b"").unwrap();
+        }
+        let gcd = dir.join("a.CR3.gcd");
+        std::fs::write(&gcd, b"{}").unwrap();
+        let missing = dir.join("gone.NEF");
+        // The Finder's order, not the name's; the sidecar is its raw,
+        // already listed.
+        let (files, refused) = list_paths(&[b.clone(), a.clone(), gcd, missing]);
+        assert_eq!(files, vec![b, a]);
+        assert_eq!(refused.len(), 1);
+        assert!(refused[0].to_string().contains("gone.NEF"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

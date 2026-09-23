@@ -7,9 +7,15 @@ release workflow puts a version's section into the GitHub release.
 
 ## 0.1.0, unreleased
 
+- The file's name, the shot and the scopes stay at the top of the
+  panel while the sections scroll under them, so the histogram is in
+  sight of any slider (§147, 2026-09-22)
 - A short guide for testers, `docs/user-guide.md`: installing on each
   system, the basics, culling, the keys, and how to report a problem
   (2026-09-22)
+- Whites aims at white: +1 makes the tones a stop under the raw's clip
+  white and -1 puts white a stop further out, where since the brighter
+  default it was aiming at a pale grey (§149, 2026-09-22)
 - Highlights pulls about as hard as Lightroom's: -2 is Lightroom's
   -100, strongest in the bright mid-tones and easing off towards
   white, where it used to pull the very top twice as hard. Lightroom

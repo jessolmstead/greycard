@@ -19,13 +19,6 @@ A user on Linux, macOS or Windows can install it,
 open a shoot, get to any frame, edit it, export it, and report what
 went wrong.
 
-- [ ] The histogram should stay pinned at the top of the pane
-- [ ] A file opened from the Finder opens in the editor: the Apple
-      Event turned into the same open the command line's path gets.
-      Finder now offers greycard for a `.gcd` and a raw and launches
-      it, but with no file (§110, §140)
-- [ ] The repo public, issues on, a `bug` label for the issue form;
-      Report a problem… opens a 404 for anyone else until then (§138)
 - [ ] The first tag, which is the release workflow's first run, on all
       three runners; the Windows package, the Mac's UTI spellings and
       sidecar `.icns` are the parts not verified by running them (§88,
@@ -36,13 +29,19 @@ went wrong.
 The default develop matches the camera JPEG's brightness and the
 sliders feel like the ones people learned on.
 
+- [ ] A file opened from the Finder opens in the editor: the delegate's
+      `application:openURLs:` is written but has not run on a Mac;
+      try a double-click, Open With and a Dock drop, at launch and
+      while it runs (§148)
 - [ ] Reference frames for the feel: eight frames with a Lightroom edit
       each and the greycard values that match, a check of the default
       develop's brightness against the embedded JPEG, a slider response
       weighted to the first third of the travel, an Auto from the
       histogram (§85). Seven frames in and measured (§143); the
       baseline landed from them (§141). Still wanted: Lightroom bases
-      for the forest, the torii, the pagoda and the flowers
+      for the forest, the torii, the pagoda and the flowers. Start from
+      §150: the set, `tools/reference/`, where each control stands and
+      what is open
 - [ ] The baseline exposure per camera, from Adobe's `BaselineExposure`
       per body: the Canons land within a tenth of a stop of Lightroom,
       the GFX half a stop over (§141, §143). Waits on one DNG exported
@@ -53,10 +52,11 @@ sliders feel like the ones people learned on.
       reach under the median, give the watch its full pull and bring a
       clipped sky under white as Lightroom does
 - [ ] Whites and shadows reshaped against the set: whites moves only
-      the top where Lightroom's moves the mid-tones; shadows over-lifts
-      the mid-tones of a low-key frame; the tops still sit 0.1 to 0.2
-      stops under Lightroom's where they are not the sensor's clip
-      (§143, §145)
+      the top where Lightroom's moves the mid-tones, and wants two more
+      frames of whites exports; shadows over-lifts the mid-tones of a
+      low-key frame; the tops still sit 0.1 to 0.2 stops under
+      Lightroom's where they are not the sensor's clip (§143, §145,
+      §149, §150). Waits on the fixed-or-range decision
 - [ ] The guided plane's halo at a hard edge, measured; darktable's
       exposure-independent guided filter if it shows (§85)
 - [ ] The contrast filters weighted by chroma through the whole range,

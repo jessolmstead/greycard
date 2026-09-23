@@ -2117,120 +2117,130 @@ export component App inherits Window {
                 // The sections scroll; the view and export buttons stay
                 // put under them, so a long tab never hides them.
                 VerticalLayout {
+                // The file, what it was shot at and the scopes stay
+                // at the top while the sections scroll under them, so
+                // the histogram is in sight of whatever slider moves it.
+                VerticalLayout {
+                    padding-left: Theme.space-4;
+                    padding-right: Theme.space-4;
+                    padding-top: Theme.space-4;
+                    spacing: Theme.space-2;
+                    // The file and what it was shot at, as one
+                    // caption: the name, then the body and its
+                    // lens, then the exposure triangle, which
+                    // wants two lines since the whole of it does
+                    // not fit the panel's width. Both lines keep
+                    // their height when the file says nothing, so
+                    // the panel below does not jump between one
+                    // picture and the next.
+                    VerticalLayout {
+                        spacing: 2px;
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            Text {
+                                text: root.file-name;
+                                color: Theme.text;
+                                font-size: Theme.font-lg;
+                                font-weight: Theme.weight-semibold;
+                                overflow: elide;
+                                vertical-alignment: center;
+                            }
+                            PanelButton {
+                                icon: @image-url("icons/rotate-ccw.svg");
+                                enabled: root.can-undo;
+                                width: Theme.control-height + Theme.space-2;
+                                clicked => { root.undo(); }
+                            }
+                            PanelButton {
+                                icon: @image-url("icons/rotate-cw.svg");
+                                enabled: root.can-redo;
+                                width: Theme.control-height + Theme.space-2;
+                                clicked => { root.redo(); }
+                            }
+                        }
+                        Text {
+                            text: root.shot-camera;
+                            height: 16px;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.shot-exposure;
+                            height: 16px;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            overflow: elide;
+                        }
+                        Text {
+                            text: root.shot-size;
+                            height: 16px;
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            overflow: elide;
+                        }
+                    }
+                    // The scopes read the develop; in culling
+                    // there is none, and they are not shown.
+                    if !root.culling: VerticalLayout {
+                        spacing: Theme.space-1;
+                        Rectangle {
+                            // The vectorscope is square, so its
+                            // circle is round however wide the
+                            // panel is. A waveform wants height to
+                            // hold its trace apart; the histogram
+                            // is low.
+                            height: root.scope == "Vector" ? self.width
+                                : (root.scope == "RGB" ? 84px : 144px);
+                            border-radius: Theme.radius-md;
+                            background: Theme.base;
+                            border-width: 1px;
+                            border-color: Theme.border;
+                            clip: true;
+                            Image {
+                                source: root.scope-picture;
+                                width: parent.width - 2px;
+                                height: parent.height - 2px;
+                                image-fit: fill;
+                                image-rendering: smooth;
+                            }
+                            if root.scope == "RGB": ClipMark {
+                                x: 1px;
+                                y: 1px;
+                                lit: root.clip-shadows-lit;
+                                mark: root.clip-shadows-mark;
+                                on: root.warn-shadows;
+                                clicked => {
+                                    root.warn-shadows = !root.warn-shadows;
+                                    root.warn-changed();
+                                }
+                            }
+                            if root.scope == "RGB": ClipMark {
+                                x: parent.width - self.width - 1px;
+                                y: 1px;
+                                lit: root.clip-highlights-lit;
+                                mark: root.clip-highlights-mark;
+                                on: root.warn-highlights;
+                                clicked => {
+                                    root.warn-highlights = !root.warn-highlights;
+                                    root.warn-changed();
+                                }
+                            }
+                        }
+                        Segmented {
+                            options: root.scopes;
+                            current <=> root.scope;
+                            selected(name) => { root.scope-changed(name); }
+                        }
+                    }
+                }
                 ScrollView {
                     content-y <=> root.panel-scroll;
                     VerticalLayout {
                         alignment: start;
                         padding: Theme.space-4;
+                        padding-top: Theme.space-2;
                         spacing: Theme.space-2;
-                        // The file and what it was shot at, as one
-                        // caption: the name, then the body and its
-                        // lens, then the exposure triangle, which
-                        // wants two lines since the whole of it does
-                        // not fit the panel's width. Both lines keep
-                        // their height when the file says nothing, so
-                        // the panel below does not jump between one
-                        // picture and the next.
-                        VerticalLayout {
-                            spacing: 2px;
-                            HorizontalLayout {
-                                spacing: Theme.space-2;
-                                Text {
-                                    text: root.file-name;
-                                    color: Theme.text;
-                                    font-size: Theme.font-lg;
-                                    font-weight: Theme.weight-semibold;
-                                    overflow: elide;
-                                    vertical-alignment: center;
-                                }
-                                PanelButton {
-                                    icon: @image-url("icons/rotate-ccw.svg");
-                                    enabled: root.can-undo;
-                                    width: Theme.control-height + Theme.space-2;
-                                    clicked => { root.undo(); }
-                                }
-                                PanelButton {
-                                    icon: @image-url("icons/rotate-cw.svg");
-                                    enabled: root.can-redo;
-                                    width: Theme.control-height + Theme.space-2;
-                                    clicked => { root.redo(); }
-                                }
-                            }
-                            Text {
-                                text: root.shot-camera;
-                                height: 16px;
-                                color: Theme.text-secondary;
-                                font-size: Theme.font-sm;
-                                overflow: elide;
-                            }
-                            Text {
-                                text: root.shot-exposure;
-                                height: 16px;
-                                color: Theme.text-secondary;
-                                font-size: Theme.font-sm;
-                                overflow: elide;
-                            }
-                            Text {
-                                text: root.shot-size;
-                                height: 16px;
-                                color: Theme.text-secondary;
-                                font-size: Theme.font-sm;
-                                overflow: elide;
-                            }
-                        }
-                        // The scopes read the develop; in culling
-                        // there is none, and they are not shown.
-                        if !root.culling: VerticalLayout {
-                            spacing: Theme.space-1;
-                            Rectangle {
-                                // The vectorscope is square, so its
-                                // circle is round however wide the
-                                // panel is. A waveform wants height to
-                                // hold its trace apart; the histogram
-                                // is low.
-                                height: root.scope == "Vector" ? self.width
-                                    : (root.scope == "RGB" ? 84px : 144px);
-                                border-radius: Theme.radius-md;
-                                background: Theme.base;
-                                border-width: 1px;
-                                border-color: Theme.border;
-                                clip: true;
-                                Image {
-                                    source: root.scope-picture;
-                                    width: parent.width - 2px;
-                                    height: parent.height - 2px;
-                                    image-fit: fill;
-                                    image-rendering: smooth;
-                                }
-                                if root.scope == "RGB": ClipMark {
-                                    x: 1px;
-                                    y: 1px;
-                                    lit: root.clip-shadows-lit;
-                                    mark: root.clip-shadows-mark;
-                                    on: root.warn-shadows;
-                                    clicked => {
-                                        root.warn-shadows = !root.warn-shadows;
-                                        root.warn-changed();
-                                    }
-                                }
-                                if root.scope == "RGB": ClipMark {
-                                    x: parent.width - self.width - 1px;
-                                    y: 1px;
-                                    lit: root.clip-highlights-lit;
-                                    mark: root.clip-highlights-mark;
-                                    on: root.warn-highlights;
-                                    clicked => {
-                                        root.warn-highlights = !root.warn-highlights;
-                                        root.warn-changed();
-                                    }
-                                }
-                            }
-                            Segmented {
-                                options: root.scopes;
-                                current <=> root.scope;
-                                selected(name) => { root.scope-changed(name); }
-                            }
-                        }
                         // The panel in the order a photo is developed;
                         // the masks and the retouch on tabs of their own.
                         Segmented {

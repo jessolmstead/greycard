@@ -607,19 +607,17 @@ fn highlights_weight(g: f32) -> f32 {
     return HIGHLIGHTS_PEAK * smoothstep(HIGHLIGHTS_RAMP.x, HIGHLIGHTS_RAMP.y, g)
         * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE_FROM, DISPLAY_WHITE_STOPS, g));
 }
-// Scene white in stops over mid grey, which the white point is named
-// against (`SCENE_WHITE_STOPS` in `finish.rs`).
-const SCENE_WHITE_STOPS: f32 = 2.47;
 // How far the blended whites may go either way, as `WHITES_RANGE` in
-// `finish.rs`: the exponent has a pole at scene white and the sliders
+// `finish.rs`: the exponent has a pole at display white and the sliders
 // of a picture and its masks add, so the value arriving here is not
 // the slider's ±2.
 const WHITES_RANGE: vec2<f32> = vec2<f32>(-3.5, 2.0);
 
 // The whites control, as `white_point` in `finish.rs`: a power about
 // mid grey on the luminance over it, its exponent eased in over the
-// first stop, that brings a luminance `whites` stops under scene white
-// to scene white; nothing at or under mid grey. A gain on all three
+// first stop, that brings a luminance `whites` stops under display white
+// (the shoulder's `DISPLAY_WHITE_STOPS`, where the raw clips) to display
+// white; nothing at or under mid grey. A gain on all three
 // channels, so hue holds.
 fn white_point(c: vec3<f32>, whites: f32) -> vec3<f32> {
     let y = dot(LUMA, c);
@@ -628,7 +626,7 @@ fn white_point(c: vec3<f32>, whites: f32) -> vec3<f32> {
     }
     let w = clamp(whites, WHITES_RANGE.x, WHITES_RANGE.y);
     let u = log2(y / MID_GREY);
-    var p = SCENE_WHITE_STOPS / (SCENE_WHITE_STOPS - w);
+    var p = DISPLAY_WHITE_STOPS / (DISPLAY_WHITE_STOPS - w);
     p = 1.0 + (p - 1.0) * smoothstep(0.0, 1.0, u);
     return c * exp2(u * (p - 1.0));
 }

@@ -581,7 +581,40 @@ pub(crate) fn open_folder(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Wor
     let last = settings::Settings::load().last_file;
     let last = (!last.is_empty()).then(|| PathBuf::from(last));
     let select = files::select_index(&files, last.as_deref());
+    open_files(state, app, worker, files, select);
+}
 
+/// What the desktop asked to open, the Finder's double-click or Open
+/// With: each path as the command line's path would be, a file on its
+/// own and a folder's pictures, starting on the first.
+pub(crate) fn open_paths(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+    paths: &[PathBuf],
+) {
+    let (files, refused) = files::list_paths(paths);
+    for e in &refused {
+        tracing::warn!("{e:#}");
+    }
+    if files.is_empty() {
+        let said = refused
+            .first()
+            .map_or_else(|| "nothing to open".to_string(), |e| format!("{e:#}"));
+        app.set_status(said.into());
+        return;
+    }
+    open_files(state, app, worker, files, 0);
+}
+
+/// A new list of files in the browser, `select` opened.
+fn open_files(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+    files: Vec<PathBuf>,
+    select: usize,
+) {
     let mut st = state.borrow_mut();
     // Leave the old file as a normal selection would: its edit saved,
     // its picture held on screen until the new one develops. In
@@ -636,7 +669,7 @@ pub(crate) fn open_folder(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Wor
     if let Some(row) = row {
         app.invoke_select(row as i32);
     } else {
-        tracing::warn!("no frames in {} pass the filter", dir.display());
+        tracing::warn!("no frames pass the filter");
         app.set_status(filter::NOTHING_SHOWN.into());
     }
 }
