@@ -2,11 +2,19 @@
 # is not one machine: formatted, no clippy warnings, tests green. The
 # ignored tests want raw files and models and are not run here.
 #
-# On Linux and on a Mac both, since the file chooser and the monitor
-# profile have a Linux side and an everywhere-else side behind cfg,
-# and a change to one cannot be seen to compile from the other. The
-# Mac runner is Apple silicon and, on a private repo, costs ten Linux
-# minutes to the minute; drop it from the matrix if that is too dear.
+# On Linux, macOS and Windows, since the file chooser, the monitor
+# profile and the window subsystem each have a Linux side and an
+# everywhere-else side behind cfg, and a change to one cannot be seen
+# to compile from the others. The Mac runner is Apple silicon and, on
+# a private repo, costs ten Linux minutes to the minute; drop it from
+# the matrix if that is too dear.
+#
+# windows-2025 has to carry an MSVC toolset at least as new as the one
+# ort's prebuilt onnxruntime.lib was compiled with, 14.51.36231 for ort
+# 2.0.0-rc.13, or the link fails on unresolved __std_* symbols out of
+# the MSVC STL and nowhere earlier; release.yml's header has the rest
+# of that story. windows-2025 took Visual Studio 2026 in June 2026;
+# windows-2025-vs2026 is the label to pin if that image goes backwards.
 name: CI
 
 on:
@@ -27,8 +35,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-15]
+        os: [ubuntu-latest, macos-15, windows-2025]
     runs-on: ${{ matrix.os }}
+    # Git Bash is on every Windows runner under this name and gives the
+    # three OSes the one shell, the same call release.yml makes; the
+    # Linux and Mac runners already default to bash so this changes
+    # nothing for them.
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
 
@@ -45,13 +60,23 @@ jobs:
       - name: Native libraries
         # lcms2 for the profiles, fontconfig and wayland for Slint's
         # backend, xkbcommon for its keyboard. A Mac needs nothing
-        # beyond Xcode's tools.
+        # beyond Xcode's tools, and neither does Windows, where lcms2
+        # builds from its own source with no pkg-config to find one.
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             liblcms2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev \
             pkg-config
+
+      - name: MSVC toolsets on this runner
+        # Printed before the build, not after it fails: an older
+        # toolset than the header names fails at link with a dozen
+        # __std_* symbols and not a word about the toolset itself.
+        if: runner.os == 'Windows'
+        run: |
+          ls -d "/c/Program Files"*"/Microsoft Visual Studio"/*/*/VC/Tools/MSVC/*/ \
+            2>/dev/null || echo "no VC/Tools/MSVC directory found"
 
       - uses: dtolnay/rust-toolchain@stable
         with:

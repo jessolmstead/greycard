@@ -15,9 +15,11 @@
 #   Linux    bin/ with the two binaries and the library, share/ with
 #            the desktop entry and the icon.
 #   macOS    greycard.app, a bundle with both binaries and the library
-#            in Contents/MacOS and the icon in Contents/Resources, so
+#            in Contents/MacOS and the icons in Contents/Resources, so
 #            it can go into Applications and be opened like any app.
-#            install.sh links the command line out of it.
+#            install.sh links the command line out of it. The sidecar
+#            gets its own .icns beside the app's, for Info.plist's
+#            document types.
 #   Windows  bin/ with the two binaries, the three DLLs and the
 #            sidecar icon; install.cmd, uninstall.cmd, register.cmd
 #            and unregister.cmd beside it rather than install.sh.
@@ -113,19 +115,25 @@ if [ "$os" = macos ]; then
     sed "s/@VERSION@/$version/g" packaging/Info.plist > "$app/Info.plist"
 
     # The icon, rasterized from the SVG by sips at each size an icns
-    # holds, and folded by iconutil. Both ship with macOS.
-    iconset="target/dist/greycard.iconset"
-    rm -rf "$iconset"
-    mkdir -p "$iconset"
-    for px in 16 32 128 256 512; do
-        sips -s format png -z "$px" "$px" assets/icon/greycard.svg \
-            --out "$iconset/icon_${px}x${px}.png" >/dev/null
-        double=$((px * 2))
-        sips -s format png -z "$double" "$double" assets/icon/greycard.svg \
-            --out "$iconset/icon_${px}x${px}@2x.png" >/dev/null
+    # holds, and folded by iconutil. Both ship with macOS. The sidecar
+    # gets the same treatment from its own SVG, so Info.plist's .gcd
+    # document type has an icon of its own rather than the app's —
+    # the same two-cards-on-a-document mark Linux and Windows use for
+    # it.
+    for icon in greycard application-x-greycard-edit; do
+        iconset="target/dist/$icon.iconset"
+        rm -rf "$iconset"
+        mkdir -p "$iconset"
+        for px in 16 32 128 256 512; do
+            sips -s format png -z "$px" "$px" "assets/icon/$icon.svg" \
+                --out "$iconset/icon_${px}x${px}.png" >/dev/null
+            double=$((px * 2))
+            sips -s format png -z "$double" "$double" "assets/icon/$icon.svg" \
+                --out "$iconset/icon_${px}x${px}@2x.png" >/dev/null
+        done
+        iconutil -c icns "$iconset" -o "$app/Resources/$icon.icns"
+        rm -rf "$iconset"
     done
-    iconutil -c icns "$iconset" -o "$app/Resources/greycard.icns"
-    rm -rf "$iconset"
 
     # An ad-hoc signature over the whole bundle. The linker already
     # signed each binary that way, which Apple silicon insists on; this

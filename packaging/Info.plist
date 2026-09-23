@@ -32,5 +32,88 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>GPL-3.0-or-later</string>
+
+	<!-- The .gcd sidecar (§120's type, org.greycard.gcd below) is ours
+	     to own: nothing else claims it, so Finder offers greycard first
+	     and its own icon, the two-cards-on-a-document mark package.sh
+	     folds from assets/icon/application-x-greycard-edit.svg. The raw
+	     types are offered, not taken — Viewer role and Alternate rank,
+	     so greycard turns up in Open With without displacing whatever
+	     already opens a .cr3 — the same call register.cmd makes on
+	     Windows for greycard.photo. public.camera-raw-image is Apple's
+	     catch-all; the maker-specific UTIs are named too, where Apple
+	     declares one, so a raw greycard cannot yet develop still opens
+	     it (the browser reads more makes than Apple has UTIs for). -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>greycard edit sidecar</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>org.greycard.gcd</string>
+			</array>
+			<key>CFBundleTypeIconFile</key>
+			<string>application-x-greycard-edit</string>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Camera raw image</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.camera-raw-image</string>
+				<string>com.canon.cr2-raw-image</string>
+				<string>com.canon.cr3-raw-image</string>
+				<string>com.nikon.raw-image</string>
+				<string>com.sony.arw-raw-image</string>
+				<string>com.fuji.raw-image</string>
+				<string>com.olympus.raw-image</string>
+				<string>com.panasonic.rw2-raw-image</string>
+				<string>com.adobe.raw-image</string>
+			</array>
+			<key>CFBundleTypeIconFile</key>
+			<string>greycard</string>
+		</dict>
+	</array>
+
+	<!-- The sidecar's own type. public.data plus public.content rather
+	     than public.json: it starts with the same brace as any other
+	     JSON file (§120 declared it a JSON subclass on Linux by glob
+	     alone, for the same reason), but it is content someone opens
+	     and not a bare data blob, so both. The identifier sits beside
+	     the bundle id's org.greycard root rather than nested under it,
+	     matching application/x-greycard-edit on Linux and greycard.gcd
+	     on Windows: a name for the type, not a path into the app. -->
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>org.greycard.gcd</string>
+			<key>UTTypeDescription</key>
+			<string>greycard edit sidecar</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+				<string>public.content</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>gcd</string>
+				</array>
+			</dict>
+			<key>UTTypeIconFile</key>
+			<string>application-x-greycard-edit</string>
+		</dict>
+	</array>
 </dict>
 </plist>
