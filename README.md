@@ -212,6 +212,11 @@ section; on a Mac it is the file, and the chooser starts in
 
 ## Reporting a bug
 
+In the editor, *Report a problem...* at the foot of the left panel
+opens the bug report form in your browser with the version, the
+system and the graphics card filled in, and opens the log's folder
+beside it so the file can be dragged into the form.
+
 The editor keeps a log, `greycard-ui.log`: under
 `~/Library/Logs/greycard` on a Mac, `~/.local/state/greycard` on
 Linux, `%LOCALAPPDATA%\greycard\logs` on Windows, with the previous

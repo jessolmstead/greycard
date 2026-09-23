@@ -2079,6 +2079,7 @@ dependencies = [
  "tracing",
  "tracing-log",
  "tracing-subscriber",
+ "webbrowser",
  "winresource",
  "zbus",
 ]

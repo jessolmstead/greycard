@@ -1,3 +1,7 @@
+# The editor's Report a problem... opens this form with `version`,
+# `os`, `gpu` and `log` filled in from the URL, by id
+# (crates/greycard-ui/src/report.rs). Renaming one of those ids breaks
+# that; change both together.
 name: Bug report
 description: Something in greycard is wrong or crashes.
 title: "[bug] "
@@ -34,33 +38,41 @@ body:
     validations:
       required: false
   - type: input
-    id: distro-desktop
+    id: os
     attributes:
-      label: Distro and desktop
-      description: Your distribution, and whether it is Wayland or X11.
-      placeholder: "Fedora 41, Wayland"
+      label: Operating system
+      description: >
+        The system and its version. On Linux, the distribution, and
+        whether it is Wayland or X11.
+      placeholder: "Fedora Linux 41, GNOME on Wayland"
     validations:
       required: true
   - type: input
     id: gpu
     attributes:
       label: GPU
+      description: The graphics card or chip, and its driver if you know it.
     validations:
       required: true
   - type: input
     id: version
     attributes:
       label: greycard version
-      description: The output of `greycard --version` or `greycard-ui --version`.
+      description: >
+        The output of `greycard --version` or `greycard-ui --version`;
+        the log's first line says it too.
     validations:
       required: true
   - type: textarea
-    id: terminal-output
+    id: log
     attributes:
-      label: Terminal output
+      label: The log
       description: >
-        Run greycard from a terminal and paste what it prints; there
-        is no log file.
-      render: shell
+        The editor keeps `greycard-ui.log`: in `~/Library/Logs/greycard`
+        on a Mac, `~/.local/state/greycard` on Linux,
+        `%LOCALAPPDATA%\greycard\logs` on Windows. Drag it in here.
+        `greycard-ui.log.1` beside it is the run before, the one to send
+        if greycard closed on its own. For the command line, paste what
+        it printed.
     validations:
       required: false

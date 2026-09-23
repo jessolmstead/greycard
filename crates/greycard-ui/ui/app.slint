@@ -1180,6 +1180,9 @@ export component App inherits Window {
     /// Ask the desktop for a folder, and open it in place of the
     /// current file list.
     callback open-folder();
+    /// Open the bug report form in the browser, filled in, and the
+    /// log's folder beside it.
+    callback report-asked();
     /// Whether a sheet is over everything. The sheets are declared
     /// after the grid and draw over it, so the keys belong to them.
     pure function sheet-open() -> bool {
@@ -1305,12 +1308,16 @@ export component App inherits Window {
     VerticalLayout {
         HorizontalLayout {
             // The left panel: the navigator, and room for what else an
-            // editor keeps on its left.
+            // editor keeps on its left; at its foot, the way to report
+            // a problem, found where it is looked for and nowhere near
+            // the work.
             Rectangle {
                 width: 240px;
                 background: Theme.surface;
                 Rectangle { x: parent.width - 1px; width: 1px; height: 100%; background: Theme.border; }
                 VerticalLayout {
+                VerticalLayout {
+                    vertical-stretch: 1;
                     alignment: start;
                     padding: Theme.space-4;
                     padding-top: Theme.space-2;
@@ -1520,6 +1527,16 @@ export component App inherits Window {
                             wrap: word-wrap;
                         }
                     }
+                }
+                VerticalLayout {
+                    padding: Theme.space-4;
+                    padding-top: Theme.space-2;
+                    PanelButton {
+                        text: "Report a problem...";
+                        icon: @image-url("icons/bug.svg");
+                        clicked => { root.report-asked(); }
+                    }
+                }
                 }
             }
             // Viewport. Everything drawn over the picture — a mask's

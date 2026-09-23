@@ -26,6 +26,7 @@ mod outline;
 mod panel;
 mod placeholder;
 mod render;
+mod report;
 mod scope;
 mod settings;
 #[cfg(test)]
@@ -354,6 +355,9 @@ pub(crate) struct State {
     /// The image pixel at the view's center.
     pub(crate) center: (f32, f32),
     pub(crate) renderer: Option<Renderer>,
+    /// The viewport's adapter as the log names it, for a report; none
+    /// until the rendering setup has run.
+    pub(crate) gpu: Option<String>,
     /// The last scope bins: the histogram, the backdrop of the curve
     /// editor, and after it whatever `scope` asked for.
     pub(crate) bins: Option<Vec<u32>>,
@@ -578,6 +582,7 @@ impl State {
             zoom: 0.0,
             center: (0.0, 0.0),
             renderer: None,
+            gpu: None,
             bins: None,
             scope: scope::Scope::default(),
             curve_drag: None,
@@ -665,6 +670,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::curve::install(app, &state, &worker);
     panel::history::install(app, &state, &worker);
     panel::retouch::install(app, &state, &worker);
+    report::install(app, &state);
 
     // Deliveries from the worker need the state and the worker too.
     STATE.with(|s| *s.borrow_mut() = Some(state));

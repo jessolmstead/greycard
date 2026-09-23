@@ -104,7 +104,11 @@ The most useful things you can send, in order:
 5. Which version: it is in the name of the folder you downloaded,
    or `greycard-ui --version` in a terminal.
 
-Then open an issue at
+The quickest way to send it: **Report a problem…** at the bottom of
+greycard's left panel opens the bug report form in your browser with
+the version, the macOS version and the graphics chip already filled
+in, and shows the log in Finder beside it; drag it into the form.
+Or open an issue at
 <https://github.com/jessolmstead/greycard/issues/new/choose> and
 pick the bug report form. If GitHub is one thing too many, email or
 message whoever sent you the link with the same things attached.

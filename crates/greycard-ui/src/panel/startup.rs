@@ -348,16 +348,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     if let slint::GraphicsAPI::WGPU30 { device, queue, .. } = api {
                         // Once per rendering setup, which is once per
                         // device: the line a "black viewport" report needs.
-                        let gpu = device.adapter_info();
-                        tracing::info!(
-                            "gpu: {} ({:?}, {:?}), driver {} {}",
-                            gpu.name,
-                            gpu.backend,
-                            gpu.device_type,
-                            gpu.driver,
-                            gpu.driver_info
-                        );
+                        // It is kept for a report's GPU field too.
+                        let gpu = report::gpu_line(&device.adapter_info());
+                        tracing::info!("gpu: {gpu}");
                         let mut st = state.borrow_mut();
+                        st.gpu = Some(gpu);
                         st.renderer = Some(Renderer::new(device, queue));
                         st.lut_for = None;
                         // The engine's GPU ops run on the same device,
@@ -375,6 +370,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }
                     } else {
                         tracing::error!("gpu: not wgpu 30 ({api:?}); the viewport cannot render");
+                        state.borrow_mut().gpu = Some(format!("not wgpu 30 ({api:?})"));
                     }
                     // The file to start on, now that the worker knows
                     // where to develop. From the event loop rather than

@@ -33,6 +33,10 @@ log.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-log.workspace = true
+# Report a problem opens the issue form in the browser. Slint's winit
+# backend already carries this on every platform, so it adds nothing
+# to the tree.
+webbrowser = "1.2"
 
 [build-dependencies]
 slint-build = "1.18"
