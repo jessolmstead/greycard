@@ -14016,6 +14016,44 @@ rather than guessed at; `windows-2025-vs2026` is the label to pin if
 that image ever goes backwards. This is the one part of the work not
 verified by running it, and the first tag is what verifies it.
 
+**No console behind the window.** Launched from the Start menu the
+editor opened a black console box beside itself, because a Rust binary
+is a console-subsystem one unless it says otherwise and Windows gives
+every such binary a console whether it wants one or not. `greycard-ui`
+now carries `#![cfg_attr(windows, windows_subsystem = "windows")]`;
+checked in the PE header, which reads GUI for the editor and console
+for `greycard`, and by the absence of a conhost child at run time. The
+log is untouched by this, being a file sink rather than the terminal,
+and a run through the installed copy wrote its lines as before. What
+is given up is small and worth naming: a terminal that launches the
+editor no longer waits for it, so `greycard-ui --version` arrives
+after the prompt comes back. The command line is where terminal work
+belongs and it stays a console binary.
+
+**What a real shoot said.** The port was exercised against 567 raws in
+one folder — 398 Canon CR3, 139 DNG, 30 Fujifilm RAF — every preview
+decoded, every orientation read, `Rotate270` included, in 26 s. The
+CLI developed a CR3 and a DNG to linear DNG, 16-bit TIFF and a PNG
+preview, all correct. The editor opened the folder, developed, wrote
+a sidecar and exported a JPEG at 4000x6000 upright from a Rotate270
+source with its EXIF carried, and said nothing above info for the
+whole session. A `.gcd` double-clicked launched the installed copy and
+mapped the sidecar to its raw; the Open with command opened a file
+whose path held spaces, parentheses and an ampersand. The learned
+subject model ran and masked correctly, on the CPU, falling back from
+WebGPU for the storage-buffer limit that is already the v0.3.0 item.
+
+**Two things the platform decides, not us.** Open Folder is
+`pick_folder`, which on Windows is `IFileOpenDialog` with
+`FOS_PICKFOLDERS`, and that flag hides files: a folder of raws looks
+empty while you are standing in it, where the portal on Linux greys
+them out instead. It is what every Select Folder dialog on Windows
+does and it is left alone. And the monitor's own profile is not read:
+`colord_monitors` returns nothing off Linux, so "System" means sRGB
+until WCS and ColorSync are read, which a wide-gamut monitor makes
+wrong and which is now a v0.6.0 item rather than a comment in
+`display.rs`.
+
 **Not done.** An MSI, with Add/Remove Programs and an uninstall entry
 the control panel knows about: nicer than a zip with a script in it,
 and not different in kind, the same call §110 made about a `.dmg`.

@@ -2,6 +2,16 @@
 //! engine on a worker thread, the edit as `greycard-edit` defines it,
 //! kept in a sidecar beside each file.
 
+// No console window behind the editor. Windows gives every
+// console-subsystem binary one whether or not it wants it, so the
+// Start menu would open a black box beside the window; the GUI
+// subsystem is what a windowed application asks for. The log is
+// unaffected, since it is a file sink and not the terminal, and
+// greycard, the command line, stays a console binary. A terminal
+// that launches this still receives what it prints, on the handles
+// it passes down, but does not wait for it.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 mod ai;
 mod cull;
 mod display;

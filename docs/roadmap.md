@@ -126,6 +126,12 @@ ask for first.
       against the accurate develop, a matrix, a curve and a small LUT
       per camera and style (§78)
 - [ ] Profile making from a chart shot, after dcamprof (§78)
+- [ ] The monitor's own profile on Windows and macOS: read it from
+      WCS and from ColorSync, so "System" means the display rather
+      than sRGB. Today `colord_monitors` returns nothing off Linux
+      and the viewport falls back to sRGB unless an ICC file is
+      picked by hand, which a wide-gamut monitor makes wrong
+      (display.rs:565, §137)
 - [ ] Luminance masking
 - [ ] A color range mask: a hue and chroma window in Oklab with a
       feather, seeded by clicking a spot, sampled before the look so

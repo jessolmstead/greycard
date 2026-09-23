@@ -7,6 +7,13 @@ release workflow puts a version's section into the GitHub release.
 
 ## 0.1.0, unreleased
 
+- The editor no longer opens a console window beside itself on
+  Windows. It is built for the GUI subsystem now, where a Rust binary
+  is a console one by default and Windows hands every console binary a
+  window whether it wants one or not. The log is unaffected; what goes
+  is a terminal waiting for the editor it launched, so
+  `greycard-ui --version` comes back after the prompt does. `greycard`,
+  the command line, is unchanged (§137, 2026-09-22)
 - There is a Windows package, `greycard-<version>-x86_64-windows.zip`,
   beside the Linux and macOS tarballs: both binaries, Dawn and the two
   DXC libraries it loads by name, the five Visual C++ runtime libraries
