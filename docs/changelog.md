@@ -4,8 +4,60 @@ What shipped, under the version it shipped in, newest first. An item
 moves here from `docs/roadmap.md` when it lands, with its notes
 section and its date; the reasoning stays in `docs/notes.md`. The
 release workflow puts a version's section into the GitHub release.
+Everything before the first release is under its own heading at the
+end, in the same one-line-an-item form; 0.1.0's own section is the
+note a first tester reads.
 
-## 0.1.0, unreleased
+## 0.1.0, 2026-09-22
+
+The first test build of greycard, a raw editor for Linux, macOS and
+Windows. It is a pre-release: some things are missing and some are
+wrong, and the reason it is out is to hear about both. Read the
+[guide for testers](https://github.com/jessolmstead/greycard/blob/master/docs/user-guide.md)
+before you start; it covers installing on each system, the keys, and
+how to report a problem.
+
+**What you can do with it**
+
+- Open a folder of raws and move through it in a filmstrip, a grid or
+  a single frame, with the camera's own JPEG shown at once and the
+  develop replacing it a moment later.
+- Cull from the camera's JPEG without developing anything: ratings,
+  picks and rejects, color labels, a filter over all of them, compare
+  two or four frames, and move the rejects into a folder of their own.
+- Develop: exposure and tone, a parametric and a point curve, a color
+  mixer, grading, black and white, texture, clarity and dehaze, grain
+  and vignette; white balance and camera profiles; lens corrections
+  from lensfun; demosaicing, highlight reconstruction, chromatic
+  aberration correction, deconvolution sharpening and two denoisers.
+- Mask with gradients, radial shapes and a brush, or let a learned
+  model find the subject or an object; heal, clone and fill.
+- Crop, straighten and correct perspective.
+- Use presets, including Lightroom's, and 3D LUT looks.
+- Export JPEG or TIFF in sRGB, Display P3 or Rec.2020, with the
+  profile and the EXIF embedded.
+- Keep every edit in a `.gcd` file beside its raw, and share ratings,
+  labels and keywords with Lightroom and darktable through XMP.
+
+**Known rough edges**
+
+- The default look and the Highlights, Whites and Shadows sliders are
+  close to Lightroom's but not there yet; that is the next release.
+  Tell us when a frame looks too dark, too flat or wrong in a way you
+  can name.
+- Fujifilm X-Trans bodies and Nikon's High Efficiency raws do not open.
+- On Windows and macOS the display is taken as sRGB unless you choose
+  your monitor's ICC profile by hand.
+- On a Mac, a double-click in the Finder launches greycard without
+  opening the file. The app is not signed, so each system warns once
+  before it first opens; the guide says what to click.
+- The best denoisers take tens of seconds on a large frame.
+
+Report a problem from the button at the foot of the left panel: it
+fills in the version, your system and your GPU, and shows you the log
+to attach.
+
+## Development history before 0.1.0
 
 - The file's name, the shot and the scopes stay at the top of the
   panel while the sections scroll under them, so the histogram is in
