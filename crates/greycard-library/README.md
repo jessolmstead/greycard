@@ -86,12 +86,15 @@ greycard library list 'lens:RF 24' --paths
 ```
 
 The `thumbs` module is the browser's thumbnail cache, keyed by the
-same content hash as the index's `hash` column and the long edge, one
-file an entry under `greycard/thumbs/` in the platform's cache
-directory: a small header (format, the caller's recipe and stamp, the
-size, a checksum) and a JPEG. A damaged entry, or one made under
-another recipe or stamp, is a miss and is removed; past its cap the
-least recently used entries go, down to nine tenths of it.
+same content hash as the index's `hash` column, the long edge and the
+caller's recipe, one file an entry (`<hash>-<size>-r<recipe>.thumb`)
+under `greycard/thumbs/` in the platform's cache directory: a small
+header (format, recipe, the caller's stamp, the size, a checksum) and
+a JPEG. A damaged entry, or one under another stamp, is a miss and is
+removed; past its cap, or when the cap is lowered, the least recently
+used entries go, down to nine tenths of it. What it holds is counted
+once and kept up after (`known_usage`); `usage_at` does the count
+without the cache's lock, for a thread that is not drawing a window.
 
 ```rust
 let mut thumbs = greycard_library::Thumbs::user(300 << 20)?;

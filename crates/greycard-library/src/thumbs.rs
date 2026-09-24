@@ -10,9 +10,12 @@
 //! orientation tag is in the file's head, which the hash covers.
 //!
 //! The key is [`hash_file`](crate::hash::hash_file) — the index's
-//! `hash` column for the same file — and the long edge asked for, one
-//! file an entry at `<root>/<first two hex>/<hash>-<size>.thumb`. The
-//! file is a small header and a JPEG:
+//! `hash` column for the same file — the long edge asked for and the
+//! caller's recipe, one file an entry at
+//! `<root>/<first two hex>/<hash>-<size>-r<recipe>.thumb`. The recipe
+//! is in the name so that two builds making pictures two ways each
+//! keep their own entries rather than removing each other's as misses.
+//! The file is a small header and a JPEG:
 //!
 //! ```text
 //! "GCTH"  format u16  recipe u16  width u32  height u32
@@ -21,12 +24,12 @@
 //!
 //! all little-endian. `recipe` is the caller's version of how it
 //! makes a picture, so a change there turns every entry into a miss;
-//! `stamp` is the caller's too: the editor's is zero for most raws
-//! and the modification time for a picture file, whose head can stay
-//! the same through a re-export (an uncompressed TIFF retouched in
-//! its lower half is the same size and the same first 64 KB), and for
-//! a DNG, whose directories and previews can sit past the head and be
-//! rewritten in place. The checksum is BLAKE3
+//! `stamp` is the caller's too: the editor's is the file's
+//! modification time, since the hash reads only the head and the
+//! size, and a file can change past its head without changing either
+//! — a picture re-exported, a DNG's previews updated in place, a raw
+//! still being copied by a copier that set its length first. The
+//! checksum is BLAKE3
 //! of the JPEG, cut to 16 bytes. An entry that fails any of it — cut
 //! short, another format, a checksum that does not match, a JPEG that
 //! will not decode or decodes to another size — is a miss, and is
@@ -36,7 +39,15 @@
 //! so a reader never sees half of one. A hit sets the entry's
 //! modification time to now, and that is its recency: when the
 //! entries pass the cap, the least recently used are removed until
-//! they are under nine tenths of it.
+//! they are under nine tenths of it. A temporary file left by a
+//! process that died mid-write is counted, evicted and cleared like
+//! an entry.
+//!
+//! What the cache holds is counted once, by walking it — which for a
+//! few hundred thousand entries takes a second, and is for a thread
+//! that is not drawing a window — and kept up to date after that by
+//! each write, eviction and clear; [`Thumbs::known_usage`] answers
+//! from that count without touching the disk.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -48,7 +59,8 @@ use crate::Error;
 pub const FORMAT: u16 = 1;
 
 /// The cap when the settings name none: 300 MB, about thirty thousand
-/// strip-sized pictures.
+/// frames at one strip-sized picture each; the grid's larger sizes are
+/// entries of their own and take more.
 pub const DEFAULT_CAP: u64 = 300 * 1024 * 1024;
 
 /// What the entries are cut down to when they pass the cap, as a
@@ -94,9 +106,9 @@ pub struct Usage {
 pub struct Thumbs {
     root: PathBuf,
     cap: u64,
-    /// The bytes the entries take, counted on the first write and
-    /// kept up after it; `None` until then.
-    used: Option<u64>,
+    /// What the entries hold, counted on disk once and kept up after
+    /// that; `None` until it has been counted.
+    used: Option<Usage>,
 }
 
 impl Thumbs {
@@ -131,22 +143,44 @@ impl Thumbs {
         self.cap
     }
 
-    /// A new cap, taking effect at the next write.
+    /// A new cap, and the entries evicted to it at once when they are
+    /// past it. Counts the cache first if it has not been counted.
     pub fn set_cap(&mut self, cap: u64) {
         self.cap = cap;
+        if self.counted().bytes > cap {
+            self.evict();
+        }
     }
 
-    /// Where the entry for `hash` at `size` lives.
-    pub fn entry_path(&self, hash: &str, size: u32) -> PathBuf {
+    /// What the cache holds as last counted and kept up since, or
+    /// `None` when it has not been counted yet. Touches no disk.
+    pub fn known_usage(&self) -> Option<Usage> {
+        self.used
+    }
+
+    /// Take a count made elsewhere — by [`usage_at`] on a thread that
+    /// did not hold this cache's lock — unless one is known already,
+    /// which is newer.
+    pub fn seed_usage(&mut self, usage: Usage) {
+        if self.used.is_none() {
+            self.used = Some(usage);
+        }
+    }
+
+    /// Where the entry for `hash` at `size` made under `recipe` lives.
+    pub fn entry_path(&self, hash: &str, size: u32, recipe: u16) -> PathBuf {
         let fan = hash.get(..2).unwrap_or("__");
-        self.root.join(fan).join(format!("{hash}-{size}.thumb"))
+        self.root
+            .join(fan)
+            .join(format!("{hash}-{size}-r{recipe}.thumb"))
     }
 
     /// The picture kept for `hash` at `size` under `tag`, or `None`.
-    /// A damaged entry, or one kept under another tag, is removed and
-    /// answers `None`: the caller renders and puts, as for any miss.
-    pub fn get(&self, hash: &str, size: u32, tag: Tag) -> Option<Thumb> {
-        let path = self.entry_path(hash, size);
+    /// A damaged entry, or one kept under another stamp, is removed
+    /// and answers `None`: the caller renders and puts, as for any
+    /// miss.
+    pub fn get(&mut self, hash: &str, size: u32, tag: Tag) -> Option<Thumb> {
+        let path = self.entry_path(hash, size, tag.recipe);
         let bytes = std::fs::read(&path).ok()?;
         match decode_entry(&bytes, tag) {
             Some(thumb) => {
@@ -158,8 +192,16 @@ impl Thumbs {
                 Some(thumb)
             }
             None => {
-                log::debug!("thumbnail cache: {} unusable, removed", path.display());
-                let _ = std::fs::remove_file(&path);
+                match std::fs::remove_file(&path) {
+                    Ok(()) => {
+                        log::debug!("thumbnail cache: {} unusable, removed", path.display());
+                        self.forget(bytes.len() as u64);
+                    }
+                    Err(e) => log::debug!(
+                        "thumbnail cache: {} unusable, not removed: {e}",
+                        path.display()
+                    ),
+                }
                 None
             }
         }
@@ -169,10 +211,10 @@ impl Thumbs {
     /// was there, and evict if that takes the cache past its cap.
     pub fn put(&mut self, hash: &str, size: u32, tag: Tag, thumb: &Thumb) -> std::io::Result<()> {
         let bytes = encode_entry(thumb, tag)?;
-        let path = self.entry_path(hash, size);
+        let path = self.entry_path(hash, size, tag.recipe);
         let dir = path.parent().expect("an entry is under its fan-out folder");
         std::fs::create_dir_all(dir)?;
-        let before = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
+        let before = std::fs::metadata(&path).ok().map(|m| m.len());
         // A name of this process's and this moment's, so two editors
         // writing one entry do not write into each other's file.
         let tmp = dir.join(format!(
@@ -194,11 +236,16 @@ impl Thumbs {
             return Err(e);
         }
         let used = match self.used {
-            Some(u) => u.saturating_sub(before) + bytes.len() as u64,
-            None => self.usage().bytes,
+            Some(u) => Usage {
+                bytes: u.bytes.saturating_sub(before.unwrap_or(0)) + bytes.len() as u64,
+                entries: u.entries + usize::from(before.is_none()),
+            },
+            // The first write of a session counts the cache, on the
+            // caller's thread, which is the worker's.
+            None => self.usage(),
         };
         self.used = Some(used);
-        if used > self.cap {
+        if used.bytes > self.cap {
             self.evict();
         }
         Ok(())
@@ -206,79 +253,74 @@ impl Thumbs {
 
     /// What the cache holds now, counted on disk.
     pub fn usage(&self) -> Usage {
-        let mut usage = Usage::default();
-        for (_, len, _) in self.entries() {
-            usage.bytes += len;
-            usage.entries += 1;
-        }
-        usage
+        usage_at(&self.root)
     }
 
-    /// Remove every entry. Answers what was removed.
+    /// Remove every entry, and any temporary file a writer that died
+    /// left behind. Answers what was removed.
     pub fn clear(&mut self) -> Usage {
         let mut gone = Usage::default();
-        for (path, len, _) in self.entries() {
+        for (path, len, _) in entries_at(&self.root) {
             if std::fs::remove_file(&path).is_ok() {
                 gone.bytes += len;
                 gone.entries += 1;
             }
         }
         self.remove_empty_folders();
-        self.used = Some(0);
+        self.used = Some(self.usage());
         gone
+    }
+
+    /// The count, made now if it is not known.
+    fn counted(&mut self) -> Usage {
+        match self.used {
+            Some(u) => u,
+            None => {
+                let u = self.usage();
+                self.used = Some(u);
+                u
+            }
+        }
+    }
+
+    /// One entry of `len` bytes gone from the count.
+    fn forget(&mut self, len: u64) {
+        if let Some(u) = self.used.as_mut() {
+            u.bytes = u.bytes.saturating_sub(len);
+            u.entries = u.entries.saturating_sub(1);
+        }
     }
 
     /// Remove the least recently used entries until the cache is
     /// under nine tenths of its cap.
     fn evict(&mut self) {
-        let mut entries = self.entries();
-        let mut used: u64 = entries.iter().map(|(_, len, _)| len).sum();
+        let mut entries = entries_at(&self.root);
+        let mut used = Usage {
+            bytes: entries.iter().map(|(_, len, _)| len).sum(),
+            entries: entries.len(),
+        };
         let target = (self.cap as f64 * LOW_WATER) as u64;
         entries.sort_by_key(|(_, _, when)| *when);
         let mut removed = 0usize;
         for (path, len, _) in &entries {
-            if used <= target {
+            if used.bytes <= target {
                 break;
             }
             if std::fs::remove_file(path).is_ok() {
-                used = used.saturating_sub(*len);
+                used.bytes = used.bytes.saturating_sub(*len);
+                used.entries -= 1;
                 removed += 1;
             }
         }
+        if removed > 0 {
+            self.remove_empty_folders();
+        }
         log::info!(
             "thumbnail cache: evicted {removed} entries, {} MB kept of a {} MB cap",
-            used / (1024 * 1024),
+            used.bytes / (1024 * 1024),
             self.cap / (1024 * 1024)
         );
         self.used = Some(used);
-    }
-
-    /// Every entry: its path, its length and when it was last used.
-    fn entries(&self) -> Vec<(PathBuf, u64, SystemTime)> {
-        let mut out = Vec::new();
-        let Ok(fans) = std::fs::read_dir(&self.root) else {
-            return out;
-        };
-        for fan in fans.flatten() {
-            if !fan.file_type().is_ok_and(|t| t.is_dir()) {
-                continue;
-            }
-            let Ok(files) = std::fs::read_dir(fan.path()) else {
-                continue;
-            };
-            for file in files.flatten() {
-                let path = file.path();
-                if path.extension().is_none_or(|e| e != "thumb") {
-                    continue;
-                }
-                let Ok(meta) = file.metadata() else {
-                    continue;
-                };
-                let when = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-                out.push((path, meta.len(), when));
-            }
-        }
-        out
     }
 
     fn remove_empty_folders(&self) {
@@ -290,6 +332,52 @@ impl Thumbs {
             }
         }
     }
+}
+
+/// What the cache under `root` holds, counted on disk: for a thread
+/// that does not hold the cache's lock, whose answer goes to
+/// [`Thumbs::seed_usage`].
+pub fn usage_at(root: &Path) -> Usage {
+    let mut usage = Usage::default();
+    for (_, len, _) in entries_at(root) {
+        usage.bytes += len;
+        usage.entries += 1;
+    }
+    usage
+}
+
+/// Every entry under `root`, and every temporary file: its path, its
+/// length and when it was last used or written. A temporary file of a
+/// write in progress is the newest thing in the cache and the last to
+/// be evicted; one left by a writer that died is as old as the death.
+fn entries_at(root: &Path) -> Vec<(PathBuf, u64, SystemTime)> {
+    let mut out = Vec::new();
+    let Ok(fans) = std::fs::read_dir(root) else {
+        return out;
+    };
+    for fan in fans.flatten() {
+        if !fan.file_type().is_ok_and(|t| t.is_dir()) {
+            continue;
+        }
+        let Ok(files) = std::fs::read_dir(fan.path()) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let path = file.path();
+            if path.extension().is_none_or(|e| e != "thumb" && e != "tmp") {
+                continue;
+            }
+            let Ok(meta) = file.metadata() else {
+                continue;
+            };
+            if !meta.is_file() {
+                continue;
+            }
+            let when = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            out.push((path, meta.len(), when));
+        }
+    }
+    out
 }
 
 /// An entry's bytes: the header and the JPEG.
@@ -427,7 +515,7 @@ mod tests {
         let key = hash_file(&raw).unwrap();
         assert_eq!(key, row.hash);
         let cache = Thumbs::at(dir.join("thumbs"), DEFAULT_CAP);
-        let entry = cache.entry_path(&key, 170);
+        let entry = cache.entry_path(&key, 170, 0);
         assert!(entry.to_string_lossy().contains(&row.hash));
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -477,13 +565,17 @@ mod tests {
         let turned = hash_file(&raw).unwrap();
         assert_ne!(turned, key);
         assert!(cache.get(&turned, 170, tag).is_none());
-        // The caller's recipe changed: a miss, and the entry gone.
+        // The caller's recipe changed: a miss, and the older build's
+        // entry left alone, so two builds do not remove each other's.
         let newer = Tag {
             recipe: 2,
             stamp: 0,
         };
         assert!(cache.get(&key, 170, newer).is_none());
-        assert!(!cache.entry_path(&key, 170).exists());
+        assert!(cache.entry_path(&key, 170, 1).exists());
+        cache.put(&key, 170, newer, &picture(170, 113, 5)).unwrap();
+        assert!(cache.get(&key, 170, tag).is_some());
+        assert!(cache.get(&key, 170, newer).is_some());
         // A picture file re-exported over itself with its head the
         // same: the stamp tells them apart.
         let stamped = Tag {
@@ -508,7 +600,7 @@ mod tests {
         let key = "ab".repeat(32);
         let tag = Tag::default();
         let thumb = picture(96, 64, 9);
-        let path = cache.entry_path(&key, 96);
+        let path = cache.entry_path(&key, 96, 0);
         cache.put(&key, 96, tag, &thumb).unwrap();
         let whole = std::fs::read(&path).unwrap();
         // Cut short at every length that matters: inside the header,
@@ -560,7 +652,7 @@ mod tests {
             // does not rest on the filesystem's timestamp grain.
             let f = std::fs::File::options()
                 .write(true)
-                .open(cache.entry_path(key, 128))
+                .open(cache.entry_path(key, 128, 0))
                 .unwrap();
             f.set_modified(t0 + std::time::Duration::from_secs(i as u64))
                 .unwrap();
@@ -604,6 +696,90 @@ mod tests {
                 .is_err()
         );
         assert_eq!(cache.usage(), Usage::default());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The count kept by writes, removals, evictions and clears is
+    /// the count on disk, without walking the disk to answer.
+    #[test]
+    fn the_kept_count_follows_the_disk() {
+        let dir = scratch("count");
+        let root = dir.join("thumbs");
+        let mut first = Thumbs::at(&root, DEFAULT_CAP);
+        for i in 0..5u8 {
+            first
+                .put(
+                    &format!("{i:02x}").repeat(32),
+                    128,
+                    Tag::default(),
+                    &picture(128, 96, i),
+                )
+                .unwrap();
+        }
+        // Another session: nothing known until it is counted, and a
+        // count made off the lock is taken.
+        let mut cache = Thumbs::at(&root, DEFAULT_CAP);
+        assert_eq!(cache.known_usage(), None);
+        cache.seed_usage(usage_at(&root));
+        assert_eq!(cache.known_usage(), Some(cache.usage()));
+        assert_eq!(cache.known_usage().unwrap().entries, 5);
+        // A later count does not replace the kept one.
+        cache.seed_usage(Usage::default());
+        assert_eq!(cache.known_usage().unwrap().entries, 5);
+        // A new entry, an entry replaced, a damaged one removed.
+        cache
+            .put(&"aa".repeat(32), 128, Tag::default(), &picture(128, 96, 9))
+            .unwrap();
+        cache
+            .put(&"00".repeat(32), 128, Tag::default(), &picture(128, 96, 77))
+            .unwrap();
+        assert_eq!(cache.known_usage(), Some(cache.usage()));
+        // Damaged behind the cache's back, its bytes change without
+        // the count knowing; the removal takes the entry off the
+        // count, and the bytes are off by what the damage changed
+        // until the next eviction or clear counts again.
+        let damaged = cache.entry_path(&"01".repeat(32), 128, 0);
+        std::fs::write(&damaged, b"no").unwrap();
+        assert!(cache.get(&"01".repeat(32), 128, Tag::default()).is_none());
+        assert_eq!(cache.known_usage().unwrap().entries, 5);
+        assert_eq!(cache.usage().entries, 5);
+        // A lowered cap evicts at once, to nine tenths of it.
+        let each = cache.usage().bytes / 5;
+        cache.set_cap(each * 3);
+        let now = cache.usage();
+        assert!(now.bytes <= each * 3 && now.entries >= 1, "{now:?}");
+        assert_eq!(cache.known_usage(), Some(now));
+        // A cap of nothing empties it.
+        cache.set_cap(0);
+        assert_eq!(cache.usage(), Usage::default());
+        assert_eq!(cache.known_usage(), Some(Usage::default()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A temporary file left by a writer that died is counted, and
+    /// clear takes it and its folder.
+    #[test]
+    fn a_leftover_temporary_file_is_swept() {
+        let dir = scratch("tmp");
+        let root = dir.join("thumbs");
+        let mut cache = Thumbs::at(&root, DEFAULT_CAP);
+        let key = "ef".repeat(32);
+        cache
+            .put(&key, 128, Tag::default(), &picture(128, 96, 1))
+            .unwrap();
+        let fan = root.join("ef");
+        let stray = fan.join(format!(".{key}-128.999.1.tmp"));
+        std::fs::write(&stray, vec![0u8; 5000]).unwrap();
+        let orphan_fan = root.join("12");
+        std::fs::create_dir_all(&orphan_fan).unwrap();
+        std::fs::write(orphan_fan.join(".12-128.1.1.tmp"), b"half").unwrap();
+        let usage = cache.usage();
+        assert_eq!(usage.entries, 3);
+        let gone = cache.clear();
+        assert_eq!(gone.entries, 3);
+        assert!(!stray.exists());
+        assert!(!fan.exists() && !orphan_fan.exists(), "the folders go too");
+        assert_eq!(cache.known_usage(), Some(Usage::default()));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
