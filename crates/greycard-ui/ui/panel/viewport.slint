@@ -54,6 +54,8 @@ export component Viewport inherits Rectangle {
     in property <[Pt]> guide-kept;
     in property <string> status;
     in property <string> placeholder-status;
+    /// The plate put away with the panels, by Tab.
+    in property <bool> plate-hidden: false;
     in-out property <int> canvas-choice;
     in property <[color]> canvas-colors;
     in property <bool> busy;
@@ -596,6 +598,7 @@ export component Viewport inherits Rectangle {
     // Status, bottom left, on a soft plate; a bar runs while
     // a develop is on its way.
     plate := Rectangle {
+        visible: !root.plate-hidden;
         x: Theme.space-3;
         y: parent.height - self.height - Theme.space-3;
         width: status-text.width + 2 * Theme.space-3 + (root.busy ? 72px : 0);

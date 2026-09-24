@@ -827,6 +827,11 @@ export component App inherits Window {
     callback report-asked();
     /// Whether a sheet is over everything. The sheets are declared
     /// after the grid and draw over it, so the keys belong to them.
+    /// Tab: everything but the picture put away, the left pane, the
+    /// panel, the strip and the status plate, and the viewport over
+    /// the whole window; Tab again brings them back. Not remembered:
+    /// the next run opens with them.
+    in-out property <bool> panels-hidden: false;
     pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open;
     }
@@ -855,6 +860,15 @@ export component App inherits Window {
                 if (e.text == Key.DownArrow) { root.grid-step(0, 1, root.grid-cols); return accept; }
                 if (e.text == "+" || e.text == "=") { root.grid-zoom(1); return accept; }
                 if (e.text == "-" || e.text == "_") { root.grid-zoom(-1); return accept; }
+            }
+            // Tab as Lightroom has it. Nothing else here binds it, and
+            // a LineEdit with the focus has it first, so typing in the
+            // filter or a name never reaches this. Not over the grid,
+            // which has the window already.
+            if (e.text == Key.Tab && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
+                && !e.modifiers.shift && !root.sheet-open() && !root.grid-open) {
+                root.panels-hidden = !root.panels-hidden;
+                return accept;
             }
             if ((e.text == "g" || e.text == "G") && !e.modifiers.control && !root.sheet-open()) {
                 root.grid-open = !root.grid-open;
@@ -953,8 +967,10 @@ export component App inherits Window {
             // editor keeps on its left; at its foot, the way to report
             // a problem, found where it is looked for and nowhere near
             // the work.
+            // Put away by Tab: no width, and nothing drawn or hit.
             Rectangle {
-                width: 240px;
+                width: root.panels-hidden ? 0px : 240px;
+                visible: !root.panels-hidden;
                 background: Theme.surface;
                 Rectangle { x: parent.width - 1px; width: 1px; height: 100%; background: Theme.border; }
                 VerticalLayout {
@@ -1089,11 +1105,13 @@ export component App inherits Window {
                 patch-dragged(a, b, c) => { root.patch-dragged(a, b, c); }
                 patch-dropped => { root.patch-dropped(); }
                 focus-keys => { keys.focus(); }
+                plate-hidden: root.panels-hidden;
             }
 
             // Panel.
             Rectangle {
-                width: 320px;
+                width: root.panels-hidden ? 0px : 320px;
+                visible: !root.panels-hidden;
                 background: Theme.surface;
                 Rectangle { x: 0; width: 1px; height: 100%; background: Theme.border; }
                 // The sections scroll; the view and export buttons stay
@@ -1580,6 +1598,8 @@ export component App inherits Window {
 
         // Filmstrip.
         strip := Filmstrip {
+            height: root.panels-hidden ? 0px : 148px;
+            visible: !root.panels-hidden;
             thumbs: root.thumbs;
             selected <=> root.selected;
             select(a) => { root.select(a); }

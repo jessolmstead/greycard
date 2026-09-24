@@ -1073,4 +1073,27 @@ mod tests {
         Shown::Guide.open(&app);
         assert_eq!(app.get_guide_mode(), "Vertical");
     }
+
+    #[test]
+    fn tab_puts_the_panels_away_and_brings_them_back() {
+        let app = crate::testing::window(3);
+        let (_state, _worker) = crate::testing::retouch_state(&app);
+        let tab = slint::platform::Key::Tab;
+        assert!(!app.get_panels_hidden());
+        crate::testing::press(&app, tab);
+        assert!(app.get_panels_hidden(), "Tab hides them");
+        crate::testing::press(&app, tab);
+        assert!(!app.get_panels_hidden(), "and Tab again shows them");
+
+        // A sheet has the keys: Tab under it is not this one.
+        app.set_export_open(true);
+        crate::testing::press(&app, tab);
+        assert!(!app.get_panels_hidden(), "not under a sheet");
+        app.set_export_open(false);
+
+        // Nor over the grid, which has the window already.
+        app.set_grid_open(true);
+        crate::testing::press(&app, tab);
+        assert!(!app.get_panels_hidden(), "not over the grid");
+    }
 }

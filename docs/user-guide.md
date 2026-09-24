@@ -87,6 +87,7 @@ instant.
 | ← → | Previous or next frame |
 | G | Grid, and back (in the grid, Ctrl+wheel or + and − resize it) |
 | C | Culling mode |
+| Tab | Hide the panels, the filmstrip and the status line, and bring them back |
 | Space | Fit or 1:1 |
 | Z | Fit or 3:1 |
 | 1 to 5, 0 | Set a rating, or clear it |

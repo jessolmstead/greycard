@@ -142,6 +142,10 @@ struct Cli {
     /// Open on the grid of the folder rather than on the picture
     #[arg(long)]
     grid: bool,
+    /// Open with the panels, the strip and the status plate put away,
+    /// as Tab does, for a snapshot of the picture alone
+    #[arg(long)]
+    hide_panels: bool,
     /// The grid's cell, logical pixels (96 to 512); without it,
     /// whichever size it was left at
     #[arg(long, value_name = "PX")]

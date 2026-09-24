@@ -218,6 +218,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         cli.grid_cell.unwrap_or(remembered.grid_cell),
     ));
     app.set_grid_open(cli.grid);
+    app.set_panels_hidden(cli.hide_panels);
     // The three names the flag's old three-way Show went by. The
     // chips say more than they can, but a flag on a command line
     // wants one word, and a script written against the old one still
