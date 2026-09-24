@@ -164,7 +164,8 @@ impl Local {
 /// the curves, the mixer, the color, the tint, a look table, the
 /// vignette or any local. So a range mask never moves under its own
 /// adjustment or another's, and the Detail section moves one a little:
-/// dehaze at 0.6 took 5% of a sky window's pixels out on `3G0A4650`.
+/// dehaze at 0.6 moved 6.3% of the pixels of a sky window (70 to 100,
+/// fading 6) on `3G0A4650`, its coverage 36.7% to 30.5%.
 ///
 /// `exposure` is the global exposure alone, not the baseline a raw is
 /// shown brighter by (`Source::baseline`), so a lightness of 1 is the
