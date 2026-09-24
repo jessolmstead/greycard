@@ -73,6 +73,28 @@ fn ops_alone() {
     apply_matrix(&mut image.data, prepared.white_balance.matrix_f32());
     println!("frame {w}x{h}, {} threads", rayon::current_num_threads());
 
+    if wants("normalize") {
+        time("normalize", runs, || {
+            let t = Instant::now();
+            let out = normalize_levels(&frame);
+            (t.elapsed(), out)
+        });
+    }
+    if wants("gains") {
+        time("gains", runs, || {
+            let mut s = prepared.samples.clone();
+            let t = Instant::now();
+            apply_gains_cfa(&mut s, w, &pattern, prepared.gains);
+            (t.elapsed(), s)
+        });
+    }
+    if wants("bilinear") {
+        time("bilinear", runs, || {
+            let t = Instant::now();
+            let out = demosaic_bilinear(&prepared.samples, w, h, &pattern);
+            (t.elapsed(), out)
+        });
+    }
     if wants("nlm") {
         time("nlm", runs, || {
             let mut rgb = camera.clone();
