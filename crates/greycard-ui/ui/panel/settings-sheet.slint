@@ -1,8 +1,8 @@
 // The settings sheet: what belongs to the installation rather than to
 // a picture, over everything until closed. Where the sidecars go and
-// whether an XMP goes beside them; and, with a folder open, the move
-// that puts that folder's sidecars where the setting says now, since
-// flipping it moves nothing by itself.
+// whether an XMP goes beside them; and, with frames open, the move
+// that puts their sidecars where the setting says now, since flipping
+// it moves nothing by itself.
 
 import { Theme } from "../theme.slint";
 import { Toggle, PanelButton, Segmented } from "../controls.slint";
@@ -12,10 +12,14 @@ export component SettingsSheet inherits Rectangle {
     /// "Beside the raw" or "Hidden folder", as the row spells it.
     in-out property <string> sidecar-placement;
     in-out property <bool> xmp-sidecars;
-    /// Whether a folder is open, and how many of its frames have a
-    /// sidecar in the place the setting does not name.
-    in property <bool> folder-open;
+    /// How many frames are open (a folder's, or the files a command
+    /// line named), and how many of them have a sidecar in the place
+    /// the setting does not name. The move runs over the same list.
+    in property <int> open-frames;
     in property <int> sidecars-elsewhere;
+    /// False under `--no-sidecars`: nothing is moved in a run that
+    /// promised not to write them.
+    in property <bool> sidecars-written: true;
     /// What the last move did, in words; empty before one.
     in property <string> settings-note;
     callback placement-changed();
@@ -26,6 +30,9 @@ export component SettingsSheet inherits Rectangle {
     property <string> elsewhere-words: root.sidecars-elsewhere == 1
         ? "1 sidecar"
         : root.sidecars-elsewhere + " sidecars";
+    property <string> frames-words: root.open-frames == 1
+        ? "the open frame"
+        : "the " + root.open-frames + " open frames";
 
     background: #000000a0;
     TouchArea { clicked => { root.settings-open = false; } }
@@ -86,21 +93,23 @@ export component SettingsSheet inherits Rectangle {
                 color: Theme.text-muted;
                 wrap: word-wrap;
             }
-            if root.folder-open: VerticalLayout {
+            if root.open-frames > 0: VerticalLayout {
                 spacing: Theme.space-2;
                 Text {
-                    text: root.sidecars-elsewhere == 0
-                        ? "Every sidecar in this folder is in the chosen place."
-                        : root.elsewhere-words + " in this folder "
+                    text: !root.sidecars-written
+                        ? "Sidecars are not written this run (--no-sidecars), so none are moved."
+                        : root.sidecars-elsewhere == 0
+                        ? "Every sidecar of " + root.frames-words + " is in the chosen place."
+                        : root.elsewhere-words + " of " + root.frames-words + " "
                             + (root.sidecars-elsewhere == 1 ? "is" : "are") + " in the other place.";
                     font-size: Theme.font-xs;
                     color: Theme.text-secondary;
                     wrap: word-wrap;
                 }
                 if !root.confirming: PanelButton {
-                    text: "Move this folder's sidecars";
+                    text: "Move the open frames' sidecars";
                     icon: @image-url("../icons/folder-open.svg");
-                    enabled: root.sidecars-elsewhere > 0;
+                    enabled: root.sidecars-written && root.sidecars-elsewhere > 0;
                     clicked => { root.confirming = true; }
                 }
                 if root.confirming: HorizontalLayout {

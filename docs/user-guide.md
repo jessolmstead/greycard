@@ -56,15 +56,15 @@ another folder or machine, copy the `.gcd` files along with the raws.
 Delete a `.gcd` file to start that frame's edit over.
 
 If you would rather not see a `.gcd` beside every raw, open
-**Settings…** at the bottom of the left panel (or press Ctrl+,) and
+**Settings...** at the bottom of the left panel (or press Ctrl+,) and
 set **Edits go** to **Hidden folder**: edits then go into a hidden
 `.greycard` folder inside the shoot's folder, which travels with the
 shoot the same way. A sidecar in either place is read, and changing
 the setting moves nothing by itself: a frame's sidecar moves to the
 chosen place the next time it is saved, so a folder tidies itself as
-you work through it. To tidy the open folder at once, use **Move this
-folder's sidecars** in the same sheet; it says how many are in the
-other place and moves them when you confirm.
+you work through it. To tidy the open frames at once, use **Move the
+open frames' sidecars** in the same sheet; it says how many are in
+the other place and moves them when you confirm.
 
 Ratings, flags and labels are kept in the `.gcd` too. To share ratings,
 labels and keywords with Lightroom or darktable, turn on **Also write

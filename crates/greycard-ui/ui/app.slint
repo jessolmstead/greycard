@@ -829,6 +829,10 @@ export component App inherits Window {
     in-out property <string> sidecar-placement: "Beside the raw";
     in-out property <bool> xmp-sidecars: false;
     in property <int> sidecars-elsewhere: 0;
+    /// How many frames are open, which the count and the move run
+    /// over; and whether this run writes sidecars at all.
+    in property <int> open-frames: 0;
+    in property <bool> sidecars-written: true;
     in property <string> settings-note: "";
     callback settings-asked();
     callback placement-changed();
@@ -1749,7 +1753,8 @@ export component App inherits Window {
         settings-open <=> root.settings-open;
         sidecar-placement <=> root.sidecar-placement;
         xmp-sidecars <=> root.xmp-sidecars;
-        folder-open: root.thumbs.length > 0;
+        open-frames: root.open-frames;
+        sidecars-written: root.sidecars-written;
         sidecars-elsewhere: root.sidecars-elsewhere;
         settings-note: root.settings-note;
         placement-changed => { root.placement-changed(); }

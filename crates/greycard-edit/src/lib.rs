@@ -1430,15 +1430,13 @@ impl Sidecar {
     /// when it is the one [`Sidecar::find`] reads, the newer, and
     /// removed when it is not, since a save would have superseded it
     /// the same way. The hidden folder is made, and hidden, first.
-    /// True when anything moved or went; false for a frame with
-    /// nothing in the other place.
-    pub fn settle(raw: &Path, placement: Placement) -> std::io::Result<bool> {
+    pub fn settle(raw: &Path, placement: Placement) -> std::io::Result<Settled> {
         let (here, other) = (
             Self::path_in(raw, placement),
             Self::path_in(raw, placement.other()),
         );
         if !other.exists() {
-            return Ok(false);
+            return Ok(Settled::InPlace);
         }
         if Self::find(raw).as_deref() == Some(other.as_path()) {
             if placement == Placement::Folder {
@@ -1446,11 +1444,25 @@ impl Sidecar {
                 Self::folder_under(shoot)?;
             }
             std::fs::rename(&other, &here)?;
+            Ok(Settled::Moved)
         } else {
             std::fs::remove_file(&other)?;
+            Ok(Settled::Dropped)
         }
-        Ok(true)
     }
+}
+
+/// What [`Sidecar::settle`] did with a frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Settled {
+    /// Nothing was in the other place.
+    InPlace,
+    /// The copy in the other place, the one read, was renamed into
+    /// this one.
+    Moved,
+    /// The copy in the other place was the older of two and was
+    /// removed; the one read was already in place.
+    Dropped,
 }
 
 /// Mark a folder hidden where a leading dot does not do it. Windows
@@ -2241,10 +2253,10 @@ mod tests {
         assert!(Sidecar::misplaced(&c, to));
         assert!(!Sidecar::misplaced(&d, to));
 
-        assert!(Sidecar::settle(&a, to).unwrap());
-        assert!(!Sidecar::settle(&b, to).unwrap(), "already there");
-        assert!(Sidecar::settle(&c, to).unwrap());
-        assert!(!Sidecar::settle(&d, to).unwrap(), "nothing to move");
+        assert_eq!(Sidecar::settle(&a, to).unwrap(), Settled::Moved);
+        assert_eq!(Sidecar::settle(&b, to).unwrap(), Settled::InPlace);
+        assert_eq!(Sidecar::settle(&c, to).unwrap(), Settled::Moved);
+        assert_eq!(Sidecar::settle(&d, to).unwrap(), Settled::InPlace);
 
         let read =
             |raw: &Path, placement| std::fs::read_to_string(Sidecar::path_in(raw, placement)).ok();
@@ -2260,7 +2272,7 @@ mod tests {
         // moved over the one that is read.
         let stale = place(&a, Placement::Beside, "a stale");
         set_modified(&stale, 1_000_000_000);
-        assert!(Sidecar::settle(&a, to).unwrap());
+        assert_eq!(Sidecar::settle(&a, to).unwrap(), Settled::Dropped);
         assert_eq!(read(&a, to).as_deref(), Some("a"));
         assert!(!stale.exists());
         std::fs::remove_dir_all(&dir).unwrap();

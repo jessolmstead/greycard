@@ -34,11 +34,13 @@ pub(crate) fn sidecars_elsewhere(files: &[PathBuf], placement: greycard_edit::Pl
         .count()
 }
 
-/// What a move did: the frames whose sidecar was settled, and the
-/// ones that could not be, each with why.
+/// What a move did: the sidecars renamed into place, the stale
+/// copies removed from the other place (the one read was in place
+/// already), and the frames that could not be settled, each with why.
 #[derive(Debug, Default, PartialEq)]
 pub(crate) struct Moved {
     pub(crate) moved: usize,
+    pub(crate) dropped: usize,
     pub(crate) failed: Vec<(PathBuf, String)>,
 }
 
@@ -49,8 +51,9 @@ pub(crate) fn move_sidecars(files: &[PathBuf], placement: greycard_edit::Placeme
     let mut out = Moved::default();
     for f in files {
         match Sidecar::settle(f, placement) {
-            Ok(true) => out.moved += 1,
-            Ok(false) => {}
+            Ok(greycard_edit::Settled::Moved) => out.moved += 1,
+            Ok(greycard_edit::Settled::Dropped) => out.dropped += 1,
+            Ok(greycard_edit::Settled::InPlace) => {}
             Err(e) => {
                 tracing::warn!("{}: sidecar not moved: {e}", f.display());
                 out.failed.push((f.clone(), e.to_string()));
@@ -71,6 +74,13 @@ pub(crate) fn moved_words(moved: &Moved, placement: greycard_edit::Placement) ->
         "Moved {n} sidecar{} {place}.",
         if n == 1 { "" } else { "s" }
     );
+    if moved.dropped > 0 {
+        let k = moved.dropped;
+        words.push_str(&format!(
+            " Removed {k} older cop{} left in the other place.",
+            if k == 1 { "y" } else { "ies" }
+        ));
+    }
     if !moved.failed.is_empty() {
         let k = moved.failed.len();
         words.push_str(&format!(" {k} could not be moved; the log says why."));
@@ -78,9 +88,13 @@ pub(crate) fn moved_words(moved: &Moved, placement: greycard_edit::Placement) ->
     words
 }
 
-/// The sheet's count, from the folder as it is on disk now.
+/// The sheet's count, over the open frames as they are on disk now:
+/// the list the move runs over, which a folder fills and a command
+/// line's files may not. And whether a move may run at all.
 pub(crate) fn show_elsewhere(st: &State, app: &App) {
+    app.set_open_frames(st.files.len() as i32);
     app.set_sidecars_elsewhere(sidecars_elsewhere(&st.files, st.placement) as i32);
+    app.set_sidecars_written(st.write_sidecars);
 }
 
 /// Change one field of the settings file, unless this is a batch run
@@ -148,11 +162,17 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             let st = state.borrow();
+            // `--no-sidecars` promised not to touch them; the sheet
+            // says so and offers nothing, and this holds to it too.
+            if !st.write_sidecars {
+                return;
+            }
             let moved = move_sidecars(&st.files, st.placement);
             tracing::info!(
-                "moved {} sidecars to {:?}, {} failed",
+                "moved {} sidecars to {:?}, removed {} older copies, {} failed",
                 moved.moved,
                 st.placement,
+                moved.dropped,
                 moved.failed.len()
             );
             app.set_settings_note(moved_words(&moved, st.placement).into());
@@ -209,6 +229,7 @@ mod tests {
             moved,
             Moved {
                 moved: 2,
+                dropped: 0,
                 failed: Vec::new()
             }
         );
@@ -238,6 +259,7 @@ mod tests {
         let files = shoot(&dir);
         let app = crate::testing::window(files.len());
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        state.borrow_mut().write_sidecars = true;
 
         // Ctrl+, opens it, with the place and the count as they are.
         app.window()
@@ -276,6 +298,55 @@ mod tests {
         // Escape closes it.
         crate::testing::press(&app, slint::platform::Key::Escape);
         assert!(!app.get_settings_open());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_stale_copy_removed_is_not_counted_as_moved() {
+        let dir = scratch("stale");
+        let (a, b) = (dir.join("A.CR3"), dir.join("B.CR3"));
+        let sidecar = Sidecar::default();
+        // A under the folder only; B beside, with an older copy
+        // under the folder too.
+        sidecar.save_in(&a, Placement::Folder).unwrap();
+        sidecar.save_in(&b, Placement::Beside).unwrap();
+        let stale = Sidecar::path_in(&b, Placement::Folder);
+        std::fs::write(&stale, "{}").unwrap();
+        let old = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+
+        let moved = move_sidecars(&[a.clone(), b.clone()], Placement::Beside);
+        assert_eq!((moved.moved, moved.dropped), (1, 1));
+        assert_eq!(
+            moved_words(&moved, Placement::Beside),
+            "Moved 1 sidecar beside their raws. Removed 1 older copy left in the other place."
+        );
+        assert!(Sidecar::path_in(&a, Placement::Beside).exists());
+        assert!(!stale.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn no_sidecars_moves_nothing() {
+        let dir = scratch("nosidecars");
+        let files = shoot(&dir);
+        let app = crate::testing::window(files.len());
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.write_sidecars = false;
+            st.placement = Placement::Folder;
+        }
+        app.invoke_settings_asked();
+        assert!(!app.get_sidecars_written(), "the sheet is told");
+        app.invoke_sidecars_move();
+        assert!(Sidecar::path_in(&files[0], Placement::Beside).exists());
+        assert_eq!(app.get_sidecars_elsewhere(), 2);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
