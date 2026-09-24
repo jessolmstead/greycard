@@ -11,7 +11,8 @@ import { PanelButton, Segmented } from "controls.slint";
 import { Pt, Thumb, MaskBox, MaskPick, CompareTile, FilterChip } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
-import { PresetsSection, CameraSection, LookSection } from "panel/assets.slint";
+import { CameraSection, LookSection } from "panel/assets.slint";
+import { PresetsSection } from "panel/presets.slint";
 import { WhiteBalanceSection, ColorSection, MixerSection, BlackWhiteSection, GradingSection, TintSection } from "panel/color.slint";
 import { CurvesSection } from "panel/curve.slint";
 import { LightSection, NoiseSection, DetailSection, SharpenSection, VignetteSection, GrainSection, DemosaicSection } from "panel/edit.slint";
@@ -963,10 +964,10 @@ export component App inherits Window {
 
     VerticalLayout {
         HorizontalLayout {
-            // The left panel: the navigator, and room for what else an
-            // editor keeps on its left; at its foot, the way to report
-            // a problem, found where it is looked for and nowhere near
-            // the work.
+            // The left panel: the navigator, the presets, the
+            // snapshots and the history, as an editor keeps them on
+            // its left; at its foot, the way to report a problem,
+            // found where it is looked for and nowhere near the work.
             // Put away by Tab: no width, and nothing drawn or hit.
             Rectangle {
                 width: root.panels-hidden ? 0px : 240px;
@@ -996,6 +997,19 @@ export component App inherits Window {
                         nav-height: root.nav-height;
                         navigate(a, b) => { root.navigate(a, b); }
                         focus-keys => { keys.focus(); }
+                    }
+                    // The presets: a click lays one over the edit, the
+                    // bin removes it, and the edit is saved or a
+                    // Lightroom preset brought in below the list. Not
+                    // in culling, as the snapshots and the history.
+                    if !root.culling: PresetsSection {
+                        selected <=> root.selected;
+                        collapsed-presets <=> root.collapsed-presets;
+                        preset-names <=> root.preset-names;
+                        preset-applied(a) => { root.preset-applied(a); }
+                        preset-deleted(a) => { root.preset-deleted(a); }
+                        preset-import => { root.preset-import(); }
+                        preset-save-open => { root.preset-save-open(); }
                     }
                     // The snapshots: whole states kept by name. A
                     // click restores one as a step; a double-click
@@ -1229,15 +1243,6 @@ export component App inherits Window {
                             component-changed(a) => { root.component-changed(a); }
                             renamed => { root.renamed(); }
                             view-changed => { root.view-changed(); }
-                        }
-                        if root.panel-tab == "Develop": PresetsSection {
-                            selected <=> root.selected;
-                            collapsed-presets <=> root.collapsed-presets;
-                            preset-names <=> root.preset-names;
-                            preset-applied(a) => { root.preset-applied(a); }
-                            preset-deleted(a) => { root.preset-deleted(a); }
-                            preset-import => { root.preset-import(); }
-                            preset-save-open => { root.preset-save-open(); }
                         }
                         if root.panel-tab == "Develop": WhiteBalanceSection {
                             as-shot <=> root.as-shot;
