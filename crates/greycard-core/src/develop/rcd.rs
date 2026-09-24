@@ -315,7 +315,13 @@ fn line(samples: &[f32], i: usize, step: isize) -> [f32; 9] {
 /// The reference's directional statistic: a quadratic form over nine
 /// samples along one line, larger where the line is busier. Symmetric
 /// under reversal, zero on a constant line, floored at `EPS_SQ`.
-#[inline]
+///
+/// Always inlined: at `#[inline]` LLVM's choice came out differently
+/// from one build of the crate to the next as unrelated code changed,
+/// and where it made this a call RCD took 5.5 s at one thread on a
+/// 45 MP frame against 4.5 s where it did not. Inlined in both passes
+/// that use it, it is 4.0 s, and the same to the bit.
+#[inline(always)]
 fn direction_stat(v: [f32; 9]) -> f32 {
     let [m4, m3, m2, m1, c, p1, p2, p3, p4] = v;
     let s = -18.0 * c * m1 - 18.0 * c * p1 - 36.0 * c * m2 - 36.0 * c * p2
