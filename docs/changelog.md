@@ -80,6 +80,15 @@ note a first tester reads.
   cannot be had (§159, 2026-09-23).
 - `greycard models --fetch all` carries on past a model that fails and
   reports the failures at the end (§159, 2026-09-23).
+- The library index, `greycard-library`: a SQLite index of every raw
+  and picture's path, size, content hash, EXIF and sidecar meta,
+  incremental, finding a moved file by hash and leaving an unmounted
+  drive alone; `greycard library index DIR` and `greycard library list
+  'camera:R6' 'iso>=3200' 'rating>=3'` with a filter language that
+  refuses what it cannot answer. Not yet wired into the editor (§160,
+  2026-09-24).
+- The probe reads the lens, focal length and date, and a JPEG or PNG's
+  EXIF from its head without decoding it (§160, 2026-09-24).
 
 ## 0.1.1, 2026-09-22
 

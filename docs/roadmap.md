@@ -150,19 +150,17 @@ Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.
 
-- [ ] `greycard-library` crate: a SQLite index of path, size, mtime,
-  content hash (first 64 KB plus size), the filterable EXIF, and
-  the sidecar's meta; a CLI listing with a filter expression as
-  the testable surface
 - [ ] The filter bar across roots and large folders with the EXIF
   facets the index holds: camera, lens, ISO, focal length, date,
-  keyword; the folder filter's fields become the index's. Waits on
-  the index
+  keyword; the folder filter's fields become the index's, with the
+  facet counts (one GROUP BY a facet) the index leaves to the bar
+  (§160). The index is there since §160
 - [ ] Thumbnail cache keyed by content hash rather than path, so a
-  moved shoot does not re-render. Waits on the index
+  moved shoot does not re-render. The index is there since §160
 - [ ] Roots: folders the user has added, an all-roots view, an inotify
   watcher on open roots and an mtime pass on launch; a moved file
-  found by hash rather than flagged missing. Waits on the index
+  found by hash rather than flagged missing. The index is there
+  since §160; `index_tree` and `folders` are its start
 - [ ] Archive roots, for a NAS or a mounted cloud folder: Back up
   copies a shoot's new and changed files and sidecars to the archive,
   hash-verified and never deleting there; Remove rejects finds the
@@ -180,7 +178,7 @@ comes across with its ratings and collections.
 - [ ] Stacks, in the collections file. Waits on collections
 - [ ] Faces in the library: detection and grouping by a clean-license
   model, names as keywords in the meta section, a facet in the filter
-  bar. Waits on the index
+  bar. The index is there since §160
 - [ ] Lightroom catalog import: the `.lrcat` read as SQLite, ratings,
   flags, labels, keywords and captions to the meta section exactly,
   collections and translatable smart collections to the collections
@@ -321,6 +319,12 @@ release when the wait clears.
       on the release after 1.18.0 (§99)
 - [ ] Drop the rawler `[patch.crates-io]`. Waits on a rawler release
       carrying dnglab/dnglab#840 (§13j)
+- [ ] rawler 0.8's `raw_metadata` on a corrupt CR3 spins to 29 GB of
+      resident memory before anything stops it, and its RW2 decoder
+      divides by zero on a fuzzed head; the recipes are in §160 and
+      the crate's fixture. File both upstream; until the first is
+      fixed a damaged CR3 on a card is the one way an index pass can
+      be brought down
 - [ ] ort rc.13 ignores every `ep::WebGPU` option (the key prefix is
       applied twice); greycard sets them through a config entry
       instead. The issue text is in §159; file it, and drop the
