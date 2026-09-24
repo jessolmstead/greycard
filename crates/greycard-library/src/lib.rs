@@ -35,15 +35,19 @@ use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, pa
 pub mod filter;
 pub mod hash;
 mod index;
+pub mod thumbs;
 
 pub use filter::{Filter, ParseError};
 pub use hash::hash_file;
 pub use index::{Progress, Report, is_indexed_path, read_meta};
+pub use thumbs::{Thumb, Thumbs};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("no data directory: XDG_DATA_HOME is not set and the platform names none")]
     NoDataDir,
+    #[error("no cache directory: XDG_CACHE_HOME is not set and the platform names none")]
+    NoCacheDir,
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("library database: {0}")]

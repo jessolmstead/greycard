@@ -24,9 +24,10 @@ blake3 = "1"
 # `std::fs::canonicalize` without the `\\?\` prefix Windows puts on
 # its answer, so a stored folder is a path a person would type.
 dunce = "1"
+# The thumbnail cache's entries are JPEGs.
+image.workspace = true
 
 [dev-dependencies]
 # The tests write small TIFFs with real EXIF through the engine's
 # writer, whose metadata is rawler's type, and a PNG with none.
 rawler.workspace = true
-image.workspace = true
