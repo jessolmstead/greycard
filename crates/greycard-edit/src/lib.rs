@@ -890,6 +890,40 @@ pub fn meta_into(
     (change, moved)
 }
 
+/// Lay `sections` of `from` over the current edit of every frame in
+/// `frames`, each as one step of its history; the frames it moved.
+///
+/// This is a preset that is never written: [`Preset::from_edit`]
+/// keeps the chosen sections of `from` and [`Preset::apply`] lays
+/// them over each frame, so a sync and a preset cannot come to mean
+/// two different things by a section. A frame that already has every
+/// chosen section as `from` has it records nothing and is left out
+/// of what comes back, so its sidecar is not rewritten. Nothing but
+/// `current` and `history` is touched: the meta, the turn and the
+/// snapshots are the frame's own. A frame past the end of the list
+/// is passed over rather than a panic, as [`meta_into`] does.
+pub fn sync_into(
+    sidecars: &mut [Sidecar],
+    from: &Edit,
+    frames: &[usize],
+    sections: &[Section],
+) -> Vec<usize> {
+    let carried = Preset::from_edit("", from, sections);
+    if carried.sections.is_empty() {
+        return Vec::new();
+    }
+    frames
+        .iter()
+        .copied()
+        .filter(|&i| {
+            sidecars.get_mut(i).is_some_and(|sidecar| {
+                let applied = carried.applied(&sidecar.current);
+                sidecar.record(applied)
+            })
+        })
+        .collect()
+}
+
 /// `onto` with every leaf that differs between `before` and
 /// `touched` taking `touched`'s value: the one slider moved, and
 /// nothing else of `touched`. Arrays are leaves. Through the edit's
@@ -1723,6 +1757,98 @@ mod tests {
         // A frame that is not there any more is passed over.
         let (_, moved) = meta_into(&mut sidecars, &[9], Change::Rating(1));
         assert!(moved.is_empty());
+    }
+
+    #[test]
+    fn a_sync_lays_the_chosen_sections_over_the_set_as_one_step_each() {
+        use crate::meta::Change;
+        // The frame synced from: a look, a white balance, a crop, a
+        // mask and a patch of its own.
+        let mut from = Edit::default();
+        from.light.exposure = 0.7;
+        from.light.tone.contrast = 1.3;
+        from.color.vibrance = 0.4;
+        from.white_balance = WhiteBalance::Custom {
+            temperature: 3200.0,
+            tint: 0.002,
+        };
+        from.geometry.crop = Some(geometry::Crop {
+            x: 0.1,
+            y: 0.1,
+            w: 0.5,
+            h: 0.5,
+        });
+        from.adjustments.push(Adjustment {
+            id: 9,
+            name: "Sky".into(),
+            ..Adjustment::default()
+        });
+        from.retouch.patches.push(retouch::Patch::default());
+
+        // Three others: one with an edit and a history of its own,
+        // one fresh, one with a star.
+        let mut sidecars = vec![Sidecar::default(); 4];
+        let mut own = Edit::default();
+        own.light.exposure = -1.0;
+        own.sharpen.radius = 2.0;
+        own.geometry.crop = Some(geometry::Crop {
+            x: 0.0,
+            y: 0.0,
+            w: 0.9,
+            h: 0.9,
+        });
+        assert!(sidecars[1].record(own.clone()));
+        meta_into(&mut sidecars, &[3], Change::Rating(3));
+        sidecars[3].turn = 1;
+        let before: Vec<Sidecar> = sidecars.clone();
+
+        let sections = [Section::Light, Section::Color, Section::WhiteBalance];
+        let moved = sync_into(&mut sidecars, &from, &[1, 2, 3, 9], &sections);
+        assert_eq!(moved, [1, 2, 3], "the frame past the end is passed over");
+        for &i in &moved {
+            let s = &sidecars[i];
+            // The chosen sections are the source's.
+            assert_eq!(s.current.light, from.light, "frame {i}");
+            assert_eq!(s.current.color, from.color, "frame {i}");
+            assert_eq!(s.current.white_balance, from.white_balance, "frame {i}");
+            // The rest is the frame's own: its sharpen, its crop,
+            // and no masks or patches of anybody else's.
+            let was = &before[i].current;
+            assert_eq!(s.current.sharpen, was.sharpen, "frame {i}");
+            assert_eq!(s.current.geometry, was.geometry, "frame {i}");
+            assert_eq!(s.current.adjustments, was.adjustments, "frame {i}");
+            assert_eq!(s.current.retouch, was.retouch, "frame {i}");
+            // One step on the history, the state before it kept.
+            assert_eq!(s.history.len(), before[i].history.len() + 1, "frame {i}");
+            assert_eq!(s.history.last(), Some(was), "frame {i}");
+            // The meta and the turn are not the edit's.
+            assert_eq!(s.meta, before[i].meta, "frame {i}");
+            assert_eq!(s.turn, before[i].turn, "frame {i}");
+        }
+        // The frame not in the set is untouched.
+        assert_eq!(sidecars[0], before[0]);
+        // Undo on a synced frame takes the sync back whole.
+        let mut undone = sidecars[1].clone();
+        assert!(undone.undo());
+        assert_eq!(undone.current, own);
+
+        // Once more: every frame has it already, so nothing moves
+        // and no sidecar needs writing.
+        let again = sync_into(&mut sidecars, &from, &[1, 2, 3], &sections);
+        assert!(again.is_empty());
+        assert_eq!(sidecars[1].history.len(), before[1].history.len() + 1);
+
+        // The masks, asked for, come across with ids of their own,
+        // exactly as a preset's do.
+        let moved = sync_into(&mut sidecars, &from, &[2], &[Section::Adjustments]);
+        assert_eq!(moved, [2]);
+        assert_eq!(sidecars[2].current.adjustments.len(), 1);
+        assert_eq!(sidecars[2].current.adjustments[0].name, "Sky");
+        assert_eq!(sidecars[2].current.adjustments[0].id, 1);
+
+        // Nothing chosen is nothing done.
+        assert!(sync_into(&mut sidecars, &from, &[0], &[]).is_empty());
+        assert_eq!(sidecars[0], before[0]);
     }
 
     #[test]
