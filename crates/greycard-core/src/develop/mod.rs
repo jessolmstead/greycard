@@ -915,9 +915,16 @@ pub(crate) fn bilinear_pixel(
 /// closure's captures, a level pattern's fields or a slice's length,
 /// and can keep the loop from vectorizing. As the argument of a
 /// function that is not inlined the row is `noalias`, and `f`, inlined
-/// into it, is compiled knowing its writes touch nothing else. Worth it
-/// only where a measurement says so; see the notes on the tile-write
-/// audit.
+/// into it, is compiled knowing its writes touch nothing else.
+///
+/// The `#[inline(never)]` is what does the work, at least for the
+/// blur: with `#[inline(always)]` the levels and the gains keep their
+/// gain, since LLVM turns a `noalias` argument into scope metadata when
+/// it inlines, but the blur goes back to what it was without this.
+/// Changing it to `#[inline]` measurably loses the blur's gain.
+///
+/// Worth it only where a measurement says so; see the notes on the
+/// tile-write audit.
 #[inline(never)]
 pub(crate) fn own_row<T, R>(row: &mut [T], f: impl FnOnce(&mut [T]) -> R) -> R {
     f(row)
