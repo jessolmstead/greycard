@@ -1,0 +1,56 @@
+// The structs App's properties carry, which Rust reads and writes
+// as generated types; here so the panel's files can name them too.
+
+/// A point on the view, logical pixels.
+export struct Pt {
+    x: float,
+    y: float,
+}
+
+export struct Thumb {
+    name: string,
+    image: image,
+    /// The frame's meta, as the badges want it: stars, the flag (1 a
+    /// pick, 2 a reject) and the color label (1 to 5). Rust owns what
+    /// the numbers mean; see `greycard_edit::meta`.
+    rating: int,
+    flag: int,
+    label: int,
+}
+
+/// A box drawn for an object, on the view, logical pixels.
+export struct MaskBox {
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+}
+
+/// A pick for an object on the view: on it, or not on it.
+export struct MaskPick {
+    x: float,
+    y: float,
+    positive: bool,
+}
+
+/// One frame of the culling loupe's compare view: its box on the
+/// view, logical pixels, its name, and whether it is the selection.
+export struct CompareTile {
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    name: string,
+    on: bool,
+}
+
+/// One chip of the browser's filter: what it asks, how many frames
+/// would be left if it were the only thing that changed, whether it
+/// is on, and which flag or color it stands for. Rust owns what the
+/// number means; see `greycard_ui::filter`.
+export struct FilterChip {
+    text: string,
+    count: int,
+    on: bool,
+    code: int,
+}

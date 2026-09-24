@@ -1,0 +1,119 @@
+// The CULLING section: the mode's keys, the frame's turn, the
+// browser's filter, the compare view and the two ways out.
+
+import { Theme } from "../theme.slint";
+import { FilterChip } from "../structs.slint";
+import { Section, PanelButton, Segmented } from "../controls.slint";
+import { FilterBar } from "filter.slint";
+
+export component CullSection inherits Section {
+    callback frame-turned(int);
+    in-out property <bool> grid-open;
+    callback cull-leave();
+    in-out property <string> compare-text;
+    callback compare-changed(int);
+    in-out property <[FilterChip]> filter-stars;
+    in-out property <[FilterChip]> filter-flags;
+    in-out property <[FilterChip]> filter-labels;
+    in-out property <bool> filter-exact;
+    in-out property <string> filter-text;
+    in-out property <int> filter-shown;
+    in-out property <int> filter-total;
+    in-out property <bool> filter-on;
+    in-out property <bool> filter-focus;
+    in-out property <bool> collapsed-culling;
+    callback filter-star-picked(int);
+    callback filter-flag-toggled(int);
+    callback filter-label-toggled(int);
+    callback filter-exact-toggled();
+    callback filter-text-edited(string);
+    callback filter-cleared();
+    in property <int> reject-count;
+    callback rejects-asked();
+    callback focus-keys();
+
+    title: "CULLING";
+    icon: @image-url("../icons/image.svg");
+    hint: "C";
+    collapsed <=> root.collapsed-culling;
+    Text {
+        text: "The camera's JPEG, through the monitor profile and nothing else. Nothing is developed until Enter, or a develop tab.";
+        font-size: Theme.font-xs;
+        color: Theme.text-secondary;
+        wrap: word-wrap;
+    }
+    Text {
+        text: "Arrows move. 1 to 5 stars, 0 none; P pick, X reject, U neither; 6 to 9 a label. Space is 1:1 on the JPEG; V compares two, then four.";
+        font-size: Theme.font-xs;
+        color: Theme.text-secondary;
+        wrap: word-wrap;
+    }
+    // The frame's own turn, for the shot the
+    // camera's tag got wrong. Nothing develops.
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        Text { text: "Turn"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        PanelButton {
+            text: "[";
+            icon: @image-url("../icons/rotate-ccw.svg");
+            clicked => { root.frame-turned(-1); }
+        }
+        PanelButton {
+            text: "]";
+            icon: @image-url("../icons/rotate-cw.svg");
+            clicked => { root.frame-turned(1); }
+        }
+    }
+    // The same filter the grid's header holds,
+    // a group of chips to a row: the panel is
+    // 320px wide and the header's one row
+    // would not fit in it.
+    Text {
+        text: "Show";
+        color: Theme.text;
+        font-size: Theme.font-sm;
+        vertical-alignment: center;
+    }
+    FilterBar {
+        stacked: true;
+        takes-focus: !root.grid-open;
+        wanted <=> root.filter-focus;
+        stars: root.filter-stars;
+        flags: root.filter-flags;
+        labels: root.filter-labels;
+        exact: root.filter-exact;
+        shown: root.filter-shown;
+        total: root.filter-total;
+        on: root.filter-on;
+        text <=> root.filter-text;
+        star-picked(i) => { root.filter-star-picked(i); }
+        flag-toggled(i) => { root.filter-flag-toggled(i); }
+        label-toggled(i) => { root.filter-label-toggled(i); }
+        exact-toggled => { root.filter-exact-toggled(); }
+        text-edited(t) => { root.filter-text-edited(t); }
+        cleared => { root.filter-cleared(); }
+        released => { root.focus-keys(); }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        Text { text: "Compare"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Segmented {
+            options: ["1", "2", "4"];
+            current <=> root.compare-text;
+            selected(c) => { root.compare-changed(c == "2" ? 2 : c == "4" ? 4 : 1); }
+        }
+    }
+    PanelButton {
+        text: root.reject-count == 0 ? "No rejects to move"
+            : "Move " + root.reject-count + (root.reject-count == 1 ? " reject..." : " rejects...");
+        icon: @image-url("../icons/folder-open.svg");
+        enabled: root.reject-count > 0;
+        clicked => { root.rejects-asked(); }
+    }
+    PanelButton {
+        text: "Develop";
+        icon: @image-url("../icons/sliders-horizontal.svg");
+        primary: true;
+        clicked => { root.cull-leave(); }
+    }
+}

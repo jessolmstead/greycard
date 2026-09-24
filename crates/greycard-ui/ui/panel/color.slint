@@ -1,0 +1,544 @@
+// The color sections: white balance, color, the mixer, black and
+// white, the grading wheels and the tint.
+
+import { Theme } from "../theme.slint";
+import { Section, EditSlider, Toggle, PanelButton, Segmented, CurveEditor, Swatches } from "../controls.slint";
+
+export component WhiteBalanceSection inherits Section {
+    in-out property <bool> as-shot;
+    in-out property <bool> collapsed-wb;
+    in-out property <string> picking;
+    callback pick-started(string);
+    in-out property <float> temperature;
+    in-out property <float> tint;
+    in property <bool> raw-input;
+    callback develop-changed();
+
+    title: "WHITE BALANCE";
+    icon: @image-url("../icons/thermometer.svg");
+    hint: root.raw-input ? "" : "raw only";
+    collapsed <=> root.collapsed-wb;
+    Toggle {
+        label: "As shot";
+        enabled: root.raw-input;
+        checked <=> root.as-shot;
+        toggled => { root.develop-changed(); }
+    }
+    // The tracks show what the picture becomes: a
+    // higher temperature renders warmer, a positive
+    // tint (a green white point) renders magenta.
+    EditSlider {
+        label: "Temperature";
+        enabled: root.raw-input && !root.as-shot;
+        tinted: true;
+        tint: @linear-gradient(90deg, #4d86e8 0%, #cfd6dc 50%, #f0b24a 100%);
+        minimum: 2000;
+        maximum: 12000;
+        default: 5500;
+        step: 50;
+        value <=> root.temperature;
+        text: round(root.temperature) + " K";
+        changed(v) => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Tint";
+        enabled: root.raw-input && !root.as-shot;
+        tinted: true;
+        tint: @linear-gradient(90deg, #5fbf5f 0%, #cfd6dc 50%, #d65fd6 100%);
+        minimum: -0.05;
+        maximum: 0.05;
+        default: 0;
+        step: 0.001;
+        value <=> root.tint;
+        text: round(root.tint * 1000) / 1000;
+        changed(v) => { root.develop-changed(); }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        alignment: end;
+        PanelButton {
+            text: "Neutral";
+            icon: @image-url("../icons/pipette.svg");
+            enabled: root.raw-input;
+            primary: root.picking == "White";
+            clicked => { root.pick-started("White"); }
+        }
+    }
+}
+
+export component ColorSection inherits Section {
+    in-out property <bool> color-enabled;
+    in-out property <float> saturation;
+    in-out property <float> vibrance;
+    in-out property <bool> collapsed-color;
+    in-out property <string> target-name;
+    in property <[color]> band-colors;
+    in property <color> dull;
+    // The track under the global saturation and vibrance sliders: the
+    // hue circle swept along it, grey at the left and the bands' own
+    // colors at the right, so the dull way and the vivid way read at
+    // a glance.
+    property <brush> spectrum: @linear-gradient(90deg,
+        root.dull 0%,
+        root.band-colors[1].mix(root.dull, 0.125) 12.5%,
+        root.band-colors[2].mix(root.dull, 0.25) 25%,
+        root.band-colors[3].mix(root.dull, 0.375) 37.5%,
+        root.band-colors[4].mix(root.dull, 0.5) 50%,
+        root.band-colors[5].mix(root.dull, 0.625) 62.5%,
+        root.band-colors[6].mix(root.dull, 0.75) 75%,
+        root.band-colors[7].mix(root.dull, 0.875) 87.5%,
+        root.band-colors[0] 100%);
+    callback view-changed();
+
+    title: "COLOR" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    icon: @image-url("../icons/palette.svg");
+    collapsed <=> root.collapsed-color;
+    switchable: true;
+    on <=> root.color-enabled;
+    switched => { root.view-changed(); }
+    EditSlider {
+        label: "Vibrance";
+        enabled: root.color-enabled;
+        tinted: true;
+        tint: root.spectrum;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.vibrance;
+        text: (root.vibrance >= 0 ? "+" : "") + round(root.vibrance * 100) + "%";
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: "Saturation";
+        enabled: root.color-enabled;
+        tinted: true;
+        tint: root.spectrum;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.saturation;
+        text: (root.saturation >= 0 ? "+" : "") + round(root.saturation * 100) + "%";
+        changed(v) => { root.view-changed(); }
+    }
+}
+
+export component MixerSection inherits Section {
+    in-out property <bool> collapsed-mixer;
+    in-out property <string> picking;
+    callback pick-started(string);
+    in-out property <string> target-name;
+    in property <[color]> band-colors;
+    in-out property <bool> mixer-enabled;
+    in-out property <int> mixer-band;
+    in-out property <float> mixer-hue;
+    in-out property <float> mixer-saturation;
+    in-out property <float> mixer-luminance;
+    callback mixer-band-changed();
+    callback mixer-changed();
+    callback mixer-reset();
+    in-out property <bool> bw-enabled;
+    in-out property <int> target;
+    // The color mixer does not act under a mono conversion
+    // (`Edit::acting_mixer`), so the picture's own mixer is shown
+    // off and dead while this is on. A mask's mixer is its own.
+    property <bool> mixer-superseded: root.bw-enabled && root.target == 0;
+    property <bool> mixer-acts: root.mixer-enabled && !root.mixer-superseded;
+    callback view-changed();
+
+    title: "COLOR MIXER" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    icon: @image-url("../icons/palette.svg");
+    collapsed <=> root.collapsed-mixer;
+    switchable: true;
+    on <=> root.mixer-enabled;
+    // The picture's mixer does not act under
+    // a mono conversion, so the black and
+    // white takes the section over while it
+    // is on. What the switch and the sliders
+    // say is kept, and comes back as it was.
+    superseded: root.mixer-superseded;
+    switched => { root.view-changed(); }
+    Swatches {
+        colors: root.band-colors;
+        enabled: root.mixer-acts;
+        current <=> root.mixer-band;
+        selected(i) => { root.mixer-band-changed(); }
+    }
+    EditSlider {
+        label: "Hue";
+        enabled: root.mixer-acts;
+        // Which way each way goes: the band's
+        // own color in the middle, its
+        // neighbors at the ends.
+        tinted: true;
+        tint: @linear-gradient(90deg,
+            root.band-colors[root.mixer-band == 0 ? 7 : root.mixer-band - 1],
+            root.band-colors[root.mixer-band],
+            root.band-colors[root.mixer-band == 7 ? 0 : root.mixer-band + 1]);
+        minimum: -30;
+        maximum: 30;
+        default: 0;
+        step: 1;
+        value <=> root.mixer-hue;
+        text: (root.mixer-hue >= 0 ? "+" : "") + round(root.mixer-hue) + "°";
+        changed(v) => { root.mixer-changed(); }
+    }
+    EditSlider {
+        label: "Saturation";
+        enabled: root.mixer-acts;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.02;
+        value <=> root.mixer-saturation;
+        text: (root.mixer-saturation >= 0 ? "+" : "") + round(root.mixer-saturation * 100) + "%";
+        changed(v) => { root.mixer-changed(); }
+    }
+    EditSlider {
+        label: "Luminance";
+        enabled: root.mixer-acts;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.05;
+        value <=> root.mixer-luminance;
+        text: (root.mixer-luminance >= 0 ? "+" : "") + round(root.mixer-luminance * 100) / 100 + " EV";
+        changed(v) => { root.mixer-changed(); }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        alignment: end;
+        PanelButton {
+            text: "Pick";
+            icon: @image-url("../icons/pipette.svg");
+            enabled: root.mixer-acts;
+            primary: root.picking == "Mixer";
+            clicked => { root.pick-started("Mixer"); }
+        }
+        PanelButton {
+            text: "Reset";
+            icon: @image-url("../icons/rotate-ccw.svg");
+            // Dead while the black and white
+            // has the section: a section
+            // drawn as not acting must not
+            // clear the settings it is
+            // holding on to, nor write a
+            // history entry for doing it.
+            enabled: !root.mixer-superseded;
+            clicked => { root.mixer-reset(); }
+        }
+    }
+}
+
+export component BlackWhiteSection inherits Section {
+    in-out property <bool> collapsed-bw;
+    in property <[color]> band-colors;
+    in property <color> dull;
+    in-out property <bool> bw-enabled;
+    in-out property <int> bw-band;
+    in-out property <float> bw-weight;
+    in-out property <float> bw-strength;
+    // The strength in hundredths, so its reading can carry two
+    // decimals: a multiplier that jumped between "1x" and "1.05x"
+    // would move the column it sits in.
+    property <float> bw-strength-cents: round(root.bw-strength * 100);
+    // The stops the chosen band's weight actually applies: the
+    // strength scales the whole set, so the weight alone is only
+    // the reading at 1.00x (`BlackWhite::stops`).
+    property <float> bw-applied: root.bw-weight * root.bw-strength;
+    in-out property <string> bw-filter;
+    callback bw-band-changed();
+    callback bw-changed();
+    callback bw-filter-changed();
+    callback bw-reset();
+    callback view-changed();
+
+    title: "BLACK & WHITE";
+    icon: @image-url("../icons/contrast.svg");
+    collapsed <=> root.collapsed-bw;
+    switchable: true;
+    on <=> root.bw-enabled;
+    switched => { root.view-changed(); }
+    // Not gated on the switch: picking a
+    // filter is a choice of conversion, so it
+    // turns the section on rather than
+    // needing the switch thrown first.
+    Segmented {
+        options: ["None", "Red", "Orange", "Yellow", "Green", "Blue"];
+        current <=> root.bw-filter;
+        selected(v) => { root.bw-filter-changed(); }
+    }
+    Swatches {
+        colors: root.band-colors;
+        enabled: root.bw-enabled;
+        current <=> root.bw-band;
+        selected(i) => { root.bw-band-changed(); }
+    }
+    EditSlider {
+        label: "Weight";
+        enabled: root.bw-enabled;
+        // Dark at the left, the band's own
+        // color at the right: which way the
+        // band's grey goes.
+        tinted: true;
+        tint: @linear-gradient(90deg, #1a1a1a, root.dull, root.band-colors[root.bw-band]);
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.05;
+        value <=> root.bw-weight;
+        // What the band's grey actually
+        // moves by, the strength in it: at
+        // 3.00x a weight of -1 is -3 EV, and
+        // a reading of -1 EV there would be
+        // a lie about the picture.
+        text: (root.bw-applied >= 0 ? "+" : "") + round(root.bw-applied * 100) / 100 + " EV";
+        changed(v) => { root.bw-changed(); }
+    }
+    // One scalar over the whole set, so a
+    // filter keeps its shape and only its
+    // depth changes: the row still says Red.
+    EditSlider {
+        label: "Strength";
+        enabled: root.bw-enabled;
+        minimum: 0;
+        // `bw::STRENGTH_MAX`, which
+        // `read_edit` clamps to.
+        maximum: 3;
+        default: 1;
+        step: 0.05;
+        value <=> root.bw-strength;
+        text: floor(root.bw-strength-cents / 100) + "."
+            + (mod(root.bw-strength-cents, 100) < 10 ? "0" : "")
+            + mod(root.bw-strength-cents, 100) + "x";
+        changed(v) => { root.view-changed(); }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        alignment: end;
+        PanelButton {
+            text: "Reset";
+            icon: @image-url("../icons/rotate-ccw.svg");
+            clicked => { root.bw-reset(); }
+        }
+    }
+}
+
+export component GradingSection inherits Section {
+    in-out property <bool> collapsed-grading;
+    in-out property <string> target-name;
+    in-out property <bool> grading-enabled;
+    in-out property <int> grade-range;
+    in-out property <float> grade-hue;
+    in-out property <float> grade-saturation;
+    in-out property <float> grade-balance;
+    in property <[image]> grade-images;
+    in-out property <int> grade-big;
+    callback grade-press(int, float, float);
+    callback grade-move(int, float, float);
+    callback grade-release();
+    callback grade-double(int);
+    callback grade-resized();
+    callback grade-changed();
+    callback grade-reset();
+    callback view-changed();
+
+    title: "COLOR GRADING" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    icon: @image-url("../icons/palette.svg");
+    collapsed <=> root.collapsed-grading;
+    switchable: true;
+    on <=> root.grading-enabled;
+    switched => { root.view-changed(); }
+    // One wheel enlarged, for a finer hand, above the row;
+    // a wheel's name toggles it. A double click puts a
+    // wheel back to nothing.
+    if root.grade-big >= 0 && root.grade-big < root.grade-images.length: CurveEditor {
+        picture: root.grade-images[root.grade-big];
+        enabled: root.grading-enabled;
+        background: transparent;
+        pressed(x, y) => { root.grade-press(root.grade-big, x, y); }
+        moved(x, y) => { root.grade-move(root.grade-big, x, y); }
+        released => { root.grade-release(); }
+        double-clicked(x, y) => { root.grade-double(root.grade-big); }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        for name[i] in ["Shadows", "Mid-tones", "Highlights"]: VerticalLayout {
+            spacing: Theme.space-1;
+            alignment: end;
+            if root.grade-big != i && i < root.grade-images.length: CurveEditor {
+                picture: root.grade-images[i];
+                enabled: root.grading-enabled;
+                background: transparent;
+                pressed(x, y) => { root.grade-press(i, x, y); }
+                moved(x, y) => { root.grade-move(i, x, y); }
+                released => { root.grade-release(); }
+                double-clicked(x, y) => { root.grade-double(i); }
+            }
+            Rectangle {
+                height: Theme.control-height - 6px;
+                border-radius: Theme.radius-sm;
+                background: name-area.has-hover ? Theme.hover : transparent;
+                name-area := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => {
+                        root.grade-big = root.grade-big == i ? -1 : i;
+                        root.grade-resized();
+                    }
+                }
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: Theme.space-1;
+                    Text {
+                        text: name;
+                        color: root.grade-range == i ? Theme.text : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                    Image {
+                        source: @image-url("../icons/maximize.svg");
+                        colorize: root.grade-big == i ? Theme.accent : Theme.text-muted;
+                        width: 10px;
+                        height: 10px;
+                        y: (parent.height - self.height) / 2;
+                    }
+                }
+            }
+        }
+    }
+    EditSlider {
+        label: "Hue";
+        enabled: root.grading-enabled;
+        minimum: 0;
+        maximum: 360;
+        default: 0;
+        step: 1;
+        value <=> root.grade-hue;
+        text: round(root.grade-hue) + "°";
+        changed(v) => { root.grade-changed(); }
+    }
+    EditSlider {
+        label: "Strength";
+        enabled: root.grading-enabled;
+        minimum: 0;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.grade-saturation;
+        text: round(root.grade-saturation * 100) + "%";
+        changed(v) => { root.grade-changed(); }
+    }
+    EditSlider {
+        label: "Balance";
+        enabled: root.grading-enabled;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.02;
+        value <=> root.grade-balance;
+        text: (root.grade-balance >= 0 ? "+" : "") + round(root.grade-balance * 100);
+        changed(v) => { root.view-changed(); }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        alignment: end;
+        PanelButton {
+            text: "Reset";
+            icon: @image-url("../icons/rotate-ccw.svg");
+            clicked => { root.grade-reset(); }
+        }
+    }
+}
+
+export component TintSection inherits Section {
+    in-out property <bool> collapsed-tint;
+    in-out property <string> target-name;
+    in-out property <float> tint-hue;
+    in-out property <float> tint-amount;
+    in property <color> tint-color;
+    in property <image> tint-image;
+    in property <string> tint-hue-text;
+    callback tint-press(float, float);
+    callback tint-move(float, float);
+    callback tint-release();
+    in property <brush> hue-circle;
+    callback tint-changed();
+    callback tint-reset();
+
+    title: "TINT" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    icon: @image-url("../icons/palette.svg");
+    collapsed <=> root.collapsed-tint;
+    // The hue ring: a drag sets the hue by
+    // the angle and the amount by the
+    // distance from the center, which is a
+    // finer hand on the hue than a slider
+    // 360 degrees long. A double click is
+    // off. The two sliders are the same two
+    // numbers and stay in step. Nothing is
+    // drawn until a file opens, so the ring
+    // is absent until then rather than a gap,
+    // as the wheels' row is.
+    if root.tint-image.width > 0: HorizontalLayout {
+        alignment: center;
+        CurveEditor {
+            width: 176px;
+            picture: root.tint-image;
+            background: transparent;
+            pressed(x, y) => { root.tint-press(x, y); }
+            moved(x, y) => { root.tint-move(x, y); }
+            released => { root.tint-release(); }
+            // Off, which is what Reset is.
+            double-clicked(x, y) => { root.tint-reset(); }
+        }
+    }
+    EditSlider {
+        label: "Hue";
+        // The Oklab hue circle along the
+        // track: which color each way is,
+        // the ring's own rim unrolled.
+        tinted: true;
+        tint: root.hue-circle;
+        minimum: 0;
+        maximum: 360;
+        default: 0;
+        // A tenth of a degree to the arrow
+        // keys and the wheel: the ring is
+        // the coarse hand, this the fine one.
+        step: 0.1;
+        value <=> root.tint-hue;
+        text: root.tint-hue-text;
+        changed(v) => { root.tint-changed(); }
+    }
+    EditSlider {
+        label: "Amount";
+        minimum: 0;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.tint-amount;
+        text: round(root.tint-amount * 100) + "%";
+        changed(v) => { root.tint-changed(); }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        alignment: end;
+        // What a mid grey becomes under the
+        // tint as it stands.
+        Rectangle {
+            width: Theme.control-height;
+            height: Theme.control-height - 6px;
+            y: 3px;
+            border-radius: Theme.radius-sm;
+            border-width: 1px;
+            border-color: Theme.border-strong;
+            background: root.tint-color;
+        }
+        Rectangle { horizontal-stretch: 1; }
+        PanelButton {
+            text: "Reset";
+            icon: @image-url("../icons/rotate-ccw.svg");
+            clicked => { root.tint-reset(); }
+        }
+    }
+}

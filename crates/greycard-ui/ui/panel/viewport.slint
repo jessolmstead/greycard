@@ -1,0 +1,636 @@
+// The viewport: the engine's texture, the pointer on it, and what is
+// drawn over the picture in view pixels, from the brush and the dropper
+// to the crop, the masks' shapes, the repairs and the status plate.
+
+import { Theme } from "../theme.slint";
+import { Pt, MaskBox, MaskPick, CompareTile } from "../structs.slint";
+import { CropHandle } from "../controls.slint";
+
+export component Viewport inherits Rectangle {
+    callback zoom(float, length, length);
+    callback pan(length, length);
+    callback toggle-zoom(length, length);
+    /// The dropper drawn at the pointer while picking. Empty if the
+    /// icon is missing, and then the cursor stays a crosshair.
+    property <image> dropper: @image-url("../icons/pipette.svg");
+    in property <bool> placeholder;
+    in property <[CompareTile]> compare-tiles;
+    in-out property <bool> crop-mode;
+    in-out property <bool> level-mode;
+    in-out property <string> guide-mode;
+    in-out property <string> panel-tab;
+    in-out property <string> placing;
+    in-out property <float> brush-size;
+    in-out property <float> brush-feather;
+    in-out property <string> brush-op;
+    in-out property <float> brush-scale;
+    in-out property <string> picking;
+    callback pick-pressed(length, length);
+    callback pick-dragged(length, length);
+    callback pick-released();
+    callback place-pressed(length, length, bool);
+    callback place-dragged(length, length);
+    callback place-released();
+    in-out property <string> mask-kind;
+    in-out property <[Pt]> mask-handles;
+    in-out property <[MaskBox]> mask-boxes;
+    in-out property <[MaskPick]> mask-picks;
+    in-out property <float> mask-angle;
+    in-out property <float> mask-rx;
+    in-out property <float> mask-ry;
+    in-out property <float> mask-feather-scale;
+    callback mask-grabbed(int);
+    callback mask-dragged(int, length, length);
+    callback mask-dropped();
+    in property <length> crop-left;
+    in property <length> crop-top;
+    in property <length> crop-width;
+    in property <length> crop-height;
+    callback crop-pressed(int);
+    callback crop-dragged(int, length, length);
+    callback crop-released();
+    callback level-end(length, length, length, length);
+    callback guide-stroke(length, length, length, length);
+    in property <[Pt]> guide-kept;
+    in property <string> status;
+    in property <string> placeholder-status;
+    in-out property <int> canvas-choice;
+    in property <[color]> canvas-colors;
+    in property <bool> busy;
+    in-out property <string> retouch-mode;
+    in-out property <float> patch-size;
+    in-out property <float> patch-feather;
+    in-out property <int> patch;
+    in-out property <[Pt]> patch-handles;
+    in property <string> patch-outline;
+    in property <string> patch-feather-outline;
+    callback patch-changed(int);
+    callback patch-edited();
+    callback patch-grabbed(int);
+    callback patch-dragged(int, length, length);
+    callback patch-dropped();
+    callback focus-keys();
+    // The engine's texture, bound by App's `texture` through this
+    // component's id as it was bound to the Image before.
+    in property <image> source <=> view.source;
+
+    clip: true;
+    background: root.canvas-colors[root.canvas-choice];
+    view := Image {
+        width: 100%;
+        height: 100%;
+        image-fit: fill;
+    }
+    ta := TouchArea {
+        property <length> last-x;
+        property <length> last-y;
+        // Where the press was, and whether it has become a drag.
+        property <length> down-x;
+        property <length> down-y;
+        property <bool> dragged;
+        mouse-cursor: root.picking != "" ? (root.dropper.width > 0 ? MouseCursor.none : MouseCursor.crosshair)
+            : root.placing != "" || root.retouch-mode != "" ? MouseCursor.crosshair
+            : self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
+        // The keys belong to the picture whenever the pointer is
+        // on it, or the last press was: a clicked slider keeps
+        // them while the pointer stays on the panel.
+        changed has-hover => {
+            if (self.has-hover) { root.focus-keys(); }
+        }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                root.focus-keys();
+                // While the camera's JPEG stands in for the
+                // develop there is nothing here to place a
+                // shape on or read a color off; the pan and
+                // the zoom still work, as in culling.
+                if (root.placeholder) {
+                } else if (root.picking != "") {
+                    if (e.button == PointerEventButton.left) {
+                        root.pick-pressed(self.mouse-x, self.mouse-y);
+                    }
+                } else if (root.placing != "" || root.retouch-mode != "") {
+                    root.place-pressed(self.mouse-x, self.mouse-y, e.button == PointerEventButton.right);
+                }
+                self.last-x = self.mouse-x;
+                self.last-y = self.mouse-y;
+                self.down-x = self.mouse-x;
+                self.down-y = self.mouse-y;
+                self.dragged = false;
+            } else if (e.kind == PointerEventKind.up) {
+                if (root.picking != "") {
+                    root.pick-released();
+                } else if (root.placing != "" || root.retouch-mode != "") {
+                    root.place-released();
+                } else if (!self.dragged && e.button == PointerEventButton.left) {
+                    // A click on the empty picture lets go
+                    // of a chosen repair, as Esc does.
+                    if (root.patch != -1) { root.patch-changed(-1); }
+                    // A click that did not drag: zoom in here, or back out.
+                    root.toggle-zoom(self.mouse-x, self.mouse-y);
+                }
+            }
+        }
+        moved => {
+            if (self.pressed) {
+                if (abs(self.mouse-x - self.down-x) > 4px || abs(self.mouse-y - self.down-y) > 4px) {
+                    self.dragged = true;
+                }
+                if (root.picking != "") {
+                    root.pick-dragged(self.mouse-x, self.mouse-y);
+                } else if (root.placing != "" || root.retouch-mode != "") {
+                    root.place-dragged(self.mouse-x, self.mouse-y);
+                } else if (self.dragged) {
+                    root.pan(self.mouse-x - self.last-x, self.mouse-y - self.last-y);
+                }
+                self.last-x = self.mouse-x;
+                self.last-y = self.mouse-y;
+            }
+        }
+        scroll-event(e) => {
+            // With the brush in hand the wheel sizes it.
+            if (root.placing == "Brush") {
+                root.brush-size = clamp(root.brush-size * (e.delta-y > 0 ? 1.1 : 1 / 1.1), 0.002, 0.5);
+                return accept;
+            }
+            if (root.retouch-mode != "") {
+                root.patch-size = clamp(root.patch-size * (e.delta-y > 0 ? 1.1 : 1 / 1.1), 0.002, 0.3);
+                root.patch-edited();
+                return accept;
+            }
+            root.zoom(e.delta-y > 0 ? 1.25 : 0.8, self.mouse-x, self.mouse-y);
+            return accept;
+        }
+    }
+    // The brush under the pointer: its radius, and where
+    // its feather begins.
+    if root.placing == "Brush" && ta.has-hover && !root.placeholder: Rectangle {
+        for s in [1.0, root.brush-op == "Erase" ? 1.0 : 1.0 - root.brush-feather]: Path {
+            width: 100%;
+            height: 100%;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: self.width / 1px;
+            viewbox-height: self.height / 1px;
+            stroke: s == 1.0 ? (root.brush-op == "Erase" ? #ff6060cc : root.brush-op == "Subtract" ? #ffb860cc : #ffffffcc) : #ffffff50;
+            stroke-width: 1px;
+            property <float> cx: ta.mouse-x / 1px;
+            property <float> cy: ta.mouse-y / 1px;
+            property <float> r: max(root.brush-size * root.brush-scale * s, 0.5);
+            MoveTo { x: cx + r; y: cy; }
+            ArcTo { x: cx - r; y: cy; radius-x: r; radius-y: r; large-arc: false; sweep: true; }
+            ArcTo { x: cx + r; y: cy; radius-x: r; radius-y: r; large-arc: false; sweep: true; }
+        }
+    }
+    // The word for the camera's JPEG standing in for a
+    // develop, in the corner of the picture it is over:
+    // the status line says the rest, and both go the
+    // moment the develop lands.
+    if root.placeholder: Rectangle {
+        x: Theme.space-3;
+        y: Theme.space-3;
+        width: placeholder-word.width + 2 * Theme.space-3;
+        height: 24px;
+        border-radius: Theme.radius-sm;
+        background: #00000099;
+        placeholder-word := Text {
+            text: "camera preview";
+            color: Theme.text;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+        }
+    }
+    // The compare view's frames: a rule round the one the
+    // selection is on, and each one's name at its top.
+    for t in root.compare-tiles: Rectangle {
+        x: t.x * 1px;
+        y: t.y * 1px;
+        width: t.w * 1px;
+        height: t.h * 1px;
+        border-width: t.on ? 2px : 0;
+        border-color: Theme.accent;
+        Rectangle {
+            x: Theme.space-2;
+            y: Theme.space-2;
+            width: tile-name.width + 2 * Theme.space-2;
+            height: 20px;
+            border-radius: Theme.radius-sm;
+            background: #00000099;
+            tile-name := Text {
+                text: t.name;
+                color: t.on ? Theme.text : Theme.text-secondary;
+                font-size: Theme.font-xs;
+                vertical-alignment: center;
+            }
+        }
+    }
+    // The dropper under the pointer, in place of a cursor:
+    // Lucide's pipette has its tip at (2, 22) of a 24 box,
+    // so the icon hangs up and to the right of the point. A
+    // dark copy behind it, spread by a pixel, reads on light
+    // and on dark alike.
+    if root.picking != "" && root.dropper.width > 0 && ta.has-hover && !root.placeholder: Rectangle {
+        property <length> size: 22px;
+        x: ta.mouse-x - 2 / 24 * self.size;
+        y: ta.mouse-y - 22 / 24 * self.size;
+        width: self.size;
+        height: self.size;
+        for o in [
+            { dx: -1.0, dy: 0.0 }, { dx: 1.0, dy: 0.0 },
+            { dx: 0.0, dy: -1.0 }, { dx: 0.0, dy: 1.0 },
+        ]: Image {
+            source: root.dropper;
+            colorize: #000000cc;
+            x: o.dx * 1px;
+            y: o.dy * 1px;
+            width: parent.width;
+            height: parent.height;
+        }
+        Image {
+            source: root.dropper;
+            colorize: #ffffff;
+            width: 100%;
+            height: 100%;
+        }
+    }
+    // The repair tool under the pointer: its radius and feather.
+    if root.retouch-mode != "" && ta.has-hover && !root.placeholder: Rectangle {
+        for s in [1.0, 1.0 - root.patch-feather]: Path {
+            width: 100%;
+            height: 100%;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: self.width / 1px;
+            viewbox-height: self.height / 1px;
+            stroke: s == 1.0 ? #7fd0ffcc : #7fd0ff50;
+            stroke-width: 1px;
+            property <float> cx: ta.mouse-x / 1px;
+            property <float> cy: ta.mouse-y / 1px;
+            property <float> r: max(root.patch-size * root.brush-scale * s, 0.5);
+            MoveTo { x: cx + r; y: cy; }
+            ArcTo { x: cx - r; y: cy; radius-x: r; radius-y: r; large-arc: false; sweep: true; }
+            ArcTo { x: cx + r; y: cy; radius-x: r; radius-y: r; large-arc: false; sweep: true; }
+        }
+    }
+    // The chosen patch's shape while the Retouch tab shows:
+    // its edge, and where its feather begins. A heal or a
+    // clone shows its result at once and so implies its
+    // shape; a fill shows nothing until the model answers,
+    // and this is where it was drawn meanwhile and after.
+    if root.panel-tab == "Retouch" && root.patch-outline != "" && !root.placeholder: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: self.width / 1px;
+        viewbox-height: self.height / 1px;
+        commands: root.patch-outline;
+        stroke: #7fd0ffaa;
+        stroke-width: 1px;
+    }
+    if root.panel-tab == "Retouch" && root.patch-feather-outline != "" && !root.placeholder: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: self.width / 1px;
+        viewbox-height: self.height / 1px;
+        commands: root.patch-feather-outline;
+        stroke: #7fd0ff40;
+        stroke-width: 1px;
+    }
+    // The chosen patch's pins: its center and its source,
+    // joined by a line.
+    if root.retouch-mode != "" && root.patch-handles.length == 2 && !root.placeholder: Path {
+        width: 100%;
+        height: 100%;
+        viewbox-x: 0;
+        viewbox-y: 0;
+        viewbox-width: self.width / 1px;
+        viewbox-height: self.height / 1px;
+        stroke: #7fd0ff99;
+        stroke-width: 1px;
+        MoveTo { x: root.patch-handles[0].x; y: root.patch-handles[0].y; }
+        LineTo { x: root.patch-handles[1].x; y: root.patch-handles[1].y; }
+    }
+    if root.retouch-mode != "" && !root.placeholder: Rectangle {
+        for h[i] in root.patch-handles: CropHandle {
+            id: i;
+            x: h.x * 1px - 10px;
+            y: h.y * 1px - 10px;
+            width: 20px;
+            height: 20px;
+            cursor: MouseCursor.move;
+            Rectangle {
+                x: 4px; y: 4px;
+                width: 12px; height: 12px;
+                background: i == 0 ? #7fd0ff : #ffffff;
+                border-radius: 6px;
+                border-width: 1px;
+                border-color: #00000080;
+            }
+            grabbed(k) => { root.patch-grabbed(k); }
+            dragged(k, dx, dy) => { root.patch-dragged(k, dx, dy); }
+            dropped => { root.patch-dropped(); }
+        }
+    }
+    // The crop: shade outside, a rule of thirds inside, eight
+    // handles and the whole to move.
+    if root.crop-mode && !root.placeholder: Rectangle {
+        property <length> cl: root.crop-left;
+        property <length> ct: root.crop-top;
+        property <length> cw: root.crop-width;
+        property <length> ch: root.crop-height;
+        Rectangle { x: 0; y: 0; width: 100%; height: ct; background: #00000099; }
+        Rectangle { x: 0; y: ct + ch; width: 100%; height: parent.height - ct - ch; background: #00000099; }
+        Rectangle { x: 0; y: ct; width: cl; height: ch; background: #00000099; }
+        Rectangle { x: cl + cw; y: ct; width: parent.width - cl - cw; height: ch; background: #00000099; }
+        CropHandle {
+            id: 8;
+            x: cl; y: ct; width: cw; height: ch;
+            cursor: MouseCursor.move;
+            grabbed(i) => { root.crop-pressed(i); }
+            dragged(i, dx, dy) => { root.crop-dragged(i, dx, dy); }
+            dropped => { root.crop-released(); }
+        }
+        Rectangle { x: cl; y: ct; width: cw; height: ch; border-width: 1px; border-color: #ffffffcc; }
+        Rectangle { x: cl + cw / 3; y: ct; width: 1px; height: ch; background: #ffffff40; }
+        Rectangle { x: cl + 2 * cw / 3; y: ct; width: 1px; height: ch; background: #ffffff40; }
+        Rectangle { x: cl; y: ct + ch / 3; width: cw; height: 1px; background: #ffffff40; }
+        Rectangle { x: cl; y: ct + 2 * ch / 3; width: cw; height: 1px; background: #ffffff40; }
+        for h in [
+            { id: 0, fx: 0.0, fy: 0.0, cursor: MouseCursor.nwse-resize },
+            { id: 1, fx: 0.5, fy: 0.0, cursor: MouseCursor.ns-resize },
+            { id: 2, fx: 1.0, fy: 0.0, cursor: MouseCursor.nesw-resize },
+            { id: 3, fx: 1.0, fy: 0.5, cursor: MouseCursor.ew-resize },
+            { id: 4, fx: 1.0, fy: 1.0, cursor: MouseCursor.nwse-resize },
+            { id: 5, fx: 0.5, fy: 1.0, cursor: MouseCursor.ns-resize },
+            { id: 6, fx: 0.0, fy: 1.0, cursor: MouseCursor.nesw-resize },
+            { id: 7, fx: 0.0, fy: 0.5, cursor: MouseCursor.ew-resize },
+        ]: CropHandle {
+            id: h.id;
+            x: cl + h.fx * cw - 10px;
+            y: ct + h.fy * ch - 10px;
+            width: 20px;
+            height: 20px;
+            cursor: h.cursor;
+            Rectangle {
+                x: 5px; y: 5px; width: 10px; height: 10px;
+                background: #ffffff;
+                border-radius: 2px;
+            }
+            grabbed(i) => { root.crop-pressed(i); }
+            dragged(i, dx, dy) => { root.crop-dragged(i, dx, dy); }
+            dropped => { root.crop-released(); }
+        }
+    }
+    // The chosen mask shape: its outline and its handles.
+    if root.mask-kind == "Linear" && root.mask-handles.length == 3 && !root.placeholder: Rectangle {
+        for h[i] in root.mask-handles: Path {
+            width: 100%;
+            height: 100%;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: self.width / 1px;
+            viewbox-height: self.height / 1px;
+            stroke: i == 0 ? #ffffff60 : #ffffffcc;
+            stroke-width: 1px;
+            property <float> dx: cos(root.mask-angle * 1deg) * 4000;
+            property <float> dy: sin(root.mask-angle * 1deg) * 4000;
+            MoveTo { x: h.x - dx; y: h.y - dy; }
+            LineTo { x: h.x + dx; y: h.y + dy; }
+        }
+    }
+    if root.mask-kind == "Radial" && root.mask-handles.length == 5 && !root.placeholder: Rectangle {
+        for s in [1.0, root.mask-feather-scale]: Path {
+            width: 100%;
+            height: 100%;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: self.width / 1px;
+            viewbox-height: self.height / 1px;
+            stroke: s == 1.0 ? #ffffffcc : #ffffff50;
+            stroke-width: 1px;
+            property <float> cx: root.mask-handles[0].x;
+            property <float> cy: root.mask-handles[0].y;
+            property <float> rx: max(root.mask-rx * s, 0.5);
+            property <float> ry: max(root.mask-ry * s, 0.5);
+            property <float> ca: cos(root.mask-angle * 1deg);
+            property <float> sa: sin(root.mask-angle * 1deg);
+            MoveTo { x: cx + rx * ca; y: cy + rx * sa; }
+            ArcTo { x: cx - rx * ca; y: cy - rx * sa; radius-x: rx; radius-y: ry; x-rotation: root.mask-angle; large-arc: false; sweep: true; }
+            ArcTo { x: cx + rx * ca; y: cy + rx * sa; radius-x: rx; radius-y: ry; x-rotation: root.mask-angle; large-arc: false; sweep: true; }
+        }
+    }
+    // An object's boxes, and its picks: a dot, green for
+    // the object and red for what is not it.
+    if !root.placeholder: Rectangle {
+        for b in root.mask-boxes: Rectangle {
+            x: b.x * 1px;
+            y: b.y * 1px;
+            width: b.w * 1px;
+            height: b.h * 1px;
+            border-width: 1px;
+            border-color: #ffffffcc;
+            Rectangle {
+                x: 1px; y: 1px;
+                width: parent.width - 2px;
+                height: parent.height - 2px;
+                border-width: 1px;
+                border-color: #00000066;
+            }
+        }
+        for k in root.mask-picks: Rectangle {
+            x: k.x * 1px - 6px;
+            y: k.y * 1px - 6px;
+            width: 12px;
+            height: 12px;
+            border-radius: 6px;
+            background: k.positive ? #4cd964 : #ff5252;
+            border-width: 1px;
+            border-color: #000000a0;
+        }
+    }
+    if root.mask-kind != "" && !root.placeholder: Rectangle {
+        for h[i] in root.mask-handles: CropHandle {
+            id: i;
+            x: h.x * 1px - 10px;
+            y: h.y * 1px - 10px;
+            width: 20px;
+            height: 20px;
+            cursor: i == 0 ? MouseCursor.move : MouseCursor.crosshair;
+            Rectangle {
+                x: i == 0 ? 4px : 5px; y: i == 0 ? 4px : 5px;
+                width: i == 0 ? 12px : 10px; height: i == 0 ? 12px : 10px;
+                background: i == 0 ? Theme.accent : #ffffff;
+                border-radius: i == 0 ? 6px : 2px;
+                border-width: 1px;
+                border-color: #00000080;
+            }
+            grabbed(k) => { root.mask-grabbed(k); }
+            dragged(k, dx, dy) => { root.mask-dragged(k, dx, dy); }
+            dropped => { root.mask-dropped(); }
+        }
+    }
+    // The level tool: drag along a line that should be
+    // horizontal or vertical.
+    if root.level-mode && !root.placeholder: leveler := Rectangle {
+        property <length> x0;
+        property <length> y0;
+        property <length> x1;
+        property <length> y1;
+        property <bool> dragging: false;
+        level := TouchArea {
+            mouse-cursor: MouseCursor.crosshair;
+            pointer-event(e) => {
+                if (e.button != PointerEventButton.left) { return; }
+                if (e.kind == PointerEventKind.down) {
+                    leveler.x0 = self.mouse-x; leveler.y0 = self.mouse-y;
+                    leveler.x1 = self.mouse-x; leveler.y1 = self.mouse-y;
+                    leveler.dragging = true;
+                } else if (e.kind == PointerEventKind.up) {
+                    leveler.dragging = false;
+                    root.level-end(leveler.x0, leveler.y0, self.mouse-x, self.mouse-y);
+                }
+            }
+            moved => {
+                if (self.pressed) { leveler.x1 = self.mouse-x; leveler.y1 = self.mouse-y; }
+            }
+        }
+        if leveler.dragging: Path {
+            width: 100%;
+            height: 100%;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: self.width / 1px;
+            viewbox-height: self.height / 1px;
+            stroke: Theme.accent;
+            stroke-width: 2px;
+            MoveTo { x: leveler.x0 / 1px; y: leveler.y0 / 1px; }
+            LineTo { x: leveler.x1 / 1px; y: leveler.y1 / 1px; }
+        }
+    }
+    // The perspective guide: two strokes along lines that
+    // should stand up, or lie flat. The first is kept in
+    // source pixels by Rust and drawn back through the view
+    // each frame, so a zoom or a pan between the strokes
+    // moves the line with the picture rather than under it;
+    // the pair gives the turn and the keystone at once, and
+    // the tool lets go.
+    if root.guide-mode != "" && !root.placeholder: guider := Rectangle {
+        // The stroke in hand.
+        property <length> x0;
+        property <length> y0;
+        property <length> x1;
+        property <length> y1;
+        property <bool> dragging: false;
+        guide := TouchArea {
+            mouse-cursor: MouseCursor.crosshair;
+            changed has-hover => {
+                if (self.has-hover) { root.focus-keys(); }
+            }
+            pointer-event(e) => {
+                if (e.button != PointerEventButton.left) { return; }
+                if (e.kind == PointerEventKind.down) {
+                    root.focus-keys();
+                    guider.x0 = self.mouse-x; guider.y0 = self.mouse-y;
+                    guider.x1 = self.mouse-x; guider.y1 = self.mouse-y;
+                    guider.dragging = true;
+                } else if (e.kind == PointerEventKind.up) {
+                    guider.dragging = false;
+                    // A stroke too short to say which way a
+                    // line runs is no stroke at all.
+                    if (abs(self.mouse-x - guider.x0) + abs(self.mouse-y - guider.y0) < 12px) { return; }
+                    // Which of the two this is, Rust says:
+                    // it holds the first one.
+                    root.guide-stroke(guider.x0, guider.y0, self.mouse-x, self.mouse-y);
+                }
+            }
+            moved => {
+                if (self.pressed) { guider.x1 = self.mouse-x; guider.y1 = self.mouse-y; }
+            }
+        }
+        if root.guide-kept.length == 2: Path {
+            width: 100%;
+            height: 100%;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: self.width / 1px;
+            viewbox-height: self.height / 1px;
+            stroke: Theme.accent;
+            stroke-width: 2px;
+            MoveTo { x: root.guide-kept[0].x; y: root.guide-kept[0].y; }
+            LineTo { x: root.guide-kept[1].x; y: root.guide-kept[1].y; }
+        }
+        if guider.dragging: Path {
+            width: 100%;
+            height: 100%;
+            viewbox-x: 0;
+            viewbox-y: 0;
+            viewbox-width: self.width / 1px;
+            viewbox-height: self.height / 1px;
+            stroke: Theme.accent;
+            stroke-width: 2px;
+            MoveTo { x: guider.x0 / 1px; y: guider.y0 / 1px; }
+            LineTo { x: guider.x1 / 1px; y: guider.y1 / 1px; }
+        }
+        // What to do, while the tool is in hand.
+        Rectangle {
+            y: Theme.space-3;
+            width: hint.width + 2 * Theme.space-3;
+            height: 24px;
+            border-radius: Theme.radius-md;
+            background: #00000099;
+            hint := Text {
+                text: root.guide-kept.length == 2
+                    ? "Now the second line"
+                    : root.guide-mode == "Vertical"
+                        ? "Drag along two lines that should stand upright"
+                        : "Drag along two lines that should lie flat";
+                color: #ffffff;
+                font-size: Theme.font-xs;
+                vertical-alignment: center;
+            }
+        }
+    }
+    // Status, bottom left, on a soft plate; a bar runs while
+    // a develop is on its way.
+    plate := Rectangle {
+        x: Theme.space-3;
+        y: parent.height - self.height - Theme.space-3;
+        width: status-text.width + 2 * Theme.space-3 + (root.busy ? 72px : 0);
+        height: 24px;
+        border-radius: Theme.radius-md;
+        background: #00000099;
+        property <float> phase: 0;
+        Timer {
+            interval: 16ms;
+            running: root.busy;
+            triggered => { plate.phase = mod(plate.phase + 0.015, 1); }
+        }
+        if root.busy: Rectangle {
+            x: Theme.space-3;
+            y: (parent.height - self.height) / 2;
+            width: 60px;
+            height: 3px;
+            border-radius: 1.5px;
+            background: Theme.border-strong;
+            clip: true;
+            Rectangle {
+                x: (parent.width + 24px) * plate.phase - 24px;
+                width: 24px;
+                height: 100%;
+                border-radius: 1.5px;
+                background: Theme.accent;
+            }
+        }
+        status-text := Text {
+            text: root.placeholder && root.placeholder-status != "" ? root.placeholder-status : root.status;
+            color: Theme.text-secondary;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            x: Theme.space-3 + (root.busy ? 72px : 0);
+            height: 100%;
+        }
+    }
+}

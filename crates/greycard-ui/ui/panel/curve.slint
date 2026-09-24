@@ -1,0 +1,113 @@
+// The CURVES section: the parametric curve and the point curves.
+
+import { Theme } from "../theme.slint";
+import { Section, EditSlider, PanelButton, Segmented, CurveEditor } from "../controls.slint";
+
+export component CurvesSection inherits Section {
+    in-out property <bool> curves-enabled;
+    in-out property <string> curve-mode;
+    in-out property <float> para-highlights;
+    in-out property <float> para-lights;
+    in-out property <float> para-darks;
+    in-out property <float> para-shadows;
+    in-out property <string> curve-channel;
+    in property <image> curve-image;
+    in-out property <bool> collapsed-curves;
+    in-out property <string> picking;
+    callback pick-started(string);
+    in-out property <string> target-name;
+    callback curve-press(float, float);
+    callback curve-move(float, float);
+    callback curve-release();
+    callback curve-double(float, float);
+    callback curve-reset();
+    callback curve-channel-changed();
+    callback curve-mode-changed();
+    callback parametric-changed();
+    callback view-changed();
+
+    title: "CURVES" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    icon: @image-url("../icons/spline.svg");
+    collapsed <=> root.collapsed-curves;
+    switchable: true;
+    on <=> root.curves-enabled;
+    switched => { root.view-changed(); }
+    Segmented {
+        options: ["Parametric", "Point"];
+        current <=> root.curve-mode;
+        selected(v) => { root.curve-mode-changed(); }
+    }
+    if root.curve-mode == "Point": Segmented {
+        options: ["RGB", "Red", "Green", "Blue", "R/G", "B/Y"];
+        current <=> root.curve-channel;
+        selected(v) => { root.curve-channel-changed(); }
+    }
+    CurveEditor {
+        picture: root.curve-image;
+        enabled: root.curves-enabled;
+        pressed(x, y) => { root.curve-press(x, y); }
+        moved(x, y) => { root.curve-move(x, y); }
+        released => { root.curve-release(); }
+        double-clicked(x, y) => { root.curve-double(x, y); }
+    }
+    if root.curve-mode == "Parametric": EditSlider {
+        label: "Highlights";
+        enabled: root.curves-enabled;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.para-highlights;
+        text: (root.para-highlights >= 0 ? "+" : "") + round(root.para-highlights * 100);
+        changed(v) => { root.parametric-changed(); }
+    }
+    if root.curve-mode == "Parametric": EditSlider {
+        label: "Lights";
+        enabled: root.curves-enabled;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.para-lights;
+        text: (root.para-lights >= 0 ? "+" : "") + round(root.para-lights * 100);
+        changed(v) => { root.parametric-changed(); }
+    }
+    if root.curve-mode == "Parametric": EditSlider {
+        label: "Darks";
+        enabled: root.curves-enabled;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.para-darks;
+        text: (root.para-darks >= 0 ? "+" : "") + round(root.para-darks * 100);
+        changed(v) => { root.parametric-changed(); }
+    }
+    if root.curve-mode == "Parametric": EditSlider {
+        label: "Shadows";
+        enabled: root.curves-enabled;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.para-shadows;
+        text: (root.para-shadows >= 0 ? "+" : "") + round(root.para-shadows * 100);
+        changed(v) => { root.parametric-changed(); }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        alignment: end;
+        if root.curve-mode == "Point": PanelButton {
+            text: "Pick";
+            icon: @image-url("../icons/pipette.svg");
+            enabled: root.curves-enabled;
+            primary: root.picking == "Curve";
+            clicked => { root.pick-started("Curve"); }
+        }
+        PanelButton {
+            text: "Reset";
+            icon: @image-url("../icons/rotate-ccw.svg");
+            clicked => { root.curve-reset(); }
+        }
+    }
+}

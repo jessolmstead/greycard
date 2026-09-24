@@ -1,0 +1,281 @@
+// The browser's filter bar and its chips: the grid's header holds one
+// and the CULLING section another.
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { FilterChip } from "../structs.slint";
+import { PanelButton } from "../controls.slint";
+
+// A chip of the filter: a pill that says what it asks and how many
+// frames it would leave. A chip that leads nowhere is dimmed rather
+// than dropped, so the row does not move about under the pointer as
+// a cull goes on.
+component Chip inherits Rectangle {
+    in property <string> text;
+    in property <int> count;
+    in property <bool> on;
+    in property <bool> has-dot: false;
+    in property <bool> outlined: false;
+    /// A chip that is a toggle rather than a question about the
+    /// folder has nothing to count.
+    in property <bool> shows-count: true;
+    /// The panel is 320px wide and the header is not, so a chip on
+    /// the panel is spelled closer.
+    in property <bool> tight: false;
+    in property <color> dot: Theme.text-muted;
+    callback clicked();
+    property <bool> nowhere: root.shows-count && root.count == 0 && !root.on;
+    height: Theme.control-height - 4px;
+    border-radius: (Theme.control-height - 4px) / 2;
+    border-width: 1px;
+    border-color: root.on ? Theme.accent : Theme.border;
+    background: root.on ? Theme.selection : (ta.has-hover ? Theme.hover : Theme.base);
+    opacity: root.nowhere ? 0.45 : 1;
+    animate background { duration: Theme.quick; }
+    HorizontalLayout {
+        padding-left: root.tight ? Theme.space-1 : Theme.space-2;
+        padding-right: root.tight ? Theme.space-1 : Theme.space-2;
+        spacing: root.tight ? 3px : Theme.space-1;
+        alignment: center;
+        if root.has-dot: Rectangle {
+            width: 10px;
+            height: 10px;
+            border-radius: 3px;
+            background: root.dot;
+            border-width: root.outlined ? 1px : 0;
+            border-color: Theme.text-muted;
+            y: (parent.height - self.height) / 2;
+        }
+        if root.text != "": Text {
+            text: root.text;
+            color: root.on ? Theme.text : Theme.text-secondary;
+            font-size: Theme.font-xs;
+            font-weight: root.on ? Theme.weight-medium : Theme.weight-regular;
+            vertical-alignment: center;
+        }
+        if root.shows-count: Text {
+            text: root.count;
+            color: Theme.text-muted;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+// A label chip, which says its color rather than its name.
+component LabelChip inherits Chip {
+    in property <int> label-code;
+    has-dot: true;
+    outlined: root.label-code == 0;
+    dot: root.label-code == 1 ? Theme.label-red
+        : root.label-code == 2 ? Theme.label-yellow
+        : root.label-code == 3 ? Theme.label-green
+        : root.label-code == 4 ? Theme.label-blue
+        : root.label-code == 5 ? Theme.label-purple
+        : transparent;
+}
+
+// The browser's filter: the rating chips and how they read, the flag
+// chips, the label chips, and a word looked for in the file name and
+// the keywords. One row of chips in the grid's header, and the same
+// chips a group to a row in the CULLING section, where the panel is
+// 320px wide and the header's row would not fit.
+export component FilterBar inherits Rectangle {
+    in property <[FilterChip]> stars;
+    in property <[FilterChip]> flags;
+    in property <[FilterChip]> labels;
+    in property <bool> exact;
+    in property <int> shown;
+    in property <int> total;
+    in property <bool> on;
+    in property <bool> stacked: false;
+    /// A key has asked for the text field. The bar on screen takes
+    /// the focus and puts this back to false, so that one press is
+    /// answered once: the grid's header is built when the grid
+    /// opens, which is a moment after the key, and a bar built later
+    /// for some other reason must not take the keys off whatever
+    /// has them.
+    in-out property <bool> wanted;
+    /// Whether this bar is the one on screen: the grid's header and
+    /// the CULLING section both hold one, and only one of them may
+    /// answer the key.
+    in property <bool> takes-focus: true;
+    in-out property <string> text;
+    callback star-picked(int);
+    callback flag-toggled(int);
+    callback label-toggled(int);
+    callback exact-toggled();
+    callback text-edited(string);
+    callback cleared();
+    /// The field is done with: the window's keys want it back.
+    callback released();
+    function grab() {
+        root.wanted = false;
+        field.focus();
+        // A query already in the field is selected, so the next
+        // character replaces it: the key is usually pressed to look
+        // for something else.
+        field.select-all();
+    }
+    // Answered here when the bar was already up, and on `init` when
+    // it was built by the same press.
+    changed wanted => { if (root.wanted && root.takes-focus) { root.grab(); } }
+    init => { if (root.wanted && root.takes-focus) { root.grab(); } }
+    VerticalLayout {
+        spacing: Theme.space-2;
+        // The header's one row: every group of chips along it, with
+        // a rule between the groups, clipped rather than wrapped at
+        // a narrow window.
+        if !root.stacked: Rectangle {
+            clip: true;
+            height: Theme.control-height - 4px;
+            HorizontalLayout {
+                spacing: Theme.space-1;
+                alignment: start;
+                for chip[i] in root.stars: Chip {
+                    text: chip.text;
+                    count: chip.count;
+                    on: chip.on;
+                    clicked => { root.star-picked(i); }
+                }
+                Chip {
+                    text: root.exact ? "exactly" : "or more";
+                    shows-count: false;
+                    on: root.exact;
+                    clicked => { root.exact-toggled(); }
+                }
+                Rectangle { width: Theme.space-2; }
+                Rectangle { width: 1px; background: Theme.border; }
+                Rectangle { width: Theme.space-2; }
+                for chip[i] in root.flags: Chip {
+                    text: chip.text;
+                    count: chip.count;
+                    on: chip.on;
+                    clicked => { root.flag-toggled(i); }
+                }
+                Rectangle { width: Theme.space-2; }
+                Rectangle { width: 1px; background: Theme.border; }
+                Rectangle { width: Theme.space-2; }
+                for chip[i] in root.labels: LabelChip {
+                    text: chip.text;
+                    count: chip.count;
+                    on: chip.on;
+                    label-code: chip.code;
+                    clicked => { root.label-toggled(i); }
+                }
+            }
+        }
+        // The panel's, a group to a row with its name over it: at
+        // 320px the header's row runs off the side, and a caption
+        // beside each row would take the width three chips need.
+        if root.stacked: VerticalLayout {
+            spacing: Theme.space-1;
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                Text {
+                    text: "Stars";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+                Chip {
+                    text: root.exact ? "exactly" : "or more";
+                    shows-count: false;
+                    tight: true;
+                    on: root.exact;
+                    clicked => { root.exact-toggled(); }
+                }
+            }
+            HorizontalLayout {
+                spacing: 3px;
+                alignment: start;
+                for chip[i] in root.stars: Chip {
+                    text: chip.text;
+                    count: chip.count;
+                    on: chip.on;
+                    tight: true;
+                    clicked => { root.star-picked(i); }
+                }
+            }
+            Text {
+                text: "Flag";
+                color: Theme.text-secondary;
+                font-size: Theme.font-xs;
+                vertical-alignment: center;
+            }
+            HorizontalLayout {
+                spacing: 3px;
+                alignment: start;
+                for chip[i] in root.flags: Chip {
+                    text: chip.text;
+                    count: chip.count;
+                    on: chip.on;
+                    tight: true;
+                    clicked => { root.flag-toggled(i); }
+                }
+            }
+            Text {
+                text: "Label";
+                color: Theme.text-secondary;
+                font-size: Theme.font-xs;
+                vertical-alignment: center;
+            }
+            HorizontalLayout {
+                spacing: 3px;
+                alignment: start;
+                for chip[i] in root.labels: LabelChip {
+                    text: chip.text;
+                    count: chip.count;
+                    on: chip.on;
+                    tight: true;
+                    label-code: chip.code;
+                    clicked => { root.label-toggled(i); }
+                }
+            }
+        }
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            field := LineEdit {
+                text <=> root.text;
+                placeholder-text: "Name or keyword";
+                // Wide enough for a few words and no wider: a field
+                // the width of the window reads as the header rather
+                // than as one control in it.
+                max-width: root.stacked ? 100000px : 360px;
+                horizontal-stretch: 1;
+                edited(t) => { root.text-edited(t); }
+                accepted(t) => { root.released(); }
+                key-pressed(e) => {
+                    // Esc undoes the whole excursion in one press:
+                    // the words go and the window's keys have the
+                    // focus back, so the next 1 to 5 is a rating
+                    // again and not a character.
+                    if (e.text == Key.Escape) {
+                        self.text = "";
+                        root.text-edited("");
+                        root.released();
+                        return accept;
+                    }
+                    return reject;
+                }
+            }
+            if !root.stacked: Rectangle { horizontal-stretch: 1; }
+            Text {
+                text: root.shown + " of " + root.total;
+                color: root.on ? Theme.text : Theme.text-muted;
+                font-size: Theme.font-xs;
+                vertical-alignment: center;
+            }
+            PanelButton {
+                text: "Clear";
+                enabled: root.on;
+                clicked => { root.cleared(); root.released(); }
+            }
+        }
+    }
+}

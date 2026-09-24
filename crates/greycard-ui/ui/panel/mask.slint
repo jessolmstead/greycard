@@ -1,0 +1,363 @@
+// The ADJUSTMENTS section on the Masks tab: the list, the chosen
+// one's shapes and the tools that add them.
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { Section, EditSlider, Toggle, PanelButton, Segmented } from "../controls.slint";
+
+export component AdjustmentsSection inherits Section {
+    in-out property <[string]> adjustment-names;
+    in-out property <int> target;
+    in-out property <bool> mask-invert;
+    in-out property <bool> has-feather;
+    in-out property <float> mask-feather;
+    in-out property <bool> show-mask;
+    callback show-mask-toggled();
+    in-out property <bool> collapsed-adjustments;
+    in-out property <string> placing;
+    in-out property <string> adjustment-name;
+    in-out property <[string]> component-names;
+    in-out property <[bool]> component-on;
+    in-out property <int> component;
+    in-out property <bool> component-invert;
+    in-out property <string> shape-mode;
+    in-out property <[bool]> adjustment-on;
+    in-out property <bool> shapes-open;
+    in-out property <bool> placing-into;
+    in-out property <string> component-kind;
+    in-out property <float> brush-size;
+    in-out property <float> brush-feather;
+    in-out property <float> brush-flow;
+    in-out property <string> brush-op;
+    callback target-changed(int);
+    callback adjustment-toggled(int);
+    callback add-adjustment(string);
+    callback delete-adjustment();
+    callback add-shape(string, string);
+    callback delete-shape-at(int);
+    callback shape-toggled(int);
+    callback component-changed(int);
+    callback renamed();
+    callback view-changed();
+
+    title: "ADJUSTMENTS";
+    icon: @image-url("../icons/layers.svg");
+    collapsed <=> root.collapsed-adjustments;
+    // The list: Global, then each adjustment with its
+    // switch. The chosen row is what the panel edits.
+    Rectangle {
+        border-radius: Theme.radius-md;
+        background: Theme.base;
+        border-width: 1px;
+        border-color: Theme.border;
+        VerticalLayout {
+            padding: 2px;
+            spacing: 2px;
+            for name[i] in root.adjustment-names: Rectangle {
+                property <bool> on: i == root.target;
+                property <bool> lit: i == 0 || root.adjustment-on[i - 1];
+                height: Theme.control-height;
+                border-radius: Theme.radius-sm;
+                background: on ? Theme.raised : (row.has-hover ? Theme.hover : transparent);
+                animate background { duration: Theme.quick; }
+                row := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => { root.target-changed(i); }
+                }
+                HorizontalLayout {
+                    padding-left: Theme.space-2;
+                    padding-right: Theme.space-1;
+                    spacing: Theme.space-2;
+                    if i > 0: Rectangle {
+                        width: 14px;
+                        Rectangle {
+                            width: 8px;
+                            height: 8px;
+                            border-radius: 4px;
+                            background: lit ? Theme.accent : transparent;
+                            border-width: 1px;
+                            border-color: lit ? Theme.accent : Theme.text-secondary;
+                        }
+                        TouchArea {
+                            mouse-cursor: MouseCursor.pointer;
+                            clicked => { root.adjustment-toggled(i - 1); }
+                        }
+                    }
+                    Text {
+                        text: name;
+                        color: !lit ? Theme.text-secondary : on ? Theme.text : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        font-weight: on ? Theme.weight-medium : Theme.weight-regular;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    if on && i > 0: Rectangle {
+                        width: Theme.control-height - 4px;
+                        Image {
+                            source: @image-url("../icons/trash-2.svg");
+                            colorize: bin.has-hover ? Theme.text : Theme.text-secondary;
+                            width: Theme.icon;
+                            height: Theme.icon;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        bin := TouchArea {
+                            mouse-cursor: MouseCursor.pointer;
+                            clicked => { root.delete-adjustment(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        PanelButton {
+            text: "Linear";
+            icon: @image-url("../icons/plus.svg");
+            primary: root.placing == "Linear" && !root.placing-into;
+            clicked => { root.add-adjustment("Linear"); }
+        }
+        PanelButton {
+            text: "Radial";
+            icon: @image-url("../icons/plus.svg");
+            primary: root.placing == "Radial" && !root.placing-into;
+            clicked => { root.add-adjustment("Radial"); }
+        }
+        PanelButton {
+            text: "Brush";
+            icon: @image-url("../icons/plus.svg");
+            primary: root.placing == "Brush" && !root.placing-into;
+            clicked => { root.add-adjustment("Brush"); }
+        }
+    }
+    // The learned masks: the subject found, or things picked.
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        PanelButton {
+            text: "Subject";
+            icon: @image-url("../icons/user-round.svg");
+            clicked => { root.add-adjustment("Subject"); }
+        }
+        PanelButton {
+            text: "Object";
+            icon: @image-url("../icons/mouse-pointer-click.svg");
+            primary: root.placing == "Object" && !root.placing-into;
+            clicked => { root.add-adjustment("Object"); }
+        }
+    }
+    // The brush in hand: its next stroke.
+    if root.placing == "Brush": VerticalLayout {
+        spacing: Theme.space-2;
+        EditSlider {
+            label: "Size";
+            minimum: 0.002;
+            maximum: 0.5;
+            default: 0.05;
+            step: 0.001;
+            value <=> root.brush-size;
+            text: round(root.brush-size * 1000) / 10 + "%";
+            changed(v) => { }
+        }
+        EditSlider {
+            label: "Feather";
+            minimum: 0;
+            maximum: 1;
+            default: 0.5;
+            step: 0.01;
+            value <=> root.brush-feather;
+            text: round(root.brush-feather * 100) + "%";
+            changed(v) => { }
+        }
+        EditSlider {
+            label: "Flow";
+            minimum: 0;
+            maximum: 1;
+            default: 1;
+            step: 0.01;
+            value <=> root.brush-flow;
+            text: round(root.brush-flow * 100) + "%";
+            changed(v) => { }
+        }
+        Segmented {
+            options: ["Add", "Subtract", "Erase"];
+            current <=> root.brush-op;
+        }
+    }
+    // The chosen adjustment: its name, its switches,
+    // and its shapes behind a fold.
+    if root.target > 0: VerticalLayout {
+        spacing: Theme.space-2;
+        LineEdit {
+            text <=> root.adjustment-name;
+            placeholder-text: "Name";
+            edited(t) => { root.renamed(); }
+        }
+        HorizontalLayout {
+            spacing: Theme.space-2;
+            Toggle {
+                label: "Show mask";
+                checked <=> root.show-mask;
+                toggled => { root.show-mask-toggled(); root.view-changed(); }
+            }
+            Toggle {
+                label: "Invert";
+                checked <=> root.mask-invert;
+                toggled => { root.view-changed(); }
+            }
+        }
+        Rectangle {
+            height: Theme.control-height;
+            border-radius: Theme.radius-sm;
+            background: fold.has-hover ? Theme.hover : transparent;
+            fold := TouchArea {
+                mouse-cursor: MouseCursor.pointer;
+                clicked => { root.shapes-open = !root.shapes-open; }
+            }
+            HorizontalLayout {
+                padding-left: Theme.space-2;
+                spacing: Theme.space-2;
+                Text {
+                    text: root.shapes-open ? "\u{25be}" : "\u{25b8}";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+                Text {
+                    text: "Shapes (" + root.component-names.length + ")";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    font-weight: Theme.weight-medium;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+        if root.shapes-open: VerticalLayout {
+            spacing: Theme.space-2;
+            Rectangle {
+                border-radius: Theme.radius-md;
+                background: Theme.base;
+                border-width: 1px;
+                border-color: Theme.border;
+                VerticalLayout {
+                    padding: 2px;
+                    spacing: 2px;
+                    for name[i] in root.component-names: Rectangle {
+                        property <bool> on: i == root.component;
+                        property <bool> lit: root.component-on[i];
+                        height: Theme.control-height;
+                        border-radius: Theme.radius-sm;
+                        background: on ? Theme.raised : (shape-row.has-hover ? Theme.hover : transparent);
+                        animate background { duration: Theme.quick; }
+                        shape-row := TouchArea {
+                            mouse-cursor: MouseCursor.pointer;
+                            clicked => { root.component-changed(i); }
+                        }
+                        HorizontalLayout {
+                            padding-left: Theme.space-2;
+                            padding-right: Theme.space-1;
+                            spacing: Theme.space-2;
+                            // The shape's switch, as an adjustment's.
+                            Rectangle {
+                                width: 14px;
+                                Rectangle {
+                                    width: 8px;
+                                    height: 8px;
+                                    border-radius: 4px;
+                                    background: lit ? Theme.accent : transparent;
+                                    border-width: 1px;
+                                    border-color: lit ? Theme.accent : Theme.text-secondary;
+                                }
+                                TouchArea {
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => { root.shape-toggled(i); }
+                                }
+                            }
+                            Text {
+                                text: name;
+                                color: !lit ? Theme.text-secondary : on ? Theme.text : Theme.text-secondary;
+                                opacity: lit ? 1.0 : 0.5;
+                                font-size: Theme.font-xs;
+                                font-weight: on ? Theme.weight-medium : Theme.weight-regular;
+                                vertical-alignment: center;
+                                horizontal-stretch: 1;
+                            }
+                            if root.component-names.length > 1: Rectangle {
+                                width: Theme.control-height - 4px;
+                                Text {
+                                    text: "\u{00d7}";
+                                    color: cross.has-hover ? Theme.text : Theme.text-secondary;
+                                    font-size: Theme.font-sm;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    width: 100%;
+                                    height: 100%;
+                                }
+                                cross := TouchArea {
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => { root.delete-shape-at(i); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Segmented {
+                options: ["Add", "Subtract", "Intersect"];
+                current <=> root.shape-mode;
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: "Linear";
+                    icon: @image-url("../icons/plus.svg");
+                    primary: root.placing == "Linear" && root.placing-into;
+                    clicked => { root.add-shape("Linear", root.shape-mode); }
+                }
+                PanelButton {
+                    text: "Radial";
+                    icon: @image-url("../icons/plus.svg");
+                    primary: root.placing == "Radial" && root.placing-into;
+                    clicked => { root.add-shape("Radial", root.shape-mode); }
+                }
+                PanelButton {
+                    text: root.component-kind == "Brush" ? "Paint" : "Brush";
+                    icon: root.component-kind == "Brush" ? @image-url("../icons/brush.svg") : @image-url("../icons/plus.svg");
+                    primary: root.placing == "Brush" && root.placing-into;
+                    clicked => { root.add-shape("Brush", root.shape-mode); }
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: "Subject";
+                    icon: @image-url("../icons/user-round.svg");
+                    clicked => { root.add-shape("Subject", root.shape-mode); }
+                }
+                PanelButton {
+                    text: root.component-kind == "Object" ? "Pick" : "Object";
+                    icon: @image-url("../icons/mouse-pointer-click.svg");
+                    primary: root.placing == "Object" && root.placing-into;
+                    clicked => { root.add-shape("Object", root.shape-mode); }
+                }
+            }
+            Toggle {
+                label: "Invert shape";
+                checked <=> root.component-invert;
+                toggled => { root.view-changed(); }
+            }
+            if root.has-feather: EditSlider {
+                label: "Feather";
+                minimum: 0;
+                maximum: 1;
+                default: 0.5;
+                step: 0.01;
+                value <=> root.mask-feather;
+                text: round(root.mask-feather * 100) + "%";
+                changed(v) => { root.view-changed(); }
+            }
+        }
+    }
+}

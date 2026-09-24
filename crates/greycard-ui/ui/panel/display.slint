@@ -1,0 +1,113 @@
+// What the screen shows the picture through: the soft proof and the
+// monitor's profile, with the surround behind the picture.
+
+import { Theme } from "../theme.slint";
+import { Section, Toggle, PanelButton, Segmented, Swatches } from "../controls.slint";
+
+export component ProofSection inherits Section {
+    in-out property <bool> collapsed-proof;
+    in-out property <bool> proofing;
+    in-out property <string> proof-profile;
+    in-out property <string> proof-file;
+    in-out property <string> proof-intent;
+    in-out property <bool> gamut-warning;
+    callback proof-changed();
+    callback choose-proof-file();
+
+    title: "SOFT PROOF";
+    icon: @image-url("../icons/image.svg");
+    collapsed <=> root.collapsed-proof;
+    hint: "S";
+    switchable: true;
+    on <=> root.proofing;
+    switched => { root.proof-changed(); }
+    Segmented {
+        options: ["sRGB", "Display P3", "Rec.2020", "File"];
+        current <=> root.proof-profile;
+        selected(p) => { root.proof-changed(); }
+    }
+    if root.proof-profile == "File": HorizontalLayout {
+        spacing: Theme.space-2;
+        Text {
+            text: root.proof-file == "" ? "No profile chosen" : root.proof-file;
+            color: root.proof-file == "" ? Theme.text-muted : Theme.text-secondary;
+            font-size: Theme.font-sm;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        PanelButton {
+            text: "Choose...";
+            clicked => { root.choose-proof-file(); }
+        }
+    }
+    Segmented {
+        options: ["Perceptual", "Relative"];
+        current <=> root.proof-intent;
+        selected(i) => { root.proof-changed(); }
+    }
+    Toggle {
+        label: "Gamut warning";
+        enabled: root.proofing;
+        checked <=> root.gamut-warning;
+        toggled => { root.proof-changed(); }
+    }
+}
+
+export component MonitorSection inherits Section {
+    in-out property <bool> collapsed-monitor;
+    in-out property <string> display-profile;
+    in-out property <string> display-monitor;
+    in-out property <string> display-file;
+    in property <[string]> monitors;
+    in property <string> display-note;
+    callback display-changed();
+    callback choose-display-file();
+    in-out property <int> canvas-choice;
+    in property <[color]> canvas-colors;
+    callback canvas-changed();
+
+    title: "MONITOR";
+    icon: @image-url("../icons/maximize.svg");
+    collapsed <=> root.collapsed-monitor;
+    Segmented {
+        options: ["System", "sRGB", "Adobe RGB", "Display P3", "File"];
+        current <=> root.display-profile;
+        selected(p) => { root.display-changed(); }
+    }
+    if root.display-profile == "System" && root.monitors.length > 1: Segmented {
+        options: root.monitors;
+        current <=> root.display-monitor;
+        selected(m) => { root.display-changed(); }
+    }
+    if root.display-profile == "File": HorizontalLayout {
+        spacing: Theme.space-2;
+        Text {
+            text: root.display-file == "" ? "No profile chosen" : root.display-file;
+            color: root.display-file == "" ? Theme.text-muted : Theme.text-secondary;
+            font-size: Theme.font-sm;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        PanelButton {
+            text: "Choose...";
+            clicked => { root.choose-display-file(); }
+        }
+    }
+    Text {
+        text: root.display-note;
+        color: Theme.text-muted;
+        font-size: Theme.font-xs;
+        wrap: word-wrap;
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        Text { text: "Canvas"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+        Swatches {
+            colors: root.canvas-colors;
+            current <=> root.canvas-choice;
+            selected(i) => { root.canvas-changed(); }
+        }
+    }
+}

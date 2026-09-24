@@ -1,0 +1,155 @@
+// The left bar's record of the edit: the snapshots kept by name, and
+// the history's steps.
+
+import { ScrollView, LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { Section, PanelButton } from "../controls.slint";
+
+export component SnapshotsSection inherits Section {
+    in-out property <int> selected;
+    in-out property <[string]> snapshot-names;
+    in-out property <int> snapshot-editing;
+    callback snapshot-taken();
+    callback snapshot-restored(int);
+    callback snapshot-hovered(int);
+    callback snapshot-renamed(int, string);
+    callback snapshot-deleted(int);
+    in-out property <bool> collapsed-snapshots;
+
+    title: "SNAPSHOTS";
+    icon: @image-url("../icons/image.svg");
+    collapsed <=> root.collapsed-snapshots;
+    if root.snapshot-names.length > 0: Rectangle {
+        border-radius: Theme.radius-md;
+        background: Theme.base;
+        border-width: 1px;
+        border-color: Theme.border;
+        VerticalLayout {
+            padding: 2px;
+            spacing: 2px;
+            for name[i] in root.snapshot-names: Rectangle {
+                height: Theme.control-height;
+                border-radius: Theme.radius-sm;
+                background: snapshot-row.has-hover ? Theme.hover : transparent;
+                animate background { duration: Theme.quick; }
+                snapshot-row := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    enabled: root.selected >= 0 && root.snapshot-editing != i;
+                    clicked => { root.snapshot-restored(i); }
+                    double-clicked => { root.snapshot-editing = i; }
+                    changed has-hover => { root.snapshot-hovered(self.has-hover ? i : -1); }
+                }
+                HorizontalLayout {
+                    padding-left: Theme.space-2;
+                    padding-right: Theme.space-1;
+                    spacing: Theme.space-2;
+                    if root.snapshot-editing == i: LineEdit {
+                        text: name;
+                        font-size: Theme.font-xs;
+                        horizontal-stretch: 1;
+                        accepted(t) => {
+                            root.snapshot-editing = -1;
+                            root.snapshot-renamed(i, t);
+                        }
+                        key-pressed(e) => {
+                            if (e.text == Key.Escape) { root.snapshot-editing = -1; return accept; }
+                            return reject;
+                        }
+                        init => { self.focus(); self.select-all(); }
+                    }
+                    if root.snapshot-editing != i: Text {
+                        text: name;
+                        color: snapshot-row.has-hover ? Theme.text : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    Rectangle {
+                        width: Theme.control-height - 4px;
+                        Image {
+                            source: @image-url("../icons/trash-2.svg");
+                            colorize: snapshot-bin.has-hover ? Theme.text : Theme.text-muted;
+                            width: Theme.icon;
+                            height: Theme.icon;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        snapshot-bin := TouchArea {
+                            mouse-cursor: MouseCursor.pointer;
+                            clicked => { root.snapshot-deleted(i); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.snapshot-names.length == 0: Text {
+        text: "None yet: take one to keep this state by name.";
+        font-size: Theme.font-xs;
+        color: Theme.text-muted;
+        wrap: word-wrap;
+    }
+    PanelButton {
+        text: "Take";
+        icon: @image-url("../icons/plus.svg");
+        enabled: root.selected >= 0;
+        clicked => { root.snapshot-taken(); }
+    }
+}
+
+export component HistorySection inherits Section {
+    in-out property <[string]> history-names;
+    in-out property <int> history-current;
+    callback history-clicked(int);
+    callback history-hovered(int);
+    in-out property <bool> collapsed-history;
+
+    title: "HISTORY";
+    icon: @image-url("../icons/undo-2.svg");
+    collapsed <=> root.collapsed-history;
+    if root.history-names.length > 0: Rectangle {
+        border-radius: Theme.radius-md;
+        background: Theme.base;
+        border-width: 1px;
+        border-color: Theme.border;
+        height: min(history-list.preferred-height, 260px);
+        ScrollView {
+            history-list := VerticalLayout {
+                padding: 2px;
+                spacing: 2px;
+                for name[i] in root.history-names: Rectangle {
+                    height: Theme.control-height - 6px;
+                    border-radius: Theme.radius-sm;
+                    background: i == root.history-current ? Theme.selection
+                        : history-row.has-hover ? Theme.hover : transparent;
+                    animate background { duration: Theme.quick; }
+                    history-row := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => { root.history-clicked(i); }
+                        changed has-hover => { root.history-hovered(self.has-hover ? i : -1); }
+                    }
+                    HorizontalLayout {
+                        padding-left: Theme.space-2;
+                        padding-right: Theme.space-2;
+                        Text {
+                            text: name;
+                            color: i < root.history-current ? Theme.text-muted
+                                : i == root.history-current ? Theme.text
+                                : history-row.has-hover ? Theme.text : Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.history-names.length == 0: Text {
+        text: "Nothing yet: each change is a step here.";
+        font-size: Theme.font-xs;
+        color: Theme.text-muted;
+        wrap: word-wrap;
+    }
+}

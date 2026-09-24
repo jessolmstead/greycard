@@ -1,0 +1,71 @@
+// The preset sheet: a name and what the preset carries, until saved
+// or left.
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { Toggle, PanelButton } from "../controls.slint";
+
+export component PresetSheet inherits Rectangle {
+    in-out property <bool> preset-open;
+    in-out property <string> preset-name;
+    in-out property <[string]> preset-section-names;
+    in-out property <[bool]> preset-section-on;
+    callback preset-section-toggled(int, bool);
+    callback preset-saved();
+
+    background: #000000a0;
+    TouchArea { clicked => { root.preset-open = false; } }
+    Rectangle {
+        width: 400px;
+        height: preset-sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        preset-sheet := VerticalLayout {
+            padding: Theme.space-5;
+            spacing: Theme.space-3;
+            Text {
+                text: "Save preset";
+                font-size: Theme.font-lg;
+                font-weight: Theme.weight-medium;
+                color: Theme.text;
+            }
+            preset-name-edit := LineEdit {
+                text <=> root.preset-name;
+                placeholder-text: "Name";
+                accepted(t) => { root.preset-saved(); }
+                init => { self.focus(); }
+            }
+            Text {
+                text: "What it carries; on, what the edit changed from the default.";
+                font-size: Theme.font-xs;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            for name[i] in root.preset-section-names: Toggle {
+                label: name;
+                checked: root.preset-section-on[i];
+                toggled => { root.preset-section-toggled(i, self.checked); }
+            }
+            Rectangle { height: Theme.space-2; }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: "Cancel";
+                    clicked => { root.preset-open = false; }
+                }
+                PanelButton {
+                    text: "Save";
+                    icon: @image-url("../icons/save.svg");
+                    primary: true;
+                    enabled: root.preset-name != "";
+                    clicked => { root.preset-saved(); }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,77 @@
+// The NAVIGATOR section: the whole frame, the part of it the view
+// has, and a press or a drag to move the view there.
+
+import { Theme } from "../theme.slint";
+import { Section } from "../controls.slint";
+
+export component NavigatorSection inherits Section {
+    in property <string> zoom-text;
+    in-out property <bool> collapsed-navigator;
+    in property <image> navigator;
+    in property <bool> nav-partial;
+    in property <float> nav-left;
+    in property <float> nav-top;
+    in property <float> nav-width;
+    in property <float> nav-height;
+    callback navigate(float, float);
+    callback focus-keys();
+
+    title: "NAVIGATOR";
+    icon: @image-url("../icons/maximize.svg");
+    note: root.zoom-text;
+    collapsed <=> root.collapsed-navigator;
+    if root.navigator.width > 0: Rectangle {
+        // The frame at the panel's width, or no
+        // taller than it is wide, centered.
+        property <float> aspect: root.navigator.width / max(1, root.navigator.height);
+        height: min(self.width, self.width / self.aspect);
+        property <length> shown-w: min(self.width, self.height * self.aspect);
+        property <length> shown-h: self.shown-w / self.aspect;
+        border-radius: Theme.radius-md;
+        background: Theme.base;
+        border-width: 1px;
+        border-color: Theme.border;
+        clip: true;
+        shown := Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            width: parent.shown-w;
+            height: parent.shown-h;
+            Image {
+                source: root.navigator;
+                width: 100%;
+                height: 100%;
+                image-fit: fill;
+                image-rendering: smooth;
+            }
+            // Always here, drawn only when the view
+            // shows less than the frame: a conditional
+            // element appearing under this clip's
+            // rounded corners would not refresh the
+            // renderer's cached layer of them.
+            Rectangle {
+                x: root.nav-left * parent.width;
+                y: root.nav-top * parent.height;
+                width: root.nav-width * parent.width;
+                height: root.nav-height * parent.height;
+                border-width: root.nav-partial ? 1px : 0px;
+                border-color: Theme.text;
+                background: root.nav-partial ? #ffffff1a : transparent;
+            }
+            TouchArea {
+                mouse-cursor: pointer;
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down && e.button == PointerEventButton.left) {
+                        root.focus-keys();
+                        root.navigate(self.mouse-x / self.width, self.mouse-y / self.height);
+                    }
+                }
+                moved => {
+                    if (self.pressed) {
+                        root.navigate(self.mouse-x / self.width, self.mouse-y / self.height);
+                    }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,259 @@
+// The sections that list what lies on disk: the presets, the camera
+// profiles and the looks.
+
+import { Theme } from "../theme.slint";
+import { Section, EditSlider, PanelButton } from "../controls.slint";
+
+export component PresetsSection inherits Section {
+    in-out property <int> selected;
+    in-out property <bool> collapsed-presets;
+    in-out property <[string]> preset-names;
+    callback preset-applied(int);
+    callback preset-deleted(int);
+    callback preset-import();
+    callback preset-save-open();
+
+    title: "PRESETS";
+    icon: @image-url("../icons/bookmark.svg");
+    collapsed <=> root.collapsed-presets;
+    // The list: a click lays the preset over the
+    // edit, as one step; the bin at the row's end
+    // removes it from the store.
+    if root.preset-names.length > 0: Rectangle {
+        border-radius: Theme.radius-md;
+        background: Theme.base;
+        border-width: 1px;
+        border-color: Theme.border;
+        VerticalLayout {
+            padding: 2px;
+            spacing: 2px;
+            for name[i] in root.preset-names: Rectangle {
+                height: Theme.control-height;
+                border-radius: Theme.radius-sm;
+                background: preset-row.has-hover ? Theme.hover : transparent;
+                animate background { duration: Theme.quick; }
+                preset-row := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    enabled: root.selected >= 0;
+                    clicked => { root.preset-applied(i); }
+                }
+                HorizontalLayout {
+                    padding-left: Theme.space-2;
+                    padding-right: Theme.space-1;
+                    spacing: Theme.space-2;
+                    Text {
+                        text: name;
+                        color: preset-row.has-hover ? Theme.text : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    Rectangle {
+                        width: Theme.control-height - 4px;
+                        Image {
+                            source: @image-url("../icons/trash-2.svg");
+                            colorize: preset-bin.has-hover ? Theme.text : Theme.text-muted;
+                            width: Theme.icon;
+                            height: Theme.icon;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        preset-bin := TouchArea {
+                            mouse-cursor: MouseCursor.pointer;
+                            clicked => { root.preset-deleted(i); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if root.preset-names.length == 0: Text {
+        text: "None yet: save the edit as one, or import a Lightroom preset.";
+        font-size: Theme.font-xs;
+        color: Theme.text-muted;
+        wrap: word-wrap;
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        PanelButton {
+            text: "Import...";
+            icon: @image-url("../icons/folder-open.svg");
+            clicked => { root.preset-import(); }
+        }
+        PanelButton {
+            text: "Save...";
+            icon: @image-url("../icons/save.svg");
+            enabled: root.selected >= 0;
+            clicked => { root.preset-save-open(); }
+        }
+    }
+}
+
+export component CameraSection inherits Section {
+    in-out property <bool> collapsed-camera;
+    in property <bool> raw-input;
+    in property <string> source-note;
+    in-out property <string> camera-profile;
+    in property <[string]> camera-profile-names;
+    in property <[string]> camera-profile-labels;
+    in property <string> camera-profile-note;
+    in property <string> camera-profile-warning;
+    callback camera-profile-picked();
+
+    title: "CAMERA PROFILE";
+    icon: @image-url("../icons/camera.svg");
+    hint: root.raw-input ? "" : "raw only";
+    collapsed <=> root.collapsed-camera;
+    // The list: the file's own calibrations
+    // first, then the profiles in the profile
+    // directory that fit this camera.
+    if root.raw-input: Rectangle {
+        border-radius: Theme.radius-md;
+        background: Theme.base;
+        border-width: 1px;
+        border-color: Theme.border;
+        VerticalLayout {
+            padding: 2px;
+            spacing: 2px;
+            for label[i] in root.camera-profile-labels: Rectangle {
+                property <bool> on: root.camera-profile-names[i] == root.camera-profile;
+                height: Theme.control-height;
+                border-radius: Theme.radius-sm;
+                background: on ? Theme.raised : (profile-row.has-hover ? Theme.hover : transparent);
+                animate background { duration: Theme.quick; }
+                profile-row := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => {
+                        root.camera-profile = root.camera-profile-names[i];
+                        root.camera-profile-picked();
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: Theme.space-2;
+                    padding-right: Theme.space-2;
+                    Text {
+                        text: label;
+                        color: on ? Theme.text : (profile-row.has-hover ? Theme.text : Theme.text-secondary);
+                        font-size: Theme.font-xs;
+                        font-weight: on ? Theme.weight-medium : Theme.weight-regular;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+    }
+    if root.raw-input && root.camera-profile-warning != "": Text {
+        text: root.camera-profile-warning;
+        color: Theme.label-yellow;
+        font-size: Theme.font-xs;
+        wrap: word-wrap;
+    }
+    if root.raw-input && root.camera-profile-note != "": Text {
+        text: root.camera-profile-note;
+        color: Theme.text-muted;
+        font-size: Theme.font-xs;
+        wrap: word-wrap;
+    }
+    if !root.raw-input: Text {
+        text: root.source-note;
+        color: Theme.text-secondary;
+        font-size: Theme.font-sm;
+        wrap: word-wrap;
+    }
+}
+
+export component LookSection inherits Section {
+    in-out property <bool> collapsed-look;
+    in-out property <string> look-name;
+    in-out property <float> look-strength;
+    in property <[string]> look-names;
+    in property <[string]> look-labels;
+    in property <string> look-note;
+    in property <string> look-warning;
+    callback look-picked();
+    callback view-changed();
+
+    title: "LOOK";
+    icon: @image-url("../icons/film.svg");
+    collapsed <=> root.collapsed-look;
+    // The list: no look first, then the tables
+    // the look directory holds.
+    Rectangle {
+        border-radius: Theme.radius-md;
+        background: Theme.base;
+        border-width: 1px;
+        border-color: Theme.border;
+        VerticalLayout {
+            padding: 2px;
+            spacing: 2px;
+            for label[i] in root.look-labels: Rectangle {
+                property <bool> on: root.look-names[i] == root.look-name;
+                height: Theme.control-height;
+                border-radius: Theme.radius-sm;
+                background: on ? Theme.raised : (look-row.has-hover ? Theme.hover : transparent);
+                animate background { duration: Theme.quick; }
+                look-row := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => {
+                        root.look-name = root.look-names[i];
+                        root.look-picked();
+                    }
+                }
+                HorizontalLayout {
+                    padding-left: Theme.space-2;
+                    padding-right: Theme.space-2;
+                    Text {
+                        text: label;
+                        color: on ? Theme.text : (look-row.has-hover ? Theme.text : Theme.text-secondary);
+                        font-size: Theme.font-xs;
+                        font-weight: on ? Theme.weight-medium : Theme.weight-regular;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+    }
+    EditSlider {
+        label: "Strength";
+        enabled: root.look-name != "none";
+        minimum: 0;
+        maximum: 1;
+        default: 1;
+        step: 0.01;
+        value <=> root.look-strength;
+        text: round(root.look-strength * 100) + "%";
+        changed(v) => { root.view-changed(); }
+    }
+    if root.look-warning != "": Text {
+        text: root.look-warning;
+        color: Theme.label-yellow;
+        font-size: Theme.font-xs;
+        wrap: word-wrap;
+    }
+    if root.look-note != "": Text {
+        text: root.look-note;
+        color: Theme.text-muted;
+        font-size: Theme.font-xs;
+        wrap: word-wrap;
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        alignment: end;
+        // Back to no look at a full strength,
+        // which is what the section opens at.
+        PanelButton {
+            text: "Reset";
+            icon: @image-url("../icons/rotate-ccw.svg");
+            clicked => {
+                root.look-name = "none";
+                root.look-strength = 1.0;
+                root.look-picked();
+            }
+        }
+    }
+}

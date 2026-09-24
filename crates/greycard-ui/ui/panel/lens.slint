@@ -1,0 +1,262 @@
+// The LENS section: the profile the database found, the manual
+// corrections and the defringe.
+
+import { Theme } from "../theme.slint";
+import { Section, EditSlider, Toggle, PanelButton } from "../controls.slint";
+
+export component LensSection inherits Section {
+    in-out property <bool> lens-enabled;
+    in-out property <bool> collapsed-lens;
+    in-out property <string> picking;
+    callback pick-started(string);
+    in property <brush> hue-circle;
+    in property <string> lens-profile;
+    in property <bool> lens-available;
+    in property <bool> lens-database;
+    in-out property <bool> lens-profile-on;
+    in-out property <bool> lens-distortion;
+    in-out property <bool> lens-ca;
+    in-out property <bool> lens-vignetting;
+    in-out property <float> lens-manual;
+    in-out property <float> lens-ca-red;
+    in-out property <float> lens-ca-blue;
+    in-out property <bool> lens-auto-scale;
+    in-out property <float> lens-scale;
+    in-out property <bool> lens-defringe;
+    in-out property <float> lens-defringe-radius;
+    in-out property <float> lens-defringe-threshold;
+    in-out property <float> lens-defringe-purple-center;
+    in-out property <float> lens-defringe-purple-width;
+    in-out property <float> lens-defringe-purple-amount;
+    in-out property <float> lens-defringe-green-center;
+    in-out property <float> lens-defringe-green-width;
+    in-out property <float> lens-defringe-green-amount;
+    callback fetch-lenses();
+    callback develop-changed();
+
+    title: "LENS";
+    icon: @image-url("../icons/aperture.svg");
+    collapsed <=> root.collapsed-lens;
+    switchable: true;
+    on <=> root.lens-enabled;
+    switched => { root.develop-changed(); }
+    Text {
+        text: root.lens-profile;
+        color: root.lens-available ? Theme.text : Theme.text-secondary;
+        font-size: Theme.font-sm;
+        wrap: word-wrap;
+    }
+    if !root.lens-database: PanelButton {
+        text: "Get lens profiles";
+        icon: @image-url("../icons/image-down.svg");
+        clicked => { root.fetch-lenses(); }
+    }
+    Toggle {
+        label: "Profile";
+        enabled: root.lens-available;
+        checked <=> root.lens-profile-on;
+        toggled => { root.develop-changed(); }
+    }
+    Toggle {
+        label: "Distortion";
+        enabled: root.lens-available && root.lens-profile-on;
+        checked <=> root.lens-distortion;
+        toggled => { root.develop-changed(); }
+    }
+    Toggle {
+        label: "Chromatic aberration";
+        enabled: root.lens-available && root.lens-profile-on;
+        checked <=> root.lens-ca;
+        toggled => { root.develop-changed(); }
+    }
+    Toggle {
+        label: "Vignetting";
+        enabled: root.lens-available && root.lens-profile-on;
+        checked <=> root.lens-vignetting;
+        toggled => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Manual";
+        minimum: -0.5;
+        maximum: 0.5;
+        default: 0;
+        step: 0.005;
+        value <=> root.lens-manual;
+        text: (root.lens-manual >= 0 ? "+" : "") + round(root.lens-manual * 1000) / 10;
+        changed(v) => { root.develop-changed(); }
+    }
+    // The aberration by hand: each channel's
+    // radius scaled beyond the green's, in
+    // tenths of a percent.
+    EditSlider {
+        label: "Red / cyan";
+        minimum: -0.01;
+        maximum: 0.01;
+        default: 0;
+        step: 0.0001;
+        value <=> root.lens-ca-red;
+        text: (root.lens-ca-red >= 0 ? "+" : "") + round(root.lens-ca-red * 10000) / 10 + "\u{2030}";
+        changed(v) => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Blue / yellow";
+        minimum: -0.01;
+        maximum: 0.01;
+        default: 0;
+        step: 0.0001;
+        value <=> root.lens-ca-blue;
+        text: (root.lens-ca-blue >= 0 ? "+" : "") + round(root.lens-ca-blue * 10000) / 10 + "\u{2030}";
+        changed(v) => { root.develop-changed(); }
+    }
+    Toggle {
+        label: "Auto scale";
+        checked <=> root.lens-auto-scale;
+        toggled => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Scale";
+        enabled: !root.lens-auto-scale;
+        minimum: 0.5;
+        maximum: 2;
+        default: 1;
+        step: 0.01;
+        value <=> root.lens-scale;
+        text: round(root.lens-scale * 100) + "%";
+        changed(v) => { root.develop-changed(); }
+    }
+    // Axial aberration and purple fringing: a
+    // different fault from the lateral one the
+    // profile and the two sliders above correct.
+    Toggle {
+        label: "Defringe";
+        checked <=> root.lens-defringe;
+        toggled => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Radius";
+        enabled: root.lens-defringe;
+        minimum: 0.5;
+        maximum: 5;
+        default: 2;
+        step: 0.1;
+        value <=> root.lens-defringe-radius;
+        text: round(root.lens-defringe-radius * 10) / 10 + " px";
+        changed(v) => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Threshold";
+        enabled: root.lens-defringe;
+        minimum: 0;
+        maximum: 100;
+        default: 13;
+        step: 1;
+        value <=> root.lens-defringe-threshold;
+        text: round(root.lens-defringe-threshold);
+        changed(v) => { root.develop-changed(); }
+    }
+    // Which hues count as a fringe. The two
+    // windows are the two sides of an axial
+    // aberration; a chroma that departs from
+    // its neighborhood in any other direction
+    // is a red berry on a grey wall, and is
+    // left alone. The dropper reads a click's
+    // deviation hue and moves the nearer
+    // window's center to it.
+    Text {
+        text: "Purple";
+        color: root.lens-defringe ? Theme.text-secondary : Theme.text-muted;
+        font-size: Theme.font-xs;
+        font-weight: Theme.weight-semibold;
+        vertical-alignment: center;
+        horizontal-alignment: left;
+    }
+    EditSlider {
+        label: "Center";
+        enabled: root.lens-defringe;
+        tinted: true;
+        tint: root.hue-circle;
+        minimum: 0;
+        maximum: 360;
+        default: 310;
+        step: 1;
+        value <=> root.lens-defringe-purple-center;
+        text: round(root.lens-defringe-purple-center) + "\u{00b0}";
+        changed(v) => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Width";
+        enabled: root.lens-defringe;
+        minimum: 10;
+        maximum: 360;
+        default: 120;
+        step: 5;
+        value <=> root.lens-defringe-purple-width;
+        text: round(root.lens-defringe-purple-width) + "\u{00b0}";
+        changed(v) => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Amount";
+        enabled: root.lens-defringe;
+        minimum: 0;
+        maximum: 1;
+        default: 1;
+        step: 0.05;
+        value <=> root.lens-defringe-purple-amount;
+        text: round(root.lens-defringe-purple-amount * 100) + "%";
+        changed(v) => { root.develop-changed(); }
+    }
+    Text {
+        text: "Green";
+        color: root.lens-defringe ? Theme.text-secondary : Theme.text-muted;
+        font-size: Theme.font-xs;
+        font-weight: Theme.weight-semibold;
+        vertical-alignment: center;
+        horizontal-alignment: left;
+    }
+    EditSlider {
+        label: "Center";
+        enabled: root.lens-defringe;
+        tinted: true;
+        tint: root.hue-circle;
+        minimum: 0;
+        maximum: 360;
+        default: 130;
+        step: 1;
+        value <=> root.lens-defringe-green-center;
+        text: round(root.lens-defringe-green-center) + "\u{00b0}";
+        changed(v) => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Width";
+        enabled: root.lens-defringe;
+        minimum: 10;
+        maximum: 360;
+        default: 120;
+        step: 5;
+        value <=> root.lens-defringe-green-width;
+        text: round(root.lens-defringe-green-width) + "\u{00b0}";
+        changed(v) => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Amount";
+        enabled: root.lens-defringe;
+        minimum: 0;
+        maximum: 1;
+        default: 1;
+        step: 0.05;
+        value <=> root.lens-defringe-green-amount;
+        text: round(root.lens-defringe-green-amount * 100) + "%";
+        changed(v) => { root.develop-changed(); }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        alignment: end;
+        PanelButton {
+            text: "Pick hue";
+            icon: @image-url("../icons/pipette.svg");
+            enabled: root.lens-defringe;
+            primary: root.picking == "Defringe";
+            clicked => { root.pick-started("Defringe"); }
+        }
+    }
+}

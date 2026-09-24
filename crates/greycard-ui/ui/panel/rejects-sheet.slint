@@ -1,0 +1,59 @@
+// The move-rejects sheet: how many and where, until answered.
+
+import { Theme } from "../theme.slint";
+import { PanelButton } from "../controls.slint";
+
+export component RejectsSheet inherits Rectangle {
+    in property <string> rejects-text;
+    callback rejects-answered(bool);
+
+    background: #000000a0;
+    TouchArea { clicked => { root.rejects-answered(false); } }
+    Rectangle {
+        width: 440px;
+        height: rejects-sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        rejects-sheet := VerticalLayout {
+            padding: Theme.space-5;
+            spacing: Theme.space-3;
+            Text {
+                text: "Move the rejects?";
+                font-size: Theme.font-lg;
+                font-weight: Theme.weight-medium;
+                color: Theme.text;
+            }
+            Text {
+                text: root.rejects-text;
+                font-size: Theme.font-sm;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            Text {
+                text: "Nothing is deleted. There is no undo for this: to bring a frame back, move it out of that folder by hand.";
+                font-size: Theme.font-sm;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            Rectangle { height: Theme.space-2; }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: "Cancel";
+                    clicked => { root.rejects-answered(false); }
+                }
+                PanelButton {
+                    text: "Move";
+                    icon: @image-url("../icons/folder-open.svg");
+                    primary: true;
+                    clicked => { root.rejects-answered(true); }
+                }
+            }
+        }
+    }
+}

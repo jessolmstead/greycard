@@ -1,0 +1,130 @@
+// The RETOUCH section: the tools, the next or chosen repair's size,
+// feather and opacity, and the repairs by name.
+
+import { Theme } from "../theme.slint";
+import { Section, EditSlider, PanelButton } from "../controls.slint";
+
+export component RetouchSection inherits Section {
+    in-out property <bool> retouch-enabled;
+    in-out property <bool> collapsed-retouch;
+    callback develop-changed();
+    in-out property <string> retouch-mode;
+    in-out property <float> patch-size;
+    in-out property <float> patch-feather;
+    in-out property <float> patch-opacity;
+    in-out property <[string]> patch-names;
+    in-out property <int> patch;
+    callback retouch-toggled(string);
+    callback patch-changed(int);
+    callback delete-patch();
+    callback patch-edited();
+
+    title: "RETOUCH";
+    icon: @image-url("../icons/bandage.svg");
+    collapsed <=> root.collapsed-retouch;
+    switchable: true;
+    on <=> root.retouch-enabled;
+    switched => { root.develop-changed(); }
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        PanelButton {
+            text: "Heal";
+            icon: @image-url("../icons/bandage.svg");
+            primary: root.retouch-mode == "Heal";
+            clicked => { root.retouch-toggled("Heal"); }
+        }
+        PanelButton {
+            text: "Clone";
+            icon: @image-url("../icons/stamp.svg");
+            primary: root.retouch-mode == "Clone";
+            clicked => { root.retouch-toggled("Clone"); }
+        }
+        PanelButton {
+            text: "Fill";
+            icon: @image-url("../icons/sparkles.svg");
+            primary: root.retouch-mode == "Fill";
+            clicked => { root.retouch-toggled("Fill"); }
+        }
+    }
+    if root.retouch-mode != "": VerticalLayout {
+        spacing: Theme.space-2;
+        EditSlider {
+            label: "Size";
+            minimum: 0.002;
+            maximum: 0.3;
+            default: 0.02;
+            step: 0.001;
+            value <=> root.patch-size;
+            text: round(root.patch-size * 1000) / 10 + "%";
+            changed(v) => { root.patch-edited(); }
+        }
+        EditSlider {
+            label: "Feather";
+            minimum: 0;
+            maximum: 1;
+            default: 0.3;
+            step: 0.01;
+            value <=> root.patch-feather;
+            text: round(root.patch-feather * 100) + "%";
+            changed(v) => { root.patch-edited(); }
+        }
+        EditSlider {
+            label: "Opacity";
+            minimum: 0;
+            maximum: 1;
+            default: 1;
+            step: 0.01;
+            value <=> root.patch-opacity;
+            text: round(root.patch-opacity * 100) + "%";
+            changed(v) => { root.patch-edited(); }
+        }
+    }
+    if root.patch-names.length > 0: Rectangle {
+        border-radius: Theme.radius-md;
+        border-width: 1px;
+        border-color: Theme.border;
+        VerticalLayout {
+            padding: 2px;
+            spacing: 2px;
+            for name[i] in root.patch-names: Rectangle {
+                property <bool> on: i == root.patch;
+                height: Theme.control-height;
+                border-radius: Theme.radius-sm;
+                background: on ? Theme.raised : (prow.has-hover ? Theme.hover : transparent);
+                animate background { duration: Theme.quick; }
+                prow := TouchArea {
+                    mouse-cursor: MouseCursor.pointer;
+                    clicked => { root.patch-changed(i); }
+                }
+                HorizontalLayout {
+                    padding-left: Theme.space-2;
+                    padding-right: Theme.space-1;
+                    spacing: Theme.space-2;
+                    Text {
+                        text: name;
+                        color: on ? Theme.text : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        font-weight: on ? Theme.weight-medium : Theme.weight-regular;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                    }
+                    if on: Rectangle {
+                        width: Theme.control-height - 4px;
+                        Image {
+                            source: @image-url("../icons/trash-2.svg");
+                            colorize: pbin.has-hover ? Theme.text : Theme.text-secondary;
+                            width: Theme.icon;
+                            height: Theme.icon;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        pbin := TouchArea {
+                            mouse-cursor: MouseCursor.pointer;
+                            clicked => { root.delete-patch(); }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

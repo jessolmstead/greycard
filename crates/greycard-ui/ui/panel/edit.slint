@@ -1,0 +1,402 @@
+// The develop sections that are sliders on the edit and nothing else:
+// light, noise, detail, sharpening, the vignette, grain, the demosaic.
+
+import { Theme } from "../theme.slint";
+import { Section, EditSlider, Toggle, Segmented } from "../controls.slint";
+
+export component LightSection inherits Section {
+    in-out property <float> exposure;
+    in-out property <bool> tone-curve;
+    in-out property <float> contrast;
+    in-out property <float> highlights;
+    in-out property <float> shadows;
+    in-out property <float> whites;
+    in-out property <float> blacks;
+    in-out property <bool> light-enabled;
+    in-out property <bool> collapsed-light;
+    in-out property <string> target-name;
+    callback view-changed();
+
+    title: "LIGHT" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    icon: @image-url("../icons/sun.svg");
+    collapsed <=> root.collapsed-light;
+    switchable: true;
+    on <=> root.light-enabled;
+    switched => { root.view-changed(); }
+    EditSlider {
+        label: "Exposure";
+        minimum: -5;
+        maximum: 5;
+        default: 0;
+        step: 0.05;
+        value <=> root.exposure;
+        text: (root.exposure >= 0 ? "+" : "") + round(root.exposure * 100) / 100 + " EV";
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: "Contrast";
+        enabled: root.tone-curve;
+        logarithmic: true;
+        minimum: 0.5;
+        maximum: 2;
+        default: 1;
+        step: 0.02;
+        value <=> root.contrast;
+        text: round(root.contrast * 100) / 100;
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: "Highlights";
+        enabled: root.tone-curve;
+        minimum: -2;
+        maximum: 2;
+        default: 0;
+        step: 0.05;
+        value <=> root.highlights;
+        text: (root.highlights >= 0 ? "+" : "") + round(root.highlights * 100) / 100 + " EV";
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: "Shadows";
+        enabled: root.tone-curve;
+        minimum: -2;
+        maximum: 2;
+        default: 0;
+        step: 0.05;
+        value <=> root.shadows;
+        text: (root.shadows >= 0 ? "+" : "") + round(root.shadows * 100) / 100 + " EV";
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: "Whites";
+        enabled: root.tone-curve;
+        minimum: -2;
+        maximum: 2;
+        default: 0;
+        step: 0.05;
+        value <=> root.whites;
+        text: (root.whites >= 0 ? "+" : "") + round(root.whites * 100) / 100 + " EV";
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: "Blacks";
+        enabled: root.tone-curve;
+        minimum: -0.3;
+        maximum: 0.3;
+        default: 0;
+        step: 0.01;
+        value <=> root.blacks;
+        text: (root.blacks >= 0 ? "+" : "") + round(root.blacks * 100) + "%";
+        changed(v) => { root.view-changed(); }
+    }
+    Toggle {
+        label: "Tone curve";
+        checked <=> root.tone-curve;
+        toggled => { root.view-changed(); }
+    }
+}
+
+export component NoiseSection inherits Section {
+    in-out property <bool> noise-enabled;
+    in-out property <bool> collapsed-noise;
+    in-out property <bool> denoise;
+    in-out property <float> denoise-strength;
+    in-out property <string> denoise-learned;
+    in property <[string]> denoise-tiers;
+    in-out property <float> denoise-learned-strength;
+    in property <bool> raw-input;
+    callback develop-changed();
+
+    title: "NOISE";
+    icon: @image-url("../icons/sparkles.svg");
+    hint: root.raw-input ? "" : "raw only";
+    collapsed <=> root.collapsed-noise;
+    switchable: true;
+    on <=> root.noise-enabled;
+    switched => { root.develop-changed(); }
+    // The learned denoiser stands in for the
+    // demosaic and the profiled denoise both.
+    Segmented {
+        options: root.denoise-tiers;
+        enabled: root.raw-input;
+        current <=> root.denoise-learned;
+        selected(v) => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Blend";
+        enabled: root.raw-input && root.denoise-learned != "off";
+        minimum: 0;
+        maximum: 1;
+        default: 1;
+        step: 0.05;
+        value <=> root.denoise-learned-strength;
+        text: round(root.denoise-learned-strength * 100) + "%";
+        changed(v) => { root.develop-changed(); }
+    }
+    Toggle {
+        label: "Denoise";
+        enabled: root.raw-input && root.denoise-learned == "off";
+        checked <=> root.denoise;
+        toggled => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Strength";
+        enabled: root.raw-input && root.denoise && root.denoise-learned == "off";
+        minimum: 0.5;
+        maximum: 3;
+        default: 1.5;
+        step: 0.05;
+        value <=> root.denoise-strength;
+        text: round(root.denoise-strength * 100) / 100;
+        changed(v) => { root.develop-changed(); }
+    }
+}
+
+export component DetailSection inherits Section {
+    in-out property <bool> collapsed-detail;
+    in-out property <bool> detail-enabled;
+    in-out property <float> detail-texture;
+    in-out property <float> detail-clarity;
+    in-out property <float> detail-dehaze;
+    callback develop-changed();
+
+    title: "DETAIL";
+    icon: @image-url("../icons/blend.svg");
+    collapsed <=> root.collapsed-detail;
+    switchable: true;
+    on <=> root.detail-enabled;
+    switched => { root.develop-changed(); }
+    EditSlider {
+        label: "Texture";
+        enabled: root.detail-enabled;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.detail-texture;
+        text: (root.detail-texture >= 0 ? "+" : "") + round(root.detail-texture * 100);
+        changed(v) => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Clarity";
+        enabled: root.detail-enabled;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.detail-clarity;
+        text: (root.detail-clarity >= 0 ? "+" : "") + round(root.detail-clarity * 100);
+        changed(v) => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Dehaze";
+        enabled: root.detail-enabled;
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.detail-dehaze;
+        text: (root.detail-dehaze >= 0 ? "+" : "") + round(root.detail-dehaze * 100);
+        changed(v) => { root.develop-changed(); }
+    }
+}
+
+export component SharpenSection inherits Section {
+    in-out property <bool> collapsed-sharpen;
+    in-out property <bool> show-sharpen-mask;
+    in-out property <bool> sharpen;
+    in-out property <bool> sharpen-auto-radius;
+    in-out property <float> sharpen-radius;
+    in-out property <float> sharpen-iterations;
+    in-out property <bool> sharpen-auto-threshold;
+    in-out property <float> sharpen-threshold;
+    in property <float> sharpen-measured-radius;
+    in property <float> sharpen-measured-threshold;
+    callback view-changed();
+    callback develop-changed();
+
+    title: "SHARPEN";
+    icon: @image-url("../icons/focus.svg");
+    collapsed <=> root.collapsed-sharpen;
+    switchable: true;
+    on <=> root.sharpen;
+    switched => { root.develop-changed(); }
+    Toggle {
+        label: "Auto radius";
+        enabled: root.sharpen;
+        checked <=> root.sharpen-auto-radius;
+        toggled => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Radius";
+        enabled: root.sharpen && !root.sharpen-auto-radius;
+        minimum: 0.4;
+        maximum: 2;
+        default: 0.75;
+        step: 0.01;
+        value <=> root.sharpen-radius;
+        text: root.sharpen-auto-radius
+            ? (root.sharpen-measured-radius > 0 ? "auto " + round(root.sharpen-measured-radius * 100) / 100 : "auto")
+            : round(root.sharpen-radius * 100) / 100;
+        changed(v) => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Iterations";
+        enabled: root.sharpen;
+        minimum: 5;
+        maximum: 50;
+        default: 20;
+        step: 1;
+        value <=> root.sharpen-iterations;
+        text: round(root.sharpen-iterations);
+        changed(v) => { root.develop-changed(); }
+    }
+    Toggle {
+        label: "Auto threshold";
+        enabled: root.sharpen;
+        checked <=> root.sharpen-auto-threshold;
+        toggled => { root.develop-changed(); }
+    }
+    EditSlider {
+        label: "Threshold";
+        enabled: root.sharpen && !root.sharpen-auto-threshold;
+        minimum: 0;
+        maximum: 0.5;
+        default: 0.1;
+        step: 0.01;
+        value <=> root.sharpen-threshold;
+        text: root.sharpen-auto-threshold
+            ? "auto " + round(root.sharpen-measured-threshold * 100) + "%"
+            : round(root.sharpen-threshold * 100) + "%";
+        changed(v) => { root.develop-changed(); }
+    }
+    Toggle {
+        label: "Show mask";
+        enabled: root.sharpen;
+        checked <=> root.show-sharpen-mask;
+        toggled => { root.view-changed(); }
+    }
+}
+
+export component VignetteSection inherits Section {
+    in-out property <bool> vignette-enabled;
+    in-out property <bool> collapsed-vignette;
+    in-out property <float> vignette-amount;
+    in-out property <float> vignette-midpoint;
+    in-out property <float> vignette-feather;
+    in-out property <float> vignette-roundness;
+    callback view-changed();
+
+    title: "VIGNETTE";
+    icon: @image-url("../icons/circle-dashed.svg");
+    collapsed <=> root.collapsed-vignette;
+    switchable: true;
+    on <=> root.vignette-enabled;
+    switched => { root.view-changed(); }
+    EditSlider {
+        label: "Amount";
+        minimum: -5;
+        maximum: 5;
+        default: 0;
+        step: 0.05;
+        value <=> root.vignette-amount;
+        text: (root.vignette-amount >= 0 ? "+" : "") + round(root.vignette-amount * 100) / 100 + " EV";
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: "Midpoint";
+        minimum: 0;
+        maximum: 1;
+        default: 0.5;
+        step: 0.01;
+        value <=> root.vignette-midpoint;
+        text: round(root.vignette-midpoint * 100) + "%";
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: "Feather";
+        minimum: 0;
+        maximum: 1;
+        default: 0.5;
+        step: 0.01;
+        value <=> root.vignette-feather;
+        text: round(root.vignette-feather * 100) + "%";
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: "Roundness";
+        minimum: -1;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.vignette-roundness;
+        text: (root.vignette-roundness >= 0 ? "+" : "") + round(root.vignette-roundness * 100);
+        changed(v) => { root.view-changed(); }
+    }
+}
+
+export component GrainSection inherits Section {
+    in-out property <bool> grain-enabled;
+    in-out property <bool> collapsed-grain;
+    in-out property <float> grain-amount;
+    in-out property <float> grain-size;
+    in-out property <string> grain-kind;
+    callback view-changed();
+
+    title: "GRAIN";
+    icon: @image-url("../icons/grip.svg");
+    collapsed <=> root.collapsed-grain;
+    switchable: true;
+    on <=> root.grain-enabled;
+    switched => { root.view-changed(); }
+    EditSlider {
+        label: "Amount";
+        minimum: 0;
+        maximum: 1;
+        default: 0;
+        step: 0.01;
+        value <=> root.grain-amount;
+        text: round(root.grain-amount * 100) + "%";
+        changed(v) => { root.view-changed(); }
+    }
+    EditSlider {
+        label: "Size";
+        minimum: 0.1;
+        maximum: 2;
+        default: 0.5;
+        step: 0.01;
+        value <=> root.grain-size;
+        text: round(root.grain-size * 100) / 100 + "\u{2030}";
+        changed(v) => { root.view-changed(); }
+    }
+    Segmented {
+        options: ["Cubic", "Tabular"];
+        current <=> root.grain-kind;
+        selected(k) => { root.view-changed(); }
+    }
+}
+
+export component DemosaicSection inherits Section {
+    in-out property <bool> collapsed-demosaic;
+    in property <bool> raw-input;
+    in property <string> source-note;
+    in-out property <string> demosaic;
+    in property <[string]> demosaics;
+    callback develop-changed();
+
+    title: "DEMOSAIC";
+    icon: @image-url("../icons/grid-2x2.svg");
+    hint: root.raw-input ? "" : "raw only";
+    collapsed <=> root.collapsed-demosaic;
+    if root.raw-input: Segmented {
+        options: root.demosaics;
+        current <=> root.demosaic;
+        selected(v) => { root.develop-changed(); }
+    }
+    if !root.raw-input: Text {
+        text: root.source-note;
+        color: Theme.text-secondary;
+        font-size: Theme.font-sm;
+        wrap: word-wrap;
+    }
+}

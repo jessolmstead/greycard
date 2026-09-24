@@ -1,0 +1,147 @@
+// The export sheet: the format, the size, the sharpening and the color
+// space an export is written in, over everything until a choice is
+// made.
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { EditSlider, Toggle, PanelButton, Segmented } from "../controls.slint";
+
+export component ExportSheet inherits Rectangle {
+    in property <string> file-name;
+    callback export();
+    in-out property <bool> export-open;
+    in-out property <string> export-format;
+    in-out property <float> export-quality;
+    in-out property <string> export-size;
+    in-out property <string> export-custom;
+    in-out property <int> frame-width;
+    in-out property <int> frame-height;
+    pure callback custom-edge(string) -> int;
+    /// The long edge the sheet asks for; 0 is the picture's own.
+    pure function export-edge() -> int {
+        if (root.export-size == "Full") { return 0; }
+        if (root.export-size == "Custom") { return root.custom-edge(root.export-custom); }
+        return root.export-size.to-float();
+    }
+    /// Whether the export comes out smaller than the picture.
+    pure function export-resizes() -> bool {
+        return root.export-edge() > 0 && root.export-edge() < max(root.frame-width, root.frame-height);
+    }
+    pure function export-width() -> int {
+        return root.export-resizes() ? round(root.frame-width * root.export-edge() / max(root.frame-width, root.frame-height)) : root.frame-width;
+    }
+    pure function export-height() -> int {
+        return root.export-resizes() ? round(root.frame-height * root.export-edge() / max(root.frame-width, root.frame-height)) : root.frame-height;
+    }
+    in-out property <string> export-space;
+    in-out property <bool> export-embed;
+    in-out property <string> export-sharpen;
+    in-out property <string> export-on-exists;
+
+    background: #000000a0;
+    TouchArea { clicked => { root.export-open = false; } }
+    Rectangle {
+        width: 400px;
+        height: sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        sheet := VerticalLayout {
+            padding: Theme.space-5;
+            spacing: Theme.space-3;
+            Text {
+                text: "Export";
+                font-size: Theme.font-lg;
+                font-weight: Theme.weight-medium;
+                color: Theme.text;
+            }
+            Text {
+                text: root.file-name;
+                font-size: Theme.font-sm;
+                color: Theme.text-secondary;
+            }
+            Rectangle { height: Theme.space-1; }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                Text { text: "Format"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                Segmented { options: ["JPEG", "PNG", "TIFF 16-bit"]; current <=> root.export-format; }
+            }
+            EditSlider {
+                label: "Quality";
+                enabled: root.export-format == "JPEG";
+                minimum: 50;
+                maximum: 100;
+                default: 92;
+                step: 1;
+                value <=> root.export-quality;
+                text: round(root.export-quality);
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                Text { text: "Long edge"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                Segmented { options: ["Full", "4096", "2048", "1024", "Custom"]; current <=> root.export-size; }
+            }
+            if root.export-size == "Custom": HorizontalLayout {
+                spacing: Theme.space-2;
+                Text { text: "Pixels"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                LineEdit {
+                    width: 96px;
+                    text <=> root.export-custom;
+                    placeholder-text: "1600";
+                    input-type: number;
+                }
+                // What comes out at that edge, or the picture's
+                // own when the number is no smaller, or no size.
+                Text {
+                    text: root.frame-width > 0
+                        ? (root.export-resizes()
+                            ? root.export-width() + " × " + root.export-height()
+                            : root.frame-width + " × " + root.frame-height + ", as it is")
+                        : "";
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-sm;
+                    vertical-alignment: center;
+                    horizontal-stretch: 1;
+                    overflow: elide;
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                Text { text: "Sharpen"; width: 68px; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                Segmented { options: ["Off", "Low", "Standard", "High"]; current <=> root.export-sharpen; }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                Text { text: "Color"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                Segmented { options: ["sRGB", "Display P3", "Rec.2020"]; current <=> root.export-space; }
+            }
+            Toggle {
+                label: "Embed profile";
+                checked <=> root.export-embed;
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                Text { text: "If it exists"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                Segmented { options: ["Increment", "Overwrite", "Skip"]; current <=> root.export-on-exists; }
+            }
+            Rectangle { height: Theme.space-2; }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: "Cancel";
+                    clicked => { root.export-open = false; }
+                }
+                PanelButton {
+                    text: "Choose file...";
+                    icon: @image-url("../icons/image-down.svg");
+                    primary: true;
+                    clicked => { root.export-open = false; root.export(); }
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,63 @@
+// The model sheet: a download offered, with its license, until
+// answered.
+
+import { Theme } from "../theme.slint";
+import { PanelButton } from "../controls.slint";
+
+export component ModelSheet inherits Rectangle {
+    in-out property <string> fetch-title;
+    in-out property <string> fetch-text;
+    in-out property <string> fetch-note;
+    callback fetch-answered(bool);
+
+    background: #000000a0;
+    TouchArea { clicked => { root.fetch-answered(false); } }
+    Rectangle {
+        width: 440px;
+        height: fetch-sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        fetch-sheet := VerticalLayout {
+            padding: Theme.space-5;
+            spacing: Theme.space-3;
+            Text {
+                text: root.fetch-title;
+                font-size: Theme.font-lg;
+                font-weight: Theme.weight-medium;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.fetch-text;
+                font-size: Theme.font-sm;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            Text {
+                text: root.fetch-note;
+                font-size: Theme.font-sm;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            Rectangle { height: Theme.space-2; }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: "Not now";
+                    clicked => { root.fetch-answered(false); }
+                }
+                PanelButton {
+                    text: "Download";
+                    icon: @image-url("../icons/image-down.svg");
+                    primary: true;
+                    clicked => { root.fetch-answered(true); }
+                }
+            }
+        }
+    }
+}

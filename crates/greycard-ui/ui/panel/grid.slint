@@ -1,0 +1,248 @@
+// The grid: the folder as a contact sheet over the window, its header
+// with the filter, and the cells riding on one scrolled offset.
+
+import { Theme } from "../theme.slint";
+import { Thumb, FilterChip } from "../structs.slint";
+import { PanelButton, ThumbBadges } from "../controls.slint";
+import { FilterBar } from "filter.slint";
+
+export component GridSheet inherits Rectangle {
+    in property <[Thumb]> thumbs;
+    in-out property <int> selected;
+    callback select(int);
+    in property <int> meta-stars;
+    in-out property <bool> grid-open;
+    in-out property <length> grid-cell;
+    in property <length> grid-pad;
+    in property <length> grid-label;
+    in-out property <length> grid-w;
+    in-out property <length> grid-h;
+    in property <length> grid-scroll;
+    in property <length> grid-gap;
+    property <length> grid-pitch: root.grid-cell + root.grid-gap;
+    in property <length> grid-row;
+    pure callback grid-slack(length, length, int) -> length;
+    property <length> grid-left:
+        root.grid-pad + root.grid-slack(root.grid-w, root.grid-cell, root.grid-cols);
+    in property <int> grid-cols;
+    in property <length> grid-max;
+    callback grid-wheel(length, bool);
+    callback grid-relay();
+    in-out property <bool> culling;
+    callback cull-toggled();
+    in-out property <[FilterChip]> filter-stars;
+    in-out property <[FilterChip]> filter-flags;
+    in-out property <[FilterChip]> filter-labels;
+    in-out property <bool> filter-exact;
+    in-out property <string> filter-text;
+    in-out property <int> filter-shown;
+    in-out property <int> filter-total;
+    in-out property <bool> filter-on;
+    in-out property <bool> filter-focus;
+    callback filter-star-picked(int);
+    callback filter-flag-toggled(int);
+    callback filter-label-toggled(int);
+    callback filter-exact-toggled();
+    callback filter-text-edited(string);
+    callback filter-cleared();
+    callback open-folder();
+    callback focus-keys();
+
+    background: Theme.sheet;
+    // Nothing may fall through to the viewport behind, the wheel
+    // over the header least of all: it would zoom a picture that
+    // is not on screen, or size the brush in hand.
+    TouchArea {
+        scroll-event(e) => { return accept; }
+    }
+    VerticalLayout {
+        // The header: what is selected and how large the cells
+        // are, then the filter, where the three-way Show used to
+        // be. It takes two rows now, because the chips and the
+        // words being looked for do not fit on one at a window
+        // narrow enough to work on.
+        Rectangle {
+            // Two rows of controls and a row of chips, which is
+            // the filter bar's own two. Spelled out rather than
+            // asked of the layout: a header whose height settles
+            // a frame late re-flows the sheet twice on the way
+            // in, and the second re-flow is a folder's worth of
+            // thumbnails asked for again.
+            height: 2 * Theme.control-height + (Theme.control-height - 4px)
+                + 4 * Theme.space-2 + 1px;
+            background: Theme.surface;
+            Rectangle { y: parent.height - 1px; height: 1px; width: 100%; background: Theme.border; }
+            header := VerticalLayout {
+                padding: Theme.space-2;
+                padding-left: Theme.space-4;
+                padding-right: Theme.space-4;
+                spacing: Theme.space-2;
+                HorizontalLayout {
+                    spacing: Theme.space-3;
+                    // The left panel's first button, here where the
+                    // grid covers it: the grid is where a folder is
+                    // looked over, so it is where the next is asked
+                    // for. Ctrl+O reaches the same callback.
+                    PanelButton {
+                        text: "Open folder...";
+                        icon: @image-url("../icons/folder-open.svg");
+                        clicked => { root.focus-keys(); root.open-folder(); }
+                    }
+                    Text {
+                        text: root.selected >= 0 && root.selected < root.thumbs.length
+                            ? root.thumbs[root.selected].name : "";
+                        color: Theme.text;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    Text {
+                        text: root.thumbs.length + (root.thumbs.length == 1 ? " frame · " : " frames · ")
+                            + round(root.grid-cell / 1px) + " px";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                    PanelButton {
+                        text: root.culling ? "Culling" : "Cull";
+                        icon: @image-url("../icons/flag.svg");
+                        primary: root.culling;
+                        clicked => { root.focus-keys(); root.cull-toggled(); }
+                    }
+                    PanelButton {
+                        text: "Loupe";
+                        icon: @image-url("../icons/image.svg");
+                        clicked => { root.focus-keys(); root.grid-open = false; }
+                    }
+                }
+                FilterBar {
+                    takes-focus: true;
+                    wanted <=> root.filter-focus;
+                    stars: root.filter-stars;
+                    flags: root.filter-flags;
+                    labels: root.filter-labels;
+                    exact: root.filter-exact;
+                    shown: root.filter-shown;
+                    total: root.filter-total;
+                    on: root.filter-on;
+                    text <=> root.filter-text;
+                    star-picked(i) => { root.filter-star-picked(i); }
+                    flag-toggled(i) => { root.filter-flag-toggled(i); }
+                    label-toggled(i) => { root.filter-label-toggled(i); }
+                    exact-toggled => { root.filter-exact-toggled(); }
+                    text-edited(t) => { root.filter-text-edited(t); }
+                    cleared => { root.filter-cleared(); }
+                    released => { root.focus-keys(); }
+                }
+            }
+        }
+        grid-sheet := Rectangle {
+            clip: true;
+            // The first layout, a re-flow, a new folder: put the
+            // selection back on screen from the top. Opened by G
+            // the sheet is born at its full size, and `changed`
+            // says nothing about a first value, so `init` reads
+            // it; `changed` is for the window resizing under it.
+            init => { root.grid-w = self.width; root.grid-h = self.height; root.grid-relay(); }
+            changed width => { root.grid-w = self.width; root.grid-relay(); }
+            changed height => { root.grid-h = self.height; root.grid-relay(); }
+            // The cells ride on this one, which is also what sees
+            // the wheel: a cell's own TouchArea rejects a scroll
+            // and it rises to this, its parent, wherever the
+            // pointer is. One offset moves the sheet, rather than
+            // a binding on every cell.
+            TouchArea {
+                y: -root.grid-scroll;
+                width: parent.width;
+                // The sheet, or the window's worth of it when
+                // the folder is short: what can be scrolled past
+                // is exactly how far it scrolls.
+                height: parent.height + root.grid-max;
+                scroll-event(e) => {
+                    // A sideways wheel is nobody's here, and with
+                    // Ctrl it would zoom out on a delta of zero.
+                    if (e.delta-y == 0px) { return reject; }
+                    root.grid-wheel(e.delta-y, e.modifiers.control);
+                    return accept;
+                }
+                for t[i] in root.thumbs: Rectangle {
+                    property <bool> on: i == root.selected;
+                    x: root.grid-left + mod(i, root.grid-cols) * root.grid-pitch;
+                    y: root.grid-pad + floor(i / root.grid-cols) * root.grid-row;
+                    width: root.grid-cell;
+                    height: root.grid-cell + root.grid-label;
+                    border-radius: Theme.radius-md;
+                    background: on ? Theme.selection : (ct.has-hover ? Theme.hover : transparent);
+                    border-width: on ? 2px : 0;
+                    border-color: Theme.accent;
+                    animate background { duration: Theme.quick; }
+                    Image {
+                        x: Theme.space-1;
+                        y: Theme.space-1;
+                        width: parent.width - 2 * Theme.space-1;
+                        height: root.grid-cell - 2 * Theme.space-1;
+                        source: t.image;
+                        image-fit: contain;
+                    }
+                    Text {
+                        y: root.grid-cell;
+                        width: 100%;
+                        height: root.grid-label;
+                        text: t.name;
+                        color: on ? Theme.text : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                        overflow: elide;
+                    }
+                    // The picture's own box inside the cell.
+                    // `contain` leaves a margin on one axis, and
+                    // a badge in that margin sits beside the
+                    // frame rather than on it; before the
+                    // thumbnail arrives there is no aspect to go
+                    // on and the box is the cell's.
+                    property <length> box: root.grid-cell - 2 * Theme.space-1;
+                    property <length> shown-w: t.image.width > 0 && t.image.height > 0
+                        ? min(self.box, self.box * t.image.width / t.image.height)
+                        : self.box;
+                    property <length> shown-h: t.image.width > 0 && t.image.height > 0
+                        ? min(self.box, self.box * t.image.height / t.image.width)
+                        : self.box;
+                    ThumbBadges {
+                        // On the picture's bottom left corner,
+                        // held inside the cell: a tall frame in a
+                        // small cell is narrower than the badge,
+                        // and a pill that hangs over the edge
+                        // belongs to the frame beside it.
+                        x: clamp(
+                            Theme.space-1 + (parent.box - parent.shown-w) / 2 + Theme.space-1,
+                            Theme.space-1,
+                            max(Theme.space-1, Theme.space-1 + parent.box - self.width));
+                        y: clamp(
+                            Theme.space-1 + (parent.box + parent.shown-h) / 2
+                                - self.height - Theme.space-1,
+                            Theme.space-1,
+                            max(Theme.space-1, Theme.space-1 + parent.box - self.height));
+                        rating: t.rating;
+                        flag: t.flag;
+                        label: t.label;
+                        stars: root.meta-stars;
+                        // With the cell, within reason: the
+                        // smallest cell keeps the size the strip
+                        // uses, and the largest does not turn a
+                        // quiet mark into a label across the
+                        // picture.
+                        glyph: clamp(root.grid-cell / 16, 9px, 18px);
+                    }
+                    ct := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => { root.focus-keys(); root.select(i); }
+                        // The frame under the pointer, in the loupe.
+                        double-clicked => { root.grid-open = false; }
+                    }
+                }
+            }
+        }
+    }
+}

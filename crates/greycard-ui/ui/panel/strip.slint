@@ -1,0 +1,107 @@
+// The filmstrip along the foot of the window: the folder's frames in a
+// row, scrolled sideways by the wheel.
+
+import { Theme } from "../theme.slint";
+import { Thumb } from "../structs.slint";
+import { ThumbBadges } from "../controls.slint";
+
+export component Filmstrip inherits Rectangle {
+    in property <[Thumb]> thumbs;
+    in-out property <int> selected;
+    callback select(int);
+    in property <int> meta-stars;
+    in property <length> strip-item;
+    in property <length> strip-pitch;
+    in property <length> strip-pad;
+    /// Scroll the strip by a wheel's delta, kept within its ends.
+    function strip-scroll(by: length) {
+        strip.content-x = min(0px, max(strip.width - strip.content-width, strip.content-x + by));
+    }
+    callback strip-relay();
+    callback strip-report();
+    callback focus-keys();
+    // The Flickable's scroll and extent, for App's reveal and report,
+    // which read and set them through this component's id.
+    in-out property <length> content-x <=> strip.content-x;
+    out property <length> content-width: strip.content-width;
+
+    height: 148px;
+    background: Theme.surface;
+    Rectangle { y: 0; height: 1px; width: 100%; background: Theme.border; }
+    // A wheel over the strip scrolls it sideways. Slint's
+    // Flickable only takes a wheel along an axis it can
+    // move, and this one moves in x alone, so the vertical
+    // wheel is turned here: this TouchArea encloses the
+    // strip and sees what the thumbnails and the Flickable
+    // reject. Dragging is the Flickable's own, and it
+    // cancels the thumbnail's click once it takes over.
+    TouchArea {
+        scroll-event(e) => {
+            // Only the vertical wheel: one with a sideways
+            // component is the Flickable's, which has the
+            // room for it and takes it before this is asked.
+            if (e.delta-y == 0px) { return reject; }
+            root.strip-scroll(e.delta-y);
+            return accept;
+        }
+        strip := Flickable {
+            content-width: max(self.width, root.thumbs.length * root.strip-pitch + 2 * root.strip-pad);
+            // No room to move in y, or the Flickable takes the
+            // vertical wheel for itself: its content would
+            // otherwise be the row's preferred height, a few
+            // pixels taller than the strip, and a wheel would
+            // nudge the thumbnails up instead of along.
+            content-height: self.height;
+            changed content-x => { root.strip-report(); }
+            // The first layout, and a folder swapped in.
+            changed width => { root.strip-relay(); }
+            changed content-width => { root.strip-relay(); }
+            HorizontalLayout {
+                padding: root.strip-pad;
+                spacing: root.strip-pitch - root.strip-item;
+                alignment: start;
+                for t[i] in root.thumbs: Rectangle {
+                    property <bool> on: i == root.selected;
+                    width: root.strip-item;
+                    border-radius: Theme.radius-md;
+                    background: on ? Theme.selection : (tt.has-hover ? Theme.hover : transparent);
+                    border-width: on ? 1px : 0;
+                    border-color: Theme.accent-muted;
+                    animate background { duration: Theme.quick; }
+                    VerticalLayout {
+                        padding: Theme.space-2;
+                        spacing: Theme.space-1;
+                        Image {
+                            source: t.image;
+                            height: 96px;
+                            image-fit: contain;
+                        }
+                        Text {
+                            text: t.name;
+                            color: on ? Theme.text : Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            horizontal-alignment: center;
+                            overflow: elide;
+                        }
+                    }
+                    // Over the picture's bottom corner, not in
+                    // the row with the name: the badges must
+                    // not push the name out of the middle, and
+                    // the cell's height is the strip's.
+                    ThumbBadges {
+                        x: Theme.space-2 + Theme.space-1;
+                        y: Theme.space-2 + 96px - self.height - Theme.space-1;
+                        rating: t.rating;
+                        flag: t.flag;
+                        label: t.label;
+                        stars: root.meta-stars;
+                    }
+                    tt := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => { root.focus-keys(); root.select(i); }
+                    }
+                }
+            }
+        }
+    }
+}
