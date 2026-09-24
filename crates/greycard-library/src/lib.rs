@@ -650,7 +650,9 @@ struct State {
     app_id: i32,
     version: i32,
     has_tables: bool,
-    has_files: bool,
+    /// A `files` table with this crate's `hash` and `folder` columns:
+    /// a table by that name alone is anybody's.
+    has_our_files: bool,
 }
 
 enum Judgement {
@@ -674,8 +676,9 @@ impl State {
                 [],
                 |r| r.get(0),
             )?,
-            has_files: conn.query_row(
-                "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'files'",
+            has_our_files: conn.query_row(
+                "SELECT count(*) = 2 FROM pragma_table_info('files') \
+                 WHERE name IN ('hash', 'folder')",
                 [],
                 |r| r.get(0),
             )?,
@@ -688,9 +691,10 @@ impl State {
 
     fn judge(&self) -> Judgement {
         // Schema 1 was written before the application id was: a
-        // `files` table at that version with no id is an early
-        // library of ours, and is rebuilt like any older one.
-        let early = self.app_id == 0 && self.version == 1 && self.has_files;
+        // `files` table with this crate's columns at that version
+        // with no id is an early library of ours, and is rebuilt like
+        // any older one.
+        let early = self.app_id == 0 && self.version == 1 && self.has_our_files;
         if !self.fresh() && !early && self.app_id != APPLICATION_ID {
             Judgement::NotOurs
         } else if self.version > SCHEMA_VERSION {
@@ -916,11 +920,32 @@ mod tests {
         assert!(matches!(Library::open(&path), Err(Error::NotALibrary(_))));
         // But schema 1 with a `files` table and no id is an early
         // library of this crate's, and is rebuilt.
+        // Not on the name alone: somebody's `files` at version 1
+        // without this crate's columns is theirs, and keeps its rows.
+        let path = dir.join("theirs-v1.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE files (id INTEGER PRIMARY KEY, note TEXT); \
+                 INSERT INTO files (note) VALUES ('precious');",
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+        }
+        assert!(matches!(Library::open(&path), Err(Error::NotALibrary(_))));
+        let conn = Connection::open(&path).unwrap();
+        let note: String = conn
+            .query_row("SELECT note FROM files", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(note, "precious");
+        drop(conn);
         let path = dir.join("early.sqlite");
         {
             let conn = Connection::open(&path).unwrap();
-            conn.execute_batch("CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);")
-                .unwrap();
+            conn.execute_batch(
+                "CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT, folder TEXT, hash TEXT);",
+            )
+            .unwrap();
             conn.pragma_update(None, "user_version", 1).unwrap();
         }
         let lib = Library::open(&path).unwrap();

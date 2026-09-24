@@ -536,7 +536,7 @@ mod tests {
             iso: Some(iso),
             exposure_time: None,
             fnumber: None,
-            orientation: Default::default(),
+            ..Default::default()
         }
     }
 

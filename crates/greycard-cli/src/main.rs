@@ -1462,11 +1462,15 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
                 for (path, why) in &report.errors {
                     println!("{:<13} {}: {why}", "not read", path.display());
                 }
-                if report.unavailable > 0 {
+                if !report.unavailable.is_empty() {
                     println!(
-                        "{:<13} {} folders empty on disk, left as they were",
-                        "unavailable", report.unavailable
+                        "{:<13} {} folders empty on disk, left as they were:",
+                        "unavailable",
+                        report.unavailable.len()
                     );
+                    for folder in &report.unavailable {
+                        println!("              {}", folder.display());
+                    }
                 }
                 for link in &report.skipped {
                     println!(

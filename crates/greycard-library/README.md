@@ -27,7 +27,13 @@ tree, are marked missing and kept until `prune_missing`, so a move
 is found from either end. A folder found empty on disk with rows
 under it is a drive not mounted, its mount point left behind, as
 likely as a shoot deleted: nothing under it is marked missing or
-claimed as a move, and the report counts it unavailable. A folder
+claimed as a move, and the report names it as unavailable. The
+trade-off is deliberate: a folder emptied on purpose keeps its files
+listed as present until the folder itself is removed, and a move
+that leaves its folder empty shows both paths, with nothing flagging
+the stale one, until then. A pass that wrote a row's meta after a
+running pass read the sidecar wins: the running pass re-reads the
+sidecar under the lock rather than writing back what it read. A folder
 that is not there and that the index knows nothing of is an error,
 a name mistyped. A tree pass does not go into hidden folders or
 follow links to folders, and names the links it skipped. The pass

@@ -90,7 +90,7 @@ pub struct Report {
     /// Folders found empty on disk with rows in the index under
     /// them: a drive not mounted, its mount point left behind, as
     /// likely as a shoot deleted, so left as they were.
-    pub unavailable: usize,
+    pub unavailable: Vec<PathBuf>,
     /// Files that could not be read, and why; each has a row anyway
     /// when it could be hashed.
     pub errors: Vec<(PathBuf, String)>,
@@ -113,7 +113,7 @@ impl Report {
         self.unchanged += other.unchanged;
         self.returned += other.returned;
         self.missing += other.missing;
-        self.unavailable += other.unavailable;
+        self.unavailable.extend(other.unavailable);
         self.errors.extend(other.errors);
         self.skipped.extend(other.skipped);
     }
@@ -230,7 +230,7 @@ impl Library {
         {
             log::info!("{}: empty on disk, left as it was", dir.display());
             return Ok(Report {
-                unavailable: 1,
+                unavailable: vec![dir],
                 ..Report::default()
             });
         }
@@ -262,7 +262,7 @@ impl Library {
         let mut dirs = vec![root.clone()];
         while let Some(dir) = dirs.pop() {
             let one = self.index_folder(&dir, progress)?;
-            if one.unavailable > 0 {
+            if !one.unavailable.is_empty() {
                 shielded.push(under_prefix(&path_bytes(&dir)));
             }
             report.add(one);
@@ -473,6 +473,11 @@ fn index_paths(
     let folder_bytes = path_bytes(folder);
     let folder_text = path_text(folder);
     let mut looked: Vec<Looked<'_>> = Vec::with_capacity(BATCH);
+    let mut disk = Disk {
+        folder: &folder_bytes,
+        listed: files.iter().map(|p| path_bytes(p)).collect(),
+        in_use: HashMap::new(),
+    };
     let mut since = Instant::now();
     for (done, path) in files.iter().enumerate() {
         progress(Progress { done, total, path });
@@ -506,7 +511,7 @@ fn index_paths(
                 let Some(hash) = hashed(&mut report) else {
                     continue;
                 };
-                let exif = if gone_by_hash(conn, &hash)?.is_some() {
+                let exif = if gone_by_hash(conn, &hash, &mut disk)?.is_some() {
                     None
                 } else {
                     Some(probe(path, &mut report))
@@ -529,6 +534,7 @@ fn index_paths(
                 &folder_text,
                 &mut looked,
                 &mut existing,
+                &mut disk,
                 &mut report,
             )?;
             since = Instant::now();
@@ -540,6 +546,7 @@ fn index_paths(
         &folder_text,
         &mut looked,
         &mut existing,
+        &mut disk,
         &mut report,
     )?;
     // What was not on disk. By id and path both: another writer may
@@ -567,6 +574,7 @@ fn write_batch(
     folder_text: &str,
     looked: &mut Vec<Looked<'_>>,
     existing: &mut HashMap<Vec<u8>, Row>,
+    disk: &mut Disk<'_>,
     report: &mut Report,
 ) -> Result<()> {
     if looked.is_empty() {
@@ -584,25 +592,34 @@ fn write_batch(
     {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
         match plan {
-            Plan::Same(row) => settle_same(&tx, row, sidecar.as_ref(), report)?,
+            Plan::Same(row) => {
+                let (row, sidecar) = current(&tx, &key, row, path, sidecar)?;
+                settle_same(&tx, row, sidecar.as_ref(), report)?;
+            }
             Plan::Changed { row, hash, exif } => {
+                let (row, sidecar) = current(&tx, &key, row, path, sidecar)?;
                 update_file(&tx, row.id, size, mtime, &hash, &exif)?;
-                write_meta(&tx, row.id, sidecar.as_ref())?;
+                if !row.same_sidecar(sidecar.as_ref()) {
+                    write_meta(&tx, row.id, sidecar.as_ref())?;
+                }
                 report.changed += 1;
             }
             Plan::Fresh { hash, exif } => {
                 if let Some(row) = row_at(&tx, &key)? {
                     // Added by another writer since the folder's rows
-                    // were read.
+                    // were read; this row is current, and the sidecar
+                    // it knows may be newer than the one read.
                     if row.size == size && row.mtime == mtime {
                         settle_same(&tx, row, sidecar.as_ref(), report)?;
                     } else {
                         let exif = exif.unwrap_or_else(|| probe(path, report));
                         update_file(&tx, row.id, size, mtime, &hash, &exif)?;
-                        write_meta(&tx, row.id, sidecar.as_ref())?;
+                        if !row.same_sidecar(sidecar.as_ref()) {
+                            write_meta(&tx, row.id, sidecar.as_ref())?;
+                        }
                         report.changed += 1;
                     }
-                } else if let Some((id, old_path)) = gone_by_hash(&tx, &hash)? {
+                } else if let Some((id, old_path)) = gone_by_hash(&tx, &hash, disk)? {
                     tx.prepare_cached(
                         "UPDATE files SET path = ?, folder = ?, folder_text = ?, name = ?, \
                          size = ?, mtime = ?, missing_since = NULL WHERE id = ?",
@@ -716,27 +733,99 @@ fn update_file(
     Ok(())
 }
 
+/// What one pass knows about the disk, so that a question is asked
+/// of it once: the paths listed in the folder being indexed, which
+/// are on disk without a stat, and whether each folder asked about
+/// is there with something in it.
+struct Disk<'a> {
+    folder: &'a [u8],
+    listed: HashSet<Vec<u8>>,
+    in_use: HashMap<Vec<u8>, bool>,
+}
+
+impl Disk<'_> {
+    /// Whether a row's file is on disk: for a row in the folder being
+    /// indexed, by the listing; for any other, by a stat.
+    fn has(&self, row_folder: &[u8], row_path: &[u8]) -> bool {
+        if row_folder == self.folder {
+            self.listed.contains(row_path)
+        } else {
+            path_from_bytes(row_path).exists()
+        }
+    }
+
+    /// Whether a folder is there with something in it, asked of the
+    /// disk once a folder a pass.
+    fn folder_in_use(&mut self, folder: &[u8]) -> bool {
+        if let Some(&known) = self.in_use.get(folder) {
+            return known;
+        }
+        let dir = path_from_bytes(folder);
+        let in_use = dir.is_dir() && !is_empty_dir(&dir).unwrap_or(true);
+        self.in_use.insert(folder.to_vec(), in_use);
+        in_use
+    }
+}
+
 /// A row with this hash whose file is gone from a folder that is
 /// still there with other things in it: a move's other end. Its id
 /// and its old path. A row whose folder is gone, or is there but
 /// empty, is not one — its drive may simply not be mounted, its
-/// mount point left behind — and the file in hand is a copy.
-fn gone_by_hash(tx: &Connection, hash: &str) -> Result<Option<(i64, Vec<u8>)>> {
-    let mut stmt = tx.prepare_cached("SELECT id, path FROM files WHERE hash = ? ORDER BY id")?;
+/// mount point left behind — and the file in hand is a copy. A
+/// folder of four thousand links to twenty raws asks this of two
+/// hundred rows a file, so the cheap question comes first and the
+/// folder's answer is kept for the pass.
+fn gone_by_hash(
+    tx: &Connection,
+    hash: &str,
+    disk: &mut Disk<'_>,
+) -> Result<Option<(i64, Vec<u8>)>> {
+    let mut stmt =
+        tx.prepare_cached("SELECT id, path, folder FROM files WHERE hash = ? ORDER BY id")?;
     let candidates = stmt.query_map(params![hash], |r| {
-        Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, Vec<u8>>(1)?,
+            r.get::<_, Vec<u8>>(2)?,
+        ))
     })?;
     for candidate in candidates {
-        let (id, old) = candidate?;
-        let old_path = path_from_bytes(&old);
-        let folder_in_use = old_path
-            .parent()
-            .is_some_and(|d| d.is_dir() && !is_empty_dir(d).unwrap_or(true));
-        if folder_in_use && !old_path.exists() {
+        let (id, old, old_folder) = candidate?;
+        if disk.has(&old_folder, &old) {
+            continue;
+        }
+        if disk.folder_in_use(&old_folder) {
             return Ok(Some((id, old)));
         }
     }
     Ok(None)
+}
+
+/// The row as it is now under the lock, and the sidecar to hold it
+/// to. Phase one read the sidecar before the lock was taken; when
+/// another writer has written the row's meta since the folder's rows
+/// were read — the editor saving a rating and calling `index_file`
+/// between the phases — what it wrote is newer than what phase one
+/// read, so the sidecar is read again here and the row is settled
+/// against its current state, not the snapshot's. A row gone
+/// meanwhile (a prune) is settled as the snapshot, and its updates
+/// by id touch nothing.
+fn current(
+    tx: &Transaction<'_>,
+    key: &[u8],
+    snapshot: Row,
+    path: &Path,
+    sidecar: Option<SidecarNow>,
+) -> Result<(Row, Option<SidecarNow>)> {
+    Ok(match row_at(tx, key)? {
+        Some(now)
+            if now.sidecar != snapshot.sidecar || now.sidecar_hash != snapshot.sidecar_hash =>
+        {
+            (now, sidecar_of(path))
+        }
+        Some(now) => (now, sidecar),
+        None => (snapshot, sidecar),
+    })
 }
 
 /// The file's EXIF, a raw's through its decoder and a picture's
@@ -1534,6 +1623,69 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// The editor saves a rating and calls `index_file` while a pass
+    /// over the folder is between its phases: the pass read the old
+    /// sidecar before the lock, and must not write it back over the
+    /// newer meta.
+    #[test]
+    fn a_meta_saved_between_the_phases_is_not_overwritten() {
+        let dir = scratch("stale");
+        let (r5, _, a7) = shoot(&dir);
+        let db = dir.join("lib").join("library.sidecar.sqlite");
+        let mut lib = Library::open(&db).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 4);
+        let mut other = Library::open(&db).unwrap();
+        // The progress call for the last file comes after the first
+        // files' phase one and before the batch is written.
+        let last = canonical(&dir).unwrap().join("r6.tif");
+        let mut saved = false;
+        let report = lib
+            .index_folder(&dir, &mut |p| {
+                if p.path == last {
+                    let mut s = Sidecar::load(&r5).unwrap().unwrap();
+                    s.meta.rating = 5;
+                    s.save(&r5).unwrap();
+                    let r = other.index_file(&r5).unwrap();
+                    assert_eq!(r.meta_refreshed, 1, "{r:?}");
+                    saved = true;
+                }
+            })
+            .unwrap();
+        assert!(saved);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        // The five stands, in the index and on disk.
+        assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 5);
+        assert_eq!(Sidecar::load(&r5).unwrap().unwrap().meta.rating, 5);
+        assert_eq!(lib.by_path(&a7).unwrap().unwrap().meta.rating, 0);
+        // The same with the file itself changed on disk between the
+        // passes' snapshots, which takes the other write path.
+        write_frame(&r5, &A7, 31);
+        std::fs::File::options()
+            .write(true)
+            .open(&r5)
+            .unwrap()
+            .set_modified(SystemTime::now() + Duration::from_secs(5))
+            .unwrap();
+        let report = lib
+            .index_folder(&dir, &mut |p| {
+                if p.path == last {
+                    let mut s = Sidecar::load(&r5).unwrap().unwrap();
+                    s.meta.rating = 1;
+                    s.save(&r5).unwrap();
+                    other.index_file(&r5).unwrap();
+                }
+            })
+            .unwrap();
+        assert_eq!(report.changed, 1, "{report:?}");
+        let e = lib.by_path(&r5).unwrap().unwrap();
+        assert_eq!(e.meta.rating, 1);
+        assert_eq!(e.exif.camera, "SONY ILCE-7M4");
+        drop(other);
+        drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// Two passes on two folders at once, on a library that is not
     /// there yet: both make rows, neither fails. This is the CLI's
     /// `index a & index b` on a fresh database.
@@ -1648,18 +1800,22 @@ pub(crate) mod tests {
         assert_eq!(
             report,
             Report {
-                unavailable: 1,
+                unavailable: vec![canonical(&drive).unwrap()],
                 ..Report::default()
             }
         );
         let report = lib.index_folder(&drive, &mut quiet()).unwrap();
-        assert_eq!(report.unavailable, 1, "{report:?}");
+        assert_eq!(report.unavailable.len(), 1, "{report:?}");
         assert_eq!(lib.prune_missing().unwrap(), 0);
         assert_eq!(names(&lib, "missing:yes"), Vec::<String>::new());
         assert!(!lib.by_path(&r5).unwrap().unwrap().missing);
         // A mount point inside a tree shields what is under it too.
         let report = lib.index_tree(&mnt, &mut quiet()).unwrap();
-        assert_eq!((report.missing, report.unavailable), (0, 1), "{report:?}");
+        assert_eq!(
+            (report.missing, report.unavailable.len()),
+            (0, 1),
+            "{report:?}"
+        );
         // Mounted again: everything is where it was.
         std::fs::remove_dir(&drive).unwrap();
         std::fs::rename(&off, &drive).unwrap();
