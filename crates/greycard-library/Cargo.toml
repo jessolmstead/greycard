@@ -1,0 +1,27 @@
+[package]
+name = "greycard-library"
+version.workspace = true
+description = "The library index: a rebuildable SQLite catalog of files, their EXIF and their sidecars' meta, and the filter language over it"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+log.workspace = true
+greycard-core = { path = "../greycard-core" }
+greycard-edit = { path = "../greycard-edit" }
+serde_json.workspace = true
+thiserror.workspace = true
+dirs.workspace = true
+# The index. Bundled, so the same SQLite is on every platform and a
+# build needs no system library.
+rusqlite = { version = "0.37", features = ["bundled"] }
+# The content hash: the first 64 KB and the size (notes §72).
+blake3 = "1"
+
+[dev-dependencies]
+# The tests write small TIFFs with real EXIF through the engine's
+# writer, whose metadata is rawler's type.
+rawler.workspace = true
