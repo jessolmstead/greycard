@@ -96,10 +96,12 @@ The strip's and the grid's thumbnails are kept on disk under
 `%LOCALAPPDATA%` on Windows), named by what is in each file rather
 than where it is, so a folder you open again, or move or rename, fills
 in at once instead of reading every raw's preview. Turning a frame
-does not make its thumbnail again. The cache keeps to 300 MB, about
-thirty thousand frames, dropping the ones used longest ago; set
-`thumb_cache_mb` in `settings.json` for another size, or 0 for none.
-**Clear** in Settings empties it.
+does not make its thumbnail again; copying a folder without keeping
+the files' dates makes each thumbnail once more. The cache keeps to
+300 MB by default, about thirty thousand frames at one size (the
+grid's larger sizes are kept as well, and take more), dropping the
+ones used longest ago. **Keep up to** in Settings changes that, or
+turns the cache off with 0, and **Clear** empties it.
 
 ### Masks by lightness and color
 

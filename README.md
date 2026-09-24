@@ -200,8 +200,11 @@ its license, into `~/.cache/greycard/models`: the denoiser is 5 to
 20 MB depending on its tier, the subject mask about 115 MB, the
 object mask about 184 MB, and the fill about 208 MB. `greycard models`
 lists them and `greycard models --fetch <tier|id|all>` gets them
-without the window, for a headless machine. On a Mac both caches are
-under `~/Library/Caches/greycard` instead.
+without the window, for a headless machine. The browser's thumbnails
+are kept in `~/.cache/greycard/thumbs`, by what is in each file rather
+than where it is, up to 300 MB by default (Settings sets the cap and
+clears it). On a Mac these caches are under
+`~/Library/Caches/greycard` instead.
 
 Settings live in `~/.config/greycard/settings.json`, or
 `~/Library/Application Support/greycard/settings.json` on a Mac.
