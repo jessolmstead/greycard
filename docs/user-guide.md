@@ -116,6 +116,13 @@ each one shows you its license first:
 Each one is downloaded once. The first Subject mask of a session takes
 a few seconds.
 
+The lens database is the one greycard offers without being asked: the
+first time a picture opens and there are no lens profiles on the
+machine, it asks whether to download them, since without them no lens
+is corrected. Answer **Not now** and it will not ask again; the
+**Get lens profiles** button in the Lens section is there whenever you want
+them.
+
 ## Known rough edges
 
 - The default look and the Highlights, Whites and Shadows sliders don't

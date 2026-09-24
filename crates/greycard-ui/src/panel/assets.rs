@@ -4,32 +4,79 @@ use crate::panel::edit::{develop_soon, read_edit, schedule_save};
 use crate::panel::history::take_current;
 use crate::*;
 
-/// Open the download sheet for the lens database.
-pub(crate) fn offer_lenses(st: &mut State, app: &App) {
+/// Whether to offer the lens profiles unprompted: only with no
+/// database on the machine, never after a Not now, and once a launch.
+/// A user who never opens the LENS section would otherwise never
+/// learn that nothing is being corrected.
+pub(crate) fn offer_lenses_unprompted(database: bool, declined: bool, asked: bool) -> bool {
+    !database && !declined && !asked
+}
+
+/// The first-launch offer, when `offer_lenses_unprompted` says so and
+/// nothing else has the screen: a sheet already up, a download on
+/// its way, or a batch run, which nobody is watching and whose
+/// capture a sheet would spoil. Called with no database found; the
+/// offer waits for a later picture when something is in the way.
+pub(crate) fn offer_lenses_once(st: &mut State, app: &App) {
+    if !offer_lenses_unprompted(false, st.lenses_declined, st.lenses_asked) {
+        return;
+    }
+    let busy = st.fetch.is_some()
+        || st.fetching
+        || app.get_fetch_open()
+        || app.get_export_open()
+        || app.get_preset_open()
+        || app.get_rejects_open();
+    if busy || st.batch {
+        return;
+    }
+    st.lenses_asked = true;
+    tracing::info!("no lens profiles on this machine: offering the download");
+    offer_lenses(st, app, true);
+}
+
+/// The first line of the lens profiles' unprompted offer.
+pub(crate) const LENSES_WHY: &str = "There are no lens profiles on this machine, so no lens is \
+     corrected for its distortion, color fringes or vignetting.";
+
+/// Open the download sheet for the lens database: `unprompted` when
+/// no one asked for it, and the sheet says why it is up.
+pub(crate) fn offer_lenses(st: &mut State, app: &App, unprompted: bool) {
     st.fetch = Some(Fetch::Lenses);
     app.set_fetch_title("Download the lens profiles?".into());
-    app.set_fetch_text(
-        format!(
-            "The lensfun database, about {} KB from {}.
+    let details = format!(
+        "The lensfun database, about {} KB from {}.
 License: {} ({}).
 Kept in {}.",
-            greycard_lens::store::APPROX_BYTES / 1000,
-            greycard_lens::store::SOURCES[0]
-                .split('/')
-                .nth(2)
-                .unwrap_or("its site"),
-            greycard_lens::store::LICENSE.0,
-            greycard_lens::store::LICENSE.1,
-            greycard_lens::Store::user().map_or("no cache directory".to_string(), |s| s
-                .root()
-                .display()
-                .to_string()),
-        )
-        .into(),
+        greycard_lens::store::APPROX_BYTES / 1000,
+        greycard_lens::store::SOURCES[0]
+            .split('/')
+            .nth(2)
+            .unwrap_or("its site"),
+        greycard_lens::store::LICENSE.0,
+        greycard_lens::store::LICENSE.1,
+        greycard_lens::Store::user().map_or("no cache directory".to_string(), |s| s
+            .root()
+            .display()
+            .to_string()),
     );
+    // Unasked, the sheet says first why it is up: the reason is the
+    // news, and the particulars follow it.
+    let text = if unprompted {
+        format!("{LENSES_WHY}\n\n{details}")
+    } else {
+        details
+    };
+    app.set_fetch_text(text.into());
+    let note =
+        "greycard does not ship the profiles; they are fetched for you under their own license.";
     app.set_fetch_note(
-        "greycard does not ship the profiles; they are fetched for you under their own license."
-            .into(),
+        if unprompted {
+            format!("{note} Not now asks no more; the LENS section keeps the button.")
+        } else {
+            note.to_string()
+        }
+        .into(),
     );
     app.set_fetch_open(true);
 }
@@ -245,7 +292,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let mut st = state.borrow_mut();
             if st.fetch.is_none() && !st.fetching {
-                offer_lenses(&mut st, &app);
+                offer_lenses(&mut st, &app, false);
             }
         });
     }
@@ -285,6 +332,18 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     app.set_status(
                         "without the profiles the lens is corrected by hand only".into(),
                     );
+                    // Asked once: the offer does not come back on its
+                    // own, this run or the next. Not from a batch run,
+                    // which leaves the user's settings alone, nor from
+                    // a test, which has no business with them.
+                    st.lenses_declined = true;
+                    if !st.batch && !cfg!(test) {
+                        let mut settings = settings::Settings::load();
+                        if !settings.lenses_declined {
+                            settings.lenses_declined = true;
+                            settings.save();
+                        }
+                    }
                 }
             }
         });
@@ -546,5 +605,76 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 },
             );
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_lens_profiles_are_offered_once_and_only_without_them() {
+        // Every combination: only no database, never declined and
+        // not asked yet this launch offers.
+        for database in [false, true] {
+            for declined in [false, true] {
+                for asked in [false, true] {
+                    assert_eq!(
+                        offer_lenses_unprompted(database, declined, asked),
+                        !database && !declined && !asked,
+                        "database {database}, declined {declined}, asked {asked}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_first_launch_offer_opens_the_sheet_once() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+
+        // Something else on screen: not now, and not spent either.
+        app.set_export_open(true);
+        offer_lenses_once(&mut state.borrow_mut(), &app);
+        assert!(!app.get_fetch_open());
+        assert!(!state.borrow().lenses_asked);
+        app.set_export_open(false);
+
+        offer_lenses_once(&mut state.borrow_mut(), &app);
+        assert!(app.get_fetch_open(), "offered");
+        assert_eq!(state.borrow().fetch, Some(Fetch::Lenses));
+        assert!(app.get_fetch_text().starts_with(LENSES_WHY));
+
+        // Not now: remembered, and the next picture asks nothing.
+        app.invoke_fetch_answered(false);
+        assert!(!app.get_fetch_open());
+        assert!(state.borrow().lenses_declined);
+        offer_lenses_once(&mut state.borrow_mut(), &app);
+        assert!(!app.get_fetch_open(), "asked once");
+
+        // A launch that was never declined still asks only once.
+        {
+            let mut st = state.borrow_mut();
+            st.lenses_declined = false;
+            st.lenses_asked = true;
+        }
+        offer_lenses_once(&mut state.borrow_mut(), &app);
+        assert!(!app.get_fetch_open(), "once a launch");
+
+        // The LENS section's own button is not the offer, and asks
+        // whatever was answered before.
+        app.invoke_fetch_lenses();
+        assert!(app.get_fetch_open());
+        assert!(!app.get_fetch_text().contains(LENSES_WHY));
+    }
+
+    #[test]
+    fn a_batch_run_is_never_offered_the_lens_profiles() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        state.borrow_mut().batch = true;
+        offer_lenses_once(&mut state.borrow_mut(), &app);
+        assert!(!app.get_fetch_open());
     }
 }

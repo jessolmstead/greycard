@@ -274,6 +274,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         show_mask: cli.show_mask.and_then(|i| i.checked_sub(1)),
         show_patch: cli.patch.and_then(|i| i.checked_sub(1)),
         store: greycard_ai::Store::user().ok(),
+        lenses_declined: remembered.lenses_declined,
         monitors,
         screenshot: cli.screenshot.clone(),
         snapshot: cli.snapshot.clone(),
@@ -1001,6 +1002,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.last_file = kept.last_file;
         settings.xmp_sidecars = kept.xmp_sidecars;
         settings.sidecars_in_folder = kept.sidecars_in_folder;
+        settings.lenses_declined = kept.lenses_declined;
         settings.save();
     }
 
@@ -1156,6 +1158,7 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // disk.
         xmp_sidecars: false,
         sidecars_in_folder: false,
+        lenses_declined: false,
         last_file: String::new(),
     }
 }

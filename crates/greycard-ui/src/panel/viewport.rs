@@ -284,6 +284,8 @@ pub(crate) enum Shown {
     Preset,
     /// The model sheet, with sample text where the download's goes.
     Fetch,
+    /// The lens profiles' download as the first launch offers it.
+    Lenses,
     /// The crop tool, on the Crop tab.
     Crop,
     /// The level tool, on the Crop tab.
@@ -299,7 +301,8 @@ impl Shown {
             "export" => Ok(Self::Export),
             "preset" => Ok(Self::Preset),
             "fetch" => Ok(Self::Fetch),
-            _ => Err(format!("want export, preset or fetch, not {name}")),
+            "lenses" => Ok(Self::Lenses),
+            _ => Err(format!("want export, preset, fetch or lenses, not {name}")),
         }
     }
 
@@ -327,6 +330,11 @@ impl Shown {
                 );
                 app.set_fetch_note("Sample text: this sheet was opened for a snapshot.".into());
                 app.set_fetch_open(true);
+            }
+            Self::Lenses => {
+                if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                    crate::panel::assets::offer_lenses(&mut state.borrow_mut(), app, true);
+                }
             }
             Self::Crop => {
                 app.set_panel_tab("Crop".into());
@@ -1062,6 +1070,14 @@ mod tests {
         Shown::Fetch.open(&app);
         assert!(app.get_fetch_open());
         assert!(!app.get_fetch_title().is_empty());
+        app.set_fetch_open(false);
+        assert_eq!(Shown::sheet("lenses"), Ok(Shown::Lenses));
+        Shown::Lenses.open(&app);
+        assert!(app.get_fetch_open());
+        assert!(
+            app.get_fetch_text()
+                .starts_with(crate::panel::assets::LENSES_WHY)
+        );
 
         // A tool brings the Crop tab with it.
         assert_eq!(app.get_panel_tab(), "Develop");

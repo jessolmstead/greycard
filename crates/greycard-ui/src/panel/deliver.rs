@@ -1,4 +1,4 @@
-use crate::panel::assets::{offer_model, show_lens, show_looks, show_profiles};
+use crate::panel::assets::{offer_lenses_once, offer_model, show_lens, show_looks, show_profiles};
 use crate::panel::browser::{file_name, show_thumb, thumb_turns};
 use crate::panel::cull::develop_landed;
 use crate::panel::edit::{current_turn, read_edit, schedule_save};
@@ -180,6 +180,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 }
             }
             show_lens(&lens, app);
+            // No database on the machine: the first time a picture
+            // is up, the download is offered without being asked for.
+            if matches!(lens, LensReport::NoDatabase) {
+                offer_lenses_once(&mut st, app);
+            }
             st.lens = lens;
             st.white_cache = None;
             // Show the frame's own white balance on the sliders, so a

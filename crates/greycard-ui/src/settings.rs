@@ -66,6 +66,11 @@ pub struct Settings {
     /// changes. The XMPs stay beside the frame whatever this says,
     /// since beside is where Lightroom and darktable look.
     pub sidecars_in_folder: bool,
+    /// Whether the lens profiles' download, offered unprompted the
+    /// first time a picture opens with no database on the machine,
+    /// was answered Not now. It is asked once: from then on the LENS
+    /// section's own button is the way to them.
+    pub lenses_declined: bool,
     /// The absolute path of the last file open, developed and all, so
     /// the next run with no path can jump back to it. Written as soon
     /// as it develops, not waited for the window to close; empty
@@ -98,6 +103,7 @@ impl Default for Settings {
             grid_cell: crate::grid::CELL,
             xmp_sidecars: false,
             sidecars_in_folder: false,
+            lenses_declined: false,
             last_file: String::new(),
         }
     }
@@ -194,6 +200,7 @@ mod tests {
             grid_cell: 256.0,
             xmp_sidecars: true,
             sidecars_in_folder: true,
+            lenses_declined: true,
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
         };
         let text = serde_json::to_string(&mine).unwrap();

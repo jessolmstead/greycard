@@ -175,7 +175,8 @@ struct Cli {
     #[arg(long)]
     patch: Option<usize>,
     /// Open this sheet once the picture is up, for a snapshot:
-    /// export, preset or fetch (the model sheet, with sample text)
+    /// export, preset, fetch (the model sheet, with sample text) or
+    /// lenses (the lens profiles' first-launch offer)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Put this Crop-tab tool in hand once the picture is up, for a
@@ -467,6 +468,11 @@ pub(crate) struct State {
     pub(crate) fetching: bool,
     /// Models declined this session, not to be asked for again.
     pub(crate) declined: Vec<&'static str>,
+    /// The lens profiles' first-launch offer: whether it was ever
+    /// answered Not now (`settings.lenses_declined`), and whether it
+    /// has been made this launch.
+    pub(crate) lenses_declined: bool,
+    pub(crate) lenses_asked: bool,
     /// What the lens database made of the open file.
     pub(crate) lens: LensReport,
     /// The camera profiles the profile directory holds, and the open
@@ -647,6 +653,8 @@ impl State {
             fetch: None,
             fetching: false,
             declined: Vec::new(),
+            lenses_declined: false,
+            lenses_asked: false,
             lens: LensReport::NoDatabase,
             profiles: Vec::new(),
             camera: (String::new(), String::new()),
