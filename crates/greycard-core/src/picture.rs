@@ -123,27 +123,169 @@ pub fn stance_path(path: &Path) -> Result<(Orientation, Option<(u32, u32)>)> {
 /// [`crate::decode::probe_path`]. A picture with no EXIF probes as
 /// a file that says nothing: an empty make and model, the rest
 /// `None`.
+///
+/// Only the head of the file is read: a JPEG's APP1 segment and a
+/// PNG's `eXIf` chunk come before the picture data, so the read
+/// starts at [`PROBE_HEAD`] bytes and grows only when the EXIF is
+/// not yet whole within it. A file cut off after an intact EXIF
+/// block still probes. A PNG that put its `eXIf` after the picture
+/// data (the standard allows it; nothing writes it so) is not read
+/// past the first `IDAT`, and probes as a file that says nothing. A
+/// TIFF's directories can be anywhere in the file, so a TIFF is
+/// read whole.
 pub fn probe_path(path: &Path) -> Result<Probe> {
-    let bytes = std::fs::read(path)?;
-    let reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
-        .with_guessed_format()
-        .map_err(|e| Error::Decode(e.to_string()))?;
-    let is_tiff = reader.format() == Some(image::ImageFormat::Tiff);
-    let mut decoder = reader.into_decoder().map_err(decode_error)?;
-    let chunk = if is_tiff {
-        None
-    } else {
-        decoder.exif_metadata().ok().flatten()
-    };
-    let tiff: Option<&[u8]> = if is_tiff {
-        Some(&bytes)
-    } else {
-        chunk.as_deref()
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut bytes = Vec::with_capacity(PROBE_HEAD);
+    file.by_ref()
+        .take(PROBE_HEAD as u64)
+        .read_to_end(&mut bytes)?;
+    let tiff: Option<Vec<u8>> = match Container::sniff(&bytes) {
+        Some(Container::Tiff) => {
+            file.read_to_end(&mut bytes)?;
+            Some(bytes)
+        }
+        Some(container) => loop {
+            match container.exif(&bytes) {
+                Scan::Found(range) => break Some(bytes[range].to_vec()),
+                Scan::None => break None,
+                Scan::NeedMore(want) => {
+                    let had = bytes.len();
+                    file.by_ref()
+                        .take((want - had) as u64)
+                        .read_to_end(&mut bytes)?;
+                    if bytes.len() == had {
+                        // The file ends inside a segment: whatever
+                        // EXIF it had is not whole.
+                        break None;
+                    }
+                }
+            }
+        },
+        None => {
+            return Err(Error::Decode(format!(
+                "{} is not a JPEG, PNG or TIFF",
+                path.display()
+            )));
+        }
     };
     Ok(tiff
+        .as_deref()
         .and_then(read_tags)
         .map(|t| Probe::from_metadata(&t.metadata))
         .unwrap_or_default())
+}
+
+/// How much of a picture [`probe_path`] reads first.
+pub const PROBE_HEAD: usize = 128 * 1024;
+
+/// The containers the probe walks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Container {
+    Jpeg,
+    Png,
+    Tiff,
+}
+
+/// What a walk over a file's head found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Scan {
+    /// The EXIF's TIFF structure, at this range of the buffer.
+    Found(std::ops::Range<usize>),
+    /// The segments before the picture data hold no EXIF.
+    None,
+    /// The buffer ends inside a segment; this many bytes would hold
+    /// it.
+    NeedMore(usize),
+}
+
+impl Container {
+    fn sniff(head: &[u8]) -> Option<Container> {
+        if head.starts_with(&[0xFF, 0xD8]) {
+            Some(Container::Jpeg)
+        } else if head.starts_with(b"\x89PNG\r\n\x1a\n") {
+            Some(Container::Png)
+        } else if head.starts_with(b"II*\0") || head.starts_with(b"MM\0*") {
+            Some(Container::Tiff)
+        } else {
+            None
+        }
+    }
+
+    fn exif(self, buf: &[u8]) -> Scan {
+        match self {
+            Container::Jpeg => jpeg_exif(buf),
+            Container::Png => png_exif(buf),
+            Container::Tiff => Scan::Found(0..buf.len()),
+        }
+    }
+}
+
+/// Walk a JPEG's segments from the SOI to the start of scan: an
+/// APP1 whose payload begins `Exif\0\0` carries the TIFF structure.
+fn jpeg_exif(buf: &[u8]) -> Scan {
+    const EXIF: &[u8] = b"Exif\0\0";
+    let mut pos = 2;
+    loop {
+        // Padding between segments is allowed to be any run of FF.
+        while pos < buf.len() && buf[pos] == 0xFF {
+            pos += 1;
+        }
+        if pos >= buf.len() {
+            return Scan::NeedMore(pos + 4);
+        }
+        let marker = buf[pos];
+        pos += 1;
+        match marker {
+            // Start of scan: the picture data, and no more segments
+            // before it. End of image likewise.
+            0xDA | 0xD9 => return Scan::None,
+            // Restart markers and TEM carry no length.
+            0xD0..=0xD7 | 0x01 => continue,
+            _ => {}
+        }
+        if pos + 2 > buf.len() {
+            return Scan::NeedMore(pos + 2);
+        }
+        let len = u16::from_be_bytes([buf[pos], buf[pos + 1]]) as usize;
+        if len < 2 {
+            return Scan::None;
+        }
+        let payload = pos + 2..pos + len;
+        if payload.end > buf.len() {
+            return Scan::NeedMore(payload.end);
+        }
+        if marker == 0xE1 && buf[payload.clone()].starts_with(EXIF) {
+            return Scan::Found(payload.start + EXIF.len()..payload.end);
+        }
+        pos = payload.end;
+    }
+}
+
+/// Walk a PNG's chunks from the signature to the first `IDAT`: an
+/// `eXIf` chunk's data is the TIFF structure.
+fn png_exif(buf: &[u8]) -> Scan {
+    let mut pos = 8;
+    loop {
+        if pos + 8 > buf.len() {
+            return Scan::NeedMore(pos + 8);
+        }
+        let len = u32::from_be_bytes([buf[pos], buf[pos + 1], buf[pos + 2], buf[pos + 3]]) as usize;
+        let kind = &buf[pos + 4..pos + 8];
+        let data = pos + 8..pos + 8 + len;
+        match kind {
+            b"IDAT" | b"IEND" => return Scan::None,
+            b"eXIf" => {
+                if data.end > buf.len() {
+                    return Scan::NeedMore(data.end);
+                }
+                return Scan::Found(data);
+            }
+            _ => {}
+        }
+        // The chunk's data and its CRC.
+        pos = data.end + 4;
+    }
 }
 
 /// Read a JPEG, PNG or TIFF into the working space.
@@ -837,5 +979,129 @@ mod tests {
         assert!(is_picture_path(Path::new("x.tiff")));
         assert!(!is_picture_path(Path::new("x.cr3")));
         assert!(!is_picture_path(Path::new("x")));
+    }
+
+    /// An EXIF payload with a camera in it, as an export writes one.
+    fn exif_payload() -> Vec<u8> {
+        use ::rawler::formats::tiff::Rational;
+        let metadata = RawMetadata {
+            exif: Exif {
+                fnumber: Some(Rational::new(28, 10)),
+                iso_speed_ratings: Some(800),
+                date_time_original: Some("2026:09:01 10:20:30".into()),
+                lens_model: Some("RF50mm F1.8 STM".into()),
+                ..Exif::default()
+            },
+            model: "EOS R6m2".into(),
+            make: "Canon".into(),
+            lens: None,
+            unique_image_id: None,
+            rating: None,
+        };
+        crate::exif::payload(&crate::exif::Provenance {
+            metadata: &metadata,
+            software: "probe test",
+            width: 4,
+            height: 3,
+            srgb: true,
+            written: None,
+            source_name: None,
+            output: None,
+            edit: None,
+        })
+        .unwrap()
+    }
+
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-probe-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(name)
+    }
+
+    /// The probe reads a picture's head and no more: a JPEG's EXIF
+    /// before its scan, whole even when the file is cut off after it
+    /// or the EXIF sits past the first read.
+    #[test]
+    fn the_probe_reads_the_head_and_survives_a_cut_file() {
+        use image::codecs::{jpeg::JpegEncoder, png::PngEncoder};
+        use image::{ExtendedColorType, ImageEncoder};
+        let px: Vec<u8> = (0..4 * 3 * 3).map(|i| (i * 7) as u8).collect();
+        let mut jpeg = Vec::new();
+        {
+            let mut enc = JpegEncoder::new_with_quality(&mut jpeg, 95);
+            enc.set_exif_metadata(exif_payload()).unwrap();
+            enc.write_image(&px, 4, 3, ExtendedColorType::Rgb8).unwrap();
+        }
+        let path = scratch("a.jpg");
+        std::fs::write(&path, &jpeg).unwrap();
+        let p = probe_path(&path).unwrap();
+        assert_eq!((p.make.as_str(), p.model.as_str()), ("Canon", "EOS R6m2"));
+        assert_eq!(p.iso, Some(800));
+        assert_eq!(p.lens_model.as_deref(), Some("RF50mm F1.8 STM"));
+        assert_eq!(p.taken.as_deref(), Some("2026:09:01 10:20:30"));
+        // The walk found it where the decoder does.
+        let Scan::Found(range) = jpeg_exif(&jpeg) else {
+            panic!("no EXIF in the walk");
+        };
+        assert!(jpeg[range.clone()].starts_with(b"II") || jpeg[range.clone()].starts_with(b"MM"));
+
+        // Cut off right after the EXIF segment: still probes.
+        let cut = path.with_file_name("cut.jpg");
+        std::fs::write(&cut, &jpeg[..range.end + 3]).unwrap();
+        assert_eq!(probe_path(&cut).unwrap().make, "Canon");
+        // Cut off inside the EXIF segment: says nothing, and is not
+        // an error.
+        std::fs::write(&cut, &jpeg[..range.start + 10]).unwrap();
+        assert_eq!(probe_path(&cut).unwrap(), Probe::default());
+
+        // A comment segment past the first read's size in front of
+        // the EXIF: the read grows to it. Segments are at most 64 KB
+        // each, so several of them.
+        let mut padded = vec![0xFF, 0xD8];
+        for _ in 0..3 {
+            let len = 60_000u16;
+            padded.extend_from_slice(&[0xFF, 0xFE]);
+            padded.extend_from_slice(&len.to_be_bytes());
+            padded.extend(std::iter::repeat_n(b' ', len as usize - 2));
+        }
+        padded.extend_from_slice(&jpeg[2..]);
+        assert!(padded.len() > PROBE_HEAD);
+        let far = path.with_file_name("far.jpg");
+        std::fs::write(&far, &padded).unwrap();
+        assert_eq!(probe_path(&far).unwrap().model, "EOS R6m2");
+        assert!(matches!(
+            jpeg_exif(&padded[..PROBE_HEAD]),
+            Scan::NeedMore(_)
+        ));
+
+        // A PNG's chunk, before its picture data, and one without.
+        let mut png = Vec::new();
+        {
+            let mut enc = PngEncoder::new(&mut png);
+            enc.set_exif_metadata(exif_payload()).unwrap();
+            enc.write_image(&px, 4, 3, ExtendedColorType::Rgb8).unwrap();
+        }
+        let png_path = path.with_file_name("a.png");
+        std::fs::write(&png_path, &png).unwrap();
+        assert_eq!(probe_path(&png_path).unwrap().make, "Canon");
+        let mut bare = Vec::new();
+        PngEncoder::new(&mut bare)
+            .write_image(&px, 4, 3, ExtendedColorType::Rgb8)
+            .unwrap();
+        std::fs::write(&png_path, &bare).unwrap();
+        assert_eq!(probe_path(&png_path).unwrap(), Probe::default());
+        assert_eq!(png_exif(&bare), Scan::None);
+
+        // Not a picture at all.
+        std::fs::write(&cut, b"nothing like a picture").unwrap();
+        assert!(probe_path(&cut).is_err());
+        std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }
