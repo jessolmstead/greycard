@@ -265,6 +265,13 @@ pub fn denoise_profiled(
     let scales = scale_count(width, height);
     let room = scales > 0 && width >= 2 << (scales - 1) && height >= 2 << (scales - 1);
     let vst: [Vst; 3] = std::array::from_fn(|c| Vst::new(model.a[c], model.b[c]));
+    let clock = std::time::Instant::now();
+    let mut mark = clock;
+    let mut lap = |what: &str| {
+        let now = std::time::Instant::now();
+        log::debug!("denoise: {what} {:.0} ms", (now - mark).as_secs_f64() * 1e3);
+        mark = now;
+    };
 
     // Into the stabilized space once, for both the means and the
     // wavelets, and out once at the end: a second pass through the
@@ -283,6 +290,7 @@ pub fn denoise_profiled(
         });
     };
 
+    lap("forward transform");
     let mut nlm_stats = None;
     let mut first_scale = 0;
     // What the means leave in each band, as a fraction of the white
@@ -298,6 +306,7 @@ pub fn denoise_profiled(
             strength,
             &options.nlm,
         );
+        lap("non-local means");
         if options.method == DenoiseMethod::Nlm || !room {
             unstabilize(rgb);
             return Ok(DenoiseStats {
@@ -306,6 +315,7 @@ pub fn denoise_profiled(
             });
         }
         band_left = super::nlm::residual_band_ratios(&stats, options.nlm.search_radius);
+        lap("residual band ratios");
         nlm_stats = Some(stats);
         first_scale = options.hybrid_from;
     } else if !room {
@@ -331,9 +341,12 @@ pub fn denoise_profiled(
         px.copy_from_slice(&to_yuv([px[0], px[1], px[2]]));
     });
 
+    lap("rotation to luma and chroma");
     let grids = variance_grids(rgb, width, height, scales);
+    lap("variance grids");
 
     let mut detail = vec![0.0f32; width * height * 3];
+    lap("detail allocation");
     let gain = [
         strength,
         strength * options.chroma.max(0.0),
@@ -358,6 +371,7 @@ pub fn denoise_profiled(
             sb2,
         };
         atrous_in_place(rgb, &mut detail, width, height, scale, sb2, &shrink);
+        lap(&format!("scale {scale}"));
     }
 
     // Residue plus detail, rotate back, unstabilize.
@@ -369,6 +383,11 @@ pub fn denoise_profiled(
                 px[c] = vst[c].inverse(v[c]);
             }
         });
+    lap("sum, rotation back and inverse transform");
+    log::debug!(
+        "denoise: {:.0} ms in all",
+        clock.elapsed().as_secs_f64() * 1e3
+    );
     Ok(DenoiseStats { scales, ..nothing })
 }
 
@@ -522,8 +541,11 @@ fn atrous_in_place(
     let mut prev_y0 = 0;
     let mut committed = 0;
     let mut y0 = 0;
+    let mut blur_time = std::time::Duration::ZERO;
+    let mut commit_time = std::time::Duration::ZERO;
     while y0 < height {
         let y1 = (y0 + band).min(height);
+        let t = std::time::Instant::now();
         {
             let cur = &*cur;
             this[..(y1 - y0) * row]
@@ -533,6 +555,8 @@ fn atrous_in_place(
                     blur_row(cur, width, height, y0 + i, mult, inv_sigma2, crow);
                 });
         }
+        blur_time += t.elapsed();
+        let t = std::time::Instant::now();
         let until = if y1 == height { height } else { y1 - reach };
         let coarse_row = |r: usize| -> &[f32] {
             let (buf, base) = if r < y0 {
@@ -555,11 +579,17 @@ fn atrous_in_place(
                 }
                 irow.copy_from_slice(crow);
             });
+        commit_time += t.elapsed();
         committed = until;
         std::mem::swap(&mut this, &mut prev);
         prev_y0 = y0;
         y0 = y1;
     }
+    log::debug!(
+        "denoise: scale {scale}: blur {:.0} ms, shrink and commit {:.0} ms",
+        blur_time.as_secs_f64() * 1e3,
+        commit_time.as_secs_f64() * 1e3
+    );
 }
 
 /// Row `y` of the guarded blur of `input` at spacing `mult`.
@@ -996,6 +1026,116 @@ mod tests {
             checked += 1;
         }
         assert!(checked >= 2, "the scene must have big edges to check");
+    }
+
+    /// The synthetic frame the golden test runs: the noisy scene, with
+    /// an edge strong enough to bring the blur's guard into play.
+    fn golden_frame() -> (usize, usize, NoiseModel, Vec<f32>) {
+        let (w, h) = (203, 131);
+        let model = NoiseModel {
+            a: [2e-3, 1.5e-3, 2.5e-3],
+            b: [1e-5, 2e-5, 1.5e-5],
+        };
+        let (_, mut noisy) = noisy_scene(w, h, &model, 11);
+        // A bright bar across the middle: the guard's case.
+        for y in h / 2 - 5..h / 2 + 5 {
+            for x in 20..w - 20 {
+                for c in 0..3 {
+                    noisy[(y * w + x) * 3 + c] += 0.6;
+                }
+            }
+        }
+        (w, h, model, noisy)
+    }
+
+    /// The values the wavelets and the hybrid gave on the golden frame
+    /// before the speed work on the chain, when the blur's guard was
+    /// `f32::exp2` and the chain ran per pixel over interleaved RGB.
+    /// The tolerance is 1e-5, under a 16-bit sample's own step; the
+    /// polynomial guard moves a 45 MP frame's worst sample by 4.2e-7.
+    #[test]
+    fn the_chain_holds_the_values_it_had_before_the_speed_work() {
+        const WAVELETS: [f32; 24] = [
+            1.17342725e-1,
+            9.625273e-2,
+            1.1002353e-1,
+            1.2120184e-1,
+            9.925471e-2,
+            1.0319633e-1,
+            4.7045967e-1,
+            2.4791166e-1,
+            1.378571e-1,
+            3.8701472e-1,
+            1.8551075e-1,
+            1.1701198e-1,
+            1.2624949e-1,
+            1.0397324e-1,
+            1.17351e-1,
+            1.315554e-1,
+            3.188896e-1,
+            2.514307e-1,
+            2.649147e-1,
+            2.9115e-1,
+            1.7451216e-1,
+            1.3788058e-1,
+            1.1207844e-1,
+            1.20419584e-1,
+        ];
+        const WAVELETS_MEAN: f64 = 0.249_760_404;
+        const HYBRID: [f32; 24] = [
+            1.2006721e-1,
+            9.753793e-2,
+            1.1058618e-1,
+            1.12879835e-1,
+            1.00722715e-1,
+            1.1340004e-1,
+            4.9413782e-1,
+            2.550038e-1,
+            1.449193e-1,
+            3.9810595e-1,
+            2.0375985e-1,
+            1.1476959e-1,
+            1.3018292e-1,
+            1.0514216e-1,
+            1.19627886e-1,
+            1.309233e-1,
+            3.1801692e-1,
+            2.4102746e-1,
+            2.4581566e-1,
+            2.892357e-1,
+            1.7671259e-1,
+            1.3548045e-1,
+            1.1304262e-1,
+            1.2111085e-1,
+        ];
+        const HYBRID_MEAN: f64 = 0.250_059_453;
+        for (method, golden, golden_mean) in [
+            (DenoiseMethod::Wavelets, WAVELETS, WAVELETS_MEAN),
+            (DenoiseMethod::Hybrid, HYBRID, HYBRID_MEAN),
+        ] {
+            let (w, h, model, mut rgb) = golden_frame();
+            let stats = denoise_profiled(
+                &mut rgb,
+                w,
+                h,
+                &model,
+                &DenoiseOptions {
+                    method,
+                    ..DenoiseOptions::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(stats.scales, 4, "{stats:?}");
+            for (k, &want) in golden.iter().enumerate() {
+                let got = rgb[(k * 1277) % (w * h * 3)];
+                assert!(
+                    (got - want).abs() < 1e-5,
+                    "{method:?} sample {k}: {got} vs {want}"
+                );
+            }
+            let mean = rgb.iter().map(|&v| v as f64).sum::<f64>() / rgb.len() as f64;
+            assert!((mean - golden_mean).abs() < 1e-7, "{method:?} mean {mean}");
+        }
     }
 
     #[test]
