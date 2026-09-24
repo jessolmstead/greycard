@@ -102,8 +102,16 @@ pub(crate) fn chosen_preset(app: &App) -> Option<String> {
 /// The picker's entries and the one chosen, and whether the sheet has
 /// moved from it: the presets as `presets` has them.
 pub(crate) fn show_presets_picker(app: &App, presets: &[ExportPreset], chosen: Option<&str>) {
+    // A preset an older file named "none" in some case is never listed:
+    // choosing it would read as the picker's None, and no lookup finds
+    // it, so it could not be deleted either.
     let names: Vec<slint::SharedString> = std::iter::once(NO_PRESET.into())
-        .chain(presets.iter().map(|p| p.name.as_str().into()))
+        .chain(
+            presets
+                .iter()
+                .filter(|p| !sheet::reserved(&p.name))
+                .map(|p| p.name.as_str().into()),
+        )
         .collect();
     app.set_export_presets(ModelRc::new(VecModel::from(names)));
     let chosen = chosen.and_then(|n| sheet::find(presets, n));
@@ -897,6 +905,21 @@ mod tests {
         show_presets_picker(&app, &state.borrow().export_presets, None);
         assert_eq!(app.get_export_preset(), NO_PRESET);
         assert_eq!(app.get_export_presets().row_count(), 2);
+        // One an older file named "none" is not listed beside None.
+        let mut with_none = state.borrow().export_presets.clone();
+        with_none.push(ExportPreset {
+            name: "none".into(),
+            sheet: Sheet::default(),
+        });
+        show_presets_picker(&app, &with_none, Some("none"));
+        let listed: Vec<String> = app
+            .get_export_presets()
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
+        assert_eq!(listed, vec![NO_PRESET.to_string(), "Web".to_string()]);
+        assert_eq!(app.get_export_preset(), NO_PRESET);
+        show_presets_picker(&app, &state.borrow().export_presets, None);
         assert!(!app.get_export_preset_edited());
 
         // Chosen: the sheet is the preset's, and not edited.
