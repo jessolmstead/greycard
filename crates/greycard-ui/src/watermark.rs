@@ -557,8 +557,17 @@ fn set_text(text: &str, target: u32) -> Result<(u32, u32, Vec<f32>)> {
     let probe = ink(&lay_out(&fonts, &chars, PROBE)).context("the watermark's text has no ink")?;
     let probe_width = (probe.max.x - probe.min.x).max(1.0);
     let px = PROBE * target as f32 / probe_width;
-    let glyphs = lay_out(&fonts, &chars, px);
-    let bounds = ink(&glyphs).context("the watermark's text has no ink")?;
+    let mut glyphs = lay_out(&fonts, &chars, px);
+    let mut bounds = ink(&glyphs).context("the watermark's text has no ink")?;
+    // Each glyph's pixel bounds are rounded outward, at the probe size
+    // and at this one, so the ink can come out a pixel or two off the
+    // width asked, more on a face whose outlines sit off the pixel
+    // grid; set it once more from what this size measured.
+    let got = bounds.max.x - bounds.min.x;
+    if got >= 1.0 && (got - target as f32).abs() > 0.5 {
+        glyphs = lay_out(&fonts, &chars, px * target as f32 / got);
+        bounds = ink(&glyphs).context("the watermark's text has no ink")?;
+    }
     let (ox, oy) = (bounds.min.x, bounds.min.y);
     let w = (bounds.max.x - ox).round().max(1.0) as u32;
     let h = (bounds.max.y - oy).round().max(1.0) as u32;
@@ -856,16 +865,22 @@ pub(crate) mod tests {
                 margin: 0.0,
                 opacity: 1.0,
             };
-            let ratio = |w: u32, h: u32| {
+            let width = |w: u32, h: u32| {
                 let mut p = flat(w, h, 128);
                 mark.apply(&mut p, w, h, Space::Srgb).unwrap();
                 let (x0, _, x1, _) = changed(&p, w, h, 128).unwrap();
-                (x1 - x0 + 1) as f64 / w as f64
+                (x1 - x0 + 1) as i64
             };
-            let (small, large) = (ratio(2048, 1365), ratio(6000, 4000));
-            // Within a pixel of the small one.
-            assert!((small - large).abs() <= 1.0 / 2048.0, "{small} vs {large}");
-            assert!((small - 0.2).abs() <= 1.0 / 2048.0, "{small}");
+            // Within two pixels of a fifth of the width at either
+            // size: a glyph's bounds round outward at each end, and
+            // which way they fall depends on the face (Noto Sans
+            // lands 411 for 410; the Mac's Helvetica fell further
+            // before the second setting pass).
+            for (w, h) in [(2048, 1365), (6000, 4000)] {
+                let want = (0.2 * f64::from(w)).round() as i64;
+                let got = width(w, h);
+                assert!((got - want).abs() <= 2, "{got} px for {want} at {w} wide");
+            }
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }

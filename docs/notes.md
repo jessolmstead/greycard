@@ -15799,6 +15799,15 @@ above as the design now is. The second pass reran every CLI case,
 viewed the exports and the sheet at both window sizes, and confirmed
 the mark stays inside its margins on a 1:3 strip at every position.
 
+**Landed after, on the first CI run.** The macOS runner failed the
+scale-invariance test: it wanted the text's ink within a pixel of a
+fifth of the width at two sizes, and a glyph's pixel bounds round
+outward at both ends, so the width lands a pixel or two over depending
+on the face (Noto Sans gives 411 for 410; Helvetica evidently more).
+The text is now set a second time from what its own size measured,
+and the test says two pixels at either size, in pixels. The runner's
+log kept no panic text, so the Mac's actual number is not known.
+
 ## 158. Luminance and color range masks (2026-09-23)
 
 Roadmap v0.6.0's two mask lines, built in wave A by an opus author and
