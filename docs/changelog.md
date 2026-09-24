@@ -14,6 +14,15 @@ note a first tester reads.
   than the file: they took the 0.8-stop baseline and the display
   curve meant for a raw. A picture with nothing done to it now looks
   as it does anywhere else (#1, §152, 2026-09-23).
+- Keep sidecars in a hidden `.greycard` folder inside the shoot's
+  folder instead of beside each raw, with `sidecars_in_folder` in the
+  settings or `--sidecar-folder` for a run. Both places are read
+  whatever the setting says, and a frame's sidecar moves to the
+  chosen place the next time it is saved. Hidden by attribute on
+  Windows; XMPs stay beside the raw (§153, 2026-09-23).
+- A plain `cargo test` no longer prints ERROR lines from the UI
+  crate's tests: the log module's test had installed a terminal sink
+  for the whole test binary (2026-09-23).
 
 ## 0.1.1, 2026-09-22
 

@@ -68,6 +68,14 @@ sliders feel like the ones people learned on.
       people expect (§87). A change to the default look and to every
       mono edit written; waits on the reference frames
 - [ ] No lens corrections on first install is a gotcha
+- [ ] The presets tool moves to the left pane, where there is room,
+      out of the develop panel's scroll. After the `app.slint` split
+- [ ] A Settings sheet, on the export sheet's pattern, for what is
+      the installation's and not a picture's: the sidecar placement
+      (§153) and the XMP toggle first, keybindings and the rest as
+      they come; with the placement, a "move this folder's sidecars"
+      action with the count, offered when the switch flips with a
+      folder open. After the `app.slint` split
 
 ## v0.3.0: speed
 
@@ -171,6 +179,14 @@ comes across with its ratings and collections.
 - [ ] Roots: folders the user has added, an all-roots view, an inotify
   watcher on open roots and an mtime pass on launch; a moved file
   found by hash rather than flagged missing. Waits on the index
+- [ ] Archive roots, for a NAS or a mounted cloud folder: Back up
+  copies a shoot's new and changed files and sidecars to the archive,
+  hash-verified and never deleting there; Remove rejects finds the
+  archive's copies by content hash, shows the list, and on confirm
+  moves them into a rejects folder on the archive, as culling moves
+  them locally; a removal queued while the root is offline. Cloud
+  through a mount or a configured command, never a provider's API.
+  Waits on roots
 - [ ] Collections and smart collections in one file under
   `~/.local/share/greycard/`, referencing files by hash with the
   path as a hint. Waits on roots
@@ -230,7 +246,6 @@ clears or a tester asks for it.
       Rec.2020 since §20; the viewport shows the chosen one since §42
   - ProPhoto as a working space: no (§84). It stays an output space and
     an intermediate inside the operations defined in it
-- [ ] Settings menu including custom keybindings
 - [ ] Resizeable / hideable panels
 - [ ] Right click on photo for options. Set label, copy develop settings, etc
 - [ ] Select multiple photos for copying settings to them etc
