@@ -69,12 +69,100 @@ pub(crate) fn show_component(mask: &Mask, app: &App) {
             };
             app.set_has_feather(feather.is_some());
             app.set_mask_feather(feather.unwrap_or(0.5));
+            show_range(&c.shape, app);
             app.set_component_kind(c.shape.name().into());
         }
         None => {
             app.set_has_feather(false);
             app.set_component_kind("".into());
         }
+    }
+}
+
+/// A range shape's window on the panel's sliders; nothing for any
+/// other shape.
+pub(crate) fn show_range(shape: &Shape, app: &App) {
+    match *shape {
+        Shape::Luminance {
+            low,
+            high,
+            low_feather,
+            high_feather,
+        } => {
+            app.set_lum_low(low);
+            app.set_lum_high(high);
+            app.set_lum_low_feather(low_feather);
+            app.set_lum_high_feather(high_feather);
+        }
+        Shape::Color {
+            hue,
+            width,
+            hue_feather,
+            chroma,
+            chroma_feather,
+        } => {
+            app.set_range_hue(hue);
+            app.set_range_width(width);
+            app.set_range_hue_feather(hue_feather);
+            app.set_range_chroma(chroma);
+            app.set_range_chroma_feather(chroma_feather);
+        }
+        _ => {}
+    }
+}
+
+/// The panel's sliders into a range shape of the same kind; any other
+/// shape is left as it is.
+pub(crate) fn read_range(shape: &mut Shape, app: &App) {
+    match shape {
+        Shape::Luminance { .. } => {
+            *shape = Shape::Luminance {
+                low: app.get_lum_low().clamp(0.0, 1.0),
+                high: app.get_lum_high().clamp(0.0, 1.0),
+                low_feather: app.get_lum_low_feather().clamp(0.0, 1.0),
+                high_feather: app.get_lum_high_feather().clamp(0.0, 1.0),
+            }
+        }
+        Shape::Color { .. } => {
+            *shape = Shape::Color {
+                hue: app.get_range_hue().rem_euclid(360.0),
+                width: app.get_range_width().clamp(0.0, 360.0),
+                hue_feather: app.get_range_hue_feather().clamp(0.0, 180.0),
+                chroma: app.get_range_chroma().max(0.0),
+                chroma_feather: app.get_range_chroma_feather().max(0.0),
+            }
+        }
+        _ => {}
+    }
+}
+
+/// An adjustment chosen whose chosen shape is a range: its sliders
+/// are the whole of it, and they are behind the shapes' fold, so the
+/// fold opens. Only on choosing, so a fold closed by hand stays shut
+/// while the adjustment is edited.
+pub(crate) fn reveal_range(edit: &Edit, target: Option<usize>, app: &App) {
+    let chosen = app.get_component().max(0) as usize;
+    if target
+        .and_then(|i| edit.adjustments.get(i))
+        .and_then(|a| a.mask.components.get(chosen))
+        .is_some_and(|c| c.shape.is_range())
+    {
+        app.set_shapes_open(true);
+    }
+}
+
+/// Whether a shape is made whole by its button, with no drag on the
+/// picture: a model's subject, or a range of the picture's own.
+fn made_at_once(kind: &str) -> bool {
+    matches!(kind, "Subject" | "Luminance" | "Color")
+}
+
+/// What the status line says once a shape made at once is in.
+fn made_hint(kind: &str) -> &'static str {
+    match kind {
+        "Subject" => "finding the subject",
+        "Color" => "click a color in the picture to center the window on it; Esc to keep the skin",
+        _ => "",
     }
 }
 
@@ -205,7 +293,30 @@ pub(crate) fn placing_hint(kind: &str) -> &'static str {
     }
 }
 
+/// After a shape made at once: its word on the status line, and for a
+/// color range the dropper in hand, so the next click on the picture
+/// centers the window. Called with the state let go of, since putting
+/// a dropper in hand puts any other tool down.
+fn arm_range_pick(app: &App, kind: &str) {
+    if kind == "Color" && app.get_picking() != "Range" {
+        app.invoke_pick_started("Range".into());
+    }
+    app.set_status(made_hint(kind).into());
+}
+
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+    // The Skin preset: the chosen color range's window at the skin
+    // hue the vibrance protects, all of it.
+    {
+        let app_weak = app.as_weak();
+        app.on_skin_preset(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            show_range(&Shape::skin(), &app);
+            app.invoke_view_changed();
+        });
+    }
     // The mask toggle thrown by hand while a tool is in hand: that
     // choice stands once the tool is down.
     {
@@ -230,6 +341,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             st.target = target.filter(|&t| t < st.edit.adjustments.len());
             app.set_component(0);
             show_edit(&st, &st.edit, &app, st.target);
+            reveal_range(&st.edit, st.target, &app);
             app.window().request_redraw();
         });
     }
@@ -286,18 +398,20 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.set_status(format!("at most {MAX_LOCALS} adjustments").into());
                 return;
             }
-            // A subject needs no placing: the model finds it.
-            if kind == "Subject" {
+            // A subject needs no placing: the model finds it; nor does
+            // a range, which is the picture's own.
+            if made_at_once(kind.as_str()) {
                 let edit = read_edit(&app, &st.edit, st.target);
                 st.edit = edit;
                 let id = st.edit.next_id();
+                let shape = Shape::of_kind(kind.as_str());
                 st.edit.adjustments.push(Adjustment {
                     id,
-                    name: format!("Subject {id}"),
+                    name: format!("{} {id}", shape.name()),
                     enabled: true,
                     mask: Mask {
                         components: vec![Component {
-                            shape: Shape::Subject {},
+                            shape,
                             mode: Mode::Add,
                             invert: false,
                             enabled: true,
@@ -310,10 +424,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 st.placing = None;
                 app.set_placing("".into());
                 app.set_component(0);
+                if kind != "Subject" {
+                    // Its sliders are the shape: show them.
+                    app.set_shapes_open(true);
+                }
                 show_edit(&st, &st.edit, &app, st.target);
-                app.set_status("finding the subject".into());
                 drop(st);
                 app.invoke_view_changed();
+                arm_range_pick(&app, kind.as_str());
                 return;
             }
             st.placing = Some(Placing {
@@ -349,14 +467,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.set_status("".into());
                 return;
             }
-            if kind == "Subject" {
+            if made_at_once(kind.as_str()) {
                 let edit = read_edit(&app, &st.edit, st.target);
                 st.edit = edit;
                 let Some(a) = st.edit.adjustments.get_mut(index) else {
                     return;
                 };
                 a.mask.components.push(Component {
-                    shape: Shape::Subject {},
+                    shape: Shape::of_kind(kind.as_str()),
                     mode: Mode::from_name(mode.as_str()).unwrap_or_default(),
                     invert: false,
                     enabled: true,
@@ -367,9 +485,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.set_shapes_open(true);
                 app.set_component(which as i32);
                 show_edit(&st, &st.edit, &app, st.target);
-                app.set_status("finding the subject".into());
                 drop(st);
                 app.invoke_view_changed();
+                arm_range_pick(&app, kind.as_str());
                 return;
             }
             // A brush chosen in the list takes more strokes rather
@@ -926,5 +1044,76 @@ mod tests {
         // The same handle on the picture is pressable, so the test is
         // about the clip and not about the wiring.
         assert!(at(360.0), "a handle on the picture is not pressable");
+    }
+
+    /// The range masks from the panel: a button makes one whole, its
+    /// sliders are its window both ways, a color one puts the dropper
+    /// in hand, and Skin puts the window at the skin hue.
+    #[test]
+    fn the_range_masks_come_from_their_buttons_and_live_in_their_sliders() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_add_adjustment("Luminance".into());
+        {
+            let st = state.borrow();
+            assert_eq!(st.target, Some(0));
+            assert_eq!(
+                st.edit.adjustments[0].mask.components[0].shape,
+                Shape::LUMINANCE
+            );
+        }
+        assert_eq!(app.get_component_kind(), "Luminance");
+        assert!(app.get_shapes_open());
+        assert!(app.get_picking().is_empty(), "no dropper for a luminance");
+        assert_eq!(app.get_lum_low(), 0.7);
+        // The sliders are the shape.
+        app.set_lum_low(0.5);
+        app.set_lum_high_feather(0.2);
+        let read = |app: &App| {
+            let st = state.borrow();
+            read_edit(app, &st.edit, st.target)
+        };
+        assert_eq!(
+            read(&app).adjustments[0].mask.components[0].shape,
+            Shape::Luminance {
+                low: 0.5,
+                high: 1.0,
+                low_feather: 0.1,
+                high_feather: 0.2,
+            }
+        );
+        // A color range intersected with it: at the skin, with the
+        // dropper in hand to move it.
+        app.set_lum_low(0.5);
+        app.invoke_add_shape("Color".into(), "Intersect".into());
+        assert_eq!(app.get_picking(), "Range");
+        assert_eq!(app.get_component(), 1);
+        assert_eq!(app.get_component_kind(), "Color");
+        let edit = read(&app);
+        let mask = &edit.adjustments[0].mask;
+        assert_eq!(mask.components[1].shape, Shape::skin());
+        assert_eq!(mask.components[1].mode, Mode::Intersect);
+        // The luminance kept what its sliders said when it was left.
+        let Shape::Luminance { low, .. } = mask.components[0].shape else {
+            panic!("{:?}", mask.components[0].shape)
+        };
+        assert_eq!(low, 0.5);
+        // The hue slider moves it; Skin brings it back.
+        app.set_range_hue(200.0);
+        let Shape::Color { hue, .. } = read(&app).adjustments[0].mask.components[1].shape else {
+            panic!()
+        };
+        assert_eq!(hue, 200.0);
+        app.invoke_skin_preset();
+        assert_eq!(
+            read(&app).adjustments[0].mask.components[1].shape,
+            Shape::skin()
+        );
+        // Back to the luminance: its own numbers on the sliders.
+        app.invoke_component_changed(0);
+        assert_eq!(app.get_component_kind(), "Luminance");
+        assert_eq!(app.get_lum_low(), 0.5);
+        assert_eq!(app.get_lum_high_feather(), 0.2);
     }
 }

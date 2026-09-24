@@ -202,27 +202,37 @@ impl Shape {
 
     /// A color window at `hue`: 30 degrees wide at full, a further 30
     /// each side to nothing, and a floor on the chroma that keeps the
-    /// near-greys out, whose hue is their noise.
+    /// near-greys out, whose hue is their noise: full from 0.03, half
+    /// at 0.02, nothing under 0.01, where a flat grey's local mean sits
+    /// well below and a pale skin well above.
     pub fn color_at(hue: f32) -> Shape {
         Shape::Color {
             hue: hue.rem_euclid(360.0),
             width: 30.0,
             hue_feather: 30.0,
-            chroma: 0.04,
-            chroma_feather: 0.03,
+            chroma: 0.03,
+            chroma_feather: 0.02,
         }
     }
 
-    /// The Skin preset: the window at the vibrance protection's skin
-    /// hue, full within its 15 degrees each side and gone by the 45
-    /// where the protection is (§60), a low floor for pale skin.
+    /// The Skin preset, and where a new color window starts: centered
+    /// at the vibrance protection's skin hue (notes §60), but wider
+    /// and lower than a window for a thing. Measured on a pale
+    /// portrait (`066A3439.CR3`), the face's local mean runs from 18
+    /// degrees at the lips, the nose and the pink of the forehead to
+    /// 53 on the cheeks, at chromas down to 0.022 in its highlights; a
+    /// window a skin's width round 55 left the pink half of that face
+    /// at a quarter. So: full from 25 to 85 degrees, nothing by 0 or
+    /// 110 (the greens and the blues stay out), full from a chroma of
+    /// 0.02, nothing under 0.01, where the cream cardigan beside it
+    /// sits.
     pub fn skin() -> Shape {
         Shape::Color {
             hue: SKIN_HUE,
-            width: 30.0,
-            hue_feather: 30.0,
-            chroma: 0.03,
-            chroma_feather: 0.02,
+            width: 60.0,
+            hue_feather: 25.0,
+            chroma: 0.02,
+            chroma_feather: 0.01,
         }
     }
 
@@ -418,7 +428,7 @@ impl Shape {
             },
             "Subject" => Shape::Subject {},
             "Luminance" => Shape::LUMINANCE,
-            "Color" => Shape::color_at(SKIN_HUE),
+            "Color" => Shape::skin(),
             "Object" => Shape::Object {
                 picks: Vec::new(),
                 boxes: Vec::new(),
@@ -1115,26 +1125,34 @@ mod tests {
     }
 
     #[test]
-    fn the_skin_preset_sits_where_the_vibrance_protects() {
+    fn the_skin_preset_takes_a_whole_face_and_not_what_is_beside_it() {
         let skin = Shape::skin();
-        let Shape::Color {
-            hue,
-            width,
-            hue_feather,
-            ..
-        } = skin
-        else {
+        let Shape::Color { hue, .. } = skin else {
             panic!()
         };
         assert_eq!(hue, SKIN_HUE);
-        // Full where vibrance acts at half (within 15 degrees), gone
-        // where it acts in full (45 degrees away), as §60 has it.
-        assert_eq!(width / 2.0, 15.0);
-        assert_eq!(width / 2.0 + hue_feather, 45.0);
-        assert_eq!(skin.of_sample(lab(0.7, 60.0, 0.06)), 1.0);
-        assert_eq!(skin.of_sample(lab(0.7, 240.0, 0.06)), 0.0);
-        // A new color shape starts there too, and a click moves it.
-        assert_eq!(Shape::of_kind("Color"), Shape::color_at(SKIN_HUE));
+        // The face of the portrait the preset was measured on, as its
+        // samples read (hue, chroma): the pink of the forehead and
+        // the nose, under the eyes, the cheeks; all in, nearly whole.
+        for (h, c) in [
+            (19.2, 0.023),
+            (22.0, 0.0275),
+            (20.4, 0.0315),
+            (18.3, 0.0226),
+            (39.7, 0.031),
+            (43.2, 0.0397),
+            (53.3, 0.0382),
+        ] {
+            let w = skin.of_sample(lab(0.55, h, c));
+            assert!(w > 0.8, "{h} {c}: {w}");
+        }
+        // And beside it: the cream cardigan (a near grey), the window
+        // frame's green, the jeans' blue.
+        for (h, c) in [(51.5, 0.01), (111.1, 0.0216), (265.5, 0.0569)] {
+            assert_eq!(skin.of_sample(lab(0.55, h, c)), 0.0, "{h} {c}");
+        }
+        // A new color shape starts there, and a click moves it.
+        assert_eq!(Shape::of_kind("Color"), Shape::skin());
         let Shape::Color { hue, .. } = Shape::color_at(-30.0) else {
             panic!()
         };

@@ -11,6 +11,19 @@ export component AdjustmentsSection inherits Section {
     in-out property <bool> mask-invert;
     in-out property <bool> has-feather;
     in-out property <float> mask-feather;
+    in-out property <float> lum-low;
+    in-out property <float> lum-high;
+    in-out property <float> lum-low-feather;
+    in-out property <float> lum-high-feather;
+    in-out property <float> range-hue;
+    in-out property <float> range-width;
+    in-out property <float> range-hue-feather;
+    in-out property <float> range-chroma;
+    in-out property <float> range-chroma-feather;
+    in property <brush> hue-circle;
+    in-out property <string> picking;
+    callback pick-started(string);
+    callback skin-preset();
     in-out property <bool> show-mask;
     callback show-mask-toggled();
     in-out property <bool> collapsed-adjustments;
@@ -145,6 +158,20 @@ export component AdjustmentsSection inherits Section {
             icon: @image-url("../icons/mouse-pointer-click.svg");
             primary: root.placing == "Object" && !root.placing-into;
             clicked => { root.add-adjustment("Object"); }
+        }
+    }
+    // The range masks: the picture's own lightness or color.
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        PanelButton {
+            text: "Luminance";
+            icon: @image-url("../icons/sun.svg");
+            clicked => { root.add-adjustment("Luminance"); }
+        }
+        PanelButton {
+            text: "Color";
+            icon: @image-url("../icons/palette.svg");
+            clicked => { root.add-adjustment("Color"); }
         }
     }
     // The brush in hand: its next stroke.
@@ -343,6 +370,19 @@ export component AdjustmentsSection inherits Section {
                     clicked => { root.add-shape("Object", root.shape-mode); }
                 }
             }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: "Luminance";
+                    icon: @image-url("../icons/sun.svg");
+                    clicked => { root.add-shape("Luminance", root.shape-mode); }
+                }
+                PanelButton {
+                    text: "Color";
+                    icon: @image-url("../icons/palette.svg");
+                    clicked => { root.add-shape("Color", root.shape-mode); }
+                }
+            }
             Toggle {
                 label: "Invert shape";
                 checked <=> root.component-invert;
@@ -357,6 +397,123 @@ export component AdjustmentsSection inherits Section {
                 value <=> root.mask-feather;
                 text: round(root.mask-feather * 100) + "%";
                 changed(v) => { root.view-changed(); }
+            }
+            // A luminance window: the lightness it takes in full, from
+            // Low to High, and how far past each it fades to nothing.
+            if root.component-kind == "Luminance": VerticalLayout {
+                spacing: Theme.space-2;
+                EditSlider {
+                    label: "Low";
+                    minimum: 0;
+                    maximum: 1;
+                    default: 0.7;
+                    step: 0.01;
+                    value <=> root.lum-low;
+                    text: round(root.lum-low * 100);
+                    changed(v) => { root.view-changed(); }
+                }
+                EditSlider {
+                    label: "Low fade";
+                    minimum: 0;
+                    maximum: 0.5;
+                    default: 0.1;
+                    step: 0.01;
+                    value <=> root.lum-low-feather;
+                    text: round(root.lum-low-feather * 100);
+                    changed(v) => { root.view-changed(); }
+                }
+                EditSlider {
+                    label: "High";
+                    minimum: 0;
+                    maximum: 1;
+                    default: 1;
+                    step: 0.01;
+                    value <=> root.lum-high;
+                    text: round(root.lum-high * 100);
+                    changed(v) => { root.view-changed(); }
+                }
+                EditSlider {
+                    label: "High fade";
+                    minimum: 0;
+                    maximum: 0.5;
+                    default: 0;
+                    step: 0.01;
+                    value <=> root.lum-high-feather;
+                    text: round(root.lum-high-feather * 100);
+                    changed(v) => { root.view-changed(); }
+                }
+            }
+            // A color window: the hue it centers on, how wide it is in
+            // full and how far round it fades; the least chroma it
+            // takes in full, and how far under that it fades.
+            if root.component-kind == "Color": VerticalLayout {
+                spacing: Theme.space-2;
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Pick";
+                        icon: @image-url("../icons/pipette.svg");
+                        primary: root.picking == "Range";
+                        clicked => { root.pick-started("Range"); }
+                    }
+                    PanelButton {
+                        text: "Skin";
+                        icon: @image-url("../icons/user-round.svg");
+                        clicked => { root.skin-preset(); }
+                    }
+                }
+                EditSlider {
+                    label: "Hue";
+                    tinted: true;
+                    tint: root.hue-circle;
+                    minimum: 0;
+                    maximum: 360;
+                    default: 55;
+                    step: 0.5;
+                    value <=> root.range-hue;
+                    text: round(root.range-hue) + "\u{00b0}";
+                    changed(v) => { root.view-changed(); }
+                }
+                EditSlider {
+                    label: "Width";
+                    minimum: 0;
+                    maximum: 180;
+                    default: 60;
+                    step: 0.5;
+                    value <=> root.range-width;
+                    text: round(root.range-width) + "\u{00b0}";
+                    changed(v) => { root.view-changed(); }
+                }
+                EditSlider {
+                    label: "Hue fade";
+                    minimum: 0;
+                    maximum: 90;
+                    default: 25;
+                    step: 0.5;
+                    value <=> root.range-hue-feather;
+                    text: round(root.range-hue-feather) + "\u{00b0}";
+                    changed(v) => { root.view-changed(); }
+                }
+                EditSlider {
+                    label: "Chroma";
+                    minimum: 0;
+                    maximum: 0.2;
+                    default: 0.02;
+                    step: 0.001;
+                    value <=> root.range-chroma;
+                    text: round(root.range-chroma * 1000) / 10;
+                    changed(v) => { root.view-changed(); }
+                }
+                EditSlider {
+                    label: "Fade";
+                    minimum: 0;
+                    maximum: 0.1;
+                    default: 0.01;
+                    step: 0.001;
+                    value <=> root.range-chroma-feather;
+                    text: round(root.range-chroma-feather * 1000) / 10;
+                    changed(v) => { root.view-changed(); }
+                }
             }
         }
     }

@@ -46,6 +46,9 @@ pub(crate) fn picking_hint(kind: &str) -> &'static str {
         "Curve" => {
             "click a tone in the picture for a point there; drag up or down to move it; Esc or the button when done"
         }
+        "Range" => {
+            "click a color in the picture to center the mask's hue on it; Esc or the button to leave it"
+        }
         "Defringe" => {
             "the defringe is off while this is out, so the fringes show: zoom to 1:1 first, a fringe is a few pixels wide; click one to center the nearer hue window on it; Esc or the button when done"
         }
@@ -824,6 +827,37 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     // and it carries the number.
                     drop(st);
                     app.invoke_develop_changed();
+                }
+                "Range" => {
+                    // The color range's hue from the picture before any
+                    // look, as the mask reads it (`finish::sample`), at
+                    // the panel's white; the dropper's box is the
+                    // mean the mask reads a hue from, near enough.
+                    let key = (app.get_as_shot(), app.get_temperature(), app.get_tint());
+                    let m = preview_white(&mut st, key);
+                    let px: [f32; 3] =
+                        std::array::from_fn(|r| m[r][0] * px[0] + m[r][1] * px[1] + m[r][2] * px[2]);
+                    let edit = read_edit(&app, &st.edit, st.target);
+                    let s = finish::sample(px, None, st.source.baseline() + edit.light.exposure);
+                    app.set_range_hue(s.hue());
+                    // Under the floor the hue is the pixel's noise, and
+                    // the window would not take it in anyway: say so.
+                    let floor = app.get_range_chroma();
+                    app.set_status(if s.chroma() < floor {
+                        format!(
+                            "that color is nearly grey (chroma {:.1}, under the floor's {:.1}): lower Chroma to take it in",
+                            s.chroma() * 100.0,
+                            floor * 100.0
+                        )
+                        .into()
+                    } else {
+                        "".into()
+                    });
+                    drop(st);
+                    let status = app.get_status();
+                    app.invoke_stop_placing();
+                    app.set_status(status);
+                    app.invoke_view_changed();
                 }
                 "Mixer" => {
                     let picked = pick_stages(&mut st, &app, px);

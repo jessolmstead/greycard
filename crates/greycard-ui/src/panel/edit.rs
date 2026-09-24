@@ -264,6 +264,7 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
             if let Shape::Radial { feather, .. } = &mut c.shape {
                 *feather = app.get_mask_feather().clamp(0.0, 1.0);
             }
+            crate::panel::mask::read_range(&mut c.shape, app);
         }
     }
     // Global only, like the vignette and the grain: a mask carries a

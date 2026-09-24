@@ -91,6 +91,24 @@ an XMP** in Settings. With it on, greycard writes standard `.xmp`
 sidecars beside the raws; one that is there is read either way. Picks
 and rejects have no XMP field, so they stay in the `.gcd`.
 
+### Masks by lightness and color
+
+On the Masks tab, **Luminance** and **Color** make a mask from the
+picture itself instead of from a shape you draw. A luminance mask takes
+everything between its **Low** and **High** lightness (0 is black, 100
+is white), fading out over **Low fade** below and **High fade** above.
+A color mask takes one range of hues, set by **Hue** and **Width** and
+fading over **Hue fade**, and leaves out anything greyer than its
+**Chroma**. When you add a color mask the dropper is in your hand:
+click a color in the picture to center the mask on it. **Pick** does
+the same later, and **Skin** sets the mask to skin tones.
+
+Both read the picture as it is before any adjustment except the global
+exposure, so a mask's own sliders never move it. Put one in a mask with
+a drawn shape and **Intersect** to limit it to a place, such as the
+bright part of the top of the frame. **Show mask** paints what it
+takes in red.
+
 ## Several frames at once
 
 Click a frame to open it. **Ctrl+click** adds a frame to the

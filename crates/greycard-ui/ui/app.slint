@@ -360,6 +360,19 @@ export component App inherits Window {
     in-out property <bool> mask-invert: false;
     in-out property <bool> has-feather: false;
     in-out property <float> mask-feather: 0.5;
+    // The chosen shape's window when it is a luminance or a color
+    // range: Oklab lightness 0 to 1; Oklch hue and widths in degrees,
+    // chroma in Oklab's units (`mask::Shape`).
+    in-out property <float> lum-low: 0.7;
+    in-out property <float> lum-high: 1.0;
+    in-out property <float> lum-low-feather: 0.1;
+    in-out property <float> lum-high-feather: 0.0;
+    in-out property <float> range-hue: 55;
+    in-out property <float> range-width: 60;
+    in-out property <float> range-hue-feather: 25;
+    in-out property <float> range-chroma: 0.02;
+    in-out property <float> range-chroma-feather: 0.01;
+    callback skin-preset();
     in-out property <bool> show-mask: false;
     // Thrown by hand, as against set while a shape is placed.
     callback show-mask-toggled();
@@ -454,7 +467,8 @@ export component App inherits Window {
     in-out property <float> brush-scale: 0;
     callback stop-placing();
     // A dropper in hand: "White" for a neutral, "Curve" for a point
-    // on the curve, "Mixer" for a band. A press on the view reads
+    // on the curve, "Mixer" for a band, "Range" for a color mask's
+    // hue. A press on the view reads
     // the picture there; a drag moves what the press chose.
     in-out property <string> picking: "";
     callback pick-started(string);
@@ -1356,6 +1370,19 @@ export component App inherits Window {
                             mask-invert <=> root.mask-invert;
                             has-feather <=> root.has-feather;
                             mask-feather <=> root.mask-feather;
+                            lum-low <=> root.lum-low;
+                            lum-high <=> root.lum-high;
+                            lum-low-feather <=> root.lum-low-feather;
+                            lum-high-feather <=> root.lum-high-feather;
+                            range-hue <=> root.range-hue;
+                            range-width <=> root.range-width;
+                            range-hue-feather <=> root.range-hue-feather;
+                            range-chroma <=> root.range-chroma;
+                            range-chroma-feather <=> root.range-chroma-feather;
+                            hue-circle: root.hue-circle;
+                            picking <=> root.picking;
+                            pick-started(a) => { root.pick-started(a); }
+                            skin-preset => { root.skin-preset(); }
                             show-mask <=> root.show-mask;
                             show-mask-toggled => { root.show-mask-toggled(); }
                             collapsed-adjustments <=> root.collapsed-adjustments;
