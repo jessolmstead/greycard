@@ -448,10 +448,16 @@ pub fn mark(rendered: &mut Rendered, settings: &Settings) -> Result<()> {
         return Ok(());
     };
     let (w, h) = (rendered.width, rendered.height);
+    let start = std::time::Instant::now();
     match &mut rendered.pixels {
-        Pixels::Eight(p) => mark.apply(p, w, h, settings.space),
-        Pixels::Sixteen(p) => mark.apply(p, w, h, settings.space),
+        Pixels::Eight(p) => mark.apply(p, w, h, settings.space)?,
+        Pixels::Sixteen(p) => mark.apply(p, w, h, settings.space)?,
     }
+    tracing::debug!(
+        "watermark on {w}x{h} in {:.3} s",
+        start.elapsed().as_secs_f64()
+    );
+    Ok(())
 }
 
 /// Whether either exposure shift is set, in the picture's own look or

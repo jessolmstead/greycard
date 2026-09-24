@@ -50,6 +50,20 @@ unpack it.
    Ctrl+Shift+E. You can write a JPEG or a TIFF, in sRGB, Display P3 or
    Rec.2020.
 
+The export sheet can lay a **watermark** over the export: a line of
+text in white or black, or a PNG with transparency. Its size and margin
+are a share of the export's long side, so it looks the same on a 2048 px
+export as on a full-size one. The **Metadata** row controls what the file
+carries: everything, everything except your edit, or nothing but the
+color profile.
+
+To keep a set of export choices, use **Save as...** at the top of the
+sheet and give it a name, then pick it from the **Preset** list next
+time. "(edited)" next to the name means the sheet no longer matches the
+saved preset. Presets are kept in the settings file. A preset can also
+drive an export from the command line:
+`greycard-ui IMG_0001.CR3 --export out.jpg --export-preset "Web 2048"`.
+
 Your edits are saved beside each raw in a `.gcd` file, so
 `IMG_0001.CR3` keeps its edit in `IMG_0001.CR3.gcd`. To move a shoot to
 another folder or machine, copy the `.gcd` files along with the raws.

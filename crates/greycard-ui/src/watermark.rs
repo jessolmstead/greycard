@@ -305,11 +305,10 @@ fn picture_mark(picture: &image::Rgba32FImage, target: u32, space: Space) -> Ras
     // The resize rings a little past the ends; a colour is never more
     // than its alpha once premultiplied.
     let mut rgba = resized.into_raw();
-    for px in rgba.chunks_exact_mut(4) {
-        px[3] = px[3].clamp(0.0, 1.0);
-        for c in 0..3 {
-            px[c] = px[c].clamp(0.0, px[3]);
-        }
+    for px in rgba.as_chunks_mut::<4>().0 {
+        let a = px[3].clamp(0.0, 1.0);
+        let [r, g, b, _] = *px;
+        *px = [r.clamp(0.0, a), g.clamp(0.0, a), b.clamp(0.0, a), a];
     }
     Raster {
         width: target,
@@ -570,7 +569,7 @@ pub(crate) mod tests {
         assert!((y1 as i32 - (800 - 30 - 1)).abs() <= 1, "{y1}");
         assert!(y0 < y1 && y0 > 600, "{y0}");
         // Some pixels are fully white: the strokes' cores.
-        assert!(pixels.iter().any(|&c| c == 255));
+        assert!(pixels.contains(&255));
     }
 
     #[test]

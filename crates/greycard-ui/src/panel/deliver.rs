@@ -855,3 +855,64 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_sheet_picks_saves_marks_and_deletes_presets() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        // A batch state: nothing here may write the user's settings.
+        state.borrow_mut().batch = true;
+        let web = Sheet {
+            size: "2048".into(),
+            quality: 85.0,
+            mark: sheet::MARK_TEXT.into(),
+            mark_text: "© me".into(),
+            ..Sheet::default()
+        };
+        state.borrow_mut().export_presets = vec![ExportPreset {
+            name: "Web".into(),
+            sheet: web.clone(),
+        }];
+        show_presets_picker(&app, &state.borrow().export_presets, None);
+        assert_eq!(app.get_export_preset(), NO_PRESET);
+        assert_eq!(app.get_export_presets().row_count(), 2);
+        assert!(!app.get_export_preset_edited());
+
+        // Chosen: the sheet is the preset's, and not edited.
+        app.invoke_export_preset_chosen("Web".into());
+        assert_eq!(app.get_export_preset(), "Web");
+        assert!(read_sheet(&app).same(&web));
+        assert_eq!(read_export_settings(&app).long_edge, Some(2048));
+        assert!(!app.get_export_preset_edited());
+        // A field moved: edited; moved back: not.
+        app.set_export_mark_position("Top left".into());
+        app.invoke_export_sheet_changed();
+        assert!(app.get_export_preset_edited());
+        app.set_export_mark_position(web.mark_position.as_str().into());
+        app.invoke_export_sheet_changed();
+        assert!(!app.get_export_preset_edited());
+
+        // Saved as a new name: a second preset, chosen, not edited.
+        app.set_export_quality(70.0);
+        app.invoke_export_sheet_changed();
+        assert!(app.get_export_preset_edited());
+        app.invoke_export_preset_saved(" Small ".into());
+        assert_eq!(app.get_export_preset(), "Small");
+        assert!(!app.get_export_preset_edited());
+        assert_eq!(state.borrow().export_presets.len(), 2);
+        assert_eq!(state.borrow().export_presets[1].sheet.quality, 70.0);
+        // "None" is the picker's, not a name.
+        app.invoke_export_preset_saved(NO_PRESET.into());
+        assert_eq!(state.borrow().export_presets.len(), 2);
+
+        // Deleted: gone, nothing chosen, the sheet as it was.
+        app.invoke_export_preset_deleted();
+        assert_eq!(state.borrow().export_presets.len(), 1);
+        assert_eq!(app.get_export_preset(), NO_PRESET);
+        assert_eq!(app.get_export_quality(), 70.0);
+    }
+}
