@@ -438,6 +438,12 @@ fn looks_like_a_term(token: &str) -> bool {
     if name_len == 0 {
         return false;
     }
+    // Only a field this language has: `C:\Users\...` in a quoted
+    // folder is a drive letter, not a term.
+    let name = token[..name_len].to_ascii_lowercase();
+    if !FIELDS.contains(&name.as_str()) {
+        return false;
+    }
     let rest = &token[name_len..];
     ["!=", ">=", "<=", ":", "=", ">", "<"]
         .iter()

@@ -2507,7 +2507,21 @@ mod tests {
         let without = shot(&view);
         view.locals = vec![local_of(vec![(Shape::color_at(250.0), Mode::Add)])];
         let with = shot(&view);
-        assert!(with == without, "the window changed the mixer's picture");
+        // Within a level: the mean is one computation shared by the
+        // window and the mixer, but the mixer re-exposes it, and a
+        // backend that contracts multiplies (Metal on the Mac runner)
+        // rounds that a last bit apart from Vulkan's.
+        let worst = with
+            .as_raw()
+            .iter()
+            .zip(without.as_raw())
+            .map(|(a, b)| a.abs_diff(*b))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            worst <= 1,
+            "the window changed the mixer's picture by {worst} levels"
+        );
         // And the mixer does act, so the check is of something.
         view.mixer.enabled = false;
         assert!(shot(&view) != without);
