@@ -251,7 +251,7 @@ pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
         if st.asked.get(&key) == Some(&shape) {
             continue;
         }
-        let Some(model) = model_for(&shape) else {
+        let Some(model) = model_for(&shape, st.store.as_ref()) else {
             continue;
         };
         if st.store.as_ref().is_some_and(|s| s.have(model)) {

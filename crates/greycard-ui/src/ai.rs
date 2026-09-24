@@ -14,7 +14,7 @@ use std::time::Instant;
 
 use greycard_ai::sam::Embedding;
 use greycard_ai::{
-    Denoiser, Fill, Model, Prompt, Provider, Rgb8, Rgbf, SAM, SUBJECT, Sam, Store, Subject, refine,
+    Denoiser, Fill, Model, Prompt, Provider, Rgb8, Rgbf, SAM, Sam, Store, Subject, refine,
 };
 use greycard_core::develop::retouch::Region;
 use greycard_core::image::WorkingImage;
@@ -26,10 +26,19 @@ use greycard_edit::retouch::Patch;
 /// A learned component: its adjustment's id and its index in the mask.
 pub type Key = (u64, usize);
 
-/// The model a shape needs, if any.
-pub fn model_for(shape: &Shape) -> Option<&'static Model> {
+/// The providers this build offers on this machine, asked once.
+fn providers() -> &'static [Provider] {
+    static PROVIDERS: std::sync::OnceLock<Vec<Provider>> = std::sync::OnceLock::new();
+    PROVIDERS.get_or_init(Provider::available)
+}
+
+/// The model a shape needs, if any. For Subject that depends on the
+/// providers and on what `store` already has (the WebGPU rewrite or
+/// the original, `greycard_ai::subject::model_for`), so the store the
+/// worker loads from is the one to pass.
+pub fn model_for(shape: &Shape, store: Option<&Store>) -> Option<&'static Model> {
     match shape {
-        Shape::Subject {} => Some(&SUBJECT),
+        Shape::Subject {} => Some(greycard_ai::subject::model_for(store, providers())),
         Shape::Object { .. } => Some(&SAM),
         _ => None,
     }
@@ -305,7 +314,7 @@ impl Ai {
     /// model's id and the shape.
     fn cached_path(&self, shape: &Shape) -> Option<PathBuf> {
         let file = self.file.as_ref()?;
-        let model = model_for(shape)?;
+        let model = model_for(shape, self.store.as_ref())?;
         let prompt = serde_json::to_string(shape).ok()?;
         let root = self.store.as_ref()?.root().parent()?.join("masks");
         let mut h = std::collections::hash_map::DefaultHasher::new();

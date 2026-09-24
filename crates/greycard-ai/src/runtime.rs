@@ -1,7 +1,9 @@
 //! ONNX Runtime, and which device runs a model: the providers are tried
 //! in order and a model settles on the first one that loads and runs,
 //! since a provider can accept a graph and then fail on it (WebGPU on
-//! BiRefNet: a Split with more outputs than the shader may bind).
+//! the onnx-community BiRefNet: a Split with more outputs than the
+//! shader may bind; greycard's rewrite of that file, `SUBJECT_WEBGPU`,
+//! runs whole on WebGPU).
 //!
 //! Two costs that failure used to pay every launch, fixed together
 //! (notes §97): the last provider in the list is skipped past a

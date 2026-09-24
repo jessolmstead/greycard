@@ -30,6 +30,10 @@ pub struct Model {
     /// Who made it and where the weights were published.
     pub source: &'static str,
     pub license: License,
+    /// What greycard changed, for a file it publishes itself: said in
+    /// the note beside the files, in place of the line that greycard
+    /// does not redistribute them.
+    pub modified: Option<&'static str>,
     pub files: &'static [File],
 }
 
@@ -50,8 +54,17 @@ impl Model {
                 )
             })
             .collect();
+        let provenance = match self.modified {
+            Some(what) => format!(
+                "Downloaded by greycard on first use. greycard publishes these files, modified from the original under its licence: {what}"
+            ),
+            None => {
+                "Downloaded by greycard on first use. greycard does not redistribute these files."
+                    .to_string()
+            }
+        };
         format!(
-            "{name}\n\nLicence: {lic} <{licurl}>\nSource: {source}\n\nFiles:\n{files}\n\nDownloaded by greycard on first use. greycard does not redistribute these files.\n",
+            "{name}\n\nLicence: {lic} <{licurl}>\nSource: {source}\n\nFiles:\n{files}\n\n{provenance}\n",
             name = self.name,
             lic = self.license.name,
             licurl = self.license.url,
@@ -71,11 +84,40 @@ pub const SUBJECT: Model = Model {
         name: "MIT",
         url: "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE",
     },
+    modified: None,
     files: &[File {
         name: "model_fp16.onnx",
         url: "https://huggingface.co/onnx-community/BiRefNet_lite-ONNX/resolve/main/onnx/model_fp16.onnx",
         bytes: 114_538_221,
         sha256: "d39b897ceb16ae654c1731f3dba0cf9b368d9cae74b5a57459b455cc8bfec402",
+    }],
+};
+
+/// BiRefNet lite rewritten so ONNX Runtime's WebGPU provider runs all
+/// of it (notes, "BiRefNet on WebGPU"): the same weights and, on the
+/// CPU, the same answer to the bit. Made from `SUBJECT`'s file by
+/// `tools/ai/birefnet_webgpu.py rewrite`, which gives these exact
+/// bytes with the versions in `tools/ai/requirements.txt`. What the
+/// Subject mask prefers where WebGPU is on offer; see
+/// `subject::model_for`.
+pub const SUBJECT_WEBGPU: Model = Model {
+    id: "birefnet-lite-2024-fp16-webgpu",
+    name: "BiRefNet lite (Zheng et al.), fp16, ONNX export by onnx-community, rewritten by greycard for WebGPU",
+    purpose: "the Subject and Background masks, on the GPU",
+    source: "https://github.com/ZhengPeng7/BiRefNet and https://huggingface.co/onnx-community/BiRefNet_lite-ONNX, rewritten by https://github.com/jessolmstead/greycard (tools/ai/birefnet_webgpu.py)",
+    license: License {
+        name: "MIT",
+        url: "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE",
+    },
+    modified: Some(
+        "the decoder's Splits of more than fifteen outputs are Slices, the Sums are Adds, and the deformable convolutions' int64 coordinate arithmetic is fp16; the weights are untouched.",
+    ),
+    files: &[File {
+        name: "model_fp16_webgpu.onnx",
+        // A placeholder until the file is uploaded to this release.
+        url: "https://github.com/jessolmstead/greycard-denoise/releases/download/birefnet-lite-webgpu-v1/model_fp16_webgpu.onnx",
+        bytes: 113_778_088,
+        sha256: "0a019d6ba73c9cedc9a251f8c9390b196ff6399acd281a2872692861abbd78c2",
     }],
 };
 
@@ -90,6 +132,7 @@ pub const SAM: Model = Model {
         name: "Apache-2.0",
         url: "https://github.com/facebookresearch/sam2/blob/main/LICENSE",
     },
+    modified: None,
     files: &[
         File {
             name: "vision_encoder.onnx",
@@ -129,6 +172,7 @@ pub const FILL: Model = Model {
         name: "Apache-2.0",
         url: "https://github.com/advimman/lama/blob/main/LICENSE",
     },
+    modified: None,
     files: &[File {
         name: "lama_fp32.onnx",
         url: "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx",
@@ -151,6 +195,7 @@ pub const DENOISE_FAST: Model = Model {
     purpose: "learned denoise and demosaic, the speed tier",
     source: DENOISE_SOURCE,
     license: DENOISE_LICENSE,
+    modified: None,
     files: &[File {
         name: "denoise-v19.onnx",
         url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v19.onnx",
@@ -166,6 +211,7 @@ pub const DENOISE_BALANCED: Model = Model {
     purpose: "learned denoise and demosaic, the middle tier",
     source: DENOISE_SOURCE,
     license: DENOISE_LICENSE,
+    modified: None,
     files: &[File {
         name: "denoise-v15.onnx",
         url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v15.onnx",
@@ -181,6 +227,7 @@ pub const DENOISE_BEST: Model = Model {
     purpose: "learned denoise and demosaic, the quality tier",
     source: DENOISE_SOURCE,
     license: DENOISE_LICENSE,
+    modified: None,
     files: &[File {
         name: "denoise-v20.onnx",
         url: "https://huggingface.co/jessolmstead/greycard-denoise/resolve/main/denoise-v20.onnx",
@@ -191,6 +238,7 @@ pub const DENOISE_BEST: Model = Model {
 
 pub const MODELS: &[Model] = &[
     SUBJECT,
+    SUBJECT_WEBGPU,
     SAM,
     FILL,
     DENOISE_FAST,
@@ -228,6 +276,8 @@ mod tests {
     use super::*;
 
     const HF: &str = "https://huggingface.co";
+    /// Where greycard publishes files it made or changed itself.
+    const OWN: &str = "https://github.com/jessolmstead/";
 
     #[test]
     fn the_registry_is_well_formed() {
@@ -236,7 +286,17 @@ mod tests {
             assert!(ids.insert(m.id), "duplicate id {}", m.id);
             assert!(!m.files.is_empty());
             for f in m.files {
-                assert!(f.url.starts_with(HF), "{} is not on the model host", f.url);
+                assert!(
+                    f.url.starts_with(HF) || f.url.starts_with(OWN),
+                    "{} is not on a model host",
+                    f.url
+                );
+                assert_eq!(
+                    f.url.starts_with(OWN),
+                    m.modified.is_some(),
+                    "{}: a file greycard publishes says what it changed, and only such a file",
+                    f.url
+                );
                 assert!(
                     f.url.ends_with(f.name),
                     "{} must keep its name {}",
@@ -282,5 +342,12 @@ mod tests {
             assert!(note.contains(f.sha256));
         }
         assert!(note.contains("does not redistribute"));
+
+        let note = SUBJECT_WEBGPU.license_note();
+        assert!(note.contains("MIT"));
+        assert!(note.contains("ZhengPeng7/BiRefNet"));
+        assert!(note.contains("onnx-community"));
+        assert!(note.contains("modified from the original"));
+        assert!(!note.contains("does not redistribute"));
     }
 }

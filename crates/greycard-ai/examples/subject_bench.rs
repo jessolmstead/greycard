@@ -39,11 +39,7 @@ fn main() {
     let out = a.get(5);
 
     let rgb = image::open(picture).expect("the picture").to_rgb8();
-    let image = Rgb8::new(
-        rgb.width() as usize,
-        rgb.height() as usize,
-        rgb.into_raw(),
-    );
+    let image = Rgb8::new(rgb.width() as usize, rgb.height() as usize, rgb.into_raw());
 
     ort::init().with_name("subject_bench").commit();
     let t = Instant::now();

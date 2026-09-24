@@ -1,7 +1,9 @@
 //! Against the real models: set `GREYCARD_MODELS` to a store root that
 //! holds them and run with `--ignored`.
 
-use greycard_ai::{Fill, Prompt, Provider, Rgb8, Rgbf, Sam, Store, Subject};
+use greycard_ai::{
+    Fill, Mask, Prompt, Provider, Rgb8, Rgbf, SUBJECT, SUBJECT_WEBGPU, Sam, Store, Subject,
+};
 
 fn store() -> Option<Store> {
     std::env::var_os("GREYCARD_MODELS").map(Store::at)
@@ -68,6 +70,106 @@ fn the_subject_model_finds_a_disc() {
     let (inside, outside) = (mean_in(&mask, disc_in), mean_in(&mask, disc_out));
     println!("subject: inside {inside:.3} outside {outside:.3}");
     assert!(inside > 0.7 && outside < 0.2);
+}
+
+/// The picture for comparing the two Subject files: the one named by
+/// `GREYCARD_SUBJECT_PICTURE` (a PNG or JPEG, say a develop of a real
+/// frame), else the disc.
+fn subject_picture() -> Rgb8 {
+    match std::env::var_os("GREYCARD_SUBJECT_PICTURE") {
+        Some(path) => {
+            let rgb = image::open(&path)
+                .unwrap_or_else(|e| panic!("{}: {e}", path.to_string_lossy()))
+                .to_rgb8();
+            Rgb8::new(rgb.width() as usize, rgb.height() as usize, rgb.into_raw())
+        }
+        None => disc(768, 512, 0.4, 0.5, 0.15),
+    }
+}
+
+/// How far apart two mattes are: the largest difference, the mean,
+/// and the share of pixels on different sides of one half.
+fn matte_difference(a: &Mask, b: &Mask) -> (f32, f32, f32) {
+    let n = a.data.len() as f32;
+    let (mut max, mut sum, mut flips) = (0f32, 0f32, 0f32);
+    for (x, y) in a.data.iter().zip(&b.data) {
+        max = max.max((x - y).abs());
+        sum += (x - y).abs();
+        flips += ((*x > 0.5) != (*y > 0.5)) as u8 as f32;
+    }
+    (max, sum / n, flips / n)
+}
+
+/// Load `model` on `providers` and make its matte of `picture`, three
+/// warm runs after the first; returns the matte and the provider.
+fn subject_matte(
+    store: &Store,
+    model: &'static greycard_ai::Model,
+    providers: &[Provider],
+    picture: &Rgb8,
+) -> (Mask, Provider) {
+    let t = std::time::Instant::now();
+    let mut subject = Subject::load_model(store, model, providers).unwrap_or_else(|e| {
+        panic!(
+            "{}: {e} (the WebGPU file is made by tools/ai/birefnet_webgpu.py rewrite, \
+             into {}/{}/)",
+            model.id,
+            store.root().display(),
+            model.id
+        )
+    });
+    let load = t.elapsed().as_secs_f64();
+    let t = std::time::Instant::now();
+    let mut mask = subject.mask(picture).expect("mask");
+    let first = t.elapsed().as_secs_f64();
+    let mut warm = Vec::new();
+    for _ in 0..3 {
+        let t = std::time::Instant::now();
+        mask = subject.mask(picture).expect("mask");
+        warm.push(format!("{:.3}", t.elapsed().as_secs_f64()));
+    }
+    println!(
+        "{} on {}: load {load:.2}s, first {first:.2}s, warm {}s",
+        model.id,
+        subject.provider().name(),
+        warm.join(" ")
+    );
+    (mask, subject.provider())
+}
+
+/// The rewrite for WebGPU is the same function as the original: to
+/// the bit on the CPU, and on WebGPU (where the build and the machine
+/// offer it) within what fp16 on the card moves an edge.
+#[test]
+#[ignore]
+fn the_webgpu_rewrite_answers_as_the_original() {
+    let Some(store) = store() else { return };
+    let picture = subject_picture();
+    let (original, _) = subject_matte(&store, &SUBJECT, &[Provider::Cpu], &picture);
+    let (rewrite, _) = subject_matte(&store, &SUBJECT_WEBGPU, &[Provider::Cpu], &picture);
+    let (max, mean, flips) = matte_difference(&original, &rewrite);
+    println!("CPU, original against rewrite: max {max:.3e}, mean {mean:.3e}, flips {flips:.3e}");
+    assert!(
+        max <= 1e-6,
+        "the rewrite is not the same function on the CPU"
+    );
+
+    if !Provider::available().contains(&Provider::WebGpu) {
+        println!("no WebGPU here; the CPU comparison is the whole test");
+        return;
+    }
+    let (gpu, provider) = subject_matte(&store, &SUBJECT_WEBGPU, &[Provider::WebGpu], &picture);
+    assert_eq!(provider, Provider::WebGpu);
+    let (max, mean, flips) = matte_difference(&original, &gpu);
+    println!(
+        "original on the CPU against the rewrite on WebGPU: max {max:.3}, mean {mean:.2e}, \
+         {:.3}% of pixels across one half",
+        flips * 100.0
+    );
+    // Measured on a 45 MP portrait: mean 4.3e-4, 0.03% across; the
+    // differences are an edge moved by fp16, never a region.
+    assert!(mean < 3e-3, "mean difference {mean}");
+    assert!(flips < 2e-3, "{flips} of the pixels change sides");
 }
 
 #[test]
