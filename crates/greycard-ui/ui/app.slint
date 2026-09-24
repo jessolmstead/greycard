@@ -849,7 +849,9 @@ export component App inherits Window {
     /// the whole window; Tab again brings them back. Not remembered:
     /// the next run opens with them.
     in-out property <bool> panels-hidden: false;
-    pure function sheet-open() -> bool {
+    /// Public so the Rust side asks the same question before it puts
+    /// a sheet up of its own accord.
+    public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
             || root.settings-open;
     }
@@ -858,11 +860,13 @@ export component App inherits Window {
     forward-focus: keys;
     keys := FocusScope {
         key-pressed(e) => {
+            // The settings sheet is declared last and so drawn over the
+            // rest: Escape closes it first.
+            if (e.text == Key.Escape && root.settings-open) { root.settings-open = false; return accept; }
             if (e.text == Key.Escape && root.export-open) { root.export-open = false; return accept; }
             if (e.text == Key.Escape && root.fetch-open) { root.fetch-answered(false); return accept; }
             if (e.text == Key.Escape && root.preset-open) { root.preset-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
-            if (e.text == Key.Escape && root.settings-open) { root.settings-open = false; return accept; }
             if (e.text == Key.Escape && (root.placing != "" || root.picking != "")) { root.stop-placing(); return accept; }
             // A repair chosen for editing, not one just drawn: Esc
             // lets go of it, so the sliders go back to the brush.

@@ -21,12 +21,9 @@ pub(crate) fn offer_lenses_once(st: &mut State, app: &App) {
     if !offer_lenses_unprompted(false, st.lenses_declined, st.lenses_asked) {
         return;
     }
-    let busy = st.fetch.is_some()
-        || st.fetching
-        || app.get_fetch_open()
-        || app.get_export_open()
-        || app.get_preset_open()
-        || app.get_rejects_open();
+    // Any sheet: the window's own list of them, so a sheet added
+    // later is covered here without being named.
+    let busy = st.fetch.is_some() || st.fetching || app.invoke_sheet_open();
     if busy || st.batch {
         return;
     }
@@ -640,6 +637,19 @@ mod tests {
         assert!(!app.get_fetch_open());
         assert!(!state.borrow().lenses_asked);
         app.set_export_open(false);
+        // The settings sheet too: an offer under it would be answered
+        // Not now, for good, by the Escape meant for the settings.
+        app.invoke_settings_asked();
+        assert!(app.get_settings_open());
+        offer_lenses_once(&mut state.borrow_mut(), &app);
+        assert!(!app.get_fetch_open(), "not under the settings");
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_settings_open());
+        assert!(
+            !state.borrow().lenses_declined,
+            "Escape closed the settings only"
+        );
+        assert!(!state.borrow().lenses_asked);
 
         offer_lenses_once(&mut state.borrow_mut(), &app);
         assert!(app.get_fetch_open(), "offered");
