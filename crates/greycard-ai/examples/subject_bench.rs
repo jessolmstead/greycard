@@ -3,7 +3,7 @@
 //!
 //! The picture is read with the `image` crate and handed to the model
 //! as the editor hands it the preview (squashed to 1024², ImageNet
-//! normalised). The session is built and run once before timing, then
+//! normalized). The session is built and run once before timing, then
 //! `RUNS` runs (default 5) are timed, each the whole `mask` call:
 //! planes, the run, the sigmoid. With `MATTE.f32` the last matte is
 //! written as raw little-endian f32, 1024 × 1024, for comparing

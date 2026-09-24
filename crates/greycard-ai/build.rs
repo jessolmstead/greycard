@@ -1,8 +1,9 @@
 // The prebuilt ONNX Runtime with WebGPU brings Dawn as a shared
 // library, copied beside the binaries; the loader must look there. A
-// test binary sits one directory below the library, in target/<profile>/deps,
-// so both are named (and an example, in target/<profile>/examples). Windows looks beside the executable on its own,
-// and MSVC's linker knows no -Wl.
+// test binary sits one directory below the library, in
+// target/<profile>/deps, so both are named; an example sits in
+// target/<profile>/examples. Windows looks beside the executable on
+// its own, and MSVC's linker knows no -Wl.
 fn main() {
     let origin = match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
         Ok("windows") => return,
