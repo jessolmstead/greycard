@@ -43,6 +43,16 @@ note a first tester reads.
   2026-09-23).
 - The release binaries are stripped: greycard-ui 112 MB to 84 MB on
   Linux, no behavior change (§155, 2026-09-23).
+- Several frames at once in the strip and the grid: Ctrl+click adds
+  one, Shift+click a run, Shift+arrows extend, Escape collapses; the
+  rating, flag, label, reject and turn keys act on the whole set
+  (§156, 2026-09-23).
+- Sync settings: Ctrl+Shift+S or the Sync button lays the chosen
+  sections of the frame on screen over every other selected frame
+  through the preset path, one history step each; the camera profile
+  only onto the body it was made for, Noise bringing the learned
+  denoiser along, masks off by default; the preset and sync sheets in
+  two columns so they fit a 768 px screen (§156, 2026-09-23).
 
 ## 0.1.1, 2026-09-22
 

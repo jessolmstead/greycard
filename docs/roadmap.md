@@ -189,9 +189,6 @@ comes across with its ratings and collections.
   its own edit and history; a collection references hash plus
   version. Waits on collections
 - [ ] Stacks, in the collections file. Waits on collections
-- [ ] Sync settings across a selection: copy chosen sections of one
-  picture's edit and paste them onto every selected frame, as a
-  preset is laid over an edit. Waits on multi-select in the browser
 - [ ] Faces in the library: detection and grouping by a clean-license
   model, names as keywords in the meta section, a facet in the filter
   bar. Waits on the index
@@ -218,8 +215,9 @@ for testing are in `docs/test-frames.md`.
       highlight reconstruction and the white-level clip for it (§71)
 - [ ] HDR merge handheld: alignment and reference-frame deghosting
       (§71)
-- [ ] Multi-select in the browser and a merge action with progress; the
-      new DNG appears beside its sources (§71)
+- [ ] A merge action over the selection, with progress; the new DNG
+      appears beside its sources (§71). The selection is there since
+      §156
 - [ ] Panorama stitching: feature matching and RANSAC for the coarse
       homography, registration for refinement, multi-band blend from
       the focus stack (§71)
@@ -243,7 +241,14 @@ clears or a tester asks for it.
     an intermediate inside the operations defined in it
 - [ ] Resizeable / hideable panels
 - [ ] Right click on photo for options. Set label, copy develop settings, etc
-- [ ] Select multiple photos for copying settings to them etc
+- [ ] Export over the selection: a queue on the worker with progress
+      and the naming policy; today Export takes the frame on screen
+      (§156)
+- [ ] A preset laid over the selection, and settings copied and pasted
+      from a right-click, both the sync's loop with a different source
+      (§156)
+- [ ] Geometry in a sync, mapped through each frame's aspect and turn
+      as masks already are (§156)
 
 
 ### Engine
