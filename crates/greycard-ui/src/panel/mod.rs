@@ -8,6 +8,7 @@ pub(crate) mod deliver;
 pub(crate) mod edit;
 pub(crate) mod history;
 pub(crate) mod mask;
+pub(crate) mod prefs;
 pub(crate) mod retouch;
 pub(crate) mod startup;
 pub(crate) mod viewport;

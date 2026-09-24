@@ -119,13 +119,14 @@ struct Cli {
     #[arg(long)]
     no_sidecars: bool,
     /// Write the meta to an `.xmp` beside the frame as well, for
-    /// Lightroom, Bridge and darktable, for this run; the panel's
-    /// setting otherwise. An XMP that is there is read either way.
+    /// Lightroom, Bridge and darktable, for this run; the Settings
+    /// sheet's choice otherwise. An XMP that is there is read either way.
     #[arg(long)]
     xmp_sidecars: bool,
     /// Write sidecars under a hidden `.greycard` folder in the
     /// frame's folder rather than beside it, for this run; the
-    /// setting otherwise. A sidecar in either place is read either way.
+    /// Settings sheet's choice otherwise. A sidecar in either place is
+    /// read either way.
     #[arg(long)]
     sidecar_folder: bool,
     /// The monitor's ICC profile to open with, over the panel's
@@ -175,8 +176,8 @@ struct Cli {
     #[arg(long)]
     patch: Option<usize>,
     /// Open this sheet once the picture is up, for a snapshot:
-    /// export, preset, fetch (the model sheet, with sample text) or
-    /// lenses (the lens profiles' first-launch offer)
+    /// export, preset, fetch (the model sheet, with sample text),
+    /// lenses (the lens profiles' first-launch offer) or settings
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Put this Crop-tab tool in hand once the picture is up, for a
@@ -707,6 +708,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::curve::install(app, &state, &worker);
     panel::history::install(app, &state, &worker);
     panel::retouch::install(app, &state, &worker);
+    panel::prefs::install(app, &state, &worker);
     report::install(app, &state);
 
     // Deliveries from the worker need the state and the worker too.

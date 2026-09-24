@@ -1416,6 +1416,41 @@ impl Sidecar {
         }
         Ok(())
     }
+
+    /// Whether `raw` has a sidecar in the place `placement` does not
+    /// name: one a [`Sidecar::settle`] would move or remove.
+    pub fn misplaced(raw: &Path, placement: Placement) -> bool {
+        Self::path_in(raw, placement.other()).exists()
+    }
+
+    /// Put `raw`'s sidecar where `placement` says, without reading or
+    /// rewriting it: the move a folder asks for by name when the
+    /// setting has flipped, rather than waiting for each frame's next
+    /// save. The copy in the other place is renamed into this one
+    /// when it is the one [`Sidecar::find`] reads, the newer, and
+    /// removed when it is not, since a save would have superseded it
+    /// the same way. The hidden folder is made, and hidden, first.
+    /// True when anything moved or went; false for a frame with
+    /// nothing in the other place.
+    pub fn settle(raw: &Path, placement: Placement) -> std::io::Result<bool> {
+        let (here, other) = (
+            Self::path_in(raw, placement),
+            Self::path_in(raw, placement.other()),
+        );
+        if !other.exists() {
+            return Ok(false);
+        }
+        if Self::find(raw).as_deref() == Some(other.as_path()) {
+            if placement == Placement::Folder {
+                let shoot = raw.parent().unwrap_or(Path::new(""));
+                Self::folder_under(shoot)?;
+            }
+            std::fs::rename(&other, &here)?;
+        } else {
+            std::fs::remove_file(&other)?;
+        }
+        Ok(true)
+    }
 }
 
 /// Mark a folder hidden where a leading dot does not do it. Windows
@@ -2174,6 +2209,61 @@ mod tests {
             "the beside copy is superseded"
         );
         assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), later);
+    }
+
+    #[test]
+    fn settle_moves_the_newer_copy_and_drops_the_stale_one() {
+        let dir = scratch("settle");
+        let (a, b, c, d) = (
+            dir.join("A.CR3"),
+            dir.join("B.CR3"),
+            dir.join("C.CR3"),
+            dir.join("D.CR3"),
+        );
+        let place = |raw: &Path, placement, text: &str| {
+            let path = Sidecar::path_in(raw, placement);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, text).unwrap();
+            path
+        };
+        // A beside only; B under the folder only; C in both, the one
+        // beside newer; D with none.
+        place(&a, Placement::Beside, "a");
+        place(&b, Placement::Folder, "b");
+        let c_beside = place(&c, Placement::Beside, "c new");
+        let c_under = place(&c, Placement::Folder, "c old");
+        set_modified(&c_under, 1_000_000_000);
+        set_modified(&c_beside, 2_000_000_000);
+
+        let to = Placement::Folder;
+        assert!(Sidecar::misplaced(&a, to));
+        assert!(!Sidecar::misplaced(&b, to));
+        assert!(Sidecar::misplaced(&c, to));
+        assert!(!Sidecar::misplaced(&d, to));
+
+        assert!(Sidecar::settle(&a, to).unwrap());
+        assert!(!Sidecar::settle(&b, to).unwrap(), "already there");
+        assert!(Sidecar::settle(&c, to).unwrap());
+        assert!(!Sidecar::settle(&d, to).unwrap(), "nothing to move");
+
+        let read =
+            |raw: &Path, placement| std::fs::read_to_string(Sidecar::path_in(raw, placement)).ok();
+        assert_eq!(read(&a, to).as_deref(), Some("a"));
+        assert_eq!(read(&a, Placement::Beside), None);
+        assert_eq!(read(&b, to).as_deref(), Some("b"));
+        // The newer copy won, over the one that was in place.
+        assert_eq!(read(&c, to).as_deref(), Some("c new"));
+        assert_eq!(read(&c, Placement::Beside), None);
+        assert!(!Sidecar::path_in(&d, to).exists());
+
+        // And back: a stale copy in the other place is dropped, not
+        // moved over the one that is read.
+        let stale = place(&a, Placement::Beside, "a stale");
+        set_modified(&stale, 1_000_000_000);
+        assert!(Sidecar::settle(&a, to).unwrap());
+        assert_eq!(read(&a, to).as_deref(), Some("a"));
+        assert!(!stale.exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

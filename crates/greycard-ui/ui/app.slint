@@ -27,6 +27,7 @@ import { ModelSheet } from "panel/model-sheet.slint";
 import { RejectsSheet } from "panel/rejects-sheet.slint";
 import { PresetSheet } from "panel/preset-sheet.slint";
 import { ExportSheet } from "panel/deliver.slint";
+import { SettingsSheet } from "panel/settings-sheet.slint";
 import { GridSheet } from "panel/grid.slint";
 import { Filmstrip } from "panel/strip.slint";
 import { Viewport } from "panel/viewport.slint";
@@ -818,6 +819,21 @@ export component App inherits Window {
     in-out property <string> export-sharpen: "Standard";
     /// What an export does when a file of that name is already there.
     in-out property <string> export-on-exists: "Increment";
+    // The settings sheet: what is the installation's and not a
+    // picture's. Where a sidecar is written, "Beside the raw" or
+    // "Hidden folder"; whether an XMP is written beside it; how many
+    // of the open folder's sidecars are in the other place, and what
+    // the last move of them did. Ctrl+, or the gear opens it, through
+    // Rust, which counts first.
+    in-out property <bool> settings-open: false;
+    in-out property <string> sidecar-placement: "Beside the raw";
+    in-out property <bool> xmp-sidecars: false;
+    in property <int> sidecars-elsewhere: 0;
+    in property <string> settings-note: "";
+    callback settings-asked();
+    callback placement-changed();
+    callback xmp-changed();
+    callback sidecars-move();
     /// Move to the file `by` places along the strip.
     callback step(int);
     /// Ask the desktop for a folder, and open it in place of the
@@ -834,7 +850,8 @@ export component App inherits Window {
     /// the next run opens with them.
     in-out property <bool> panels-hidden: false;
     pure function sheet-open() -> bool {
-        return root.export-open || root.fetch-open || root.preset-open || root.rejects-open;
+        return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
+            || root.settings-open;
     }
 
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
@@ -845,6 +862,7 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.fetch-open) { root.fetch-answered(false); return accept; }
             if (e.text == Key.Escape && root.preset-open) { root.preset-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
+            if (e.text == Key.Escape && root.settings-open) { root.settings-open = false; return accept; }
             if (e.text == Key.Escape && (root.placing != "" || root.picking != "")) { root.stop-placing(); return accept; }
             // A repair chosen for editing, not one just drawn: Esc
             // lets go of it, so the sliders go back to the brush.
@@ -900,6 +918,12 @@ export component App inherits Window {
             }
             if (e.modifiers.control && e.modifiers.shift && (e.text == "e" || e.text == "E")) {
                 if (!root.export-open && !root.busy && root.selected >= 0 && !root.culling) { root.export-open = true; }
+                return accept;
+            }
+            // Ctrl+, is where a desktop application keeps its
+            // settings; nothing else here binds a comma.
+            if (e.modifiers.control && e.text == "," && !root.sheet-open()) {
+                root.settings-asked();
                 return accept;
             }
             if (e.modifiers.control && (e.text == "o" || e.text == "O")) {
@@ -1042,6 +1066,12 @@ export component App inherits Window {
                 VerticalLayout {
                     padding: Theme.space-4;
                     padding-top: Theme.space-2;
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Settings...";
+                        icon: @image-url("icons/settings.svg");
+                        clicked => { root.settings-asked(); }
+                    }
                     PanelButton {
                         text: "Report a problem...";
                         icon: @image-url("icons/bug.svg");
@@ -1707,6 +1737,19 @@ export component App inherits Window {
         export-embed <=> root.export-embed;
         export-sharpen <=> root.export-sharpen;
         export-on-exists <=> root.export-on-exists;
+    }
+
+    // The settings sheet, over everything, until closed.
+    if root.settings-open: SettingsSheet {
+        settings-open <=> root.settings-open;
+        sidecar-placement <=> root.sidecar-placement;
+        xmp-sidecars <=> root.xmp-sidecars;
+        folder-open: root.thumbs.length > 0;
+        sidecars-elsewhere: root.sidecars-elsewhere;
+        settings-note: root.settings-note;
+        placement-changed => { root.placement-changed(); }
+        xmp-changed => { root.xmp-changed(); }
+        sidecars-move => { root.sidecars-move(); }
     }
 
 }

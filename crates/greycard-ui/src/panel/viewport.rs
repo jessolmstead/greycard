@@ -286,6 +286,8 @@ pub(crate) enum Shown {
     Fetch,
     /// The lens profiles' download as the first launch offers it.
     Lenses,
+    /// The settings sheet.
+    Settings,
     /// The crop tool, on the Crop tab.
     Crop,
     /// The level tool, on the Crop tab.
@@ -302,7 +304,10 @@ impl Shown {
             "preset" => Ok(Self::Preset),
             "fetch" => Ok(Self::Fetch),
             "lenses" => Ok(Self::Lenses),
-            _ => Err(format!("want export, preset, fetch or lenses, not {name}")),
+            "settings" => Ok(Self::Settings),
+            _ => Err(format!(
+                "want export, preset, fetch, lenses or settings, not {name}"
+            )),
         }
     }
 
@@ -336,6 +341,7 @@ impl Shown {
                     crate::panel::assets::offer_lenses(&mut state.borrow_mut(), app, true);
                 }
             }
+            Self::Settings => app.invoke_settings_asked(),
             Self::Crop => {
                 app.set_panel_tab("Crop".into());
                 app.set_crop_mode(true);
@@ -1072,12 +1078,17 @@ mod tests {
         assert!(!app.get_fetch_title().is_empty());
         app.set_fetch_open(false);
         assert_eq!(Shown::sheet("lenses"), Ok(Shown::Lenses));
+        assert_eq!(Shown::sheet("settings"), Ok(Shown::Settings));
         Shown::Lenses.open(&app);
         assert!(app.get_fetch_open());
         assert!(
             app.get_fetch_text()
                 .starts_with(crate::panel::assets::LENSES_WHY)
         );
+
+        app.set_fetch_open(false);
+        Shown::Settings.open(&app);
+        assert!(app.get_settings_open());
 
         // A tool brings the Crop tab with it.
         assert_eq!(app.get_panel_tab(), "Develop");

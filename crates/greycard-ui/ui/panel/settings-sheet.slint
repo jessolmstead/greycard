@@ -1,0 +1,151 @@
+// The settings sheet: what belongs to the installation rather than to
+// a picture, over everything until closed. Where the sidecars go and
+// whether an XMP goes beside them; and, with a folder open, the move
+// that puts that folder's sidecars where the setting says now, since
+// flipping it moves nothing by itself.
+
+import { Theme } from "../theme.slint";
+import { Toggle, PanelButton, Segmented } from "../controls.slint";
+
+export component SettingsSheet inherits Rectangle {
+    in-out property <bool> settings-open;
+    /// "Beside the raw" or "Hidden folder", as the row spells it.
+    in-out property <string> sidecar-placement;
+    in-out property <bool> xmp-sidecars;
+    /// Whether a folder is open, and how many of its frames have a
+    /// sidecar in the place the setting does not name.
+    in property <bool> folder-open;
+    in property <int> sidecars-elsewhere;
+    /// What the last move did, in words; empty before one.
+    in property <string> settings-note;
+    callback placement-changed();
+    callback xmp-changed();
+    callback sidecars-move();
+    /// The move asked for and not yet confirmed.
+    property <bool> confirming: false;
+    property <string> elsewhere-words: root.sidecars-elsewhere == 1
+        ? "1 sidecar"
+        : root.sidecars-elsewhere + " sidecars";
+
+    background: #000000a0;
+    TouchArea { clicked => { root.settings-open = false; } }
+    Rectangle {
+        width: 440px;
+        height: sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        sheet := VerticalLayout {
+            padding: Theme.space-5;
+            spacing: Theme.space-3;
+            Text {
+                text: "Settings";
+                font-size: Theme.font-lg;
+                font-weight: Theme.weight-medium;
+                color: Theme.text;
+            }
+            Text {
+                text: "For this installation, not for a picture.";
+                font-size: Theme.font-sm;
+                color: Theme.text-secondary;
+            }
+            Rectangle { height: Theme.space-1; }
+            Text {
+                text: "SIDECARS";
+                font-size: Theme.font-xs;
+                font-weight: Theme.weight-medium;
+                color: Theme.text-secondary;
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                Text { text: "Edits go"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                Segmented {
+                    options: ["Beside the raw", "Hidden folder"];
+                    current <=> root.sidecar-placement;
+                    selected => {
+                        root.confirming = false;
+                        root.placement-changed();
+                    }
+                }
+            }
+            Text {
+                text: root.sidecar-placement == "Hidden folder"
+                    ? "In a hidden .greycard folder inside the shoot's folder, which travels with it."
+                    : "As IMG_0001.CR3.gcd beside IMG_0001.CR3.";
+                font-size: Theme.font-xs;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            Text {
+                text: "A sidecar is read in either place. Changing this moves nothing: each frame's sidecar goes to the chosen place when that frame is next saved.";
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+            if root.folder-open: VerticalLayout {
+                spacing: Theme.space-2;
+                Text {
+                    text: root.sidecars-elsewhere == 0
+                        ? "Every sidecar in this folder is in the chosen place."
+                        : root.elsewhere-words + " in this folder "
+                            + (root.sidecars-elsewhere == 1 ? "is" : "are") + " in the other place.";
+                    font-size: Theme.font-xs;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                if !root.confirming: PanelButton {
+                    text: "Move this folder's sidecars";
+                    icon: @image-url("../icons/folder-open.svg");
+                    enabled: root.sidecars-elsewhere > 0;
+                    clicked => { root.confirming = true; }
+                }
+                if root.confirming: HorizontalLayout {
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.confirming = false; }
+                    }
+                    PanelButton {
+                        text: "Move " + root.elsewhere-words;
+                        primary: true;
+                        clicked => {
+                            root.confirming = false;
+                            root.sidecars-move();
+                        }
+                    }
+                }
+            }
+            if root.settings-note != "": Text {
+                text: root.settings-note;
+                font-size: Theme.font-xs;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            Toggle {
+                label: "Also write an XMP for Lightroom and darktable";
+                checked <=> root.xmp-sidecars;
+                toggled => { root.xmp-changed(); }
+            }
+            Text {
+                text: "The rating, the label and the keywords, in an .xmp beside the raw. An XMP that is there is read either way.";
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+            Rectangle { height: Theme.space-2; }
+            HorizontalLayout {
+                alignment: end;
+                PanelButton {
+                    text: "Done";
+                    primary: true;
+                    width: 96px;
+                    clicked => { root.settings-open = false; }
+                }
+            }
+        }
+    }
+}

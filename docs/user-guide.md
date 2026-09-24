@@ -55,18 +55,22 @@ Your edits are saved beside each raw in a `.gcd` file, so
 another folder or machine, copy the `.gcd` files along with the raws.
 Delete a `.gcd` file to start that frame's edit over.
 
-If you would rather not see a `.gcd` beside every raw, set
-`sidecars_in_folder` to true in the settings: edits then go into a
-hidden `.greycard` folder inside the shoot's folder, which travels
-with the shoot the same way. A sidecar in either place is read, and
-a frame's sidecar moves to the chosen place the next time it is
-saved, so a folder tidies itself as you work through it.
+If you would rather not see a `.gcd` beside every raw, open
+**Settings…** at the bottom of the left panel (or press Ctrl+,) and
+set **Edits go** to **Hidden folder**: edits then go into a hidden
+`.greycard` folder inside the shoot's folder, which travels with the
+shoot the same way. A sidecar in either place is read, and changing
+the setting moves nothing by itself: a frame's sidecar moves to the
+chosen place the next time it is saved, so a folder tidies itself as
+you work through it. To tidy the open folder at once, use **Move this
+folder's sidecars** in the same sheet; it says how many are in the
+other place and moves them when you confirm.
 
 Ratings, flags and labels are kept in the `.gcd` too. To share ratings,
-labels and keywords with Lightroom or darktable, turn on
-`xmp_sidecars` in the settings. With it on, greycard reads and writes
-standard `.xmp` sidecars. Picks and rejects have no XMP field, so they
-stay in the `.gcd`.
+labels and keywords with Lightroom or darktable, turn on **Also write
+an XMP** in Settings. With it on, greycard writes standard `.xmp`
+sidecars beside the raws; one that is there is read either way. Picks
+and rejects have no XMP field, so they stay in the `.gcd`.
 
 ## Culling
 
@@ -100,6 +104,7 @@ instant.
 | Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y | Undo, redo |
 | Ctrl+O | Open a folder |
 | Ctrl+Shift+E | Export |
+| Ctrl+, | Settings |
 | Esc | Close a dialog, drop the tool in hand, or clear the filter |
 
 On a Mac these are the Ctrl keys, not ⌘, for now.

@@ -304,6 +304,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         ..State::empty(files.clone(), &app)
     }));
     app.set_compare_tiles(ModelRc::from(state.borrow().compare_tiles.clone()));
+    // The settings sheet's two, as this run has them: the flags'
+    // over the file's.
+    app.set_sidecar_placement(crate::panel::prefs::placement_name(state.borrow().placement).into());
+    app.set_xmp_sidecars(state.borrow().xmp_sidecars);
     // The browser's list under the filter asked for, the files it
     // hides left out of the strip and the grid; and the chips, which
     // count the folder whether or not anything is filtered.
@@ -1126,8 +1130,9 @@ pub(crate) fn opening_scope(cli: &Cli, remembered: &settings::Settings) -> scope
 }
 
 /// The panel's choices, to keep for the next run. What the panel
-/// does not own — the last file, and whether XMPs are written — is
-/// put back from the file by the caller.
+/// does not own — the last file, the Settings sheet's two and the
+/// lens offer's answer, each written to the file when it changes —
+/// is put back from the file by the caller.
 pub(crate) fn remember(app: &App) -> settings::Settings {
     settings::Settings {
         export_format: app.get_export_format().into(),
@@ -1152,10 +1157,10 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         canvas_color: render::canvas_name(app.get_canvas_choice()).to_string(),
         collapsed: read_folds(app),
         grid_cell: app.get_grid_cell(),
-        // Kept apart, both of them: the last file is written as
-        // soon as a file develops, and whether XMPs are written is
-        // nothing the panel holds. The caller fills them in from
-        // disk.
+        // Kept apart, all of them: the last file is written as soon
+        // as a file develops, the sidecars' two as the Settings sheet
+        // changes them, and the lens offer's answer as it is given.
+        // The caller fills them in from disk.
         xmp_sidecars: false,
         sidecars_in_folder: false,
         lenses_declined: false,
