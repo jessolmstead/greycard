@@ -31,8 +31,10 @@ mod report;
 mod scope;
 mod selection;
 mod settings;
+mod sheet;
 #[cfg(test)]
 pub(crate) mod testing;
+mod watermark;
 mod wheel;
 mod worker;
 mod zoom;
@@ -160,6 +162,12 @@ struct Cli {
     /// Export the first file under its edit to this path, then quit
     #[arg(long)]
     export: Option<PathBuf>,
+    /// Fill the export sheet from this export preset, by name, for
+    /// this run: its size, format, metadata and watermark. The format
+    /// is still the --export path's extension when it names one, and
+    /// --long-edge and --on-exists still win over it
+    #[arg(long, value_name = "NAME")]
+    export_preset: Option<String>,
     /// The export's long edge in pixels, over the sheet's remembered
     /// size; never enlarges
     #[arg(long)]
@@ -540,6 +548,8 @@ pub(crate) struct State {
     pub(crate) encoded_lut_for: Option<display::MonitorProfile>,
     /// An export to run once the first develop lands, then quit.
     pub(crate) export_then_quit: Option<PathBuf>,
+    /// The export presets, as the settings file keeps them.
+    pub(crate) export_presets: Vec<sheet::ExportPreset>,
     /// The presets, as the store lists them, and the store.
     pub(crate) presets: Vec<Entry>,
     pub(crate) preset_store: Option<preset::Store>,
@@ -696,6 +706,7 @@ impl State {
             lut_for: None,
             encoded_lut_for: None,
             export_then_quit: None,
+            export_presets: Vec::new(),
             presets: Vec::new(),
             preset_store: None,
             preset_sections: Rc::new(VecModel::from(vec![false; Section::ALL.len()])),

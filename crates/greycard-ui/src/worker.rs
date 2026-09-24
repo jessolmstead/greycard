@@ -894,7 +894,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver) {
                         &framed
                     };
                     let clip_level = base.as_ref().map(|b| b.clip_level).unwrap_or(f32::INFINITY);
-                    let rendered = crate::export::render(
+                    let mut rendered = crate::export::render(
                         image,
                         &edit,
                         source,
@@ -911,14 +911,20 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver) {
                             .map(|n| n.to_string_lossy().into_owned()),
                         edit: Some(edit.to_json()),
                     };
-                    let result = crate::export::write(
-                        &rendered,
-                        &settings,
-                        &path,
-                        metadata.as_deref(),
-                        &origin,
-                    )
-                    .map_err(|e| format!("{e:#}"));
+                    // The mark, on the export alone; one that cannot be
+                    // drawn fails the export rather than let an unmarked
+                    // picture out.
+                    let result = crate::export::mark(&mut rendered, &settings)
+                        .and_then(|()| {
+                            crate::export::write(
+                                &rendered,
+                                &settings,
+                                &path,
+                                metadata.as_deref(),
+                                &origin,
+                            )
+                        })
+                        .map_err(|e| format!("{e:#}"));
                     deliver(match result {
                         Ok(()) => Outcome::Exported {
                             path,

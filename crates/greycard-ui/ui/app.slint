@@ -841,6 +841,49 @@ export component App inherits Window {
     in-out property <string> export-sharpen: "Standard";
     /// What an export does when a file of that name is already there.
     in-out property <string> export-on-exists: "Increment";
+    /// What the file says of where it came from: All, No edit, None.
+    in-out property <string> export-metadata: "All";
+    /// The watermark: Off, Text or Image, and its settings; the size
+    /// and the margin are percent of the export's long edge.
+    in-out property <string> export-mark: "Off";
+    in-out property <string> export-mark-text: "";
+    in-out property <string> export-mark-image: "";
+    /// The image's file name, for the sheet to show.
+    in-out property <string> export-mark-image-name: "";
+    in-out property <string> export-mark-color: "White";
+    in-out property <string> export-mark-position: "Bottom right";
+    in-out property <float> export-mark-size: 15;
+    in-out property <float> export-mark-margin: 2;
+    in-out property <float> export-mark-opacity: 60;
+    /// Ask the desktop for the watermark's PNG.
+    callback export-mark-choose();
+    /// The export presets by name, the one chosen (empty for none)
+    /// and whether the sheet has moved from it since.
+    in-out property <[string]> export-presets: [];
+    in-out property <string> export-preset: "";
+    in-out property <bool> export-preset-edited: false;
+    callback export-preset-chosen(string);
+    callback export-preset-saved(string);
+    callback export-preset-deleted();
+    /// Any of the sheet's choices moved.
+    callback export-sheet-changed();
+    changed export-format => { root.export-sheet-changed(); }
+    changed export-quality => { root.export-sheet-changed(); }
+    changed export-size => { root.export-sheet-changed(); }
+    changed export-custom => { root.export-sheet-changed(); }
+    changed export-space => { root.export-sheet-changed(); }
+    changed export-embed => { root.export-sheet-changed(); }
+    changed export-sharpen => { root.export-sheet-changed(); }
+    changed export-on-exists => { root.export-sheet-changed(); }
+    changed export-metadata => { root.export-sheet-changed(); }
+    changed export-mark => { root.export-sheet-changed(); }
+    changed export-mark-text => { root.export-sheet-changed(); }
+    changed export-mark-image => { root.export-sheet-changed(); }
+    changed export-mark-color => { root.export-sheet-changed(); }
+    changed export-mark-position => { root.export-sheet-changed(); }
+    changed export-mark-size => { root.export-sheet-changed(); }
+    changed export-mark-margin => { root.export-sheet-changed(); }
+    changed export-mark-opacity => { root.export-sheet-changed(); }
     // The settings sheet: what is the installation's and not a
     // picture's. Where a sidecar is written, "Beside the raw" or
     // "Hidden folder"; whether an XMP is written beside it; how many
@@ -1816,6 +1859,22 @@ export component App inherits Window {
         export-embed <=> root.export-embed;
         export-sharpen <=> root.export-sharpen;
         export-on-exists <=> root.export-on-exists;
+        export-metadata <=> root.export-metadata;
+        export-mark <=> root.export-mark;
+        export-mark-text <=> root.export-mark-text;
+        export-mark-image-name <=> root.export-mark-image-name;
+        export-mark-color <=> root.export-mark-color;
+        export-mark-position <=> root.export-mark-position;
+        export-mark-size <=> root.export-mark-size;
+        export-mark-margin <=> root.export-mark-margin;
+        export-mark-opacity <=> root.export-mark-opacity;
+        export-mark-choose => { root.export-mark-choose(); }
+        export-presets <=> root.export-presets;
+        export-preset <=> root.export-preset;
+        export-preset-edited <=> root.export-preset-edited;
+        export-preset-chosen(n) => { root.export-preset-chosen(n); }
+        export-preset-saved(n) => { root.export-preset-saved(n); }
+        export-preset-deleted => { root.export-preset-deleted(); }
     }
 
     // The settings sheet, over everything, until closed.

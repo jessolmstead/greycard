@@ -4,6 +4,8 @@ use crate::panel::cull::develop_landed;
 use crate::panel::edit::{current_turn, read_edit, schedule_save};
 use crate::panel::startup::remember_last_file;
 use crate::panel::viewport::picking_hint;
+use crate::settings;
+use crate::sheet::{self, ExportPreset, Sheet};
 use crate::*;
 
 /// A develop the worker sent, waiting for the frame that puts it on
@@ -42,27 +44,115 @@ pub(crate) fn export_path(raw: &std::path::Path, format: export::Format) -> Path
     raw.with_file_name(format!("{stem}.greycard.{}", format.extension()))
 }
 
+/// The export sheet's choices as the panel holds them.
+pub(crate) fn read_sheet(app: &App) -> Sheet {
+    Sheet {
+        format: app.get_export_format().into(),
+        quality: app.get_export_quality(),
+        size: app.get_export_size().into(),
+        custom: app.get_export_custom().into(),
+        space: app.get_export_space().into(),
+        embed: app.get_export_embed(),
+        sharpen: app.get_export_sharpen().into(),
+        on_exists: app.get_export_on_exists().into(),
+        metadata: app.get_export_metadata().into(),
+        mark: app.get_export_mark().into(),
+        mark_text: app.get_export_mark_text().into(),
+        mark_image: app.get_export_mark_image().into(),
+        mark_color: app.get_export_mark_color().into(),
+        mark_position: app.get_export_mark_position().into(),
+        mark_size: app.get_export_mark_size(),
+        mark_margin: app.get_export_mark_margin(),
+        mark_opacity: app.get_export_mark_opacity(),
+    }
+}
+
+/// Put a sheet's choices on the panel.
+pub(crate) fn show_sheet(app: &App, s: &Sheet) {
+    app.set_export_format(s.format.as_str().into());
+    app.set_export_quality(s.quality);
+    app.set_export_size(s.size.as_str().into());
+    app.set_export_custom(s.custom.as_str().into());
+    app.set_export_space(s.space.as_str().into());
+    app.set_export_embed(s.embed);
+    app.set_export_sharpen(s.sharpen.as_str().into());
+    app.set_export_on_exists(s.on_exists.as_str().into());
+    app.set_export_metadata(s.metadata.as_str().into());
+    app.set_export_mark(s.mark.as_str().into());
+    app.set_export_mark_text(s.mark_text.as_str().into());
+    app.set_export_mark_image(s.mark_image.as_str().into());
+    app.set_export_mark_image_name(file_name(Path::new(&s.mark_image)).into());
+    app.set_export_mark_color(s.mark_color.as_str().into());
+    app.set_export_mark_position(s.mark_position.as_str().into());
+    app.set_export_mark_size(s.mark_size);
+    app.set_export_mark_margin(s.mark_margin);
+    app.set_export_mark_opacity(s.mark_opacity);
+}
+
+/// The picker's word for no preset. A preset cannot take it as a name.
+pub(crate) const NO_PRESET: &str = "None";
+
+/// The preset the panel has chosen, none for `NO_PRESET`.
+pub(crate) fn chosen_preset(app: &App) -> Option<String> {
+    let name = app.get_export_preset();
+    (!name.is_empty() && name != NO_PRESET).then(|| name.to_string())
+}
+
+/// The picker's entries and the one chosen, and whether the sheet has
+/// moved from it: the presets as `presets` has them.
+pub(crate) fn show_presets_picker(app: &App, presets: &[ExportPreset], chosen: Option<&str>) {
+    let names: Vec<slint::SharedString> = std::iter::once(NO_PRESET.into())
+        .chain(presets.iter().map(|p| p.name.as_str().into()))
+        .collect();
+    app.set_export_presets(ModelRc::new(VecModel::from(names)));
+    let chosen = chosen.and_then(|n| sheet::find(presets, n));
+    app.set_export_preset(chosen.map_or(NO_PRESET, |p| p.name.as_str()).into());
+    show_edited(app, presets);
+}
+
+/// "(edited)" beside the name when the sheet writes another file than
+/// the preset does.
+pub(crate) fn show_edited(app: &App, presets: &[ExportPreset]) {
+    let edited = chosen_preset(app)
+        .and_then(|n| sheet::find(presets, &n).cloned())
+        .is_some_and(|p| !p.sheet.same(&read_sheet(app)));
+    if app.get_export_preset_edited() != edited {
+        app.set_export_preset_edited(edited);
+    }
+}
+
 /// The export sheet as the panel shows it.
 pub(crate) fn read_export_settings(app: &App) -> export::Settings {
-    let defaults = export::Settings::default();
+    read_sheet(app).settings()
+}
+
+/// A batch export's settings: the sheet's, as remembered or as the
+/// preset named on the command line fills it, in the format the
+/// path's extension names, or the sheet's when it names none.
+pub(crate) fn batch_settings(path: &Path, sheet: export::Settings) -> export::Settings {
     export::Settings {
-        format: export::Format::from_name(app.get_export_format().as_str())
-            .unwrap_or(defaults.format),
-        quality: app.get_export_quality().round().clamp(1.0, 100.0) as u8,
-        long_edge: export::long_edge(
-            app.get_export_size().as_str(),
-            app.get_export_custom().as_str(),
-        ),
-        space: export::Space::from_name(app.get_export_space().as_str()).unwrap_or(defaults.space),
-        embed_profile: app.get_export_embed(),
-        sharpen: export::Sharpen::from_name(app.get_export_sharpen().as_str())
-            .unwrap_or(defaults.sharpen),
+        format: export::Format::from_path(path).unwrap_or(sheet.format),
+        ..sheet
     }
 }
 
 /// The sheet's answer to a file of that name being there already.
 pub(crate) fn read_on_exists(app: &App) -> export::OnExists {
-    export::OnExists::from_name(app.get_export_on_exists().as_str()).unwrap_or_default()
+    read_sheet(app).on_exists()
+}
+
+/// Keep the presets in the settings file now, not at the window's
+/// close: a preset is worth keeping even from a session that ends
+/// badly. Not from a snapshot or a batch run.
+fn keep_presets(st: &State, app: &App) {
+    if st.batch {
+        return;
+    }
+    let mut settings = settings::Settings::load();
+    settings.export_presets = st.export_presets.clone();
+    settings.export_preset = chosen_preset(app).unwrap_or_default();
+    settings.export = read_sheet(app);
+    settings.save();
 }
 
 /// A result from the worker, on the UI thread.
@@ -379,10 +469,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 }
                 // The sheet's choices as remembered, the format from
                 // the path's extension.
-                let settings = export::Settings {
-                    format: export::Format::from_path(&path).unwrap_or(export::Format::Jpeg),
-                    ..read_export_settings(app)
-                };
+                let settings = batch_settings(&path, read_export_settings(app));
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {
                         w.send(Job::Export {
@@ -614,6 +701,105 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
     // The sheet's typed size, read the way the export reads it.
     app.on_custom_edge(|text| export::parse_edge(&text).map_or(0, |n| n as i32));
+    // Any choice on the sheet: is it still the preset?
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_export_sheet_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                show_edited(&app, &state.borrow().export_presets);
+            }
+        });
+    }
+    // A preset chosen fills the sheet; None leaves it as it is.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_export_preset_chosen(move |name| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let st = state.borrow();
+            if let Some(p) = sheet::find(&st.export_presets, &name) {
+                show_sheet(&app, &p.sheet);
+                app.set_status(format!("export preset {}", p.name).into());
+            }
+            show_presets_picker(&app, &st.export_presets, Some(&name));
+            keep_presets(&st, &app);
+        });
+    }
+    // Save as: the sheet under a name, over one of that name.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_export_preset_saved(move |name| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let name = name.trim();
+            if name.is_empty() || name == NO_PRESET {
+                return;
+            }
+            let mut st = state.borrow_mut();
+            let current = read_sheet(&app);
+            if sheet::save_as(&mut st.export_presets, name, &current) {
+                show_presets_picker(&app, &st.export_presets, Some(name));
+                keep_presets(&st, &app);
+                app.set_status(format!("export preset {name} saved").into());
+            }
+        });
+    }
+    // Delete the preset chosen; the sheet keeps its choices.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_export_preset_deleted(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(name) = chosen_preset(&app) else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            if sheet::delete(&mut st.export_presets, &name) {
+                show_presets_picker(&app, &st.export_presets, None);
+                keep_presets(&st, &app);
+                app.set_status(format!("export preset {name} deleted").into());
+            }
+        });
+    }
+    // The watermark's PNG, from the desktop's chooser.
+    {
+        let app_weak = app.as_weak();
+        app.on_export_mark_choose(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let current = app.get_export_mark_image().to_string();
+            let start = Path::new(&current)
+                .parent()
+                .filter(|p| p.is_dir())
+                .map(Path::to_path_buf)
+                .or_else(dirs::picture_dir)
+                .or_else(dirs::home_dir)
+                .unwrap_or_else(|| PathBuf::from("/"));
+            let weak = app.as_weak();
+            export::choose_open(
+                "Watermark",
+                start,
+                ("PNG".into(), vec!["*.png".into(), "*.PNG".into()]),
+                move |chosen| {
+                    let _ = weak.upgrade_in_event_loop(move |app| match chosen {
+                        Ok(Some(path)) => {
+                            app.set_export_mark_image(path.to_string_lossy().as_ref().into());
+                            app.set_export_mark_image_name(file_name(&path).into());
+                        }
+                        Ok(None) => {}
+                        Err(e) => {
+                            tracing::warn!("file chooser: {e:#}");
+                            app.set_status("the desktop offered no file chooser".into());
+                        }
+                    });
+                },
+            );
+        });
+    }
     // Export the current file under the panel's edit, beside it.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());

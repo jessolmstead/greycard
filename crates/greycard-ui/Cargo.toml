@@ -37,6 +37,10 @@ tracing-log.workspace = true
 # backend already carries this on every platform, so it adds nothing
 # to the tree.
 webbrowser = "1.2"
+# The watermark's text: the system's sans-serif found the way Slint
+# finds its own, and rasterized. Both already in the tree.
+fontique = "0.11"
+ab_glyph = "0.2"
 
 [build-dependencies]
 slint-build = "1.18"

@@ -6,7 +6,7 @@ use crate::panel::browser::{
 use crate::panel::color::{preview_white, white_key};
 use crate::panel::cull::{cull_frame, develop_landed, show_filter, standing_in};
 use crate::panel::curve::{PARAMETRIC, draw_curve};
-use crate::panel::deliver::deliver;
+use crate::panel::deliver::{chosen_preset, deliver, read_sheet, show_presets_picker, show_sheet};
 use crate::panel::edit::{read_edit, read_folds, save_edit, show_folds, time_sharpen};
 use crate::panel::mask::{ask_for, bake_locals};
 use crate::panel::retouch::patch_outlines;
@@ -104,23 +104,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             .collect::<Vec<_>>(),
     )));
     // What the last run left, unless the command line says otherwise.
-    app.set_export_format(remembered.export_format.as_str().into());
-    app.set_export_quality(remembered.export_quality);
-    app.set_export_size(remembered.export_size.as_str().into());
-    app.set_export_custom(remembered.export_custom.as_str().into());
-    if let Some(edge) = cli.long_edge {
-        // The flag's size over the sheet's, for this run's export.
-        app.set_export_size(export::CUSTOM.into());
-        app.set_export_custom(edge.to_string().into());
-    }
-    app.set_export_space(remembered.export_space.as_str().into());
-    app.set_export_embed(remembered.export_embed);
-    app.set_export_sharpen(remembered.export_sharpen.as_str().into());
-    app.set_export_on_exists(remembered.export_on_exists.as_str().into());
-    if let Some(policy) = cli.on_exists {
-        // The flag's answer over the sheet's, for this run's export.
-        app.set_export_on_exists(policy.name().into());
-    }
+    let (sheet, preset) = opening_sheet(&cli, &remembered)?;
+    show_sheet(&app, &sheet);
+    show_presets_picker(&app, &remembered.export_presets, preset.as_deref());
     show_folds(&app, &remembered.collapsed);
     app.set_scope(opening_scope(&cli, &remembered).name().into());
     app.set_show_sharpen_mask(cli.sharpen_mask);
@@ -281,6 +267,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         panel_scroll: cli.panel_scroll,
         snapshot_shown: cli.sheet.or(cli.tool),
         export_then_quit: cli.export.clone(),
+        export_presets: remembered.export_presets.clone(),
         presets: preset_store.as_ref().map(|s| s.list()).unwrap_or_default(),
         preset_store,
         batch: cli.snapshot.is_some() || cli.screenshot.is_some() || cli.export.is_some(),
@@ -1011,6 +998,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // as it develops, not gathered from the panel here.
     if cli.screenshot.is_none() && cli.snapshot.is_none() && cli.export.is_none() {
         let mut settings = remember(&app);
+        settings.export_presets = state.borrow().export_presets.clone();
         let kept = settings::Settings::load();
         settings.last_file = kept.last_file;
         settings.xmp_sidecars = kept.xmp_sidecars;
@@ -1129,6 +1117,50 @@ pub(crate) fn sync_rows<T: Clone + PartialEq + 'static>(model: &VecModel<T>, row
     }
 }
 
+/// The export sheet to open with, and the preset it is: the last
+/// run's, or the preset `--export-preset` names, with `--long-edge`
+/// and `--on-exists` over either. A preset the settings do not have
+/// is an error, not a quiet export at whatever the sheet was left at.
+pub(crate) fn opening_sheet(
+    cli: &Cli,
+    remembered: &settings::Settings,
+) -> Result<(sheet::Sheet, Option<String>)> {
+    let (mut s, preset) = match &cli.export_preset {
+        Some(name) => {
+            let Some(p) = sheet::find(&remembered.export_presets, name) else {
+                let known: Vec<&str> = remembered
+                    .export_presets
+                    .iter()
+                    .map(|p| p.name.as_str())
+                    .collect();
+                anyhow::bail!(
+                    "no export preset {name:?}; the settings have {}",
+                    if known.is_empty() {
+                        "none".to_string()
+                    } else {
+                        known.join(", ")
+                    }
+                );
+            };
+            (p.sheet.clone(), Some(p.name.clone()))
+        }
+        None => (
+            remembered.export.clone(),
+            (!remembered.export_preset.is_empty()).then(|| remembered.export_preset.clone()),
+        ),
+    };
+    if let Some(edge) = cli.long_edge {
+        // The flag's size over the sheet's, for this run's export.
+        s.size = export::CUSTOM.into();
+        s.custom = edge.to_string();
+    }
+    if let Some(policy) = cli.on_exists {
+        // The flag's answer over the sheet's, for this run's export.
+        s.on_exists = policy.name().into();
+    }
+    Ok((s, preset))
+}
+
 /// The scope to open on: the command line's, else the last run's.
 pub(crate) fn opening_scope(cli: &Cli, remembered: &settings::Settings) -> scope::Scope {
     cli.scope
@@ -1144,14 +1176,10 @@ pub(crate) fn opening_scope(cli: &Cli, remembered: &settings::Settings) -> scope
 /// is put back from the file by the caller.
 pub(crate) fn remember(app: &App) -> settings::Settings {
     settings::Settings {
-        export_format: app.get_export_format().into(),
-        export_quality: app.get_export_quality(),
-        export_size: app.get_export_size().into(),
-        export_custom: app.get_export_custom().into(),
-        export_space: app.get_export_space().into(),
-        export_embed: app.get_export_embed(),
-        export_sharpen: app.get_export_sharpen().into(),
-        export_on_exists: app.get_export_on_exists().into(),
+        export: read_sheet(app),
+        // Kept by the caller: the list is the state's, not the panel's.
+        export_presets: Vec::new(),
+        export_preset: chosen_preset(app).unwrap_or_default(),
         scope: app.get_scope().into(),
         curve_mode: app.get_curve_mode().into(),
         warn_shadows: app.get_warn_shadows(),
@@ -1224,6 +1252,132 @@ pub(crate) fn size_text(width: u32, height: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::panel::deliver::batch_settings;
+    use crate::sheet::{ExportPreset, Sheet};
+    use greycard_core::image::WorkingImage;
+
+    fn remembered_with_presets(dir: &Path) -> settings::Settings {
+        let png = crate::watermark::tests::bar_png(dir, 40);
+        settings::Settings {
+            export: Sheet {
+                size: "Full".into(),
+                ..Sheet::default()
+            },
+            export_presets: vec![
+                ExportPreset {
+                    name: "Web 2048".into(),
+                    sheet: Sheet {
+                        format: "PNG".into(),
+                        size: "2048".into(),
+                        metadata: "None".into(),
+                        mark: "Image".into(),
+                        mark_image: png.to_string_lossy().into_owned(),
+                        mark_position: "Top left".into(),
+                        mark_size: 25.0,
+                        mark_margin: 2.0,
+                        mark_opacity: 100.0,
+                        on_exists: "Overwrite".into(),
+                        ..Sheet::default()
+                    },
+                },
+                ExportPreset {
+                    name: "Print".into(),
+                    sheet: Sheet::default(),
+                },
+            ],
+            export_preset: "Print".into(),
+            ..settings::Settings::default()
+        }
+    }
+
+    #[test]
+    fn export_preset_fills_the_sheet_for_a_batch_run() {
+        let dir = std::env::temp_dir().join(format!("greycard-cli-preset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let remembered = remembered_with_presets(&dir);
+        let out = dir.join("out.jpg");
+        let cli = Cli::try_parse_from([
+            "greycard-ui".as_ref(),
+            "frame.cr3".as_ref(),
+            "--export".as_ref(),
+            out.as_os_str(),
+            "--export-preset".as_ref(),
+            "web 2048".as_ref(),
+        ])
+        .unwrap();
+        let (sheet, preset) = opening_sheet(&cli, &remembered).unwrap();
+        assert_eq!(preset.as_deref(), Some("Web 2048"));
+        assert_eq!(sheet, remembered.export_presets[0].sheet);
+        // The path's extension over the preset's format, the rest the
+        // preset's, as the batch run hands it to the worker.
+        let settings = batch_settings(&out, sheet.settings());
+        assert_eq!(settings.format, export::Format::Jpeg);
+        assert_eq!(settings.long_edge, Some(2048));
+        assert_eq!(settings.metadata, export::Metadata::None);
+        assert!(settings.watermark.is_some());
+        assert_eq!(sheet.on_exists(), export::OnExists::Overwrite);
+
+        // And the file it writes: 2048 on its long side, the mark a
+        // quarter of it, 41 px in from the top-left corner.
+        let (w, h) = (3000usize, 2000usize);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: vec![0.05; w * h * 3],
+        };
+        let mut rendered = export::render(
+            &image,
+            &greycard_edit::Edit::default(),
+            (w as u32, h as u32),
+            &settings,
+            &Default::default(),
+            1.0,
+            None,
+            finish::Source::Scene,
+        );
+        export::mark(&mut rendered, &settings).unwrap();
+        export::write(&rendered, &settings, &out, None, &export::Origin::default()).unwrap();
+        let back = image::open(&out).unwrap().into_rgb8();
+        assert_eq!(back.dimensions(), (2048, 1365));
+        let ground = back.get_pixel(1500, 1000).0[1];
+        let lit = |x: u32, y: u32| back.get_pixel(x, y).0[1] > ground.saturating_add(60);
+        // The bar is the PNG's middle half: rows 41 + 64 to 41 + 192.
+        assert!(lit(41 + 256, 41 + 128));
+        assert!(lit(41 + 2, 41 + 128));
+        assert!(!lit(41 - 3, 41 + 128));
+        assert!(lit(41 + 511 - 2, 41 + 128));
+        assert!(!lit(41 + 512 + 3, 41 + 128));
+        assert!(!lit(41 + 256, 41 + 20));
+
+        // A flag's size still wins over the preset's.
+        let cli = Cli::try_parse_from([
+            "greycard-ui",
+            "frame.cr3",
+            "--export-preset",
+            "Web 2048",
+            "--long-edge",
+            "800",
+        ])
+        .unwrap();
+        let (sheet, _) = opening_sheet(&cli, &remembered).unwrap();
+        assert_eq!(sheet.settings().long_edge, Some(800));
+        assert!(sheet.settings().watermark.is_some());
+        // Without the flag: the sheet as left, and the preset last on.
+        let cli = Cli::try_parse_from(["greycard-ui", "frame.cr3"]).unwrap();
+        let (sheet, preset) = opening_sheet(&cli, &remembered).unwrap();
+        assert_eq!(sheet, remembered.export);
+        assert_eq!(preset.as_deref(), Some("Print"));
+        // A name the settings do not have is an error that lists them.
+        let cli =
+            Cli::try_parse_from(["greycard-ui", "frame.cr3", "--export-preset", "Nope"]).unwrap();
+        let err = opening_sheet(&cli, &remembered).unwrap_err().to_string();
+        assert!(
+            err.contains("Nope") && err.contains("Web 2048, Print"),
+            "{err}"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn size_text_reads_as_a_camera_is_named() {

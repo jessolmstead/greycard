@@ -3,6 +3,7 @@
 //! chooser for where it goes.
 
 use crate::finish;
+use crate::watermark::Mark;
 use anyhow::{Context, Result, bail};
 use greycard_core::RgbSpace;
 use greycard_core::color::{CAT, WORKING_SPACE};
@@ -198,8 +199,39 @@ impl Sharpen {
     }
 }
 
+/// What an export says about where it came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Metadata {
+    /// The camera's EXIF, and in the XMP the source's name, what the
+    /// sheet asked for and the edit that made it.
+    #[default]
+    All,
+    /// All of that but the edit: a picture to hand on without the
+    /// recipe.
+    NoEdit,
+    /// Nothing but the profile: no EXIF, no XMP. The camera, the time
+    /// and any location stay behind.
+    None,
+}
+
+impl Metadata {
+    pub const ALL: [Metadata; 3] = [Metadata::All, Metadata::NoEdit, Metadata::None];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Metadata::All => "All",
+            Metadata::NoEdit => "No edit",
+            Metadata::None => "None",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.name() == name)
+    }
+}
+
 /// What an export is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Settings {
     pub format: Format,
     /// JPEG quality, 1 to 100.
@@ -212,6 +244,10 @@ pub struct Settings {
     pub embed_profile: bool,
     /// Sharpening after the resize; nothing without one.
     pub sharpen: Sharpen,
+    /// What the file says about where it came from.
+    pub metadata: Metadata,
+    /// A mark laid over the picture after its resize.
+    pub watermark: Option<Mark>,
 }
 
 impl Default for Settings {
@@ -223,6 +259,8 @@ impl Default for Settings {
             space: Space::Srgb,
             embed_profile: true,
             sharpen: Sharpen::Standard,
+            metadata: Metadata::All,
+            watermark: None,
         }
     }
 }
@@ -402,6 +440,20 @@ pub fn render(
     }
 }
 
+/// Lay the settings' watermark, if any, over a rendered picture: on
+/// the finished, encoded pixels, after the resize and the sharpening,
+/// before the file's encode.
+pub fn mark(rendered: &mut Rendered, settings: &Settings) -> Result<()> {
+    let Some(mark) = &settings.watermark else {
+        return Ok(());
+    };
+    let (w, h) = (rendered.width, rendered.height);
+    match &mut rendered.pixels {
+        Pixels::Eight(p) => mark.apply(p, w, h, settings.space),
+        Pixels::Sixteen(p) => mark.apply(p, w, h, settings.space),
+    }
+}
+
 /// Whether either exposure shift is set, in the picture's own look or
 /// in a local adjustment that acts: the only thing that reads the
 /// guide plane. Not whites, which is a white point and global.
@@ -463,6 +515,11 @@ impl Settings {
         if self.sharpen != Sharpen::Off && self.long_edge.is_some() {
             s.push_str(&format!(", output sharpening {}", self.sharpen.name()));
         }
+        match self.watermark.as_ref().map(|m| &m.kind) {
+            Some(crate::watermark::Kind::Text { .. }) => s.push_str(", a text watermark"),
+            Some(crate::watermark::Kind::Image { .. }) => s.push_str(", an image watermark"),
+            None => {}
+        }
         s
     }
 }
@@ -486,6 +543,11 @@ pub fn write(
     };
     let (w, h) = (rendered.width, rendered.height);
     let output = settings.describe();
+    let source = source.filter(|_| settings.metadata != Metadata::None);
+    let edit = origin
+        .edit
+        .as_deref()
+        .filter(|_| settings.metadata == Metadata::All);
     let provenance = source.map(|metadata| Provenance {
         metadata,
         software: SOFTWARE,
@@ -495,7 +557,7 @@ pub fn write(
         written: Some(std::time::SystemTime::now()),
         source_name: origin.source_name.as_deref(),
         output: Some(&output),
-        edit: origin.edit.as_deref(),
+        edit,
     });
     let payload = match &provenance {
         Some(p) => Some(exif::payload(p).context("the EXIF")?),
@@ -1251,6 +1313,159 @@ mod tests {
             // The picture still opens.
             let back = image::open(&path).unwrap();
             assert_eq!((back.width(), back.height()), source);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn the_metadata_policy_leaves_out_what_it_says() {
+        let (w, h) = (24usize, 16usize);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: vec![0.2; w * h * 3],
+        };
+        let metadata = RawMetadata {
+            exif: Default::default(),
+            model: "EOS R6m2".into(),
+            make: "Canon".into(),
+            lens: None,
+            unique_image_id: None,
+            rating: None,
+        };
+        let edit = greycard_edit::Edit::default();
+        let dir = scratch("metadata");
+        let carries = |bytes: &[u8], what: &[u8]| bytes.windows(what.len()).any(|w| w == what);
+        let origin = Origin {
+            source_name: Some("IMG_0001.CR3".into()),
+            edit: Some(edit.to_json()),
+        };
+        for policy in Metadata::ALL {
+            let settings = Settings {
+                metadata: policy,
+                ..Settings::default()
+            };
+            let rendered = render(
+                &image,
+                &edit,
+                (w as u32, h as u32),
+                &settings,
+                &Default::default(),
+                1.0,
+                None,
+                finish::Source::Scene,
+            );
+            let path = dir.join(format!("m-{}.jpg", policy.name()));
+            write(&rendered, &settings, &path, Some(&metadata), &origin).unwrap();
+            let bytes = std::fs::read(&path).unwrap();
+            let camera = carries(&bytes, b"EOS R6m2");
+            let source = carries(&bytes, b"<greycard:Source>");
+            let recipe = carries(&bytes, b"<greycard:Edit>");
+            match policy {
+                Metadata::All => assert!(camera && source && recipe),
+                Metadata::NoEdit => assert!(camera && source && !recipe),
+                Metadata::None => assert!(!camera && !source && !recipe),
+            }
+            // The profile is the embed toggle's, whatever the policy.
+            let mut decoder = image::ImageReader::open(&path)
+                .unwrap()
+                .into_decoder()
+                .unwrap();
+            assert!(
+                image::ImageDecoder::icc_profile(&mut decoder)
+                    .unwrap()
+                    .is_some()
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_watermark_moves_its_box_and_nothing_else() {
+        let (w, h) = (900usize, 600usize);
+        // A gradient, so "unchanged" is a real comparison.
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                data.extend_from_slice(&[x as f32 / w as f32, y as f32 / h as f32, 0.2]);
+            }
+        }
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data,
+        };
+        let dir = scratch("watermark-export");
+        let png = crate::watermark::tests::bar_png(&dir, 30);
+        let edit = greycard_edit::Edit::default();
+        let plain = Settings {
+            format: Format::Png,
+            long_edge: Some(600),
+            ..Settings::default()
+        };
+        let render_with = |settings: &Settings| {
+            let mut r = render(
+                &image,
+                &edit,
+                (w as u32, h as u32),
+                settings,
+                &Default::default(),
+                1.0,
+                None,
+                finish::Source::Scene,
+            );
+            mark(&mut r, settings).unwrap();
+            let Pixels::Eight(p) = r.pixels else {
+                panic!("a PNG is eight bits")
+            };
+            (r.width, r.height, p)
+        };
+        let (pw, ph, base) = render_with(&plain);
+        assert_eq!((pw, ph), (600, 400));
+        use crate::watermark::{Kind, Mark, Position};
+        let marks = [
+            Mark {
+                kind: Kind::Image { path: png },
+                position: Position::TopLeft,
+                size: 0.2,
+                margin: 0.05,
+                opacity: 0.5,
+            },
+            Mark {
+                kind: Kind::Text {
+                    text: "greycard".into(),
+                    white: true,
+                },
+                position: Position::BottomRight,
+                size: 0.3,
+                margin: 0.05,
+                opacity: 0.5,
+            },
+        ];
+        // The boxes: 120 x 60 at 30, 30; and 180 wide, its right and
+        // bottom 30 in.
+        let boxes = [
+            (30u32, 30u32, 150u32, 90u32),
+            (600 - 30 - 181, 250, 571, 371),
+        ];
+        for (m, b) in marks.into_iter().zip(boxes) {
+            let settings = Settings {
+                watermark: Some(m),
+                ..plain.clone()
+            };
+            let (_, _, marked) = render_with(&settings);
+            let mut moved = 0;
+            for y in 0..ph {
+                for x in 0..pw {
+                    let i = ((y * pw + x) * 3) as usize;
+                    let inside = x >= b.0 && x < b.2 && y >= b.1 && y < b.3;
+                    if marked[i..i + 3] != base[i..i + 3] {
+                        assert!(inside, "moved at {x},{y} outside {b:?}");
+                        moved += 1;
+                    }
+                }
+            }
+            assert!(moved > 500, "{moved}");
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }

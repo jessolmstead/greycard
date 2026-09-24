@@ -1,7 +1,7 @@
 //! What the panel remembers between runs.
 //!
 //! A small JSON file under the user's configuration directory holding
-//! the export sheet's choices, the scope on show, the clipping
+//! the export sheet's choices and its presets, the scope on show, the clipping
 //! warnings, the soft proof's choices, the monitor's profile and the
 //! last file open, by the same names the panel uses for them. Read at
 //! startup, written when the window closes and after an export; the
@@ -13,20 +13,20 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::sheet::{ExportPreset, Sheet};
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    pub export_format: String,
-    pub export_quality: f32,
-    pub export_size: String,
-    /// The long edge typed for a custom size, as typed.
-    pub export_custom: String,
-    pub export_space: String,
-    pub export_embed: bool,
-    pub export_sharpen: String,
-    /// What an export does when a file of that name is already there:
-    /// Increment, Overwrite or Skip.
-    pub export_on_exists: String,
+    /// The export sheet as it was left, under the `export_` names it
+    /// has always had in the file.
+    #[serde(flatten)]
+    pub export: Sheet,
+    /// The export presets, in the order they were first saved.
+    pub export_presets: Vec<ExportPreset>,
+    /// The preset last chosen or saved, empty for none; the sheet
+    /// above may have been edited since.
+    pub export_preset: String,
     pub scope: String,
     /// Which curve the CURVES section shows: "Parametric" or "Point".
     pub curve_mode: String,
@@ -81,14 +81,9 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            export_format: "JPEG".into(),
-            export_quality: 92.0,
-            export_size: "Full".into(),
-            export_custom: "1600".into(),
-            export_space: "sRGB".into(),
-            export_embed: true,
-            export_sharpen: crate::export::Sharpen::default().name().into(),
-            export_on_exists: crate::export::OnExists::default().name().into(),
+            export: Sheet::default(),
+            export_presets: Vec::new(),
+            export_preset: String::new(),
             scope: crate::scope::Scope::default().name().into(),
             curve_mode: "Point".into(),
             warn_shadows: false,
@@ -177,15 +172,41 @@ mod tests {
 
     #[test]
     fn the_settings_round_trip() {
+        let sheet = Sheet {
+            format: "PNG".into(),
+            quality: 60.0,
+            size: "2048".into(),
+            custom: "3000".into(),
+            space: "Display P3".into(),
+            embed: false,
+            sharpen: "High".into(),
+            on_exists: "Skip".into(),
+            metadata: "None".into(),
+            mark: "Image".into(),
+            mark_text: "© x".into(),
+            mark_image: "/home/x/logo.png".into(),
+            mark_color: "Black".into(),
+            mark_position: "Top left".into(),
+            mark_size: 12.5,
+            mark_margin: 3.0,
+            mark_opacity: 40.0,
+        };
         let mine = Settings {
-            export_format: "PNG".into(),
-            export_quality: 60.0,
-            export_size: "2048".into(),
-            export_custom: "3000".into(),
-            export_space: "Display P3".into(),
-            export_embed: false,
-            export_sharpen: "High".into(),
-            export_on_exists: "Skip".into(),
+            export: sheet.clone(),
+            export_presets: vec![
+                ExportPreset {
+                    name: "Web".into(),
+                    sheet: Sheet {
+                        mark: "Text".into(),
+                        ..sheet.clone()
+                    },
+                },
+                ExportPreset {
+                    name: "Print".into(),
+                    sheet: Sheet::default(),
+                },
+            ],
+            export_preset: "Web".into(),
             scope: "Vector".into(),
             curve_mode: "Parametric".into(),
             warn_shadows: true,
@@ -211,10 +232,13 @@ mod tests {
     fn a_file_from_another_version_keeps_what_it_knows() {
         // A field this version has dropped, and ones it has not
         // written yet: neither is a reason to lose the rest.
-        let text = r#"{"export_quality": 60, "grain_seed": 7}"#;
+        let text = r#"{"export_quality": 60, "export_size": "1024", "grain_seed": 7}"#;
         let read: Settings = serde_json::from_str(text).unwrap();
-        assert_eq!(read.export_quality, 60.0);
-        assert_eq!(read.export_format, Settings::default().export_format);
+        assert_eq!(read.export.quality, 60.0);
+        assert_eq!(read.export.size, "1024");
+        assert_eq!(read.export.format, Settings::default().export.format);
+        assert_eq!(read.export.mark, Settings::default().export.mark);
+        assert!(read.export_presets.is_empty());
         assert_eq!(read.scope, Settings::default().scope);
     }
 
@@ -223,7 +247,20 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("greycard-settings-{}", std::process::id()));
         let path = dir.join("greycard").join("settings.json");
         let mine = Settings {
-            export_size: "1024".into(),
+            export: Sheet {
+                size: "1024".into(),
+                ..Sheet::default()
+            },
+            export_presets: vec![ExportPreset {
+                name: "Web 2048".into(),
+                sheet: Sheet {
+                    size: "2048".into(),
+                    mark: "Text".into(),
+                    mark_text: "© greycard".into(),
+                    ..Sheet::default()
+                },
+            }],
+            export_preset: "Web 2048".into(),
             scope: "Parade".into(),
             ..Settings::default()
         };
