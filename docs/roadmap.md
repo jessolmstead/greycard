@@ -237,9 +237,9 @@ clears or a tester asks for it.
       and so in an export preset; a list of marks so text and a logo
       go on one export; a plate or shadow behind text; a bundled font
       so exports match across machines (§157)
-- [ ] A preset laid over the selection, and settings copied and pasted
-      from a right-click, both the sync's loop with a different source
-      (§156)
+- [ ] Settings copied and pasted from a right-click: the sync's loop
+      with a clipboard between (§156, §162). There is no context menu
+      on the strip or the grid yet
 - [ ] Geometry in a sync, mapped through each frame's aspect and turn
       as masks already are (§156)
 - [ ] The range masks' sample from before the Detail section, so dehaze

@@ -94,6 +94,12 @@ note a first tester reads.
   files' times decide only when a copy carries no count, so a copy tool
   or a restore cannot make the next save drop an edit (§161,
   2026-09-24).
+- A preset click lays the preset over every selected frame, one
+  history step each, the way a sync does; a camera profile in a preset
+  reaches only frames of the body it was made for, the open frame
+  included, and the status says which it left off (§162, 2026-09-24).
+- A preset applied in culling now writes the frame's sidecar; before,
+  the step lived only in memory until the next save (§162, 2026-09-24).
 
 ## 0.1.1, 2026-09-22
 
