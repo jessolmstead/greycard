@@ -21,10 +21,12 @@
 //!
 //! all little-endian. `recipe` is the caller's version of how it
 //! makes a picture, so a change there turns every entry into a miss;
-//! `stamp` is the caller's too, zero for a raw and the modification
-//! time for a picture file, whose head can stay the same through a
-//! re-export (an uncompressed TIFF retouched in its lower half is
-//! the same size and the same first 64 KB). The checksum is BLAKE3
+//! `stamp` is the caller's too: the editor's is zero for most raws
+//! and the modification time for a picture file, whose head can stay
+//! the same through a re-export (an uncompressed TIFF retouched in
+//! its lower half is the same size and the same first 64 KB), and for
+//! a DNG, whose directories and previews can sit past the head and be
+//! rewritten in place. The checksum is BLAKE3
 //! of the JPEG, cut to 16 bytes. An entry that fails any of it — cut
 //! short, another format, a checksum that does not match, a JPEG that
 //! will not decode or decodes to another size — is a miss, and is

@@ -1945,12 +1945,23 @@ fn blend(model: &Arc<WorkingImage>, plain: &Arc<WorkingImage>, strength: f32) ->
 pub const THUMB_RECIPE: u16 = 1;
 
 /// What a cache entry for `path` must have been made under: this
-/// recipe, and for a picture file its modification time, since a
-/// re-export can leave a picture's head and length as they were
-/// while its pixels change. A raw is never rewritten in place by
-/// anything that keeps its head, so its entry needs only the hash.
+/// recipe, and for a picture file or a DNG its modification time as
+/// well. A re-export can leave a picture's head and length as they
+/// were while its pixels change; a DNG keeps its IFD0, its
+/// orientation and its previews wherever its writer put them — at
+/// the end, for DNGLab's — and Lightroom's "Update DNG previews" or
+/// an orientation set in place by a metadata tool rewrites them
+/// without touching the first 64 KB or, often, the length. The other
+/// raws carry their orientation tag and their preview's directory in
+/// the head, and nothing rewrites them in place, so their entries
+/// need only the hash. The cost of the stamp: a DNG copied without
+/// its modification time (a plain `cp`, not a move or a rename) is
+/// made once more.
 fn thumb_tag(path: &std::path::Path) -> Tag {
-    let stamp = if is_picture_path(path) {
+    let dng = path
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("dng"));
+    let stamp = if dng || is_picture_path(path) {
         std::fs::metadata(path)
             .and_then(|m| m.modified())
             .ok()
@@ -2473,6 +2484,31 @@ mod tests {
             fresh.rgb.iter().all(|v| *v < 60),
             "the new picture's pixels"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A DNG's entry is stamped with its modification time, which a
+    /// rename keeps and a rewrite in place does not; a CR3's is not.
+    #[test]
+    fn a_dng_is_stamped_and_a_cr3_is_not() {
+        let dir = thumb_scratch("stamp");
+        let dng = dir.join("A.dng");
+        let cr3 = dir.join("B.CR3");
+        std::fs::write(&dng, b"dng").unwrap();
+        std::fs::write(&cr3, b"cr3").unwrap();
+        let tag = thumb_tag(&dng);
+        assert_ne!(tag.stamp, 0);
+        assert_eq!(thumb_tag(&cr3).stamp, 0);
+        let renamed = dir.join("wedding-A.DNG");
+        std::fs::rename(&dng, &renamed).unwrap();
+        assert_eq!(thumb_tag(&renamed), tag);
+        std::fs::File::options()
+            .write(true)
+            .open(&renamed)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(9))
+            .unwrap();
+        assert_ne!(thumb_tag(&renamed), tag);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
