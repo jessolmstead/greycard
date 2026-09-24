@@ -999,6 +999,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
                     .expect("worker queue")
                     .thumb_size
                     .unwrap_or(THUMB_WIDTH);
+                let size = crate::grid::made_size(size);
                 let started = Instant::now();
                 match cached_thumbnail(&thumbs, &path, size) {
                     Ok((thumb, cached)) => deliver(Outcome::Thumbnail {

@@ -38,6 +38,20 @@ pub fn render_size(cell: f32) -> u32 {
     (cell.ceil().max(1.0) as u32).min(MAX_RENDER)
 }
 
+/// The long edges a picture is actually made at: the strip's 170 and
+/// the grid's cells rounded up to one of these, so the thumbnail
+/// cache, which keeps a picture a size, holds a few sizes of a frame
+/// rather than one for every size a timing happened to ask for. The
+/// grid's smallest cells get a 128 where they asked for 96, which is
+/// the most this costs.
+pub const MADE: [u32; 4] = [128, 176, 256, MAX_RENDER];
+
+/// The size from [`MADE`] a picture asked for at `asked` is made at:
+/// the least that is no smaller, or `asked` itself past the last.
+pub fn made_size(asked: u32) -> u32 {
+    MADE.iter().copied().find(|&m| m >= asked).unwrap_or(asked)
+}
+
 /// Whether a picture made at `made` is too small for a cell asking
 /// for `want`. A quarter more is worth making it again; a few
 /// percent is not, since the downscale is by a whole factor and a
@@ -341,5 +355,21 @@ mod tests {
         assert_eq!(clamp_cell(4000.0), 512.0);
         assert_eq!(clamp_cell(1.0), 96.0);
         assert_eq!(clamp_cell(f32::NAN), CELL);
+    }
+
+    /// The strip's size and the grid's cells land on a few made
+    /// sizes, each no smaller than was asked.
+    #[test]
+    fn a_picture_is_made_at_one_of_a_few_sizes() {
+        assert_eq!(made_size(crate::worker::THUMB_WIDTH), 176);
+        assert_eq!(made_size(render_size(STEPS[0])), 128);
+        assert_eq!(made_size(render_size(CELL)), 176);
+        for cell in STEPS {
+            let asked = render_size(cell);
+            let made = made_size(asked);
+            assert!(made >= asked && MADE.contains(&made), "{cell}");
+            assert!(!wants_bigger(made, asked));
+        }
+        assert_eq!(made_size(600), 600);
     }
 }
