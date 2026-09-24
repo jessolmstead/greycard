@@ -89,8 +89,8 @@ pub(crate) fn moved_words(moved: &Moved, placement: greycard_edit::Placement) ->
 }
 
 /// The sheet's count, over the open frames as they are on disk now:
-/// the list the move runs over, which a folder fills and a command
-/// line's files may not. And whether a move may run at all.
+/// the list the move runs over, a folder's or the one file opened on
+/// its own. And whether a move may run at all.
 pub(crate) fn show_elsewhere(st: &State, app: &App) {
     app.set_open_frames(st.files.len() as i32);
     app.set_sidecars_elsewhere(sidecars_elsewhere(&st.files, st.placement) as i32);

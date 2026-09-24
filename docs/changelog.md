@@ -28,6 +28,21 @@ note a first tester reads.
   untouched; 4,949 lines down to 1,687, verified by whole-window
   captures against the previous build and a differential event fuzz,
   no behavior change (§154, 2026-09-23).
+- Tab hides everything but the photo and brings it back; `--hide-panels`
+  opens that way for a capture (§155, 2026-09-23).
+- The lens profiles are offered once, unasked, the first time a picture
+  opens with no lens database, with the reason; Not now is remembered
+  and the LENS section keeps its button (§155, 2026-09-23).
+- The PRESETS section moves to the left pane, under the navigator, out
+  of the develop panel's scroll; the presets and history lists give up
+  room when the pane is short of it (§155, 2026-09-23).
+- A Settings sheet (Ctrl+, or the Settings... button) for where sidecars
+  are written and whether XMPs are, with a "move the open frames'
+  sidecars" action that reports what it renamed and what stale copies it
+  removed; `--sheet settings` and `--sheet lenses` for captures (§155,
+  2026-09-23).
+- The release binaries are stripped: greycard-ui 112 MB to 84 MB on
+  Linux, no behavior change (§155, 2026-09-23).
 
 ## 0.1.1, 2026-09-22
 

@@ -12,9 +12,9 @@ export component SettingsSheet inherits Rectangle {
     /// "Beside the raw" or "Hidden folder", as the row spells it.
     in-out property <string> sidecar-placement;
     in-out property <bool> xmp-sidecars;
-    /// How many frames are open (a folder's, or the files a command
-    /// line named), and how many of them have a sidecar in the place
-    /// the setting does not name. The move runs over the same list.
+    /// How many frames are open (a folder's, or one file opened on its
+    /// own), and how many of them have a sidecar in the place the
+    /// setting does not name. The move runs over the same list.
     in property <int> open-frames;
     in property <int> sidecars-elsewhere;
     /// False under `--no-sidecars`: nothing is moved in a run that
@@ -107,7 +107,7 @@ export component SettingsSheet inherits Rectangle {
                     wrap: word-wrap;
                 }
                 if !root.confirming: PanelButton {
-                    text: "Move the open frames' sidecars";
+                    text: root.open-frames == 1 ? "Move the open frame's sidecar" : "Move the open frames' sidecars";
                     icon: @image-url("../icons/folder-open.svg");
                     enabled: root.sidecars-written && root.sidecars-elsewhere > 0;
                     clicked => { root.confirming = true; }

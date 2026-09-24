@@ -67,15 +67,6 @@ sliders feel like the ones people learned on.
       editor mixes the channels, so None starts flatter across hues than
       people expect (§87). A change to the default look and to every
       mono edit written; waits on the reference frames
-- [ ] No lens corrections on first install is a gotcha
-- [ ] The presets tool moves to the left pane, where there is room,
-      out of the develop panel's scroll. After the `app.slint` split
-- [ ] A Settings sheet, on the export sheet's pattern, for what is
-      the installation's and not a picture's: the sidecar placement
-      (§153) and the XMP toggle first, keybindings and the rest as
-      they come; with the placement, a "move this folder's sidecars"
-      action with the count, offered when the switch flips with a
-      folder open. After the `app.slint` split
 - [ ] A save counter in the sidecar, so `find` chooses between a
       beside and a folder copy by what was saved last and not by the
       files' times, which a copy tool or two clocks can get wrong;
@@ -119,7 +110,6 @@ A shoot can be culled without developing a frame.
       folder index or a cached probe, since reading every raw's EXIF
       on open is twenty seconds on a wedding (§133)
 - [ ] Lightbox to see a whole collection and look for consistency
-- [ ] Key binding to hide everything but the photo for review
 
 ## v0.5.0: AI masks and fill
 
@@ -254,9 +244,6 @@ clears or a tester asks for it.
 - [ ] Resizeable / hideable panels
 - [ ] Right click on photo for options. Set label, copy develop settings, etc
 - [ ] Select multiple photos for copying settings to them etc
-- [ ] `strip = true` under `[profile.release]`: the released
-      greycard-ui binary is 110MB unstripped (109.5MB with a full
-      symtab), 82MB stripped, for no behavior change
 
 
 ### Engine
