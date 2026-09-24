@@ -70,7 +70,7 @@ pub fn dir() -> Option<PathBuf> {
 /// `RUST_LOG`, when set, decides for both instead.
 pub fn start(verbose: u8) -> Option<PathBuf> {
     let file = dir().and_then(open);
-    install(file.as_ref().map(|(_, f)| f), verbose);
+    install(file.as_ref().map(|(_, f)| f), verbose, true);
     file.map(|(path, _)| path)
 }
 
@@ -128,7 +128,11 @@ fn filter_or_env(ours: &str) -> EnvFilter {
     EnvFilter::try_from_default_env().unwrap_or_else(|_| filter(ours))
 }
 
-fn install(file: Option<&File>, verbose: u8) {
+/// `terminal` is whether stderr listens too. The test binary says
+/// no: the subscriber is global to the process, so a terminal sink
+/// installed by one test would print every later test's expected
+/// failures as ERROR lines through a green run.
+fn install(file: Option<&File>, verbose: u8, terminal: bool) {
     let env_set = std::env::var_os(EnvFilter::DEFAULT_ENV).is_some();
     let (to_file, to_terminal) = match verbose {
         0 => ("info", "warn"),
@@ -147,12 +151,14 @@ fn install(file: Option<&File>, verbose: u8) {
             .with_timer(Uptime(std::time::Instant::now()))
             .with_filter(filter_or_env(to_file))
     });
-    let terminal_layer = tracing_subscriber::fmt::layer()
-        .with_writer(std::io::stderr)
-        .with_ansi(std::io::stderr().is_terminal())
-        .with_target(false)
-        .without_time()
-        .with_filter(filter_or_env(to_terminal));
+    let terminal_layer = terminal.then(|| {
+        tracing_subscriber::fmt::layer()
+            .with_writer(std::io::stderr)
+            .with_ansi(std::io::stderr().is_terminal())
+            .with_target(false)
+            .without_time()
+            .with_filter(filter_or_env(to_terminal))
+    });
     let subscriber = tracing_subscriber::registry()
         .with(file_layer)
         .with(terminal_layer);
@@ -265,7 +271,7 @@ mod tests {
         drop(first);
 
         let (path, file) = open(dir.clone()).unwrap();
-        install(Some(&file), 0);
+        install(Some(&file), 0, false);
         tracing::info!("an info line");
         tracing::debug!("a debug line");
         log::warn!(target: "some_library", "a library's warning");
