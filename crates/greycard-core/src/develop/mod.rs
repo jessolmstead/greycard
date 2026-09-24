@@ -954,6 +954,9 @@ pub fn orient(image: WorkingImage, orientation: Orientation) -> WorkingImage {
 }
 
 #[cfg(test)]
+mod timing;
+
+#[cfg(test)]
 pub(crate) mod tests {
     use super::*;
     use crate::color::tests::rec2020_camera_matrix;
