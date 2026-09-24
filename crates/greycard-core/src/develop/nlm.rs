@@ -409,8 +409,9 @@ fn denoise_tile(
 /// was an earlier shape of the tile code, and on this one it does not
 /// reproduce: inlined here, the weight and accumulation loops come out
 /// as the same instructions and the benchmark does not move. The input
-/// and the scratch reach the loops as arguments, so no write through
-/// the frame's rows can touch them. The split is harmless and kept.
+/// and the scratch reach the loops as arguments; the scratch's own
+/// buffers are behind loaded pointers, so the loops run behind a
+/// runtime overlap check either way. The split is harmless and kept.
 #[inline(never)]
 fn accumulate(input: &[f32], p: &Params, s: &mut Scratch, xs: (usize, usize), ys: (usize, usize)) {
     let ((x0, x1), (y0, y1)) = (xs, ys);

@@ -921,10 +921,11 @@ pub(crate) fn bilinear_pixel(
 /// blur: with `#[inline(always)]` the levels and the gains keep their
 /// gain, since LLVM turns a `noalias` argument into scope metadata when
 /// it inlines, but the blur goes back to what it was without this.
-/// Changing it to `#[inline]` measurably loses the blur's gain.
+/// Measured with `#[inline(always)]` only (the blur 0.128 to 0.154 s
+/// at one thread); plain `#[inline]` was not measured, so leave this.
 ///
-/// Worth it only where a measurement says so; see the notes on the
-/// tile-write audit.
+/// Worth it only where a measurement says so; see the notes' section
+/// on the tile-write audit (§165).
 #[inline(never)]
 pub(crate) fn own_row<T, R>(row: &mut [T], f: impl FnOnce(&mut [T]) -> R) -> R {
     f(row)

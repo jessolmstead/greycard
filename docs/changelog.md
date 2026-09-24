@@ -110,6 +110,11 @@ note a first tester reads.
   time: the 45 MP develop with the hybrid denoise at six threads goes
   from about 26 s to 12.7 s, the 24 MP from 11.3 to 5.7, output within
   a 16-bit step of before (§164, 2026-09-24).
+- Faster develop ops, output bit-identical: the lens correction 17
+  percent and its vignetting four times at four threads, the CFA gains
+  twice and the levels a quarter at one thread, the Gaussian blur, the
+  dehaze, and the RCD demosaic 11 percent from an inlining decision
+  pinned (§165, 2026-09-24).
 
 ## 0.1.1, 2026-09-22
 

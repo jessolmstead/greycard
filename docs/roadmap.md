@@ -270,11 +270,9 @@ clears or a tester asks for it.
 
 ### Engine
 
-- [ ] Every op that writes tiles straight into a frame: check that
-      the accumulation does not see the frame's `&mut` rows, since a
-      reference read out of a slice carries no `noalias` and the
-      inlined write-out cost the means 25 percent until the sums were
-      kept out of line (§128)
+- [ ] `stack.rs` and `register.rs` warps: rows written the way the lens
+      correction's were, with captured models re-read per pixel; the
+      lens gain (§165) says they are the next place to look
 - [ ] X-Trans demosaic. Waits on an X-Trans frame to test against
 - [ ] Per-camera hot pixel defect map. Waits on a place for per-camera
       data and a way to take dark frames in (§13s)
