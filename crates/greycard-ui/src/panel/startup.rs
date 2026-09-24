@@ -739,7 +739,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 std::time::Duration::from_millis(100),
                                 move || {
                                     if let Some(app) = app_weak.upgrade() {
-                                        app.invoke_step(1);
+                                        app.invoke_step(1, false);
                                     }
                                 },
                             );

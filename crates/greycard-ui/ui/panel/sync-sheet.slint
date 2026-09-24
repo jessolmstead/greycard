@@ -1,0 +1,73 @@
+// The sync sheet: which of the current frame's sections go over the
+// rest of the selection, until applied or left. The preset sheet's
+// twin, with no name to give: nothing is kept but the frames' own
+// sidecars.
+
+import { Theme } from "../theme.slint";
+import { Toggle, PanelButton } from "../controls.slint";
+
+export component SyncSheet inherits Rectangle {
+    in-out property <bool> sync-open;
+    /// What the sync will do, in words: from which frame onto how
+    /// many.
+    in property <string> sync-text;
+    in-out property <[string]> sync-section-names;
+    in-out property <[bool]> sync-section-on;
+    callback sync-section-toggled(int, bool);
+    callback sync-applied();
+
+    background: #000000a0;
+    TouchArea { clicked => { root.sync-open = false; } }
+    Rectangle {
+        width: 400px;
+        height: sync-sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        sync-sheet := VerticalLayout {
+            padding: Theme.space-5;
+            spacing: Theme.space-3;
+            Text {
+                text: "Sync settings";
+                font-size: Theme.font-lg;
+                font-weight: Theme.weight-medium;
+                color: Theme.text;
+            }
+            Text {
+                text: root.sync-text;
+                font-size: Theme.font-sm;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+            Text {
+                text: "What goes across; on, all but the masks. The crop and the retouch are each frame's own and never go.";
+                font-size: Theme.font-xs;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            for name[i] in root.sync-section-names: Toggle {
+                label: name;
+                checked: root.sync-section-on[i];
+                toggled => { root.sync-section-toggled(i, self.checked); }
+            }
+            Rectangle { height: Theme.space-2; }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: "Cancel";
+                    clicked => { root.sync-open = false; }
+                }
+                PanelButton {
+                    text: "Apply";
+                    icon: @image-url("../icons/layers.svg");
+                    primary: true;
+                    clicked => { root.sync-applied(); }
+                }
+            }
+        }
+    }
+}

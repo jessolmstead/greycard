@@ -17,7 +17,33 @@ pub(crate) fn thumb_for(path: &Path, meta: &Meta) -> Thumb {
         rating: meta.rating.min(meta::STARS) as i32,
         flag: meta.flag.code(),
         label: meta.label.code(),
+        chosen: false,
     }
+}
+
+/// The selection as it is acted on: the current frame and the rest
+/// of the set, as files, sorted. Empty with nothing open.
+pub(crate) fn chosen_frames(st: &State) -> Vec<usize> {
+    selection::frames(&st.picked, st.current)
+}
+
+/// Put the set on the strip's and the grid's rows, and its size on
+/// the window. Only the rows whose mark changed are written, so a
+/// click in a folder of hundreds touches two rows and not all of
+/// them.
+pub(crate) fn show_set(st: &mut State, app: &App) {
+    st.picked = chosen_frames(st);
+    let model = app.get_thumbs();
+    for (row, &f) in st.shown.iter().enumerate() {
+        let chosen = st.picked.binary_search(&f).is_ok();
+        if let Some(mut t) = model.row_data(row)
+            && t.chosen != chosen
+        {
+            t.chosen = chosen;
+            model.set_row_data(row, t);
+        }
+    }
+    app.set_set_count(st.picked.len().max(1) as i32);
 }
 
 /// Put file `i`'s meta on its row in the strip and the grid, leaving
@@ -50,11 +76,11 @@ pub(crate) fn show_badges(st: &State, app: &App, i: usize) {
 /// to the next frame, and the develop that arrow starts would write
 /// over any such word before it had been read.
 ///
-/// The set is the whole selection. There is one frame in it today —
-/// the browser has no multi-select — and the shape is here so that
-/// when it grows one this is already what it calls. A label key is
-/// settled against the set first, so one press on a mixed selection
-/// makes it uniform rather than half one thing and half the other.
+/// The set is the whole selection (`chosen_frames`): the frame on
+/// screen and whatever Ctrl, Shift or Shift and an arrow put beside
+/// it. A label key is settled against the set first, so one press on
+/// a mixed selection makes it uniform rather than half one thing and
+/// half the other.
 ///
 /// The write goes through the sidecar the edit is saved from, so
 /// neither can lose the other: they are one file and one struct, and
@@ -435,6 +461,10 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
         }
     }
     app.set_reject_count(reject_count(st) as i32);
+    // A frame the filter now hides leaves the set: a key or a sync
+    // must not reach a frame nobody can see is chosen.
+    st.picked = selection::prune(&st.picked, &st.shown, st.current);
+    show_set(st, app);
     let Some(c) = st.current else {
         app.set_selected(-1);
         return None;
@@ -641,6 +671,7 @@ fn open_files(
     st.hold = None;
     st.prefetch.want(Vec::new());
     st.current = None;
+    st.picked.clear();
     let (sidecars, seed_blend) = load_sidecars(&files, st.write_sidecars);
     st.sidecars = sidecars;
     st.seed_blend = seed_blend;
@@ -735,7 +766,7 @@ pub(crate) fn time_select(
     let app_weak = app.as_weak();
     slint::Timer::single_shot(std::time::Duration::from_millis(100), move || {
         if let Some(app) = app_weak.upgrade() {
-            app.invoke_step(1);
+            app.invoke_step(1, false);
         }
     });
 }
@@ -744,6 +775,133 @@ pub(crate) fn file_name(p: &std::path::Path) -> String {
     p.file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// Open the frame on browser row `row`: decode and develop it on the
+/// worker, or in culling show its JPEG. It becomes the current frame;
+/// the set becomes that frame alone, or with `extend` (Shift and an
+/// arrow) keeps what it held and takes this frame as well.
+pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, extend: bool) {
+    // The window's rows are the browser's list, which the
+    // filter may have shortened; the file is what is opened.
+    let Some(&i) = usize::try_from(row).ok().and_then(|r| st.shown.get(r)) else {
+        return;
+    };
+    st.picked = if extend {
+        selection::union(&chosen_frames(st), &[i])
+    } else {
+        vec![i]
+    };
+    // `--cull`: the first file opens the mode, not a develop.
+    if let Some(compare) = st.cull_at_start.take() {
+        enter_cull(st, app, compare);
+    }
+    // In culling nothing is developed: the frame's JPEG shows.
+    if st.cull.is_some() {
+        cull_select(st, app, i);
+        show_set(st, app);
+        return;
+    }
+    // The panel is the file's: keep the old one's, show the new one's.
+    // The viewport keeps the old picture under the old look
+    // until the new frame's camera JPEG is decoded, which
+    // stands in until its develop lands; a file chosen from
+    // the strip opens fitted either way.
+    if st.current.is_some() {
+        let outgoing = read_edit(app, &st.edit, st.target);
+        if st.base_white.is_some() {
+            st.held = Some(outgoing.clone());
+        } else {
+            st.zoom = 0.0;
+        }
+        save_edit(st, outgoing);
+    }
+    // Before the edit reaches the panel, and so before any
+    // refit can run on it: a sidecar from an older build
+    // does not know which way up its Original crop goes
+    // until the frame does.
+    migrate_frame(st, i);
+    let edit = st.sidecars[i].current.clone();
+    // A mask asked for on the command line is the first file's
+    // target, so a screenshot can show the panel's block for it.
+    st.target = if st.current.is_none() {
+        let m = st.show_mask.take().filter(|&m| m < edit.adjustments.len());
+        if m.is_some() {
+            app.set_show_mask(true);
+        }
+        // Likewise a patch, which the panel's list then shows
+        // chosen and the viewport outlines.
+        if let Some(p) = st.show_patch.take() {
+            app.set_patch(p as i32);
+        }
+        m
+    } else {
+        None
+    };
+    st.placing = None;
+    app.set_placing("".into());
+    // Another picture: a guide stroke drawn on the last one
+    // means nothing here, and the source's size is not known
+    // again until this frame's develop lands — a turn before
+    // that must not map this frame's masks by the last
+    // frame's shape.
+    st.guiding.clear();
+    st.source_size = (0, 0);
+    app.set_guide_mode("".into());
+    show_edit(st, &edit, app, st.target);
+    st.edit = edit.clone();
+    st.current = Some(i);
+    st.generation += 1;
+    // The key's moment, until the frame that shows this
+    // frame: the log's line, and `--time-select`.
+    st.selected_at = Some(std::time::Instant::now());
+    app.set_selected(row);
+    app.set_file_name(file_name(&st.files[i]).into());
+    // The last file's shot is not this one's; the open says
+    // what this one was.
+    app.set_shot_camera("".into());
+    app.set_shot_exposure("".into());
+    app.set_shot_size("".into());
+    app.set_status("decoding...".into());
+    app.set_busy(true);
+    show_history(st, app);
+    worker.send(Job::Open {
+        path: st.files[i].clone(),
+        edit,
+        generation: st.generation,
+        seed_blend: st.seed_blend.get(i).copied().unwrap_or(false),
+        turn: st.sidecars[i].turn,
+    });
+    // The frame's own camera JPEG, to stand in for that
+    // develop: after the job, so the decode that matters
+    // most is under way first.
+    start_placeholder(st, app, i);
+    show_set(st, app);
+}
+
+/// An arrow's landing on browser row `row`, which `moves` when it is
+/// not the row already current. A plain arrow opens it as a click
+/// would and the set collapses to it, even at the end of the strip
+/// where nothing moved; with Shift the set keeps what it had and
+/// takes the frame landed on as well.
+fn step_to(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Worker,
+    row: i32,
+    moves: bool,
+    extend: bool,
+) {
+    match (moves, extend) {
+        (true, false) => app.invoke_select(row),
+        (true, true) => open_row(&mut state.borrow_mut(), app, worker, row, true),
+        (false, false) => {
+            let mut st = state.borrow_mut();
+            st.picked = st.current.into_iter().collect();
+            show_set(&mut st, app);
+        }
+        (false, true) => {}
+    }
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
@@ -762,8 +920,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return false;
             };
             let mut st = state.borrow_mut();
-            // The selection: one frame, until the browser has more.
-            let frames: Vec<usize> = st.current.into_iter().collect();
+            // The whole selection: the current frame and the set.
+            let frames = chosen_frames(&st);
             if frames.is_empty() {
                 return false;
             }
@@ -786,8 +944,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            // The selection: one frame, until the browser has more.
-            let frames: Vec<usize> = st.current.into_iter().collect();
+            // The whole selection, as the meta keys have it.
+            let frames = chosen_frames(&st);
             turn_frames(&mut st, &app, &worker, &frames, quarters);
         });
     }
@@ -798,101 +956,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let mut st = state.borrow_mut();
-            // The window's rows are the browser's list, which the
-            // filter may have shortened; the file is what is opened.
-            let Some(&i) = usize::try_from(row).ok().and_then(|r| st.shown.get(r)) else {
-                return;
-            };
-            // `--cull`: the first file opens the mode, not a develop.
-            if let Some(compare) = st.cull_at_start.take() {
-                enter_cull(&mut st, &app, compare);
-            }
-            // In culling nothing is developed: the frame's JPEG shows.
-            if st.cull.is_some() {
-                cull_select(&mut st, &app, i);
-                return;
-            }
-            // The panel is the file's: keep the old one's, show the new one's.
-            // The viewport keeps the old picture under the old look
-            // until the new frame's camera JPEG is decoded, which
-            // stands in until its develop lands; a file chosen from
-            // the strip opens fitted either way.
-            if st.current.is_some() {
-                let outgoing = read_edit(&app, &st.edit, st.target);
-                if st.base_white.is_some() {
-                    st.held = Some(outgoing.clone());
-                } else {
-                    st.zoom = 0.0;
-                }
-                save_edit(&mut st, outgoing);
-            }
-            // Before the edit reaches the panel, and so before any
-            // refit can run on it: a sidecar from an older build
-            // does not know which way up its Original crop goes
-            // until the frame does.
-            migrate_frame(&mut st, i);
-            let edit = st.sidecars[i].current.clone();
-            // A mask asked for on the command line is the first file's
-            // target, so a screenshot can show the panel's block for it.
-            st.target = if st.current.is_none() {
-                let m = st.show_mask.take().filter(|&m| m < edit.adjustments.len());
-                if m.is_some() {
-                    app.set_show_mask(true);
-                }
-                // Likewise a patch, which the panel's list then shows
-                // chosen and the viewport outlines.
-                if let Some(p) = st.show_patch.take() {
-                    app.set_patch(p as i32);
-                }
-                m
-            } else {
-                None
-            };
-            st.placing = None;
-            app.set_placing("".into());
-            // Another picture: a guide stroke drawn on the last one
-            // means nothing here, and the source's size is not known
-            // again until this frame's develop lands — a turn before
-            // that must not map this frame's masks by the last
-            // frame's shape.
-            st.guiding.clear();
-            st.source_size = (0, 0);
-            app.set_guide_mode("".into());
-            show_edit(&st, &edit, &app, st.target);
-            st.edit = edit.clone();
-            st.current = Some(i);
-            st.generation += 1;
-            // The key's moment, until the frame that shows this
-            // frame: the log's line, and `--time-select`.
-            st.selected_at = Some(std::time::Instant::now());
-            app.set_selected(row);
-            app.set_file_name(file_name(&st.files[i]).into());
-            // The last file's shot is not this one's; the open says
-            // what this one was.
-            app.set_shot_camera("".into());
-            app.set_shot_exposure("".into());
-            app.set_shot_size("".into());
-            app.set_status("decoding...".into());
-            app.set_busy(true);
-            show_history(&st, &app);
-            worker.send(Job::Open {
-                path: st.files[i].clone(),
-                edit,
-                generation: st.generation,
-                seed_blend: st.seed_blend.get(i).copied().unwrap_or(false),
-                turn: st.sidecars[i].turn,
-            });
-            // The frame's own camera JPEG, to stand in for that
-            // develop: after the job, so the decode that matters
-            // most is under way first.
-            start_placeholder(&mut st, &app, i);
+            open_row(&mut state.borrow_mut(), &app, &worker, row, false);
         });
     }
-    // Arrow keys step along the strip.
+    // Arrow keys step along the strip: the set collapses to the
+    // frame landed on, or with Shift held takes it as well.
     {
-        let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_step(move |by| {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_step(move |by, extend| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -910,9 +981,57 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let next = (row as i64 + by as i64).clamp(0, count as i64 - 1) as usize;
-            if next != row || app.get_selected() < 0 {
-                app.invoke_select(next as i32);
+            step_to(
+                &state,
+                &app,
+                &worker,
+                next as i32,
+                next != row || app.get_selected() < 0,
+                extend,
+            );
+        });
+    }
+    // A click on a frame in the strip or the grid: a plain one opens
+    // it, a Ctrl or a Shift one changes the set about the frame on
+    // screen and leaves it there.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_frame_clicked(move |row, ctrl, shift| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let Some(&file) = usize::try_from(row).ok().and_then(|r| st.shown.get(r)) else {
+                return;
+            };
+            match selection::click(&st.picked, &st.shown, st.current, file, ctrl, shift) {
+                // A plain click on the frame already on screen: the
+                // set goes back to it, and nothing is opened again.
+                selection::Click::Open(f) if Some(f) == st.current => {
+                    st.picked = vec![f];
+                    show_set(&mut st, &app);
+                }
+                selection::Click::Open(_) => {
+                    drop(st);
+                    app.invoke_select(row);
+                }
+                selection::Click::Set(set) => {
+                    st.picked = set;
+                    show_set(&mut st, &app);
+                }
             }
+        });
+    }
+    // Escape over a set: back to the frame on screen.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_set_collapsed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            st.picked = st.current.into_iter().collect();
+            show_set(&mut st, &app);
         });
     }
     // The frames the strip shows: their pictures jump the worker's
@@ -945,15 +1064,22 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     // An arrow in the grid: along the row, or by a whole row, and
     // the frame it lands on is opened as a click on it would.
     {
-        let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_grid_step(move |dx, dy, columns| {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_grid_step(move |dx, dy, columns, extend| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let count = state.borrow().shown.len() as i32;
             let next = grid::step(app.get_selected(), dx, dy, columns, count);
-            if next >= 0 && next != app.get_selected() {
-                app.invoke_select(next);
+            if next >= 0 {
+                step_to(
+                    &state,
+                    &app,
+                    &worker,
+                    next,
+                    next != app.get_selected(),
+                    extend,
+                );
             }
         });
     }
@@ -1306,9 +1432,9 @@ mod tests {
         let app = window(11);
         let steps = Rc::new(RefCell::new(Vec::new()));
         let flat = steps.clone();
-        app.on_step(move |by| flat.borrow_mut().push((by, 0)));
+        app.on_step(move |by, _| flat.borrow_mut().push((by, 0)));
         let two = steps.clone();
-        app.on_grid_step(move |dx, dy, cols| {
+        app.on_grid_step(move |dx, dy, cols, _| {
             assert!(cols >= 1, "the grid always has a column");
             two.borrow_mut().push((dx, dy));
         });
@@ -1371,7 +1497,7 @@ mod tests {
         });
         let steps = Rc::new(RefCell::new(0));
         let cols = steps.clone();
-        app.on_grid_step(move |_, _, c| *cols.borrow_mut() = c);
+        app.on_grid_step(move |_, _, c, _| *cols.borrow_mut() = c);
         app.set_selected(0);
         press(&app, "g");
         press(&app, Key::DownArrow);

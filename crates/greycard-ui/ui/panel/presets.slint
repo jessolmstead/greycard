@@ -16,6 +16,9 @@ export component PresetsSection inherits Section {
     callback preset-deleted(int);
     callback preset-import();
     callback preset-save-open();
+    /// How many frames the browser's selection holds.
+    in property <int> set-count;
+    callback sync-open-asked();
 
     title: "PRESETS";
     shrinks: true;
@@ -101,5 +104,14 @@ export component PresetsSection inherits Section {
             enabled: root.selected >= 0;
             clicked => { root.preset-save-open(); }
         }
+    }
+    // The edit's sections onto the rest of the selection: a preset
+    // from this frame that is never saved. Ctrl+Shift+S. A row of its
+    // own, as the pane is too narrow for a third button beside two.
+    PanelButton {
+        text: "Sync...";
+        icon: @image-url("../icons/layers.svg");
+        enabled: root.set-count > 1;
+        clicked => { root.sync-open-asked(); }
     }
 }

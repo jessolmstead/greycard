@@ -132,6 +132,16 @@ impl Section {
         )
     }
 
+    /// Whether a sync across a selection carries it unless told not
+    /// to: all but the masks. A sync is between frames of one shoot,
+    /// so the white, the lens, the demosaic and the camera profile
+    /// that a preset leaves alone are what a sync is for; the masks
+    /// are drawn on one picture's subject and land on nothing in the
+    /// next. The geometry and the retouch are not sections at all.
+    pub fn syncs_by_default(self) -> bool {
+        self != Section::Adjustments
+    }
+
     /// Lay this section of `from` over `onto`.
     pub fn copy(self, from: &Edit, onto: &mut Edit) {
         match self {

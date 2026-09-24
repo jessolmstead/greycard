@@ -1040,7 +1040,7 @@ pub(crate) fn time_cull(
             if let Some(cull) = state.borrow_mut().cull.as_mut() {
                 cull.switched = Some(std::time::Instant::now());
             }
-            app.invoke_step(1);
+            app.invoke_step(1, false);
         }
     });
 }
@@ -1163,6 +1163,9 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
         .as_ref()
         .map(|p| st.files.iter().position(|f| f == p));
     st.current = went.flatten();
+    // The set was numbered by the old list; the frame on screen is
+    // what is left of it.
+    st.picked.clear();
     let next = rebuild_browser(st, app);
     app.set_status(status.into());
     match (st.current, next) {

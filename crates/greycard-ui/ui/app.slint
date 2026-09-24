@@ -26,6 +26,7 @@ import { PanelHead } from "panel/scopes.slint";
 import { ModelSheet } from "panel/model-sheet.slint";
 import { RejectsSheet } from "panel/rejects-sheet.slint";
 import { PresetSheet } from "panel/preset-sheet.slint";
+import { SyncSheet } from "panel/sync-sheet.slint";
 import { ExportSheet } from "panel/deliver.slint";
 import { SettingsSheet } from "panel/settings-sheet.slint";
 import { GridSheet } from "panel/grid.slint";
@@ -60,7 +61,28 @@ export component App inherits Window {
     // The filmstrip.
     in property <[Thumb]> thumbs;
     in-out property <int> selected: -1;
+    /// Open the frame on this row and make it the whole selection.
     callback select(int);
+    /// A click on a frame in the strip or the grid, with Ctrl and
+    /// Shift as they were held: Rust decides what it does to the set
+    /// (`selection::click`). `selected` stays the current frame, the
+    /// one on screen; each row's `chosen` says it is in the set.
+    callback frame-clicked(int, bool, bool);
+    /// How many frames the selection holds, the current one among
+    /// them: 1 with a frame open and nothing else chosen.
+    in property <int> set-count: 1;
+    /// Escape over a set of more than one: back to the current frame.
+    callback set-collapsed();
+    /// Ctrl+Shift+S, or the presets' Sync button: the sync sheet.
+    callback sync-open-asked();
+    // The sync sheet: the current frame's sections, checked, to lay
+    // over the rest of the set.
+    in-out property <bool> sync-open: false;
+    in property <string> sync-text: "";
+    in-out property <[string]> sync-section-names: [];
+    in-out property <[bool]> sync-section-on: [];
+    callback sync-section-toggled(int, bool);
+    callback sync-applied();
     /// A culling key over the browser: the text of it, and true when
     /// it meant something. Rust reads the key, applies it to the
     /// whole selection and writes the sidecars; the badges follow.
@@ -156,7 +178,7 @@ export component App inherits Window {
         root.grid-max-scroll(root.grid-h, root.grid-cell, root.grid-cols, root.thumbs.length);
     /// Move the selection a column along or a row down, told how many
     /// columns there are now.
-    callback grid-step(int, int, int);
+    callback grid-step(int, int, int, bool);
     /// A step up or down the cell sizes.
     callback grid-zoom(int);
     /// The frames the grid shows now, from its scroll and its height:
@@ -839,7 +861,9 @@ export component App inherits Window {
     callback xmp-changed();
     callback sidecars-move();
     /// Move to the file `by` places along the strip.
-    callback step(int);
+    /// Move to the file `by` places along the strip; with Shift held,
+    /// the set keeps what it had and takes that file as well.
+    callback step(int, bool);
     /// Ask the desktop for a folder, and open it in place of the
     /// current file list.
     callback open-folder();
@@ -857,7 +881,7 @@ export component App inherits Window {
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
-            || root.settings-open;
+            || root.settings-open || root.sync-open;
     }
 
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
@@ -877,14 +901,23 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.patch != -1) { root.patch-changed(-1); return accept; }
             if (e.text == Key.Escape && root.guide-mode != "") { root.guide-mode = ""; root.guide-dropped(); return accept; }
             if (e.text == Key.Escape && root.level-mode) { root.level-mode = false; return accept; }
+            if (e.text == Key.Escape && root.sync-open) { root.sync-open = false; return accept; }
+            // A set of frames goes back to the one on screen before
+            // Escape means anything else: leaving the grid or the
+            // culling mode with the set still held would leave it
+            // chosen where it cannot be seen.
+            if (e.text == Key.Escape && root.set-count > 1 && !root.sheet-open()) {
+                root.set-collapsed();
+                return accept;
+            }
             // The grid takes the window: its own arrows, its own
             // zoom, and three ways back to the loupe.
             if (root.grid-open && !root.sheet-open()) {
                 if (e.text == Key.Escape || e.text == Key.Return) { root.grid-open = false; return accept; }
-                if (e.text == Key.LeftArrow) { root.grid-step(-1, 0, root.grid-cols); return accept; }
-                if (e.text == Key.RightArrow) { root.grid-step(1, 0, root.grid-cols); return accept; }
-                if (e.text == Key.UpArrow) { root.grid-step(0, -1, root.grid-cols); return accept; }
-                if (e.text == Key.DownArrow) { root.grid-step(0, 1, root.grid-cols); return accept; }
+                if (e.text == Key.LeftArrow) { root.grid-step(-1, 0, root.grid-cols, e.modifiers.shift); return accept; }
+                if (e.text == Key.RightArrow) { root.grid-step(1, 0, root.grid-cols, e.modifiers.shift); return accept; }
+                if (e.text == Key.UpArrow) { root.grid-step(0, -1, root.grid-cols, e.modifiers.shift); return accept; }
+                if (e.text == Key.DownArrow) { root.grid-step(0, 1, root.grid-cols, e.modifiers.shift); return accept; }
                 if (e.text == "+" || e.text == "=") { root.grid-zoom(1); return accept; }
                 if (e.text == "-" || e.text == "_") { root.grid-zoom(-1); return accept; }
             }
@@ -938,6 +971,13 @@ export component App inherits Window {
                 root.open-folder();
                 return accept;
             }
+            // Sync settings: Lightroom's Ctrl+Shift+S. The bare S is
+            // the proof, and Ctrl+S nothing yet, so this one reads
+            // the same to a hand from there.
+            if (e.modifiers.control && e.modifiers.shift && (e.text == "s" || e.text == "S")) {
+                if (root.set-count > 1 && !root.sheet-open()) { root.sync-open-asked(); }
+                return accept;
+            }
             // The filter's text field, two ways in. Ctrl+F is what
             // every application means by find and nothing here bound
             // it; / is the one-key reach for a hand already on the
@@ -973,8 +1013,8 @@ export component App inherits Window {
                 root.frame-turned(e.text == "[" ? -1 : 1);
                 return accept;
             }
-            if (e.text == Key.LeftArrow) { root.step(-1); return accept; }
-            if (e.text == Key.RightArrow) { root.step(1); return accept; }
+            if (e.text == Key.LeftArrow) { root.step(-1, e.modifiers.shift); return accept; }
+            if (e.text == Key.RightArrow) { root.step(1, e.modifiers.shift); return accept; }
             if (e.text == " " && !e.modifiers.control && !root.grid-open) { root.zoom-key(1); return accept; }
             if ((e.text == "z" || e.text == "Z") && !e.modifiers.control && !root.grid-open) { root.zoom-key(3); return accept; }
             if ((e.text == "s" || e.text == "S") && !e.modifiers.control && !root.grid-open) {
@@ -1043,6 +1083,8 @@ export component App inherits Window {
                         preset-deleted(a) => { root.preset-deleted(a); }
                         preset-import => { root.preset-import(); }
                         preset-save-open => { root.preset-save-open(); }
+                        set-count: root.set-count;
+                        sync-open-asked => { root.sync-open-asked(); }
                     }
                     // The snapshots: whole states kept by name. A
                     // click restores one as a step; a double-click
@@ -1646,7 +1688,7 @@ export component App inherits Window {
             visible: !root.panels-hidden;
             thumbs: root.thumbs;
             selected <=> root.selected;
-            select(a) => { root.select(a); }
+            frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
             meta-stars: root.meta-stars;
             strip-item: root.strip-item;
             strip-pitch: root.strip-pitch;
@@ -1665,7 +1707,8 @@ export component App inherits Window {
     if root.grid-open: GridSheet {
         thumbs: root.thumbs;
         selected <=> root.selected;
-        select(a) => { root.select(a); }
+        frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
+        set-count: root.set-count;
         meta-stars: root.meta-stars;
         grid-open <=> root.grid-open;
         grid-cell <=> root.grid-cell;
@@ -1728,6 +1771,17 @@ export component App inherits Window {
         preset-section-on <=> root.preset-section-on;
         preset-section-toggled(a, b) => { root.preset-section-toggled(a, b); }
         preset-saved => { root.preset-saved(); }
+    }
+
+    // The sync sheet: the preset sheet's twin, over everything, until
+    // applied or left.
+    if root.sync-open: SyncSheet {
+        sync-open <=> root.sync-open;
+        sync-text: root.sync-text;
+        sync-section-names <=> root.sync-section-names;
+        sync-section-on <=> root.sync-section-on;
+        sync-section-toggled(a, b) => { root.sync-section-toggled(a, b); }
+        sync-applied => { root.sync-applied(); }
     }
 
     // The export sheet, over everything, until a choice is made.

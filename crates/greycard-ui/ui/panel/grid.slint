@@ -9,7 +9,11 @@ import { FilterBar } from "filter.slint";
 export component GridSheet inherits Rectangle {
     in property <[Thumb]> thumbs;
     in-out property <int> selected;
-    callback select(int);
+    /// A click on a frame, with Ctrl and Shift as they were held
+    /// when it was pressed.
+    callback frame-clicked(int, bool, bool);
+    /// How many frames the selection holds, for the header.
+    in property <int> set-count;
     in property <int> meta-stars;
     in-out property <bool> grid-open;
     in-out property <length> grid-cell;
@@ -90,7 +94,10 @@ export component GridSheet inherits Rectangle {
                     }
                     Text {
                         text: root.selected >= 0 && root.selected < root.thumbs.length
-                            ? root.thumbs[root.selected].name : "";
+                            ? root.thumbs[root.selected].name
+                                + (root.set-count > 1 ? " and " + (root.set-count - 1)
+                                    + (root.set-count == 2 ? " other" : " others") : "")
+                            : "";
                         color: Theme.text;
                         font-size: Theme.font-sm;
                         vertical-alignment: center;
@@ -167,15 +174,18 @@ export component GridSheet inherits Rectangle {
                     return accept;
                 }
                 for t[i] in root.thumbs: Rectangle {
+                    // As the strip has it: the set on the
+                    // selection's ground, the current frame ringed.
                     property <bool> on: i == root.selected;
+                    property <bool> in-set: on || t.chosen;
                     x: root.grid-left + mod(i, root.grid-cols) * root.grid-pitch;
                     y: root.grid-pad + floor(i / root.grid-cols) * root.grid-row;
                     width: root.grid-cell;
                     height: root.grid-cell + root.grid-label;
                     border-radius: Theme.radius-md;
-                    background: on ? Theme.selection : (ct.has-hover ? Theme.hover : transparent);
-                    border-width: on ? 2px : 0;
-                    border-color: Theme.accent;
+                    background: in-set ? Theme.selection : (ct.has-hover ? Theme.hover : transparent);
+                    border-width: on ? 2px : (in-set ? 1px : 0);
+                    border-color: on ? Theme.accent : Theme.accent-muted;
                     animate background { duration: Theme.quick; }
                     Image {
                         x: Theme.space-1;
@@ -190,7 +200,7 @@ export component GridSheet inherits Rectangle {
                         width: 100%;
                         height: root.grid-label;
                         text: t.name;
-                        color: on ? Theme.text : Theme.text-secondary;
+                        color: in-set ? Theme.text : Theme.text-secondary;
                         font-size: Theme.font-xs;
                         horizontal-alignment: center;
                         vertical-alignment: center;
@@ -235,9 +245,19 @@ export component GridSheet inherits Rectangle {
                         // picture.
                         glyph: clamp(root.grid-cell / 16, 9px, 18px);
                     }
+                    // `clicked` carries no modifiers, so the press
+                    // says which were held and the click reads them.
                     ct := TouchArea {
+                        property <bool> ctrl;
+                        property <bool> shift;
                         mouse-cursor: MouseCursor.pointer;
-                        clicked => { root.focus-keys(); root.select(i); }
+                        pointer-event(e) => {
+                            if (e.kind == PointerEventKind.down) {
+                                self.ctrl = e.modifiers.control;
+                                self.shift = e.modifiers.shift;
+                            }
+                        }
+                        clicked => { root.focus-keys(); root.frame-clicked(i, self.ctrl, self.shift); }
                         // The frame under the pointer, in the loupe.
                         double-clicked => { root.grid-open = false; }
                     }

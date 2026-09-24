@@ -8,7 +8,9 @@ import { ThumbBadges } from "../controls.slint";
 export component Filmstrip inherits Rectangle {
     in property <[Thumb]> thumbs;
     in-out property <int> selected;
-    callback select(int);
+    /// A click on a frame, with Ctrl and Shift as they were held
+    /// when it was pressed.
+    callback frame-clicked(int, bool, bool);
     in property <int> meta-stars;
     in property <length> strip-item;
     in property <length> strip-pitch;
@@ -61,12 +63,16 @@ export component Filmstrip inherits Rectangle {
                 spacing: root.strip-pitch - root.strip-item;
                 alignment: start;
                 for t[i] in root.thumbs: Rectangle {
+                    // The current frame, and the set it is one of:
+                    // every frame in the set wears the selection's
+                    // ground, the current one its ring as well.
                     property <bool> on: i == root.selected;
+                    property <bool> in-set: on || t.chosen;
                     width: root.strip-item;
                     border-radius: Theme.radius-md;
-                    background: on ? Theme.selection : (tt.has-hover ? Theme.hover : transparent);
-                    border-width: on ? 1px : 0;
-                    border-color: Theme.accent-muted;
+                    background: in-set ? Theme.selection : (tt.has-hover ? Theme.hover : transparent);
+                    border-width: on ? 2px : (in-set ? 1px : 0);
+                    border-color: on ? Theme.accent : Theme.accent-muted;
                     animate background { duration: Theme.quick; }
                     VerticalLayout {
                         padding: Theme.space-2;
@@ -78,7 +84,7 @@ export component Filmstrip inherits Rectangle {
                         }
                         Text {
                             text: t.name;
-                            color: on ? Theme.text : Theme.text-secondary;
+                            color: in-set ? Theme.text : Theme.text-secondary;
                             font-size: Theme.font-xs;
                             horizontal-alignment: center;
                             overflow: elide;
@@ -96,9 +102,19 @@ export component Filmstrip inherits Rectangle {
                         label: t.label;
                         stars: root.meta-stars;
                     }
+                    // `clicked` carries no modifiers, so the press
+                    // says which were held and the click reads them.
                     tt := TouchArea {
+                        property <bool> ctrl;
+                        property <bool> shift;
                         mouse-cursor: MouseCursor.pointer;
-                        clicked => { root.focus-keys(); root.select(i); }
+                        pointer-event(e) => {
+                            if (e.kind == PointerEventKind.down) {
+                                self.ctrl = e.modifiers.control;
+                                self.shift = e.modifiers.shift;
+                            }
+                        }
+                        clicked => { root.focus-keys(); root.frame-clicked(i, self.ctrl, self.shift); }
                     }
                 }
             }

@@ -29,6 +29,7 @@ mod placeholder;
 mod render;
 mod report;
 mod scope;
+mod selection;
 mod settings;
 #[cfg(test)]
 pub(crate) mod testing;
@@ -282,6 +283,11 @@ enum Fetch {
 pub(crate) struct State {
     pub(crate) files: Vec<PathBuf>,
     pub(crate) current: Option<usize>,
+    /// The browser's selection, as files: the current frame and
+    /// whatever else Ctrl, Shift or Shift and an arrow put beside it.
+    /// Read through `selection::frames`, which puts the current frame
+    /// back in whatever this holds.
+    pub(crate) picked: Vec<usize>,
     /// The edit the worker is developing, or last developed.
     pub(crate) edit: Edit,
     /// Every file's sidecar: its current edit and history.
@@ -530,6 +536,8 @@ pub(crate) struct State {
     pub(crate) preset_store: Option<preset::Store>,
     /// The save sheet's choice of sections, in `Section::ALL`'s order.
     pub(crate) preset_sections: Rc<VecModel<bool>>,
+    /// The sync sheet's, the same way.
+    pub(crate) sync_sections: Rc<VecModel<bool>>,
     /// A state shown in the viewport in place of the panel's while a
     /// history or snapshot row is under the pointer, and the status
     /// line it covers meanwhile.
@@ -569,6 +577,7 @@ impl State {
         Self {
             files,
             current: None,
+            picked: Vec::new(),
             edit: Edit::default(),
             sidecars: vec![Sidecar::default(); count],
             seed_blend: vec![false; count],
@@ -677,6 +686,7 @@ impl State {
             presets: Vec::new(),
             preset_store: None,
             preset_sections: Rc::new(VecModel::from(vec![false; Section::ALL.len()])),
+            sync_sections: Rc::new(VecModel::from(vec![false; Section::ALL.len()])),
             peek: None,
             held: None,
             status_kept: None,
@@ -709,6 +719,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::history::install(app, &state, &worker);
     panel::retouch::install(app, &state, &worker);
     panel::prefs::install(app, &state, &worker);
+    panel::sync::install(app, &state, &worker);
     report::install(app, &state);
 
     // Deliveries from the worker need the state and the worker too.

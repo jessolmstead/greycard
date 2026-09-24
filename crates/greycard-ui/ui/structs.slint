@@ -16,6 +16,9 @@ export struct Thumb {
     rating: int,
     flag: int,
     label: int,
+    /// In the selection's set. The current frame, the one the
+    /// viewport shows, is `selected`'s row and is always in it.
+    chosen: bool,
 }
 
 /// A box drawn for an object, on the view, logical pixels.
