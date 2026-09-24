@@ -272,9 +272,84 @@ pub(crate) fn sync_display(
 /// develop does not: that develop is on the worker's GPU queue this
 /// moment, and a process that exits in the middle of one dies in the
 /// driver rather than at its own hand.
+/// What `--sheet` or `--tool` puts on screen before a snapshot. No
+/// flag and no key reaches a sheet or a Crop-tab tool, so a capture
+/// of one asks for it here, once the picture is up; the split of
+/// `app.slint` was checked with these.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Shown {
+    /// The export sheet.
+    Export,
+    /// The preset sheet, as Save preset opens it.
+    Preset,
+    /// The model sheet, with sample text where the download's goes.
+    Fetch,
+    /// The crop tool, on the Crop tab.
+    Crop,
+    /// The level tool, on the Crop tab.
+    Level,
+    /// A vertical perspective guide in hand, on the Crop tab.
+    Guide,
+}
+
+impl Shown {
+    /// `--sheet`'s names.
+    pub(crate) fn sheet(name: &str) -> Result<Self, String> {
+        match name {
+            "export" => Ok(Self::Export),
+            "preset" => Ok(Self::Preset),
+            "fetch" => Ok(Self::Fetch),
+            _ => Err(format!("want export, preset or fetch, not {name}")),
+        }
+    }
+
+    /// `--tool`'s names.
+    pub(crate) fn tool(name: &str) -> Result<Self, String> {
+        match name {
+            "crop" => Ok(Self::Crop),
+            "level" => Ok(Self::Level),
+            "guide" => Ok(Self::Guide),
+            _ => Err(format!("want crop, level or guide, not {name}")),
+        }
+    }
+
+    /// Put it on screen: what the key or the button would have done.
+    /// A tool brings the Crop tab with it.
+    pub(crate) fn open(self, app: &App) {
+        match self {
+            Self::Export => app.set_export_open(true),
+            Self::Preset => app.invoke_preset_save_open(),
+            Self::Fetch => {
+                app.set_fetch_title("Download the Subject model?".into());
+                app.set_fetch_text(
+                    "312 MB from the model registry.\nLicense: Apache-2.0.\nKept in the models folder."
+                        .into(),
+                );
+                app.set_fetch_note("Sample text: this sheet was opened for a snapshot.".into());
+                app.set_fetch_open(true);
+            }
+            Self::Crop => {
+                app.set_panel_tab("Crop".into());
+                app.set_crop_mode(true);
+                app.invoke_crop_toggled();
+            }
+            Self::Level => {
+                app.set_panel_tab("Crop".into());
+                app.set_level_mode(true);
+            }
+            Self::Guide => {
+                app.set_panel_tab("Crop".into());
+                app.set_guide_mode("Vertical".into());
+            }
+        }
+        app.window().request_redraw();
+    }
+}
+
 pub(crate) fn schedule_snapshot(
     snapshot: &mut Option<PathBuf>,
     panel_scroll: &mut Option<f32>,
+    shown: &mut Option<Shown>,
     app: &App,
     state: &Rc<RefCell<State>>,
     ready: bool,
@@ -286,6 +361,7 @@ pub(crate) fn schedule_snapshot(
     let app_weak = app.as_weak();
     let state = state.clone();
     let scroll = panel_scroll.take();
+    let shown = shown.take();
     let capture = move || {
         if let Some(app) = app_weak.upgrade() {
             let wrote = match app.window().take_snapshot() {
@@ -327,6 +403,19 @@ pub(crate) fn schedule_snapshot(
         }
     };
     let moment = std::time::Duration::from_millis(300);
+    // A sheet or a tool asked for is opened after the scroll and given
+    // longer to settle: a sheet fades in.
+    let opened = std::time::Duration::from_millis(1500);
+    let open_then = {
+        let app_weak = app.as_weak();
+        move || match (shown, app_weak.upgrade()) {
+            (Some(what), Some(app)) => {
+                what.open(&app);
+                slint::Timer::single_shot(opened, capture);
+            }
+            _ => capture(),
+        }
+    };
     let app_weak = app.as_weak();
     slint::Timer::single_shot(moment, move || match scroll {
         Some(px) => {
@@ -334,9 +423,9 @@ pub(crate) fn schedule_snapshot(
                 app.set_panel_scroll(-px);
                 app.window().request_redraw();
             }
-            slint::Timer::single_shot(moment, capture);
+            slint::Timer::single_shot(moment, open_then);
         }
-        None => capture(),
+        None => open_then(),
     });
 }
 
@@ -952,5 +1041,36 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             st.center = (iw as f32 / 2.0, ih as f32 / 2.0);
             app.window().request_redraw();
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_sheet_or_a_tool_asked_for_is_on_screen() {
+        let app = crate::testing::window(1);
+        let (_state, _worker) = crate::testing::retouch_state(&app);
+        assert_eq!(Shown::sheet("export"), Ok(Shown::Export));
+        assert_eq!(Shown::tool("guide"), Ok(Shown::Guide));
+        assert!(Shown::sheet("guide").is_err());
+        assert!(Shown::tool("export").is_err());
+
+        Shown::Export.open(&app);
+        assert!(app.get_export_open());
+        Shown::Fetch.open(&app);
+        assert!(app.get_fetch_open());
+        assert!(!app.get_fetch_title().is_empty());
+
+        // A tool brings the Crop tab with it.
+        assert_eq!(app.get_panel_tab(), "Develop");
+        Shown::Crop.open(&app);
+        assert_eq!(app.get_panel_tab(), "Crop");
+        assert!(app.get_crop_mode());
+        Shown::Level.open(&app);
+        assert!(app.get_level_mode());
+        Shown::Guide.open(&app);
+        assert_eq!(app.get_guide_mode(), "Vertical");
     }
 }

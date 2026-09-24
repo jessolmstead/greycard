@@ -920,6 +920,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     schedule_snapshot(
         &mut st.snapshot,
         &mut st.panel_scroll,
+        &mut st.snapshot_shown,
         app,
         state,
         ready && (standing_in || !holding),

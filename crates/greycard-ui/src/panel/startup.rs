@@ -277,6 +277,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         screenshot: cli.screenshot.clone(),
         snapshot: cli.snapshot.clone(),
         panel_scroll: cli.panel_scroll,
+        snapshot_shown: cli.sheet.or(cli.tool),
         export_then_quit: cli.export.clone(),
         presets: preset_store.as_ref().map(|s| s.list()).unwrap_or_default(),
         preset_store,
@@ -873,6 +874,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     schedule_snapshot(
                         &mut st.snapshot,
                         &mut st.panel_scroll,
+                        &mut st.snapshot_shown,
                         &app,
                         &state,
                         ready,

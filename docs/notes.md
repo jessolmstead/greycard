@@ -15011,3 +15011,12 @@ by the TINT and LENS sections only; it could live in `theme.slint`
 beside the other tokens, as could `band-colors` and `dull`. And the
 tab bar's handler in `App` (put the crop down away from Crop) holds a
 decision that belongs to Rust with the tab change it already hears.
+
+**Landed after, the same night.** The scratch hook became two flags:
+`--sheet export|preset|fetch` and `--tool crop|level|guide`, opened
+after the panel scroll and given longer to settle before the capture,
+a tool bringing the Crop tab with it, the model sheet with sample text
+in place of a download's. `panel::viewport::Shown` holds them with a
+headless test; a snapshot of every sheet and tool no longer needs a
+patched second binary.
+

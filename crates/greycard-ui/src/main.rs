@@ -170,6 +170,14 @@ struct Cli {
     /// a screenshot of its shape on the Retouch tab
     #[arg(long)]
     patch: Option<usize>,
+    /// Open this sheet once the picture is up, for a snapshot:
+    /// export, preset or fetch (the model sheet, with sample text)
+    #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
+    sheet: Option<panel::viewport::Shown>,
+    /// Put this Crop-tab tool in hand once the picture is up, for a
+    /// snapshot: crop, level or guide
+    #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::tool)]
+    tool: Option<panel::viewport::Shown>,
     /// Paint the capture sharpening's mask over the picture, for a
     /// screenshot
     #[arg(long)]
@@ -489,6 +497,8 @@ pub(crate) struct State {
     /// How far down the panel is scrolled before the snapshot,
     /// logical pixels.
     pub(crate) panel_scroll: Option<f32>,
+    /// A sheet or a tool put on screen before the snapshot.
+    pub(crate) snapshot_shown: Option<panel::viewport::Shown>,
     /// The displays colord knows, primary first, for the panel's
     /// "System" choice.
     pub(crate) monitors: Vec<display::Monitor>,
@@ -646,6 +656,7 @@ impl State {
             screenshot: None,
             snapshot: None,
             panel_scroll: None,
+            snapshot_shown: None,
             monitors: Vec::new(),
             lut_for: None,
             encoded_lut_for: None,
