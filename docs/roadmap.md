@@ -76,6 +76,11 @@ sliders feel like the ones people learned on.
       they come; with the placement, a "move this folder's sidecars"
       action with the count, offered when the switch flips with a
       folder open. After the `app.slint` split
+- [ ] A save counter in the sidecar, so `find` chooses between a
+      beside and a folder copy by what was saved last and not by the
+      files' times, which a copy tool or two clocks can get wrong;
+      the time stays the fallback for sidecars written before the
+      field. The wrong choice loses an edit at the next save (§153)
 
 ## v0.3.0: speed
 
@@ -252,8 +257,6 @@ clears or a tester asks for it.
 - [ ] `strip = true` under `[profile.release]`: the released
       greycard-ui binary is 110MB unstripped (109.5MB with a full
       symtab), 82MB stripped, for no behavior change
-- [ ] Split `app.slint` the same way, 4,436 lines into one file a
-      panel section (§130)
 
 
 ### Engine

@@ -23,6 +23,11 @@ note a first tester reads.
 - A plain `cargo test` no longer prints ERROR lines from the UI
   crate's tests: the log module's test had installed a terminal sink
   for the whole test binary (2026-09-23).
+- `app.slint` split into one file a panel section under `ui/panel/`,
+  the window keeping every property and callback so the Rust side is
+  untouched; 4,949 lines down to 1,687, verified by whole-window
+  captures against the previous build and a differential event fuzz,
+  no behavior change (§154, 2026-09-23).
 
 ## 0.1.1, 2026-09-22
 
