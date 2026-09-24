@@ -550,6 +550,10 @@ pub(crate) struct State {
     pub(crate) export_then_quit: Option<PathBuf>,
     /// The export presets, as the settings file keeps them.
     pub(crate) export_presets: Vec<sheet::ExportPreset>,
+    /// Where a preset saved, chosen or deleted is written at once;
+    /// none for a snapshot or a batch run, which leave the user's
+    /// settings alone.
+    pub(crate) settings_file: Option<PathBuf>,
     /// The presets, as the store lists them, and the store.
     pub(crate) presets: Vec<Entry>,
     pub(crate) preset_store: Option<preset::Store>,
@@ -707,6 +711,7 @@ impl State {
             encoded_lut_for: None,
             export_then_quit: None,
             export_presets: Vec::new(),
+            settings_file: None,
             presets: Vec::new(),
             preset_store: None,
             preset_sections: Rc::new(VecModel::from(vec![false; Section::ALL.len()])),

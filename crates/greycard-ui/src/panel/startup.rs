@@ -268,6 +268,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         snapshot_shown: cli.sheet.or(cli.tool),
         export_then_quit: cli.export.clone(),
         export_presets: remembered.export_presets.clone(),
+        settings_file: if cli.snapshot.is_some() || cli.screenshot.is_some() || cli.export.is_some()
+        {
+            None
+        } else {
+            settings::path()
+        },
         presets: preset_store.as_ref().map(|s| s.list()).unwrap_or_default(),
         preset_store,
         batch: cli.snapshot.is_some() || cli.screenshot.is_some() || cli.export.is_some(),
@@ -1127,21 +1133,7 @@ pub(crate) fn opening_sheet(
 ) -> Result<(sheet::Sheet, Option<String>)> {
     let (mut s, preset) = match &cli.export_preset {
         Some(name) => {
-            let Some(p) = sheet::find(&remembered.export_presets, name) else {
-                let known: Vec<&str> = remembered
-                    .export_presets
-                    .iter()
-                    .map(|p| p.name.as_str())
-                    .collect();
-                anyhow::bail!(
-                    "no export preset {name:?}; the settings have {}",
-                    if known.is_empty() {
-                        "none".to_string()
-                    } else {
-                        known.join(", ")
-                    }
-                );
-            };
+            let p = sheet::lookup(&remembered.export_presets, name)?;
             (p.sheet.clone(), Some(p.name.clone()))
         }
         None => (

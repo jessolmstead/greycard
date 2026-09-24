@@ -41,6 +41,8 @@ webbrowser = "1.2"
 # finds its own, and rasterized. Both already in the tree.
 fontique = "0.11"
 ab_glyph = "0.2"
+# A character's script, for the font fallback. Already in the tree.
+unicode-script = "0.5"
 
 [build-dependencies]
 slint-build = "1.18"

@@ -89,13 +89,14 @@ pub(crate) fn show_sheet(app: &App, s: &Sheet) {
     app.set_export_mark_opacity(s.mark_opacity);
 }
 
-/// The picker's word for no preset. A preset cannot take it as a name.
-pub(crate) const NO_PRESET: &str = "None";
+/// The picker's word for no preset. A preset cannot take it as a
+/// name, in any case.
+pub(crate) const NO_PRESET: &str = sheet::NO_PRESET;
 
 /// The preset the panel has chosen, none for `NO_PRESET`.
 pub(crate) fn chosen_preset(app: &App) -> Option<String> {
     let name = app.get_export_preset();
-    (!name.is_empty() && name != NO_PRESET).then(|| name.to_string())
+    (!name.is_empty() && !sheet::reserved(&name)).then(|| name.to_string())
 }
 
 /// The picker's entries and the one chosen, and whether the sheet has
@@ -143,16 +144,17 @@ pub(crate) fn read_on_exists(app: &App) -> export::OnExists {
 
 /// Keep the presets in the settings file now, not at the window's
 /// close: a preset is worth keeping even from a session that ends
-/// badly. Not from a snapshot or a batch run.
+/// badly. Not from a snapshot or a batch run, which have no file to
+/// write (`State::settings_file`).
 fn keep_presets(st: &State, app: &App) {
-    if st.batch {
+    let Some(path) = &st.settings_file else {
         return;
-    }
-    let mut settings = settings::Settings::load();
+    };
+    let mut settings = settings::Settings::load_from(path);
     settings.export_presets = st.export_presets.clone();
     settings.export_preset = chosen_preset(app).unwrap_or_default();
     settings.export = read_sheet(app);
-    settings.save();
+    settings.save_to(path);
 }
 
 /// A result from the worker, on the UI thread.
@@ -734,7 +736,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             let name = name.trim();
-            if name.is_empty() || name == NO_PRESET {
+            if name.is_empty() || sheet::reserved(name) {
+                app.set_status(format!("{NO_PRESET} is the picker's; choose another name").into());
                 return;
             }
             let mut st = state.borrow_mut();
@@ -744,6 +747,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 keep_presets(&st, &app);
                 app.set_status(format!("export preset {name} saved").into());
             }
+        });
+    }
+    // Whether Save as would replace one: the button says so.
+    {
+        let state = state.clone();
+        app.on_export_preset_exists(move |name| {
+            sheet::exists(&state.borrow().export_presets, &name)
         });
     }
     // Delete the preset chosen; the sheet keeps its choices.
@@ -815,6 +825,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 (st.files[c].clone(), read_edit(&app, &st.edit, st.target))
             };
             let settings = read_export_settings(&app);
+            // A mark asked for with nothing to draw: say so and keep
+            // the sheet up, rather than write the picture unmarked.
+            if let Some(Err(e)) = settings.watermark.as_ref().map(|m| m.check()) {
+                app.set_status(format!("not exported: {e:#}").into());
+                app.set_export_open(true);
+                return;
+            }
             let on_exists = read_on_exists(&app);
             let suggested = raw.with_extension(settings.format.extension());
             let weak = app.as_weak();
@@ -914,5 +931,73 @@ mod tests {
         assert_eq!(state.borrow().export_presets.len(), 1);
         assert_eq!(app.get_export_preset(), NO_PRESET);
         assert_eq!(app.get_export_quality(), 70.0);
+        // Nothing was written: the state has no settings file.
+        assert!(state.borrow().settings_file.is_none());
+    }
+
+    #[test]
+    fn a_pick_a_save_and_a_delete_are_written_at_once() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let dir = std::env::temp_dir().join(format!("greycard-keep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let file = dir.join("greycard").join("settings.json");
+        // What else the file holds is kept.
+        settings::Settings {
+            scope: "Parade".into(),
+            ..settings::Settings::default()
+        }
+        .save_to(&file);
+        state.borrow_mut().settings_file = Some(file.clone());
+        let read = || settings::Settings::load_from(&file);
+
+        app.set_export_size("1024".into());
+        app.invoke_export_preset_saved("Small".into());
+        let on_disk = read();
+        assert_eq!(on_disk.export_presets.len(), 1);
+        assert_eq!(on_disk.export_presets[0].name, "Small");
+        assert_eq!(on_disk.export_presets[0].sheet.size, "1024");
+        assert_eq!(on_disk.export_preset, "Small");
+        assert_eq!(on_disk.scope, "Parade");
+
+        // Another saved, then the first picked back: the pick is kept.
+        app.set_export_size("2048".into());
+        app.invoke_export_preset_saved("Web".into());
+        assert_eq!(read().export_presets.len(), 2);
+        app.invoke_export_preset_chosen("Small".into());
+        let on_disk = read();
+        assert_eq!(on_disk.export_preset, "Small");
+        assert_eq!(on_disk.export.size, "1024");
+
+        // Deleted: gone from the file, nothing chosen.
+        app.invoke_export_preset_deleted();
+        let on_disk = read();
+        assert_eq!(on_disk.export_presets.len(), 1);
+        assert_eq!(on_disk.export_presets[0].name, "Web");
+        assert_eq!(on_disk.export_preset, "");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_empty_mark_keeps_the_sheet_up_and_says_why() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        state.borrow_mut().current = Some(0);
+        app.set_export_mark(sheet::MARK_IMAGE.into());
+        app.set_export_mark_image("".into());
+        app.set_export_open(false);
+        app.invoke_export();
+        assert!(app.get_export_open());
+        assert!(app.get_status().contains("no PNG"), "{}", app.get_status());
+        app.set_export_mark(sheet::MARK_TEXT.into());
+        app.set_export_mark_text("  ".into());
+        app.set_export_open(false);
+        app.invoke_export();
+        assert!(app.get_export_open());
+        assert!(
+            app.get_status().contains("text is empty"),
+            "{}",
+            app.get_status()
+        );
     }
 }

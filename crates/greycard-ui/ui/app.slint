@@ -865,6 +865,7 @@ export component App inherits Window {
     callback export-preset-chosen(string);
     callback export-preset-saved(string);
     callback export-preset-deleted();
+    pure callback export-preset-exists(string) -> bool;
     /// Any of the sheet's choices moved.
     callback export-sheet-changed();
     changed export-format => { root.export-sheet-changed(); }
@@ -1875,6 +1876,7 @@ export component App inherits Window {
         export-preset-chosen(n) => { root.export-preset-chosen(n); }
         export-preset-saved(n) => { root.export-preset-saved(n); }
         export-preset-deleted => { root.export-preset-deleted(); }
+        export-preset-exists(n) => { return root.export-preset-exists(n); }
     }
 
     // The settings sheet, over everything, until closed.

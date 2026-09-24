@@ -95,7 +95,9 @@ impl Default for Sheet {
 
 impl Sheet {
     /// The export these choices ask for. A name from another version
-    /// is the default's; a mark with nothing to draw is no mark.
+    /// is the default's. A text or image mark with nothing to draw is
+    /// still asked for, so the export refuses it rather than write the
+    /// picture unmarked (`Mark::check`).
     pub fn settings(&self) -> export::Settings {
         let defaults = export::Settings::default();
         export::Settings {
@@ -117,11 +119,11 @@ impl Sheet {
 
     fn watermark(&self) -> Option<Mark> {
         let kind = match self.mark.as_str() {
-            MARK_TEXT if !self.mark_text.trim().is_empty() => Kind::Text {
+            MARK_TEXT => Kind::Text {
                 text: self.mark_text.trim().to_string(),
                 white: self.mark_color != "Black",
             },
-            MARK_IMAGE if !self.mark_image.trim().is_empty() => Kind::Image {
+            MARK_IMAGE => Kind::Image {
                 path: self.mark_image.trim().into(),
             },
             _ => return None,
@@ -187,29 +189,88 @@ pub struct ExportPreset {
     pub sheet: Sheet,
 }
 
-/// The preset of that name: exactly, else ignoring case, as a name
-/// typed on the command line may be.
-pub fn find<'a>(presets: &'a [ExportPreset], name: &str) -> Option<&'a ExportPreset> {
-    let name = name.trim();
-    presets
-        .iter()
-        .find(|p| p.name == name)
-        .or_else(|| presets.iter().find(|p| p.name.eq_ignore_ascii_case(name)))
+/// The picker's entry for no preset. No preset can take the name, in
+/// any case.
+pub const NO_PRESET: &str = "None";
+
+/// Whether a name is the picker's own and not a preset's.
+pub fn reserved(name: &str) -> bool {
+    name.trim().eq_ignore_ascii_case(NO_PRESET)
 }
 
-/// Keep `sheet` as `name`: in the place of one of that name, else at
-/// the end. The name is trimmed; an empty one keeps nothing.
+/// The preset of that name: exactly, else the one preset whose name
+/// matches ignoring case, as a name typed on the command line may be.
+/// Two that match only ignoring case are an error, not a guess; the
+/// picker's None is never a preset.
+pub fn lookup<'a>(presets: &'a [ExportPreset], name: &str) -> anyhow::Result<&'a ExportPreset> {
+    let name = name.trim();
+    let usable = || presets.iter().filter(|p| !reserved(&p.name));
+    if let Some(p) = usable().find(|p| p.name == name) {
+        return Ok(p);
+    }
+    let matches: Vec<&ExportPreset> = usable()
+        .filter(|p| p.name.eq_ignore_ascii_case(name))
+        .collect();
+    match matches.as_slice() {
+        [one] => Ok(one),
+        [] => {
+            let known: Vec<&str> = usable().map(|p| p.name.as_str()).collect();
+            anyhow::bail!(
+                "no export preset {name:?}; the settings have {}",
+                if known.is_empty() {
+                    "none".to_string()
+                } else {
+                    known.join(", ")
+                }
+            )
+        }
+        many => {
+            let names: Vec<&str> = many.iter().map(|p| p.name.as_str()).collect();
+            anyhow::bail!(
+                "export preset {name:?} could be any of {}; give the name as written",
+                names.join(", ")
+            )
+        }
+    }
+}
+
+/// `lookup` for the sheet, which only needs to know.
+pub fn find<'a>(presets: &'a [ExportPreset], name: &str) -> Option<&'a ExportPreset> {
+    lookup(presets, name).ok()
+}
+
+/// Whether saving as `name` would replace a preset: one of that name
+/// in any case.
+pub fn exists(presets: &[ExportPreset], name: &str) -> bool {
+    let name = name.trim();
+    presets.iter().any(|p| p.name.eq_ignore_ascii_case(name))
+}
+
+/// Keep `sheet` as `name`: in the place of one of that name in any
+/// case, which takes the name as now typed, else at the end. The name
+/// is trimmed; an empty one, or the picker's None, keeps nothing.
 pub fn save_as(presets: &mut Vec<ExportPreset>, name: &str, sheet: &Sheet) -> bool {
     let name = name.trim();
-    if name.is_empty() {
+    if name.is_empty() || reserved(name) {
         return false;
     }
     let preset = ExportPreset {
         name: name.to_string(),
         sheet: sheet.clone(),
     };
-    match presets.iter_mut().find(|p| p.name == name) {
-        Some(p) => *p = preset,
+    match presets
+        .iter()
+        .position(|p| p.name.eq_ignore_ascii_case(name))
+    {
+        Some(i) => {
+            presets[i] = preset;
+            // Any other left over in another case from before goes.
+            let mut k = 0;
+            presets.retain(|p| {
+                k += 1;
+                k - 1 == i || !p.name.eq_ignore_ascii_case(name)
+            });
+        }
         None => presets.push(preset),
     }
     true
@@ -259,12 +320,30 @@ mod tests {
         );
         assert_eq!(mark.position, Position::BottomRight);
         assert!((mark.size - 0.2).abs() < 1e-6 && (mark.opacity - 0.5).abs() < 1e-6);
-        // A mark with nothing to draw is none.
+        // A mark with nothing to draw is still asked for, and refused.
         let empty = Sheet {
             mark_text: "  ".into(),
             ..web()
         };
-        assert!(empty.settings().watermark.is_none());
+        let asked = empty.settings().watermark.expect("still a mark");
+        assert!(asked.check().is_err());
+        let no_png = Sheet {
+            mark: MARK_IMAGE.into(),
+            mark_image: String::new(),
+            ..web()
+        };
+        let err = no_png.settings().watermark.unwrap().check().unwrap_err();
+        assert!(err.to_string().contains("PNG"), "{err}");
+        // Off is no mark.
+        assert!(
+            Sheet {
+                mark: MARK_OFF.into(),
+                ..web()
+            }
+            .settings()
+            .watermark
+            .is_none()
+        );
         let image = Sheet {
             mark: MARK_IMAGE.into(),
             mark_image: "/x/logo.png".into(),
@@ -348,8 +427,41 @@ mod tests {
             Some(&"Web".to_string())
         );
         assert!(find(&list, "Nope").is_none());
-        assert!(delete(&mut list, "Web"));
-        assert!(!delete(&mut list, "Web"));
+        // Another case is the same preset: replaced, renamed.
+        assert!(exists(&list, "WEB"));
+        assert!(save_as(&mut list, "WEB", &web()));
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].name, "WEB");
+        assert!(delete(&mut list, "WEB"));
+        assert!(!delete(&mut list, "WEB"));
         assert_eq!(list.len(), 1);
+        // The picker's None is no name, in any case.
+        for none in ["None", "none", " NONE "] {
+            assert!(!save_as(&mut list, none, &web()));
+        }
+        assert_eq!(list.len(), 1);
+    }
+
+    #[test]
+    fn a_name_is_found_once_or_not_at_all() {
+        let named = |n: &str| ExportPreset {
+            name: n.into(),
+            sheet: Sheet::default(),
+        };
+        // An older file with a preset called none, and two that differ
+        // only in case.
+        let list = vec![named("none"), named("Web"), named("web"), named("Print")];
+        assert!(find(&list, "None").is_none());
+        assert!(find(&list, "none").is_none());
+        assert_eq!(find(&list, "Web").unwrap().name, "Web");
+        assert_eq!(find(&list, "web").unwrap().name, "web");
+        assert_eq!(find(&list, "print").unwrap().name, "Print");
+        let err = lookup(&list, "WEB").unwrap_err().to_string();
+        assert!(err.contains("Web, web"), "{err}");
+        let err = lookup(&list, "Nope").unwrap_err().to_string();
+        assert!(
+            err.contains("Web, web, Print") && !err.contains("none,"),
+            "{err}"
+        );
     }
 }

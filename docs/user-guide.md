@@ -53,7 +53,12 @@ unpack it.
 The export sheet can lay a **watermark** over the export: a line of
 text in white or black, or a PNG with transparency. Its size and margin
 are a share of the export's long side, so it looks the same on a 2048 px
-export as on a full-size one. The **Metadata** row controls what the file
+export as on a full-size one; on a narrow crop it shrinks to stay
+inside its margins. Text is set in the system's sans-serif, with the
+system's fallback font for other scripts. If a character has no font
+that can draw it (a color emoji, for one), the export stops and names
+that character. A watermark with no text or no PNG also stops the
+export instead of writing an unmarked file. The **Metadata** row controls what the file
 carries: everything, everything except your edit, or nothing but the
 color profile.
 

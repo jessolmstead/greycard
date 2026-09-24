@@ -3,7 +3,7 @@
 // and the watermark laid over it, kept by name as presets; over
 // everything until a choice is made.
 
-import { ComboBox, LineEdit } from "std-widgets.slint";
+import { ComboBox, LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { EditSlider, Toggle, PanelButton, Segmented } from "../controls.slint";
 
@@ -86,6 +86,9 @@ export component ExportSheet inherits Rectangle {
     callback export-preset-chosen(string);
     callback export-preset-saved(string);
     callback export-preset-deleted();
+    /// Whether a preset of that name, in any case, is there already:
+    /// Save then says Replace.
+    pure callback export-preset-exists(string) -> bool;
     property <bool> naming: false;
     property <string> new-name;
 
@@ -93,7 +96,10 @@ export component ExportSheet inherits Rectangle {
     TouchArea { clicked => { root.export-open = false; } }
     Rectangle {
         width: 420px;
-        height: min(sheet.preferred-height, root.height - 2 * Theme.space-5);
+        // The header and the buttons always show; the choices between
+        // them scroll when the window is too short for all of them.
+        height: min(header.preferred-height + body.preferred-height + footer.preferred-height + 2px,
+                    root.height - 2 * Theme.space-5);
         background: Theme.surface;
         border-radius: Theme.radius-lg;
         border-width: 1px;
@@ -102,221 +108,243 @@ export component ExportSheet inherits Rectangle {
         drop-shadow-color: #00000099;
         clip: true;
         TouchArea { }
-        Flickable {
-            content-height: sheet.preferred-height;
-            sheet := VerticalLayout {
-            padding: Theme.space-5;
-            spacing: Theme.space-3;
-            Text {
-                text: "Export";
-                font-size: Theme.font-lg;
-                font-weight: Theme.weight-medium;
-                color: Theme.text;
-            }
-            Text {
-                text: root.file-name;
-                font-size: Theme.font-sm;
-                color: Theme.text-secondary;
-            }
-            Rectangle { height: Theme.space-1; }
-            HorizontalLayout {
+        VerticalLayout {
+            header := VerticalLayout {
+                padding: Theme.space-5;
+                padding-bottom: Theme.space-3;
                 spacing: Theme.space-2;
-                Text { text: "Preset"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                ComboBox {
-                    horizontal-stretch: 1;
-                    model: root.export-presets;
-                    current-value <=> root.export-preset;
-                    selected(v) => { root.naming = false; root.export-preset-chosen(v); }
+                Text {
+                    text: "Export";
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
                 }
                 Text {
-                    text: root.export-preset-edited ? "(edited)" : "";
-                    width: 52px;
-                    color: Theme.text-secondary;
+                    text: root.file-name;
                     font-size: Theme.font-sm;
-                    vertical-alignment: center;
+                    color: Theme.text-secondary;
                 }
-            }
-            if !root.naming: HorizontalLayout {
-                spacing: Theme.space-2;
-                padding-left: 68px + Theme.space-2;
-                PanelButton {
-                    text: "Save as...";
-                    clicked => {
-                        root.new-name = root.export-preset == "None" ? "" : root.export-preset;
-                        root.naming = true;
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    Text { text: "Preset"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                    ComboBox {
+                        horizontal-stretch: 1;
+                        model: root.export-presets;
+                        current-value <=> root.export-preset;
+                        selected(v) => { root.naming = false; root.export-preset-chosen(v); }
+                    }
+                    Text {
+                        text: root.export-preset-edited ? "(edited)" : "";
+                        width: 52px;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
                     }
                 }
-                PanelButton {
-                    text: "Delete";
-                    enabled: root.export-preset != "None" && root.export-preset != "";
-                    clicked => { root.export-preset-deleted(); }
-                }
-                Rectangle { horizontal-stretch: 1; }
-            }
-            if root.naming: HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Name"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                LineEdit {
-                    horizontal-stretch: 1;
-                    text <=> root.new-name;
-                    placeholder-text: "Web 2048";
-                    accepted(t) => {
-                        if (t != "" && t != "None") { root.naming = false; root.export-preset-saved(t); }
+                if !root.naming: HorizontalLayout {
+                    spacing: Theme.space-2;
+                    padding-left: 68px + Theme.space-2;
+                    PanelButton {
+                        text: "Save as...";
+                        clicked => {
+                            root.new-name = root.export-preset == "None" ? "" : root.export-preset;
+                            root.naming = true;
+                        }
                     }
-                    init => { self.focus(); }
+                    PanelButton {
+                        text: "Delete";
+                        enabled: root.export-preset != "None" && root.export-preset != "";
+                        clicked => { root.export-preset-deleted(); }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
                 }
-                PanelButton {
-                    text: "Save";
-                    primary: true;
-                    enabled: root.new-name != "" && root.new-name != "None";
-                    clicked => { root.naming = false; root.export-preset-saved(root.new-name); }
-                }
-                PanelButton {
-                    text: "Cancel";
-                    clicked => { root.naming = false; }
+                if root.naming: HorizontalLayout {
+                    spacing: Theme.space-2;
+                    Text { text: "Name"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                    LineEdit {
+                        horizontal-stretch: 1;
+                        text <=> root.new-name;
+                        placeholder-text: "Web 2048";
+                        accepted(t) => {
+                            if (t.to-lowercase() != "none" && t != "") { root.naming = false; root.export-preset-saved(t); }
+                        }
+                        init => { self.focus(); }
+                    }
+                    PanelButton {
+                        // Over a preset of that name, in any case.
+                        text: root.export-preset-exists(root.new-name) ? "Replace" : "Save";
+                        primary: true;
+                        enabled: root.new-name != "" && root.new-name.to-lowercase() != "none";
+                        clicked => { root.naming = false; root.export-preset-saved(root.new-name); }
+                    }
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.naming = false; }
+                    }
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Format"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                Segmented { options: ["JPEG", "PNG", "TIFF 16-bit"]; current <=> root.export-format; }
-            }
-            EditSlider {
-                label: "Quality";
-                enabled: root.export-format == "JPEG";
-                minimum: 50;
-                maximum: 100;
-                default: 92;
-                step: 1;
-                value <=> root.export-quality;
-                text: round(root.export-quality);
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Long edge"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                Segmented { options: ["Full", "4096", "2048", "1024", "Custom"]; current <=> root.export-size; }
-            }
-            if root.export-size == "Custom": HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Pixels"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                LineEdit {
-                    width: 96px;
-                    text <=> root.export-custom;
-                    placeholder-text: "1600";
-                    input-type: number;
+            ScrollView {
+                vertical-stretch: 1;
+                body := VerticalLayout {
+                    alignment: start;
+                    padding-left: Theme.space-5;
+                    padding-right: Theme.space-5;
+                    padding-top: Theme.space-3;
+                    padding-bottom: Theme.space-3;
+                    spacing: Theme.space-2;
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Format"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Segmented { options: ["JPEG", "PNG", "TIFF 16-bit"]; current <=> root.export-format; }
+                    }
+                    EditSlider {
+                        label: "Quality";
+                        enabled: root.export-format == "JPEG";
+                        minimum: 50;
+                        maximum: 100;
+                        default: 92;
+                        step: 1;
+                        value <=> root.export-quality;
+                        text: round(root.export-quality);
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Long edge"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Segmented { options: ["Full", "4096", "2048", "1024", "Custom"]; current <=> root.export-size; }
+                    }
+                    if root.export-size == "Custom": HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Pixels"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        LineEdit {
+                            width: 96px;
+                            text <=> root.export-custom;
+                            placeholder-text: "1600";
+                            input-type: number;
+                        }
+                        // What comes out at that edge, or the picture's
+                        // own when the number is no smaller, or no size.
+                        Text {
+                            text: root.frame-width > 0
+                                ? (root.export-resizes()
+                                    ? root.export-width() + " × " + root.export-height()
+                                    : root.frame-width + " × " + root.frame-height + ", as it is")
+                                : "";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Sharpen"; width: 68px; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Segmented { options: ["Off", "Low", "Standard", "High"]; current <=> root.export-sharpen; }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Color"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Segmented { options: ["sRGB", "Display P3", "Rec.2020"]; current <=> root.export-space; }
+                    }
+                    Toggle {
+                        label: "Embed profile";
+                        checked <=> root.export-embed;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Metadata"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Segmented { options: ["All", "No edit", "None"]; current <=> root.export-metadata; }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "If it exists"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Segmented { options: ["Increment", "Overwrite", "Skip"]; current <=> root.export-on-exists; }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Watermark"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Segmented { options: ["Off", "Text", "Image"]; current <=> root.export-mark; }
+                    }
+                    if root.export-mark == "Text": HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Text"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        LineEdit {
+                            horizontal-stretch: 1;
+                            text <=> root.export-mark-text;
+                            placeholder-text: "© Your Name";
+                        }
+                        Segmented { width: 110px; options: ["White", "Black"]; current <=> root.export-mark-color; }
+                    }
+                    if root.export-mark == "Image": HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Image"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Text {
+                            text: root.export-mark-image-name == "" ? "No PNG chosen" : root.export-mark-image-name;
+                            color: root.export-mark-image-name == "" ? Theme.text-muted : Theme.text-secondary;
+                            font-size: Theme.font-sm;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        PanelButton {
+                            text: "Choose...";
+                            clicked => { root.export-mark-choose(); }
+                        }
+                    }
+                    // Where it goes beside how big, how far in and how
+                    // strong: one block rather than four rows.
+                    if root.export-mark != "Off": HorizontalLayout {
+                        spacing: Theme.space-3;
+                        VerticalLayout {
+                            width: 68px;
+                            alignment: center;
+                            spacing: Theme.space-1;
+                            PositionGrid { current <=> root.export-mark-position; }
+                            Text {
+                                text: root.export-mark-position;
+                                color: Theme.text-secondary;
+                                font-size: Theme.font-xs;
+                            }
+                        }
+                        VerticalLayout {
+                            horizontal-stretch: 1;
+                            spacing: 0;
+                            EditSlider {
+                                label: "Size";
+                                minimum: 1;
+                                maximum: 50;
+                                default: 15;
+                                step: 0.5;
+                                value <=> root.export-mark-size;
+                                text: round(root.export-mark-size * 10) / 10 + " %";
+                            }
+                            EditSlider {
+                                label: "Margin";
+                                minimum: 0;
+                                maximum: 10;
+                                default: 2;
+                                step: 0.1;
+                                value <=> root.export-mark-margin;
+                                text: round(root.export-mark-margin * 10) / 10 + " %";
+                            }
+                            EditSlider {
+                                label: "Opacity";
+                                minimum: 5;
+                                maximum: 100;
+                                default: 60;
+                                step: 1;
+                                value <=> root.export-mark-opacity;
+                                text: round(root.export-mark-opacity) + " %";
+                            }
+                        }
+                    }
                 }
-                // What comes out at that edge, or the picture's
-                // own when the number is no smaller, or no size.
-                Text {
-                    text: root.frame-width > 0
-                        ? (root.export-resizes()
-                            ? root.export-width() + " × " + root.export-height()
-                            : root.frame-width + " × " + root.frame-height + ", as it is")
-                        : "";
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-sm;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    overflow: elide;
-                }
             }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Sharpen"; width: 68px; color: root.export-resizes() ? Theme.text : Theme.text-muted; font-size: Theme.font-sm; vertical-alignment: center; }
-                Segmented { options: ["Off", "Low", "Standard", "High"]; current <=> root.export-sharpen; }
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Color"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                Segmented { options: ["sRGB", "Display P3", "Rec.2020"]; current <=> root.export-space; }
-            }
-            Toggle {
-                label: "Embed profile";
-                checked <=> root.export-embed;
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Metadata"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                Segmented { options: ["All", "No edit", "None"]; current <=> root.export-metadata; }
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "If it exists"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                Segmented { options: ["Increment", "Overwrite", "Skip"]; current <=> root.export-on-exists; }
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Watermark"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                Segmented { options: ["Off", "Text", "Image"]; current <=> root.export-mark; }
-            }
-            if root.export-mark == "Text": HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Text"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                LineEdit {
-                    horizontal-stretch: 1;
-                    text <=> root.export-mark-text;
-                    placeholder-text: "© Your Name";
-                }
-                Segmented { width: 110px; options: ["White", "Black"]; current <=> root.export-mark-color; }
-            }
-            if root.export-mark == "Image": HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Image"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                Text {
-                    text: root.export-mark-image-name == "" ? "No PNG chosen" : root.export-mark-image-name;
-                    color: root.export-mark-image-name == "" ? Theme.text-muted : Theme.text-secondary;
-                    font-size: Theme.font-sm;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                    overflow: elide;
-                }
-                PanelButton {
-                    text: "Choose...";
-                    clicked => { root.export-mark-choose(); }
-                }
-            }
-            if root.export-mark != "Off": HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Place"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                PositionGrid { current <=> root.export-mark-position; }
-                Text {
-                    text: root.export-mark-position;
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-sm;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                }
-            }
-            if root.export-mark != "Off": EditSlider {
-                label: "Size";
-                minimum: 1;
-                maximum: 50;
-                default: 15;
-                step: 0.5;
-                value <=> root.export-mark-size;
-                text: round(root.export-mark-size * 10) / 10 + " %";
-            }
-            if root.export-mark != "Off": EditSlider {
-                label: "Margin";
-                minimum: 0;
-                maximum: 10;
-                default: 2;
-                step: 0.1;
-                value <=> root.export-mark-margin;
-                text: round(root.export-mark-margin * 10) / 10 + " %";
-            }
-            if root.export-mark != "Off": EditSlider {
-                label: "Opacity";
-                minimum: 5;
-                maximum: 100;
-                default: 60;
-                step: 1;
-                value <=> root.export-mark-opacity;
-                text: round(root.export-mark-opacity) + " %";
-            }
-            Rectangle { height: Theme.space-2; }
-            HorizontalLayout {
+            Rectangle { height: 1px; background: Theme.border; }
+            footer := HorizontalLayout {
+                padding: Theme.space-5;
+                padding-top: Theme.space-3;
                 spacing: Theme.space-2;
                 PanelButton {
                     text: "Cancel";
@@ -329,7 +357,6 @@ export component ExportSheet inherits Rectangle {
                     clicked => { root.export-open = false; root.export(); }
                 }
             }
-        }
         }
     }
 }

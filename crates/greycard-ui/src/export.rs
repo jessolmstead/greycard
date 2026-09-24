@@ -1346,9 +1346,13 @@ mod tests {
             source_name: Some("IMG_0001.CR3".into()),
             edit: Some(edit.to_json()),
         };
-        for policy in Metadata::ALL {
+        for (policy, format) in Metadata::ALL
+            .into_iter()
+            .flat_map(|p| Format::ALL.map(|f| (p, f)))
+        {
             let settings = Settings {
                 metadata: policy,
+                format,
                 ..Settings::default()
             };
             let rendered = render(
@@ -1361,27 +1365,35 @@ mod tests {
                 None,
                 finish::Source::Scene,
             );
-            let path = dir.join(format!("m-{}.jpg", policy.name()));
+            let path = dir.join(format!("m-{}.{}", policy.name(), format.extension()));
             write(&rendered, &settings, &path, Some(&metadata), &origin).unwrap();
+            // Whatever the container, the packets lie in the file
+            // uncompressed, so the bytes say what is there.
             let bytes = std::fs::read(&path).unwrap();
             let camera = carries(&bytes, b"EOS R6m2");
             let source = carries(&bytes, b"<greycard:Source>");
             let recipe = carries(&bytes, b"<greycard:Edit>");
+            let what = format!("{} {}", policy.name(), format.name());
             match policy {
-                Metadata::All => assert!(camera && source && recipe),
-                Metadata::NoEdit => assert!(camera && source && !recipe),
-                Metadata::None => assert!(!camera && !source && !recipe),
+                Metadata::All => assert!(camera && source && recipe, "{what}"),
+                Metadata::NoEdit => assert!(camera && source && !recipe, "{what}"),
+                Metadata::None => assert!(!camera && !source && !recipe, "{what}"),
             }
             // The profile is the embed toggle's, whatever the policy.
-            let mut decoder = image::ImageReader::open(&path)
-                .unwrap()
-                .into_decoder()
-                .unwrap();
-            assert!(
-                image::ImageDecoder::icc_profile(&mut decoder)
-                    .unwrap()
-                    .is_some()
-            );
+            // A PNG's is compressed, so the decoder reads it; the image
+            // crate reads none out of a TIFF, whose bytes hold it whole.
+            let icc = settings.space.icc().unwrap();
+            let profile = match format {
+                Format::Tiff => carries(&bytes, &icc),
+                _ => {
+                    let mut decoder = image::ImageReader::open(&path)
+                        .unwrap()
+                        .into_decoder()
+                        .unwrap();
+                    image::ImageDecoder::icc_profile(&mut decoder).unwrap() == Some(icc)
+                }
+            };
+            assert!(profile, "{what}");
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }
