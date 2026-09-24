@@ -41,6 +41,9 @@ fn time(name: &str, runs: usize, mut run: impl FnMut() -> (Duration, Vec<f32>)) 
         println!("{name:>14} run {i}: {t:8.4} s  (load {at})  bits {bits:016x}");
         times.push(t);
     }
+    if times.is_empty() {
+        return;
+    }
     times.sort_by(f64::total_cmp);
     println!(
         "{name:>14}: min {:.4} s  median {:.4} s  over {runs}",
