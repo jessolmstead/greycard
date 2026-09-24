@@ -151,10 +151,11 @@ sync as one step in its history, named for what changed, so Ctrl+Z
 on that frame undoes it. While the sheet is open, the arrow keys and
 undo do nothing, so the frames it names are the frames it syncs.
 
-A preset click lands on every selected frame too, one history step
-apiece, with the same camera-profile check a sync gives its targets:
-a profile made for one camera reaches only frames of that camera, the
-open one included.
+A preset click lands on every selected frame, one history step
+apiece. A preset naming a camera profile reaches only a frame of that
+camera — the frame on screen is no exception, whether or not others
+are selected — and the panel's "Made for X, not Y" warning is there
+for when you want the profile anyway.
 
 Export works on the open frame only, not the whole selection.
 

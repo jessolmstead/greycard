@@ -19,8 +19,9 @@
 use crate::panel::browser::{
     chosen_frames, file_name, migrate_frame, show_badges, show_thumb, thumb_turns,
 };
+use crate::panel::cull::leave_cull;
 use crate::panel::edit::{read_edit, save_edit, write_sidecar};
-use crate::panel::history::show_history;
+use crate::panel::history::{show_history, take_current};
 use crate::*;
 use greycard_edit::camera::{self, ProfileChoice};
 
@@ -266,6 +267,142 @@ pub(crate) fn sync_selection(
     let preset = Preset::from_edit("", &from, sections);
     let learned_from = preset.sections.contains(&Section::Noise).then_some(&from);
     lay_over_targets(st, app, &preset, &targets, learned_from, profiles, probe)
+}
+
+/// What a preset click does, for the current frame alone or for a
+/// whole selected set, once the preset itself and the profile
+/// directory are in hand: `panel::assets::on_preset_applied`'s own
+/// logic, pulled out here — as `sync_selection` already is — so a
+/// test can hand it fake bodies instead of going through
+/// `greycard_edit::camera::list` and a real file's metadata, which
+/// the Slint callback itself has no way to fake.
+///
+/// The current frame takes the preset the way it always has (through
+/// the panel outside culling, through the sidecar under it), but with
+/// the same camera-profile fit check [`preset_for_body`] gives every
+/// other frame in the set: a preset naming a DCP is not the open
+/// frame's for the taking just because it is the one on screen. With
+/// two or more frames selected, the rest of the set takes it the way
+/// a sync lays sections over its targets ([`lay_over_targets`]), and
+/// a left-off open frame is folded into the same status line as any
+/// left-off target.
+pub(crate) fn apply_preset(
+    st: &mut State,
+    app: &App,
+    worker: &Worker,
+    preset: &Preset,
+    profiles: &[camera::Entry],
+    probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
+) {
+    let Some(c) = st.current else {
+        return;
+    };
+    let targets = sync_targets(st);
+    // The same camera-profile fit check either way, one frame or a
+    // set. A profile left off this way is still there to choose by
+    // hand from the CAMERA PROFILE section, which warns "Made for X,
+    // not Y" rather than refusing it.
+    let (current_preset, current_left_off) = preset_for_body(st, preset, c, profiles, &probe);
+    // With one frame selected, this is otherwise unchanged from
+    // before the set existed: the current frame alone, on the panel
+    // outside culling and on the sidecar under it.
+    if targets.is_empty() {
+        // In culling the panel is not the frame's: the preset goes
+        // over the sidecar's current state, and the leaving develops
+        // it.
+        if st.cull.is_some() {
+            let edit = st.sidecars[c].current.clone();
+            let applied = current_preset.applied(&edit);
+            if applied == edit {
+                app.set_status(format!("{} is on already", preset.name).into());
+                return;
+            }
+            st.sidecars[c].record(applied);
+            // `leave_cull(.., None)` reads the edit to leave with off
+            // the sidecar it is itself about to read, so its own "a
+            // control's change is written once the panel rests" never
+            // sees a difference and never schedules the write: the
+            // step just recorded is saved here instead.
+            write_sidecar(st, c);
+            leave_cull(st, app, worker, None);
+            return;
+        }
+        // Whatever the panel holds is a state first, then the preset
+        // over it.
+        let edit = read_edit(app, &st.edit, st.target);
+        let applied = current_preset.applied(&edit);
+        if applied == edit {
+            app.set_status(format!("{} is on already", preset.name).into());
+            return;
+        }
+        st.sidecars[c].record(edit);
+        st.sidecars[c].record(applied);
+        app.set_status(format!("{} applied", preset.name).into());
+        take_current(st, app, worker);
+        return;
+    }
+    // Two or more selected: the current frame takes the preset the
+    // way it always has, and the rest of the set the way a sync lays
+    // sections over its targets.
+    let current_changed = if st.cull.is_some() {
+        let edit = st.sidecars[c].current.clone();
+        let applied = current_preset.applied(&edit);
+        let changed = applied != edit;
+        if changed {
+            st.sidecars[c].record(applied);
+        }
+        changed
+    } else {
+        let edit = read_edit(app, &st.edit, st.target);
+        let applied = current_preset.applied(&edit);
+        let changed = applied != edit;
+        if changed {
+            st.sidecars[c].record(edit);
+            st.sidecars[c].record(applied);
+        }
+        changed
+    };
+    let mut synced = lay_over_targets(st, app, preset, &targets, None, profiles, probe);
+    if current_left_off {
+        synced.profile_left_off.push(c);
+        synced.profile_left_off.sort_unstable();
+    }
+    let moved = synced.moved.len() + usize::from(current_changed);
+    let asked = targets.len() + 1;
+    let said = preset_onto_words(st, &preset.name, moved, asked, &synced);
+    if !current_changed {
+        // Nothing async is coming for the current frame: what
+        // happened across the set is the word that stands.
+        app.set_status(said.into());
+    } else if st.cull.is_some() {
+        // Saved here, as the single-frame culling branch above does:
+        // `leave_cull(.., None)` would otherwise never see its own
+        // edit differ from the sidecar's and never schedule the
+        // write.
+        write_sidecar(st, c);
+        // The leaving develops the frame and sets its own status;
+        // culling's placeholder text can replace that again before
+        // the develop is on screen (`cull.rs`), so this line is not
+        // guaranteed to be the one left standing the way the
+        // non-culling one below is.
+        leave_cull(st, app, worker, None);
+        app.set_status(said.into());
+    } else {
+        // The develop sets its own "developing..." now and, once it
+        // lands, its own "WxH, developed in ...". Left here for that
+        // generation, `said` is the line the develop's own words are
+        // appended to (`Outcome::Developed` in `deliver.rs`), so it is
+        // not lost the moment the develop finishes.
+        let before = st.generation;
+        take_current(st, app, worker);
+        if st.generation == before {
+            // No develop was asked for after all: the panel's change
+            // did not reach the engine.
+            app.set_status(said.into());
+        } else {
+            st.status_after_develop = Some((st.generation, said));
+        }
+    }
 }
 
 /// The tail every report of a sync or a preset onto a set shares: the
@@ -1036,6 +1173,61 @@ mod tests {
         );
     }
 
+    /// `apply_preset` is what `on_preset_applied` calls: a left-off
+    /// open frame is folded into the same report a left-off target
+    /// gets, not just the two helpers it is built from
+    /// (`preset_for_body` and `lay_over_targets`, tested apart above).
+    #[test]
+    fn apply_preset_names_the_open_frame_among_a_left_off_profile() {
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        let edit = Edit {
+            camera: greycard_edit::Camera {
+                profile: ProfileChoice::Named("r5".into()),
+            },
+            light: greycard_edit::Light {
+                exposure: 0.4,
+                ..Default::default()
+            },
+            ..Edit::default()
+        };
+        let preset = Preset::from_edit("Portra 400", &edit, &[Section::Camera, Section::Light]);
+        let profiles = [entry("r5", Some("Canon EOS R5"))];
+        let bodies = |_: &State, f: usize| match f {
+            0 => Some(body("Fujifilm", "X-T5", 100)), // the open frame: does not fit
+            1 => Some(body("Canon", "EOS R5", 200)),  // a target: fits
+            _ => None,
+        };
+        app.invoke_select(0);
+        state.borrow_mut().picked = vec![0, 1];
+
+        apply_preset(
+            &mut state.borrow_mut(),
+            &app,
+            &worker,
+            &preset,
+            &profiles,
+            bodies,
+        );
+
+        let status = app.get_status();
+        assert!(status.contains("Portra 400 onto 2 frames"), "{status}");
+        assert!(
+            status.contains("the camera profile left off IMG_0000.CR3 (made for another camera)"),
+            "{status}: the open frame, not just the target"
+        );
+        let st = state.borrow();
+        assert!(
+            st.sidecars[0].current.camera.profile.is_embedded(),
+            "left off the open frame"
+        );
+        assert_eq!(
+            st.sidecars[0].current.light.exposure, 0.4,
+            "Light still lands"
+        );
+        assert_eq!(st.sidecars[1].current.camera.profile.name(), "r5");
+    }
+
     /// In culling, `leave_cull(.., None)` reads the edit to leave with
     /// off the very sidecar a preset click just recorded onto, so the
     /// two never differ and its own "write once the panel rests"
@@ -1157,12 +1349,11 @@ mod tests {
                 fills: crate::worker::FillReport::default(),
             },
         );
+        // The set's own words first, so they are not the ones a long
+        // develop line clips.
         let status = app.get_status();
-        assert!(
-            status.starts_with("100x80, developed in 0.42 s"),
-            "{status}"
-        );
-        assert!(status.ends_with("Portra 400 onto 2 frames"), "{status}");
+        assert!(status.starts_with("Portra 400 onto 2 frames; "), "{status}");
+        assert!(status.ends_with("100x80, developed in 0.42 s"), "{status}");
         assert!(state.borrow().status_after_develop.is_none(), "taken");
     }
 }

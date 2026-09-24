@@ -417,29 +417,34 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // A preset or a sync's own words ("Muted Slide onto 3
             // frames"), left here for the develop this generation is,
             // so the develop's line does not stand alone as the only
-            // word on what changed. Taken regardless of which branch
-            // below runs, so a generation it does not match, or a
-            // dropper's hint, never leaves it to be read against a
-            // later develop.
-            let suffix = st
+            // word on what changed. `take_if` leaves a stash whose
+            // generation does not match in place rather than clearing
+            // it, but that never misfires: generations only rise, so
+            // a stash an earlier develop's landing did not want is
+            // for a generation this one will never equal either, and
+            // `take_current` clears it outright once a newer develop
+            // is asked for, before it can sit and wait for one.
+            let prefix = st
                 .status_after_develop
                 .take_if(|(g, _)| *g == generation)
-                .map(|(_, s)| s);
+                .map(|(_, s)| format!("{s}; "))
+                .unwrap_or_default();
             // A dropper in hand keeps its hint: the defringe's arms
             // itself by asking for a develop, and the instructions
             // must not be what that develop takes away.
             let picking = app.get_picking();
             if picking.is_empty() {
-                let mut said = format!(
-                    "{}x{}, developed in {seconds:.2} s{detailed}{dehazed}{sharpened}{learned_note}{fill_note}",
-                    image.width(),
-                    image.height()
+                // The set's own words first: the develop's line runs
+                // long with a note or two of its own, and the set's
+                // is the one a snapshot's width must not clip.
+                app.set_status(
+                    format!(
+                        "{prefix}{}x{}, developed in {seconds:.2} s{detailed}{dehazed}{sharpened}{learned_note}{fill_note}",
+                        image.width(),
+                        image.height()
+                    )
+                    .into(),
                 );
-                if let Some(suffix) = suffix {
-                    said.push_str("; ");
-                    said.push_str(&suffix);
-                }
-                app.set_status(said.into());
             } else {
                 app.set_status(picking_hint(picking.as_str()).into());
             }

@@ -142,6 +142,11 @@ pub(crate) fn take_current(st: &mut State, app: &App, worker: &Worker) {
     } else {
         st.edit = edit;
         st.generation += 1;
+        // A preset or a sync's own words, left for an earlier
+        // generation's develop to carry (`status_after_develop`): that
+        // generation is superseded now and will not land, so the
+        // words it was holding for would otherwise sit unread.
+        st.status_after_develop = None;
         app.set_status("developing...".into());
         app.set_busy(true);
         worker.send(Job::Develop {
