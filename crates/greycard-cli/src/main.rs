@@ -1462,6 +1462,12 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
                 for (path, why) in &report.errors {
                     println!("{:<13} {}: {why}", "not read", path.display());
                 }
+                if report.unavailable > 0 {
+                    println!(
+                        "{:<13} {} folders empty on disk, left as they were",
+                        "unavailable", report.unavailable
+                    );
+                }
                 for link in &report.skipped {
                     println!(
                         "{:<13} {} is a link; not followed",
@@ -1497,7 +1503,7 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
             let entries = lib.query(&filter)?;
             for e in &entries {
                 if paths {
-                    println!("{}", e.path.display());
+                    print_path(&e.path)?;
                     continue;
                 }
                 let summary = e.exif.shot().summary(&e.exif.make, &e.exif.model);
@@ -1537,6 +1543,26 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// A path on its own line, byte for byte on Unix so that a name that
+/// is not UTF-8 comes out as the name and not as a replacement
+/// character: `--paths` is for feeding to another tool. Windows
+/// paths are Unicode and print as they display.
+fn print_path(path: &std::path::Path) -> Result<()> {
+    use std::io::Write;
+    let mut out = std::io::stdout().lock();
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt;
+        out.write_all(path.as_os_str().as_bytes())?;
+    }
+    #[cfg(not(unix))]
+    {
+        out.write_all(path.display().to_string().as_bytes())?;
+    }
+    out.write_all(b"\n")?;
+    Ok(())
 }
 
 /// A preset's sections, in a row.

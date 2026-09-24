@@ -30,7 +30,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use greycard_core::decode::Probe;
 use greycard_core::raw::{Shot, camera_name};
 use greycard_edit::meta::Meta;
-use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 
 pub mod filter;
 pub mod hash;
@@ -192,18 +192,15 @@ impl Exif {
 
 /// EXIF's `YYYY:MM:DD HH:MM:SS` to `YYYY-MM-DD HH:MM:SS`, so the
 /// column sorts and compares lexically and a filter's `2026-09` is a
-/// prefix of it. A date that does not start with four digits — a
-/// camera with no clock writes spaces — is no date. Counted in
-/// characters, not bytes: a tag with a stray multibyte character in
-/// it is a bad date, not a bad day for the whole folder.
+/// prefix of it. What does not fit that shape after the colons are
+/// turned — a camera with no clock writes spaces, a tag edited by
+/// hand has a letter where a digit should be, rawler's replacement
+/// character for a byte it could not decode — is no date rather
+/// than a date that `date:2024-01` would find and `date:2024-01-05`
+/// would not. Counted in characters, not bytes: the first cut split
+/// inside a multibyte character and took the process down.
 pub fn normalize_taken(exif: &str) -> Option<String> {
     let s = exif.trim();
-    if s.chars().count() < 4
-        || !s.chars().take(4).all(|c| c.is_ascii_digit())
-        || s.starts_with("0000")
-    {
-        return None;
-    }
     let date: String = s
         .chars()
         .take(10)
@@ -211,11 +208,23 @@ pub fn normalize_taken(exif: &str) -> Option<String> {
         .collect();
     let time: String = s.chars().skip(10).collect();
     let time = time.trim();
-    Some(if time.is_empty() {
-        date
-    } else {
-        format!("{date} {time}")
-    })
+    let shaped = |text: &str, len: usize, seps: [usize; 2], sep: char| {
+        text.chars().count() == len
+            && text.chars().enumerate().all(|(i, c)| {
+                if seps.contains(&i) {
+                    c == sep
+                } else {
+                    c.is_ascii_digit()
+                }
+            })
+    };
+    if !shaped(&date, 10, [4, 7], '-') || date.starts_with("0000") {
+        return None;
+    }
+    if time.is_empty() {
+        return Some(date);
+    }
+    shaped(time, 8, [2, 5], ':').then(|| format!("{date} {time}"))
 }
 
 /// One file as the index holds it.
@@ -312,6 +321,26 @@ pub(crate) fn canonical(path: &Path) -> std::io::Result<PathBuf> {
     dunce::canonicalize(path)
 }
 
+/// A file's path as the index keys it: its folder canonical, its own
+/// name kept. Canonicalizing the file too would follow a link to its
+/// target, and a folder pass lists the link under its own name, so
+/// the link's row would never be the one a save or a lookup found.
+pub(crate) fn canonical_file(path: &Path) -> PathBuf {
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => {
+            let parent = if parent.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                parent
+            };
+            canonical(parent)
+                .map(|p| p.join(name))
+                .unwrap_or_else(|_| path.to_path_buf())
+        }
+        _ => canonical(path).unwrap_or_else(|_| path.to_path_buf()),
+    }
+}
+
 impl Library {
     /// Where the user's library is: `greycard/library.sqlite` under
     /// `$XDG_DATA_HOME` when that is set, else under the platform's
@@ -391,57 +420,102 @@ impl Library {
                 })
             },
         )?;
-        let app_id: i32 = conn.query_row("PRAGMA application_id", [], |r| r.get(0))?;
-        let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        let has_tables: bool = conn.query_row(
-            "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table'",
-            [],
-            |r| r.get(0),
-        )?;
-        let fresh = app_id == 0 && version == 0 && !has_tables;
-        if !fresh && app_id != APPLICATION_ID {
-            return Err(Error::NotALibrary(path));
-        }
-        if version > SCHEMA_VERSION {
-            return Err(Error::NewerSchema {
-                path,
-                found: version,
-                ours: SCHEMA_VERSION,
-            });
-        }
-        if version == SCHEMA_VERSION {
-            if !read_only {
-                conn.pragma_update(None, "synchronous", "NORMAL")?;
+        // What the file is, read in one transaction so that the
+        // three answers are from one moment: read one at a time, they
+        // straddled another process's making of the schema and read
+        // "no id, no version, tables" — somebody else's file.
+        let mut conn = conn;
+        let state = {
+            let tx = conn.transaction()?;
+            let state = State::read(&tx)?;
+            tx.commit()?;
+            state
+        };
+        match state.judge() {
+            Judgement::Ours => {
+                if !read_only {
+                    conn.pragma_update(None, "synchronous", "NORMAL")?;
+                }
+                return Ok(Library {
+                    conn,
+                    path,
+                    read_only,
+                });
             }
-            return Ok(Library {
-                conn,
-                path,
-                read_only,
-            });
+            Judgement::NotOurs => return Err(Error::NotALibrary(path)),
+            Judgement::Newer => {
+                return Err(Error::NewerSchema {
+                    path,
+                    found: state.version,
+                    ours: SCHEMA_VERSION,
+                });
+            }
+            Judgement::ToMake => {}
         }
         // Fresh, or older: the file is written, which a read-only
         // connection cannot do.
         if read_only {
             return Err(Error::NeedsRebuild(path));
         }
-        if !fresh {
-            log::warn!(
-                "{}: schema version {version}, this build writes {SCHEMA_VERSION}; rebuilding",
-                path.display()
-            );
-            conn.execute_batch("DROP TABLE IF EXISTS keywords; DROP TABLE IF EXISTS files;")?;
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
+        // The making, as one write transaction taken from the start:
+        // two processes opening a library that is not there yet both
+        // find it fresh, and the second waits here for the first and
+        // then finds the schema made. The first cut had both make
+        // it, and the second got "database is locked".
+        {
+            let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+            // Judged again under the write lock: the other opener may
+            // have made it while this one waited.
+            let now = State::read(&tx)?;
+            match now.judge() {
+                Judgement::Ours => {}
+                Judgement::NotOurs => return Err(Error::NotALibrary(path)),
+                Judgement::Newer => {
+                    return Err(Error::NewerSchema {
+                        path,
+                        found: now.version,
+                        ours: SCHEMA_VERSION,
+                    });
+                }
+                Judgement::ToMake => {
+                    if !now.fresh() {
+                        log::warn!(
+                            "{}: schema version {}, this build writes {SCHEMA_VERSION}; \
+                             rebuilding",
+                            path.display(),
+                            now.version
+                        );
+                        tx.execute_batch(
+                            "DROP TABLE IF EXISTS keywords; DROP TABLE IF EXISTS files;",
+                        )?;
+                    }
+                    tx.execute_batch(SCHEMA)?;
+                    tx.pragma_update(None, "application_id", APPLICATION_ID)?;
+                    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                }
+            }
+            tx.commit()?;
         }
         // Write-ahead logging is a property of the file and is set
         // once, here: a listing then reads while an index writes.
         // `synchronous=NORMAL` is safe under WAL: a crash loses the
         // last transaction, never the file, and the index is
-        // rebuildable anyway. An in-memory database has no WAL and
-        // says so; that is not an error.
-        let _ = conn.pragma_update(None, "journal_mode", "WAL");
-        conn.pragma_update(None, "synchronous", "NORMAL")?;
-        conn.execute_batch(SCHEMA)?;
-        conn.pragma_update(None, "application_id", APPLICATION_ID)?;
-        conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        // rebuildable anyway. The switch wants the file to itself for
+        // a moment and does not wait for it, so it is tried again
+        // while another connection is busy; an in-memory database has
+        // no WAL and says so, which is not an error either.
+        for attempt in 0..50 {
+            match conn.pragma_update(None, "journal_mode", "WAL") {
+                Ok(()) => break,
+                Err(rusqlite::Error::SqliteFailure(e, _))
+                    if e.code == rusqlite::ErrorCode::DatabaseBusy && attempt < 49 =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                Err(_) => break,
+            }
+        }
         Ok(Library {
             conn,
             path,
@@ -520,7 +594,7 @@ impl Library {
     /// The file at this path, if the index holds it. The path is
     /// canonicalized when it can be, as the index stores it.
     pub fn by_path(&self, path: &Path) -> Result<Option<Entry>> {
-        let stored = canonical(path).unwrap_or_else(|_| path.to_path_buf());
+        let stored = canonical_file(path);
         let sql = format!("SELECT {COLUMNS} FROM files WHERE path = ?");
         Ok(self
             .conn
@@ -555,15 +629,77 @@ impl Library {
     }
 
     /// Fold the write-ahead log into the file, for a size that means
-    /// something.
+    /// something. Passive: it does what it can without blocking
+    /// anyone, and never invokes the busy handler. A truncating
+    /// checkpoint, the first cut's, waits for every other connection
+    /// and then resets the log under them, and a pass on another
+    /// connection starting a read at that moment got "database is
+    /// locked" with no busy handler to wait it out.
     pub fn checkpoint(&self) -> Result<()> {
-        self.conn
-            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
+        self.conn.execute_batch("PRAGMA wal_checkpoint(PASSIVE);")?;
         Ok(())
     }
 
     pub(crate) fn conn_mut(&mut self) -> &mut Connection {
         &mut self.conn
+    }
+}
+
+/// What a SQLite file says it is, read at one moment.
+struct State {
+    app_id: i32,
+    version: i32,
+    has_tables: bool,
+    has_files: bool,
+}
+
+enum Judgement {
+    /// A library at this schema.
+    Ours,
+    /// Fresh, or an older library: to be made.
+    ToMake,
+    /// Somebody else's SQLite file.
+    NotOurs,
+    /// A later build's library.
+    Newer,
+}
+
+impl State {
+    fn read(conn: &Connection) -> rusqlite::Result<State> {
+        Ok(State {
+            app_id: conn.query_row("PRAGMA application_id", [], |r| r.get(0))?,
+            version: conn.query_row("PRAGMA user_version", [], |r| r.get(0))?,
+            has_tables: conn.query_row(
+                "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table'",
+                [],
+                |r| r.get(0),
+            )?,
+            has_files: conn.query_row(
+                "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table' AND name = 'files'",
+                [],
+                |r| r.get(0),
+            )?,
+        })
+    }
+
+    fn fresh(&self) -> bool {
+        self.app_id == 0 && self.version == 0 && !self.has_tables
+    }
+
+    fn judge(&self) -> Judgement {
+        // Schema 1 was written before the application id was: a
+        // `files` table at that version with no id is an early
+        // library of ours, and is rebuilt like any older one.
+        let early = self.app_id == 0 && self.version == 1 && self.has_files;
+        if !self.fresh() && !early && self.app_id != APPLICATION_ID {
+            Judgement::NotOurs
+        } else if self.version > SCHEMA_VERSION {
+            Judgement::Newer
+        } else if self.version == SCHEMA_VERSION {
+            Judgement::Ours
+        } else {
+            Judgement::ToMake
+        }
     }
 }
 
@@ -636,17 +772,20 @@ mod tests {
     /// could not decode — used to split the string inside the
     /// character and take the process down.
     #[test]
-    fn a_bad_date_is_a_bad_date_and_not_a_panic() {
-        assert_eq!(
-            normalize_taken("2024:01:0é 10:00:00").as_deref(),
-            Some("2024-01-0é 10:00:00")
-        );
-        assert_eq!(
-            normalize_taken("2024:01:0\u{fffd} 10:00:00").as_deref(),
-            Some("2024-01-0\u{fffd} 10:00:00")
-        );
-        assert_eq!(normalize_taken("2024:0é").as_deref(), Some("2024-0é"));
+    fn a_bad_date_is_no_date_and_not_a_panic() {
+        assert_eq!(normalize_taken("2024:01:0é 10:00:00"), None);
+        assert_eq!(normalize_taken("2024:01:0\u{fffd} 10:00:00"), None);
+        assert_eq!(normalize_taken("2024:0é"), None);
         assert_eq!(normalize_taken("é024:01:01"), None);
+        // The shape, exactly: a date, or a date and a time.
+        assert_eq!(normalize_taken("2024:01:05 10:00"), None);
+        assert_eq!(normalize_taken("2024:01:05 10:00:0x"), None);
+        assert_eq!(normalize_taken("2024:1:5"), None);
+        assert_eq!(normalize_taken("2024-01-05T10:00:00"), None);
+        assert_eq!(
+            normalize_taken("2024:01:05 10:00:00").as_deref(),
+            Some("2024-01-05 10:00:00")
+        );
     }
 
     #[test]
@@ -775,6 +914,78 @@ mod tests {
             conn.execute_batch("CREATE TABLE t (x);").unwrap();
         }
         assert!(matches!(Library::open(&path), Err(Error::NotALibrary(_))));
+        // But schema 1 with a `files` table and no id is an early
+        // library of this crate's, and is rebuilt.
+        let path = dir.join("early.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch("CREATE TABLE files (id INTEGER PRIMARY KEY, path TEXT);")
+                .unwrap();
+            conn.pragma_update(None, "user_version", 1).unwrap();
+        }
+        let lib = Library::open(&path).unwrap();
+        assert_eq!(lib.len().unwrap(), 0);
+        let app: i32 = lib
+            .conn
+            .query_row("PRAGMA application_id", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(app, APPLICATION_ID);
+        drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Two processes opening a library that is not there yet both
+    /// make it, and both must come out with the one library. Four
+    /// threads at once, on five fresh paths.
+    #[test]
+    fn a_library_can_be_made_by_several_at_once() {
+        let dir = crate::index::tests::scratch("race");
+        for round in 0..5 {
+            let path = dir.join(format!("lib{round}")).join("library.sqlite");
+            let openers: Vec<_> = (0..4)
+                .map(|_| {
+                    let path = path.clone();
+                    std::thread::spawn(move || Library::open(&path).map(|l| l.len().unwrap()))
+                })
+                .collect();
+            for opener in openers {
+                let opened = opener.join().unwrap();
+                assert!(opened.is_ok(), "round {round}: {:?}", opened.err());
+                assert_eq!(opened.unwrap(), 0);
+            }
+            let lib = Library::open_read_only(&path).unwrap();
+            let version: i32 = lib
+                .conn
+                .query_row("PRAGMA user_version", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(version, SCHEMA_VERSION);
+            let mode: String = lib
+                .conn
+                .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(mode, "wal");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A link to a file is listed by a folder pass under its own
+    /// name, so a lookup by the link's path must key the same way:
+    /// the folder canonical, the name kept.
+    #[cfg(unix)]
+    #[test]
+    fn a_file_path_keeps_its_own_name_when_keyed() {
+        let dir = crate::index::tests::scratch("key");
+        std::fs::write(dir.join("target.tif"), b"x").unwrap();
+        std::os::unix::fs::symlink(dir.join("target.tif"), dir.join("link.tif")).unwrap();
+        let keyed = canonical_file(&dir.join("link.tif"));
+        assert_eq!(keyed.file_name().unwrap(), "link.tif");
+        assert_eq!(keyed.parent().unwrap(), canonical(&dir).unwrap());
+        // A file that is not there keys the same way, so a row for a
+        // file gone can still be found.
+        assert_eq!(
+            canonical_file(&dir.join("gone.tif")),
+            canonical(&dir).unwrap().join("gone.tif")
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

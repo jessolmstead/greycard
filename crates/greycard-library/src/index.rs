@@ -30,9 +30,17 @@
 //! data makes the decoder panic is the same case: the panic is
 //! caught at the file and never takes the folder with it.
 //!
-//! The pass commits every [`BATCH`] files or every second, whichever
-//! comes first, so a listing or the editor's [`Library::index_file`]
-//! gets in between batches rather than waiting for the folder.
+//! The pass works in batches of [`BATCH`] files, or of a second,
+//! each in two phases: the files are stat'd, hashed and probed with
+//! no transaction open, then the batch's rows are written in one
+//! short write transaction taken as a write from the start. So a
+//! listing never waits, and a second writer — another pass, or the
+//! editor's [`Library::index_file`] after a save — gets in between
+//! batches rather than polling a lock that is never free. A folder
+//! found empty on disk with rows in the index under it is left as it
+//! was and counted unavailable: an unmounted drive leaves its mount
+//! point behind, and marking a shoot missing because its disk is in
+//! a drawer would be Lightroom's exclamation mark.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -40,11 +48,11 @@ use std::time::{Duration, Instant};
 
 use greycard_edit::Sidecar;
 use greycard_edit::meta::Meta;
-use rusqlite::{Connection, Transaction, params};
+use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 use crate::{
-    Error, Exif, Library, Result, canonical, filter, hash, mtime_of, now_secs, path_bytes,
-    path_from_bytes, path_text,
+    Error, Exif, Library, Result, canonical, canonical_file, filter, hash, mtime_of, now_secs,
+    path_bytes, path_from_bytes, path_text,
 };
 
 /// Files a transaction holds before it is committed.
@@ -79,6 +87,10 @@ pub struct Report {
     pub returned: usize,
     /// Rows whose file, or whose whole folder, is gone.
     pub missing: usize,
+    /// Folders found empty on disk with rows in the index under
+    /// them: a drive not mounted, its mount point left behind, as
+    /// likely as a shoot deleted, so left as they were.
+    pub unavailable: usize,
     /// Files that could not be read, and why; each has a row anyway
     /// when it could be hashed.
     pub errors: Vec<(PathBuf, String)>,
@@ -101,6 +113,7 @@ impl Report {
         self.unchanged += other.unchanged;
         self.returned += other.returned;
         self.missing += other.missing;
+        self.unavailable += other.unavailable;
         self.errors.extend(other.errors);
         self.skipped.extend(other.skipped);
     }
@@ -134,11 +147,41 @@ fn list_folder(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// Whether a folder has no entries at all, hidden ones included.
+fn is_empty_dir(dir: &Path) -> std::io::Result<bool> {
+    Ok(std::fs::read_dir(dir)?.next().is_none())
+}
+
+/// Whether the index holds rows in this folder or under it.
+fn has_rows_under(conn: &Connection, folder: &[u8]) -> Result<bool> {
+    let prefix = under_prefix(folder);
+    Ok(conn
+        .prepare_cached("SELECT 1 FROM files WHERE folder = ? OR substr(folder, 1, ?) = ? LIMIT 1")?
+        .exists(params![folder, prefix.len() as i64, prefix])?)
+}
+
+/// The folder's bytes with a separator on the end: what a folder
+/// under it starts with.
+fn under_prefix(folder: &[u8]) -> Vec<u8> {
+    let mut prefix = folder.to_vec();
+    prefix.extend_from_slice(&path_bytes(Path::new(std::path::MAIN_SEPARATOR_STR)));
+    prefix
+}
+
+/// A folder that does not exist and that the index has nothing under
+/// is a name mistyped, not a folder deleted.
+fn no_such_folder(dir: &Path) -> Error {
+    Error::Io(std::io::Error::new(
+        std::io::ErrorKind::NotFound,
+        format!("there is no {}", dir.display()),
+    ))
+}
+
 /// The folder as the index keys it, and whether it is there. A
 /// folder that is gone is keyed through its parent, which has to be
-/// there: a parent gone too is a drive gone, which is not a folder
-/// deleted, and is an error rather than a thousand rows marked
-/// missing.
+/// there: what the caller does with a gone folder depends on whether
+/// the index has rows under it, and a parent gone too is an error
+/// either way.
 fn resolve_folder(dir: &Path) -> Result<(PathBuf, bool)> {
     match canonical(dir) {
         Ok(d) => Ok((d, true)),
@@ -160,19 +203,37 @@ fn resolve_folder(dir: &Path) -> Result<(PathBuf, bool)> {
 impl Library {
     /// Index one folder's files, not its subfolders: see the module
     /// for the rules. `progress` is called before each file. A folder
-    /// that is gone, its parent still there, marks its rows missing.
+    /// that is gone, its parent still there and the index holding
+    /// rows under it, marks its rows missing; one the index knows
+    /// nothing of is an error, since it is a name mistyped. A folder
+    /// found empty with rows under it is left as it was and counted
+    /// unavailable.
     pub fn index_folder(
         &mut self,
         dir: &Path,
         progress: &mut dyn FnMut(Progress<'_>),
     ) -> Result<Report> {
         let (dir, exists) = resolve_folder(dir)?;
+        let folder = path_bytes(&dir);
+        if !exists && !has_rows_under(self.conn_mut(), &folder)? {
+            return Err(no_such_folder(&dir));
+        }
         let files = if exists {
             list_folder(&dir)?
         } else {
             Vec::new()
         };
-        let folder = path_bytes(&dir);
+        if exists
+            && files.is_empty()
+            && is_empty_dir(&dir)?
+            && has_rows_under(self.conn_mut(), &folder)?
+        {
+            log::info!("{}: empty on disk, left as it was", dir.display());
+            return Ok(Report {
+                unavailable: 1,
+                ..Report::default()
+            });
+        }
         let existing = rows_in_folder(self.conn_mut(), &folder)?;
         index_paths(self.conn_mut(), &dir, &files, existing, progress)
     }
@@ -181,18 +242,30 @@ impl Library {
     /// leading dot, the sidecar folder among them) left alone and
     /// symbolic links to folders not followed but named in the
     /// report. Rows in folders under the root that are no longer
-    /// there are marked missing.
+    /// there are marked missing, unless the folder they are under is
+    /// empty on disk, which is a mount point with nothing mounted.
     pub fn index_tree(
         &mut self,
         root: &Path,
         progress: &mut dyn FnMut(Progress<'_>),
     ) -> Result<Report> {
         let (root, exists) = resolve_folder(root)?;
+        let root_bytes = path_bytes(&root);
+        if !exists && !has_rows_under(self.conn_mut(), &root_bytes)? {
+            return Err(no_such_folder(&root));
+        }
         let mut report = Report::default();
         let mut visited: HashSet<Vec<u8>> = HashSet::new();
+        // Folders found empty with rows under them: nothing under
+        // them is marked.
+        let mut shielded: Vec<Vec<u8>> = Vec::new();
         let mut dirs = vec![root.clone()];
         while let Some(dir) = dirs.pop() {
-            report.add(self.index_folder(&dir, progress)?);
+            let one = self.index_folder(&dir, progress)?;
+            if one.unavailable > 0 {
+                shielded.push(under_prefix(&path_bytes(&dir)));
+            }
+            report.add(one);
             visited.insert(path_bytes(&dir));
             if !exists {
                 continue;
@@ -218,8 +291,7 @@ impl Library {
         }
         // Folders the index holds under the root that the walk did
         // not reach and that are not there: gone, with their files.
-        let mut prefix = path_bytes(&root);
-        prefix.extend_from_slice(path_bytes(Path::new(std::path::MAIN_SEPARATOR_STR)).as_slice());
+        let prefix = under_prefix(&root_bytes);
         let gone: Vec<Vec<u8>> = {
             let mut stmt = self.conn_mut().prepare_cached(
                 "SELECT DISTINCT folder FROM files \
@@ -232,7 +304,10 @@ impl Library {
         };
         let now = now_secs();
         for folder in gone {
-            if visited.contains(&folder) || path_from_bytes(&folder).is_dir() {
+            if visited.contains(&folder)
+                || path_from_bytes(&folder).is_dir()
+                || shielded.iter().any(|s| folder.starts_with(s))
+            {
                 continue;
             }
             let marked = self.conn_mut().execute(
@@ -253,7 +328,7 @@ impl Library {
     /// sidecar says without a pass over the folder. A file gone from
     /// its path is marked missing.
     pub fn index_file(&mut self, path: &Path) -> Result<Report> {
-        let path = canonical(path).unwrap_or_else(|_| path.to_path_buf());
+        let path = canonical_file(path);
         let folder = path.parent().unwrap_or(Path::new("")).to_path_buf();
         let mut existing = HashMap::new();
         if let Some(row) = row_at(self.conn_mut(), &path_bytes(&path))? {
@@ -338,9 +413,54 @@ impl Row {
     }
 }
 
+/// A write transaction, taken as one from the start. A deferred
+/// transaction begins as a read and asks for the write lock at its
+/// first write, and SQLite answers that upgrade with "busy" at once
+/// rather than waiting, so two passes on two folders, or a pass and
+/// the editor's `index_file`, collided instead of taking turns.
+/// Immediate takes the lock up front, under the connection's busy
+/// timeout.
+fn begin(conn: &mut Connection) -> Result<Transaction<'_>> {
+    Ok(conn.transaction_with_behavior(TransactionBehavior::Immediate)?)
+}
+
+/// What the first phase found out about a file, for the second to
+/// write.
+enum Plan {
+    /// The row's size and mtime match the file's.
+    Same(Row),
+    /// The file changed on disk: hashed and probed again.
+    Changed { row: Row, hash: String, exif: Exif },
+    /// No row at this path when the folder's rows were read: hashed,
+    /// and probed unless a move looked likely, since a move keeps
+    /// its EXIF.
+    Fresh { hash: String, exif: Option<Exif> },
+}
+
+/// One file looked at, with everything the disk had to say.
+struct Looked<'a> {
+    path: &'a Path,
+    key: Vec<u8>,
+    size: u64,
+    mtime: i64,
+    sidecar: Option<SidecarNow>,
+    plan: Plan,
+}
+
 /// The pass over `files`, which are all in `folder`, against
 /// `existing`, the folder's rows by path; what is left of `existing`
-/// at the end is marked missing. Committed in batches.
+/// at the end is marked missing.
+///
+/// Two phases a batch. The first stats, hashes and probes the files
+/// with no transaction open, which is where the time goes — a cold
+/// raw is tens of milliseconds — and the second writes the batch's
+/// rows in one short write transaction. The first cut held the
+/// write lock through the probing and took the next transaction the
+/// moment it committed, and a second writer polling for the lock
+/// never once found it free and gave up at its timeout. `existing`
+/// was read before the pass and another writer may have added a row
+/// since, so a path it did not hold is looked up again inside the
+/// transaction before anything is inserted.
 fn index_paths(
     conn: &mut Connection,
     folder: &Path,
@@ -352,18 +472,10 @@ fn index_paths(
     let total = files.len();
     let folder_bytes = path_bytes(folder);
     let folder_text = path_text(folder);
-    let mut tx = conn.transaction()?;
-    let mut batch = 0;
+    let mut looked: Vec<Looked<'_>> = Vec::with_capacity(BATCH);
     let mut since = Instant::now();
     for (done, path) in files.iter().enumerate() {
         progress(Progress { done, total, path });
-        if batch >= BATCH || since.elapsed() >= BATCH_TIME {
-            tx.commit()?;
-            tx = conn.transaction()?;
-            batch = 0;
-            since = Instant::now();
-        }
-        batch += 1;
         let key = path_bytes(path);
         let stat = match std::fs::metadata(path) {
             Ok(m) => m,
@@ -374,62 +486,123 @@ fn index_paths(
         };
         let (size, mtime) = (stat.len(), mtime_of(&stat));
         let sidecar = sidecar_of(path);
-        match existing.remove(&key) {
-            Some(row) if row.size == size && row.mtime == mtime => {
-                if row.missing {
-                    tx.prepare_cached("UPDATE files SET missing_since = NULL WHERE id = ?")?
-                        .execute(params![row.id])?;
-                    report.returned += 1;
-                }
-                if row.same_sidecar(sidecar.as_ref()) {
-                    report.unchanged += 1;
-                } else {
-                    write_meta(&tx, row.id, sidecar.as_ref())?;
-                    report.meta_refreshed += 1;
-                }
+        let hashed = |report: &mut Report| match hash::hash_file(path) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                report.errors.push((path.clone(), e.to_string()));
+                None
             }
+        };
+        let plan = match existing.remove(&key) {
+            Some(row) if row.size == size && row.mtime == mtime => Plan::Same(row),
             Some(row) => {
-                let hash = match hash::hash_file(path) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        report.errors.push((path.clone(), e.to_string()));
-                        continue;
-                    }
+                let Some(hash) = hashed(&mut report) else {
+                    continue;
                 };
                 let exif = probe(path, &mut report);
-                tx.prepare_cached(
-                    "UPDATE files SET size = ?, mtime = ?, hash = ?, make = ?, model = ?, \
-                     camera = ?, lens = ?, iso = ?, focal = ?, aperture = ?, shutter = ?, \
-                     taken = ?, missing_since = NULL WHERE id = ?",
+                Plan::Changed { row, hash, exif }
+            }
+            None => {
+                let Some(hash) = hashed(&mut report) else {
+                    continue;
+                };
+                let exif = if gone_by_hash(conn, &hash)?.is_some() {
+                    None
+                } else {
+                    Some(probe(path, &mut report))
+                };
+                Plan::Fresh { hash, exif }
+            }
+        };
+        looked.push(Looked {
+            path,
+            key,
+            size,
+            mtime,
+            sidecar,
+            plan,
+        });
+        if looked.len() >= BATCH || since.elapsed() >= BATCH_TIME {
+            write_batch(
+                conn,
+                &folder_bytes,
+                &folder_text,
+                &mut looked,
+                &mut existing,
+                &mut report,
+            )?;
+            since = Instant::now();
+        }
+    }
+    write_batch(
+        conn,
+        &folder_bytes,
+        &folder_text,
+        &mut looked,
+        &mut existing,
+        &mut report,
+    )?;
+    // What was not on disk. By id and path both: another writer may
+    // have moved the row on since the folder's rows were read.
+    if existing.values().any(|r| !r.missing) {
+        let tx = begin(conn)?;
+        let now = now_secs();
+        for (key, row) in existing.iter().filter(|(_, r)| !r.missing) {
+            report.missing += tx
+                .prepare_cached(
+                    "UPDATE files SET missing_since = ? WHERE id = ? AND path = ? \
+                     AND missing_since IS NULL",
                 )?
-                .execute(params![
-                    size as i64,
-                    mtime,
-                    hash,
-                    exif.make,
-                    exif.model,
-                    exif.camera,
-                    exif.lens,
-                    exif.iso,
-                    exif.focal,
-                    exif.aperture,
-                    exif.shutter,
-                    exif.taken,
-                    row.id
-                ])?;
+                .execute(params![now, row.id, key])?;
+        }
+        tx.commit()?;
+    }
+    Ok(report)
+}
+
+/// The second phase: the batch's rows, in one write transaction.
+fn write_batch(
+    conn: &mut Connection,
+    folder_bytes: &[u8],
+    folder_text: &str,
+    looked: &mut Vec<Looked<'_>>,
+    existing: &mut HashMap<Vec<u8>, Row>,
+    report: &mut Report,
+) -> Result<()> {
+    if looked.is_empty() {
+        return Ok(());
+    }
+    let tx = begin(conn)?;
+    for Looked {
+        path,
+        key,
+        size,
+        mtime,
+        sidecar,
+        plan,
+    } in looked.drain(..)
+    {
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        match plan {
+            Plan::Same(row) => settle_same(&tx, row, sidecar.as_ref(), report)?,
+            Plan::Changed { row, hash, exif } => {
+                update_file(&tx, row.id, size, mtime, &hash, &exif)?;
                 write_meta(&tx, row.id, sidecar.as_ref())?;
                 report.changed += 1;
             }
-            None => {
-                let hash = match hash::hash_file(path) {
-                    Ok(h) => h,
-                    Err(e) => {
-                        report.errors.push((path.clone(), e.to_string()));
-                        continue;
+            Plan::Fresh { hash, exif } => {
+                if let Some(row) = row_at(&tx, &key)? {
+                    // Added by another writer since the folder's rows
+                    // were read.
+                    if row.size == size && row.mtime == mtime {
+                        settle_same(&tx, row, sidecar.as_ref(), report)?;
+                    } else {
+                        let exif = exif.unwrap_or_else(|| probe(path, report));
+                        update_file(&tx, row.id, size, mtime, &hash, &exif)?;
+                        write_meta(&tx, row.id, sidecar.as_ref())?;
+                        report.changed += 1;
                     }
-                };
-                let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
-                if let Some((id, old_path)) = gone_by_hash(&tx, &hash)? {
+                } else if let Some((id, old_path)) = gone_by_hash(&tx, &hash)? {
                     tx.prepare_cached(
                         "UPDATE files SET path = ?, folder = ?, folder_text = ?, name = ?, \
                          size = ?, mtime = ?, missing_since = NULL WHERE id = ?",
@@ -454,7 +627,7 @@ fn index_paths(
                     );
                     report.moved += 1;
                 } else {
-                    let exif = probe(path, &mut report);
+                    let exif = exif.unwrap_or_else(|| probe(path, report));
                     tx.prepare_cached(
                         "INSERT INTO files (path, folder, folder_text, name, size, mtime, hash, \
                          make, model, camera, lens, iso, focal, aperture, shutter, taken) \
@@ -485,22 +658,70 @@ fn index_paths(
             }
         }
     }
-    // What was not on disk.
-    let now = now_secs();
-    for row in existing.values().filter(|r| !r.missing) {
-        tx.prepare_cached("UPDATE files SET missing_since = ? WHERE id = ?")?
-            .execute(params![now, row.id])?;
-        report.missing += 1;
-    }
     tx.commit()?;
-    Ok(report)
+    Ok(())
+}
+
+/// A row whose file is as it was: back if it was missing, and its
+/// meta refreshed if its sidecar is not the one it knew.
+fn settle_same(
+    tx: &Transaction<'_>,
+    row: Row,
+    sidecar: Option<&SidecarNow>,
+    report: &mut Report,
+) -> Result<()> {
+    if row.missing {
+        tx.prepare_cached("UPDATE files SET missing_since = NULL WHERE id = ?")?
+            .execute(params![row.id])?;
+        report.returned += 1;
+    }
+    if row.same_sidecar(sidecar) {
+        report.unchanged += 1;
+    } else {
+        write_meta(tx, row.id, sidecar)?;
+        report.meta_refreshed += 1;
+    }
+    Ok(())
+}
+
+/// A changed file's row: its new size, mtime, hash and EXIF.
+fn update_file(
+    tx: &Transaction<'_>,
+    id: i64,
+    size: u64,
+    mtime: i64,
+    hash: &str,
+    exif: &Exif,
+) -> Result<()> {
+    tx.prepare_cached(
+        "UPDATE files SET size = ?, mtime = ?, hash = ?, make = ?, model = ?, \
+         camera = ?, lens = ?, iso = ?, focal = ?, aperture = ?, shutter = ?, \
+         taken = ?, missing_since = NULL WHERE id = ?",
+    )?
+    .execute(params![
+        size as i64,
+        mtime,
+        hash,
+        exif.make,
+        exif.model,
+        exif.camera,
+        exif.lens,
+        exif.iso,
+        exif.focal,
+        exif.aperture,
+        exif.shutter,
+        exif.taken,
+        id
+    ])?;
+    Ok(())
 }
 
 /// A row with this hash whose file is gone from a folder that is
-/// still there: a move's other end. Its id and its old path. A row
-/// whose folder is gone too is not one — its drive may simply not
-/// be mounted — and the file in hand is a copy.
-fn gone_by_hash(tx: &Transaction<'_>, hash: &str) -> Result<Option<(i64, Vec<u8>)>> {
+/// still there with other things in it: a move's other end. Its id
+/// and its old path. A row whose folder is gone, or is there but
+/// empty, is not one — its drive may simply not be mounted, its
+/// mount point left behind — and the file in hand is a copy.
+fn gone_by_hash(tx: &Connection, hash: &str) -> Result<Option<(i64, Vec<u8>)>> {
     let mut stmt = tx.prepare_cached("SELECT id, path FROM files WHERE hash = ? ORDER BY id")?;
     let candidates = stmt.query_map(params![hash], |r| {
         Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
@@ -508,8 +729,10 @@ fn gone_by_hash(tx: &Transaction<'_>, hash: &str) -> Result<Option<(i64, Vec<u8>
     for candidate in candidates {
         let (id, old) = candidate?;
         let old_path = path_from_bytes(&old);
-        let folder_there = old_path.parent().is_some_and(Path::is_dir);
-        if folder_there && !old_path.exists() {
+        let folder_in_use = old_path
+            .parent()
+            .is_some_and(|d| d.is_dir() && !is_empty_dir(d).unwrap_or(true));
+        if folder_in_use && !old_path.exists() {
             return Ok(Some((id, old)));
         }
     }
@@ -1109,14 +1332,18 @@ pub(crate) mod tests {
 
         // Moved the other way round: the new folder indexed first
         // finds the old path gone and claims the row before the old
-        // folder ever notices.
+        // folder ever notices. The old folder keeps another file, so
+        // that it is a folder in use and not an empty mount point.
+        write_frame(&sub.join("keep.tif"), &R6, 21);
+        assert_eq!(lib.index_folder(&sub, &mut quiet()).unwrap().added, 1);
         let back = dir.join("a7.tif");
         std::fs::rename(&moved, &back).unwrap();
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.moved, 1, "{report:?}");
         let report = lib.index_folder(&sub, &mut quiet()).unwrap();
-        assert_eq!(report, Report::default());
-        assert_eq!(lib.len().unwrap(), 3);
+        assert_eq!(report.unchanged, 1, "{report:?}");
+        assert_eq!(report.missing, 0);
+        assert_eq!(lib.len().unwrap(), 4);
 
         // A copy is not a move: both files are there, so both rows.
         let copy = dir.join("copy.tif");
@@ -1270,43 +1497,228 @@ pub(crate) mod tests {
     fn a_panic_in_the_probe_is_one_files_error() {
         let dir = scratch("panic");
         let (_r5, _, _) = shoot(&dir);
-        // The probe is wrapped whatever the decoder does; the
-        // wrapper is what is tested, with a panic of our own
-        // through the same path.
-        let mut report = Report::default();
-        let exif = {
-            let r = std::panic::catch_unwind(|| -> greycard_core::Result<()> {
-                panic!("a decoder that gave up")
-            });
-            match r {
-                Err(panic) => {
-                    let what = panic
-                        .downcast_ref::<&str>()
-                        .map(|s| s.to_string())
-                        .unwrap_or_default();
-                    report
-                        .errors
-                        .push((dir.join("x"), format!("the decoder panicked: {what}")));
-                    Exif::default()
-                }
-                Ok(_) => unreachable!(),
-            }
-        };
-        assert_eq!(exif, Exif::default());
-        assert!(report.errors[0].1.contains("gave up"));
-        // And the real path: a file the decoder refuses, a file with a
-        // header that lies about where its directory is, and good
-        // files, all in one folder, all indexed.
-        let liar = dir.join("liar.tif");
-        let mut bytes = b"II*\0".to_vec();
-        bytes.extend_from_slice(&0xFFFF_FF00u32.to_le_bytes());
-        bytes.extend_from_slice(&[0u8; 64]);
-        std::fs::write(&liar, &bytes).unwrap();
+        // The first 8,192 bytes of the sample P1000247.RW2 with
+        // fifteen bytes changed by a fuzz pass (offsets 15, 42, 54,
+        // 59, 102, 114, 122, 123, 167, 185, 190, 201, 206, 222, 245),
+        // the body's and the lens's serial numbers zeroed and every
+        // byte past 6,150 zeroed (the embedded preview starts at
+        // 6,144, and this repo holds nobody's picture), on which
+        // rawler 0.8's RW2 decoder divides by zero in `rw2.rs:76`; a
+        // 6,144-byte cut does not reach that line. In the folder
+        // with good files: the folder is indexed, the file has a row,
+        // the panic is one line.
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/rawler-rw2-divide-by-zero.RW2");
+        let bad = dir.join("P1000247.RW2");
+        std::fs::copy(&fixture, &bad).unwrap();
+        // Quiet the panic's own print: the test is that it is caught.
+        let before = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
         let mut lib = Library::open_in_memory().unwrap();
-        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet());
+        std::panic::set_hook(before);
+        let report = report.unwrap();
         assert_eq!(report.added, 4, "{report:?}");
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        assert_eq!(report.errors[0].0, canonical(&bad).unwrap());
+        assert!(
+            report.errors[0].1.contains("panicked"),
+            "{}",
+            report.errors[0].1
+        );
         assert_eq!(lib.len().unwrap(), 4);
         assert_eq!(names(&lib, "camera:canon").len(), 2);
+        let e = lib.by_path(&bad).unwrap().unwrap();
+        assert_eq!(e.exif, Exif::default());
+        assert_eq!(e.hash, hash::hash_file(&bad).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Two passes on two folders at once, on a library that is not
+    /// there yet: both make rows, neither fails. This is the CLI's
+    /// `index a & index b` on a fresh database.
+    #[test]
+    fn two_passes_on_two_folders_at_once_both_finish() {
+        let dir = scratch("twopass");
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let n = BATCH * 3;
+        for i in 0..n {
+            write_frame(&a.join(format!("a{i:03}.tif")), &R5, i as u16);
+            write_frame(&b.join(format!("b{i:03}.tif")), &R6, (i + 500) as u16);
+        }
+        for round in 0..3 {
+            let db = dir.join(format!("lib{round}")).join("library.sqlite");
+            let passes: Vec<_> = [a.clone(), b.clone()]
+                .into_iter()
+                .map(|folder| {
+                    let db = db.clone();
+                    std::thread::spawn(move || {
+                        let mut lib = Library::open(&db).map_err(|e| format!("open: {e:?}"))?;
+                        lib.index_folder(&folder, &mut |_| {})
+                            .map_err(|e| format!("pass over {}: {e:?}", folder.display()))
+                    })
+                })
+                .collect();
+            for pass in passes {
+                let report = pass
+                    .join()
+                    .unwrap()
+                    .unwrap_or_else(|e| panic!("round {round}: {e}"));
+                assert_eq!(report.added, n, "round {round}: {report:?}");
+                assert!(report.errors.is_empty(), "{:?}", report.errors);
+            }
+            let lib = Library::open_read_only(&db).unwrap();
+            assert_eq!(lib.len().unwrap(), 2 * n);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Two writers take turns rather than colliding: a folder pass
+    /// with the editor's `index_file` on the folder's last file
+    /// running beside it, from another connection on another thread,
+    /// finishes with every row and no error on either side.
+    #[test]
+    fn a_pass_and_a_concurrent_index_file_both_finish() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let dir = scratch("concurrent");
+        let n = BATCH * 4;
+        for i in 0..n {
+            write_frame(&dir.join(format!("f{i:03}.tif")), &R5, i as u16);
+        }
+        let last = dir.join(format!("f{:03}.tif", n - 1));
+        let db = dir.join("lib").join("library.sqlite");
+        let mut lib = Library::open(&db).unwrap();
+        let stop = Arc::new(AtomicBool::new(false));
+        let writer = std::thread::spawn({
+            let (db, last, stop) = (db.clone(), last.clone(), stop.clone());
+            move || {
+                let mut other = Library::open(&db).unwrap();
+                let (mut calls, mut errors) = (0usize, Vec::new());
+                while !stop.load(Ordering::Relaxed) {
+                    match other.index_file(&last) {
+                        Ok(_) => calls += 1,
+                        Err(e) => errors.push(e.to_string()),
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                (calls, errors)
+            }
+        });
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        stop.store(true, Ordering::Relaxed);
+        let (calls, errors) = writer.join().unwrap();
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(calls > 0);
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        // The last file was added by whichever got there first and
+        // found unchanged by the other; every file has one row.
+        assert_eq!(report.seen(), n, "{report:?}");
+        assert_eq!(lib.len().unwrap(), n);
+        assert!(lib.by_path(&last).unwrap().is_some());
+        drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// An unmounted drive leaves its mount point behind, an empty
+    /// folder: nothing under it is marked missing or claimed as a
+    /// move, and a prune forgets nothing of it.
+    #[test]
+    fn an_empty_mount_point_is_unavailable_not_deleted() {
+        let dir = scratch("mount");
+        let mnt = dir.join("mnt");
+        let drive = mnt.join("drive");
+        let day1 = drive.join("day1");
+        std::fs::create_dir_all(&day1).unwrap();
+        let (r5, _, _) = shoot(&day1);
+        let mut lib = Library::open_in_memory().unwrap();
+        assert_eq!(lib.index_tree(&drive, &mut quiet()).unwrap().added, 3);
+        // Unmounted: the folder stays, empty.
+        let off = dir.join("drive.off");
+        std::fs::rename(&drive, &off).unwrap();
+        std::fs::create_dir(&drive).unwrap();
+        let laptop = dir.join("laptop");
+        std::fs::create_dir(&laptop).unwrap();
+        std::fs::copy(off.join("day1").join("r5.tif"), laptop.join("r5.tif")).unwrap();
+        let report = lib.index_folder(&laptop, &mut quiet()).unwrap();
+        assert_eq!((report.added, report.moved), (1, 0), "{report:?}");
+        let report = lib.index_tree(&drive, &mut quiet()).unwrap();
+        assert_eq!(
+            report,
+            Report {
+                unavailable: 1,
+                ..Report::default()
+            }
+        );
+        let report = lib.index_folder(&drive, &mut quiet()).unwrap();
+        assert_eq!(report.unavailable, 1, "{report:?}");
+        assert_eq!(lib.prune_missing().unwrap(), 0);
+        assert_eq!(names(&lib, "missing:yes"), Vec::<String>::new());
+        assert!(!lib.by_path(&r5).unwrap().unwrap().missing);
+        // A mount point inside a tree shields what is under it too.
+        let report = lib.index_tree(&mnt, &mut quiet()).unwrap();
+        assert_eq!((report.missing, report.unavailable), (0, 1), "{report:?}");
+        // Mounted again: everything is where it was.
+        std::fs::remove_dir(&drive).unwrap();
+        std::fs::rename(&off, &drive).unwrap();
+        let report = lib.index_tree(&drive, &mut quiet()).unwrap();
+        assert_eq!((report.unchanged, report.added), (3, 0), "{report:?}");
+        // An empty folder the index knows nothing of is just empty.
+        let fresh = dir.join("fresh");
+        std::fs::create_dir(&fresh).unwrap();
+        assert_eq!(
+            lib.index_folder(&fresh, &mut quiet()).unwrap(),
+            Report::default()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder that is not there and that the index knows nothing
+    /// of is a name mistyped, and an error; one with rows is the
+    /// deleted-folder case.
+    #[test]
+    fn a_mistyped_folder_is_an_error() {
+        let dir = scratch("typo");
+        shoot(&dir);
+        let mut lib = Library::open_in_memory().unwrap();
+        let typo = dir.join("tpyo");
+        let said = lib
+            .index_folder(&typo, &mut quiet())
+            .unwrap_err()
+            .to_string();
+        assert!(said.contains("tpyo"), "{said}");
+        assert!(lib.index_tree(&typo, &mut quiet()).is_err());
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let sub = dir.join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        write_frame(&sub.join("x.tif"), &A7, 1);
+        lib.index_folder(&sub, &mut quiet()).unwrap();
+        std::fs::remove_dir_all(&sub).unwrap();
+        assert_eq!(lib.index_folder(&sub, &mut quiet()).unwrap().missing, 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A link to a file is one entry of its folder, under its own
+    /// name, and a save through the link or a lookup by it finds that
+    /// row and not a second one for the target.
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_file_has_one_row() {
+        let dir = scratch("link");
+        let (r5, _, _) = shoot(&dir);
+        let link = dir.join("link.tif");
+        std::os::unix::fs::symlink(&r5, &link).unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        assert_eq!(lib.index_folder(&dir, &mut quiet()).unwrap().added, 4);
+        let e = lib.by_path(&link).unwrap().expect("the link's own row");
+        assert_eq!(e.name(), "link.tif");
+        let report = lib.index_file(&link).unwrap();
+        assert_eq!((report.added, report.unchanged), (0, 1), "{report:?}");
+        assert_eq!(lib.len().unwrap(), 4);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.unchanged, 4, "{report:?}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

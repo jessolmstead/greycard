@@ -22,13 +22,24 @@ Indexing a folder is incremental: a file whose size and mtime the
 index holds is not read; a sidecar whose bytes changed refreshes the
 meta and nothing else; a file under a new path whose hash the index
 knows, gone from a folder that is still there, is a move and keeps
-its row (a folder that is gone entirely may be a drive not mounted,
-so its files are not claimed). Files gone from a folder, and folders
-gone from under a tree, are marked missing and kept until
-`prune_missing`, so a move is found from either end. A tree pass
-does not go into hidden folders or follow links to folders, and
-names the links it skipped. The pass commits every fifty files or
-every second, so a listing and the editor's `index_file` get in.
+its row. Files gone from a folder, and folders gone from under a
+tree, are marked missing and kept until `prune_missing`, so a move
+is found from either end. A folder found empty on disk with rows
+under it is a drive not mounted, its mount point left behind, as
+likely as a shoot deleted: nothing under it is marked missing or
+claimed as a move, and the report counts it unavailable. A folder
+that is not there and that the index knows nothing of is an error,
+a name mistyped. A tree pass does not go into hidden folders or
+follow links to folders, and names the links it skipped. The pass
+works in batches of fifty files: the files are stat'd, hashed and
+probed with no transaction open, then the batch's rows are written
+in one short write transaction, so a listing never waits and a
+second writer — another pass, or the editor's `index_file` after a
+save — gets in between batches. A pass and a concurrent `index_file`
+on the same file, two passes on two folders on a library that is not
+there yet, and four openers of a fresh library at once all finish
+with every row and no error; each is a test with its own connections
+on its own threads.
 
 The filter language (`filter` module) is terms separated by spaces,
 all of which must pass:

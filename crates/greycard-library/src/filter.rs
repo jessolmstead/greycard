@@ -302,12 +302,14 @@ fn parse_term(token: &str) -> Result<Term, ParseError> {
                 "a word is wanted; a quote on its own is none".to_string()
             ));
         }
+        one_term_only(&word, &err)?;
         return Ok(Term::Word(word.to_lowercase()));
     };
     let value = unquote(value);
     if value.is_empty() {
         return Err(err(format!("{name} wants a value after {op}")));
     }
+    one_term_only(&value, &err)?;
     let field = name.to_ascii_lowercase();
     let text_field = match field.as_str() {
         "camera" => Some(TextField::Camera),
@@ -422,6 +424,35 @@ fn parse_term(token: &str) -> Result<Term, ParseError> {
             "no field called {name}; the fields are {}",
             FIELDS.join(", ")
         ))),
+    }
+}
+
+/// Whether a token is shaped like a term: letters, an operator, and
+/// something after it.
+fn looks_like_a_term(token: &str) -> bool {
+    let name_len = token
+        .char_indices()
+        .find(|(_, c)| !c.is_ascii_alphabetic())
+        .map(|(i, _)| i)
+        .unwrap_or(token.len());
+    if name_len == 0 {
+        return false;
+    }
+    let rest = &token[name_len..];
+    ["!=", ">=", "<=", ":", "=", ">", "<"]
+        .iter()
+        .any(|op| rest.strip_prefix(op).is_some_and(|v| !v.is_empty()))
+}
+
+/// A value with another term inside it is a whole filter handed over
+/// as one argument — `list 'camera:R6 iso>=3200'` — which would
+/// otherwise be a camera called "R6 iso>=3200" that matches nothing.
+fn one_term_only(value: &str, err: &dyn Fn(String) -> ParseError) -> Result<(), ParseError> {
+    match value.split_whitespace().find(|t| looks_like_a_term(t)) {
+        Some(inner) => Err(err(format!(
+            "{inner:?} looks like another term; one term per argument, spaces inside quotes"
+        ))),
+        None => Ok(()),
     }
 }
 
@@ -1079,6 +1110,22 @@ mod tests {
         );
         assert!(Filter::from_terms::<&str>(&[]).unwrap().is_empty());
         assert!(Filter::from_terms(&["camra:R6"]).is_err());
+        // A whole filter in one argument is refused with the hint,
+        // whether it starts with a field or a word.
+        let said = Filter::from_terms(&["camera:R6 iso>=3200"])
+            .unwrap_err()
+            .to_string();
+        assert!(said.contains("one term per argument"), "{said}");
+        assert!(said.contains("iso>=3200"), "{said}");
+        assert!(
+            Filter::from_terms(&["harbor flag:pick"])
+                .unwrap_err()
+                .to_string()
+                .contains("one term per argument")
+        );
+        // A value with a space and no operator in it is fine, and so
+        // is a token that starts with a digit.
+        assert!(Filter::from_terms(&["lens:RF 24-105", "keyword:noon 12:30"]).is_ok());
     }
 
     #[test]
