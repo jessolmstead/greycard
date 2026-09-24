@@ -181,29 +181,7 @@ fn run(
         .par_chunks_mut(w * 3)
         .zip(map_rows.into_par_iter())
         .enumerate()
-        .map(|(y, (row, mut map_row))| {
-            let (y0, y1, fy) = tap(y, model.height, model.factor);
-            let mut sum = 0f64;
-            let mut min = f32::INFINITY;
-            for (x, (px, &(x0, x1, fx))) in row
-                .as_chunks_mut::<3>()
-                .0
-                .iter_mut()
-                .zip(&columns)
-                .enumerate()
-            {
-                let t = model.transmission(x0, x1, fx, y0, y1, fy, px);
-                for (v, &a) in px.iter_mut().zip(&a) {
-                    *v = (*v - a) / t + a;
-                }
-                if let Some(m) = map_row.as_mut() {
-                    m[x] = t;
-                }
-                sum += t as f64;
-                min = min.min(t);
-            }
-            (sum, min)
-        })
+        .map(|(y, (row, map_row))| clear_row(row, map_row, y, &model, &columns))
         .reduce(|| (0.0, f32::INFINITY), |x, y| (x.0 + y.0, x.1.min(y.1)));
     (
         DehazeStats {
@@ -216,6 +194,47 @@ fn run(
         },
         map,
     )
+}
+
+/// One row of the picture cleared of its haze, and its transmission
+/// written to `map_row` when there is one: the sum and the least of
+/// the row's transmissions.
+///
+/// Out of line so the rows arrive as arguments. Inside the closure the
+/// picture's row comes out of rayon's enumerate tuple and the map's out
+/// of a vector, and a reference loaded from memory carries no promise
+/// that it is distinct from anything else, so every write to a pixel
+/// had the model's fields read again for the next.
+#[inline(never)]
+fn clear_row(
+    row: &mut [f32],
+    mut map_row: Option<&mut [f32]>,
+    y: usize,
+    model: &Model,
+    columns: &[(usize, usize, f32)],
+) -> (f64, f32) {
+    let (y0, y1, fy) = tap(y, model.height, model.factor);
+    let a = model.airlight;
+    let mut sum = 0f64;
+    let mut min = f32::INFINITY;
+    for (x, (px, &(x0, x1, fx))) in row
+        .as_chunks_mut::<3>()
+        .0
+        .iter_mut()
+        .zip(columns)
+        .enumerate()
+    {
+        let t = model.transmission(x0, x1, fx, y0, y1, fy, px);
+        for (v, &a) in px.iter_mut().zip(&a) {
+            *v = (*v - a) / t + a;
+        }
+        if let Some(m) = map_row.as_mut() {
+            m[x] = t;
+        }
+        sum += t as f64;
+        min = min.min(t);
+    }
+    (sum, min)
 }
 
 /// The reduction a picture of this size gets: the smallest factor
