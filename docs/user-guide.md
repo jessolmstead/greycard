@@ -75,13 +75,14 @@ and rejects have no XMP field, so they stay in the `.gcd`.
 ## Several frames at once
 
 Click a frame to open it. **Ctrl+click** adds a frame to the
-selection or takes it out again, and **Shift+click** selects every
-frame from the open one to the one you click; hold both to add a run
-to what is already selected. **Shift+←** and **Shift+→** (and the
-arrows in the grid) move to the next frame and keep the selection.
-The selected frames are highlighted in the filmstrip and the grid,
-and the frame on screen has the brighter outline. A plain arrow or a
-plain click goes back to one frame, and so does **Esc**.
+selection or takes it out again. **Shift+click** replaces the
+selection with every frame from the open one to the one you click;
+**Ctrl+Shift+click** adds that run to what is already selected.
+**Shift** with the arrow keys, in the filmstrip or the grid, moves to
+the next frame and adds it to the selection. The selected frames are
+highlighted in the filmstrip and the grid, and the frame on screen
+has the brighter outline. A plain arrow or a plain click goes back to
+one frame, and so does **Esc**.
 
 Ratings, flags, labels and the [ ] turns act on every selected frame.
 
@@ -89,9 +90,15 @@ Ratings, flags, labels and the [ ] turns act on every selected frame.
 selected frames. Edit one frame, Ctrl+click or Shift+click the
 others, then press **Sync…** under Presets, or Ctrl+Shift+S. Choose
 which sections to copy: all are ticked except Adjustments, because
-masks are drawn around one picture's subject. The crop, the
-straighten and the retouch are never copied. Each frame keeps the
-sync as one step in its history, so Ctrl+Z on that frame undoes it.
+masks are drawn around one picture's subject. Ticking Adjustments
+replaces each frame's own masks with the open frame's. Noise brings
+the learned denoiser and its blend along (a preset does not). A
+camera profile made for one camera is copied only onto frames from
+that camera; the status line names any frame it skipped. The crop,
+the straighten and the retouch are never copied. Each frame keeps the
+sync as one step in its history, named for what changed, so Ctrl+Z
+on that frame undoes it. While the sheet is open, the arrow keys and
+undo do nothing, so the frames it names are the frames it syncs.
 
 Export works on the open frame only, not the whole selection.
 
@@ -112,8 +119,9 @@ instant.
 | Key | Does |
 |---|---|
 | ← → | Previous or next frame |
-| Shift+← → | Next frame, keeping the selection |
-| Ctrl+click, Shift+click | Add a frame, or a run of frames, to the selection |
+| Shift+← → | Previous or next frame, added to the selection |
+| Ctrl+click | Add a frame to the selection, or take it out |
+| Shift+click, Ctrl+Shift+click | Select every frame from the open one to this one; with Ctrl, add them instead |
 | G | Grid, and back (in the grid, Ctrl+wheel or + and − resize it) |
 | C | Culling mode |
 | Tab | Hide the panels, the filmstrip and the status line, and bring them back |
