@@ -607,6 +607,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let mut st = state.borrow_mut();
             st.fetching = false;
             st.asked.clear();
+            st.fetch_failed.retain(|id| *id != model.id);
             let short = model.name.split(',').next().unwrap_or(model.name);
             app.set_status(format!("{short} is ready").into());
             // A denoiser the edit is waiting for, or the fill model

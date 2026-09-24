@@ -257,7 +257,9 @@ pub(crate) enum Step {
 /// The step for `shape`, given what the store has, the providers, the
 /// models declined this session, those whose fetch failed, and whether
 /// the sheet is free for an offer. A Subject whose WebGPU file was
-/// declined or could not be fetched is offered the original.
+/// declined or could not be fetched is offered the original. A model
+/// whose fetch failed is not offered again this session, as one
+/// declined is not: offline, the sheet would come straight back.
 pub(crate) fn step(
     shape: &Shape,
     have: impl Fn(&greycard_ai::Model) -> bool + Copy,
@@ -270,7 +272,7 @@ pub(crate) fn step(
     let model = crate::ai::model_with(shape, have, providers, &unavailable)?;
     Some(if have(model) {
         Step::Ask(model)
-    } else if sheet_free && !declined.contains(&model.id) {
+    } else if sheet_free && !declined.contains(&model.id) && !failed.contains(&model.id) {
         Step::Offer(model)
     } else {
         Step::Wait
@@ -1120,6 +1122,21 @@ mod tests {
             step(&shape, nothing, &gpu, &declined, &failed, true),
             Some(Step::Offer(&SUBJECT))
         );
+        // Offline, the original fails too: no third offer.
+        {
+            let mut failed = failed.clone();
+            fetch_failed(&mut failed, SUBJECT.id, SUBJECT.name, "offline");
+            assert_eq!(
+                step(&shape, nothing, &gpu, &declined, &failed, true),
+                Some(Step::Wait)
+            );
+            // Once it is in the store after all, it is asked for.
+            let original = |m: &greycard_ai::Model| m.id == SUBJECT.id;
+            assert_eq!(
+                step(&shape, original, &gpu, &declined, &failed, true),
+                Some(Step::Ask(&SUBJECT))
+            );
+        }
         declined.push(SUBJECT.id);
         assert_eq!(
             step(&shape, nothing, &gpu, &declined, &failed, true),
