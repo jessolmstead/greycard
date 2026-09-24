@@ -331,6 +331,8 @@ pub enum Outcome {
         model: &'static greycard_ai::Model,
     },
     FetchFailed {
+        /// The model's registry id.
+        id: &'static str,
         name: &'static str,
         message: String,
     },
@@ -449,6 +451,7 @@ impl Worker {
                     }));
                     if let Err(payload) = held {
                         deliver(Outcome::FetchFailed {
+                            id: model.id,
                             name: model.name,
                             message: format!(
                                 "the fetch panicked: {}",
@@ -553,6 +556,7 @@ fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) {
         Ok(s) => s,
         Err(e) => {
             deliver(Outcome::FetchFailed {
+                id: model.id,
                 name,
                 message: e.to_string(),
             });
@@ -574,6 +578,7 @@ fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) {
     deliver(match result {
         Ok(()) => Outcome::Fetched { model },
         Err(e) => Outcome::FetchFailed {
+            id: model.id,
             name,
             message: e.to_string(),
         },

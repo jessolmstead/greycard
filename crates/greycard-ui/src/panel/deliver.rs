@@ -643,12 +643,15 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             }
             app.window().request_redraw();
         }
-        Outcome::FetchFailed { name, message } => {
+        Outcome::FetchFailed { id, name, message } => {
             let mut st = state.borrow_mut();
             st.fetching = false;
-            let short = name.split(',').next().unwrap_or(name);
             tracing::error!("{name} could not be fetched: {message}");
-            app.set_status(format!("{short} could not be fetched: {message}").into());
+            let status = crate::panel::mask::fetch_failed(&mut st.fetch_failed, id, name, &message);
+            app.set_status(status.into());
+            // The masks waiting on it are asked about again, and may
+            // now turn to another model.
+            app.window().request_redraw();
         }
         Outcome::LensesFetching { done, total } => {
             app.set_status(

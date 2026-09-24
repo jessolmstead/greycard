@@ -78,12 +78,23 @@ Kept in {}.",
     app.set_fetch_open(true);
 }
 
+/// The model sheet's note on where the model comes from: one greycard
+/// changed and publishes itself says so, and under whose license.
+pub(crate) fn model_note(model: &greycard_ai::Model) -> String {
+    match model.modified {
+        Some(_) => format!(
+            "greycard publishes this copy, changed from the original for speed; it is fetched for you under the original's {} license.",
+            model.license.name
+        ),
+        None => "greycard does not ship this model; it is fetched for you under its own license."
+            .to_string(),
+    }
+}
+
 /// Open the model sheet for `model`.
 pub(crate) fn offer_model(st: &mut State, app: &App, model: &'static greycard_ai::Model) {
     st.fetch = Some(Fetch::Model(model));
-    app.set_fetch_note(
-        "greycard does not ship this model; it is fetched for you under its own license.".into(),
-    );
+    app.set_fetch_note(model_note(model).into());
     app.set_fetch_title(format!("Download {}?", model.name).into());
     app.set_fetch_text(
         format!(
@@ -312,7 +323,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 }
                 (Fetch::Model(model), false) => {
                     st.declined.push(model.id);
-                    let lost = if model.id == greycard_ai::FILL.id {
+                    let lost = if model.id == greycard_ai::SUBJECT_WEBGPU.id {
+                        // The masks waiting on it turn to the original,
+                        // which the next frame offers.
+                        app.window().request_redraw();
+                        "without the GPU model the original Subject model is offered"
+                    } else if model.id == greycard_ai::FILL.id {
                         "without the model a fill is left as it was"
                     } else if greycard_ai::DENOISERS.iter().any(|(_, m)| m.id == model.id) {
                         "without the model the engine's own denoise stands in"

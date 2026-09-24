@@ -21,29 +21,44 @@ pub struct Subject {
     model: &'static Model,
 }
 
-/// The Subject model to use with these providers and this store: the
-/// rewrite when WebGPU is on offer, since only it runs there, else the
-/// original — unless the other one is already in the store and the
-/// preferred one is not, when that one is used rather than asking for
-/// a second download of the same weights. Either runs on either
-/// provider list: the rewrite answers on the CPU exactly as the
+/// The Subject model to use, or to offer to fetch, with these
+/// providers and this store. What is in the store comes first: the
+/// rewrite when WebGPU is on offer and the store has it, else whichever
+/// of the two the store has, the original first. Either runs on
+/// either provider list: the rewrite answers on the CPU as the
 /// original does, and the original on WebGPU fails over to the CPU.
-pub fn model_for(store: Option<&Store>, providers: &[Provider]) -> &'static Model {
-    choose(providers.contains(&Provider::WebGpu), |m| {
-        store.is_some_and(|s| s.have(m))
-    })
+/// With neither in the store, the one to offer: the rewrite where
+/// WebGPU is on offer, unless its id is in `unavailable` (its fetch
+/// failed, or it was declined, this session), then the original. So a
+/// rewrite that cannot be had never stands between a shape and the
+/// original.
+pub fn model_for(
+    store: Option<&Store>,
+    providers: &[Provider],
+    unavailable: &[&str],
+) -> &'static Model {
+    pick(
+        providers.contains(&Provider::WebGpu),
+        |m| store.is_some_and(|s| s.have(m)),
+        |m| unavailable.contains(&m.id),
+    )
 }
 
-fn choose(webgpu: bool, have: impl Fn(&Model) -> bool) -> &'static Model {
-    let (preferred, other) = if webgpu {
-        (&SUBJECT_WEBGPU, &SUBJECT)
+/// [`model_for`]'s choice, given whether WebGPU is on offer, what the
+/// store has, and what cannot be fetched this session.
+pub fn pick(
+    webgpu: bool,
+    have: impl Fn(&Model) -> bool,
+    unavailable: impl Fn(&Model) -> bool,
+) -> &'static Model {
+    if webgpu && have(&SUBJECT_WEBGPU) {
+        &SUBJECT_WEBGPU
+    } else if have(&SUBJECT) {
+        &SUBJECT
+    } else if have(&SUBJECT_WEBGPU) || (webgpu && !unavailable(&SUBJECT_WEBGPU)) {
+        &SUBJECT_WEBGPU
     } else {
-        (&SUBJECT, &SUBJECT_WEBGPU)
-    };
-    if !have(preferred) && have(other) {
-        other
-    } else {
-        preferred
+        &SUBJECT
     }
 }
 
@@ -51,7 +66,7 @@ impl Subject {
     /// Load from the store, on the first provider that runs it: the
     /// file [`model_for`] picks.
     pub fn load(store: &Store, providers: &[Provider]) -> Result<Self> {
-        Self::load_model(store, model_for(Some(store), providers), providers)
+        Self::load_model(store, model_for(Some(store), providers, &[]), providers)
     }
 
     /// Load this one of the two Subject files, whichever the
@@ -115,30 +130,48 @@ impl Subject {
 mod tests {
     use super::*;
 
-    #[test]
-    fn webgpu_prefers_the_rewrite_and_the_cpu_the_original() {
-        let none = |_: &Model| false;
-        assert_eq!(choose(true, none).id, SUBJECT_WEBGPU.id);
-        assert_eq!(choose(false, none).id, SUBJECT.id);
-        let both = |_: &Model| true;
-        assert_eq!(choose(true, both).id, SUBJECT_WEBGPU.id);
-        assert_eq!(choose(false, both).id, SUBJECT.id);
+    fn id(webgpu: bool, have: &[&str], unavailable: &[&str]) -> &'static str {
+        pick(
+            webgpu,
+            |m| have.contains(&m.id),
+            |m| unavailable.contains(&m.id),
+        )
+        .id
     }
 
     #[test]
-    fn the_file_in_the_store_is_used_rather_than_fetching_the_other() {
-        let only_original = |m: &Model| m.id == SUBJECT.id;
-        assert_eq!(choose(true, only_original).id, SUBJECT.id);
-        let only_rewrite = |m: &Model| m.id == SUBJECT_WEBGPU.id;
-        assert_eq!(choose(false, only_rewrite).id, SUBJECT_WEBGPU.id);
+    fn what_the_store_has_comes_first() {
+        let (rw, orig) = (SUBJECT_WEBGPU.id, SUBJECT.id);
+        assert_eq!(id(true, &[rw, orig], &[]), rw);
+        assert_eq!(id(false, &[rw, orig], &[]), orig);
+        // One of the two in the store: that one, on either machine,
+        // rather than a second download of the same weights.
+        assert_eq!(id(true, &[orig], &[]), orig);
+        assert_eq!(id(false, &[rw], &[]), rw);
+    }
+
+    #[test]
+    fn with_neither_the_rewrite_is_offered_only_where_webgpu_runs() {
+        assert_eq!(id(true, &[], &[]), SUBJECT_WEBGPU.id);
+        assert_eq!(id(false, &[], &[]), SUBJECT.id);
+    }
+
+    #[test]
+    fn a_rewrite_that_cannot_be_had_gives_way_to_the_original() {
+        assert_eq!(id(true, &[], &[SUBJECT_WEBGPU.id]), SUBJECT.id);
+        // Its being unavailable to fetch does not matter once it is here.
+        assert_eq!(
+            id(true, &[SUBJECT_WEBGPU.id], &[SUBJECT_WEBGPU.id]),
+            SUBJECT_WEBGPU.id
+        );
     }
 
     #[test]
     fn with_no_store_the_preference_stands() {
         assert_eq!(
-            model_for(None, &[Provider::WebGpu, Provider::Cpu]).id,
+            model_for(None, &[Provider::WebGpu, Provider::Cpu], &[]).id,
             SUBJECT_WEBGPU.id
         );
-        assert_eq!(model_for(None, &[Provider::Cpu]).id, SUBJECT.id);
+        assert_eq!(model_for(None, &[Provider::Cpu], &[]).id, SUBJECT.id);
     }
 }

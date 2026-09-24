@@ -77,7 +77,7 @@ use crate::panel::deliver::Landed;
 use crate::panel::mask::{MaskDrag, Placing};
 use crate::panel::retouch::PatchShape;
 use crate::panel::viewport::Picking;
-pub(crate) use ai::{Key, model_for, prompted};
+pub(crate) use ai::{Key, prompted};
 pub(crate) use finish::{Baked, Local, MAX_LOCALS, RasterRef};
 use panel::startup::main;
 pub(crate) use render::{Renderer, View};
@@ -492,6 +492,9 @@ pub(crate) struct State {
     pub(crate) fetching: bool,
     /// Models declined this session, not to be asked for again.
     pub(crate) declined: Vec<&'static str>,
+    /// Models whose fetch failed this session: a Subject turns from
+    /// its WebGPU file to the original when that one fails.
+    pub(crate) fetch_failed: Vec<&'static str>,
     /// The lens profiles' first-launch offer: whether it was ever
     /// answered Not now (`settings.lenses_declined`), and whether it
     /// has been made this launch.
@@ -690,6 +693,7 @@ impl State {
             fetch: None,
             fetching: false,
             declined: Vec::new(),
+            fetch_failed: Vec::new(),
             lenses_declined: false,
             lenses_asked: false,
             lens: LensReport::NoDatabase,

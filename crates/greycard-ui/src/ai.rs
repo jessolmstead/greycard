@@ -27,18 +27,43 @@ use greycard_edit::retouch::Patch;
 pub type Key = (u64, usize);
 
 /// The providers this build offers on this machine, asked once.
-fn providers() -> &'static [Provider] {
+pub fn providers() -> &'static [Provider] {
     static PROVIDERS: std::sync::OnceLock<Vec<Provider>> = std::sync::OnceLock::new();
     PROVIDERS.get_or_init(Provider::available)
 }
 
 /// The model a shape needs, if any. For Subject that depends on the
-/// providers and on what `store` already has (the WebGPU rewrite or
-/// the original, `greycard_ai::subject::model_for`), so the store the
-/// worker loads from is the one to pass.
-pub fn model_for(shape: &Shape, store: Option<&Store>) -> Option<&'static Model> {
+/// providers, on what `store` already has, and on which models cannot
+/// be had this session (`unavailable`: declined, or their fetch
+/// failed), `greycard_ai::subject::model_for`; so the store the worker
+/// loads from is the one to pass.
+pub fn model_for(
+    shape: &Shape,
+    store: Option<&Store>,
+    unavailable: &[&str],
+) -> Option<&'static Model> {
+    model_with(
+        shape,
+        |m| store.is_some_and(|s| s.have(m)),
+        providers(),
+        unavailable,
+    )
+}
+
+/// `model_for` with what the store has and the providers given, for
+/// a test.
+pub fn model_with(
+    shape: &Shape,
+    have: impl Fn(&Model) -> bool,
+    providers: &[Provider],
+    unavailable: &[&str],
+) -> Option<&'static Model> {
     match shape {
-        Shape::Subject {} => Some(greycard_ai::subject::model_for(store, providers())),
+        Shape::Subject {} => Some(greycard_ai::subject::pick(
+            providers.contains(&Provider::WebGpu),
+            have,
+            |m| unavailable.contains(&m.id),
+        )),
         Shape::Object { .. } => Some(&SAM),
         _ => None,
     }
@@ -314,7 +339,13 @@ impl Ai {
     /// model's id and the shape.
     fn cached_path(&self, shape: &Shape) -> Option<PathBuf> {
         let file = self.file.as_ref()?;
-        let model = model_for(shape, self.store.as_ref())?;
+        // The Subject model loaded, once there is one: the store may
+        // have gained the other file since, and the raster is that
+        // model's.
+        let model = match (shape, &self.subject) {
+            (Shape::Subject {}, Some(subject)) => subject.model(),
+            _ => model_for(shape, self.store.as_ref(), &[])?,
+        };
         let prompt = serde_json::to_string(shape).ok()?;
         let root = self.store.as_ref()?.root().parent()?.join("masks");
         let mut h = std::collections::hash_map::DefaultHasher::new();

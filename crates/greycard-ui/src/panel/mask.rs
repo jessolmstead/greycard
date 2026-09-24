@@ -244,6 +244,39 @@ pub(crate) fn bake_locals(
     (locals, wants)
 }
 
+/// What to do for a learned shape wanted: ask the worker for it, offer
+/// its model, or wait (the sheet is busy, or every model it could use
+/// was declined).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Step {
+    Ask(&'static greycard_ai::Model),
+    Offer(&'static greycard_ai::Model),
+    Wait,
+}
+
+/// The step for `shape`, given what the store has, the providers, the
+/// models declined this session, those whose fetch failed, and whether
+/// the sheet is free for an offer. A Subject whose WebGPU file was
+/// declined or could not be fetched is offered the original.
+pub(crate) fn step(
+    shape: &Shape,
+    have: impl Fn(&greycard_ai::Model) -> bool + Copy,
+    providers: &[greycard_ai::Provider],
+    declined: &[&'static str],
+    failed: &[&'static str],
+    sheet_free: bool,
+) -> Option<Step> {
+    let unavailable: Vec<&str> = declined.iter().chain(failed).copied().collect();
+    let model = crate::ai::model_with(shape, have, providers, &unavailable)?;
+    Some(if have(model) {
+        Step::Ask(model)
+    } else if sheet_free && !declined.contains(&model.id) {
+        Step::Offer(model)
+    } else {
+        Step::Wait
+    })
+}
+
 /// Ask the worker for the learned masks wanted and not yet asked for;
 /// where the model is not in the store, offer to fetch it.
 pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
@@ -251,10 +284,20 @@ pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
         if st.asked.get(&key) == Some(&shape) {
             continue;
         }
-        let Some(model) = model_for(&shape, st.store.as_ref()) else {
+        let store = st.store.clone();
+        let have = |m: &greycard_ai::Model| store.as_ref().is_some_and(|s| s.have(m));
+        let sheet_free = st.fetch.is_none() && !st.fetching;
+        let Some(next) = step(
+            &shape,
+            have,
+            crate::ai::providers(),
+            &st.declined,
+            &st.fetch_failed,
+            sheet_free,
+        ) else {
             continue;
         };
-        if st.store.as_ref().is_some_and(|s| s.have(model)) {
+        if let Step::Ask(_) = next {
             WORKER.with(|w| {
                 if let Some(w) = &*w.borrow() {
                     w.send(Job::Mask {
@@ -264,9 +307,30 @@ pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
                 }
             });
             st.asked.insert(key, shape);
-        } else if st.fetch.is_none() && !st.fetching && !st.declined.contains(&model.id) {
+        } else if let Step::Offer(model) = next {
             offer_model(st, app, model);
         }
+    }
+}
+
+/// A model's fetch failed: remember it, so a Subject turns to the
+/// original, and say what happened. The status line to show.
+pub(crate) fn fetch_failed(
+    failed: &mut Vec<&'static str>,
+    id: &'static str,
+    name: &str,
+    message: &str,
+) -> String {
+    if !failed.contains(&id) {
+        failed.push(id);
+    }
+    if id == greycard_ai::SUBJECT_WEBGPU.id {
+        format!(
+            "the GPU Subject model could not be fetched ({message}); the original is offered instead"
+        )
+    } else {
+        let short = name.split(',').next().unwrap_or(name);
+        format!("{short} could not be fetched: {message}")
     }
 }
 
@@ -1023,6 +1087,72 @@ mod tests {
     /// The left bar: the navigator, the snapshots and the history,
     /// and the width the viewport begins at.
     const LEFT_BAR: f32 = 240.0;
+
+    /// A Subject on a WebGPU machine with neither model: the GPU file
+    /// is offered; its fetch fails (faked here), and the original is
+    /// offered next; declining the original leaves the shape waiting;
+    /// the original arriving is asked for. Declining the GPU file also
+    /// turns to the original rather than blocking it.
+    #[test]
+    fn a_subject_turns_to_the_original_when_the_gpu_model_cannot_be_had() {
+        use greycard_ai::{Provider, SUBJECT, SUBJECT_WEBGPU};
+        let gpu = [Provider::WebGpu, Provider::Cpu];
+        let shape = Shape::Subject {};
+        let nothing = |_: &greycard_ai::Model| false;
+        let (mut declined, mut failed) = (Vec::new(), Vec::new());
+
+        assert_eq!(
+            step(&shape, nothing, &gpu, &declined, &failed, true),
+            Some(Step::Offer(&SUBJECT_WEBGPU))
+        );
+        // The sheet is up or a fetch is on its way: wait.
+        assert_eq!(
+            step(&shape, nothing, &gpu, &declined, &failed, false),
+            Some(Step::Wait)
+        );
+        let status = fetch_failed(&mut failed, SUBJECT_WEBGPU.id, SUBJECT_WEBGPU.name, "404");
+        assert!(
+            status.contains("GPU Subject model could not be fetched"),
+            "{status}"
+        );
+        assert!(status.contains("original"), "{status}");
+        assert_eq!(
+            step(&shape, nothing, &gpu, &declined, &failed, true),
+            Some(Step::Offer(&SUBJECT))
+        );
+        declined.push(SUBJECT.id);
+        assert_eq!(
+            step(&shape, nothing, &gpu, &declined, &failed, true),
+            Some(Step::Wait)
+        );
+        let original = |m: &greycard_ai::Model| m.id == SUBJECT.id;
+        assert_eq!(
+            step(&shape, original, &gpu, &declined, &failed, true),
+            Some(Step::Ask(&SUBJECT))
+        );
+
+        // Declined, not failed: the same turn to the original.
+        let (declined, failed) = (vec![SUBJECT_WEBGPU.id], Vec::new());
+        assert_eq!(
+            step(&shape, nothing, &gpu, &declined, &failed, true),
+            Some(Step::Offer(&SUBJECT))
+        );
+        // And on a CPU-only machine the original from the start.
+        assert_eq!(
+            step(&shape, nothing, &[Provider::Cpu], &[], &[], true),
+            Some(Step::Offer(&SUBJECT))
+        );
+    }
+
+    /// The sheet's note says who publishes the model.
+    #[test]
+    fn the_offer_says_who_publishes_the_model() {
+        let ours = crate::panel::assets::model_note(&greycard_ai::SUBJECT_WEBGPU);
+        assert!(ours.contains("greycard publishes this copy"), "{ours}");
+        assert!(ours.contains("MIT"), "{ours}");
+        let theirs = crate::panel::assets::model_note(&greycard_ai::SUBJECT);
+        assert!(theirs.contains("does not ship"), "{theirs}");
+    }
 
     /// The overlay is drawn in view pixels off a shape that knows
     /// nothing of the window: a handle lands wherever the shape does,
