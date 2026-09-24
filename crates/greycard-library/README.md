@@ -87,11 +87,13 @@ greycard library list 'lens:RF 24' --paths
 
 The `thumbs` module is the browser's thumbnail cache, keyed by the
 same content hash as the index's `hash` column, the long edge and the
-caller's recipe, one file an entry (`<hash>-<size>-r<recipe>.thumb`)
+caller's recipe and stamp, one file an entry
+(`<hash>-<size>-r<recipe>-<stamp>.thumb`)
 under `greycard/thumbs/` in the platform's cache directory: a small
 header (format, recipe, the caller's stamp, the size, a checksum) and
-a JPEG. A damaged entry, or one under another stamp, is a miss and is
-removed; past its cap, or when the cap is lowered, the least recently
+a JPEG. A damaged entry is a miss and is removed; one whose stamp has
+moved on is never asked for again and goes by the eviction; past its
+cap, or when the cap is lowered, the least recently
 used entries go, down to nine tenths of it. What it holds is counted
 once and kept up after (`known_usage`); `usage_at` does the count
 without the cache's lock, for a thread that is not drawing a window.
