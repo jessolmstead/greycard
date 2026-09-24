@@ -357,14 +357,7 @@ pub fn correct(image: &WorkingImage, correction: &LensCorrection) -> (WorkingIma
             out.data
                 .par_chunks_mut(image.width * 3)
                 .enumerate()
-                .for_each(|(y, row)| {
-                    for (x, px) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
-                        let g = correction.gain_at(x as f32 + 0.5, y as f32 + 0.5, w, h);
-                        for v in px {
-                            *v *= g;
-                        }
-                    }
-                });
+                .for_each(|(y, row)| vignette_row(row, y, correction, (w, h)));
         }
         return (
             out,
@@ -380,23 +373,7 @@ pub fn correct(image: &WorkingImage, correction: &LensCorrection) -> (WorkingIma
     out.data
         .par_chunks_mut(image.width * 3)
         .enumerate()
-        .for_each(|(y, row)| {
-            for (x, px) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
-                let (ox, oy) = (x as f32 + 0.5, y as f32 + 0.5);
-                for (channel, v) in px.iter_mut().enumerate() {
-                    let (sx, sy) = correction.source_of(channel, ox, oy, w, h, scale);
-                    if sx < 0.0 || sy < 0.0 || sx >= w || sy >= h {
-                        *v = 0.0;
-                        continue;
-                    }
-                    let mut s = sample_cubic(image, channel, sx, sy);
-                    if vignetted {
-                        s *= correction.gain_at(sx, sy, w, h);
-                    }
-                    *v = s;
-                }
-            }
-        });
+        .for_each(|(y, row)| resample_row(row, y, image, correction, (w, h), scale, vignetted));
     (
         out,
         LensStats {
@@ -405,6 +382,51 @@ pub fn correct(image: &WorkingImage, correction: &LensCorrection) -> (WorkingIma
             corner_gain,
         },
     )
+}
+
+/// Row `y` of the picture brightened by the vignetting's gain.
+///
+/// This and [`resample_row`] are out of line so the row arrives as an
+/// argument: inside rayon's closure it comes out of the enumerate tuple,
+/// a reference loaded from memory that carries no promise it is distinct
+/// from anything else, and every write to it had the correction's
+/// fields read again for the next pixel.
+#[inline(never)]
+fn vignette_row(row: &mut [f32], y: usize, correction: &LensCorrection, (w, h): (f32, f32)) {
+    for (x, px) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+        let g = correction.gain_at(x as f32 + 0.5, y as f32 + 0.5, w, h);
+        for v in px {
+            *v *= g;
+        }
+    }
+}
+
+/// Row `y` of the corrected picture, resampled from `image`.
+#[inline(never)]
+fn resample_row(
+    row: &mut [f32],
+    y: usize,
+    image: &WorkingImage,
+    correction: &LensCorrection,
+    (w, h): (f32, f32),
+    scale: f32,
+    vignetted: bool,
+) {
+    for (x, px) in row.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+        let (ox, oy) = (x as f32 + 0.5, y as f32 + 0.5);
+        for (channel, v) in px.iter_mut().enumerate() {
+            let (sx, sy) = correction.source_of(channel, ox, oy, w, h, scale);
+            if sx < 0.0 || sy < 0.0 || sx >= w || sy >= h {
+                *v = 0.0;
+                continue;
+            }
+            let mut s = sample_cubic(image, channel, sx, sy);
+            if vignetted {
+                s *= correction.gain_at(sx, sy, w, h);
+            }
+            *v = s;
+        }
+    }
 }
 
 /// Catmull-Rom's weights for the four taps about a position `t` (0 to
