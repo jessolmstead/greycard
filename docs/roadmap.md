@@ -93,9 +93,6 @@ seconds.
       is that size already), and the compute plan printed from the
       probe before believing any timing, since a node the provider
       declines runs on the CPU with a copy each way (§90)
-- [ ] BiRefNet on WebGPU: the decoder's fifty sixteen-way Splits
-      rewritten as Slices, so the shader stays under Dawn's sixteen
-      storage buffers; our own registry entry with its hash (§97)
 - [ ] The profiled denoiser's wavelet chain: three quarters of the
       denoise at six threads now that the means are quick (§128), and
       it scales like the base develop, memory-bound, so more cores
@@ -260,6 +257,8 @@ clears or a tester asks for it.
       hue (§158)
 - [ ] A dropper for the luminance window's edges and a swatch of the
       color window beside its sliders (§158)
+- [ ] A way in the editor to take the GPU Subject model once the
+      original is in the store; today it is fetched by id (§159)
 - [ ] The vibrance protection's skin window (§60, 55 degrees plus or
       minus 15) against the 10 to 59 degrees a pale face measured
       (§158): widen it or not; a change to existing edits
@@ -322,6 +321,13 @@ release when the wait clears.
       on the release after 1.18.0 (§99)
 - [ ] Drop the rawler `[patch.crates-io]`. Waits on a rawler release
       carrying dnglab/dnglab#840 (§13j)
+- [ ] ort rc.13 ignores every `ep::WebGPU` option (the key prefix is
+      applied twice); greycard sets them through a config entry
+      instead. The issue text is in §159; file it, and drop the
+      workaround when a release carries the fix
+- [ ] The GPU Subject model on Mac and Windows adapters: its remaining
+      Splits need nine storage buffers; an adapter allowing fewer
+      falls back to the CPU. Check on the machines (§159)
 - [ ] The makers' embedded lens corrections, exact where a file carries
       them. Waits on rawler surfacing them (and the Panasonic lens name)
 - [ ] lensfun calibrates the Sigma 50mm f/1.4 DG HSM Art with a

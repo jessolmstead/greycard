@@ -73,6 +73,13 @@ note a first tester reads.
   that shape left out and a warning, instead of being refused whole;
   builds before 0.1.2 still refuse a sidecar with a range mask (§158,
   2026-09-23).
+- The Subject and Background masks run on the GPU where WebGPU is
+  available: a rewrite of the BiRefNet lite export, published by
+  greycard under its MIT license, that takes 0.16 s a mask against 2.9 s
+  on the CPU; fetched on first use, the original offered when it
+  cannot be had (§159, 2026-09-23).
+- `greycard models --fetch all` carries on past a model that fails and
+  reports the failures at the end (§159, 2026-09-23).
 
 ## 0.1.1, 2026-09-22
 
