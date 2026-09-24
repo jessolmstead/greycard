@@ -307,10 +307,8 @@ pub(crate) fn path_bytes(path: &Path) -> Vec<u8> {
 #[cfg(windows)]
 pub(crate) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
     use std::os::windows::ffi::OsStringExt;
-    let wide: Vec<u16> = bytes
-        .chunks_exact(2)
-        .map(|c| u16::from_le_bytes([c[0], c[1]]))
-        .collect();
+    let (pairs, _) = bytes.as_chunks::<2>();
+    let wide: Vec<u16> = pairs.iter().map(|c| u16::from_le_bytes(*c)).collect();
     PathBuf::from(std::ffi::OsString::from_wide(&wide))
 }
 
@@ -337,11 +335,26 @@ pub(crate) fn canonical_file(path: &Path) -> PathBuf {
             } else {
                 parent
             };
-            canonical(parent)
-                .map(|p| p.join(name))
-                .unwrap_or_else(|_| path.to_path_buf())
+            nearest_canonical(parent).join(name)
         }
         _ => canonical(path).unwrap_or_else(|_| path.to_path_buf()),
+    }
+}
+
+/// A folder's canonical path even when the folder is gone: the
+/// nearest ancestor that is there, canonical, with the rest of the
+/// path put back under it. A lookup by a path under a deleted folder
+/// must still key the way the index stored it, which matters where
+/// the temporary directory is a link (macOS's `/var` is `/private/var`).
+pub(crate) fn nearest_canonical(path: &Path) -> PathBuf {
+    match canonical(path) {
+        Ok(p) => p,
+        Err(_) => match (path.parent(), path.file_name()) {
+            (Some(parent), Some(name)) if !parent.as_os_str().is_empty() => {
+                nearest_canonical(parent).join(name)
+            }
+            _ => path.to_path_buf(),
+        },
     }
 }
 

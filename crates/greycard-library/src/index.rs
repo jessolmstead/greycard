@@ -934,7 +934,10 @@ pub(crate) mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        // Canonical, so paths the tests build under it compare equal
+        // to the ones the index stores: on macOS the temporary
+        // directory is a link (`/var` to `/private/var`).
+        crate::canonical(&dir).unwrap()
     }
 
     /// A frame's worth of EXIF.
@@ -1931,6 +1934,12 @@ pub(crate) mod tests {
         let dir = scratch("bytes");
         let a = dir.join(std::ffi::OsStr::from_bytes(b"caf\xe9.tif"));
         let b = dir.join(std::ffi::OsStr::from_bytes(b"caf\xff.tif"));
+        // APFS refuses a name that is not UTF-8 ("Illegal byte
+        // sequence"), so on a Mac there is nothing to test.
+        if let Err(e) = std::fs::write(&b, b"") {
+            eprintln!("skipped a_name_that_is_not_utf8_is_stored_as_its_bytes: {e}");
+            return;
+        }
         write_frame(&a, &R5, 11);
         write_frame(&b, &R6, 12);
         assert_eq!(a.to_string_lossy(), b.to_string_lossy());
