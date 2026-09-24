@@ -141,11 +141,6 @@ ask for first.
       and the viewport falls back to sRGB unless an ICC file is
       picked by hand, which a wide-gamut monitor makes wrong
       (display.rs:565, §137)
-- [ ] Luminance masking
-- [ ] A color range mask: a hue and chroma window in Oklab with a
-      feather, seeded by clicking a spot, sampled before the look so
-      it does not move under the edit; a skin preset at the 55 degree
-      center the vibrance protection uses
 - [ ] Scopes weighted by the active mask: a "selection" toggle on the
       scopes panel, each pixel's bin weighted by the mask's coverage,
       in the shader and the CPU reference alike, so a skin mask on the
@@ -257,6 +252,17 @@ clears or a tester asks for it.
       (§156)
 - [ ] Geometry in a sync, mapped through each frame's aspect and turn
       as masks already are (§156)
+- [ ] The range masks' sample from before the Detail section, so dehaze
+      stops moving a luminance window; needs a second full-size texture
+      on the GPU (§158)
+- [ ] The 5x5 color mean at a fixed scale, so the viewport and a
+      smaller export agree on a color window's edge and the mixer's
+      hue (§158)
+- [ ] A dropper for the luminance window's edges and a swatch of the
+      color window beside its sliders (§158)
+- [ ] The vibrance protection's skin window (§60, 55 degrees plus or
+      minus 15) against the 10 to 59 degrees a pale face measured
+      (§158): widen it or not; a change to existing edits
 
 
 ### Engine

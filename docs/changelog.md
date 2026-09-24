@@ -62,6 +62,17 @@ note a first tester reads.
   edge and an opacity, so it lands the same at every export size;
   never in the viewport; an empty or undrawable mark fails the export
   rather than letting an unmarked picture out (§157, 2026-09-23).
+- Two range masks on the Masks tab: a Luminance window on the picture's
+  lightness (Oklab L, 100 the sensor's white, the ends open) and a
+  Color window on its hue and chroma in Oklab, each with fades, a
+  dropper that centers the hue on a click and a Skin preset; sampled
+  from the developed picture before the look, so a mask does not move
+  under its own edit; on the CPU and in the viewport shader alike
+  (§158, 2026-09-23).
+- A sidecar carrying a mask shape from a later build now loads with
+  that shape left out and a warning, instead of being refused whole;
+  builds before 0.1.2 still refuse a sidecar with a range mask (§158,
+  2026-09-23).
 
 ## 0.1.1, 2026-09-22
 
