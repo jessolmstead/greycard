@@ -94,20 +94,33 @@ and rejects have no XMP field, so they stay in the `.gcd`.
 ### Masks by lightness and color
 
 On the Masks tab, **Luminance** and **Color** make a mask from the
-picture itself instead of from a shape you draw. A luminance mask takes
-everything between its **Low** and **High** lightness (0 is black, 100
-is white), fading out over **Low fade** below and **High fade** above.
-A color mask takes one range of hues, set by **Hue** and **Width** and
-fading over **Hue fade**, and leaves out anything greyer than its
-**Chroma**. When you add a color mask the dropper is in your hand:
-click a color in the picture to center the mask on it. **Pick** does
-the same later, and **Skin** sets the mask to skin tones.
+picture itself instead of from a shape you draw.
 
-Both read the picture as it is before any adjustment except the global
-exposure, so a mask's own sliders never move it. Put one in a mask with
-a drawn shape and **Intersect** to limit it to a place, such as the
-bright part of the top of the frame. **Show mask** paints what it
-takes in red.
+A luminance mask takes everything between its **Low** and **High**
+lightness, fading out over **Low fade** below and **High fade** above.
+The scale is perceptual: 0 is black, about 57 is middle grey, and 100
+is the brightest the camera recorded, at a global exposure of 0. The
+picture on screen is shown a little brighter than that, so a bright sky
+can sit in the 70s. A High of 100 takes in everything above it too, and
+a Low of 0 everything below. High cannot go under Low: dragging one
+past the other pushes it along.
+
+A color mask takes one range of hues, set by **Hue** and **Width** and
+fading over **Hue fade**, and only colors at least as strong as its
+**Chroma**, fading out over **Chroma fade** below that, so greys stay
+out. When you add a color mask the dropper is in your hand: click a
+color in the picture to center the mask on it. **Pick** does the same
+later, and **Skin** sets the mask to skin tones (hair of the same hue
+comes with it).
+
+Both read the picture after the develop (white balance, noise
+reduction, lens corrections, the Detail section and capture
+sharpening) and the global exposure, but before any other adjustment:
+the tone and color sliders, the curves, the look and every mask's own
+sliders leave them where they are. Dehaze and clarity can move one a
+little. Put one in a mask with a drawn shape and **Intersect** to limit
+it to a place, such as the bright part of the top of the frame. **Show
+mask** paints what it takes in red.
 
 ## Several frames at once
 
