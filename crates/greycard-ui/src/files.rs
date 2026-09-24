@@ -79,12 +79,8 @@ pub fn list_files(path: &std::path::Path) -> Result<Vec<PathBuf>> {
     // behind it used to pass and open a blank window that never said
     // anything.
     anyhow::ensure!(path.exists(), "there is no {}", path.display());
-    let raw_extensions = ["cr3", "cr2", "dng", "nef", "arw", "raf", "orf", "rw2"];
     let opens = |p: &std::path::Path| {
-        p.extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| raw_extensions.contains(&e.to_ascii_lowercase().as_str()))
-            || greycard_core::picture::is_picture_path(p)
+        greycard_core::decode::is_raw_path(p) || greycard_core::picture::is_picture_path(p)
     };
     if path.is_dir() {
         // In a directory, just filter for actual raw and picture files.

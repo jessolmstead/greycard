@@ -435,18 +435,67 @@ mod tests {
 }
 
 /// What a file says about itself, read without decoding the samples:
-/// enough to pick files from a folder by camera and ISO.
-#[derive(Debug, Clone, PartialEq)]
+/// enough to pick files from a folder by camera and ISO, and for a
+/// library to index it by.
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Probe {
     pub make: String,
     pub model: String,
+    /// The lens's name as the camera wrote it, or as the decoder's
+    /// lens table names it; see [`Shot::lens_model`].
+    pub lens_model: Option<String>,
+    /// Millimeters.
+    pub focal_length: Option<f64>,
     pub iso: Option<u32>,
     /// Seconds.
     pub exposure_time: Option<f64>,
     pub fnumber: Option<f64>,
+    /// When the frame was taken, as the file spells it:
+    /// `DateTimeOriginal`, or `CreateDate` when only that is there,
+    /// in EXIF's `YYYY:MM:DD HH:MM:SS`. Not parsed here; a consumer
+    /// that sorts by it normalizes it.
+    pub taken: Option<String>,
     /// The EXIF orientation tag, the file's own; `Normal` when it
     /// carries none or one this build does not know.
     pub orientation: Orientation,
+}
+
+impl Probe {
+    /// The probe of a file's metadata, however that was read: a
+    /// raw's through its decoder, a picture's from its EXIF chunk.
+    pub(crate) fn from_metadata(metadata: &RawMetadata) -> Probe {
+        let shot = shot_of(metadata);
+        let exif = &metadata.exif;
+        let text = |s: &Option<String>| {
+            s.as_deref()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+        };
+        // In double precision from the rational itself, not through
+        // the shot's f32: an index compares these, and f/2.8 read
+        // as 2.7999999 is under f/2.8.
+        let rational = |r: &Option<::rawler::formats::tiff::Rational>| {
+            r.as_ref()
+                .filter(|r| r.d != 0)
+                .map(|r| f64::from(r.n) / f64::from(r.d))
+                .filter(|v| v.is_finite() && *v > 0.0)
+        };
+        Probe {
+            make: metadata.make.trim().to_string(),
+            model: metadata.model.trim().to_string(),
+            lens_model: shot.lens_model,
+            focal_length: rational(&exif.focal_length),
+            iso: shot.iso,
+            exposure_time: rational(&exif.exposure_time),
+            fnumber: rational(&exif.fnumber),
+            taken: text(&exif.date_time_original).or_else(|| text(&exif.create_date)),
+            orientation: exif
+                .orientation
+                .and_then(Orientation::from_exif)
+                .unwrap_or_default(),
+        }
+    }
 }
 
 /// The frame's orientation tag and the size a develop of it comes
@@ -487,18 +536,5 @@ pub fn probe_path(path: &Path) -> Result<Probe> {
     let metadata = decoder
         .raw_metadata(&source, &RawDecodeParams::default())
         .map_err(decoder_error)?;
-    let rational =
-        |r: &::rawler::formats::tiff::Rational| (r.d != 0).then(|| r.n as f64 / r.d as f64);
-    Ok(Probe {
-        make: metadata.make.clone(),
-        model: metadata.model.clone(),
-        iso: iso_of(&metadata.exif),
-        exposure_time: metadata.exif.exposure_time.as_ref().and_then(rational),
-        fnumber: metadata.exif.fnumber.as_ref().and_then(rational),
-        orientation: metadata
-            .exif
-            .orientation
-            .and_then(Orientation::from_exif)
-            .unwrap_or_default(),
-    })
+    Ok(Probe::from_metadata(&metadata))
 }

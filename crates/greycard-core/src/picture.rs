@@ -28,7 +28,7 @@ use rawcolor::{Cat, Chromaticity, Mat3, RgbSpace, Vec3};
 use rayon::prelude::*;
 
 use crate::color::{CAT, WORKING_SPACE, srgb_decode};
-use crate::decode::RawMetadata;
+use crate::decode::{Probe, RawMetadata};
 use crate::develop::orient;
 use crate::error::{Error, Result};
 use crate::image::WorkingImage;
@@ -115,6 +115,35 @@ pub fn stance_path(path: &Path) -> Result<(Orientation, Option<(u32, u32)>)> {
         orientation,
         (size.0 > 0 && size.1 > 0).then_some((size.0, size.1)),
     ))
+}
+
+/// A picture's camera, lens, exposure and date from its EXIF chunk,
+/// read exactly the way [`decode_picture`] reads it and without
+/// decoding a pixel; the raw's counterpart is
+/// [`crate::decode::probe_path`]. A picture with no EXIF probes as
+/// a file that says nothing: an empty make and model, the rest
+/// `None`.
+pub fn probe_path(path: &Path) -> Result<Probe> {
+    let bytes = std::fs::read(path)?;
+    let reader = image::ImageReader::new(std::io::Cursor::new(&bytes))
+        .with_guessed_format()
+        .map_err(|e| Error::Decode(e.to_string()))?;
+    let is_tiff = reader.format() == Some(image::ImageFormat::Tiff);
+    let mut decoder = reader.into_decoder().map_err(decode_error)?;
+    let chunk = if is_tiff {
+        None
+    } else {
+        decoder.exif_metadata().ok().flatten()
+    };
+    let tiff: Option<&[u8]> = if is_tiff {
+        Some(&bytes)
+    } else {
+        chunk.as_deref()
+    };
+    Ok(tiff
+        .and_then(read_tags)
+        .map(|t| Probe::from_metadata(&t.metadata))
+        .unwrap_or_default())
 }
 
 /// Read a JPEG, PNG or TIFF into the working space.

@@ -44,10 +44,21 @@ pub fn decode_path_with_metadata(path: impl AsRef<Path>) -> Result<(RawFrame, Ra
     RawlerDecoder.decode_path_with_metadata(path.as_ref())
 }
 
-/// Camera, ISO and exposure from a file's metadata, without decoding
-/// the samples; see `rawler_backend::probe_path`.
+/// Camera, lens, ISO, exposure and date from a raw's metadata,
+/// without decoding the samples; see `rawler_backend::probe_path`.
+/// A picture's is [`crate::picture::probe_path`].
 pub fn probe_path(path: impl AsRef<Path>) -> Result<Probe> {
     rawler_backend::probe_path(path.as_ref())
+}
+
+/// The extensions taken for a raw the decoder opens.
+pub const RAW_EXTENSIONS: [&str; 8] = ["cr3", "cr2", "dng", "nef", "arw", "raf", "orf", "rw2"];
+
+/// Whether a path's extension is one of a raw's.
+pub fn is_raw_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| RAW_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
 }
 
 /// How a file's frame stands, without decoding a pixel of it.
