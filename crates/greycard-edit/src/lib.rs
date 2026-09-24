@@ -1104,6 +1104,19 @@ pub struct Sidecar {
         deserialize_with = "meta::loose"
     )]
     pub xmp: Option<xmp::Adopted>,
+    /// How many times this sidecar, or the one it grew out of, has
+    /// been written: [`Self::save`] and [`Self::save_in`] increment
+    /// it before every write. [`Self::find`] reads it from both
+    /// copies when a frame has one in each place and takes the
+    /// higher, falling back to mtime only on a tie, since a copy
+    /// tool, a backup restore or two clocks can make one file's
+    /// mtime lie about which save is newer but cannot make it lie
+    /// about how many saves it has seen. Defaulted, so a sidecar
+    /// from before this field reads as 0 and both the old file and
+    /// an older build opening a sidecar this build wrote are
+    /// unaffected: an unknown field is silently ignored by serde,
+    /// and 0 is what an old build already assumes.
+    pub saved: u64,
     /// Earlier states, oldest first, each one a whole edit.
     pub history: Vec<Edit>,
     /// States undone, newest first; kept for the session, not written.
@@ -1171,6 +1184,26 @@ fn under_folder(sidecar: &Path) -> bool {
     sidecar.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new(SIDECAR_FOLDER))
 }
 
+/// Just [`Sidecar::saved`], read without paying for the rest of the
+/// file: a struct of one field, so [`Sidecar::find`] does not parse
+/// the edit, the history and the snapshots twice over to compare two
+/// counters. Anything that keeps it from reading as a number — the
+/// file gone, not JSON, an object with no such field, a sidecar from
+/// before the field existed — reads as 0, which is exactly what
+/// [`Sidecar::find`] wants: fall back to mtime.
+#[derive(Deserialize, Default)]
+struct SavedCount {
+    #[serde(default)]
+    saved: u64,
+}
+
+fn saved_count(path: &Path) -> u64 {
+    std::fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<SavedCount>(&bytes).ok())
+        .map_or(0, |s| s.saved)
+}
+
 /// The hidden folder's name under a shoot's folder.
 pub const SIDECAR_FOLDER: &str = ".greycard";
 
@@ -1199,8 +1232,14 @@ impl Sidecar {
 
     /// The sidecar `raw` has, wherever it is: both places are read
     /// whatever the setting says, so flipping the setting never
-    /// loses an edit. When both are there, the one written last;
-    /// beside on a tie.
+    /// loses an edit. When both are there, the one with the higher
+    /// [`Self::saved`] wins; a copy tool, a backup restore or two
+    /// clocks can leave the older save with the newer mtime, but not
+    /// with the higher count. Only when the counts are equal — both
+    /// 0 for a pair from before the field existed, or a genuine tie —
+    /// does mtime decide, beside on a tie there too. The counters are
+    /// read only in this both-exist case, so the common one-copy
+    /// case costs nothing beyond the metadata call it already made.
     pub fn find(raw: &Path) -> Option<PathBuf> {
         let modified = |p: &Path| p.metadata().and_then(|m| m.modified()).ok();
         let (beside, under) = (
@@ -1209,9 +1248,14 @@ impl Sidecar {
         );
         match (modified(&beside), modified(&under)) {
             (None, None) => None,
-            (Some(b), Some(u)) if u > b => Some(under),
-            (Some(_), _) => Some(beside),
+            (Some(_), None) => Some(beside),
             (None, Some(_)) => Some(under),
+            (Some(b), Some(u)) => match saved_count(&beside).cmp(&saved_count(&under)) {
+                std::cmp::Ordering::Less => Some(under),
+                std::cmp::Ordering::Greater => Some(beside),
+                std::cmp::Ordering::Equal if u > b => Some(under),
+                std::cmp::Ordering::Equal => Some(beside),
+            },
         }
     }
 
@@ -1436,7 +1480,7 @@ impl Sidecar {
     }
 
     /// Write the sidecar beside `raw`, whole, through a temporary file.
-    pub fn save(&self, raw: &Path) -> Result<()> {
+    pub fn save(&mut self, raw: &Path) -> Result<()> {
         self.save_in(raw, Placement::Beside)
     }
 
@@ -1448,7 +1492,12 @@ impl Sidecar {
     /// one sidecar after a save. That is how a folder migrates when
     /// the setting flips, a frame at its next edit; the rest wait for
     /// a move asked for by name.
-    pub fn save_in(&self, raw: &Path, placement: Placement) -> Result<()> {
+    ///
+    /// [`Self::saved`] is incremented before the write, so the copy
+    /// that lands is always the one [`Self::find`] will prefer over
+    /// whatever it replaces.
+    pub fn save_in(&mut self, raw: &Path, placement: Placement) -> Result<()> {
+        self.saved += 1;
         let path = Self::path_in(raw, placement);
         if placement == Placement::Folder
             && let Some(folder) = path.parent()
@@ -1477,7 +1526,8 @@ impl Sidecar {
     /// rewriting it: the move a folder asks for by name when the
     /// setting has flipped, rather than waiting for each frame's next
     /// save. The copy in the other place is renamed into this one
-    /// when it is the one [`Sidecar::find`] reads, the newer, and
+    /// when it is the one [`Sidecar::find`] would pick — by
+    /// [`Sidecar::saved`], falling back to mtime the same way — and
     /// removed when it is not, since a save would have superseded it
     /// the same way. The hidden folder is made, and hidden, first.
     pub fn settle(raw: &Path, placement: Placement) -> std::io::Result<Settled> {
@@ -2327,7 +2377,9 @@ mod tests {
         std::fs::write(&under, b"{}").unwrap();
         assert_eq!(Sidecar::find(&raw), Some(under.clone()));
 
-        // Both there: the one written last, whichever place it is in.
+        // Both there, neither with a `saved` count (both read as 0,
+        // an equal tie): mtime decides, the one written last,
+        // whichever place it is in.
         std::fs::write(&beside, b"{}").unwrap();
         set_modified(&beside, 1_000_000_000);
         set_modified(&under, 2_000_000_000);
@@ -2337,6 +2389,106 @@ mod tests {
         // A tie is beside: the older rule.
         set_modified(&under, 3_000_000_000);
         assert_eq!(Sidecar::find(&raw), Some(beside));
+    }
+
+    #[test]
+    fn saving_three_times_counts_three() {
+        let dir = scratch("counter");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        let mut sidecar = Sidecar::default();
+        for n in 0..3 {
+            let mut e = Edit::default();
+            e.light.exposure = n as f32;
+            sidecar.record(e);
+            sidecar.save(&raw).unwrap();
+        }
+        assert_eq!(sidecar.saved, 3);
+        assert_eq!(Sidecar::load(&raw).unwrap().unwrap().saved, 3);
+    }
+
+    #[test]
+    fn find_prefers_the_higher_count_over_a_newer_mtime() {
+        let dir = scratch("count-over-mtime");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        let (beside, under) = (
+            Sidecar::path_in(&raw, Placement::Beside),
+            Sidecar::path_in(&raw, Placement::Folder),
+        );
+        std::fs::create_dir_all(under.parent().unwrap()).unwrap();
+        // The beside copy has the higher count but the older mtime —
+        // a copy tool or a restore could produce exactly this. It
+        // still wins: the count says it is the later save.
+        std::fs::write(&beside, r#"{"saved":5}"#).unwrap();
+        std::fs::write(&under, r#"{"saved":2}"#).unwrap();
+        set_modified(&beside, 1_000_000_000);
+        set_modified(&under, 2_000_000_000);
+        assert_eq!(Sidecar::find(&raw), Some(beside));
+    }
+
+    #[test]
+    fn find_falls_back_to_mtime_when_counts_are_equal() {
+        let dir = scratch("count-tie");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        let (beside, under) = (
+            Sidecar::path_in(&raw, Placement::Beside),
+            Sidecar::path_in(&raw, Placement::Folder),
+        );
+        std::fs::create_dir_all(under.parent().unwrap()).unwrap();
+        // Equal, non-zero counts: not before the field existed, a
+        // genuine tie (a `settle` that renamed rather than wrote,
+        // for instance). mtime is what is left to decide with.
+        std::fs::write(&beside, r#"{"saved":4}"#).unwrap();
+        std::fs::write(&under, r#"{"saved":4}"#).unwrap();
+        set_modified(&beside, 1_000_000_000);
+        set_modified(&under, 2_000_000_000);
+        assert_eq!(Sidecar::find(&raw), Some(under.clone()));
+        set_modified(&beside, 3_000_000_000);
+        assert_eq!(Sidecar::find(&raw), Some(beside));
+    }
+
+    #[test]
+    fn a_sidecar_without_the_saved_field_loads_as_zero() {
+        let dir = scratch("no-field");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        let beside = Sidecar::path_in(&raw, Placement::Beside);
+        // What this build's own sidecars looked like before this
+        // field existed, and what an older build still writes.
+        std::fs::write(&beside, r#"{"current":{"version":4}}"#).unwrap();
+        let loaded = Sidecar::load(&raw).unwrap().unwrap();
+        assert_eq!(loaded.saved, 0);
+    }
+
+    #[test]
+    fn settle_agrees_with_find_when_the_count_beats_mtime() {
+        let dir = scratch("settle-count");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        let (beside, under) = (
+            Sidecar::path_in(&raw, Placement::Beside),
+            Sidecar::path_in(&raw, Placement::Folder),
+        );
+        std::fs::create_dir_all(under.parent().unwrap()).unwrap();
+        // Same shape as `find_prefers_the_higher_count_over_a_newer_mtime`:
+        // the beside copy is the higher count but the older mtime.
+        std::fs::write(&beside, r#"{"saved":5}"#).unwrap();
+        std::fs::write(&under, r#"{"saved":2}"#).unwrap();
+        set_modified(&beside, 1_000_000_000);
+        set_modified(&under, 2_000_000_000);
+
+        assert_eq!(Sidecar::find(&raw), Some(beside.clone()));
+        // Settling into `Folder` should keep the copy `find` picked,
+        // beside, and drop the other: they must never disagree.
+        assert_eq!(
+            Sidecar::settle(&raw, Placement::Folder).unwrap(),
+            Settled::Moved
+        );
+        assert!(under.exists());
+        assert!(!beside.exists());
+        assert_eq!(std::fs::read_to_string(&under).unwrap(), r#"{"saved":5}"#);
     }
 
     #[test]

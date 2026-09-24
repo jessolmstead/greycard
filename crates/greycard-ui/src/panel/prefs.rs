@@ -305,7 +305,7 @@ mod tests {
     fn a_stale_copy_removed_is_not_counted_as_moved() {
         let dir = scratch("stale");
         let (a, b) = (dir.join("A.CR3"), dir.join("B.CR3"));
-        let sidecar = Sidecar::default();
+        let mut sidecar = Sidecar::default();
         // A under the folder only; B beside, with an older copy
         // under the folder too.
         sidecar.save_in(&a, Placement::Folder).unwrap();
