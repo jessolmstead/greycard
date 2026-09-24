@@ -772,13 +772,15 @@ pub fn normalize_levels(frame: &RawFrame) -> Vec<f32> {
     out.par_chunks_mut(width * cpp)
         .enumerate()
         .for_each(|(y, row)| {
-            for (x, px) in row.chunks_exact_mut(cpp).enumerate() {
-                for (ch, s) in px.iter_mut().enumerate() {
-                    let b = black.at(y, x, ch);
-                    let range = (white.at(y, x, ch) - b).max(f32::EPSILON);
-                    *s = ((*s - b) / range).clamp(0.0, 1.0);
+            own_row(row, |row| {
+                for (x, px) in row.chunks_exact_mut(cpp).enumerate() {
+                    for (ch, s) in px.iter_mut().enumerate() {
+                        let b = black.at(y, x, ch);
+                        let range = (white.at(y, x, ch) - b).max(f32::EPSILON);
+                        *s = ((*s - b) / range).clamp(0.0, 1.0);
+                    }
                 }
-            }
+            })
         });
     out
 }
@@ -805,13 +807,15 @@ pub fn apply_gains_cfa(samples: &mut [f32], width: usize, pattern: &CfaPattern, 
         .par_chunks_mut(width)
         .enumerate()
         .for_each(|(y, row)| {
-            for (x, s) in row.iter_mut().enumerate() {
-                let c = pattern
-                    .color_at(y, x)
-                    .rgb_index()
-                    .expect("RGB pattern checked by caller");
-                *s *= gains[c];
-            }
+            own_row(row, |row| {
+                for (x, s) in row.iter_mut().enumerate() {
+                    let c = pattern
+                        .color_at(y, x)
+                        .rgb_index()
+                        .expect("RGB pattern checked by caller");
+                    *s *= gains[c];
+                }
+            })
         });
 }
 
@@ -900,6 +904,23 @@ pub(crate) fn bilinear_pixel(
             0.0
         }
     })
+}
+
+/// `f` run on `row`, with `row` handed across a call.
+///
+/// A row that comes out of rayon's `enumerate` or `zip` arrives inside
+/// a tuple, and a reference loaded from memory carries no promise that
+/// it is distinct from anything else: every write to the row then makes
+/// the compiler read again whatever the loop reads through the
+/// closure's captures, a level pattern's fields or a slice's length,
+/// and can keep the loop from vectorizing. As the argument of a
+/// function that is not inlined the row is `noalias`, and `f`, inlined
+/// into it, is compiled knowing its writes touch nothing else. Worth it
+/// only where a measurement says so; see the notes on the tile-write
+/// audit.
+#[inline(never)]
+pub(crate) fn own_row<T, R>(row: &mut [T], f: impl FnOnce(&mut [T]) -> R) -> R {
+    f(row)
 }
 
 /// Apply a 3x3 matrix given as columns (`cols[c][r]`) to interleaved RGB.

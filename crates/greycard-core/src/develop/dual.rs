@@ -465,43 +465,47 @@ pub(crate) fn gaussian_blur(data: &mut [f32], width: usize, height: usize, sigma
     tmp.par_chunks_mut(width)
         .zip(data.par_chunks(width))
         .for_each(|(dst, src)| {
-            if width < 2 * radius + 1 {
-                for (x, d) in dst.iter_mut().enumerate() {
+            super::own_row(dst, |dst| {
+                if width < 2 * radius + 1 {
+                    for (x, d) in dst.iter_mut().enumerate() {
+                        *d = clamped(src, x);
+                    }
+                    return;
+                }
+                for (x, d) in dst.iter_mut().enumerate().take(radius) {
                     *d = clamped(src, x);
                 }
-                return;
-            }
-            for (x, d) in dst.iter_mut().enumerate().take(radius) {
-                *d = clamped(src, x);
-            }
-            for (d, win) in dst[radius..width - radius]
-                .iter_mut()
-                .zip(src.windows(2 * radius + 1))
-            {
-                let mut acc = kernel[0] * win[radius];
-                for (k, &w) in kernel.iter().enumerate().skip(1) {
-                    acc += w * (win[radius - k] + win[radius + k]);
+                for (d, win) in dst[radius..width - radius]
+                    .iter_mut()
+                    .zip(src.windows(2 * radius + 1))
+                {
+                    let mut acc = kernel[0] * win[radius];
+                    for (k, &w) in kernel.iter().enumerate().skip(1) {
+                        acc += w * (win[radius - k] + win[radius + k]);
+                    }
+                    *d = acc;
                 }
-                *d = acc;
-            }
-            for (x, d) in dst.iter_mut().enumerate().skip(width - radius) {
-                *d = clamped(src, x);
-            }
+                for (x, d) in dst.iter_mut().enumerate().skip(width - radius) {
+                    *d = clamped(src, x);
+                }
+            })
         });
     data.par_chunks_mut(width).enumerate().for_each(|(y, dst)| {
-        let row = |i: isize| {
-            let r = taps(i, height);
-            &tmp[r * width..r * width + width]
-        };
-        for (d, s) in dst.iter_mut().zip(row(y as isize)) {
-            *d = kernel[0] * s;
-        }
-        for (k, &w) in kernel.iter().enumerate().skip(1) {
-            let (above, below) = (row(y as isize - k as isize), row(y as isize + k as isize));
-            for ((d, a), b) in dst.iter_mut().zip(above).zip(below) {
-                *d += w * (a + b);
+        super::own_row(dst, |dst| {
+            let row = |i: isize| {
+                let r = taps(i, height);
+                &tmp[r * width..r * width + width]
+            };
+            for (d, s) in dst.iter_mut().zip(row(y as isize)) {
+                *d = kernel[0] * s;
             }
-        }
+            for (k, &w) in kernel.iter().enumerate().skip(1) {
+                let (above, below) = (row(y as isize - k as isize), row(y as isize + k as isize));
+                for ((d, a), b) in dst.iter_mut().zip(above).zip(below) {
+                    *d += w * (a + b);
+                }
+            }
+        })
     });
 }
 
