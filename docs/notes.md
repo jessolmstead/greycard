@@ -14996,8 +14996,8 @@ of 400 pointer and key events from twelve starting states, at scale
 property and every callback fired after each event; the two traces
 were byte-identical over 140,946 lines. That covers the focus chain,
 Escape and Return, and what follows a sheet's closing, which no
-capture does. The tool is worth keeping for the next move of this
-kind; it lives with the review's files for now.
+capture does. The generator and the reconstruction script are kept
+in `tools/split/` for the next move of this kind.
 
 **For the second pass.** `app.slint`'s interface is now most of it,
 and every section repeats the declarations of what it binds: 507
