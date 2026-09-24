@@ -106,6 +106,7 @@ export component HistorySection inherits Section {
     in-out property <bool> collapsed-history;
 
     title: "HISTORY";
+    shrinks: true;
     icon: @image-url("../icons/undo-2.svg");
     collapsed <=> root.collapsed-history;
     if root.history-names.length > 0: Rectangle {
@@ -113,7 +114,13 @@ export component HistorySection inherits Section {
         background: Theme.base;
         border-width: 1px;
         border-color: Theme.border;
-        height: min(history-list.preferred-height, 260px);
+        // Its list's height up to 260 px, and less when the pane is
+        // short of room: down to two rows, the rest a scroll away, so
+        // a long history never pushes the pane past the window.
+        preferred-height: min(history-list.preferred-height, 260px);
+        max-height: self.preferred-height;
+        min-height: min(history-list.preferred-height, 2 * Theme.control-height);
+        vertical-stretch: 1;
         ScrollView {
             history-list := VerticalLayout {
                 padding: 2px;

@@ -992,10 +992,11 @@ export component App inherits Window {
             // snapshots and the history, as an editor keeps them on
             // its left; at its foot, the way to report a problem,
             // found where it is looked for and nowhere near the work.
-            // Put away by Tab: no width, and nothing drawn or hit.
-            Rectangle {
-                width: root.panels-hidden ? 0px : 240px;
-                visible: !root.panels-hidden;
+            // Put away by Tab: out of the layout altogether. At zero
+            // width its wrapping texts would grow tall and raise the
+            // window's minimum height past the screen's.
+            if !root.panels-hidden: Rectangle {
+                width: 240px;
                 background: Theme.surface;
                 Rectangle { x: parent.width - 1px; width: 1px; height: 100%; background: Theme.border; }
                 VerticalLayout {
@@ -1153,9 +1154,9 @@ export component App inherits Window {
             }
 
             // Panel.
-            Rectangle {
-                width: root.panels-hidden ? 0px : 320px;
-                visible: !root.panels-hidden;
+            // Put away by Tab, as the left pane is.
+            if !root.panels-hidden: Rectangle {
+                width: 320px;
                 background: Theme.surface;
                 Rectangle { x: 0; width: 1px; height: 100%; background: Theme.border; }
                 // The sections scroll; the view and export buttons stay

@@ -76,6 +76,12 @@ export component Section inherits VerticalLayout {
     // other section lets go.
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
+    // The body may be given less than it asks for when the column it
+    // stands in is short of room, down to what its own contents allow:
+    // for a section holding a list that scrolls in its own box, in a
+    // pane that does not scroll. Off, the body is always its full
+    // height.
+    in property <bool> shrinks: false;
     callback switched();
     spacing: Theme.space-2;
     padding-top: Theme.space-3;
@@ -149,13 +155,19 @@ export component Section inherits VerticalLayout {
     // The body, clipped to nothing when folded.
     Rectangle {
         clip: true;
-        height: root.collapsed ? 0px : body.preferred-height;
-        animate height { duration: 120ms; easing: ease-out; }
+        property <length> full: root.collapsed ? 0px : body.preferred-height;
+        animate full { duration: 120ms; easing: ease-out; }
+        preferred-height: self.full;
+        max-height: self.full;
+        min-height: root.shrinks ? min(self.full, body.min-height) : self.full;
         body := VerticalLayout {
             x: 0;
             y: 0;
             width: 100%;
-            height: self.preferred-height;
+            // Given less than its full height, a shrinking body lays
+            // itself out in what it has; folding, it keeps at least its
+            // least and is clipped away.
+            height: root.shrinks ? max(parent.height, self.min-height) : self.preferred-height;
             spacing: Theme.space-2;
             opacity: root.switchable && (!root.on || root.superseded) ? 0.45 : 1;
             animate opacity { duration: Theme.quick; }

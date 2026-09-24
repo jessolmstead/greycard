@@ -18,6 +18,7 @@ export component PresetsSection inherits Section {
     callback preset-save-open();
 
     title: "PRESETS";
+    shrinks: true;
     icon: @image-url("../icons/bookmark.svg");
     collapsed <=> root.collapsed-presets;
     // The list: a click lays the preset over the edit, as one step;
@@ -29,7 +30,12 @@ export component PresetsSection inherits Section {
         background: Theme.base;
         border-width: 1px;
         border-color: Theme.border;
-        height: min(preset-list.preferred-height, 200px);
+        // As the history's box: its list up to 200 px, down to two
+        // rows when the pane is short of room.
+        preferred-height: min(preset-list.preferred-height, 200px);
+        max-height: self.preferred-height;
+        min-height: min(preset-list.preferred-height, 2 * Theme.control-height);
+        vertical-stretch: 1;
         ScrollView {
             preset-list := VerticalLayout {
                 padding: 2px;
