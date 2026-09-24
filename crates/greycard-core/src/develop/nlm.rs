@@ -263,7 +263,14 @@ pub(crate) fn residual_band_ratios(stats: &NlmStats, search_radius: usize) -> [f
     };
     denoise_stabilized(&mut rgb, SIDE, SIDE, 1.0, stats.strength, &options);
     let white = band_variances();
-    let grids = variance_grids(&rgb, SIDE, SIDE, MAX_BANDS);
+    // The grids take planes.
+    let mut planes = vec![0.0f32; SIDE * SIDE * 3];
+    for (i, px) in rgb.as_chunks::<3>().0.iter().enumerate() {
+        for (c, &v) in px.iter().enumerate() {
+            planes[c * SIDE * SIDE + i] = v;
+        }
+    }
+    let grids = variance_grids(&planes, SIDE, SIDE, MAX_BANDS);
     std::array::from_fn(|scale| {
         let grid = &grids[scale];
         let n = (grid.values.len() * 3) as f32;
@@ -550,7 +557,7 @@ fn accumulate(input: &[f32], p: &Params, s: &mut Scratch, xs: (usize, usize), ys
 /// series, whose first missing term is 1.2e-7 of the value at the worst
 /// `f`.
 #[inline(always)]
-fn weight(e: f32) -> f32 {
+pub(crate) fn weight(e: f32) -> f32 {
     // At or above zero the weight is one: `f` comes out zero and the
     // series' constant term is exact.
     //

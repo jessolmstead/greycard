@@ -224,8 +224,9 @@ pub(crate) fn band_variances() -> [f32; MAX_BANDS] {
 ///
 /// Two passes. The first measures each band's local variance on a
 /// decimated pyramid ([`variance_grids`]); the second runs the à trous
-/// chain in the caller's buffer, a band of rows at a time, and collects
-/// the shrunk detail in the one other frame this allocates.
+/// chain over three planes, luma and the two chromas, a band of rows at
+/// a time, and collects the shrunk detail in the caller's buffer, which
+/// the planes are the one other frame this allocates beside.
 pub fn denoise_profiled(
     rgb: &mut [f32],
     width: usize,
@@ -335,18 +336,23 @@ pub fn denoise_profiled(
     };
 
     let band_var = band_variances();
+    let n = width * height;
 
-    // Rotate to luma and chroma, in place.
-    rgb.par_chunks_mut(3).for_each(|px| {
-        px.copy_from_slice(&to_yuv([px[0], px[1], px[2]]));
-    });
-
+    // The chain runs on three planes rather than the interleaved
+    // triples, so a tap of the blur is a loop over contiguous floats.
+    // The rotation to luma and chroma reads the caller's buffer into
+    // them, and from then on that buffer is the accumulator for the
+    // shrunk detail; the answer goes back into it at the end.
+    let mut planes = vec![0.0f32; 3 * n];
+    to_planes(rgb, &mut planes);
     lap("rotation to luma and chroma");
-    let grids = variance_grids(rgb, width, height, scales);
+    let grids = variance_grids(&planes, width, height, scales);
     lap("variance grids");
+    let acc = rgb;
+    acc.par_chunks_mut(CHUNK).for_each(|c| c.fill(0.0));
+    let mut bands = Bands::new(width, height, scales);
+    lap("accumulator and band buffers");
 
-    let mut detail = vec![0.0f32; width * height * 3];
-    lap("detail allocation");
     let gain = [
         strength,
         strength * options.chroma.max(0.0),
@@ -370,19 +376,31 @@ pub fn denoise_profiled(
             gain,
             sb2,
         };
-        atrous_in_place(rgb, &mut detail, width, height, scale, sb2, &shrink);
+        atrous_level(
+            &mut planes,
+            acc,
+            width,
+            height,
+            scale,
+            sb2,
+            &shrink,
+            &mut bands,
+        );
         lap(&format!("scale {scale}"));
     }
 
-    // Residue plus detail, rotate back, unstabilize.
-    rgb.par_chunks_mut(3)
-        .zip(detail.par_chunks(3))
-        .for_each(|(px, d)| {
-            let v = from_yuv([px[0] + d[0], px[1] + d[1], px[2] + d[2]]);
-            for c in 0..3 {
-                px[c] = vst[c].inverse(v[c]);
+    // Residue plus detail, then rotated back and unstabilized into the
+    // caller's buffer. Two passes: the detail lives in that buffer as
+    // planes, and its interleaved rows land on planar rows not yet read.
+    planes
+        .par_chunks_mut(CHUNK)
+        .zip(acc.par_chunks(CHUNK))
+        .for_each(|(p, a)| {
+            for (p, a) in p.iter_mut().zip(a) {
+                *p += *a;
             }
         });
+    from_planes(&planes, acc, &vst);
     lap("sum, rotation back and inverse transform");
     log::debug!(
         "denoise: {:.0} ms in all",
@@ -484,6 +502,45 @@ fn from_yuv([y, u, v]: [f32; 3]) -> [f32; 3] {
     ]
 }
 
+/// Elements per task of the flat passes over the frame.
+const CHUNK: usize = 1 << 16;
+
+/// The rotation into luma and chroma, interleaved `rgb` into the three
+/// planes of `planes`.
+fn to_planes(rgb: &[f32], planes: &mut [f32]) {
+    let n = rgb.len() / 3;
+    let (p0, rest) = planes.split_at_mut(n);
+    let (p1, p2) = rest.split_at_mut(n);
+    p0.par_chunks_mut(CHUNK)
+        .zip(p1.par_chunks_mut(CHUNK))
+        .zip(p2.par_chunks_mut(CHUNK))
+        .zip(rgb.par_chunks(3 * CHUNK))
+        .for_each(|(((p0, p1), p2), rgb)| {
+            for (i, px) in rgb.as_chunks::<3>().0.iter().enumerate() {
+                let [y, u, v] = to_yuv(*px);
+                p0[i] = y;
+                p1[i] = u;
+                p2[i] = v;
+            }
+        });
+}
+
+/// The three planes rotated back and taken out of the stabilized space
+/// into interleaved `rgb`.
+fn from_planes(planes: &[f32], rgb: &mut [f32], vst: &[Vst; 3]) {
+    let n = rgb.len() / 3;
+    rgb.par_chunks_mut(3 * CHUNK)
+        .zip(planes[..n].par_chunks(CHUNK))
+        .zip(planes[n..2 * n].par_chunks(CHUNK))
+        .zip(planes[2 * n..].par_chunks(CHUNK))
+        .for_each(|(((rgb, p0), p1), p2)| {
+            for (i, px) in rgb.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+                let v = from_yuv([p0[i], p1[i], p2[i]]);
+                *px = std::array::from_fn(|c| vst[c].inverse(v[c]));
+            }
+        });
+}
+
 /// The soft threshold of one band, from its local variance grid.
 struct Shrink<'a> {
     grid: &'a LocalVariance,
@@ -493,14 +550,72 @@ struct Shrink<'a> {
 }
 
 impl Shrink<'_> {
-    /// Add the shrunk detail `d` at `(x, y)` to `acc`.
-    #[inline]
-    fn apply(&self, x: usize, y: usize, d: [f32; 3], acc: &mut [f32]) {
-        let var = self.grid.at(x, y);
-        for c in 0..3 {
-            let std_x = (var[c] - self.noise_floor).max(1e-12).sqrt();
-            let t = self.gain[c] * self.sb2 / std_x;
-            acc[c] += (d[c] - t).max(0.0) + (d[c] + t).min(0.0);
+    /// Add the shrunk detail `input - coarse` to `acc`, over a run of
+    /// row `y` starting at `x0`: `input`, `coarse` and `acc` are that
+    /// run in each of the three planes.
+    ///
+    /// The grid's vertical interpolation is the row's and is taken
+    /// once; its four corner values are a tile column's and are taken
+    /// once per column, so the loop over a column's pixels is plain
+    /// floats and vectorizes. The interpolation itself is the same
+    /// arithmetic per pixel as before, and gives the same bits.
+    fn row(
+        &self,
+        y: usize,
+        x0: usize,
+        input: [&[f32]; 3],
+        coarse: [&[f32]; 3],
+        acc: [&mut [f32]; 3],
+    ) {
+        let g = self.grid;
+        let n = coarse[0].len();
+        let tile = g.tile as f32;
+        let fy = ((y as f32 + 0.5) / tile - 0.5).max(0.0);
+        let ty = (fy as usize).min(g.tiles_y - 1);
+        let ty1 = (ty + 1).min(g.tiles_y - 1);
+        let ay = (fy - ty as f32).min(1.0);
+        let row0 = &g.values[ty * g.tiles_x..(ty + 1) * g.tiles_x];
+        let row1 = &g.values[ty1 * g.tiles_x..(ty1 + 1) * g.tiles_x];
+        // Position in tile units, measured from the first tile's
+        // center; the tile column it falls in.
+        let column = |x: usize| {
+            let fx = ((x as f32 + 0.5) / tile - 0.5).max(0.0);
+            (fx as usize).min(g.tiles_x - 1)
+        };
+        let [a0, a1, a2] = acc;
+        let mut i = 0;
+        while i < n {
+            let tx = column(x0 + i);
+            let tx1 = (tx + 1).min(g.tiles_x - 1);
+            // The run of the block in this column. Tile widths are even
+            // and `x + 0.5` exact, so the column changes exactly where
+            // the integer form says, and the last column runs on.
+            let end = if tx + 1 == g.tiles_x {
+                n
+            } else {
+                ((tx + 1) * g.tile + g.tile / 2 - x0).min(n)
+            };
+            debug_assert!(end > i && column(x0 + end - 1) == tx);
+            debug_assert!(end == n || column(x0 + end) == tx + 1);
+            let (v00, v10, v01, v11) = (row0[tx], row0[tx1], row1[tx], row1[tx1]);
+            let txf = tx as f32;
+            for (c, a) in [&mut *a0, &mut *a1, &mut *a2].into_iter().enumerate() {
+                let (input, coarse, a) = (&input[c][i..end], &coarse[c][i..end], &mut a[i..end]);
+                let (v00, v10, v01, v11) = (v00[c], v10[c], v01[c], v11[c]);
+                let (gain, sb2, floor) = (self.gain[c], self.sb2, self.noise_floor);
+                for (j, a) in a.iter_mut().enumerate() {
+                    let fx = ((x0 + i + j) as f32 + 0.5) / tile - 0.5;
+                    let ax = (fx.max(0.0) - txf).min(1.0);
+                    let top = v00 + (v10 - v00) * ax;
+                    let bottom = v01 + (v11 - v01) * ax;
+                    let var = top + (bottom - top) * ay;
+                    let std_x = (var - floor).max(1e-12).sqrt();
+                    let t = gain * sb2 / std_x;
+                    let d = input[j] - coarse[j];
+                    *a += (d - t).max(0.0) + (d + t).min(0.0);
+                }
+            }
+            i = end;
         }
     }
 }
@@ -510,17 +625,56 @@ impl Shrink<'_> {
 /// must be at least the blur's reach, `2^(scale+1)` rows.
 const BAND_ROWS: usize = 256;
 
-/// One à trous level in place: `cur` holds the level's input and, on
-/// return, its coarse (the 5x5 B3 spline blur at spacing `2^scale`,
-/// edge-guarded so that pixels many sigmas apart in color do not mix);
-/// the detail `input - coarse`, shrunk, is added to `acc`.
+/// Pixels per block of a row in the blur. A block's sums and weights
+/// and the five tap rows' stretch of it are what the tap loops stream,
+/// and at this size they stay in the first-level cache.
+const BLOCK: usize = 512;
+
+/// The coarse rows of the band being blurred and of the band before it,
+/// planar, `rows` rows a plane: one pair for every level of the chain.
+struct Bands {
+    this: Vec<f32>,
+    prev: Vec<f32>,
+    rows: usize,
+}
+
+impl Bands {
+    fn new(width: usize, height: usize, scales: usize) -> Self {
+        let rows = BAND_ROWS.max(1 << scales).min(height);
+        Self {
+            this: vec![0.0; 3 * rows * width],
+            prev: vec![0.0; 3 * rows * width],
+            rows,
+        }
+    }
+}
+
+/// Per-worker scratch for the blur: a block's stretch of the five tap
+/// rows in each plane, its weighted sums, one per plane, and its
+/// summed weights.
+#[derive(Default)]
+struct Scratch {
+    /// The tap rows' stretch of the block with the blur's reach either
+    /// side, the row's ends repeated past them: `[tap][plane][pixel]`.
+    rows: Vec<f32>,
+    sum: [Vec<f32>; 3],
+    wgt: Vec<f32>,
+}
+
+/// One à trous level in place: `cur` holds the level's input in three
+/// planes and, on return, its coarse (the 5x5 B3 spline blur at spacing
+/// `2^scale`, edge-guarded so that pixels many sigmas apart in color do
+/// not mix); the detail `input - coarse`, shrunk, is added to the three
+/// planes of `acc`.
 ///
 /// The blur of a band of rows reads `reach` rows beyond it, so a row of
 /// `cur` may only be replaced once the band after the one it belongs to
-/// has been blurred. Each band's coarse goes to a buffer; after the next
-/// band is blurred, the rows nothing later reads are shrunk and
-/// committed, from the previous buffer's tail and this one's head.
-fn atrous_in_place(
+/// has been blurred. Each band's coarse goes to a band buffer, and its
+/// detail is shrunk into `acc` in the same sweep; after the next band
+/// is blurred, the rows nothing later reads are copied into `cur`, from
+/// the previous buffer's tail and this one's head.
+#[allow(clippy::too_many_arguments)]
+fn atrous_level(
     cur: &mut [f32],
     acc: &mut [f32],
     width: usize,
@@ -528,16 +682,17 @@ fn atrous_in_place(
     scale: usize,
     band_variance: f32,
     shrink: &Shrink,
+    bands: &mut Bands,
 ) {
+    let n = width * height;
     let mult = 1usize << scale;
     let reach = 2 * mult;
     let band = BAND_ROWS.max(reach).min(height);
-    let row = width * 3;
+    debug_assert!(band <= bands.rows, "the band buffers fit every level");
+    let stride = bands.rows * width;
     // darktable's guard: exp2(-max(0, distance^2 * 0.02 / sigma_band^2 - 9)).
     let inv_sigma2 = 0.02 / band_variance;
 
-    let mut this = vec![0.0f32; band * row];
-    let mut prev = vec![0.0f32; band * row];
     let mut prev_y0 = 0;
     let mut committed = 0;
     let mut y0 = 0;
@@ -545,86 +700,221 @@ fn atrous_in_place(
     let mut commit_time = std::time::Duration::ZERO;
     while y0 < height {
         let y1 = (y0 + band).min(height);
+        let rows = y1 - y0;
         let t = std::time::Instant::now();
         {
             let cur = &*cur;
-            this[..(y1 - y0) * row]
-                .par_chunks_mut(row)
+            let input: [&[f32]; 3] = [&cur[..n], &cur[n..2 * n], &cur[2 * n..]];
+            let (a0, rest) = acc.split_at_mut(n);
+            let (a1, a2) = rest.split_at_mut(n);
+            let (t0, rest) = bands.this.split_at_mut(stride);
+            let (t1, t2) = rest.split_at_mut(stride);
+            let span = y0 * width..y1 * width;
+            t0[..rows * width]
+                .par_chunks_mut(width)
+                .zip(t1[..rows * width].par_chunks_mut(width))
+                .zip(t2[..rows * width].par_chunks_mut(width))
+                .zip(a0[span.clone()].par_chunks_mut(width))
+                .zip(a1[span.clone()].par_chunks_mut(width))
+                .zip(a2[span].par_chunks_mut(width))
                 .enumerate()
-                .for_each(|(i, crow)| {
-                    blur_row(cur, width, height, y0 + i, mult, inv_sigma2, crow);
-                });
+                .for_each_init(
+                    Scratch::default,
+                    |scratch, (i, (((((t0, t1), t2), a0), a1), a2))| {
+                        blur_row(
+                            input,
+                            width,
+                            height,
+                            y0 + i,
+                            mult,
+                            inv_sigma2,
+                            shrink,
+                            scratch,
+                            [t0, t1, t2],
+                            [a0, a1, a2],
+                        );
+                    },
+                );
         }
         blur_time += t.elapsed();
         let t = std::time::Instant::now();
         let until = if y1 == height { height } else { y1 - reach };
-        let coarse_row = |r: usize| -> &[f32] {
+        let coarse_row = |p: usize, r: usize| -> &[f32] {
             let (buf, base) = if r < y0 {
-                (&prev, prev_y0)
+                (&bands.prev, prev_y0)
             } else {
-                (&this, y0)
+                (&bands.this, y0)
             };
-            &buf[(r - base) * row..(r - base + 1) * row]
+            &buf[(p * bands.rows + r - base) * width..][..width]
         };
-        cur[committed * row..until * row]
-            .par_chunks_mut(row)
-            .zip(acc[committed * row..until * row].par_chunks_mut(row))
-            .enumerate()
-            .for_each(|(i, (irow, arow))| {
-                let r = committed + i;
-                let crow = coarse_row(r);
-                for x in 0..width {
-                    let d = std::array::from_fn(|c| irow[x * 3 + c] - crow[x * 3 + c]);
-                    shrink.apply(x, r, d, &mut arow[x * 3..x * 3 + 3]);
-                }
-                irow.copy_from_slice(crow);
-            });
+        for (p, plane) in cur.chunks_exact_mut(n).enumerate() {
+            plane[committed * width..until * width]
+                .par_chunks_mut(width)
+                .enumerate()
+                .for_each(|(i, row)| row.copy_from_slice(coarse_row(p, committed + i)));
+        }
         commit_time += t.elapsed();
         committed = until;
-        std::mem::swap(&mut this, &mut prev);
+        std::mem::swap(&mut bands.this, &mut bands.prev);
         prev_y0 = y0;
         y0 = y1;
     }
     log::debug!(
-        "denoise: scale {scale}: blur {:.0} ms, shrink and commit {:.0} ms",
+        "denoise: scale {scale}: blur and shrink {:.0} ms, commit {:.0} ms",
         blur_time.as_secs_f64() * 1e3,
         commit_time.as_secs_f64() * 1e3
     );
 }
 
-/// Row `y` of the guarded blur of `input` at spacing `mult`.
+/// Row `y` of the guarded blur of `input` at spacing `mult` into `out`,
+/// and the detail it leaves, shrunk, into `acc`; `out` and `acc` are
+/// the row in each plane.
+///
+/// The row goes in blocks of [`BLOCK`] pixels. A block's stretch of each
+/// of the five tap rows, with the blur's reach either side and the
+/// row's ends repeated past them, is copied into the scratch first: one
+/// plain copy per stretch, which the memory system streams, where the
+/// taps reading the frame directly stalled on fifteen short runs a
+/// block from a spacing of four up. Then each of the 25 taps is a loop
+/// over the block's contiguous run of every plane, floats in and floats
+/// out with no index arithmetic or clamp per pixel, so the vectorizer
+/// takes it. The taps come in the order the per-pixel form took them,
+/// so the sums are the same to the bit.
+#[allow(clippy::too_many_arguments)]
 fn blur_row(
-    input: &[f32],
+    input: [&[f32]; 3],
     width: usize,
     height: usize,
     y: usize,
     mult: usize,
     inv_sigma2: f32,
-    crow: &mut [f32],
+    shrink: &Shrink,
+    scratch: &mut Scratch,
+    mut out: [&mut [f32]; 3],
+    acc: [&mut [f32]; 3],
 ) {
-    for x in 0..width {
-        let px = &input[(y * width + x) * 3..(y * width + x) * 3 + 3];
-        let mut sum = [0.0f32; 3];
-        let mut wgt = 0.0f32;
-        for (jj, fy) in FILTER.iter().enumerate() {
-            let yy = (y as isize + mult as isize * (jj as isize - 2)).clamp(0, height as isize - 1)
-                as usize;
-            for (ii, fx) in FILTER.iter().enumerate() {
-                let xx = (x as isize + mult as isize * (ii as isize - 2))
-                    .clamp(0, width as isize - 1) as usize;
-                let q = &input[(yy * width + xx) * 3..(yy * width + xx) * 3 + 3];
-                let dist = sq(px[0] - q[0]) + sq(px[1] - q[1]) + sq(px[2] - q[2]);
-                let guard = (-(dist * inv_sigma2 - 9.0).max(0.0)).exp2();
-                let w = fy * fx * guard;
-                wgt += w;
-                for c in 0..3 {
-                    sum[c] += w * q[c];
-                }
+    let m = mult as isize;
+    let reach = 2 * mult;
+    let tap_rows: [usize; 5] = std::array::from_fn(|jj| {
+        (y as isize + m * (jj as isize - 2)).clamp(0, height as isize - 1) as usize
+    });
+    // A stretch is the block and the reach either side.
+    let ew = BLOCK + 2 * reach;
+    scratch.rows.resize(15 * ew, 0.0);
+    for s in &mut scratch.sum {
+        s.resize(BLOCK, 0.0);
+    }
+    scratch.wgt.resize(BLOCK, 0.0);
+    let [a0, a1, a2] = acc;
+    let mut x0 = 0;
+    while x0 < width {
+        let x1 = (x0 + BLOCK).min(width);
+        let n = x1 - x0;
+        let len = n + 2 * reach;
+        for (jj, &yy) in tap_rows.iter().enumerate() {
+            for (c, plane) in input.iter().enumerate() {
+                let row = &plane[yy * width..(yy + 1) * width];
+                let dst = &mut scratch.rows[(jj * 3 + c) * ew..][..len];
+                // Pixels `x0 - reach .. x1 + reach`, clamped to the row.
+                let start = x0 as isize - reach as isize;
+                let left = (-start).max(0) as usize;
+                let right = (start + len as isize - width as isize).max(0) as usize;
+                let middle = len - left - right;
+                dst[..left].fill(row[0]);
+                let from = (start + left as isize) as usize;
+                dst[left..left + middle].copy_from_slice(&row[from..from + middle]);
+                dst[left + middle..].fill(row[width - 1]);
             }
         }
-        for c in 0..3 {
-            crow[x * 3 + c] = sum[c] / wgt;
+        for s in &mut scratch.sum {
+            s[..n].fill(0.0);
         }
+        scratch.wgt[..n].fill(0.0);
+        let stretch = |jj: usize, c: usize, off: isize| -> &[f32] {
+            let at = (reach as isize + off) as usize;
+            &scratch.rows[(jj * 3 + c) * ew + at..][..n]
+        };
+        let p: [&[f32]; 3] = std::array::from_fn(|c| stretch(2, c, 0));
+        for (jj, fy) in FILTER.iter().enumerate() {
+            for (ii, fx) in FILTER.iter().enumerate() {
+                let off = m * (ii as isize - 2);
+                let q: [&[f32]; 3] = std::array::from_fn(|c| stretch(jj, c, off));
+                tap(
+                    p,
+                    q,
+                    fy * fx,
+                    inv_sigma2,
+                    &mut scratch.sum,
+                    &mut scratch.wgt,
+                );
+            }
+        }
+        for (c, o) in out.iter_mut().enumerate() {
+            let o = &mut o[x0..x1];
+            let (s, w) = (&scratch.sum[c][..n], &scratch.wgt[..n]);
+            for i in 0..n {
+                o[i] = s[i] / w[i];
+            }
+        }
+        let coarse: [&[f32]; 3] = std::array::from_fn(|c| &out[c][x0..x1]);
+        shrink.row(
+            y,
+            x0,
+            p,
+            coarse,
+            [&mut a0[x0..x1], &mut a1[x0..x1], &mut a2[x0..x1]],
+        );
+        x0 = x1;
+    }
+}
+
+/// The guard's floor: the exponent past which a tap weighs no less.
+///
+/// The means' weight bottoms out at `2^-126`, which is right for them,
+/// since their weights are never scaled down. Here a tap's weight is
+/// the guard times a filter weight as small as `1/256`, and that times
+/// the pixel: at the coarse scales, where the band's noise variance is
+/// small and the guard is engaged nearly everywhere and far past its
+/// floor, those products are subnormal, and subnormal arithmetic is
+/// microcode at a hundred cycles an operation. That, and not the
+/// memory, was the difference between scale 0 and scale 6: a flat
+/// frame, whose guard never engages, ran every scale at the speed of
+/// scale 0, and a frame of pure noise ran every scale at twice that.
+/// Nor does a select help, since both its sides are computed. So the
+/// guard is floored at `2^-60` before the filter weight: against the
+/// center tap's own `36/256` a weight that small could change no sum
+/// by as much as a last bit, and every value the loop makes is normal.
+const FLOOR: f32 = 60.0;
+
+/// One tap of the blur over a block: `p` is the block's run of the
+/// center row in each plane, `q` the tap's pixels for it, and `f` the
+/// tap's filter weight before the guard.
+///
+/// Out of line so the loop holds no `&mut` into the frame: the sums go
+/// to the scratch and the frame is only read (notes §128).
+#[inline(never)]
+fn tap(
+    p: [&[f32]; 3],
+    q: [&[f32]; 3],
+    f: f32,
+    inv_sigma2: f32,
+    sum: &mut [Vec<f32>; 3],
+    wgt: &mut [f32],
+) {
+    let k = p[0].len();
+    let (p0, p1, p2) = (&p[0][..k], &p[1][..k], &p[2][..k]);
+    let (q0, q1, q2) = (&q[0][..k], &q[1][..k], &q[2][..k]);
+    let [s0, s1, s2] = sum;
+    let (s0, s1, s2) = (&mut s0[..k], &mut s1[..k], &mut s2[..k]);
+    let wg = &mut wgt[..k];
+    for i in 0..k {
+        let dist = sq(p0[i] - q0[i]) + sq(p1[i] - q1[i]) + sq(p2[i] - q2[i]);
+        let e = (dist * inv_sigma2 - 9.0).min(FLOOR);
+        let w = f * super::nlm::weight(e);
+        wg[i] += w;
+        s0[i] += w * q0[i];
+        s1[i] += w * q1[i];
+        s2[i] += w * q2[i];
     }
 }
 
@@ -657,37 +947,16 @@ impl LocalVariance {
     const TILE: usize = 8;
     /// Coefficients averaged per full tile.
     const SAMPLES: usize = Self::TILE * Self::TILE;
-
-    #[inline]
-    fn at(&self, x: usize, y: usize) -> [f32; 3] {
-        // Position in tile units, measured from the first tile's center.
-        let fx = ((x as f32 + 0.5) / self.tile as f32 - 0.5).max(0.0);
-        let fy = ((y as f32 + 0.5) / self.tile as f32 - 0.5).max(0.0);
-        let tx = (fx as usize).min(self.tiles_x - 1);
-        let ty = (fy as usize).min(self.tiles_y - 1);
-        let tx1 = (tx + 1).min(self.tiles_x - 1);
-        let ty1 = (ty + 1).min(self.tiles_y - 1);
-        let ax = (fx - tx as f32).min(1.0);
-        let ay = (fy - ty as f32).min(1.0);
-        let v00 = self.values[ty * self.tiles_x + tx];
-        let v10 = self.values[ty * self.tiles_x + tx1];
-        let v01 = self.values[ty1 * self.tiles_x + tx];
-        let v11 = self.values[ty1 * self.tiles_x + tx1];
-        std::array::from_fn(|c| {
-            let top = v00[c] + (v10[c] - v00[c]) * ax;
-            let bottom = v01[c] + (v11[c] - v01[c]) * ax;
-            top + (bottom - top) * ay
-        })
-    }
 }
 
-/// The local variance of every band, from a decimated pyramid of
-/// `image`: each level is the previous blurred with the 5-tap filter
-/// and taken every other pixel, which is the unguarded à trous chain on
-/// the lattice of its scale. Costs a third of one plain blur of the
-/// image over all levels, and a quarter of the image in memory.
+/// The local variance of every band, from a decimated pyramid of the
+/// three planes of `planes`: each level is the previous blurred with
+/// the 5-tap filter and taken every other pixel, which is the unguarded
+/// à trous chain on the lattice of its scale. Costs a third of one plain
+/// blur of the image over all levels, and a quarter of the image in
+/// memory.
 pub(crate) fn variance_grids(
-    image: &[f32],
+    planes: &[f32],
     width: usize,
     height: usize,
     scales: usize,
@@ -696,7 +965,7 @@ pub(crate) fn variance_grids(
     let mut level: Vec<f32> = Vec::new();
     let (mut w, mut h) = (width, height);
     for scale in 0..scales {
-        let src = if scale == 0 { image } else { &level };
+        let src = if scale == 0 { planes } else { &level };
         let (grid, next) = pyramid_level(src, w, h, scale);
         grids.push(grid);
         level = next;
@@ -707,62 +976,25 @@ pub(crate) fn variance_grids(
 }
 
 /// One pyramid level: the tile variances of `src` minus its blur, and
-/// the blur decimated by two for the next level.
+/// the blur decimated by two for the next level, plane by plane.
 fn pyramid_level(src: &[f32], w: usize, h: usize, scale: usize) -> (LocalVariance, Vec<f32>) {
-    // Rows per task: a multiple of two and of the tile.
-    const CHUNK: usize = 8 * LocalVariance::TILE;
     let tile = LocalVariance::TILE;
     let tiles_x = w.div_ceil(tile);
     let tiles_y = h.div_ceil(tile);
     let (nw, nh) = (w.div_ceil(2), h.div_ceil(2));
-    let row = w * 3;
-    let mut next = vec![0.0f32; nw * nh * 3];
-    let values: Vec<[f32; 3]> = next
-        .par_chunks_mut(CHUNK / 2 * nw * 3)
+    let mut next = vec![0.0f32; 3 * nw * nh];
+    let mut values = vec![[0.0f32; 3]; tiles_x * tiles_y];
+    for (c, (plane, next)) in src
+        .chunks_exact(w * h)
+        .zip(next.chunks_exact_mut(nw * nh))
         .enumerate()
-        .flat_map_iter(|(k, nrows)| {
-            let y0 = k * CHUNK;
-            let y1 = (y0 + CHUNK).min(h);
-            // The rows blurred along x: the chunk's and two beyond it.
-            let ha = y0.saturating_sub(2);
-            let hb = (y1 + 2).min(h);
-            let mut hrows = vec![0.0f32; (hb - ha) * row];
-            for (i, hrow) in hrows.chunks_exact_mut(row).enumerate() {
-                blur_row_h(&src[(ha + i) * row..(ha + i + 1) * row], w, hrow);
-            }
-            let hrow = |y: isize| (y.clamp(0, h as isize - 1) as usize - ha) * row;
-
-            let tile_rows = (y1 - y0).div_ceil(tile);
-            let mut sums = vec![[0.0f64; 3]; tile_rows * tiles_x];
-            let mut counts = vec![0u32; tile_rows * tiles_x];
-            for y in y0..y1 {
-                let taps: [usize; 5] = std::array::from_fn(|j| hrow(y as isize + j as isize - 2));
-                let ty = (y - y0) / tile;
-                for x in 0..w {
-                    let t = ty * tiles_x + x / tile;
-                    counts[t] += 1;
-                    for c in 0..3 {
-                        let i = x * 3 + c;
-                        let b: f32 = FILTER
-                            .iter()
-                            .zip(taps)
-                            .map(|(f, off)| f * hrows[off + i])
-                            .sum();
-                        let d = src[y * row + i] - b;
-                        sums[t][c] += (d * d) as f64;
-                        if y % 2 == 0 && x % 2 == 0 {
-                            nrows[((y - y0) / 2 * nw + x / 2) * 3 + c] = b;
-                        }
-                    }
-                }
-            }
-            sums.iter()
-                .zip(counts)
-                .map(|(s, n)| std::array::from_fn(|c| (s[c] / n as f64) as f32))
-                .collect::<Vec<_>>()
-        })
-        .collect();
-    debug_assert_eq!(values.len(), tiles_x * tiles_y);
+    {
+        let sums = pyramid_plane(plane, w, h, next);
+        debug_assert_eq!(sums.len(), values.len());
+        for (v, s) in values.iter_mut().zip(sums) {
+            v[c] = s;
+        }
+    }
     (
         LocalVariance {
             tiles_x,
@@ -774,19 +1006,107 @@ fn pyramid_level(src: &[f32], w: usize, h: usize, scale: usize) -> (LocalVarianc
     )
 }
 
+/// One plane of a pyramid level: the tile variances of `src` minus its
+/// blur, and the blur decimated by two into `next`.
+fn pyramid_plane(src: &[f32], w: usize, h: usize, next: &mut [f32]) -> Vec<f32> {
+    // Rows per task: a multiple of two and of the tile.
+    const CHUNK: usize = 8 * LocalVariance::TILE;
+    let tile = LocalVariance::TILE;
+    let tiles_x = w.div_ceil(tile);
+    let nw = w.div_ceil(2);
+    next.par_chunks_mut(CHUNK / 2 * nw)
+        .enumerate()
+        .flat_map_iter(|(k, nrows)| {
+            let y0 = k * CHUNK;
+            let y1 = (y0 + CHUNK).min(h);
+            // The rows blurred along x: the chunk's and two beyond it.
+            let ha = y0.saturating_sub(2);
+            let hb = (y1 + 2).min(h);
+            let mut hrows = vec![0.0f32; (hb - ha) * w];
+            for (i, hrow) in hrows.chunks_exact_mut(w).enumerate() {
+                blur_row_h(&src[(ha + i) * w..(ha + i + 1) * w], hrow);
+            }
+            let hrow = |y: isize| (y.clamp(0, h as isize - 1) as usize - ha) * w;
+
+            let tile_rows = (y1 - y0).div_ceil(tile);
+            let mut sums = vec![0.0f64; tile_rows * tiles_x];
+            let mut counts = vec![0u32; tile_rows * tiles_x];
+            let mut blur = vec![0.0f32; w];
+            for y in y0..y1 {
+                let taps: [&[f32]; 5] = std::array::from_fn(|j| {
+                    let at = hrow(y as isize + j as isize - 2);
+                    &hrows[at..at + w]
+                });
+                for (x, b) in blur.iter_mut().enumerate() {
+                    let mut s = 0.0f32;
+                    for (f, tap) in FILTER.iter().zip(taps) {
+                        s += f * tap[x];
+                    }
+                    *b = s;
+                }
+                let srow = &src[y * w..(y + 1) * w];
+                let ty = (y - y0) / tile;
+                for tx in 0..tiles_x {
+                    let xs = tx * tile..((tx + 1) * tile).min(w);
+                    let t = ty * tiles_x + tx;
+                    counts[t] += xs.len() as u32;
+                    let mut s = sums[t];
+                    for (&v, &b) in srow[xs.clone()].iter().zip(&blur[xs]) {
+                        let d = v - b;
+                        s += (d * d) as f64;
+                    }
+                    sums[t] = s;
+                }
+                if y % 2 == 0 {
+                    let nrow = &mut nrows[(y - y0) / 2 * nw..][..nw];
+                    for (nb, b) in nrow.iter_mut().zip(blur.iter().step_by(2)) {
+                        *nb = *b;
+                    }
+                }
+            }
+            sums.iter()
+                .zip(counts)
+                .map(|(s, n)| (s / n as f64) as f32)
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
 /// One row blurred along x with the 5-tap filter, edges clamped.
-fn blur_row_h(src: &[f32], w: usize, out: &mut [f32]) {
-    for x in 0..w {
-        for c in 0..3 {
-            out[x * 3 + c] = FILTER
-                .iter()
-                .enumerate()
-                .map(|(i, f)| {
-                    let xx = (x as isize + i as isize - 2).clamp(0, w as isize - 1) as usize;
-                    f * src[xx * 3 + c]
-                })
-                .sum();
+fn blur_row_h(src: &[f32], out: &mut [f32]) {
+    let w = src.len();
+    let inner = 2..w.saturating_sub(2);
+    for (x, o) in out.iter_mut().enumerate() {
+        if inner.contains(&x) {
+            continue;
         }
+        let mut s = 0.0f32;
+        for (i, f) in FILTER.iter().enumerate() {
+            let xx = (x as isize + i as isize - 2).clamp(0, w as isize - 1) as usize;
+            s += f * src[xx];
+        }
+        *o = s;
+    }
+    if inner.is_empty() {
+        return;
+    }
+    let n = inner.len();
+    let out = &mut out[inner];
+    let (s0, s1, s2, s3, s4) = (
+        &src[..n],
+        &src[1..1 + n],
+        &src[2..2 + n],
+        &src[3..3 + n],
+        &src[4..4 + n],
+    );
+    for i in 0..n {
+        let mut s = 0.0f32;
+        s += FILTER[0] * s0[i];
+        s += FILTER[1] * s1[i];
+        s += FILTER[2] * s2[i];
+        s += FILTER[3] * s3[i];
+        s += FILTER[4] * s4[i];
+        out[i] = s;
     }
 }
 
@@ -839,6 +1159,27 @@ mod tests {
         assert!((norm(y) - norm(v)).abs() < 1e-5, "length preserved");
     }
 
+    /// The chain over `scales` levels with nothing shrunk, on planes.
+    fn keep_everything(cur: &mut [f32], acc: &mut [f32], w: usize, h: usize, scales: usize) {
+        let want = band_variances();
+        let keep = LocalVariance {
+            tiles_x: 1,
+            tiles_y: 1,
+            tile: w,
+            values: vec![[1.0; 3]],
+        };
+        let mut bands = Bands::new(w, h, scales);
+        for (scale, &sb2) in want.iter().enumerate().take(scales) {
+            let shrink = Shrink {
+                grid: &keep,
+                noise_floor: 0.0,
+                gain: [0.0; 3],
+                sb2,
+            };
+            atrous_level(cur, acc, w, h, scale, sb2, &shrink, &mut bands);
+        }
+    }
+
     #[test]
     fn band_variances_are_measured_right() {
         // Unit white noise: each band's variance on the pyramid must
@@ -851,10 +1192,13 @@ mod tests {
         assert!((want[0] - 0.79).abs() < 0.02, "{want:?}");
         let grids = variance_grids(&input, w, h, 4);
         for (scale, (grid, &want_var)) in grids.iter().zip(&want).enumerate() {
-            let got = grid.values.iter().map(|v| v[0]).sum::<f32>() / grid.values.len() as f32;
+            let per: [f32; 3] = std::array::from_fn(|c| {
+                grid.values.iter().map(|v| v[c]).sum::<f32>() / grid.values.len() as f32
+            });
+            let got = (per[0] + per[1] + per[2]) / 3.0;
             assert!(
                 (got / want_var - 1.0).abs() < 0.06,
-                "scale {scale}: {got} vs {want_var}"
+                "scale {scale}: {got} ({per:?}) vs {want_var}"
             );
             assert_eq!(grid.tile, 8 << scale);
             assert_eq!(grid.tiles_x, w.div_ceil(8 << scale));
@@ -862,35 +1206,56 @@ mod tests {
 
         let mut cur = input.clone();
         let mut acc = vec![0.0f32; w * h * 3];
-        let keep = LocalVariance {
-            tiles_x: 1,
-            tiles_y: 1,
-            tile: w,
-            values: vec![[1.0; 3]],
-        };
-        for (scale, &sb2) in want.iter().enumerate().take(4) {
-            let shrink = Shrink {
-                grid: &keep,
-                noise_floor: 0.0,
-                gain: [0.0; 3],
-                sb2,
-            };
-            atrous_in_place(&mut cur, &mut acc, w, h, scale, sb2, &shrink);
-        }
+        keep_everything(&mut cur, &mut acc, w, h, 4);
         for ((a, r), i) in acc.iter().zip(&cur).zip(&input) {
             assert!((a + r - i).abs() < 1e-4);
         }
     }
 
-    #[test]
-    fn in_place_chain_matches_a_plain_one() {
-        // A tall, thin image so the chain runs over several bands at
-        // every scale, and a two-band scale whose reach is a whole
-        // band's worth of rows.
-        let (w, h) = (24, 3 * BAND_ROWS + 37);
+    /// The guarded blur in its plain per-pixel form, on planes: the
+    /// reference the blocked, vectorized one is checked against.
+    fn plain_blur(input: &[f32], w: usize, h: usize, mult: usize, inv_sigma2: f32) -> Vec<f32> {
+        let n = w * h;
+        let mut out = vec![0.0f32; 3 * n];
+        for y in 0..h {
+            for x in 0..w {
+                let px: [f32; 3] = std::array::from_fn(|c| input[c * n + y * w + x]);
+                let mut sum = [0.0f32; 3];
+                let mut wgt = 0.0f32;
+                for (jj, fy) in FILTER.iter().enumerate() {
+                    let yy = (y as isize + mult as isize * (jj as isize - 2))
+                        .clamp(0, h as isize - 1) as usize;
+                    for (ii, fx) in FILTER.iter().enumerate() {
+                        let xx = (x as isize + mult as isize * (ii as isize - 2))
+                            .clamp(0, w as isize - 1) as usize;
+                        let q: [f32; 3] = std::array::from_fn(|c| input[c * n + yy * w + xx]);
+                        let dist = sq(px[0] - q[0]) + sq(px[1] - q[1]) + sq(px[2] - q[2]);
+                        let guard = super::super::nlm::weight(dist * inv_sigma2 - 9.0);
+                        let w = fy * fx * guard;
+                        wgt += w;
+                        for c in 0..3 {
+                            sum[c] += w * q[c];
+                        }
+                    }
+                }
+                for c in 0..3 {
+                    out[c * n + y * w + x] = sum[c] / wgt;
+                }
+            }
+        }
+        out
+    }
+
+    fn chain_matches_the_plain_one(w: usize, h: usize, scales: usize) {
         let mut g = Gauss(7);
+        // Rows of a slow wave, noise, and a bright bar to bring the
+        // guard in.
         let input: Vec<f32> = (0..w * h * 3)
-            .map(|i| ((i / 3 / w) as f32 * 0.01).sin() + 0.3 * g.next())
+            .map(|i| {
+                let (x, y) = (i % w, i / w % h);
+                let bar = if y % 40 == 7 && x > 3 { 20.0 } else { 0.0 };
+                (y as f32 * 0.01).sin() + 0.3 * g.next() + bar
+            })
             .collect();
         let want = band_variances();
         let keep = LocalVariance {
@@ -902,24 +1267,31 @@ mod tests {
         let mut cur = input.clone();
         let mut acc = vec![0.0f32; w * h * 3];
         let mut plain = input.clone();
-        for (scale, &sb2) in want.iter().enumerate().take(4) {
+        let mut bands = Bands::new(w, h, scales);
+        for (scale, &sb2) in want.iter().enumerate().take(scales) {
             let shrink = Shrink {
                 grid: &keep,
                 noise_floor: 0.0,
                 gain: [0.0; 3],
                 sb2,
             };
-            atrous_in_place(&mut cur, &mut acc, w, h, scale, sb2, &shrink);
-            let mut coarse = vec![0.0f32; w * h * 3];
-            for (y, crow) in coarse.chunks_exact_mut(w * 3).enumerate() {
-                blur_row(&plain, w, h, y, 1 << scale, 0.02 / sb2, crow);
-            }
-            plain = coarse;
-            assert_eq!(cur, plain, "coarse after scale {scale}");
+            atrous_level(&mut cur, &mut acc, w, h, scale, sb2, &shrink, &mut bands);
+            plain = plain_blur(&plain, w, h, 1 << scale, 0.02 / sb2);
+            assert_eq!(cur, plain, "coarse after scale {scale} at {w}x{h}");
         }
         for ((a, r), i) in acc.iter().zip(&cur).zip(&input) {
             assert!((a + r - i).abs() < 1e-4);
         }
+    }
+
+    #[test]
+    fn in_place_chain_matches_a_plain_one() {
+        // A tall, thin image so the chain runs over several bands at
+        // every scale, and a two-band scale whose reach is a whole
+        // band's worth of rows; then a wide, short one so a row goes in
+        // several blocks and the coarse taps clamp at both ends of it.
+        chain_matches_the_plain_one(24, 3 * BAND_ROWS + 37, 4);
+        chain_matches_the_plain_one(2 * BLOCK + 37, 40, 4);
     }
 
     #[test]
