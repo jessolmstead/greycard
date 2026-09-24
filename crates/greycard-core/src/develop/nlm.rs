@@ -402,14 +402,15 @@ fn denoise_tile(
 
 /// The weighted sums for one tile, left in `s.acc`.
 ///
-/// Deliberately not inlined into [`denoise_tile`], which is the one
-/// thing here that looks like a stylistic choice and is not. Its caller
-/// holds the frame's own rows as `&mut [f32]` read out of a slice, and a
-/// reference loaded from memory carries no promise that it is distinct
-/// from anything else; fold the writing out in beside this loop and the
-/// compiler has to assume those rows may be the input or the scratch.
-/// That costs a quarter of the means' speed, 0.79 s to 1.04 s on the
-/// one-core benchmark.
+/// Kept out of [`denoise_tile`], whose caller holds the frame's own
+/// rows as `&mut [f32]` read out of a slice. When the means were made
+/// faster, folding the writing out in beside this loop measured a
+/// quarter slower, 0.79 s to 1.04 s on the one-core benchmark; that
+/// was an earlier shape of the tile code, and on this one it does not
+/// reproduce: inlined here, the weight and accumulation loops come out
+/// as the same instructions and the benchmark does not move. The input
+/// and the scratch reach the loops as arguments, so no write through
+/// the frame's rows can touch them. The split is harmless and kept.
 #[inline(never)]
 fn accumulate(input: &[f32], p: &Params, s: &mut Scratch, xs: (usize, usize), ys: (usize, usize)) {
     let ((x0, x1), (y0, y1)) = (xs, ys);
