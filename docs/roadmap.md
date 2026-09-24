@@ -151,9 +151,6 @@ ask for first.
       in the shader and the CPU reference alike, so a skin mask on the
       vectorscope shows the skin cloud against the line and a face on
       the waveform shows its level
-- [ ] Export presets and a watermark: the sheet's choices kept by name,
-      a text or image mark placed at a corner with opacity and scale,
-      rendered on the export only
 
 ## v0.7.0: the library
 
@@ -251,6 +248,10 @@ clears or a tester asks for it.
 - [ ] Export over the selection: a queue on the worker with progress
       and the naming policy; today Export takes the frame on screen
       (§156)
+- [ ] Export naming patterns and a destination folder on the sheet,
+      and so in an export preset; a list of marks so text and a logo
+      go on one export; a plate or shadow behind text; a bundled font
+      so exports match across machines (§157)
 - [ ] A preset laid over the selection, and settings copied and pasted
       from a right-click, both the sync's loop with a different source
       (§156)

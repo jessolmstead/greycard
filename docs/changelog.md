@@ -53,6 +53,15 @@ note a first tester reads.
   only onto the body it was made for, Noise bringing the learned
   denoiser along, masks off by default; the preset and sync sheets in
   two columns so they fit a 768 px screen (§156, 2026-09-23).
+- Export presets: the export sheet's choices kept by name, picked at
+  the top of the sheet, saved and deleted there, and `--export-preset
+  NAME` for a headless export; a metadata choice of All, No edit or
+  None (§157, 2026-09-23).
+- A watermark on the export: text in the system's sans-serif or a PNG,
+  at one of nine positions with a margin, a size as a share of the long
+  edge and an opacity, so it lands the same at every export size;
+  never in the viewport; an empty or undrawable mark fails the export
+  rather than letting an unmarked picture out (§157, 2026-09-23).
 
 ## 0.1.1, 2026-09-22
 
