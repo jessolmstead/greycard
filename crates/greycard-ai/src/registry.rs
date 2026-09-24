@@ -30,11 +30,23 @@ pub struct Model {
     /// Who made it and where the weights were published.
     pub source: &'static str,
     pub license: License,
-    /// What greycard changed, for a file it publishes itself: said in
-    /// the note beside the files, in place of the line that greycard
-    /// does not redistribute them.
-    pub modified: Option<&'static str>,
+    /// For a file greycard publishes itself, changed from the
+    /// upstream one: what changed, and the upstream license's notice,
+    /// both written into the note beside the files.
+    pub modified: Option<Modified>,
     pub files: &'static [File],
+}
+
+/// A model file greycard changed and publishes under the upstream
+/// license.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Modified {
+    /// What greycard changed, in a sentence.
+    pub what: &'static str,
+    /// The upstream license's text as its copyright holders give it:
+    /// the copyright line and the permission notice, which a license
+    /// such as MIT requires to go with every copy.
+    pub notice: &'static str,
 }
 
 impl Model {
@@ -55,8 +67,10 @@ impl Model {
             })
             .collect();
         let provenance = match self.modified {
-            Some(what) => format!(
-                "Downloaded by greycard on first use. greycard publishes these files, modified from the original under its licence: {what}"
+            Some(m) => format!(
+                "Downloaded by greycard on first use. greycard publishes these files, modified from the original under its license: {what}\n\nThe original's license:\n\n{notice}",
+                what = m.what,
+                notice = m.notice,
             ),
             None => {
                 "Downloaded by greycard on first use. greycard does not redistribute these files."
@@ -64,7 +78,7 @@ impl Model {
             }
         };
         format!(
-            "{name}\n\nLicence: {lic} <{licurl}>\nSource: {source}\n\nFiles:\n{files}\n\n{provenance}\n",
+            "{name}\n\nLicense: {lic} <{licurl}>\nSource: {source}\n\nFiles:\n{files}\n\n{provenance}\n",
             name = self.name,
             lic = self.license.name,
             licurl = self.license.url,
@@ -93,6 +107,32 @@ pub const SUBJECT: Model = Model {
     }],
 };
 
+/// BiRefNet's license, as its repository gives it
+/// (https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE), for the
+/// note beside the copy greycard publishes.
+const BIREFNET_LICENSE: &str = "MIT License
+
+Copyright (c) 2024 ZhengPeng
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the \"Software\"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+";
+
 /// BiRefNet lite rewritten so ONNX Runtime's WebGPU provider runs all
 /// of it (notes, "BiRefNet on WebGPU"): the same weights and, on the
 /// CPU, the same answer to the bit. Made from `SUBJECT`'s file by
@@ -109,13 +149,13 @@ pub const SUBJECT_WEBGPU: Model = Model {
         name: "MIT",
         url: "https://github.com/ZhengPeng7/BiRefNet/blob/main/LICENSE",
     },
-    modified: Some(
-        "the decoder's Splits of more than fifteen outputs are Slices, the Sums are Adds, and the deformable convolutions' int64 coordinate arithmetic is fp16; the weights are untouched.",
-    ),
+    modified: Some(Modified {
+        what: "the decoder's Splits of more than fifteen outputs are Slices, the Sums are Adds, and the deformable convolutions' int64 coordinate arithmetic is fp16; the weights are untouched.",
+        notice: BIREFNET_LICENSE,
+    }),
     files: &[File {
         name: "model_fp16_webgpu.onnx",
-        // A placeholder until the file is uploaded to this release.
-        url: "https://github.com/jessolmstead/greycard-denoise/releases/download/birefnet-lite-webgpu-v1/model_fp16_webgpu.onnx",
+        url: "https://huggingface.co/jessolmstead/BiRefNet_lite-ONNX-webgpu/resolve/main/model_fp16_webgpu.onnx",
         bytes: 113_778_088,
         sha256: "0a019d6ba73c9cedc9a251f8c9390b196ff6399acd281a2872692861abbd78c2",
     }],
@@ -276,8 +316,6 @@ mod tests {
     use super::*;
 
     const HF: &str = "https://huggingface.co";
-    /// Where greycard publishes files it made or changed itself.
-    const OWN: &str = "https://github.com/jessolmstead/";
 
     #[test]
     fn the_registry_is_well_formed() {
@@ -286,17 +324,7 @@ mod tests {
             assert!(ids.insert(m.id), "duplicate id {}", m.id);
             assert!(!m.files.is_empty());
             for f in m.files {
-                assert!(
-                    f.url.starts_with(HF) || f.url.starts_with(OWN),
-                    "{} is not on a model host",
-                    f.url
-                );
-                assert_eq!(
-                    f.url.starts_with(OWN),
-                    m.modified.is_some(),
-                    "{}: a file greycard publishes says what it changed, and only such a file",
-                    f.url
-                );
+                assert!(f.url.starts_with(HF), "{} is not on the model host", f.url);
                 assert!(
                     f.url.ends_with(f.name),
                     "{} must keep its name {}",
@@ -312,6 +340,18 @@ mod tests {
                 assert!(f.bytes > 0);
             }
             assert!(m.license.url.starts_with("https://"));
+            if let Some(modified) = m.modified {
+                assert!(
+                    !modified.what.is_empty(),
+                    "{} says nothing of what changed",
+                    m.id
+                );
+                assert!(
+                    modified.notice.contains("Copyright"),
+                    "{} carries no copyright notice",
+                    m.id
+                );
+            }
             assert!(!m.purpose.is_empty(), "{} says nothing it is for", m.id);
             assert_eq!(model(m.id), Some(m), "{} is not found by its id", m.id);
         }
@@ -348,6 +388,10 @@ mod tests {
         assert!(note.contains("ZhengPeng7/BiRefNet"));
         assert!(note.contains("onnx-community"));
         assert!(note.contains("modified from the original"));
+        // MIT wants the copyright line and the permission notice with
+        // every copy, not a link to them.
+        assert!(note.contains("Copyright (c) 2024 ZhengPeng"));
+        assert!(note.contains("The above copyright notice and this permission notice"));
         assert!(!note.contains("does not redistribute"));
     }
 }
