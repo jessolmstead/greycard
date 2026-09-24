@@ -1,0 +1,7 @@
+# The versions the published rewrite was made with; the output's hash
+# depends on the onnx and protobuf serializers.
+onnx==1.23.0
+protobuf==7.36.2
+numpy==2.5.3
+onnxruntime==1.30.0
+pillow
