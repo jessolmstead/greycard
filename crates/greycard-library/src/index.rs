@@ -4,32 +4,54 @@
 //! The rules, in the order they are tried for each file on disk:
 //!
 //! 1. A row at this path with the same size and mtime: the file is
-//!    not read. Its sidecar is looked for, and when that is not the
-//!    one the row knows (a different place, size or mtime, or none
-//!    where there was one) the meta is read again and only the meta.
+//!    not read. Its sidecar is looked for, read (it is small) and
+//!    hashed, and when that is not the sidecar the row knows — a
+//!    different place or different bytes, or none where there was
+//!    one — the meta is written again and only the meta.
 //! 2. A row at this path with another size or mtime: the file
 //!    changed on disk, and is hashed and probed again.
 //! 3. No row at this path: the file is hashed. A row with that hash
-//!    whose own path is gone from disk is this file moved, and
-//!    keeps its id and its EXIF; only its path and its meta are
-//!    written. Otherwise the file is probed and a row is added.
+//!    whose file is gone from a folder that is still there is this
+//!    file moved, and keeps its id and its EXIF; only its path and
+//!    its meta are written. A row whose whole folder is gone is not
+//!    a move's other end — the folder is on a drive that is not
+//!    mounted, as likely as not — so the file is a copy, and a new
+//!    row. Otherwise the file is probed and a row is added.
 //!
 //! What was in the folder's rows and not on disk is marked missing,
 //! with the time, and kept: a move to a folder not yet indexed is
-//! found when that folder is, from the missing row's hash.
+//! found when that folder is, from the missing row's hash. A folder
+//! that is gone marks its rows missing the same way, from its parent
+//! or from a pass over the tree above it.
 //!
 //! A file the probe cannot read is still a row, with no EXIF, so it
 //! is listed by name and rating with the rest; the error is in the
-//! report. It is not retried until the file changes.
+//! report. It is not retried until the file changes. A file whose
+//! data makes the decoder panic is the same case: the panic is
+//! caught at the file and never takes the folder with it.
+//!
+//! The pass commits every [`BATCH`] files or every second, whichever
+//! comes first, so a listing or the editor's [`Library::index_file`]
+//! gets in between batches rather than waiting for the folder.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use greycard_edit::Sidecar;
 use greycard_edit::meta::Meta;
-use rusqlite::{Transaction, params};
+use rusqlite::{Connection, Transaction, params};
 
-use crate::{Exif, Library, Result, filter, hash, mtime_of, now_secs, path_text};
+use crate::{
+    Error, Exif, Library, Result, canonical, filter, hash, mtime_of, now_secs, path_bytes,
+    path_from_bytes, path_text,
+};
+
+/// Files a transaction holds before it is committed.
+pub const BATCH: usize = 50;
+
+/// The longest a transaction is held.
+const BATCH_TIME: Duration = Duration::from_secs(1);
 
 /// Where an index run is, for a progress bar: `done` of `total`
 /// files in this folder, the one about to be looked at.
@@ -49,17 +71,20 @@ pub struct Report {
     pub moved: usize,
     /// Files whose size or mtime changed, read again whole.
     pub changed: usize,
-    /// Files unchanged whose sidecar changed: the meta read again.
+    /// Files unchanged whose sidecar changed: the meta written again.
     pub meta_refreshed: usize,
     /// Files whose row was right already.
     pub unchanged: usize,
     /// Files back at a path the index had marked missing.
     pub returned: usize,
-    /// Rows whose file is gone from its path.
+    /// Rows whose file, or whose whole folder, is gone.
     pub missing: usize,
     /// Files that could not be read, and why; each has a row anyway
     /// when it could be hashed.
     pub errors: Vec<(PathBuf, String)>,
+    /// Folders a tree pass did not go into: symbolic links, which
+    /// could lead back up the tree.
+    pub skipped: Vec<PathBuf>,
 }
 
 impl Report {
@@ -77,6 +102,7 @@ impl Report {
         self.returned += other.returned;
         self.missing += other.missing;
         self.errors.extend(other.errors);
+        self.skipped.extend(other.skipped);
     }
 }
 
@@ -85,9 +111,8 @@ struct Row {
     id: i64,
     size: u64,
     mtime: i64,
-    sidecar: Option<String>,
-    sidecar_size: Option<i64>,
-    sidecar_mtime: Option<i64>,
+    sidecar: Option<Vec<u8>>,
+    sidecar_hash: Option<String>,
     missing: bool,
 }
 
@@ -109,45 +134,116 @@ fn list_folder(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     Ok(files)
 }
 
+/// The folder as the index keys it, and whether it is there. A
+/// folder that is gone is keyed through its parent, which has to be
+/// there: a parent gone too is a drive gone, which is not a folder
+/// deleted, and is an error rather than a thousand rows marked
+/// missing.
+fn resolve_folder(dir: &Path) -> Result<(PathBuf, bool)> {
+    match canonical(dir) {
+        Ok(d) => Ok((d, true)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            let (Some(parent), Some(name)) = (dir.parent(), dir.file_name()) else {
+                return Err(Error::Io(e));
+            };
+            let parent = if parent.as_os_str().is_empty() {
+                canonical(Path::new("."))?
+            } else {
+                canonical(parent)?
+            };
+            Ok((parent.join(name), false))
+        }
+        Err(e) => Err(Error::Io(e)),
+    }
+}
+
 impl Library {
     /// Index one folder's files, not its subfolders: see the module
-    /// for the rules. `progress` is called before each file.
+    /// for the rules. `progress` is called before each file. A folder
+    /// that is gone, its parent still there, marks its rows missing.
     pub fn index_folder(
         &mut self,
         dir: &Path,
         progress: &mut dyn FnMut(Progress<'_>),
     ) -> Result<Report> {
-        let dir = std::fs::canonicalize(dir)?;
-        let files = list_folder(&dir)?;
-        let folder = path_text(&dir);
-        let tx = self.conn_mut().transaction()?;
-        let existing = rows_in_folder(&tx, &folder)?;
-        let report = index_paths(&tx, &folder, &files, existing, progress)?;
-        tx.commit()?;
-        Ok(report)
+        let (dir, exists) = resolve_folder(dir)?;
+        let files = if exists {
+            list_folder(&dir)?
+        } else {
+            Vec::new()
+        };
+        let folder = path_bytes(&dir);
+        let existing = rows_in_folder(self.conn_mut(), &folder)?;
+        index_paths(self.conn_mut(), &dir, &files, existing, progress)
     }
 
     /// Index a folder and every folder under it, hidden ones (a
-    /// leading dot, the sidecar folder among them) left alone.
+    /// leading dot, the sidecar folder among them) left alone and
+    /// symbolic links to folders not followed but named in the
+    /// report. Rows in folders under the root that are no longer
+    /// there are marked missing.
     pub fn index_tree(
         &mut self,
         root: &Path,
         progress: &mut dyn FnMut(Progress<'_>),
     ) -> Result<Report> {
-        let mut dirs = vec![std::fs::canonicalize(root)?];
+        let (root, exists) = resolve_folder(root)?;
         let mut report = Report::default();
+        let mut visited: HashSet<Vec<u8>> = HashSet::new();
+        let mut dirs = vec![root.clone()];
         while let Some(dir) = dirs.pop() {
             report.add(self.index_folder(&dir, progress)?);
-            let mut under: Vec<PathBuf> = std::fs::read_dir(&dir)?
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-                .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
-                .map(|e| e.path())
-                .collect();
+            visited.insert(path_bytes(&dir));
+            if !exists {
+                continue;
+            }
+            let mut under = Vec::new();
+            for entry in std::fs::read_dir(&dir)?.filter_map(|e| e.ok()) {
+                let Ok(kind) = entry.file_type() else {
+                    continue;
+                };
+                if entry.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                if kind.is_symlink() && entry.path().is_dir() {
+                    report.skipped.push(entry.path());
+                } else if kind.is_dir() {
+                    under.push(entry.path());
+                }
+            }
             // Popped from the end, so reversed to walk in name order.
             under.sort();
             under.reverse();
             dirs.extend(under);
+        }
+        // Folders the index holds under the root that the walk did
+        // not reach and that are not there: gone, with their files.
+        let mut prefix = path_bytes(&root);
+        prefix.extend_from_slice(path_bytes(Path::new(std::path::MAIN_SEPARATOR_STR)).as_slice());
+        let gone: Vec<Vec<u8>> = {
+            let mut stmt = self.conn_mut().prepare_cached(
+                "SELECT DISTINCT folder FROM files \
+                 WHERE substr(folder, 1, ?) = ? AND missing_since IS NULL",
+            )?;
+            let rows = stmt.query_map(params![prefix.len() as i64, prefix], |r| {
+                r.get::<_, Vec<u8>>(0)
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        let now = now_secs();
+        for folder in gone {
+            if visited.contains(&folder) || path_from_bytes(&folder).is_dir() {
+                continue;
+            }
+            let marked = self.conn_mut().execute(
+                "UPDATE files SET missing_since = ? WHERE folder = ? AND missing_since IS NULL",
+                params![now, folder],
+            )?;
+            log::info!(
+                "{}: gone, {marked} files marked missing",
+                path_from_bytes(&folder).display()
+            );
+            report.missing += marked;
         }
         Ok(report)
     }
@@ -157,92 +253,86 @@ impl Library {
     /// sidecar says without a pass over the folder. A file gone from
     /// its path is marked missing.
     pub fn index_file(&mut self, path: &Path) -> Result<Report> {
-        let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        let folder = path_text(path.parent().unwrap_or(Path::new("")));
-        let tx = self.conn_mut().transaction()?;
+        let path = canonical(path).unwrap_or_else(|_| path.to_path_buf());
+        let folder = path.parent().unwrap_or(Path::new("")).to_path_buf();
         let mut existing = HashMap::new();
-        if let Some(row) = row_at(&tx, &path_text(&path))? {
-            existing.insert(path_text(&path), row);
+        if let Some(row) = row_at(self.conn_mut(), &path_bytes(&path))? {
+            existing.insert(path_bytes(&path), row);
         }
         let files: Vec<PathBuf> = if path.is_file() {
             vec![path]
         } else {
             Vec::new()
         };
-        let report = index_paths(&tx, &folder, &files, existing, &mut |_| {})?;
-        tx.commit()?;
-        Ok(report)
+        index_paths(self.conn_mut(), &folder, &files, existing, &mut |_| {})
     }
 }
 
-fn rows_in_folder(tx: &Transaction<'_>, folder: &str) -> Result<HashMap<String, Row>> {
-    let mut stmt = tx.prepare_cached(
-        "SELECT id, path, size, mtime, sidecar, sidecar_size, sidecar_mtime, missing_since \
+fn row_from(r: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<Row> {
+    Ok(Row {
+        id: r.get(from)?,
+        size: r.get::<_, i64>(from + 1)? as u64,
+        mtime: r.get(from + 2)?,
+        sidecar: r.get(from + 3)?,
+        sidecar_hash: r.get(from + 4)?,
+        missing: r.get::<_, Option<i64>>(from + 5)?.is_some(),
+    })
+}
+
+fn rows_in_folder(conn: &Connection, folder: &[u8]) -> Result<HashMap<Vec<u8>, Row>> {
+    let mut stmt = conn.prepare_cached(
+        "SELECT path, id, size, mtime, sidecar, sidecar_hash, missing_since \
          FROM files WHERE folder = ?",
     )?;
     let rows = stmt.query_map(params![folder], |r| {
-        Ok((
-            r.get::<_, String>(1)?,
-            Row {
-                id: r.get(0)?,
-                size: r.get::<_, i64>(2)? as u64,
-                mtime: r.get(3)?,
-                sidecar: r.get(4)?,
-                sidecar_size: r.get(5)?,
-                sidecar_mtime: r.get(6)?,
-                missing: r.get::<_, Option<i64>>(7)?.is_some(),
-            },
-        ))
+        Ok((r.get::<_, Vec<u8>>(0)?, row_from(r, 1)?))
     })?;
     Ok(rows.collect::<rusqlite::Result<HashMap<_, _>>>()?)
 }
 
-fn row_at(tx: &Transaction<'_>, path: &str) -> Result<Option<Row>> {
+fn row_at(conn: &Connection, path: &[u8]) -> Result<Option<Row>> {
     use rusqlite::OptionalExtension;
-    Ok(tx
+    Ok(conn
         .prepare_cached(
-            "SELECT id, size, mtime, sidecar, sidecar_size, sidecar_mtime, missing_since \
+            "SELECT id, size, mtime, sidecar, sidecar_hash, missing_since \
              FROM files WHERE path = ?",
         )?
-        .query_row(params![path], |r| {
-            Ok(Row {
-                id: r.get(0)?,
-                size: r.get::<_, i64>(1)? as u64,
-                mtime: r.get(2)?,
-                sidecar: r.get(3)?,
-                sidecar_size: r.get(4)?,
-                sidecar_mtime: r.get(5)?,
-                missing: r.get::<_, Option<i64>>(6)?.is_some(),
-            })
-        })
+        .query_row(params![path], |r| row_from(r, 0))
         .optional()?)
 }
 
-/// The sidecar a file has now: its path, size and mtime, or `None`.
-struct SidecarStat {
-    path: String,
-    size: i64,
+/// The sidecar a file has now: where, its bytes' hash, its mtime,
+/// and the bytes themselves for the meta to be read from once.
+struct SidecarNow {
+    path: PathBuf,
+    hash: String,
     mtime: i64,
+    json: Vec<u8>,
 }
 
-fn sidecar_of(raw: &Path) -> Option<SidecarStat> {
+/// A sidecar is small and is read whole: its hash is what says
+/// whether it changed, since a save that changes one digit of a
+/// rating changes neither its length nor, within one timestamp
+/// tick, its mtime.
+fn sidecar_of(raw: &Path) -> Option<SidecarNow> {
     let path = Sidecar::find(raw)?;
-    let metadata = std::fs::metadata(&path).ok()?;
-    Some(SidecarStat {
-        path: path_text(&path),
-        size: metadata.len() as i64,
-        mtime: mtime_of(&metadata),
+    let json = std::fs::read(&path).ok()?;
+    let mtime = std::fs::metadata(&path).map(|m| mtime_of(&m)).unwrap_or(0);
+    Some(SidecarNow {
+        hash: blake3::hash(&json).to_hex().to_string(),
+        path,
+        mtime,
+        json,
     })
 }
 
 impl Row {
-    fn same_sidecar(&self, now: Option<&SidecarStat>) -> bool {
+    fn same_sidecar(&self, now: Option<&SidecarNow>) -> bool {
         match now {
             None => self.sidecar.is_none(),
             Some(s) => {
-                self.sidecar.as_deref() == Some(s.path.as_str())
-                    && self.sidecar_size == Some(s.size)
-                    && self.sidecar_mtime == Some(s.mtime)
+                self.sidecar.as_deref() == Some(path_bytes(&s.path).as_slice())
+                    && self.sidecar_hash.as_deref() == Some(s.hash.as_str())
             }
         }
     }
@@ -250,19 +340,31 @@ impl Row {
 
 /// The pass over `files`, which are all in `folder`, against
 /// `existing`, the folder's rows by path; what is left of `existing`
-/// at the end is marked missing.
+/// at the end is marked missing. Committed in batches.
 fn index_paths(
-    tx: &Transaction<'_>,
-    folder: &str,
+    conn: &mut Connection,
+    folder: &Path,
     files: &[PathBuf],
-    mut existing: HashMap<String, Row>,
+    mut existing: HashMap<Vec<u8>, Row>,
     progress: &mut dyn FnMut(Progress<'_>),
 ) -> Result<Report> {
     let mut report = Report::default();
     let total = files.len();
+    let folder_bytes = path_bytes(folder);
+    let folder_text = path_text(folder);
+    let mut tx = conn.transaction()?;
+    let mut batch = 0;
+    let mut since = Instant::now();
     for (done, path) in files.iter().enumerate() {
         progress(Progress { done, total, path });
-        let key = path_text(path);
+        if batch >= BATCH || since.elapsed() >= BATCH_TIME {
+            tx.commit()?;
+            tx = conn.transaction()?;
+            batch = 0;
+            since = Instant::now();
+        }
+        batch += 1;
+        let key = path_bytes(path);
         let stat = match std::fs::metadata(path) {
             Ok(m) => m,
             Err(e) => {
@@ -282,7 +384,7 @@ fn index_paths(
                 if row.same_sidecar(sidecar.as_ref()) {
                     report.unchanged += 1;
                 } else {
-                    write_meta(tx, row.id, sidecar.as_ref())?;
+                    write_meta(&tx, row.id, sidecar.as_ref())?;
                     report.meta_refreshed += 1;
                 }
             }
@@ -315,7 +417,7 @@ fn index_paths(
                     exif.taken,
                     row.id
                 ])?;
-                write_meta(tx, row.id, sidecar.as_ref())?;
+                write_meta(&tx, row.id, sidecar.as_ref())?;
                 report.changed += 1;
             }
             None => {
@@ -326,37 +428,42 @@ fn index_paths(
                         continue;
                     }
                 };
-                if let Some((id, old_path)) = gone_by_hash(tx, &hash)? {
-                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+                let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+                if let Some((id, old_path)) = gone_by_hash(&tx, &hash)? {
                     tx.prepare_cached(
-                        "UPDATE files SET path = ?, folder = ?, name = ?, size = ?, mtime = ?, \
-                         missing_since = NULL WHERE id = ?",
+                        "UPDATE files SET path = ?, folder = ?, folder_text = ?, name = ?, \
+                         size = ?, mtime = ?, missing_since = NULL WHERE id = ?",
                     )?
                     .execute(params![
                         key,
-                        folder,
+                        folder_bytes,
+                        folder_text,
                         name,
                         size as i64,
                         mtime,
                         id
                     ])?;
-                    write_meta(tx, id, sidecar.as_ref())?;
+                    write_meta(&tx, id, sidecar.as_ref())?;
                     // A rename within the folder: the old row is this
                     // one, and is not to be marked missing.
                     existing.remove(&old_path);
-                    log::info!("{}: moved from {old_path}", path.display());
+                    log::info!(
+                        "{}: moved from {}",
+                        path.display(),
+                        path_from_bytes(&old_path).display()
+                    );
                     report.moved += 1;
                 } else {
                     let exif = probe(path, &mut report);
-                    let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
                     tx.prepare_cached(
-                        "INSERT INTO files (path, folder, name, size, mtime, hash, make, model, \
-                         camera, lens, iso, focal, aperture, shutter, taken) \
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "INSERT INTO files (path, folder, folder_text, name, size, mtime, hash, \
+                         make, model, camera, lens, iso, focal, aperture, shutter, taken) \
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     )?
                     .execute(params![
                         key,
-                        folder,
+                        folder_bytes,
+                        folder_text,
                         name,
                         size as i64,
                         mtime,
@@ -372,7 +479,7 @@ fn index_paths(
                         exif.taken,
                     ])?;
                     let id = tx.last_insert_rowid();
-                    write_meta(tx, id, sidecar.as_ref())?;
+                    write_meta(&tx, id, sidecar.as_ref())?;
                     report.added += 1;
                 }
             }
@@ -385,20 +492,25 @@ fn index_paths(
             .execute(params![now, row.id])?;
         report.missing += 1;
     }
+    tx.commit()?;
     Ok(report)
 }
 
-/// A row with this hash whose file is not at its path any more: a
-/// move's other end. Its id and its old path.
-fn gone_by_hash(tx: &Transaction<'_>, hash: &str) -> Result<Option<(i64, String)>> {
+/// A row with this hash whose file is gone from a folder that is
+/// still there: a move's other end. Its id and its old path. A row
+/// whose folder is gone too is not one — its drive may simply not
+/// be mounted — and the file in hand is a copy.
+fn gone_by_hash(tx: &Transaction<'_>, hash: &str) -> Result<Option<(i64, Vec<u8>)>> {
     let mut stmt = tx.prepare_cached("SELECT id, path FROM files WHERE hash = ? ORDER BY id")?;
     let candidates = stmt.query_map(params![hash], |r| {
-        Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?))
+        Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
     })?;
     for candidate in candidates {
-        let (id, old_path) = candidate?;
-        if !Path::new(&old_path).exists() {
-            return Ok(Some((id, old_path)));
+        let (id, old) = candidate?;
+        let old_path = path_from_bytes(&old);
+        let folder_there = old_path.parent().is_some_and(Path::is_dir);
+        if folder_there && !old_path.exists() {
+            return Ok(Some((id, old)));
         }
     }
     Ok(None)
@@ -406,35 +518,48 @@ fn gone_by_hash(tx: &Transaction<'_>, hash: &str) -> Result<Option<(i64, String)
 
 /// The file's EXIF, a raw's through its decoder and a picture's
 /// from its chunk; a file that will not say is an empty EXIF and a
-/// line in the report.
+/// line in the report. A decoder that panics on the file's data is
+/// the same case, caught here so one file never ends the folder.
 fn probe(path: &Path, report: &mut Report) -> Exif {
-    let probed = if greycard_core::picture::is_picture_path(path) {
-        greycard_core::picture::probe_path(path)
-    } else {
-        greycard_core::decode::probe_path(path)
-    };
-    match probed {
-        Ok(p) => Exif::from_probe(&p),
-        Err(e) => {
-            log::warn!("{}: {e}", path.display());
-            report.errors.push((path.to_path_buf(), e.to_string()));
-            Exif::default()
+    let probed = std::panic::catch_unwind(|| {
+        if greycard_core::picture::is_picture_path(path) {
+            greycard_core::picture::probe_path(path)
+        } else {
+            greycard_core::decode::probe_path(path)
         }
-    }
+    });
+    let failed = match probed {
+        Ok(Ok(p)) => return Exif::from_probe(&p),
+        Ok(Err(e)) => e.to_string(),
+        Err(panic) => {
+            let what = panic
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| panic.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_else(|| "the decoder gave up".to_string());
+            format!("the decoder panicked: {what}")
+        }
+    };
+    log::warn!("{}: {failed}", path.display());
+    report.errors.push((path.to_path_buf(), failed));
+    Exif::default()
 }
 
 /// The sidecar's meta section and nothing else of it: the edit and
 /// its history are not read, and a sidecar whose edit this build
 /// cannot read still gives up its stars.
 pub fn read_meta(sidecar: &Path) -> Meta {
-    let json = match std::fs::read_to_string(sidecar) {
-        Ok(j) => j,
+    match std::fs::read(sidecar) {
+        Ok(json) => meta_from_json(&json, sidecar),
         Err(e) => {
             log::warn!("{}: {e}", sidecar.display());
-            return Meta::default();
+            Meta::default()
         }
-    };
-    let value: serde_json::Value = match serde_json::from_str(&json) {
+    }
+}
+
+fn meta_from_json(json: &[u8], sidecar: &Path) -> Meta {
+    let value: serde_json::Value = match serde_json::from_slice(json) {
         Ok(v) => v,
         Err(e) => {
             log::warn!("{}: {e}", sidecar.display());
@@ -449,18 +574,18 @@ pub fn read_meta(sidecar: &Path) -> Meta {
 }
 
 /// The row's meta from its sidecar, or the empty meta when it has
-/// none, and the sidecar's stat so the next pass can tell.
-fn write_meta(tx: &Transaction<'_>, id: i64, sidecar: Option<&SidecarStat>) -> Result<()> {
+/// none, and the sidecar's hash so the next pass can tell.
+fn write_meta(tx: &Transaction<'_>, id: i64, sidecar: Option<&SidecarNow>) -> Result<()> {
     let meta = sidecar
-        .map(|s| read_meta(Path::new(&s.path)))
+        .map(|s| meta_from_json(&s.json, &s.path))
         .unwrap_or_default();
     tx.prepare_cached(
-        "UPDATE files SET sidecar = ?, sidecar_size = ?, sidecar_mtime = ?, rating = ?, \
+        "UPDATE files SET sidecar = ?, sidecar_hash = ?, sidecar_mtime = ?, rating = ?, \
          flag = ?, label = ?, keywords = ? WHERE id = ?",
     )?
     .execute(params![
-        sidecar.map(|s| s.path.as_str()),
-        sidecar.map(|s| s.size),
+        sidecar.map(|s| path_bytes(&s.path)),
+        sidecar.map(|s| s.hash.as_str()),
         sidecar.map(|s| s.mtime),
         i64::from(meta.rating),
         filter::flag_name(meta.flag),
@@ -488,7 +613,7 @@ pub(crate) mod tests {
     use rawler::decoders::RawMetadata;
     use rawler::exif::Exif as RawExif;
     use rawler::formats::tiff::Rational;
-    use std::time::{Duration, SystemTime};
+    use std::time::SystemTime;
 
     /// A scratch folder of this run's own.
     pub(crate) fn scratch(what: &str) -> PathBuf {
@@ -621,6 +746,10 @@ pub(crate) mod tests {
             .collect()
     }
 
+    fn quiet() -> impl FnMut(Progress<'_>) {
+        |_| {}
+    }
+
     #[test]
     fn a_folder_is_indexed_and_a_second_pass_reads_nothing() {
         let dir = scratch("index");
@@ -636,7 +765,7 @@ pub(crate) mod tests {
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         assert_eq!(seen.len(), 3);
         assert_eq!(seen[0].0, 0);
-        assert_eq!(seen[2], (2, 3, std::fs::canonicalize(&r6).unwrap()));
+        assert_eq!(seen[2], (2, 3, canonical(&r6).unwrap()));
         assert_eq!(lib.len().unwrap(), 3);
 
         // The EXIF came through the probe.
@@ -656,11 +785,7 @@ pub(crate) mod tests {
         assert_eq!(e.meta.keywords, ["Wedding", "Harbor"]);
         assert_eq!(
             e.sidecar,
-            Some(
-                std::fs::canonicalize(&r5)
-                    .unwrap()
-                    .with_extension("tif.gcd")
-            )
+            Some(canonical(&r5).unwrap().with_extension("tif.gcd"))
         );
         let e = lib.by_path(&r6).unwrap().unwrap();
         assert_eq!(e.meta.label, Label::Red);
@@ -676,6 +801,8 @@ pub(crate) mod tests {
         assert_eq!(names(&lib, "iso>=3200 camera:sony"), ["a7.tif"]);
         assert_eq!(names(&lib, "focal:50mm"), ["r6.tif"]);
         assert_eq!(names(&lib, "focal<=35"), ["a7.tif", "r5.tif"]);
+        assert_eq!(names(&lib, "focal>=24"), ["a7.tif", "r5.tif", "r6.tif"]);
+        assert_eq!(names(&lib, "focal>24"), ["r5.tif", "r6.tif"]);
         assert_eq!(names(&lib, "aperture:f/1.8"), ["r6.tif"]);
         assert_eq!(names(&lib, "aperture<2.8"), ["r5.tif", "r6.tif"]);
         assert_eq!(names(&lib, "aperture<=2.8"), ["a7.tif", "r5.tif", "r6.tif"]);
@@ -711,21 +838,15 @@ pub(crate) mod tests {
         assert_eq!(
             names(
                 &lib,
-                &format!(
-                    "folder=\"{}\"",
-                    std::fs::canonicalize(&dir).unwrap().display()
-                )
+                &format!("folder=\"{}\"", canonical(&dir).unwrap().display())
             ),
             ["a7.tif", "r5.tif", "r6.tif"]
         );
         assert_eq!(lib.count(&Filter::parse("iso>=3200").unwrap()).unwrap(), 2);
-        assert_eq!(
-            lib.folders().unwrap(),
-            vec![std::fs::canonicalize(&dir).unwrap()]
-        );
+        assert_eq!(lib.folders().unwrap(), vec![canonical(&dir).unwrap()]);
 
         // Again: nothing added, nothing read.
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(
             report,
             Report {
@@ -736,32 +857,106 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// `!=` leaves a file that does not say out, on every kind of
+    /// field: a JPEG with no EXIF is not "not ISO 100", it is
+    /// unknown, and a listing of "everything but ISO 100" that
+    /// carried it would surprise.
+    #[test]
+    fn not_equals_leaves_the_unknown_out_on_every_field() {
+        let dir = scratch("unknown");
+        shoot(&dir);
+        // A picture with no EXIF at all.
+        let bare = dir.join("bare.png");
+        image::RgbImage::new(2, 2).save(&bare).unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.added, 4, "{report:?}");
+        assert_eq!(lib.by_path(&bare).unwrap().unwrap().exif, Exif::default());
+        assert_eq!(names(&lib, "iso!=100"), ["a7.tif", "r6.tif"]);
+        assert_eq!(names(&lib, "aperture!=2.8"), ["r5.tif", "r6.tif"]);
+        assert_eq!(names(&lib, "focal!=50"), ["a7.tif", "r5.tif"]);
+        assert_eq!(names(&lib, "date!=2024"), ["a7.tif", "r6.tif"]);
+        assert_eq!(
+            names(&lib, "lens!=\"RF50mm F1.8 STM\""),
+            ["a7.tif", "r5.tif"]
+        );
+        // An empty camera is an empty string, which `make!=canon`
+        // could see as "not Canon"; it is unknown and stays out.
+        assert_eq!(names(&lib, "make!=canon"), ["a7.tif"]);
+        assert_eq!(
+            names(&lib, "camera!=\"Canon EOS R5\""),
+            ["a7.tif", "r6.tif"]
+        );
+        // No keywords is known, and `keyword!=` keeps such a file.
+        assert_eq!(
+            names(&lib, "keyword!=wedding"),
+            ["a7.tif", "bare.png", "r6.tif"]
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The browser's box lowercases both sides with Unicode rules;
+    /// SQLite's LIKE folds ASCII only. The index folds the same way
+    /// the browser does.
+    #[test]
+    fn a_name_is_found_whatever_its_case_in_any_script() {
+        let dir = scratch("unicode");
+        let odd = dir.join("Ärger_50%.tif");
+        write_frame(&odd, &R5, 4);
+        let plain = dir.join("plain.tif");
+        write_frame(&plain, &R6, 5);
+        let mut s = Sidecar::default();
+        s.meta.set_keywords(vec!["Straße".into(), "ÉTÉ".into()]);
+        s.save(&plain).unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        for word in ["Ärger", "ärger", "ÄRGER", "rger_50%", "Ärger_50%.tif"] {
+            assert_eq!(names(&lib, word), ["Ärger_50%.tif"], "{word}");
+            assert_eq!(
+                names(&lib, &format!("name:{word}")),
+                ["Ärger_50%.tif"],
+                "name:{word}"
+            );
+        }
+        assert_eq!(names(&lib, "name=\"ärger_50%.TIF\""), ["Ärger_50%.tif"]);
+        assert_eq!(names(&lib, "name!=\"ärger_50%.TIF\""), ["plain.tif"]);
+        for word in ["straße", "STRASSE", "été", "Été"] {
+            let want: Vec<&str> = if word == "STRASSE" {
+                // ß has no single-character upper case; a search
+                // for the two-letter spelling does not find it, as
+                // the browser's box does not either.
+                vec![]
+            } else {
+                vec!["plain.tif"]
+            };
+            assert_eq!(names(&lib, word), want, "{word}");
+            assert_eq!(
+                names(&lib, &format!("keyword:{word}")),
+                want,
+                "keyword:{word}"
+            );
+        }
+        assert_eq!(names(&lib, "keyword=été"), ["plain.tif"]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn a_changed_sidecar_refreshes_the_meta_and_nothing_else() {
         let dir = scratch("meta");
         let (r5, _r6, a7) = shoot(&dir);
         let mut lib = Library::open_in_memory().unwrap();
-        lib.index_folder(&dir, &mut |_| {}).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
         let before = lib.by_path(&r5).unwrap().unwrap();
 
-        // The R5 loses a star; the A7 gains a sidecar. The sidecar's
-        // mtime is moved on by hand, since a save within the same
-        // filesystem tick would look like the same sidecar.
+        // The R5 loses a star; the A7 gains a sidecar.
         let mut s = Sidecar::load(&r5).unwrap().unwrap();
         s.meta.rating = 3;
         s.save(&r5).unwrap();
-        let gcd = Sidecar::find(&r5).unwrap();
-        std::fs::File::options()
-            .write(true)
-            .open(&gcd)
-            .unwrap()
-            .set_modified(SystemTime::now() + Duration::from_secs(5))
-            .unwrap();
         let mut s = Sidecar::default();
         s.meta.set_keywords(vec!["sea".into()]);
         s.save(&a7).unwrap();
 
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(
             report,
             Report {
@@ -776,12 +971,11 @@ pub(crate) mod tests {
         assert_eq!(after.id, before.id);
         assert_eq!(after.hash, before.hash);
         assert_eq!(after.exif, before.exif);
-        assert_ne!(after.sidecar_mtime, before.sidecar_mtime);
         assert_eq!(names(&lib, "keyword:sea"), ["a7.tif"]);
 
         // The sidecar taken away: the meta goes with it.
         std::fs::remove_file(Sidecar::find(&a7).unwrap()).unwrap();
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.meta_refreshed, 1, "{report:?}");
         assert!(names(&lib, "keyword:sea").is_empty());
         assert_eq!(lib.by_path(&a7).unwrap().unwrap().sidecar, None);
@@ -790,15 +984,40 @@ pub(crate) mod tests {
         let mut s = Sidecar::load(&r5).unwrap().unwrap();
         s.meta.rating = 5;
         s.save(&r5).unwrap();
+        let report = lib.index_file(&r5).unwrap();
+        assert_eq!(report.meta_refreshed, 1, "{report:?}");
+        assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 5);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A save that changes one digit changes neither the sidecar's
+    /// length nor, within one filesystem tick, its mtime. The hash
+    /// of its bytes still sees it.
+    #[test]
+    fn a_same_size_save_in_the_same_tick_is_still_seen() {
+        let dir = scratch("tick");
+        let (r5, _, _) = shoot(&dir);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let gcd = Sidecar::find(&r5).unwrap();
+        let before = std::fs::metadata(&gcd).unwrap();
+        let mut s = Sidecar::load(&r5).unwrap().unwrap();
+        s.meta.rating = 3;
+        s.save(&r5).unwrap();
+        // The same mtime as before, to the nanosecond, and the same
+        // length.
         std::fs::File::options()
             .write(true)
             .open(&gcd)
             .unwrap()
-            .set_modified(SystemTime::now() + Duration::from_secs(10))
+            .set_modified(before.modified().unwrap())
             .unwrap();
+        let after = std::fs::metadata(&gcd).unwrap();
+        assert_eq!(after.len(), before.len());
+        assert_eq!(after.modified().unwrap(), before.modified().unwrap());
         let report = lib.index_file(&r5).unwrap();
         assert_eq!(report.meta_refreshed, 1, "{report:?}");
-        assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 5);
+        assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 3);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -807,7 +1026,7 @@ pub(crate) mod tests {
         let dir = scratch("changed");
         let (r5, _, _) = shoot(&dir);
         let mut lib = Library::open_in_memory().unwrap();
-        lib.index_folder(&dir, &mut |_| {}).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
         let before = lib.by_path(&r5).unwrap().unwrap();
         // Overwritten by another frame, a second later.
         write_frame(&r5, &A7, 9);
@@ -817,7 +1036,7 @@ pub(crate) mod tests {
             .unwrap()
             .set_modified(SystemTime::now() + Duration::from_secs(5))
             .unwrap();
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.changed, 1, "{report:?}");
         let after = lib.by_path(&r5).unwrap().unwrap();
         assert_eq!(after.id, before.id);
@@ -833,14 +1052,14 @@ pub(crate) mod tests {
         let dir = scratch("move");
         let (r5, _r6, a7) = shoot(&dir);
         let mut lib = Library::open_in_memory().unwrap();
-        lib.index_folder(&dir, &mut |_| {}).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
         let before = lib.by_path(&r5).unwrap().unwrap();
 
         // Renamed within the folder, the sidecar with it.
         let renamed = dir.join("z_renamed.tif");
         std::fs::rename(&r5, &renamed).unwrap();
         std::fs::rename(Sidecar::path_for(&r5), Sidecar::path_for(&renamed)).unwrap();
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(
             report,
             Report {
@@ -861,7 +1080,7 @@ pub(crate) mod tests {
         assert!(lib.by_path(&r5).unwrap().is_none());
         let found = lib.by_hash(&before.hash).unwrap();
         assert_eq!(found.len(), 1);
-        assert_eq!(found[0].path, std::fs::canonicalize(&renamed).unwrap());
+        assert_eq!(found[0].path, canonical(&renamed).unwrap());
         assert!(!found[0].missing);
 
         // Moved to a folder indexed later: the old folder marks it
@@ -870,13 +1089,12 @@ pub(crate) mod tests {
         std::fs::create_dir(&sub).unwrap();
         let moved = sub.join("a7.tif");
         std::fs::rename(&a7, &moved).unwrap();
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.missing, 1, "{report:?}");
-        let gone = lib.by_path(&moved).unwrap();
-        assert!(gone.is_none());
+        assert!(lib.by_path(&moved).unwrap().is_none());
         assert!(names(&lib, "").iter().all(|n| n != "a7.tif"));
         assert_eq!(names(&lib, "missing:yes"), ["a7.tif"]);
-        let report = lib.index_folder(&sub, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&sub, &mut quiet()).unwrap();
         assert_eq!(report.moved, 1, "{report:?}");
         assert_eq!(report.added, 0);
         assert_eq!(lib.len().unwrap(), 3);
@@ -885,7 +1103,7 @@ pub(crate) mod tests {
         assert!(!e.missing);
         assert!(names(&lib, "missing:yes").is_empty());
         // And the old folder, indexed again, has nothing to say.
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.missing, 0, "{report:?}");
         assert_eq!(report.unchanged, 2);
 
@@ -894,18 +1112,53 @@ pub(crate) mod tests {
         // folder ever notices.
         let back = dir.join("a7.tif");
         std::fs::rename(&moved, &back).unwrap();
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.moved, 1, "{report:?}");
-        let report = lib.index_folder(&sub, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&sub, &mut quiet()).unwrap();
         assert_eq!(report, Report::default());
         assert_eq!(lib.len().unwrap(), 3);
 
         // A copy is not a move: both files are there, so both rows.
         let copy = dir.join("copy.tif");
         std::fs::copy(&back, &copy).unwrap();
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.added, 1, "{report:?}");
         assert_eq!(lib.by_hash(&e.hash).unwrap().len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A row whose whole folder is gone is not a move's other end:
+    /// the folder is a drive not mounted, as likely as not, and a
+    /// copy of its file on the laptop must not take its row. When
+    /// the drive is back its files are still where the index says.
+    #[test]
+    fn a_copy_from_an_unmounted_drive_is_not_a_move() {
+        let dir = scratch("drive");
+        let drive = dir.join("drive");
+        let day = drive.join("day1");
+        std::fs::create_dir_all(&day).unwrap();
+        let (r5, _, _) = shoot(&day);
+        let laptop = dir.join("laptop");
+        std::fs::create_dir(&laptop).unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&drive, &mut quiet()).unwrap();
+        let on_drive = lib.by_path(&r5).unwrap().unwrap();
+        // The copy made, then the drive unmounted.
+        std::fs::copy(&r5, laptop.join("r5.tif")).unwrap();
+        let off = dir.join("drive.off");
+        std::fs::rename(&drive, &off).unwrap();
+        let report = lib.index_folder(&laptop, &mut quiet()).unwrap();
+        assert_eq!(report.added, 1, "{report:?}");
+        assert_eq!(report.moved, 0);
+        let same = lib.by_hash(&on_drive.hash).unwrap();
+        assert_eq!(same.len(), 2);
+        assert!(same.iter().any(|e| e.path == on_drive.path && !e.missing));
+        // The drive back: its file is unchanged, not new.
+        std::fs::rename(&off, &drive).unwrap();
+        let report = lib.index_tree(&drive, &mut quiet()).unwrap();
+        assert_eq!(report.added, 0, "{report:?}");
+        assert_eq!(report.unchanged, 3);
+        assert_eq!(lib.len().unwrap(), 4);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -914,22 +1167,22 @@ pub(crate) mod tests {
         let dir = scratch("missing");
         let (r5, _, _) = shoot(&dir);
         let mut lib = Library::open_in_memory().unwrap();
-        lib.index_folder(&dir, &mut |_| {}).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
         let bytes = std::fs::read(&r5).unwrap();
         std::fs::remove_file(&r5).unwrap();
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.missing, 1, "{report:?}");
         assert_eq!(names(&lib, ""), ["a7.tif", "r6.tif"]);
         assert_eq!(names(&lib, "missing:yes"), ["r5.tif"]);
         assert_eq!(names(&lib, "missing:no"), ["a7.tif", "r6.tif"]);
         assert!(lib.by_path(&r5).unwrap().unwrap().missing);
         // Still missing next time, and not counted twice.
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.missing, 0, "{report:?}");
         // Back where it was: found, and its row is the same row.
         let id = lib.by_path(&r5).unwrap().unwrap().id;
         std::fs::write(&r5, &bytes).unwrap();
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert!(report.returned == 1 || report.changed == 1, "{report:?}");
         assert_eq!(report.added, 0);
         let e = lib.by_path(&r5).unwrap().unwrap();
@@ -937,10 +1190,51 @@ pub(crate) mod tests {
         assert!(!e.missing);
         // Gone for good, and pruned.
         std::fs::remove_file(&r5).unwrap();
-        lib.index_folder(&dir, &mut |_| {}).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(lib.prune_missing().unwrap(), 1);
         assert_eq!(lib.len().unwrap(), 2);
         assert!(lib.by_path(&r5).unwrap().is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder deleted with its files: a pass over the tree above
+    /// it marks them missing, and so does a pass over the folder
+    /// itself, which is not an error while its parent is there.
+    #[test]
+    fn a_deleted_folder_marks_its_files_missing() {
+        let dir = scratch("gone");
+        let day1 = dir.join("day1");
+        let day2 = dir.join("day2");
+        std::fs::create_dir_all(&day1).unwrap();
+        std::fs::create_dir_all(&day2).unwrap();
+        shoot(&day1);
+        write_frame(&day2.join("x.tif"), &A7, 7);
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.added, 4, "{report:?}");
+
+        std::fs::remove_dir_all(&day1).unwrap();
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.missing, 3, "{report:?}");
+        assert_eq!(names(&lib, ""), ["x.tif"]);
+        assert_eq!(names(&lib, "missing:yes").len(), 3);
+        // Not marked twice.
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.missing, 0, "{report:?}");
+        assert_eq!(lib.prune_missing().unwrap(), 3);
+        assert_eq!(lib.len().unwrap(), 1);
+
+        // The folder on its own.
+        std::fs::remove_dir_all(&day2).unwrap();
+        let report = lib.index_folder(&day2, &mut quiet()).unwrap();
+        assert_eq!(report.missing, 1, "{report:?}");
+        assert!(lib.by_path(&day2.join("x.tif")).unwrap().unwrap().missing);
+        // A folder whose parent is gone too is a drive gone, and
+        // an error rather than a marking.
+        assert!(
+            lib.index_folder(&dir.join("nowhere").join("deep"), &mut quiet())
+                .is_err()
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -953,17 +1247,112 @@ pub(crate) mod tests {
         s.meta.rating = 1;
         s.save(&bad).unwrap();
         let mut lib = Library::open_in_memory().unwrap();
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.added, 1);
         assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
-        assert_eq!(report.errors[0].0, std::fs::canonicalize(&bad).unwrap());
+        assert_eq!(report.errors[0].0, canonical(&bad).unwrap());
         let e = lib.by_path(&bad).unwrap().unwrap();
         assert_eq!(e.exif, Exif::default());
         assert_eq!(e.meta.rating, 1);
         assert_eq!(names(&lib, "rating:1"), ["IMG_0001.CR3"]);
         // Not retried while the file stands.
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert!(report.errors.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A decoder that panics on a file's bytes costs that file its
+    /// EXIF and nothing else: the rest of the folder is indexed and
+    /// the panic is a line in the report. The bytes here are a TIFF
+    /// header pointing its directory past the end of the file,
+    /// which is the kind of thing a decoder trips on.
+    #[test]
+    fn a_panic_in_the_probe_is_one_files_error() {
+        let dir = scratch("panic");
+        let (_r5, _, _) = shoot(&dir);
+        // The probe is wrapped whatever the decoder does; the
+        // wrapper is what is tested, with a panic of our own
+        // through the same path.
+        let mut report = Report::default();
+        let exif = {
+            let r = std::panic::catch_unwind(|| -> greycard_core::Result<()> {
+                panic!("a decoder that gave up")
+            });
+            match r {
+                Err(panic) => {
+                    let what = panic
+                        .downcast_ref::<&str>()
+                        .map(|s| s.to_string())
+                        .unwrap_or_default();
+                    report
+                        .errors
+                        .push((dir.join("x"), format!("the decoder panicked: {what}")));
+                    Exif::default()
+                }
+                Ok(_) => unreachable!(),
+            }
+        };
+        assert_eq!(exif, Exif::default());
+        assert!(report.errors[0].1.contains("gave up"));
+        // And the real path: a file the decoder refuses, a file with a
+        // header that lies about where its directory is, and good
+        // files, all in one folder, all indexed.
+        let liar = dir.join("liar.tif");
+        let mut bytes = b"II*\0".to_vec();
+        bytes.extend_from_slice(&0xFFFF_FF00u32.to_le_bytes());
+        bytes.extend_from_slice(&[0u8; 64]);
+        std::fs::write(&liar, &bytes).unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.added, 4, "{report:?}");
+        assert_eq!(lib.len().unwrap(), 4);
+        assert_eq!(names(&lib, "camera:canon").len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Two names that a lossy conversion spells the same are two
+    /// files, and a copy of a file with such a name is a copy.
+    #[cfg(unix)]
+    #[test]
+    fn a_name_that_is_not_utf8_is_stored_as_its_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = scratch("bytes");
+        let a = dir.join(std::ffi::OsStr::from_bytes(b"caf\xe9.tif"));
+        let b = dir.join(std::ffi::OsStr::from_bytes(b"caf\xff.tif"));
+        write_frame(&a, &R5, 11);
+        write_frame(&b, &R6, 12);
+        assert_eq!(a.to_string_lossy(), b.to_string_lossy());
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.added, 2, "{report:?}");
+        assert!(report.errors.is_empty());
+        assert_eq!(lib.len().unwrap(), 2);
+        assert_eq!(
+            lib.by_path(&a).unwrap().unwrap().exif.camera,
+            "Canon EOS R5"
+        );
+        assert_eq!(
+            lib.by_path(&b).unwrap().unwrap().exif.camera,
+            "Canon EOS R6m2"
+        );
+        assert_eq!(
+            lib.by_path(&a).unwrap().unwrap().path,
+            canonical(&a).unwrap()
+        );
+        // A second pass and a copy: no flip-flop between moved and
+        // added, since the stored path is one that exists.
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.unchanged, 2, "{report:?}");
+        std::fs::copy(&a, dir.join("copy.tif")).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.added, 1, "{report:?}");
+        assert_eq!(report.moved, 0);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.unchanged, 3, "{report:?}");
+        assert_eq!(report.moved, 0);
+        assert_eq!(lib.len().unwrap(), 3);
+        // The folder listing shows the name as best it can.
+        assert_eq!(names(&lib, "caf").len(), 2);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -980,10 +1369,50 @@ pub(crate) mod tests {
         std::fs::create_dir(&hidden).unwrap();
         write_frame(&hidden.join("thumb.tif"), &A7, 8);
         let mut lib = Library::open_in_memory().unwrap();
-        let report = lib.index_tree(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
         assert_eq!(report.added, 4, "{report:?}");
+        assert!(report.skipped.is_empty());
         assert_eq!(lib.folders().unwrap().len(), 2);
         assert_eq!(names(&lib, "camera:sony"), ["a7.tif", "x.tif"]);
+        // A symbolic link to a folder is not followed, and is named.
+        #[cfg(unix)]
+        {
+            let link = dir.join("link");
+            std::os::unix::fs::symlink(&sub, &link).unwrap();
+            let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+            assert_eq!(report.skipped, vec![link]);
+            assert_eq!(report.added, 0);
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder past the batch size commits as it goes, so a reader
+    /// on another connection sees the first batch before the folder
+    /// is done, and a read-only open never waits.
+    #[test]
+    fn a_pass_commits_in_batches_and_a_reader_gets_in() {
+        let dir = scratch("batch");
+        for i in 0..(BATCH + 5) {
+            write_frame(&dir.join(format!("f{i:03}.tif")), &R5, i as u16);
+        }
+        let db = dir.join("lib").join("library.sqlite");
+        let mut lib = Library::open(&db).unwrap();
+        let reader = Library::open_read_only(&db).unwrap();
+        assert!(reader.is_read_only());
+        let mut seen_mid_pass = None;
+        let report = lib
+            .index_folder(&dir, &mut |p| {
+                if p.done == BATCH + 2 {
+                    seen_mid_pass = Some(reader.len().unwrap());
+                }
+            })
+            .unwrap();
+        assert_eq!(report.added, BATCH + 5);
+        // The first batch was committed before the pass ended.
+        assert_eq!(seen_mid_pass, Some(BATCH));
+        assert_eq!(reader.len().unwrap(), BATCH + 5);
+        drop(reader);
+        drop(lib);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -994,14 +1423,15 @@ pub(crate) mod tests {
         let db = dir.join("lib").join("library.sqlite");
         {
             let mut lib = Library::open(&db).unwrap();
-            lib.index_folder(&dir, &mut |_| {}).unwrap();
+            lib.index_folder(&dir, &mut quiet()).unwrap();
             lib.checkpoint().unwrap();
             assert!(lib.size_on_disk().unwrap() > 0);
         }
-        let lib = Library::open(&db).unwrap();
+        let lib = Library::open_read_only(&db).unwrap();
         assert_eq!(lib.len().unwrap(), 3);
         assert_eq!(names(&lib, "flag:pick"), ["r5.tif"]);
         assert_eq!(lib.path(), db);
+        drop(lib);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1032,7 +1462,7 @@ pub(crate) mod tests {
             return;
         }
         let mut lib = Library::open_in_memory().unwrap();
-        let report = lib.index_folder(&samples, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&samples, &mut quiet()).unwrap();
         assert_eq!(report.added, files.len(), "{report:?}");
         assert!(report.errors.is_empty(), "{:?}", report.errors);
         for raw in &raws {
@@ -1071,14 +1501,20 @@ pub(crate) mod tests {
         let all = lib.count(&Filter::default()).unwrap();
         let canon = lib.count(&Filter::parse("make:canon").unwrap()).unwrap();
         let not_canon = lib.count(&Filter::parse("make!=canon").unwrap()).unwrap();
-        assert_eq!(canon + not_canon, all);
+        let no_make = lib
+            .query(&Filter::default())
+            .unwrap()
+            .iter()
+            .filter(|e| e.exif.make.is_empty())
+            .count();
+        assert_eq!(canon + not_canon + no_make, all);
         // A picture without EXIF has no ISO and answers neither side.
         let low = lib.count(&Filter::parse("iso<800").unwrap()).unwrap();
         let high = lib.count(&Filter::parse("iso>=800").unwrap()).unwrap();
         let with_iso = lib.count(&Filter::parse("iso>=0").unwrap()).unwrap();
         assert_eq!(low + high, with_iso);
         assert!(with_iso >= raws.len());
-        let report = lib.index_folder(&samples, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&samples, &mut quiet()).unwrap();
         assert_eq!(report.unchanged, files.len(), "{report:?}");
     }
 
@@ -1106,11 +1542,11 @@ pub(crate) mod tests {
         let db = dir.join("lib").join("library.sqlite");
         let mut lib = Library::open(&db).unwrap();
         let start = std::time::Instant::now();
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         let first = start.elapsed();
         assert_eq!(report.added, 1000, "{report:?}");
         let start = std::time::Instant::now();
-        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         let second = start.elapsed();
         assert_eq!(report.unchanged, 1000, "{report:?}");
         lib.checkpoint().unwrap();
@@ -1126,8 +1562,9 @@ pub(crate) mod tests {
             .unwrap();
         let counted = start.elapsed();
         eprintln!(
-            "1000 frames: first pass {:.3} s, second {:.3} s; {size} bytes on disk, {} a row; \
+            "1000 frames under {}: first pass {:.3} s, second {:.3} s; {size} bytes on disk, {} a row; \
              a four-term query {:.1} ms for {} rows, a count {:.1} ms for {n}",
+            dir.display(),
             first.as_secs_f64(),
             second.as_secs_f64(),
             size / 1000,

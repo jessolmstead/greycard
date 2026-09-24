@@ -4,19 +4,20 @@
 //! One SQLite file, one row a file: where it is, how big it is and
 //! when it changed, a content hash that names it when its path
 //! cannot, the EXIF worth filtering on, and its sidecar's meta —
-//! rating, flag, label, keywords — mirrored in with the sidecar's
-//! own mtime so a newer sidecar always wins. Nothing here is
+//! rating, flag, label, keywords — mirrored in with a hash of the
+//! sidecar's bytes so a changed sidecar always wins. Nothing here is
 //! authoritative: the raw and its `.gcd` are, and the index can be
 //! deleted and rebuilt from them at any time.
 //!
 //! Indexing a folder is incremental. A file whose size and mtime
-//! the index already holds is not read; a sidecar that changed
-//! refreshes the meta and nothing else; a file that arrives under a
-//! new path with a hash the index knows, whose old path is gone, is
-//! a move and keeps its row. A file gone from a folder is marked
-//! missing rather than forgotten, so the move can be found from
-//! either side, and [`Library::prune_missing`] forgets them when
-//! asked.
+//! the index already holds is not read; a sidecar whose bytes
+//! changed refreshes the meta and nothing else; a file that arrives
+//! under a new path with a hash the index knows, gone from a folder
+//! that is still there, is a move and keeps its row. A file gone
+//! from a folder, or a whole folder gone from under a tree, is
+//! marked missing rather than forgotten, so the move can be found
+//! from either side, and [`Library::prune_missing`] forgets them
+//! when asked.
 //!
 //! The filter language over the index is [`filter`]; the CLI's
 //! `library list` is its first surface and the filter bar its
@@ -29,7 +30,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use greycard_core::decode::Probe;
 use greycard_core::raw::{Shot, camera_name};
 use greycard_edit::meta::Meta;
-use rusqlite::{Connection, OptionalExtension, params};
+use rusqlite::{Connection, OpenFlags, OptionalExtension, params};
 
 pub mod filter;
 pub mod hash;
@@ -37,26 +38,47 @@ mod index;
 
 pub use filter::{Filter, ParseError};
 pub use hash::hash_file;
-pub use index::{Progress, Report};
+pub use index::{Progress, Report, is_indexed_path, read_meta};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("no data directory: XDG_DATA_HOME is not set and the platform names none")]
     NoDataDir,
-    #[error("{0}")]
+    #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error("library database: {0}")]
     Db(#[from] rusqlite::Error),
     #[error("filter: {0}")]
     Filter(#[from] ParseError),
+    /// A SQLite file that is not a greycard library: another
+    /// program's, or one made by hand. Left alone rather than
+    /// rebuilt over.
+    #[error("{0} is not a greycard library")]
+    NotALibrary(PathBuf),
+    /// A library written by a later build. Refused rather than
+    /// rebuilt, since the later build may still want it.
+    #[error("{path} is schema {found}, written by a later greycard than this one ({ours})")]
+    NewerSchema {
+        path: PathBuf,
+        found: i32,
+        ours: i32,
+    },
+    /// An older library opened read-only, which cannot be brought
+    /// up to date without writing.
+    #[error("{0} is an older library; open it for writing once to rebuild it")]
+    NeedsRebuild(PathBuf),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
 
-/// The schema this build writes. A database at another version is
-/// dropped and rebuilt on open: it is a cache, and a migration
-/// would be more code than the rebuild costs.
-pub const SCHEMA_VERSION: i32 = 1;
+/// The schema this build writes. A library at an older version is
+/// dropped and rebuilt on open: it is a cache, and a migration would
+/// be more code than the rebuild costs. A newer one is refused.
+pub const SCHEMA_VERSION: i32 = 2;
+
+/// `PRAGMA application_id`: "GRCY", so a SQLite file that is not a
+/// library is never rebuilt over.
+pub const APPLICATION_ID: i32 = 0x4752_4359;
 
 /// The database's name under the data directory.
 pub const FILE_NAME: &str = "library.sqlite";
@@ -64,8 +86,9 @@ pub const FILE_NAME: &str = "library.sqlite";
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS files (
     id            INTEGER PRIMARY KEY,
-    path          TEXT NOT NULL UNIQUE,
-    folder        TEXT NOT NULL,
+    path          BLOB NOT NULL UNIQUE,
+    folder        BLOB NOT NULL,
+    folder_text   TEXT NOT NULL,
     name          TEXT NOT NULL,
     size          INTEGER NOT NULL,
     mtime         INTEGER NOT NULL,
@@ -79,8 +102,8 @@ CREATE TABLE IF NOT EXISTS files (
     aperture      REAL,
     shutter       REAL,
     taken         TEXT,
-    sidecar       TEXT,
-    sidecar_size  INTEGER,
+    sidecar       BLOB,
+    sidecar_hash  TEXT,
     sidecar_mtime INTEGER,
     rating        INTEGER NOT NULL DEFAULT 0,
     flag          TEXT NOT NULL DEFAULT 'none',
@@ -99,8 +122,8 @@ CREATE TABLE IF NOT EXISTS keywords (
 CREATE INDEX IF NOT EXISTS keywords_word ON keywords(word);
 ";
 
-/// The columns [`Entry`] is read from, in the order `entry_from_row`
-/// reads them.
+/// The columns [`Entry`] is read from, in the order `entry` reads
+/// them.
 const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash, \
     files.make, files.model, files.camera, files.lens, files.iso, files.focal, \
     files.aperture, files.shutter, files.taken, files.sidecar, files.sidecar_mtime, \
@@ -110,6 +133,7 @@ const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash
 pub struct Library {
     conn: Connection,
     path: PathBuf,
+    read_only: bool,
 }
 
 /// What a file's EXIF says that a filter can ask about.
@@ -118,7 +142,9 @@ pub struct Exif {
     pub make: String,
     pub model: String,
     /// Make and model joined as the panel shows them, the make not
-    /// said twice: `Canon EOS R5`, `NIKON Z6_3`, `SONY ILCE-7M4`.
+    /// said twice (`greycard_core::raw::camera_name`): `Canon EOS
+    /// R5`, `Nikon Z 6 3`, `Sony ILCE-7M4`, as rawler spells the
+    /// bodies.
     pub camera: String,
     pub lens: Option<String>,
     pub iso: Option<u32>,
@@ -167,14 +193,23 @@ impl Exif {
 /// EXIF's `YYYY:MM:DD HH:MM:SS` to `YYYY-MM-DD HH:MM:SS`, so the
 /// column sorts and compares lexically and a filter's `2026-09` is a
 /// prefix of it. A date that does not start with four digits — a
-/// camera with no clock writes spaces — is no date.
+/// camera with no clock writes spaces — is no date. Counted in
+/// characters, not bytes: a tag with a stray multibyte character in
+/// it is a bad date, not a bad day for the whole folder.
 pub fn normalize_taken(exif: &str) -> Option<String> {
     let s = exif.trim();
-    if s.len() < 4 || !s.bytes().take(4).all(|b| b.is_ascii_digit()) || s.starts_with("0000") {
+    if s.chars().count() < 4
+        || !s.chars().take(4).all(|c| c.is_ascii_digit())
+        || s.starts_with("0000")
+    {
         return None;
     }
-    let (date, time) = s.split_at(s.len().min(10));
-    let date = date.replace(':', "-");
+    let date: String = s
+        .chars()
+        .take(10)
+        .map(|c| if c == ':' { '-' } else { c })
+        .collect();
+    let time: String = s.chars().skip(10).collect();
     let time = time.trim();
     Some(if time.is_empty() {
         date
@@ -231,23 +266,66 @@ pub(crate) fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
-/// A path as the `path` column spells it.
+/// A path's exact bytes, as the `path` and `folder` columns hold
+/// them: the OS string's own bytes on Unix, the UTF-16 units on
+/// Windows. Two names that a lossy conversion would spell the same
+/// stay two paths.
+#[cfg(unix)]
+pub(crate) fn path_bytes(path: &Path) -> Vec<u8> {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().to_vec()
+}
+
+#[cfg(unix)]
+pub(crate) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+    use std::os::unix::ffi::OsStrExt;
+    PathBuf::from(std::ffi::OsStr::from_bytes(bytes))
+}
+
+#[cfg(windows)]
+pub(crate) fn path_bytes(path: &Path) -> Vec<u8> {
+    use std::os::windows::ffi::OsStrExt;
+    path.as_os_str()
+        .encode_wide()
+        .flat_map(u16::to_le_bytes)
+        .collect()
+}
+
+#[cfg(windows)]
+pub(crate) fn path_from_bytes(bytes: &[u8]) -> PathBuf {
+    use std::os::windows::ffi::OsStringExt;
+    let wide: Vec<u16> = bytes
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    PathBuf::from(std::ffi::OsString::from_wide(&wide))
+}
+
+/// A path as the text columns show it, for the `folder:` filter and
+/// the log; lossy, and never what a row is matched by.
 pub(crate) fn path_text(path: &Path) -> String {
     path.to_string_lossy().into_owned()
+}
+
+/// The canonical form of a path, without Windows' `\\?\` prefix.
+pub(crate) fn canonical(path: &Path) -> std::io::Result<PathBuf> {
+    dunce::canonicalize(path)
 }
 
 impl Library {
     /// Where the user's library is: `greycard/library.sqlite` under
     /// `$XDG_DATA_HOME` when that is set, else under the platform's
-    /// data directory — `~/.local/share` on Linux, `~/Library/
-    /// Application Support` on macOS, `%APPDATA%` on Windows. Under
-    /// data rather than cache, since a rebuild of a large library is
-    /// hours and cache cleaners wipe `~/.cache` (§72).
+    /// local data directory — `~/.local/share` on Linux, `~/Library/
+    /// Application Support` on macOS, `%LOCALAPPDATA%` on Windows
+    /// (local, not roaming: an index of this machine's disks has no
+    /// business following a profile to another). Under data rather
+    /// than cache, since a rebuild of a large library is hours and
+    /// cache cleaners wipe `~/.cache` (§72).
     pub fn user_path() -> Option<PathBuf> {
         let base = std::env::var_os("XDG_DATA_HOME")
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
-            .or_else(dirs::data_dir)?;
+            .or_else(dirs::data_local_dir)?;
         Some(Self::path_under(&base))
     }
 
@@ -262,45 +340,121 @@ impl Library {
     }
 
     /// Open a library at `path`, making it and its directory if they
-    /// are not there. A database from another schema version is
-    /// emptied and rebuilt, with a warning.
+    /// are not there. A library from an older schema is emptied and
+    /// rebuilt, with a warning; a newer one, or a SQLite file that
+    /// is not a library, is refused.
     pub fn open(path: &Path) -> Result<Library> {
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }
         let conn = Connection::open(path)?;
-        Self::prepare(conn, path.to_path_buf())
+        Self::prepare(conn, path.to_path_buf(), false)
+    }
+
+    /// Open a library for reading only: a listing beside a running
+    /// index, which under write-ahead logging never waits for it.
+    /// The file has to be there.
+    pub fn open_read_only(path: &Path) -> Result<Library> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        Self::prepare(conn, path.to_path_buf(), true)
     }
 
     /// A library that lives only as long as the process: for tests
     /// and for a listing nobody wants kept.
     pub fn open_in_memory() -> Result<Library> {
-        Self::prepare(Connection::open_in_memory()?, PathBuf::from(":memory:"))
+        Self::prepare(
+            Connection::open_in_memory()?,
+            PathBuf::from(":memory:"),
+            false,
+        )
     }
 
-    fn prepare(conn: Connection, path: PathBuf) -> Result<Library> {
-        // Write-ahead logging keeps a listing readable while an
-        // index runs, and `synchronous=NORMAL` is safe under WAL: a
-        // crash loses the last transaction, never the file. The
-        // index is rebuildable anyway.
-        conn.pragma_update(None, "journal_mode", "WAL")?;
-        conn.pragma_update(None, "synchronous", "NORMAL")?;
+    fn prepare(conn: Connection, path: PathBuf, read_only: bool) -> Result<Library> {
+        // Per-connection settings, none of them a write to the file.
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.create_scalar_function(
+            "ulower",
+            1,
+            rusqlite::functions::FunctionFlags::SQLITE_UTF8
+                | rusqlite::functions::FunctionFlags::SQLITE_DETERMINISTIC,
+            |ctx| {
+                // Text folded with Unicode's rules; anything else
+                // is NULL, which no text test matches.
+                Ok(match ctx.get_raw(0) {
+                    rusqlite::types::ValueRef::Text(t) => {
+                        Some(String::from_utf8_lossy(t).to_lowercase())
+                    }
+                    _ => None,
+                })
+            },
+        )?;
+        let app_id: i32 = conn.query_row("PRAGMA application_id", [], |r| r.get(0))?;
         let version: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version != 0 && version != SCHEMA_VERSION {
+        let has_tables: bool = conn.query_row(
+            "SELECT count(*) > 0 FROM sqlite_master WHERE type = 'table'",
+            [],
+            |r| r.get(0),
+        )?;
+        let fresh = app_id == 0 && version == 0 && !has_tables;
+        if !fresh && app_id != APPLICATION_ID {
+            return Err(Error::NotALibrary(path));
+        }
+        if version > SCHEMA_VERSION {
+            return Err(Error::NewerSchema {
+                path,
+                found: version,
+                ours: SCHEMA_VERSION,
+            });
+        }
+        if version == SCHEMA_VERSION {
+            if !read_only {
+                conn.pragma_update(None, "synchronous", "NORMAL")?;
+            }
+            return Ok(Library {
+                conn,
+                path,
+                read_only,
+            });
+        }
+        // Fresh, or older: the file is written, which a read-only
+        // connection cannot do.
+        if read_only {
+            return Err(Error::NeedsRebuild(path));
+        }
+        if !fresh {
             log::warn!(
                 "{}: schema version {version}, this build writes {SCHEMA_VERSION}; rebuilding",
                 path.display()
             );
             conn.execute_batch("DROP TABLE IF EXISTS keywords; DROP TABLE IF EXISTS files;")?;
         }
+        // Write-ahead logging is a property of the file and is set
+        // once, here: a listing then reads while an index writes.
+        // `synchronous=NORMAL` is safe under WAL: a crash loses the
+        // last transaction, never the file, and the index is
+        // rebuildable anyway. An in-memory database has no WAL and
+        // says so; that is not an error.
+        let _ = conn.pragma_update(None, "journal_mode", "WAL");
+        conn.pragma_update(None, "synchronous", "NORMAL")?;
         conn.execute_batch(SCHEMA)?;
+        conn.pragma_update(None, "application_id", APPLICATION_ID)?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
-        Ok(Library { conn, path })
+        Ok(Library {
+            conn,
+            path,
+            read_only,
+        })
     }
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// How many files the index holds, the missing among them.
@@ -366,12 +520,12 @@ impl Library {
     /// The file at this path, if the index holds it. The path is
     /// canonicalized when it can be, as the index stores it.
     pub fn by_path(&self, path: &Path) -> Result<Option<Entry>> {
-        let canonical = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let stored = canonical(path).unwrap_or_else(|_| path.to_path_buf());
         let sql = format!("SELECT {COLUMNS} FROM files WHERE path = ?");
         Ok(self
             .conn
             .prepare_cached(&sql)?
-            .query_row(params![path_text(&canonical)], entry)
+            .query_row(params![path_bytes(&stored)], entry)
             .optional()?)
     }
 
@@ -380,11 +534,12 @@ impl Library {
         let mut stmt = self
             .conn
             .prepare_cached("SELECT DISTINCT folder FROM files ORDER BY folder")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0).map(PathBuf::from))?;
+        let rows = stmt.query_map([], |r| r.get::<_, Vec<u8>>(0).map(|b| path_from_bytes(&b)))?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// Forget the files last found missing; how many went.
+    /// Forget every file in the library last found missing; how many
+    /// went.
     pub fn prune_missing(&mut self) -> Result<usize> {
         Ok(self
             .conn
@@ -432,7 +587,7 @@ fn entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
     meta.set_keywords(serde_json::from_str(&keywords).unwrap_or_default());
     Ok(Entry {
         id: row.get(0)?,
-        path: PathBuf::from(row.get::<_, String>(1)?),
+        path: path_from_bytes(&row.get::<_, Vec<u8>>(1)?),
         size: row.get::<_, i64>(2)? as u64,
         mtime: row.get(3)?,
         hash: row.get(4)?,
@@ -448,7 +603,9 @@ fn entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
             taken: row.get(13)?,
         },
         meta,
-        sidecar: row.get::<_, Option<String>>(14)?.map(PathBuf::from),
+        sidecar: row
+            .get::<_, Option<Vec<u8>>>(14)?
+            .map(|b| path_from_bytes(&b)),
         sidecar_mtime: row.get(15)?,
         missing: row.get::<_, Option<i64>>(20)?.is_some(),
     })
@@ -472,6 +629,24 @@ mod tests {
         assert_eq!(normalize_taken("    :  :     :  :  "), None);
         assert_eq!(normalize_taken("0000:00:00 00:00:00"), None);
         assert_eq!(normalize_taken(""), None);
+    }
+
+    /// A multibyte character where a digit should be — a tag edited
+    /// by hand, or rawler's replacement character for a byte it
+    /// could not decode — used to split the string inside the
+    /// character and take the process down.
+    #[test]
+    fn a_bad_date_is_a_bad_date_and_not_a_panic() {
+        assert_eq!(
+            normalize_taken("2024:01:0é 10:00:00").as_deref(),
+            Some("2024-01-0é 10:00:00")
+        );
+        assert_eq!(
+            normalize_taken("2024:01:0\u{fffd} 10:00:00").as_deref(),
+            Some("2024-01-0\u{fffd} 10:00:00")
+        );
+        assert_eq!(normalize_taken("2024:0é").as_deref(), Some("2024-0é"));
+        assert_eq!(normalize_taken("é024:01:01"), None);
     }
 
     #[test]
@@ -503,21 +678,22 @@ mod tests {
     }
 
     #[test]
-    fn a_database_from_another_schema_is_rebuilt() {
+    fn an_older_library_is_rebuilt_and_a_newer_one_refused() {
         let dir = crate::index::tests::scratch("schema");
         let path = dir.join("library.sqlite");
         {
             let lib = Library::open(&path).unwrap();
             lib.conn
                 .execute(
-                    "INSERT INTO files (path, folder, name, size, mtime, hash) \
-                          VALUES ('/a', '/', 'a', 1, 1, 'h')",
+                    "INSERT INTO files (path, folder, folder_text, name, size, mtime, hash) \
+                     VALUES (x'2f61', x'2f', '/', 'a', 1, 1, 'h')",
                     [],
                 )
                 .unwrap();
             assert_eq!(lib.len().unwrap(), 1);
-            lib.conn.pragma_update(None, "user_version", 99).unwrap();
+            lib.conn.pragma_update(None, "user_version", 1).unwrap();
         }
+        // Older: rebuilt, empty, at this version and still marked ours.
         let lib = Library::open(&path).unwrap();
         assert_eq!(lib.len().unwrap(), 0);
         let version: i32 = lib
@@ -525,7 +701,89 @@ mod tests {
             .query_row("PRAGMA user_version", [], |r| r.get(0))
             .unwrap();
         assert_eq!(version, SCHEMA_VERSION);
+        let app: i32 = lib
+            .conn
+            .query_row("PRAGMA application_id", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(app, APPLICATION_ID);
+        // Older and read-only: cannot be rebuilt, says so.
+        lib.conn.pragma_update(None, "user_version", 1).unwrap();
         drop(lib);
+        assert!(matches!(
+            Library::open_read_only(&path),
+            Err(Error::NeedsRebuild(_))
+        ));
+        // Newer: refused, and left as it was.
+        {
+            let lib = Library::open(&path).unwrap();
+            lib.conn
+                .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+                .unwrap();
+        }
+        match Library::open(&path) {
+            Err(Error::NewerSchema { found, ours, .. }) => {
+                assert_eq!((found, ours), (SCHEMA_VERSION + 1, SCHEMA_VERSION));
+            }
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        assert!(matches!(
+            Library::open_read_only(&path),
+            Err(Error::NewerSchema { .. })
+        ));
+        let conn = Connection::open(&path).unwrap();
+        let version: i32 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION + 1);
+        drop(conn);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A SQLite file that is somebody else's — no application id,
+    /// but tables — is not rebuilt over, whatever its user_version
+    /// says.
+    #[test]
+    fn a_sqlite_file_that_is_not_a_library_is_left_alone() {
+        let dir = crate::index::tests::scratch("notours");
+        let path = dir.join("other.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE files (id INTEGER PRIMARY KEY, note TEXT); \
+                 INSERT INTO files (note) VALUES ('mine');",
+            )
+            .unwrap();
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION)
+                .unwrap();
+        }
+        assert!(matches!(Library::open(&path), Err(Error::NotALibrary(_))));
+        assert!(matches!(
+            Library::open_read_only(&path),
+            Err(Error::NotALibrary(_))
+        ));
+        let conn = Connection::open(&path).unwrap();
+        let note: String = conn
+            .query_row("SELECT note FROM files", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(note, "mine");
+        drop(conn);
+        // A library of another application id, likewise.
+        let path = dir.join("theirs.sqlite");
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.pragma_update(None, "application_id", 0x1234).unwrap();
+            conn.execute_batch("CREATE TABLE t (x);").unwrap();
+        }
+        assert!(matches!(Library::open(&path), Err(Error::NotALibrary(_))));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_round_trips_through_its_bytes() {
+        use std::os::unix::ffi::OsStrExt;
+        let odd = PathBuf::from(std::ffi::OsStr::from_bytes(b"/a/caf\xe9.tif"));
+        assert_eq!(path_from_bytes(&path_bytes(&odd)), odd);
+        assert_eq!(path_bytes(Path::new("/a/b")), b"/a/b");
     }
 }

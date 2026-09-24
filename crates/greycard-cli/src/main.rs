@@ -364,25 +364,30 @@ enum Command {
 enum LibraryAction {
     /// Index folders: a file the index knows by size and mtime is not
     /// read, a changed sidecar refreshes only its meta, a file found
-    /// under a new path by its content hash is a move. Prints what
-    /// was done and how long it took
+    /// under a new path by its content hash is a move, a folder gone
+    /// marks its files missing. Prints what was done and how long it
+    /// took
     Index {
         /// The folders to index
         dirs: Vec<PathBuf>,
-        /// Their subfolders too, hidden ones left alone
+        /// Their subfolders too, hidden ones left alone and links to
+        /// folders not followed
         #[arg(long)]
         tree: bool,
-        /// Forget the files last found gone from their paths
+        /// Afterwards, forget every file in the whole library last
+        /// found gone from its path, not only under the folders given
         #[arg(long)]
         prune: bool,
     },
-    /// List the files that pass a filter, e.g. `camera:R6 iso>=3200
-    /// rating>=3 flag:pick keyword:wedding date:2026-09`. Words test
+    /// List the files that pass a filter. Each argument is one term,
+    /// so quote a term with a space or a shell character in it:
+    /// `list camera:R6 'iso>=3200' 'rating>=3' flag:pick
+    /// keyword:wedding date:2026-09 'lens:RF 24'`. A bare word tests
     /// the name and the keywords; `:` on a text field is contains,
     /// `=` and `!=` the whole value; numbers take `< <= > >=`; a date
     /// is a prefix, `2026-09`; `missing:yes` lists what is gone
     List {
-        /// The filter's terms; a value with a space goes in quotes
+        /// The filter's terms, one an argument
         filter: Vec<String>,
         /// Only the paths, one a line
         #[arg(long)]
@@ -1412,11 +1417,20 @@ fn presets(
 /// The library subcommand: the index brought up to date, or listed.
 fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
     use greycard_library::{Filter, Library};
-    let mut lib = match db {
-        Some(path) => Library::open(&path),
-        None => Library::open_user(),
+    let path = match db {
+        Some(path) => path,
+        None => Library::user_path().context("no data directory for the library")?,
+    };
+    // A listing reads only, so it opens read-only and never waits
+    // for an index that is running; a library not there yet is made,
+    // so the first listing says "0 of 0" rather than "no such file".
+    let reading = matches!(action, LibraryAction::List { .. }) && path.is_file();
+    let mut lib = if reading {
+        Library::open_read_only(&path)
+    } else {
+        Library::open(&path)
     }
-    .context("opening the library")?;
+    .with_context(|| format!("opening the library at {}", path.display()))?;
     match action {
         LibraryAction::Index { dirs, tree, prune } => {
             if dirs.is_empty() && !prune {
@@ -1448,6 +1462,13 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
                 for (path, why) in &report.errors {
                     println!("{:<13} {}: {why}", "not read", path.display());
                 }
+                for link in &report.skipped {
+                    println!(
+                        "{:<13} {} is a link; not followed",
+                        "skipped",
+                        link.display()
+                    );
+                }
             }
             if prune {
                 let gone = lib.prune_missing().context("pruning")?;
@@ -1468,7 +1489,7 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
             paths,
             count,
         } => {
-            let filter = Filter::parse(&filter.join(" "))?;
+            let filter = Filter::from_terms(&filter)?;
             if count {
                 println!("{}", lib.count(&filter)?);
                 return Ok(());

@@ -2098,8 +2098,10 @@ version = "0.1.1"
 dependencies = [
  "blake3",
  "dirs",
+ "dunce",
  "greycard-core",
  "greycard-edit",
+ "image",
  "log",
  "rawler",
  "rusqlite",

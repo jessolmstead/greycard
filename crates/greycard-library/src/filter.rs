@@ -17,16 +17,30 @@
 //! whole value and `!=` not that value; a value with a space in it
 //! goes in double quotes. On a number `:` and `=` are equality and
 //! `<`, `<=`, `>`, `>=` compare; a shutter may be written `1/250`,
-//! a focal length `50mm`, an aperture `f/2.8`. A date is a prefix,
-//! `2026`, `2026-09` or `2026-09-21`, spelled with dashes or EXIF's
-//! colons, and every operator compares that much of the file's own
-//! date, so `date<=2026-09` is everything through September. A flag
-//! is `pick`, `reject` or `none`, a label one of Lightroom's five or
-//! `none`, and `missing` is `yes` or `no`.
+//! a focal length `50mm`, an aperture `f/2.8`, and ISO and rating
+//! are whole numbers. A date is a prefix, `2026`, `2026-09` or
+//! `2026-09-21`, spelled with dashes or EXIF's colons, and every
+//! operator compares that much of the file's own date, so
+//! `date<=2026-09` is everything through September. A flag is
+//! `pick`, `reject` or `none`, a label one of Lightroom's five or
+//! `none`, and `missing` is `yes` or `no`. `!=` on any field leaves
+//! out a file that does not say: a JPEG with no EXIF is not "not
+//! ISO 100", it is unknown.
 //!
-//! The parser refuses what it does not understand — a field it has
-//! no column for, a rating of nine, `lens>50` — because a filter
-//! that silently matched nothing would look like an empty library.
+//! Case is folded with Unicode's rules on both sides, as the
+//! browser's search box folds it (`greycard-ui`'s `filter.rs`), so
+//! `ärger` finds `Ärger.jpg`; the library registers `ulower` with
+//! SQLite for it, since SQLite's own `LIKE` folds ASCII only. Where
+//! the two differ: the box has no quotes and no fields, so there
+//! `"low tide"` is two words with quote marks and `a:b` is a word,
+//! and here the quotes make a phrase and `a:b` is refused as a
+//! field this language does not have. The box is §133's and will
+//! take this parser when the filter bar lands.
+//!
+//! The parser refuses what it cannot answer — a field it has no
+//! column for, a rating of nine or of two and a half, `lens>50`, a
+//! lone quote — because a filter that silently matched nothing, or
+//! everything, would look like the library and not like a mistake.
 //! Nothing here touches the database: [`Filter::to_sql`] returns a
 //! `WHERE` body and its parameters, and the library binds them.
 
@@ -183,6 +197,22 @@ impl Filter {
         Ok(Filter { terms })
     }
 
+    /// A filter from arguments a shell has already split: each one
+    /// is one term, quotes optional, so `lens:RF 24` typed as
+    /// `'lens:RF 24'` is a lens test with a space in it and not two
+    /// terms. A blank argument is nothing.
+    pub fn from_terms<S: AsRef<str>>(args: &[S]) -> Result<Filter, ParseError> {
+        let mut terms = Vec::new();
+        for arg in args {
+            let arg = arg.as_ref().trim();
+            if arg.is_empty() {
+                continue;
+            }
+            terms.push(parse_term(arg)?);
+        }
+        Ok(Filter { terms })
+    }
+
     /// Whether nothing is asked.
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
@@ -266,7 +296,13 @@ fn parse_term(token: &str) -> Result<Term, ParseError> {
         })
         .flatten()
     else {
-        return Ok(Term::Word(unquote(token).to_lowercase()));
+        let word = unquote(token);
+        if word.trim().is_empty() {
+            return Err(err(
+                "a word is wanted; a quote on its own is none".to_string()
+            ));
+        }
+        return Ok(Term::Word(word.to_lowercase()));
     };
     let value = unquote(value);
     if value.is_empty() {
@@ -290,7 +326,13 @@ fn parse_term(token: &str) -> Result<Term, ParseError> {
             "!=" => TextOp::NotEquals,
             _ => return Err(err(format!("{name} is words; use :, = or !=, not {op}"))),
         };
-        return Ok(Term::Text { field, op, value });
+        // Folded here, once; the column is folded the same way in
+        // the SQL.
+        return Ok(Term::Text {
+            field,
+            op,
+            value: value.to_lowercase(),
+        });
     }
     let number_field = match field.as_str() {
         "iso" => Some(NumberField::Iso),
@@ -314,6 +356,12 @@ fn parse_term(token: &str) -> Result<Term, ParseError> {
             .ok_or_else(|| err(format!("{name} wants a number, not {value:?}")))?;
         if field == NumberField::Rating && (value < 0.0 || value > f64::from(STARS)) {
             return Err(err(format!("a rating is 0 to {STARS} stars")));
+        }
+        // A whole-number field takes a whole number: `rating>2.5`
+        // rounded to `rating>3` would drop the three-star frames it
+        // was asking for.
+        if field.is_whole() && value.fract() != 0.0 {
+            return Err(err(format!("{name} is a whole number; {value} is not one")));
         }
         return Ok(Term::Number {
             field,
@@ -482,7 +530,7 @@ impl TextField {
             TextField::Model => "files.model",
             TextField::Lens => "files.lens",
             TextField::Name => "files.name",
-            TextField::Folder => "files.folder",
+            TextField::Folder => "files.folder_text",
             TextField::Keyword => return None,
         })
     }
@@ -498,6 +546,29 @@ impl NumberField {
             NumberField::Rating => "files.rating",
         }
     }
+
+    /// Whether the field holds whole numbers, compared as such.
+    pub fn is_whole(self) -> bool {
+        matches!(self, NumberField::Iso | NumberField::Rating)
+    }
+
+    /// The window a real value is matched through: two f/2.8s are
+    /// equal, and so are a shutter written 1/250 and one read as
+    /// 0.004000000000000000083. For aperture and shutter it is half
+    /// a percent either way, under a tenth of a stop; a focal length
+    /// is a tenth of a millimetre, since 24 and 23.9 are different
+    /// settings of a zoom and a window of a percent would join them.
+    fn window(self, value: f64) -> (f64, f64) {
+        match self {
+            NumberField::Focal => (value - 0.05, value + 0.05),
+            _ => (value * 0.995, value * 1.005),
+        }
+    }
+}
+
+/// A text column folded the way the values are.
+fn folded(col: &str) -> String {
+    format!("ulower({col})")
 }
 
 impl Term {
@@ -508,38 +579,45 @@ impl Term {
                 let pattern = contains_pattern(word);
                 params.push(Param::Text(pattern.clone()));
                 params.push(Param::Text(pattern));
-                "(files.name LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM keywords k \
-                 WHERE k.file = files.id AND k.word LIKE ? ESCAPE '\\'))"
+                "(ulower(files.name) LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM keywords k \
+                 WHERE k.file = files.id AND ulower(k.word) LIKE ? ESCAPE '\\'))"
                     .to_string()
             }
             Term::Text { field, op, value } => match field.column() {
-                Some(col) => match op {
-                    TextOp::Contains => {
-                        params.push(Param::Text(contains_pattern(value)));
-                        format!("{col} LIKE ? ESCAPE '\\'")
+                Some(col) => {
+                    let col = folded(col);
+                    match op {
+                        TextOp::Contains => {
+                            params.push(Param::Text(contains_pattern(value)));
+                            format!("{col} LIKE ? ESCAPE '\\'")
+                        }
+                        TextOp::Equals => {
+                            params.push(Param::Text(value.clone()));
+                            format!("{col} = ?")
+                        }
+                        // A column that is NULL or empty is a file
+                        // that did not say, and is left out.
+                        TextOp::NotEquals => {
+                            params.push(Param::Text(value.clone()));
+                            format!("({col} <> ? AND {col} <> '')")
+                        }
                     }
-                    TextOp::Equals => {
-                        params.push(Param::Text(value.clone()));
-                        format!("{col} = ? COLLATE NOCASE")
-                    }
-                    TextOp::NotEquals => {
-                        params.push(Param::Text(value.clone()));
-                        format!("({col} IS NULL OR {col} <> ? COLLATE NOCASE)")
-                    }
-                },
+                }
                 None => {
                     let (exists, test) = match op {
                         TextOp::Contains => {
                             params.push(Param::Text(contains_pattern(value)));
-                            ("EXISTS", "k.word LIKE ? ESCAPE '\\'")
+                            ("EXISTS", "ulower(k.word) LIKE ? ESCAPE '\\'")
                         }
                         TextOp::Equals => {
                             params.push(Param::Text(value.clone()));
-                            ("EXISTS", "k.word = ? COLLATE NOCASE")
+                            ("EXISTS", "ulower(k.word) = ?")
                         }
+                        // No keywords is a known thing, not an
+                        // unknown one, so such a file passes.
                         TextOp::NotEquals => {
                             params.push(Param::Text(value.clone()));
-                            ("NOT EXISTS", "k.word = ? COLLATE NOCASE")
+                            ("NOT EXISTS", "ulower(k.word) = ?")
                         }
                     };
                     format!(
@@ -549,44 +627,36 @@ impl Term {
             },
             Term::Number { field, op, value } => {
                 let col = field.column();
-                match field {
-                    // Integers compare as integers; a rating of 3.0
-                    // is a rating of 3.
-                    NumberField::Iso | NumberField::Rating => {
-                        params.push(Param::Int(value.round() as i64));
+                if field.is_whole() {
+                    // Whole numbers compare as such; the parser
+                    // refused a fraction. A NULL compares as nothing
+                    // and is left out, `<>` included.
+                    params.push(Param::Int(*value as i64));
+                    return format!("{col} {} ?", op.sql());
+                }
+                // A real is compared through its window: equal is
+                // inside it, `<` is below it and `<=` is not above
+                // it, so `aperture<2.8` leaves the f/2.8 frames out
+                // and `aperture<=2.8` takes them.
+                let (lo, hi) = field.window(*value);
+                match op {
+                    Cmp::Eq => {
+                        params.push(Param::Real(lo));
+                        params.push(Param::Real(hi));
+                        format!("({col} >= ? AND {col} <= ?)")
+                    }
+                    Cmp::Ne => {
+                        params.push(Param::Real(lo));
+                        params.push(Param::Real(hi));
+                        format!("({col} < ? OR {col} > ?)")
+                    }
+                    Cmp::Lt | Cmp::Ge => {
+                        params.push(Param::Real(lo));
                         format!("{col} {} ?", op.sql())
                     }
-                    // A shutter of 1/250 is 0.004 in the file and
-                    // 0.004000000000000000083 here, and a camera
-                    // writes f/2.8 as 28/10 and 2.8 as a float is
-                    // not that either. So a real is compared through
-                    // a window half a percent wide, under a tenth of
-                    // a stop: equal is inside it, `<` is below it
-                    // and `<=` is not above it, so `aperture<2.8`
-                    // leaves the f/2.8 frames out and `aperture<=2.8`
-                    // takes them.
-                    NumberField::Focal | NumberField::Aperture | NumberField::Shutter => {
-                        let (lo, hi) = (value * 0.995, value * 1.005);
-                        match op {
-                            Cmp::Eq => {
-                                params.push(Param::Real(lo));
-                                params.push(Param::Real(hi));
-                                format!("({col} >= ? AND {col} <= ?)")
-                            }
-                            Cmp::Ne => {
-                                params.push(Param::Real(lo));
-                                params.push(Param::Real(hi));
-                                format!("({col} IS NULL OR {col} < ? OR {col} > ?)")
-                            }
-                            Cmp::Lt | Cmp::Ge => {
-                                params.push(Param::Real(lo));
-                                format!("{col} {} ?", op.sql())
-                            }
-                            Cmp::Le | Cmp::Gt => {
-                                params.push(Param::Real(hi));
-                                format!("{col} {} ?", op.sql())
-                            }
-                        }
+                    Cmp::Le | Cmp::Gt => {
+                        params.push(Param::Real(hi));
+                        format!("{col} {} ?", op.sql())
                     }
                 }
             }
@@ -692,7 +762,7 @@ mod tests {
                 Term::Text {
                     field: TextField::Camera,
                     op: TextOp::Contains,
-                    value: "R6".into()
+                    value: "r6".into()
                 },
                 Term::Number {
                     field: NumberField::Iso,
@@ -720,7 +790,7 @@ mod tests {
             ]
         );
         let (sql, params) = f.to_sql();
-        assert!(sql.starts_with("files.camera LIKE ?"), "{sql}");
+        assert!(sql.starts_with("ulower(files.camera) LIKE ?"), "{sql}");
         assert!(sql.ends_with("substr(files.taken, 1, ?) = ?"), "{sql}");
         assert_eq!(sql.matches('?').count(), params.len(), "{sql}\n{params:?}");
         assert_eq!(params.len(), 7, "{params:?}");
@@ -733,7 +803,7 @@ mod tests {
             Term::Text {
                 field: TextField::Lens,
                 op: TextOp::Contains,
-                value: "RF 100-500mm".into()
+                value: "rf 100-500mm".into()
             }
         );
         // A quoted bare phrase is one word, lowercased as the
@@ -753,7 +823,7 @@ mod tests {
             Term::Text {
                 field: TextField::Camera,
                 op: TextOp::Equals,
-                value: "Canon".into()
+                value: "canon".into()
             }
         );
         assert_eq!(
@@ -782,6 +852,7 @@ mod tests {
         assert_eq!(value("shutter>=2s"), 2.0);
         assert_eq!(value("iso:ISO800"), 800.0);
         assert_eq!(value("rating:0"), 0.0);
+        assert_eq!(value("focal:23.9"), 23.9);
         assert!(refused("iso:high").contains("number"));
         assert!(refused("rating>9").contains("0 to 5"));
         assert!(refused("shutter:1/0").contains("number"));
@@ -868,37 +939,39 @@ mod tests {
     #[test]
     fn the_sql_binds_one_parameter_a_question_mark() {
         let checks = [
-            (r#"camera:"EOS R6""#, "files.camera LIKE ? ESCAPE '\\'"),
-            ("make=Canon", "files.make = ? COLLATE NOCASE"),
+            (
+                r#"camera:"EOS R6""#,
+                "ulower(files.camera) LIKE ? ESCAPE '\\'",
+            ),
+            ("make=Canon", "ulower(files.make) = ?"),
             (
                 "lens!=kit",
-                "(files.lens IS NULL OR files.lens <> ? COLLATE NOCASE)",
+                "(ulower(files.lens) <> ? AND ulower(files.lens) <> '')",
             ),
             ("iso>=3200", "files.iso >= ?"),
+            ("iso!=100", "files.iso <> ?"),
             ("rating:3", "files.rating = ?"),
             ("focal:50", "(files.focal >= ? AND files.focal <= ?)"),
-            (
-                "shutter!=1/250",
-                "(files.shutter IS NULL OR files.shutter < ? OR files.shutter > ?)",
-            ),
+            ("shutter!=1/250", "(files.shutter < ? OR files.shutter > ?)"),
             ("aperture<2", "files.aperture < ?"),
             ("date:2026-09", "substr(files.taken, 1, ?) = ?"),
             ("date<=2026", "substr(files.taken, 1, ?) <= ?"),
+            ("date!=2026", "substr(files.taken, 1, ?) <> ?"),
             ("flag:pick", "files.flag = ?"),
             ("label!=red", "files.label <> ?"),
             ("missing:yes", "files.missing_since IS NOT NULL"),
             ("missing:no", "files.missing_since IS NULL"),
             (
                 "keyword:wedding",
-                "EXISTS (SELECT 1 FROM keywords k WHERE k.file = files.id AND k.word LIKE ? ESCAPE '\\')",
+                "EXISTS (SELECT 1 FROM keywords k WHERE k.file = files.id AND ulower(k.word) LIKE ? ESCAPE '\\')",
             ),
             (
                 "keyword=wedding",
-                "EXISTS (SELECT 1 FROM keywords k WHERE k.file = files.id AND k.word = ? COLLATE NOCASE)",
+                "EXISTS (SELECT 1 FROM keywords k WHERE k.file = files.id AND ulower(k.word) = ?)",
             ),
             (
                 "keyword!=wedding",
-                "NOT EXISTS (SELECT 1 FROM keywords k WHERE k.file = files.id AND k.word = ? COLLATE NOCASE)",
+                "NOT EXISTS (SELECT 1 FROM keywords k WHERE k.file = files.id AND ulower(k.word) = ?)",
             ),
         ];
         for (text, want) in checks {
@@ -921,20 +994,91 @@ mod tests {
         assert!((real("aperture>=2.8") - 2.8 * 0.995).abs() < 1e-12);
         assert!((real("aperture<=2.8") - 2.8 * 1.005).abs() < 1e-12);
         assert!((real("aperture>2.8") - 2.8 * 1.005).abs() < 1e-12);
+        // A focal length's window is a tenth of a millimetre, not a
+        // percent: 23.9 is not 24.
         let (_, params) = Filter::parse("focal:50").unwrap().to_sql();
         match params.as_slice() {
             [Param::Real(lo), Param::Real(hi)] => {
                 assert!(
-                    (lo - 49.75).abs() < 1e-9 && (hi - 50.25).abs() < 1e-9,
+                    (lo - 49.95).abs() < 1e-9 && (hi - 50.05).abs() < 1e-9,
                     "{params:?}"
                 );
             }
             other => panic!("{other:?}"),
         }
-        // A word searches the name and the keywords with one pattern.
-        let (sql, params) = Filter::parse("har%bor").unwrap().to_sql();
+        assert!((real("focal>=24") - 23.95).abs() < 1e-9);
+        // A whole number binds as one, whatever it was spelled as.
+        assert_eq!(
+            Filter::parse("iso:800").unwrap().to_sql().1,
+            vec![Param::Int(800)]
+        );
+        // A word searches the name and the keywords with one
+        // pattern, both sides folded.
+        let (sql, params) = Filter::parse("Har%bor").unwrap().to_sql();
         assert_eq!(params, vec![Param::Text("%har\\%bor%".into()); 2]);
-        assert!(sql.starts_with("(files.name LIKE ?"), "{sql}");
+        assert!(sql.starts_with("(ulower(files.name) LIKE ?"), "{sql}");
+        // And a text value is folded at parse time.
+        assert_eq!(
+            Filter::parse("camera:ÄRGER").unwrap().to_sql().1,
+            vec![Param::Text("%ärger%".into())]
+        );
+    }
+
+    #[test]
+    fn a_whole_number_field_refuses_a_fraction() {
+        assert!(refused("rating>2.5").contains("whole number"));
+        assert!(refused("iso>3199.6").contains("whole number"));
+        assert!(refused("iso:1/2").contains("whole number"));
+        assert_eq!(
+            one("rating>2"),
+            Term::Number {
+                field: NumberField::Rating,
+                op: Cmp::Gt,
+                value: 2.0
+            }
+        );
+        assert_eq!(
+            one("iso:3200.0"),
+            Term::Number {
+                field: NumberField::Iso,
+                op: Cmp::Eq,
+                value: 3200.0
+            }
+        );
+        // The real fields still take one.
+        assert!(matches!(one("focal:24.5"), Term::Number { value, .. } if value == 24.5));
+    }
+
+    #[test]
+    fn a_lone_quote_is_refused_and_arguments_are_one_term_each() {
+        assert!(refused("\"").contains("a word is wanted"));
+        assert!(refused("iso>=800 \"").contains("a word is wanted"));
+        assert!(refused("\"\"").contains("a word is wanted"));
+        // From a shell: an argument with a space is one term, with
+        // or without quotes, and a blank argument is nothing.
+        let f = Filter::from_terms(&["lens:RF 24", "iso>=3200", "", "low tide"]).unwrap();
+        assert_eq!(
+            f.terms,
+            vec![
+                Term::Text {
+                    field: TextField::Lens,
+                    op: TextOp::Contains,
+                    value: "rf 24".into()
+                },
+                Term::Number {
+                    field: NumberField::Iso,
+                    op: Cmp::Ge,
+                    value: 3200.0
+                },
+                Term::Word("low tide".into()),
+            ]
+        );
+        assert_eq!(
+            Filter::from_terms(&["lens:\"RF 24\""]).unwrap().terms,
+            Filter::from_terms(&["lens:RF 24"]).unwrap().terms
+        );
+        assert!(Filter::from_terms::<&str>(&[]).unwrap().is_empty());
+        assert!(Filter::from_terms(&["camra:R6"]).is_err());
     }
 
     #[test]
