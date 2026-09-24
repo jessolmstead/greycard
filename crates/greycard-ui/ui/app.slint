@@ -906,6 +906,12 @@ export component App inherits Window {
     // the last move of them did. Ctrl+, or the gear opens it, through
     // Rust, which counts first.
     in-out property <bool> settings-open: false;
+    // However the sheet is closed — Done, Escape, a click outside — a
+    // cap typed and not yet entered is taken; Rust ignores one that
+    // did not change.
+    changed settings-open => {
+        if (!root.settings-open) { root.thumb-cache-cap-changed(); }
+    }
     in-out property <string> sidecar-placement: "Beside the raw";
     in-out property <bool> xmp-sidecars: false;
     in property <int> sidecars-elsewhere: 0;
@@ -918,11 +924,16 @@ export component App inherits Window {
     callback placement-changed();
     callback xmp-changed();
     callback sidecars-move();
-    /// The thumbnail cache: whether there is one this run, what it
-    /// holds in words, and the Clear under it.
+    /// The thumbnail cache: whether there is one this run, how many
+    /// entries it holds and what that is in words, the cap in
+    /// megabytes as the field has it, and the Clear and the cap's
+    /// change.
     in property <bool> thumb-cache-on: false;
+    in property <int> thumb-cache-entries: 0;
     in property <string> thumb-cache-words: "";
+    in-out property <string> thumb-cache-cap: "";
     callback thumb-cache-clear();
+    callback thumb-cache-cap-changed();
     /// Move to the file `by` places along the strip; with Shift held,
     /// the set keeps what it had and takes that file as well.
     callback step(int, bool);
@@ -1924,8 +1935,11 @@ export component App inherits Window {
         xmp-changed => { root.xmp-changed(); }
         sidecars-move => { root.sidecars-move(); }
         thumb-cache-on: root.thumb-cache-on;
+        thumb-cache-entries: root.thumb-cache-entries;
         thumb-cache-words: root.thumb-cache-words;
+        thumb-cache-cap <=> root.thumb-cache-cap;
         thumb-cache-clear => { root.thumb-cache-clear(); }
+        thumb-cache-cap-changed => { root.thumb-cache-cap-changed(); }
     }
 
 }

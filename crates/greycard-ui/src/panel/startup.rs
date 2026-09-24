@@ -332,20 +332,24 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         })
     };
     let worker = Rc::new(worker);
-    // The thumbnail cache, before the first thumbnail is asked for.
-    // A cap of zero in the settings is the cache off.
-    if remembered.thumb_cache_mb > 0 {
-        match greycard_library::Thumbs::user(remembered.thumb_cache_mb * 1024 * 1024) {
-            Ok(cache) => {
-                tracing::info!(
-                    "thumbnail cache {} (cap {} MB)",
-                    cache.root().display(),
-                    remembered.thumb_cache_mb
-                );
-                worker.set_thumb_cache(Some(cache));
-            }
-            Err(e) => tracing::warn!("no thumbnail cache: {e}"),
+    // The thumbnail cache, before the first thumbnail is asked for. A
+    // cap of zero is the cache off, and the cache is still handed over
+    // so the Settings sheet can show and clear what an earlier run
+    // left in it.
+    match greycard_library::Thumbs::user(crate::panel::prefs::cap_bytes(remembered.thumb_cache_mb))
+    {
+        Ok(cache) => {
+            tracing::info!(
+                "thumbnail cache {} ({})",
+                cache.root().display(),
+                match remembered.thumb_cache_mb {
+                    0 => "off".to_string(),
+                    mb => format!("cap {mb} MB"),
+                }
+            );
+            worker.set_thumb_cache(Some(cache));
         }
+        Err(e) => tracing::warn!("no thumbnail cache: {e}"),
     }
     state.borrow_mut().thumb_run = Some(crate::panel::browser::ThumbRun::new(files.len()));
     for (i, f) in files.iter().enumerate() {

@@ -6,6 +6,7 @@
 
 import { Theme } from "../theme.slint";
 import { Toggle, PanelButton, Segmented } from "../controls.slint";
+import { LineEdit } from "std-widgets.slint";
 
 export component SettingsSheet inherits Rectangle {
     in-out property <bool> settings-open;
@@ -28,8 +29,12 @@ export component SettingsSheet inherits Rectangle {
     /// The thumbnail cache: whether this run has one, what it holds
     /// in words, and the button that empties it.
     in property <bool> thumb-cache-on;
+    in property <int> thumb-cache-entries;
     in property <string> thumb-cache-words;
+    /// The cap in megabytes as typed; taken on Enter or Done.
+    in-out property <string> thumb-cache-cap;
     callback thumb-cache-clear();
+    callback thumb-cache-cap-changed();
     /// The move asked for and not yet confirmed.
     property <bool> confirming: false;
     property <string> elsewhere-words: root.sidecars-elsewhere == 1
@@ -167,14 +172,26 @@ export component SettingsSheet inherits Rectangle {
                     wrap: word-wrap;
                     horizontal-stretch: 1;
                 }
-                if root.thumb-cache-on: PanelButton {
+                if root.thumb-cache-entries > 0: PanelButton {
                     text: "Clear";
                     width: 96px;
                     clicked => { root.thumb-cache-clear(); }
                 }
             }
+            if root.thumb-cache-on: HorizontalLayout {
+                spacing: Theme.space-2;
+                Text { text: "Keep up to"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                LineEdit {
+                    width: 96px;
+                    text <=> root.thumb-cache-cap;
+                    placeholder-text: "300";
+                    input-type: number;
+                    accepted => { root.thumb-cache-cap-changed(); }
+                }
+                Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+            }
             Text {
-                text: "Kept by content, so a folder moved or renamed opens without making them again. The cap is thumb_cache_mb in settings.json.";
+                text: "Kept by content, so a folder moved or renamed opens without making them again. A lower cap drops the thumbnails used longest ago at once.";
                 font-size: Theme.font-xs;
                 color: Theme.text-muted;
                 wrap: word-wrap;
