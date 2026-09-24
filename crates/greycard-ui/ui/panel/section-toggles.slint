@@ -1,0 +1,28 @@
+// The edit's sections as switches in two columns, for the preset
+// sheet and the sync sheet: eighteen switches down one column made a
+// sheet taller than a 768-high window.
+
+import { Theme } from "../theme.slint";
+import { Toggle } from "../controls.slint";
+
+export component SectionToggles inherits Rectangle {
+    in property <[string]> names;
+    in property <[bool]> on;
+    callback toggled(int, bool);
+    property <length> col-gap: Theme.space-4;
+    property <length> pitch: Theme.control-height + Theme.space-1;
+    property <length> col-w: (self.width - self.col-gap) / 2;
+    // Down the first column, then the second, so the panel's order
+    // still reads top to bottom.
+    property <int> row-count: ceil(root.names.length / 2);
+
+    height: root.row-count * root.pitch;
+    for name[i] in root.names: Toggle {
+        x: i < root.row-count ? 0 : root.col-w + root.col-gap;
+        y: mod(i, root.row-count) * root.pitch;
+        width: root.col-w;
+        label: name;
+        checked: root.on[i];
+        toggled => { root.toggled(i, self.checked); }
+    }
+}

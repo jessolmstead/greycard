@@ -284,8 +284,9 @@ pub(crate) enum Shown {
     Preset,
     /// The sync sheet over the set `--also` made.
     Sync,
-    /// The sync sheet answered with Apply on its defaults: the
-    /// sidecars written, the status line saying so.
+    /// The sync applied on the sheet's defaults in the same turn the
+    /// sheet opens, so it is never drawn: the sidecars written, the
+    /// status line saying so.
     Synced,
     /// The model sheet, with sample text where the download's goes.
     Fetch,

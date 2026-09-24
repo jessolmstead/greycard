@@ -4,7 +4,8 @@
 // sidecars.
 
 import { Theme } from "../theme.slint";
-import { Toggle, PanelButton } from "../controls.slint";
+import { PanelButton } from "../controls.slint";
+import { SectionToggles } from "section-toggles.slint";
 
 export component SyncSheet inherits Rectangle {
     in-out property <bool> sync-open;
@@ -19,7 +20,7 @@ export component SyncSheet inherits Rectangle {
     background: #000000a0;
     TouchArea { clicked => { root.sync-open = false; } }
     Rectangle {
-        width: 400px;
+        width: 560px;
         height: sync-sheet.preferred-height;
         background: Theme.surface;
         border-radius: Theme.radius-lg;
@@ -44,15 +45,15 @@ export component SyncSheet inherits Rectangle {
                 wrap: word-wrap;
             }
             Text {
-                text: "What goes across; on, all but the masks. The crop and the retouch are each frame's own and never go.";
+                text: "What goes across; on, all but the masks. Noise brings the learned denoiser with it. The camera profile goes only to frames of the camera it was made for. The crop and the retouch are each frame's own and never go.";
                 font-size: Theme.font-xs;
                 color: Theme.text-secondary;
                 wrap: word-wrap;
             }
-            for name[i] in root.sync-section-names: Toggle {
-                label: name;
-                checked: root.sync-section-on[i];
-                toggled => { root.sync-section-toggled(i, self.checked); }
+            SectionToggles {
+                names: root.sync-section-names;
+                on: root.sync-section-on;
+                toggled(i, on) => { root.sync-section-toggled(i, on); }
             }
             Rectangle { height: Theme.space-2; }
             HorizontalLayout {

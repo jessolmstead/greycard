@@ -3,7 +3,8 @@
 
 import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Toggle, PanelButton } from "../controls.slint";
+import { PanelButton } from "../controls.slint";
+import { SectionToggles } from "section-toggles.slint";
 
 export component PresetSheet inherits Rectangle {
     in-out property <bool> preset-open;
@@ -16,7 +17,7 @@ export component PresetSheet inherits Rectangle {
     background: #000000a0;
     TouchArea { clicked => { root.preset-open = false; } }
     Rectangle {
-        width: 400px;
+        width: 560px;
         height: preset-sheet.preferred-height;
         background: Theme.surface;
         border-radius: Theme.radius-lg;
@@ -46,10 +47,10 @@ export component PresetSheet inherits Rectangle {
                 color: Theme.text-secondary;
                 wrap: word-wrap;
             }
-            for name[i] in root.preset-section-names: Toggle {
-                label: name;
-                checked: root.preset-section-on[i];
-                toggled => { root.preset-section-toggled(i, self.checked); }
+            SectionToggles {
+                names: root.preset-section-names;
+                on: root.preset-section-on;
+                toggled(i, on) => { root.preset-section-toggled(i, on); }
             }
             Rectangle { height: Theme.space-2; }
             HorizontalLayout {

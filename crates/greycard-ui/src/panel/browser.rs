@@ -22,9 +22,15 @@ pub(crate) fn thumb_for(path: &Path, meta: &Meta) -> Thumb {
 }
 
 /// The selection as it is acted on: the current frame and the rest
-/// of the set, as files, sorted. Empty with nothing open.
+/// of the set, as files, sorted, and only what the filter shows. A
+/// current frame the filter has just hidden is not in it: a key must
+/// not reach a frame nobody can see is chosen. Empty with nothing
+/// open.
 pub(crate) fn chosen_frames(st: &State) -> Vec<usize> {
     selection::frames(&st.picked, st.current)
+        .into_iter()
+        .filter(|&f| row_of(st, f).is_some())
+        .collect()
 }
 
 /// Put the set on the strip's and the grid's rows, and its size on
@@ -32,10 +38,10 @@ pub(crate) fn chosen_frames(st: &State) -> Vec<usize> {
 /// click in a folder of hundreds touches two rows and not all of
 /// them.
 pub(crate) fn show_set(st: &mut State, app: &App) {
-    st.picked = chosen_frames(st);
+    let chosen_set = chosen_frames(st);
     let model = app.get_thumbs();
     for (row, &f) in st.shown.iter().enumerate() {
-        let chosen = st.picked.binary_search(&f).is_ok();
+        let chosen = chosen_set.binary_search(&f).is_ok();
         if let Some(mut t) = model.row_data(row)
             && t.chosen != chosen
         {
@@ -43,7 +49,7 @@ pub(crate) fn show_set(st: &mut State, app: &App) {
             model.set_row_data(row, t);
         }
     }
-    app.set_set_count(st.picked.len().max(1) as i32);
+    app.set_set_count(chosen_set.len().max(1) as i32);
 }
 
 /// Put file `i`'s meta on its row in the strip and the grid, leaving

@@ -860,7 +860,6 @@ export component App inherits Window {
     callback placement-changed();
     callback xmp-changed();
     callback sidecars-move();
-    /// Move to the file `by` places along the strip.
     /// Move to the file `by` places along the strip; with Shift held,
     /// the set keeps what it had and takes that file as well.
     callback step(int, bool);
@@ -870,6 +869,11 @@ export component App inherits Window {
     /// Open the bug report form in the browser, filled in, and the
     /// log's folder beside it.
     callback report-asked();
+    /// Whether a viewport tool is in hand: a shape being placed, a
+    /// dropper, a perspective guide, the level. Escape puts each down.
+    pure function tool-in-hand() -> bool {
+        return root.placing != "" || root.picking != "" || root.guide-mode != "" || root.level-mode;
+    }
     /// Whether a sheet is over everything. The sheets are declared
     /// after the grid and draw over it, so the keys belong to them.
     /// Tab: everything but the picture put away, the left pane, the
@@ -895,13 +899,13 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.fetch-open) { root.fetch-answered(false); return accept; }
             if (e.text == Key.Escape && root.preset-open) { root.preset-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
+            if (e.text == Key.Escape && root.sync-open) { root.sync-open = false; return accept; }
             if (e.text == Key.Escape && (root.placing != "" || root.picking != "")) { root.stop-placing(); return accept; }
             // A repair chosen for editing, not one just drawn: Esc
             // lets go of it, so the sliders go back to the brush.
             if (e.text == Key.Escape && root.patch != -1) { root.patch-changed(-1); return accept; }
             if (e.text == Key.Escape && root.guide-mode != "") { root.guide-mode = ""; root.guide-dropped(); return accept; }
             if (e.text == Key.Escape && root.level-mode) { root.level-mode = false; return accept; }
-            if (e.text == Key.Escape && root.sync-open) { root.sync-open = false; return accept; }
             // A set of frames goes back to the one on screen before
             // Escape means anything else: leaving the grid or the
             // culling mode with the set still held would leave it
@@ -949,12 +953,17 @@ export component App inherits Window {
                 root.cull-toggled();
                 return accept;
             }
+            // Undo and redo move the frame under the sheet, and a sheet
+            // reads that frame: a sync would carry the undone state.
+            // Under a sheet they are nobody's.
             if (e.modifiers.control && (e.text == "z" || e.text == "Z")) {
-                if (e.modifiers.shift) { root.redo(); } else { root.undo(); }
+                if (!root.sheet-open()) {
+                    if (e.modifiers.shift) { root.redo(); } else { root.undo(); }
+                }
                 return accept;
             }
             if (e.modifiers.control && (e.text == "y" || e.text == "Y")) {
-                root.redo();
+                if (!root.sheet-open()) { root.redo(); }
                 return accept;
             }
             if (e.modifiers.control && e.modifiers.shift && (e.text == "e" || e.text == "E")) {
@@ -975,7 +984,9 @@ export component App inherits Window {
             // the proof, and Ctrl+S nothing yet, so this one reads
             // the same to a hand from there.
             if (e.modifiers.control && e.modifiers.shift && (e.text == "s" || e.text == "S")) {
-                if (root.set-count > 1 && !root.sheet-open()) { root.sync-open-asked(); }
+                // Not over a tool in hand either: the sheet would hide
+                // the drag or the pick half done.
+                if (root.set-count > 1 && !root.sheet-open() && !root.tool-in-hand()) { root.sync-open-asked(); }
                 return accept;
             }
             // The filter's text field, two ways in. Ctrl+F is what
@@ -1013,6 +1024,11 @@ export component App inherits Window {
                 root.frame-turned(e.text == "[" ? -1 : 1);
                 return accept;
             }
+            // Everything below acts on the frame behind a sheet, and a
+            // sheet reads that frame: the sync sheet's words and its
+            // source would go stale under an arrow. Under a sheet they
+            // do nothing.
+            if (root.sheet-open()) { return reject; }
             if (e.text == Key.LeftArrow) { root.step(-1, e.modifiers.shift); return accept; }
             if (e.text == Key.RightArrow) { root.step(1, e.modifiers.shift); return accept; }
             if (e.text == " " && !e.modifiers.control && !root.grid-open) { root.zoom-key(1); return accept; }

@@ -179,7 +179,8 @@ struct Cli {
     /// Open this sheet once the picture is up, for a snapshot:
     /// export, preset, fetch (the model sheet, with sample text),
     /// lenses (the lens profiles' first-launch offer), settings, sync
-    /// (over the set `--also` makes) or synced (the same, applied)
+    /// (over the frames selected) or synced (the sync applied on its
+    /// defaults at once, the sheet never drawn)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Put this Crop-tab tool in hand once the picture is up, for a
@@ -546,6 +547,9 @@ pub(crate) struct State {
     pub(crate) preset_sections: Rc<VecModel<bool>>,
     /// The sync sheet's, the same way.
     pub(crate) sync_sections: Rc<VecModel<bool>>,
+    /// The frame and the targets the sync sheet was opened on, so an
+    /// Apply can refuse a selection that moved under it.
+    pub(crate) sync_asked: Option<(usize, Vec<usize>)>,
     /// A state shown in the viewport in place of the panel's while a
     /// history or snapshot row is under the pointer, and the status
     /// line it covers meanwhile.
@@ -696,6 +700,7 @@ impl State {
             preset_store: None,
             preset_sections: Rc::new(VecModel::from(vec![false; Section::ALL.len()])),
             sync_sections: Rc::new(VecModel::from(vec![false; Section::ALL.len()])),
+            sync_asked: None,
             peek: None,
             held: None,
             status_kept: None,
