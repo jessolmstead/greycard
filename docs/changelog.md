@@ -106,6 +106,10 @@ note a first tester reads.
   cap field and a Clear button in the Settings sheet's new THUMBNAILS
   row; a thumbnail made while the file was still being copied is never
   kept (§163, 2026-09-24).
+- The profiled denoiser's wavelet chain runs on planes a block at a
+  time: the 45 MP develop with the hybrid denoise at six threads goes
+  from about 26 s to 12.7 s, the 24 MP from 11.3 to 5.7, output within
+  a 16-bit step of before (§164, 2026-09-24).
 
 ## 0.1.1, 2026-09-22
 

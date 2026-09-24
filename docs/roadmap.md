@@ -94,11 +94,15 @@ seconds.
       is that size already), and the compute plan printed from the
       probe before believing any timing, since a node the provider
       declines runs on the CPU with a copy each way (§90)
-- [ ] The profiled denoiser's wavelet chain: three quarters of the
-      denoise at six threads now that the means are quick (§128), and
-      it scales like the base develop, memory-bound, so more cores
-      will not help it; the 45 MP develop with the hybrid denoise is
-      22.6 s at six threads, the number a tester can watch
+- [ ] The non-local means' symmetric-offset halving, §128's leftover:
+      the means are the larger half of the hybrid denoise again (about
+      4.4 s of the 45 MP denoise at six threads against the chain's
+      2.3), and it is the next second (§164). The whole 45 MP develop
+      with the hybrid denoise is 12.7 s at six threads, the number a
+      tester can watch
+- [ ] An AVX2-and-FMA path for the wavelet chain's taps behind a
+      feature check: about as much again on a desktop, nothing on the
+      Mac; the first x86 assumption, declined twice (§128, §164)
 
 ## v0.4.0: cull and rate
 
