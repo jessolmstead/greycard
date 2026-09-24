@@ -1302,8 +1302,9 @@ fn presets(
             }
             let edit = entry.preset.applied(&sidecar.current);
             if sidecar.record(edit) {
+                // Back where it was found: the CLI has no setting.
                 sidecar
-                    .save(file)
+                    .save_in(file, greycard_edit::Placement::of(file))
                     .with_context(|| format!("writing the sidecar of {}", file.display()))?;
                 println!("applied       {} to {}", entry.preset.name, file.display());
             } else {

@@ -16,3 +16,8 @@ serde_json.workspace = true
 thiserror.workspace = true
 roxmltree.workspace = true
 dirs.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+# For the hidden attribute on the sidecar folder; a leading dot hides
+# nothing on Windows.
+windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }

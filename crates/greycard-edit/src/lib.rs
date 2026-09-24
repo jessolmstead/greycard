@@ -1081,24 +1081,95 @@ pub struct Snapshot {
 /// whatever the count, so the state the file was opened in stays.
 pub const HISTORY: usize = 50;
 
+/// Where a frame's sidecar is kept: beside the frame, which is the
+/// default and the rule of §72 and §117, or in a hidden folder
+/// inside the frame's own folder, for a tester who finds a `.gcd`
+/// between every pair of raws cluttering. Either way the sidecar
+/// travels with the shoot's folder; a parallel tree elsewhere would
+/// not, and a copied shoot would arrive without its edits.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Placement {
+    /// `IMG_0001.CR3.gcd` beside `IMG_0001.CR3`.
+    #[default]
+    Beside,
+    /// `.greycard/IMG_0001.CR3.gcd` under the frame's folder.
+    Folder,
+}
+
+impl Placement {
+    /// The other place.
+    pub fn other(self) -> Self {
+        match self {
+            Self::Beside => Self::Folder,
+            Self::Folder => Self::Beside,
+        }
+    }
+
+    /// The placement `raw`'s sidecar has now, beside when it has
+    /// none: for a tool without the setting, which writes a sidecar
+    /// back where it found it.
+    pub fn of(raw: &Path) -> Self {
+        match Sidecar::find(raw) {
+            Some(p) if under_folder(&p) => Self::Folder,
+            _ => Self::Beside,
+        }
+    }
+}
+
+/// Whether a sidecar's path is under the hidden folder.
+fn under_folder(sidecar: &Path) -> bool {
+    sidecar.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new(SIDECAR_FOLDER))
+}
+
+/// The hidden folder's name under a shoot's folder.
+pub const SIDECAR_FOLDER: &str = ".greycard";
+
 impl Sidecar {
     /// The sidecar's path for a RAW: the file's name with `.gcd` on the end,
     /// so `IMG_0001.CR3` keeps its edit in `IMG_0001.CR3.gcd` (JSON inside).
+    /// The `Beside` placement; `path_in` is the general form.
     pub fn path_for(raw: &Path) -> PathBuf {
+        Self::path_in(raw, Placement::Beside)
+    }
+
+    /// Where `raw`'s sidecar goes under `placement`: beside it, or
+    /// under the `.greycard` folder in its own folder, with the same
+    /// name either way.
+    pub fn path_in(raw: &Path, placement: Placement) -> PathBuf {
         let mut name = raw
             .file_name()
             .map(|n| n.to_os_string())
             .unwrap_or_default();
         name.push(".gcd");
-        raw.with_file_name(name)
+        match placement {
+            Placement::Beside => raw.with_file_name(name),
+            Placement::Folder => raw.with_file_name(SIDECAR_FOLDER).join(name),
+        }
     }
 
-    /// The sidecar beside `raw`, if there is one.
-    pub fn load(raw: &Path) -> Result<Option<Self>> {
-        let path = Self::path_for(raw);
-        if !path.exists() {
-            return Ok(None);
+    /// The sidecar `raw` has, wherever it is: both places are read
+    /// whatever the setting says, so flipping the setting never
+    /// loses an edit. When both are there, the one written last;
+    /// beside on a tie.
+    pub fn find(raw: &Path) -> Option<PathBuf> {
+        let modified = |p: &Path| p.metadata().and_then(|m| m.modified()).ok();
+        let (beside, under) = (
+            Self::path_in(raw, Placement::Beside),
+            Self::path_in(raw, Placement::Folder),
+        );
+        match (modified(&beside), modified(&under)) {
+            (None, None) => None,
+            (Some(b), Some(u)) if u > b => Some(under),
+            (Some(_), _) => Some(beside),
+            (None, Some(_)) => Some(under),
         }
+    }
+
+    /// The sidecar `raw` has, if there is one, wherever it is.
+    pub fn load(raw: &Path) -> Result<Option<Self>> {
+        let Some(path) = Self::find(raw) else {
+            return Ok(None);
+        };
         let json = std::fs::read_to_string(&path)?;
         let mut value: serde_json::Value = serde_json::from_str(&json)?;
         if let Some(obj) = value.as_object_mut() {
@@ -1300,12 +1371,83 @@ impl Sidecar {
             .any(Edit::placed)
     }
 
+    /// The hidden folder under `shoot`, made and hidden: every time
+    /// and not only the first, so a folder unhidden by hand, or
+    /// copied to a disk that dropped the attribute, goes hidden
+    /// again. The edit matters more than the attribute, so a failure
+    /// to hide is said and not returned.
+    pub fn folder_under(shoot: &Path) -> std::io::Result<PathBuf> {
+        let folder = shoot.join(SIDECAR_FOLDER);
+        std::fs::create_dir_all(&folder)?;
+        if let Err(e) = hide_folder(&folder) {
+            log::warn!("{}: not hidden: {e}", folder.display());
+        }
+        Ok(folder)
+    }
+
     /// Write the sidecar beside `raw`, whole, through a temporary file.
     pub fn save(&self, raw: &Path) -> Result<()> {
-        let path = Self::path_for(raw);
+        self.save_in(raw, Placement::Beside)
+    }
+
+    /// Write the sidecar where `placement` says, whole, through a
+    /// temporary file; the hidden folder made, and hidden, when it
+    /// is not there yet. A copy in the other place goes: what was
+    /// loaded was the newer of the two and what is written came from
+    /// it, so the other is superseded either way, and a frame keeps
+    /// one sidecar after a save. That is how a folder migrates when
+    /// the setting flips, a frame at its next edit; the rest wait for
+    /// a move asked for by name.
+    pub fn save_in(&self, raw: &Path, placement: Placement) -> Result<()> {
+        let path = Self::path_in(raw, placement);
+        if placement == Placement::Folder
+            && let Some(folder) = path.parent()
+        {
+            Self::folder_under(folder.parent().unwrap_or(Path::new("")))?;
+        }
         let tmp = path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_string_pretty(self)?)?;
         std::fs::rename(&tmp, &path)?;
+        let other = Self::path_in(raw, placement.other());
+        if other.exists()
+            && let Err(e) = std::fs::remove_file(&other)
+        {
+            log::warn!("{}: superseded but not removed: {e}", other.display());
+        }
+        Ok(())
+    }
+}
+
+/// Mark a folder hidden where a leading dot does not do it. Windows
+/// keeps that in a file attribute rather than in the name, and the
+/// attribute set is written whole, so the ones the folder has are
+/// read first and kept. Nothing to do elsewhere.
+fn hide_folder(dir: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_HIDDEN, GetFileAttributesW, INVALID_FILE_ATTRIBUTES, SetFileAttributesW,
+        };
+        let wide: Vec<u16> = dir.as_os_str().encode_wide().chain(Some(0)).collect();
+        // SAFETY: `wide` is a null-terminated UTF-16 path that outlives
+        // both calls, which read it and nothing else.
+        unsafe {
+            let have = GetFileAttributesW(wide.as_ptr());
+            if have == INVALID_FILE_ATTRIBUTES {
+                return Err(std::io::Error::last_os_error());
+            }
+            if have & FILE_ATTRIBUTE_HIDDEN == 0
+                && SetFileAttributesW(wide.as_ptr(), have | FILE_ATTRIBUTE_HIDDEN) == 0
+            {
+                return Err(std::io::Error::last_os_error());
+            }
+        }
+        Ok(())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = dir;
         Ok(())
     }
 }
@@ -1913,6 +2055,125 @@ mod tests {
         assert!(tree.get("dehaze").is_none(), "{json}");
         assert_eq!(tree["detail"]["dehaze"], -0.25);
         assert_eq!(Edit::from_json(&json).unwrap(), edit);
+    }
+
+    /// A fresh folder a test can write into, its own by name and pid.
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-edit-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn set_modified(path: &Path, secs: u64) {
+        let t = std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("the file opens")
+            .set_modified(t)
+            .expect("the time is set");
+    }
+
+    #[test]
+    fn the_sidecar_has_one_name_in_two_places() {
+        let raw = Path::new("/shoot/IMG_0001.CR3");
+        assert_eq!(
+            Sidecar::path_in(raw, Placement::Beside),
+            Path::new("/shoot/IMG_0001.CR3.gcd")
+        );
+        assert_eq!(
+            Sidecar::path_in(raw, Placement::Beside),
+            Sidecar::path_for(raw)
+        );
+        assert_eq!(
+            Sidecar::path_in(raw, Placement::Folder),
+            Path::new("/shoot/.greycard/IMG_0001.CR3.gcd")
+        );
+        // A bare name has a folder too: the current one.
+        assert_eq!(
+            Sidecar::path_in(Path::new("IMG_0001.CR3"), Placement::Folder),
+            Path::new(".greycard/IMG_0001.CR3.gcd")
+        );
+    }
+
+    #[test]
+    fn find_reads_both_places_and_takes_the_newer() {
+        let dir = scratch("find");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        assert_eq!(Sidecar::find(&raw), None);
+
+        let beside = Sidecar::path_in(&raw, Placement::Beside);
+        let under = Sidecar::path_in(&raw, Placement::Folder);
+        std::fs::write(&beside, b"{}").unwrap();
+        assert_eq!(Sidecar::find(&raw), Some(beside.clone()));
+
+        std::fs::remove_file(&beside).unwrap();
+        std::fs::create_dir_all(under.parent().unwrap()).unwrap();
+        std::fs::write(&under, b"{}").unwrap();
+        assert_eq!(Sidecar::find(&raw), Some(under.clone()));
+
+        // Both there: the one written last, whichever place it is in.
+        std::fs::write(&beside, b"{}").unwrap();
+        set_modified(&beside, 1_000_000_000);
+        set_modified(&under, 2_000_000_000);
+        assert_eq!(Sidecar::find(&raw), Some(under.clone()));
+        set_modified(&beside, 3_000_000_000);
+        assert_eq!(Sidecar::find(&raw), Some(beside.clone()));
+        // A tie is beside: the older rule.
+        set_modified(&under, 3_000_000_000);
+        assert_eq!(Sidecar::find(&raw), Some(beside));
+    }
+
+    #[test]
+    fn a_sidecar_under_the_folder_loads_and_saves() {
+        let dir = scratch("folder");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        let mut sidecar = Sidecar::default();
+        let mut e = Edit::default();
+        e.light.exposure = 1.0;
+        sidecar.record(e);
+
+        // Saved under the folder: the folder is made, nothing lands
+        // beside the raw, and a load finds it without being told.
+        sidecar.save_in(&raw, Placement::Folder).unwrap();
+        let under = dir.join(SIDECAR_FOLDER).join("IMG_0001.CR3.gcd");
+        assert!(under.exists(), "{}", under.display());
+        assert!(!Sidecar::path_for(&raw).exists());
+        assert!(
+            !dir.join(SIDECAR_FOLDER)
+                .join("IMG_0001.CR3.json.tmp")
+                .exists()
+        );
+        assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), sidecar);
+
+        // Saved beside afterwards: the folder's copy is superseded
+        // and goes, so the frame has one sidecar, and it loads.
+        let mut later = sidecar.clone();
+        let mut e = Edit::default();
+        e.light.exposure = 2.0;
+        later.record(e);
+        later.save(&raw).unwrap();
+        assert!(!under.exists(), "the folder's copy is superseded");
+        assert!(Sidecar::path_for(&raw).exists());
+        assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), later);
+
+        // And back under the folder: the beside copy goes the same way.
+        later.save_in(&raw, Placement::Folder).unwrap();
+        assert!(under.exists());
+        assert!(
+            !Sidecar::path_for(&raw).exists(),
+            "the beside copy is superseded"
+        );
+        assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), later);
     }
 
     #[test]

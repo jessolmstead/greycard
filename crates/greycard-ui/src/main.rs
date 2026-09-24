@@ -123,6 +123,11 @@ struct Cli {
     /// setting otherwise. An XMP that is there is read either way.
     #[arg(long)]
     xmp_sidecars: bool,
+    /// Write sidecars under a hidden `.greycard` folder in the
+    /// frame's folder rather than beside it, for this run; the
+    /// setting otherwise. A sidecar in either place is read either way.
+    #[arg(long)]
+    sidecar_folder: bool,
     /// The monitor's ICC profile to open with, over the panel's
     /// remembered choice (colord's profile for the primary display
     /// unless changed)
@@ -276,6 +281,10 @@ pub(crate) struct State {
     /// `--xmp-sidecars`. Reading one is not a choice, so nothing
     /// here guards it.
     pub(crate) xmp_sidecars: bool,
+    /// Where a sidecar written goes, beside the frame or under the
+    /// hidden folder: `settings.sidecars_in_folder`, or
+    /// `--sidecar-folder`. Reading looks in both places either way.
+    pub(crate) placement: greycard_edit::Placement,
     /// The developed image waiting to go to the GPU, if any.
     pub(crate) pending: Option<Landed>,
     /// `--time-sharpen`: the moves left, when the last was sent, and
@@ -544,6 +553,7 @@ impl State {
             seed_blend: vec![false; count],
             write_sidecars: false,
             xmp_sidecars: false,
+            placement: greycard_edit::Placement::Beside,
             pending: None,
             time_sharpen: None,
             time_cull: None,

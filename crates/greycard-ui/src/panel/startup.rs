@@ -263,6 +263,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         seed_blend,
         write_sidecars: !cli.no_sidecars,
         xmp_sidecars: cli.xmp_sidecars || remembered.xmp_sidecars,
+        placement: if cli.sidecar_folder || remembered.sidecars_in_folder {
+            greycard_edit::Placement::Folder
+        } else {
+            greycard_edit::Placement::Beside
+        },
         zoom: cli.zoom.max(0.0),
         scope: opening_scope(&cli, &remembered),
         show_mask: cli.show_mask.and_then(|i| i.checked_sub(1)),
@@ -992,6 +997,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         let kept = settings::Settings::load();
         settings.last_file = kept.last_file;
         settings.xmp_sidecars = kept.xmp_sidecars;
+        settings.sidecars_in_folder = kept.sidecars_in_folder;
         settings.save();
     }
 
@@ -1146,6 +1152,7 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // nothing the panel holds. The caller fills them in from
         // disk.
         xmp_sidecars: false,
+        sidecars_in_folder: false,
         last_file: String::new(),
     }
 }

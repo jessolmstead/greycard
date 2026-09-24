@@ -128,7 +128,7 @@ pub(crate) fn take_current(st: &mut State, app: &App, worker: &Worker) {
     }
     let edit = st.sidecars[c].current.clone();
     if st.write_sidecars
-        && let Err(e) = st.sidecars[c].save(&st.files[c])
+        && let Err(e) = st.sidecars[c].save_in(&st.files[c], st.placement)
     {
         tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c]));
     }

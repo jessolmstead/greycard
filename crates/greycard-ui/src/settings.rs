@@ -59,6 +59,13 @@ pub struct Settings {
     /// shared with another tool and is asked for. Reading an XMP
     /// that is there is not a choice and happens either way.
     pub xmp_sidecars: bool,
+    /// Whether a frame's `.gcd` is written under a hidden `.greycard`
+    /// folder in the frame's folder rather than beside the frame.
+    /// Off by default. Reading looks in both places either way, so
+    /// flipping this loses nothing; only where the next write goes
+    /// changes. The XMPs stay beside the frame whatever this says,
+    /// since beside is where Lightroom and darktable look.
+    pub sidecars_in_folder: bool,
     /// The absolute path of the last file open, developed and all, so
     /// the next run with no path can jump back to it. Written as soon
     /// as it develops, not waited for the window to close; empty
@@ -90,6 +97,7 @@ impl Default for Settings {
             collapsed: Vec::new(),
             grid_cell: crate::grid::CELL,
             xmp_sidecars: false,
+            sidecars_in_folder: false,
             last_file: String::new(),
         }
     }
@@ -185,6 +193,7 @@ mod tests {
             collapsed: vec!["grain".into(), "demosaic".into()],
             grid_cell: 256.0,
             xmp_sidecars: true,
+            sidecars_in_folder: true,
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
         };
         let text = serde_json::to_string(&mine).unwrap();

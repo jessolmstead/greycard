@@ -607,15 +607,25 @@ pub fn move_rejects(files: &[PathBuf], rejected: &[usize]) -> anyhow::Result<Mov
             continue;
         };
         let dest = dir.join(name);
-        let sidecar = greycard_edit::Sidecar::path_for(raw);
         // Everything that belongs to this frame and has to travel
-        // with it: the `.gcd`, and the XMPs whose names are this
-        // frame's (both, when a folder has been through two tools).
-        let beside: Vec<(PathBuf, PathBuf)> = std::iter::once(sidecar.clone())
-            .filter(|p| p.exists())
+        // with it: the `.gcd`, wherever the frame keeps it, and the
+        // XMPs whose names are this frame's (both, when a folder has
+        // been through two tools). A sidecar under the hidden folder
+        // goes under the rejects' own, so the placement survives the
+        // cull; the XMPs are always beside.
+        let sidecar = greycard_edit::Sidecar::find(raw);
+        let hidden = std::ffi::OsStr::new(greycard_edit::SIDECAR_FOLDER);
+        let beside: Vec<(PathBuf, PathBuf)> = sidecar
+            .iter()
+            .cloned()
             .chain(greycard_edit::xmp::paths_of(raw))
             .filter_map(|from| {
-                let to = from.file_name().map(|n| dir.join(n))?;
+                let file = from.file_name()?;
+                let to = if from.parent().and_then(Path::file_name) == Some(hidden) {
+                    dir.join(hidden).join(file)
+                } else {
+                    dir.join(file)
+                };
                 Some((from, to))
             })
             .collect();
@@ -643,8 +653,14 @@ pub fn move_rejects(files: &[PathBuf], rejected: &[usize]) -> anyhow::Result<Mov
         }
         moved.files.push(i);
         for (from, to) in &beside {
+            if to.parent().is_some_and(|p| !p.exists())
+                && let Err(e) = greycard_edit::Sidecar::folder_under(&dir)
+            {
+                tracing::warn!("{}: not moved: {e}", from.display());
+                continue;
+            }
             match std::fs::rename(from, to) {
-                Ok(()) if *from == sidecar => moved.sidecars += 1,
+                Ok(()) if Some(from) == sidecar.as_ref() => moved.sidecars += 1,
                 Ok(()) => {}
                 Err(e) => tracing::warn!("{}: not moved: {e}", from.display()),
             }
@@ -808,6 +824,50 @@ mod tests {
         assert_eq!(&turned[0..6], &[30, 0, 0, 70, 0, 0]);
         assert_eq!(turned_size(4, 2, Orientation::Rotate90), (2, 4));
         assert_eq!(turned_size(4, 2, Orientation::Rotate180), (4, 2));
+    }
+
+    #[test]
+    fn a_reject_takes_its_sidecar_under_the_folder_along() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-rejects-folder-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = dir.join("A.CR3");
+        let b = dir.join("B.CR3");
+        std::fs::write(&a, b"raw").unwrap();
+        std::fs::write(&b, b"raw").unwrap();
+        let mut sidecar = greycard_edit::Sidecar::default();
+        sidecar.meta.flag = greycard_edit::meta::Flag::Reject;
+        sidecar
+            .save_in(&a, greycard_edit::Placement::Folder)
+            .unwrap();
+        sidecar.save(&b).unwrap();
+
+        let moved = move_rejects(&[a.clone(), b.clone()], &[0, 1]).unwrap();
+        assert_eq!(moved.files, vec![0, 1]);
+        assert_eq!(moved.sidecars, 2);
+        let there = rejects_dir(&dir);
+        // Each sidecar keeps the placement it had: A's under the
+        // rejects' own hidden folder, B's beside B.
+        assert!(
+            there
+                .join(greycard_edit::SIDECAR_FOLDER)
+                .join("A.CR3.gcd")
+                .exists()
+        );
+        assert!(!there.join("A.CR3.gcd").exists());
+        assert!(there.join("B.CR3.gcd").exists());
+        assert!(
+            !dir.join(greycard_edit::SIDECAR_FOLDER)
+                .join("A.CR3.gcd")
+                .exists()
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

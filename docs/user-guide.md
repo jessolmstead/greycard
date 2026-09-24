@@ -55,6 +55,13 @@ Your edits are saved beside each raw in a `.gcd` file, so
 another folder or machine, copy the `.gcd` files along with the raws.
 Delete a `.gcd` file to start that frame's edit over.
 
+If you would rather not see a `.gcd` beside every raw, set
+`sidecars_in_folder` to true in the settings: edits then go into a
+hidden `.greycard` folder inside the shoot's folder, which travels
+with the shoot the same way. A sidecar in either place is read, and
+a frame's sidecar moves to the chosen place the next time it is
+saved, so a folder tidies itself as you work through it.
+
 Ratings, flags and labels are kept in the `.gcd` too. To share ratings,
 labels and keywords with Lightroom or darktable, turn on
 `xmp_sidecars` in the settings. With it on, greycard reads and writes

@@ -31,16 +31,24 @@ pub fn never_developed(sidecar: &Sidecar) -> bool {
     sidecar.current == Edit::default() && sidecar.history.is_empty() && sidecar.snapshots.is_empty()
 }
 
-/// Map a .gcd sidecar path to its raw: IMG.CR3.gcd -> IMG.CR3.
+/// Map a .gcd sidecar path to its raw: IMG.CR3.gcd -> IMG.CR3, and
+/// .greycard/IMG.CR3.gcd -> IMG.CR3 beside the folder, since a
+/// sidecar under the hidden folder belongs to the frame above it.
 /// Other paths pass through unchanged.
 pub fn sidecar_to_raw(p: PathBuf) -> PathBuf {
-    if p.extension()
+    if !p
+        .extension()
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("gcd"))
     {
-        p.with_extension("")
-    } else {
-        p
+        return p;
+    }
+    let raw = p.with_extension("");
+    let folder = raw.parent().and_then(Path::file_name)
+        == Some(std::ffi::OsStr::new(greycard_edit::SIDECAR_FOLDER));
+    match (folder, raw.parent().and_then(Path::parent), raw.file_name()) {
+        (true, Some(shoot), Some(name)) => shoot.join(name),
+        _ => raw,
     }
 }
 
@@ -192,6 +200,43 @@ mod tests {
         assert_eq!(files, vec![b, a]);
         assert_eq!(refused.len(), 1);
         assert!(refused[0].to_string().contains("gone.NEF"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_sidecar_under_the_folder_names_the_frame_above_it() {
+        let under = PathBuf::from("/shoot/.greycard/IMG_0001.CR3.gcd");
+        assert_eq!(sidecar_to_raw(under), PathBuf::from("/shoot/IMG_0001.CR3"));
+        // Only that folder: a `.gcd` in any other folder is beside
+        // its raw.
+        let elsewhere = PathBuf::from("/shoot/edits/IMG_0001.CR3.gcd");
+        assert_eq!(
+            sidecar_to_raw(elsewhere),
+            PathBuf::from("/shoot/edits/IMG_0001.CR3")
+        );
+    }
+
+    #[test]
+    fn a_folder_listing_skips_the_hidden_folder() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-list-hidden-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let hidden = dir.join(greycard_edit::SIDECAR_FOLDER);
+        std::fs::create_dir_all(&hidden).unwrap();
+        std::fs::write(dir.join("a.CR3"), b"raw").unwrap();
+        std::fs::write(hidden.join("a.CR3.gcd"), b"{}").unwrap();
+        let files = list_files(&dir).unwrap();
+        assert_eq!(files, vec![dir.join("a.CR3")]);
+        // And the sidecar under it opens as its frame.
+        assert_eq!(
+            list_files(&hidden.join("a.CR3.gcd")).unwrap(),
+            vec![dir.join("a.CR3")]
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
