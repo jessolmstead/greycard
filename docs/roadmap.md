@@ -240,6 +240,13 @@ clears or a tester asks for it.
   - ProPhoto as a working space: no (§84). It stays an output space and
     an intermediate inside the operations defined in it
 - [ ] Resizeable / hideable panels
+- [ ] A software GPU when there is none: the worker and greycard-gpu
+      ask wgpu for a high-performance adapter and stop when there is
+      no adapter at all (a headless box, a VM, a remote desktop), so
+      ask again with `force_fallback_adapter` and take lavapipe or
+      WARP, slow but right; the develop already runs on the CPU, the
+      viewport does not. A tester on such a machine decides whether
+      the viewport wants a CPU path too
 - [ ] Right click on photo for options. Set label, copy develop settings, etc
 - [ ] Export over the selection: a queue on the worker with progress
       and the naming policy; today Export takes the frame on screen
