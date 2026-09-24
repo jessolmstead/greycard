@@ -10,11 +10,15 @@
 //! orientation tag is in the file's head, which the hash covers.
 //!
 //! The key is [`hash_file`](crate::hash::hash_file) — the index's
-//! `hash` column for the same file — the long edge asked for and the
-//! caller's recipe, one file an entry at
-//! `<root>/<first two hex>/<hash>-<size>-r<recipe>.thumb`. The recipe
-//! is in the name so that two builds making pictures two ways each
-//! keep their own entries rather than removing each other's as misses.
+//! `hash` column for the same file — the long edge asked for, and the
+//! caller's recipe and stamp, one file an entry at
+//! `<root>/<first two hex>/<hash>-<size>-r<recipe>-<stamp>.thumb`. The
+//! recipe and the stamp are in the name so that what differs only in
+//! them keeps an entry of its own rather than each removing the other's
+//! as a miss: two builds making pictures two ways, or two copies of one
+//! frame with the same head and length and different times (a card and
+//! its import by a plain `cp`). An entry left behind by a stamp that
+//! has moved on is never asked for again and goes by the eviction.
 //! The file is a small header and a JPEG:
 //!
 //! ```text
@@ -144,10 +148,11 @@ impl Thumbs {
     }
 
     /// A new cap, and the entries evicted to it at once when they are
-    /// past it. Counts the cache first if it has not been counted.
+    /// known to be past it. A cache not counted yet is not walked
+    /// here: the count, when it is seeded, evicts to the cap then.
     pub fn set_cap(&mut self, cap: u64) {
         self.cap = cap;
-        if self.counted().bytes > cap {
+        if self.used.is_some_and(|u| u.bytes > cap) {
             self.evict();
         }
     }
@@ -160,27 +165,33 @@ impl Thumbs {
 
     /// Take a count made elsewhere — by [`usage_at`] on a thread that
     /// did not hold this cache's lock — unless one is known already,
-    /// which is newer.
+    /// which is newer; and when that count is past the cap, evict to
+    /// it now rather than at the next write, for a cap lowered while
+    /// the editor was closed. A cap of nothing is the cache off, and a
+    /// count does not empty it: what an earlier run left is the
+    /// user's to clear.
     pub fn seed_usage(&mut self, usage: Usage) {
         if self.used.is_none() {
             self.used = Some(usage);
+            if self.cap > 0 && usage.bytes > self.cap {
+                self.evict();
+            }
         }
     }
 
-    /// Where the entry for `hash` at `size` made under `recipe` lives.
-    pub fn entry_path(&self, hash: &str, size: u32, recipe: u16) -> PathBuf {
+    /// Where the entry for `hash` at `size` under `tag` lives.
+    pub fn entry_path(&self, hash: &str, size: u32, tag: Tag) -> PathBuf {
         let fan = hash.get(..2).unwrap_or("__");
         self.root
             .join(fan)
-            .join(format!("{hash}-{size}-r{recipe}.thumb"))
+            .join(format!("{hash}-{size}-r{}-{}.thumb", tag.recipe, tag.stamp))
     }
 
     /// The picture kept for `hash` at `size` under `tag`, or `None`.
-    /// A damaged entry, or one kept under another stamp, is removed
-    /// and answers `None`: the caller renders and puts, as for any
-    /// miss.
+    /// A damaged entry is removed and answers `None`: the caller
+    /// renders and puts, as for any miss.
     pub fn get(&mut self, hash: &str, size: u32, tag: Tag) -> Option<Thumb> {
-        let path = self.entry_path(hash, size, tag.recipe);
+        let path = self.entry_path(hash, size, tag);
         let bytes = std::fs::read(&path).ok()?;
         match decode_entry(&bytes, tag) {
             Some(thumb) => {
@@ -211,7 +222,7 @@ impl Thumbs {
     /// was there, and evict if that takes the cache past its cap.
     pub fn put(&mut self, hash: &str, size: u32, tag: Tag, thumb: &Thumb) -> std::io::Result<()> {
         let bytes = encode_entry(thumb, tag)?;
-        let path = self.entry_path(hash, size, tag.recipe);
+        let path = self.entry_path(hash, size, tag);
         let dir = path.parent().expect("an entry is under its fan-out folder");
         std::fs::create_dir_all(dir)?;
         let before = std::fs::metadata(&path).ok().map(|m| m.len());
@@ -269,18 +280,6 @@ impl Thumbs {
         self.remove_empty_folders();
         self.used = Some(self.usage());
         gone
-    }
-
-    /// The count, made now if it is not known.
-    fn counted(&mut self) -> Usage {
-        match self.used {
-            Some(u) => u,
-            None => {
-                let u = self.usage();
-                self.used = Some(u);
-                u
-            }
-        }
     }
 
     /// One entry of `len` bytes gone from the count.
@@ -515,7 +514,7 @@ mod tests {
         let key = hash_file(&raw).unwrap();
         assert_eq!(key, row.hash);
         let cache = Thumbs::at(dir.join("thumbs"), DEFAULT_CAP);
-        let entry = cache.entry_path(&key, 170, 0);
+        let entry = cache.entry_path(&key, 170, Tag::default());
         assert!(entry.to_string_lossy().contains(&row.hash));
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -572,7 +571,7 @@ mod tests {
             stamp: 0,
         };
         assert!(cache.get(&key, 170, newer).is_none());
-        assert!(cache.entry_path(&key, 170, 1).exists());
+        assert!(cache.entry_path(&key, 170, tag).exists());
         cache.put(&key, 170, newer, &picture(170, 113, 5)).unwrap();
         assert!(cache.get(&key, 170, tag).is_some());
         assert!(cache.get(&key, 170, newer).is_some());
@@ -590,6 +589,15 @@ mod tests {
             stamp: 1_700_000_500,
         };
         assert!(cache.get(&key, 170, later).is_none());
+        // Two copies of one frame, a card's and its `cp` import, share
+        // the head and the length and differ in time: each made once,
+        // both hit, by turns, without removing the other's.
+        cache.put(&key, 170, later, &picture(170, 113, 50)).unwrap();
+        for _ in 0..3 {
+            let card = cache.get(&key, 170, stamped).expect("the card's");
+            let import = cache.get(&key, 170, later).expect("the import's");
+            assert_ne!(card.rgb, import.rgb);
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -600,7 +608,7 @@ mod tests {
         let key = "ab".repeat(32);
         let tag = Tag::default();
         let thumb = picture(96, 64, 9);
-        let path = cache.entry_path(&key, 96, 0);
+        let path = cache.entry_path(&key, 96, tag);
         cache.put(&key, 96, tag, &thumb).unwrap();
         let whole = std::fs::read(&path).unwrap();
         // Cut short at every length that matters: inside the header,
@@ -652,7 +660,7 @@ mod tests {
             // does not rest on the filesystem's timestamp grain.
             let f = std::fs::File::options()
                 .write(true)
-                .open(cache.entry_path(key, 128, 0))
+                .open(cache.entry_path(key, 128, Tag::default()))
                 .unwrap();
             f.set_modified(t0 + std::time::Duration::from_secs(i as u64))
                 .unwrap();
@@ -738,7 +746,7 @@ mod tests {
         // the count knowing; the removal takes the entry off the
         // count, and the bytes are off by what the damage changed
         // until the next eviction or clear counts again.
-        let damaged = cache.entry_path(&"01".repeat(32), 128, 0);
+        let damaged = cache.entry_path(&"01".repeat(32), 128, Tag::default());
         std::fs::write(&damaged, b"no").unwrap();
         assert!(cache.get(&"01".repeat(32), 128, Tag::default()).is_none());
         assert_eq!(cache.known_usage().unwrap().entries, 5);
@@ -753,6 +761,42 @@ mod tests {
         cache.set_cap(0);
         assert_eq!(cache.usage(), Usage::default());
         assert_eq!(cache.known_usage(), Some(Usage::default()));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A cache already past its cap when it is counted — the cap
+    /// lowered while the editor was closed — is evicted by the count,
+    /// not left until the next write; a cap lowered before the count
+    /// waits for it rather than walking the cache itself; a cap of
+    /// nothing leaves what is there for the user to clear.
+    #[test]
+    fn the_count_evicts_a_cache_past_its_cap() {
+        let dir = scratch("seedevict");
+        let root = dir.join("thumbs");
+        let mut first = Thumbs::at(&root, DEFAULT_CAP);
+        for i in 0..10u8 {
+            first
+                .put(
+                    &format!("{i:02x}").repeat(32),
+                    128,
+                    Tag::default(),
+                    &picture(128, 96, i),
+                )
+                .unwrap();
+        }
+        let whole = first.usage();
+        let cap = whole.bytes / 2;
+        let mut lowered = Thumbs::at(&root, DEFAULT_CAP);
+        lowered.set_cap(cap);
+        assert_eq!(lowered.known_usage(), None, "not walked by the cap");
+        assert_eq!(lowered.usage(), whole);
+        lowered.seed_usage(usage_at(&root));
+        let now = lowered.usage();
+        assert!(now.bytes <= cap && now.entries > 0, "{now:?}");
+        assert_eq!(lowered.known_usage(), Some(now));
+        let mut off = Thumbs::at(&root, 0);
+        off.seed_usage(usage_at(&root));
+        assert_eq!(off.usage(), now, "a cache off is not emptied by a count");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

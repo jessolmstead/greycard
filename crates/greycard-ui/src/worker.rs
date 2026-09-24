@@ -2614,6 +2614,34 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A card's frame and its import by a plain `cp`: one head, one
+    /// length, two times. Each is made once, and after that both hit,
+    /// opened by turns, rather than each removing the other's entry.
+    #[test]
+    fn two_copies_with_two_times_both_hit() {
+        let dir = thumb_scratch("twocopies");
+        let card = dir.join("card").join("IMG_0007.CR3");
+        let import = dir.join("import").join("IMG_0007.CR3");
+        std::fs::create_dir_all(card.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(import.parent().unwrap()).unwrap();
+        std::fs::write(&card, vec![7u8; 90_000]).unwrap();
+        std::fs::copy(&card, &import).unwrap();
+        set_time(&import, 60);
+        assert_eq!(
+            greycard_library::hash_file(&card).unwrap(),
+            greycard_library::hash_file(&import).unwrap()
+        );
+        let cache = cache_at(&dir);
+        for (round, path) in [&card, &import, &card, &import, &card]
+            .into_iter()
+            .enumerate()
+        {
+            let (_, cached) = cached_thumbnail_with(&cache, path, 176, tail_picture).unwrap();
+            assert_eq!(cached, round >= 2, "round {round}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A file that grows or is touched while its picture is being made
     /// gets the picture shown and not kept.
     #[test]

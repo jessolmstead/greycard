@@ -202,7 +202,9 @@ fn show_thumb_cache(app: &App, worker: &Worker) {
 /// Do `work` to the thumbnail cache on a thread of its own — a clear
 /// or an eviction over a large cache takes seconds, and a lock the
 /// worker holds is waited for there — and show the cache as it is
-/// after.
+/// after. A cache the startup count has not finished with is not
+/// walked again here: the line says "Counting…" until the count is
+/// seeded, looked for a few times a second without holding the lock.
 fn on_the_cache(
     app: &App,
     worker: &Worker,
@@ -213,26 +215,34 @@ fn on_the_cache(
     let spawned = std::thread::Builder::new()
         .name("thumbnail cache".into())
         .spawn(move || {
-            let shown = match cache.lock() {
-                Ok(mut held) => match held.as_mut() {
-                    None => CacheShown::Missing,
-                    Some(c) => {
-                        work(c);
-                        let usage = match c.known_usage() {
-                            Some(u) => u,
-                            None => {
-                                let u = c.usage();
-                                c.seed_usage(u);
-                                u
+            let mut work = Some(work);
+            let started = std::time::Instant::now();
+            let shown = loop {
+                let shown = match cache.lock() {
+                    Ok(mut held) => match held.as_mut() {
+                        None => CacheShown::Missing,
+                        Some(c) => {
+                            if let Some(work) = work.take() {
+                                work(c);
                             }
-                        };
-                        CacheShown::Known {
-                            usage,
-                            cap: c.cap(),
+                            match c.known_usage() {
+                                Some(usage) => CacheShown::Known {
+                                    usage,
+                                    cap: c.cap(),
+                                },
+                                None => CacheShown::Counting,
+                            }
                         }
-                    }
-                },
-                Err(_) => CacheShown::Missing,
+                    },
+                    Err(_) => CacheShown::Missing,
+                };
+                // A count that never arrives (its thread could not be
+                // started) leaves the line saying so, not a thread
+                // spinning.
+                if shown != CacheShown::Counting || started.elapsed().as_secs() >= 120 {
+                    break shown;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(100));
             };
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(app) = app_weak.upgrade() {
