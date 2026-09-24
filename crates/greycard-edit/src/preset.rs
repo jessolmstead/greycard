@@ -138,6 +138,8 @@ impl Section {
     /// that a preset leaves alone are what a sync is for; the masks
     /// are drawn on one picture's subject and land on nothing in the
     /// next. The geometry and the retouch are not sections at all.
+    /// A named camera profile is ticked but the editor lays it only
+    /// on frames of the body it was made for (`panel::sync`).
     pub fn syncs_by_default(self) -> bool {
         self != Section::Adjustments
     }

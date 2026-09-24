@@ -896,7 +896,12 @@ pub fn meta_into(
 /// This is a preset that is never written: [`Preset::from_edit`]
 /// keeps the chosen sections of `from` and [`Preset::apply`] lays
 /// them over each frame, so a sync and a preset cannot come to mean
-/// two different things by a section. A frame that already has every
+/// two different things by a section, but for one thing on top: a
+/// sync's Noise brings the learned denoiser and its blend as well
+/// ([`sync_learned`]). A preset leaves those to each file's ISO; a
+/// sync is between frames of one shoot, and a frame taken to the
+/// learned tier is the one the others are meant to look like. A
+/// frame that already has every
 /// chosen section as `from` has it records nothing and is left out
 /// of what comes back, so its sidecar is not rewritten. Nothing but
 /// `current` and `history` is touched: the meta, the turn and the
@@ -912,16 +917,27 @@ pub fn sync_into(
     if carried.sections.is_empty() {
         return Vec::new();
     }
+    let learned = carried.sections.contains(&Section::Noise);
     frames
         .iter()
         .copied()
         .filter(|&i| {
             sidecars.get_mut(i).is_some_and(|sidecar| {
-                let applied = carried.applied(&sidecar.current);
+                let mut applied = carried.applied(&sidecar.current);
+                if learned {
+                    sync_learned(from, &mut applied);
+                }
                 sidecar.record(applied)
             })
         })
         .collect()
+}
+
+/// What a sync's Noise carries beyond a preset's: the learned
+/// denoiser's tier and its blend.
+pub fn sync_learned(from: &Edit, onto: &mut Edit) {
+    onto.noise.learned = from.noise.learned;
+    onto.noise.learned_strength = from.noise.learned_strength;
 }
 
 /// `onto` with every leaf that differs between `before` and
@@ -1845,6 +1861,24 @@ mod tests {
         assert_eq!(sidecars[2].current.adjustments.len(), 1);
         assert_eq!(sidecars[2].current.adjustments[0].name, "Sky");
         assert_eq!(sidecars[2].current.adjustments[0].id, 1);
+
+        // Noise carries the learned denoiser in a sync, which a
+        // preset of the same section does not.
+        let mut learned = from.clone();
+        learned.noise.strength = 0.8;
+        learned.noise.learned = Learned::Balanced;
+        learned.noise.learned_strength = 0.6;
+        let moved = sync_into(&mut sidecars, &learned, &[3], &[Section::Noise]);
+        assert_eq!(moved, [3]);
+        assert_eq!(sidecars[3].current.noise, learned.noise);
+        let preset = Preset::from_edit("", &learned, &[Section::Noise]);
+        let laid = preset.applied(&Edit::default());
+        assert_eq!(laid.noise.strength, 0.8);
+        assert_eq!(laid.noise.learned, Learned::Off, "a preset leaves it");
+        // Without Noise chosen, the learned tier stays the frame's.
+        let moved = sync_into(&mut sidecars, &from, &[3], &[Section::Light]);
+        assert!(moved.is_empty(), "light was the source's already");
+        assert_eq!(sidecars[3].current.noise.learned, Learned::Balanced);
 
         // Nothing chosen is nothing done.
         assert!(sync_into(&mut sidecars, &from, &[0], &[]).is_empty());
