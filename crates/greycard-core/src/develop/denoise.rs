@@ -225,8 +225,8 @@ pub(crate) fn band_variances() -> [f32; MAX_BANDS] {
 /// Two passes. The first measures each band's local variance on a
 /// decimated pyramid ([`variance_grids`]); the second runs the à trous
 /// chain over three planes, luma and the two chromas, a band of rows at
-/// a time, and collects the shrunk detail in the caller's buffer, which
-/// the planes are the one other frame this allocates beside.
+/// a time, and collects the shrunk detail in the caller's buffer. The
+/// planes are the one other frame this allocates.
 pub fn denoise_profiled(
     rgb: &mut [f32],
     width: usize,
@@ -1192,6 +1192,12 @@ mod tests {
         assert!((want[0] - 0.79).abs() < 0.02, "{want:?}");
         let grids = variance_grids(&input, w, h, 4);
         for (scale, (grid, &want_var)) in grids.iter().zip(&want).enumerate() {
+            // The three planes are independent draws of the same unit
+            // noise, so their mean is the same estimate on three times
+            // the samples. That matters at scale 3, where a plane is 64
+            // tiles of 64 coefficients and lands several percent off on
+            // its own (channel 0 alone was within 6 percent in the
+            // interleaved layout and is 7.5 percent over in this one).
             let per: [f32; 3] = std::array::from_fn(|c| {
                 grid.values.iter().map(|v| v[c]).sum::<f32>() / grid.values.len() as f32
             });
