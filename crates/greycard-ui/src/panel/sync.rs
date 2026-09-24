@@ -303,6 +303,21 @@ pub(crate) fn apply_preset(
     // hand from the CAMERA PROFILE section, which warns "Made for X,
     // not Y" rather than refusing it.
     let (current_preset, current_left_off) = preset_for_body(st, preset, c, profiles, &probe);
+    // The same tail a set's report gives a left-off frame
+    // (`preset_onto_words`, through `profile_left_off_words`), built
+    // from a `Synced` of one frame so the words are exactly the same
+    // whether the frame reached it alone or as part of a set.
+    let left_off_tail = if current_left_off {
+        profile_left_off_words(
+            st,
+            &Synced {
+                moved: Vec::new(),
+                profile_left_off: vec![c],
+            },
+        )
+    } else {
+        String::new()
+    };
     // With one frame selected, this is otherwise unchanged from
     // before the set existed: the current frame alone, on the panel
     // outside culling and on the sidecar under it.
@@ -314,7 +329,7 @@ pub(crate) fn apply_preset(
             let edit = st.sidecars[c].current.clone();
             let applied = current_preset.applied(&edit);
             if applied == edit {
-                app.set_status(format!("{} is on already", preset.name).into());
+                app.set_status(format!("{} is on already{left_off_tail}", preset.name).into());
                 return;
             }
             st.sidecars[c].record(applied);
@@ -324,7 +339,11 @@ pub(crate) fn apply_preset(
             // sees a difference and never schedules the write: the
             // step just recorded is saved here instead.
             write_sidecar(st, c);
+            // The leaving sets its own status; ours, with the
+            // left-off tail leave_cull cannot know about, is the one
+            // that stands once it has had its say.
             leave_cull(st, app, worker, None);
+            app.set_status(format!("{} applied{left_off_tail}", preset.name).into());
             return;
         }
         // Whatever the panel holds is a state first, then the preset
@@ -332,13 +351,22 @@ pub(crate) fn apply_preset(
         let edit = read_edit(app, &st.edit, st.target);
         let applied = current_preset.applied(&edit);
         if applied == edit {
-            app.set_status(format!("{} is on already", preset.name).into());
+            app.set_status(format!("{} is on already{left_off_tail}", preset.name).into());
             return;
         }
         st.sidecars[c].record(edit);
         st.sidecars[c].record(applied);
-        app.set_status(format!("{} applied", preset.name).into());
+        let said = format!("{} applied{left_off_tail}", preset.name);
+        // As the set's own non-culling branch below: left for the
+        // develop this generation is when one is actually asked for,
+        // so the tail is not lost the moment it lands.
+        let before = st.generation;
         take_current(st, app, worker);
+        if st.generation == before {
+            app.set_status(said.into());
+        } else {
+            st.status_after_develop = Some((st.generation, said));
+        }
         return;
     }
     // Two or more selected: the current frame takes the preset the
@@ -1226,6 +1254,97 @@ mod tests {
             "Light still lands"
         );
         assert_eq!(st.sidecars[1].current.camera.profile.name(), "r5");
+    }
+
+    /// A single-frame click that leaves the camera profile off says
+    /// so too, the same tail a set's report gives a left-off frame,
+    /// and — outside culling — those words survive a real develop
+    /// landing the way a set's do.
+    #[test]
+    fn a_single_frame_click_names_a_left_off_profile_and_the_words_ride_the_develop() {
+        let app = window(1);
+        let (state, worker) = state_for(&app, folder(1));
+        let edit = Edit {
+            camera: greycard_edit::Camera {
+                profile: ProfileChoice::Named("r5".into()),
+            },
+            white_balance: WhiteBalance::Custom {
+                temperature: 3200.0,
+                tint: 0.0,
+            },
+            ..Edit::default()
+        };
+        let preset = Preset::from_edit(
+            "Portra 400",
+            &edit,
+            &[Section::Camera, Section::WhiteBalance],
+        );
+        let profiles = [entry("r5", Some("Canon EOS R5"))];
+        let bodies = |_: &State, _: usize| Some(body("Fujifilm", "X-T5", 100));
+
+        app.invoke_select(0);
+        state.borrow_mut().picked = vec![0];
+        assert!(sync_targets(&state.borrow()).is_empty(), "one frame alone");
+
+        apply_preset(
+            &mut state.borrow_mut(),
+            &app,
+            &worker,
+            &preset,
+            &profiles,
+            bodies,
+        );
+        assert_eq!(
+            app.get_status(),
+            "developing...",
+            "take_current's own word, for now"
+        );
+        let generation = state.borrow().generation;
+        let said = "Portra 400 applied; the camera profile left off IMG_0000.CR3 \
+                     (made for another camera)";
+        assert_eq!(
+            state.borrow().status_after_develop,
+            Some((generation, said.to_string()))
+        );
+        // The profile was left off; the rest of the preset still
+        // landed.
+        let st = state.borrow();
+        assert!(st.sidecars[0].current.camera.profile.is_embedded());
+        assert_eq!(
+            st.sidecars[0].current.white_balance,
+            WhiteBalance::Custom {
+                temperature: 3200.0,
+                tint: 0.0
+            }
+        );
+        drop(st);
+
+        crate::panel::deliver::deliver(
+            &app,
+            crate::worker::Outcome::Developed {
+                generation,
+                image: crate::worker::Developed::Halves(std::sync::Arc::new(
+                    crate::worker::Halves {
+                        width: 60,
+                        height: 40,
+                        pixels: Vec::new(),
+                    },
+                )),
+                guide: std::sync::Arc::new(crate::finish::Guide::NONE),
+                white: crate::worker::WhiteBase::IDENTITY,
+                seconds: 0.1,
+                detail: None,
+                sharpen: None,
+                dehaze: None,
+                sources: Vec::new(),
+                learned: crate::worker::LearnedReport::Off,
+                fills: crate::worker::FillReport::default(),
+            },
+        );
+        let status = app.get_status();
+        assert!(status.starts_with(&format!("{said}; ")), "{status}");
+        assert!(status.ends_with("60x40, developed in 0.10 s"), "{status}");
+        assert!(state.borrow().status_after_develop.is_none(), "taken");
     }
 
     /// In culling, `leave_cull(.., None)` reads the edit to leave with
