@@ -87,6 +87,16 @@ enum Command {
         #[arg(long, value_name = "TIER|ID|all")]
         fetch: Option<String>,
     },
+    /// The library: an index of folders' files, their EXIF and their
+    /// sidecars' meta, and a listing of it by filter
+    Library {
+        /// A database other than the user's (greycard/library.sqlite
+        /// under the platform's data directory)
+        #[arg(long, value_name = "FILE", global = true)]
+        db: Option<PathBuf>,
+        #[command(subcommand)]
+        action: LibraryAction,
+    },
     /// The presets: list them; import Lightroom (.xmp) or greycard
     /// (.gcp) preset files; lay one over files' edits
     Presets {
@@ -350,10 +360,44 @@ enum Command {
     },
 }
 
+#[derive(Subcommand)]
+enum LibraryAction {
+    /// Index folders: a file the index knows by size and mtime is not
+    /// read, a changed sidecar refreshes only its meta, a file found
+    /// under a new path by its content hash is a move. Prints what
+    /// was done and how long it took
+    Index {
+        /// The folders to index
+        dirs: Vec<PathBuf>,
+        /// Their subfolders too, hidden ones left alone
+        #[arg(long)]
+        tree: bool,
+        /// Forget the files last found gone from their paths
+        #[arg(long)]
+        prune: bool,
+    },
+    /// List the files that pass a filter, e.g. `camera:R6 iso>=3200
+    /// rating>=3 flag:pick keyword:wedding date:2026-09`. Words test
+    /// the name and the keywords; `:` on a text field is contains,
+    /// `=` and `!=` the whole value; numbers take `< <= > >=`; a date
+    /// is a prefix, `2026-09`; `missing:yes` lists what is gone
+    List {
+        /// The filter's terms; a value with a space goes in quotes
+        filter: Vec<String>,
+        /// Only the paths, one a line
+        #[arg(long)]
+        paths: bool,
+        /// Only how many
+        #[arg(long)]
+        count: bool,
+    },
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
     log::start(cli.verbose);
     match cli.command {
+        Command::Library { db, action } => library(db, action),
         Command::Info { file } => {
             if greycard_core::picture::is_picture_path(&file) {
                 info_picture(&file)
@@ -1363,6 +1407,115 @@ fn presets(
         }
     }
     Ok(())
+}
+
+/// The library subcommand: the index brought up to date, or listed.
+fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
+    use greycard_library::{Filter, Library};
+    let mut lib = match db {
+        Some(path) => Library::open(&path),
+        None => Library::open_user(),
+    }
+    .context("opening the library")?;
+    match action {
+        LibraryAction::Index { dirs, tree, prune } => {
+            if dirs.is_empty() && !prune {
+                anyhow::bail!("say which folders to index");
+            }
+            for dir in &dirs {
+                let start = std::time::Instant::now();
+                let report = if tree {
+                    lib.index_tree(dir, &mut |_| {})
+                } else {
+                    lib.index_folder(dir, &mut |_| {})
+                }
+                .with_context(|| format!("indexing {}", dir.display()))?;
+                let took = start.elapsed();
+                println!(
+                    "{:<13} {} files in {:.2} s: {} added, {} moved, {} changed, {} meta \
+                     refreshed, {} unchanged, {} returned, {} missing",
+                    "indexed",
+                    report.seen(),
+                    took.as_secs_f32(),
+                    report.added,
+                    report.moved,
+                    report.changed,
+                    report.meta_refreshed,
+                    report.unchanged,
+                    report.returned,
+                    report.missing
+                );
+                for (path, why) in &report.errors {
+                    println!("{:<13} {}: {why}", "not read", path.display());
+                }
+            }
+            if prune {
+                let gone = lib.prune_missing().context("pruning")?;
+                println!("{:<13} {gone} missing files forgotten", "pruned");
+            }
+            lib.checkpoint().ok();
+            println!(
+                "{:<13} {} ({} files, {} bytes)",
+                "library",
+                lib.path().display(),
+                lib.len()?,
+                lib.size_on_disk().unwrap_or(0)
+            );
+            Ok(())
+        }
+        LibraryAction::List {
+            filter,
+            paths,
+            count,
+        } => {
+            let filter = Filter::parse(&filter.join(" "))?;
+            if count {
+                println!("{}", lib.count(&filter)?);
+                return Ok(());
+            }
+            let entries = lib.query(&filter)?;
+            for e in &entries {
+                if paths {
+                    println!("{}", e.path.display());
+                    continue;
+                }
+                let summary = e.exif.shot().summary(&e.exif.make, &e.exif.model);
+                let mut marks = Vec::new();
+                if e.meta.rating > 0 {
+                    marks.push(format!("{}*", e.meta.rating));
+                }
+                if e.meta.flag != greycard_edit::meta::Flag::None {
+                    marks.push(e.meta.flag.name().to_lowercase());
+                }
+                if e.meta.label != greycard_edit::meta::Label::None {
+                    marks.push(e.meta.label.name().to_lowercase());
+                }
+                if !e.meta.keywords.is_empty() {
+                    marks.push(format!("[{}]", e.meta.keywords.join(", ")));
+                }
+                if e.missing {
+                    marks.push("missing".into());
+                }
+                println!("{}", e.path.display());
+                let line: Vec<String> = [
+                    e.exif.taken.clone().unwrap_or_default(),
+                    summary.camera,
+                    summary.exposure,
+                    marks.join(" "),
+                ]
+                .into_iter()
+                .filter(|s| !s.is_empty())
+                .collect();
+                if !line.is_empty() {
+                    println!("              {}", line.join("  "));
+                }
+            }
+            if !paths {
+                println!("{:<13} {} of {}", "listed", entries.len(), lib.len()?);
+            }
+            Ok(())
+        }
+    }
 }
 
 /// A preset's sections, in a row.

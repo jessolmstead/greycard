@@ -17,6 +17,7 @@ greycard-core = { path = "../greycard-core" }
 greycard-ai = { path = "../greycard-ai" }
 greycard-lens = { path = "../greycard-lens" }
 greycard-edit = { path = "../greycard-edit" }
+greycard-library = { path = "../greycard-library" }
 image.workspace = true
 clap.workspace = true
 anyhow.workspace = true

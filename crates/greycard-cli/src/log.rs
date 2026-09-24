@@ -15,12 +15,13 @@ use tracing_subscriber::EnvFilter;
 /// The tool's own target is the binary's name, `greycard`, not the
 /// package's; a directive matches a target only up to a `::`, so it
 /// does not take the other crates with it.
-const OURS: [&str; 5] = [
+const OURS: [&str; 6] = [
     "greycard",
     "greycard_core",
     "greycard_edit",
     "greycard_ai",
     "greycard_lens",
+    "greycard_library",
 ];
 
 pub fn start(verbose: u8) {
