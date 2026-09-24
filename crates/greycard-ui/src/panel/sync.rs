@@ -3,13 +3,18 @@
 //! as one step and each sidecar written where the frame keeps it.
 //!
 //! The sheet is the preset sheet's twin and the work is a preset's:
-//! `greycard_edit::sync_into` builds a `Preset` from the current
-//! frame and applies it, so there is no second copy of what a
-//! section is. Two things are the sync's own, because a sync reads
-//! the frames it lands on and a preset cannot: a named camera
-//! profile goes only to frames of the body it was made for, and a
-//! frame whose learned-denoiser blend was still waiting on its ISO
-//! is given it before the sync makes its edit no longer the default.
+//! `greycard_edit::apply_preset_into` lays a `Preset`'s sections over
+//! each frame, so there is no second copy of what a section is.
+//! [`lay_over_targets`] is the loop both a sync and a preset click
+//! onto two or more selected frames run: a sync builds its `Preset`
+//! from the current frame (`sync_selection`, below); a preset click
+//! (`panel::assets::on_preset_applied`) already has one, from the
+//! store. Two things are the sync's own, because a sync reads the
+//! frames it lands on and a preset cannot: a named camera profile
+//! goes only to frames of the body it was made for, and a frame whose
+//! learned-denoiser blend was still waiting on its ISO is given it
+//! before the sync (or the preset) makes its edit no longer the
+//! default.
 
 use crate::panel::browser::{
     chosen_frames, file_name, migrate_frame, show_badges, show_thumb, thumb_turns,
@@ -65,7 +70,7 @@ fn sync_source(st: &mut State, app: &App) -> Option<Edit> {
 /// A raw frame's make, model and ISO, read from its metadata without
 /// a pixel decoded; `None` for a picture that is not a raw, or a file
 /// that will not say.
-fn probe(st: &State, file: usize) -> Option<greycard_core::decode::Probe> {
+pub(crate) fn probe(st: &State, file: usize) -> Option<greycard_core::decode::Probe> {
     let path = st.files.get(file)?;
     if greycard_core::picture::is_picture_path(path) {
         return None;
@@ -102,48 +107,56 @@ pub(crate) struct Synced {
     pub(crate) profile_left_off: Vec<usize>,
 }
 
-/// Lay `sections` of the current frame over the rest of the set:
-/// one step on each frame's history, each sidecar written with the
-/// placement the setting asks for, each row's picture and badges put
-/// out again. The current frame's edit is not touched.
+/// Lay `preset`'s carried sections over `targets`: one step on each
+/// frame's history, a frame that already matches left alone, each
+/// sidecar written with the placement the setting asks for, each
+/// row's picture and badges put out again. No frame outside `targets`
+/// is touched, so a caller's current frame (a sync's source, or a
+/// preset click's frame on screen) is safe to hand this its own
+/// targets alone.
+///
+/// `learned_from` is a sync's own difference from a plain preset
+/// apply: `Some` source edit, with Noise carried, also carries the
+/// learned denoiser's tier and blend along
+/// (`greycard_edit::sync_learned`); a preset's Noise never does,
+/// since the learned tier is each file's own, so a preset click
+/// passes `None`.
 ///
 /// `profiles` is the profile directory as `camera::list` reads it:
-/// with Camera chosen and a named profile on the source, each target
+/// with Camera carried and a named profile on `preset`, each target
 /// is read for its body and a target the profile was not made for
 /// takes every other section and keeps its own profile.
 ///
 /// A target still waiting on its first open for the learned blend
-/// its ISO asks for (`seed_blend`) is given that blend now when the
-/// sync does not bring one: the sync makes its edit no longer the
-/// default, and the next launch would take that to mean the blend
-/// was seeded already.
-pub(crate) fn sync_selection(
+/// its ISO asks for (`seed_blend`) is given that blend now when this
+/// call does not bring one itself (`learned_from` is `None`): the
+/// call makes the target's edit no longer the default, and the next
+/// launch would take that to mean the blend was seeded already.
+pub(crate) fn lay_over_targets(
     st: &mut State,
     app: &App,
-    sections: &[Section],
+    preset: &Preset,
+    targets: &[usize],
+    learned_from: Option<&Edit>,
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> Synced {
-    let Some(from) = sync_source(st, app) else {
-        return Synced::default();
-    };
-    let targets = sync_targets(st);
     // As a turn does: a sidecar from an older build is brought up to
     // date before anything acts on it, when its shape can be had.
-    for &f in &targets {
+    for &f in targets {
         migrate_frame(st, f);
     }
-    let named = match &from.camera.profile {
-        ProfileChoice::Named(name) if sections.contains(&Section::Camera) => {
+    let named = match &preset.edit.camera.profile {
+        ProfileChoice::Named(name) if preset.sections.contains(&Section::Camera) => {
             Some(profiles.iter().find(|e| &e.name == name))
         }
         _ => None,
     };
-    let seeds = !sections.contains(&Section::Noise);
+    let seeds = learned_from.is_none();
     let mut fits = Vec::new();
     let mut left_off = Vec::new();
     let mut seeded = Vec::new();
-    for &f in &targets {
+    for &f in targets {
         let wants_seed = seeds && st.seed_blend.get(f).copied().unwrap_or(false);
         let probed = (named.is_some() || wants_seed)
             .then(|| probe(st, f))
@@ -166,18 +179,17 @@ pub(crate) fn sync_selection(
             _ => fits.push(f),
         }
     }
-    let mut moved = greycard_edit::sync_into(&mut st.sidecars, &from, &fits, sections);
-    let without: Vec<Section> = sections
-        .iter()
-        .copied()
-        .filter(|s| *s != Section::Camera)
-        .collect();
-    moved.extend(greycard_edit::sync_into(
-        &mut st.sidecars,
-        &from,
-        &left_off,
-        &without,
-    ));
+    let mut moved = greycard_edit::apply_preset_into(&mut st.sidecars, preset, &fits, learned_from);
+    if !left_off.is_empty() {
+        let mut without = preset.clone();
+        without.sections.retain(|s| *s != Section::Camera);
+        moved.extend(greycard_edit::apply_preset_into(
+            &mut st.sidecars,
+            &without,
+            &left_off,
+            learned_from,
+        ));
+    }
     moved.sort_unstable();
     if !seeds {
         // The sync brought the learned blend, which is a choice now
@@ -202,6 +214,50 @@ pub(crate) fn sync_selection(
     }
 }
 
+/// Lay `sections` of the current frame over the rest of the set,
+/// through [`lay_over_targets`]. The current frame's edit is not
+/// touched.
+pub(crate) fn sync_selection(
+    st: &mut State,
+    app: &App,
+    sections: &[Section],
+    profiles: &[camera::Entry],
+    probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
+) -> Synced {
+    let Some(from) = sync_source(st, app) else {
+        return Synced::default();
+    };
+    let targets = sync_targets(st);
+    let preset = Preset::from_edit("", &from, sections);
+    let learned_from = preset.sections.contains(&Section::Noise).then_some(&from);
+    lay_over_targets(st, app, &preset, &targets, learned_from, profiles, probe)
+}
+
+/// The tail every report of a sync or a preset onto a set shares: the
+/// frames the camera profile was left off because it was made for
+/// another body, named up to three, the rest counted.
+fn profile_left_off_words(st: &State, synced: &Synced) -> String {
+    if synced.profile_left_off.is_empty() {
+        return String::new();
+    }
+    let names: Vec<String> = synced
+        .profile_left_off
+        .iter()
+        .take(3)
+        .map(|&f| file_name(&st.files[f]))
+        .collect();
+    let more = synced.profile_left_off.len().saturating_sub(3);
+    format!(
+        "; the camera profile left off {}{} (made for another camera)",
+        names.join(", "),
+        if more > 0 {
+            format!(" and {more} more")
+        } else {
+            String::new()
+        }
+    )
+}
+
 /// The status line after a sync: how much went where, and which
 /// frames kept their own camera profile.
 fn synced_words(st: &State, sections: usize, asked: usize, synced: &Synced) -> String {
@@ -216,24 +272,32 @@ fn synced_words(st: &State, sections: usize, asked: usize, synced: &Synced) -> S
             plural(synced.moved.len())
         )
     };
-    if !synced.profile_left_off.is_empty() {
-        let names: Vec<String> = synced
-            .profile_left_off
-            .iter()
-            .take(3)
-            .map(|&f| file_name(&st.files[f]))
-            .collect();
-        let more = synced.profile_left_off.len().saturating_sub(3);
-        said.push_str(&format!(
-            "; the camera profile left off {}{} (made for another camera)",
-            names.join(", "),
-            if more > 0 {
-                format!(" and {more} more")
-            } else {
-                String::new()
-            }
-        ));
+    said.push_str(&profile_left_off_words(st, synced));
+    said
+}
+
+/// The status line after a preset click lays itself over two or more
+/// selected frames: `moved` is how many of `total` selected frames
+/// took it (the current frame counted in with `synced`'s targets),
+/// with the camera profile note a sync's report also carries.
+pub(crate) fn preset_onto_words(
+    st: &State,
+    name: &str,
+    moved: usize,
+    total: usize,
+    synced: &Synced,
+) -> String {
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    let mut said = if moved == 0 {
+        format!("{name} is on already")
+    } else {
+        format!("{name} onto {moved} frame{}", plural(moved))
+    };
+    let already = total.saturating_sub(moved);
+    if moved > 0 && already > 0 {
+        said.push_str(&format!("; {already} had it already"));
     }
+    said.push_str(&profile_left_off_words(st, synced));
     said
 }
 
@@ -698,5 +762,117 @@ mod tests {
         let st = state.borrow();
         assert_eq!(chosen_frames(&st), vec![2]);
         assert_eq!(st.current, Some(1));
+    }
+
+    /// A preset click with three frames selected lays it over each,
+    /// through `lay_over_targets` the same way a sync does: one step
+    /// per frame that did not have it, a frame that already matches
+    /// left alone, and the frame outside the set untouched.
+    #[test]
+    fn a_preset_click_with_three_selected_lays_it_over_each_and_leaves_the_rest() {
+        let dir = std::env::temp_dir().join(format!("greycard-preset-set-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let files: Vec<PathBuf> = (0..4)
+            .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
+            .collect();
+        let app = window(4);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, files.clone());
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.5;
+        let preset = Preset::from_edit("Portra 400", &edit, &[Section::Light]);
+        {
+            let mut st = state.borrow_mut();
+            st.write_sidecars = true;
+            st.placement = greycard_edit::Placement::Folder;
+            st.presets = vec![Entry {
+                path: PathBuf::new(),
+                preset: preset.clone(),
+            }];
+            // Frame 2 already has the preset's Light on it: it is left
+            // out of what moves.
+            st.sidecars[2].record(preset.applied(&Edit::default()));
+        }
+        app.invoke_select(0);
+        with_modifier(&app, Key::Control, || {
+            let (x, y) = strip_cell(1);
+            click(&app, x, y);
+            let (x, y) = strip_cell(2);
+            click(&app, x, y);
+        });
+        assert_eq!(chosen_frames(&state.borrow()), vec![0, 1, 2]);
+
+        app.invoke_preset_applied(0);
+
+        let st = state.borrow();
+        // The current frame took it, through the panel, as it always
+        // has.
+        assert_eq!(st.sidecars[0].current.light.exposure, 0.5);
+        assert_eq!(st.sidecars[0].history.len(), 1);
+        // The other selected frame took it, through the sidecar, as a
+        // sync's target does.
+        assert_eq!(st.sidecars[1].current.light.exposure, 0.5);
+        assert_eq!(st.sidecars[1].history.len(), 1);
+        // Already had it: no new step.
+        assert_eq!(st.sidecars[2].history.len(), 1);
+        // Outside the set: untouched.
+        assert_eq!(st.sidecars[3], Sidecar::default());
+        assert_eq!(
+            app.get_status(),
+            "Portra 400 onto 2 frames; 1 had it already"
+        );
+
+        // Written where the setting says.
+        let on_disk = Sidecar::path_in(&files[1], greycard_edit::Placement::Folder);
+        assert!(on_disk.exists(), "{}", on_disk.display());
+        let back = Sidecar::load(&files[1]).unwrap().unwrap();
+        assert_eq!(back.current, st.sidecars[1].current);
+        assert!(!Sidecar::path_in(&files[3], greycard_edit::Placement::Folder).exists());
+        drop(st);
+        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+    }
+
+    /// With one frame selected, a preset click is unchanged: the
+    /// current frame alone, "applied" or "is on already", exactly as
+    /// before the set existed.
+    #[test]
+    fn a_preset_click_with_one_frame_selected_is_unchanged() {
+        let dir = std::env::temp_dir().join(format!("greycard-preset-one-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let files: Vec<PathBuf> = (0..2)
+            .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
+            .collect();
+        let app = window(2);
+        let (state, _worker) = state_for(&app, files.clone());
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.5;
+        let preset = Preset::from_edit("Portra 400", &edit, &[Section::Light]);
+        {
+            let mut st = state.borrow_mut();
+            st.write_sidecars = true;
+            st.placement = greycard_edit::Placement::Folder;
+            st.presets = vec![Entry {
+                path: PathBuf::new(),
+                preset,
+            }];
+        }
+        app.invoke_select(0);
+        assert_eq!(chosen_frames(&state.borrow()), vec![0]);
+
+        app.invoke_preset_applied(0);
+        assert_eq!(state.borrow().sidecars[0].current.light.exposure, 0.5);
+        assert_eq!(state.borrow().sidecars[0].history.len(), 1);
+        assert_eq!(app.get_status(), "Portra 400 applied");
+        assert_eq!(state.borrow().sidecars[1], Sidecar::default());
+
+        // Applied again: already on, and nothing else moves.
+        app.invoke_preset_applied(0);
+        assert_eq!(app.get_status(), "Portra 400 is on already");
+        assert_eq!(state.borrow().sidecars[0].history.len(), 1);
+
+        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
     }
 }

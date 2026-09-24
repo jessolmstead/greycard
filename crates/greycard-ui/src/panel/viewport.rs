@@ -291,6 +291,10 @@ pub(crate) enum Shown {
     /// sheet opens, so it is never drawn: the sidecars written, the
     /// status line saying so.
     Synced,
+    /// The first stored preset clicked over the set `--also` made, no
+    /// sheet involved: the current frame through the panel, the rest
+    /// through `panel::sync::lay_over_targets`.
+    PresetOntoSet,
     /// The model sheet, with sample text where the download's goes.
     Fetch,
     /// The lens profiles' download as the first launch offers it.
@@ -316,8 +320,10 @@ impl Shown {
             "settings" => Ok(Self::Settings),
             "sync" => Ok(Self::Sync),
             "synced" => Ok(Self::Synced),
+            "preset-onto-set" => Ok(Self::PresetOntoSet),
             _ => Err(format!(
-                "want export, preset, fetch, lenses, settings, sync or synced, not {name}"
+                "want export, preset, fetch, lenses, settings, sync, synced or \
+                 preset-onto-set, not {name}"
             )),
         }
     }
@@ -343,6 +349,7 @@ impl Shown {
                 app.invoke_sync_open_asked();
                 app.invoke_sync_applied();
             }
+            Self::PresetOntoSet => app.invoke_preset_applied(0),
             Self::Fetch => {
                 app.set_fetch_title("Download the Subject model?".into());
                 app.set_fetch_text(
@@ -1117,6 +1124,7 @@ mod tests {
         assert_eq!(Shown::tool("guide"), Ok(Shown::Guide));
         assert_eq!(Shown::sheet("sync"), Ok(Shown::Sync));
         assert_eq!(Shown::sheet("synced"), Ok(Shown::Synced));
+        assert_eq!(Shown::sheet("preset-onto-set"), Ok(Shown::PresetOntoSet));
         assert!(Shown::sheet("guide").is_err());
         assert!(Shown::tool("export").is_err());
 

@@ -890,23 +890,60 @@ pub fn meta_into(
     (change, moved)
 }
 
+/// Lay `preset`'s carried sections over the current edit of every
+/// frame in `frames`, each as one step of its history; the frames it
+/// moved. `learned_from` is a sync's own difference from a plain
+/// preset apply: `Some` source edit carries its learned denoiser's
+/// tier and blend along with Noise ([`sync_learned`]), which is not
+/// something `Preset::apply` ever does (a preset leaves those to each
+/// file's own ISO, so they are not in `preset.edit` even when the
+/// preset came from [`Preset::from_edit`] and Noise was chosen; the
+/// source edit itself is needed). A frame that already has every
+/// carried section as `preset` has it (and, when asked, the source's
+/// learned tier) records nothing and is left out of what comes back,
+/// so its sidecar is not rewritten. Nothing but `current` and
+/// `history` is touched: the meta, the turn and the snapshots are the
+/// frame's own. A frame past the end of the list is passed over
+/// rather than a panic, as [`meta_into`] does.
+///
+/// This is what both `panel::sync::lay_over_targets` (a sync, and a
+/// preset click over two or more selected frames) build on, so a
+/// section means the same thing however it reaches a frame.
+pub fn apply_preset_into(
+    sidecars: &mut [Sidecar],
+    preset: &Preset,
+    frames: &[usize],
+    learned_from: Option<&Edit>,
+) -> Vec<usize> {
+    if preset.sections.is_empty() {
+        return Vec::new();
+    }
+    frames
+        .iter()
+        .copied()
+        .filter(|&i| {
+            sidecars.get_mut(i).is_some_and(|sidecar| {
+                let mut applied = preset.applied(&sidecar.current);
+                if let Some(from) = learned_from {
+                    sync_learned(from, &mut applied);
+                }
+                sidecar.record(applied)
+            })
+        })
+        .collect()
+}
+
 /// Lay `sections` of `from` over the current edit of every frame in
 /// `frames`, each as one step of its history; the frames it moved.
 ///
 /// This is a preset that is never written: [`Preset::from_edit`]
-/// keeps the chosen sections of `from` and [`Preset::apply`] lays
+/// keeps the chosen sections of `from` and [`apply_preset_into`] lays
 /// them over each frame, so a sync and a preset cannot come to mean
 /// two different things by a section, but for one thing on top: a
 /// sync's Noise brings the learned denoiser and its blend as well
 /// ([`sync_learned`]). A preset leaves those to each file's ISO; a
 /// sync is between frames of one shoot, and a frame taken to the
-/// learned tier is the one the others are meant to look like. A
-/// frame that already has every
-/// chosen section as `from` has it records nothing and is left out
-/// of what comes back, so its sidecar is not rewritten. Nothing but
-/// `current` and `history` is touched: the meta, the turn and the
-/// snapshots are the frame's own. A frame past the end of the list
-/// is passed over rather than a panic, as [`meta_into`] does.
+/// learned tier is the one the others are meant to look like.
 pub fn sync_into(
     sidecars: &mut [Sidecar],
     from: &Edit,
@@ -914,23 +951,8 @@ pub fn sync_into(
     sections: &[Section],
 ) -> Vec<usize> {
     let carried = Preset::from_edit("", from, sections);
-    if carried.sections.is_empty() {
-        return Vec::new();
-    }
     let learned = carried.sections.contains(&Section::Noise);
-    frames
-        .iter()
-        .copied()
-        .filter(|&i| {
-            sidecars.get_mut(i).is_some_and(|sidecar| {
-                let mut applied = carried.applied(&sidecar.current);
-                if learned {
-                    sync_learned(from, &mut applied);
-                }
-                sidecar.record(applied)
-            })
-        })
-        .collect()
+    apply_preset_into(sidecars, &carried, frames, learned.then_some(from))
 }
 
 /// What a sync's Noise carries beyond a preset's: the learned

@@ -187,8 +187,10 @@ struct Cli {
     /// Open this sheet once the picture is up, for a snapshot:
     /// export, preset, fetch (the model sheet, with sample text),
     /// lenses (the lens profiles' first-launch offer), settings, sync
-    /// (over the frames selected) or synced (the sync applied on its
-    /// defaults at once, the sheet never drawn)
+    /// (over the frames selected), synced (the sync applied on its
+    /// defaults at once, the sheet never drawn) or preset-onto-set
+    /// (the first stored preset clicked over the frames selected, no
+    /// sheet involved)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Put this Crop-tab tool in hand once the picture is up, for a

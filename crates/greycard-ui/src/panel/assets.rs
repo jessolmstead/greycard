@@ -2,7 +2,9 @@ use crate::panel::browser::file_name;
 use crate::panel::cull::{control_over_frame, leave_cull};
 use crate::panel::edit::{develop_soon, read_edit, schedule_save};
 use crate::panel::history::take_current;
+use crate::panel::sync;
 use crate::*;
+use greycard_edit::camera;
 
 /// Whether to offer the lens profiles unprompted: only with no
 /// database on the machine, never after a Not now, and once a launch.
@@ -447,32 +449,84 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(preset) = st.presets.get(i as usize).map(|e| e.preset.clone()) else {
                 return;
             };
-            // In culling the panel is not the frame's: the preset goes
-            // over the sidecar's current state, and the leaving
-            // develops it.
-            if st.cull.is_some() {
-                let edit = st.sidecars[c].current.clone();
+            let targets = sync::sync_targets(&st);
+            // With one frame selected, this is unchanged from before
+            // the set existed: the current frame alone, on the panel
+            // outside culling and on the sidecar under it.
+            if targets.is_empty() {
+                // In culling the panel is not the frame's: the preset
+                // goes over the sidecar's current state, and the
+                // leaving develops it.
+                if st.cull.is_some() {
+                    let edit = st.sidecars[c].current.clone();
+                    let applied = preset.applied(&edit);
+                    if applied == edit {
+                        app.set_status(format!("{} is on already", preset.name).into());
+                        return;
+                    }
+                    st.sidecars[c].record(applied);
+                    leave_cull(&mut st, &app, &worker, None);
+                    return;
+                }
+                // Whatever the panel holds is a state first, then the
+                // preset over it.
+                let edit = read_edit(&app, &st.edit, st.target);
                 let applied = preset.applied(&edit);
                 if applied == edit {
                     app.set_status(format!("{} is on already", preset.name).into());
                     return;
                 }
+                st.sidecars[c].record(edit);
                 st.sidecars[c].record(applied);
-                leave_cull(&mut st, &app, &worker, None);
+                app.set_status(format!("{} applied", preset.name).into());
+                take_current(&mut st, &app, &worker);
                 return;
             }
-            // Whatever the panel holds is a state first, then the
-            // preset over it.
-            let edit = read_edit(&app, &st.edit, st.target);
-            let applied = preset.applied(&edit);
-            if applied == edit {
-                app.set_status(format!("{} is on already", preset.name).into());
-                return;
+            // Two or more selected: the current frame takes the
+            // preset the way it always has, and the rest of the set
+            // the way a sync lays sections over its targets.
+            let current_changed = if st.cull.is_some() {
+                let edit = st.sidecars[c].current.clone();
+                let applied = preset.applied(&edit);
+                let changed = applied != edit;
+                if changed {
+                    st.sidecars[c].record(applied);
+                }
+                changed
+            } else {
+                let edit = read_edit(&app, &st.edit, st.target);
+                let applied = preset.applied(&edit);
+                let changed = applied != edit;
+                if changed {
+                    st.sidecars[c].record(edit);
+                    st.sidecars[c].record(applied);
+                }
+                changed
+            };
+            let profiles = camera::list();
+            let synced = sync::lay_over_targets(
+                &mut st,
+                &app,
+                &preset,
+                &targets,
+                None,
+                &profiles,
+                sync::probe,
+            );
+            let moved = synced.moved.len() + usize::from(current_changed);
+            let asked = targets.len() + 1;
+            let said = sync::preset_onto_words(&st, &preset.name, moved, asked, &synced);
+            // The develop (or the leaving of culling) sets its own
+            // "developing..." status; what happened across the set is
+            // the word that stands once it has had its say.
+            if current_changed {
+                if st.cull.is_some() {
+                    leave_cull(&mut st, &app, &worker, None);
+                } else {
+                    take_current(&mut st, &app, &worker);
+                }
             }
-            st.sidecars[c].record(edit);
-            st.sidecars[c].record(applied);
-            app.set_status(format!("{} applied", preset.name).into());
-            take_current(&mut st, &app, &worker);
+            app.set_status(said.into());
         });
     }
     {
