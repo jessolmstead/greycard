@@ -203,7 +203,9 @@ export component EditSlider inherits Rectangle {
     callback changed(float);
 
     height: Theme.control-height + Theme.space-2;
-    property <length> label-width: 68px;
+    // Wider for a section whose labels run long; the sliders of one
+    // block share it so their tracks line up.
+    in property <length> label-width: 68px;
     property <length> value-width: 60px;
     property <length> track-left: label-width;
     property <length> track-right: self.width - value-width;

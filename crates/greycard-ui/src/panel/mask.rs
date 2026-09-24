@@ -116,20 +116,22 @@ pub(crate) fn show_range(shape: &Shape, app: &App) {
 pub(crate) fn read_range(shape: &mut Shape, app: &App) {
     match shape {
         Shape::Luminance { .. } => {
+            let low = app.get_lum_low().clamp(0.0, 1.0);
             *shape = Shape::Luminance {
-                low: app.get_lum_low().clamp(0.0, 1.0),
-                high: app.get_lum_high().clamp(0.0, 1.0),
+                low,
+                high: app.get_lum_high().clamp(low, 1.0),
                 low_feather: app.get_lum_low_feather().clamp(0.0, 1.0),
                 high_feather: app.get_lum_high_feather().clamp(0.0, 1.0),
             }
         }
         Shape::Color { .. } => {
+            let chroma = app.get_range_chroma().max(0.0);
             *shape = Shape::Color {
                 hue: app.get_range_hue().rem_euclid(360.0),
                 width: app.get_range_width().clamp(0.0, 360.0),
                 hue_feather: app.get_range_hue_feather().clamp(0.0, 180.0),
-                chroma: app.get_range_chroma().max(0.0),
-                chroma_feather: app.get_range_chroma_feather().max(0.0),
+                chroma,
+                chroma_feather: app.get_range_chroma_feather().clamp(0.0, chroma),
             }
         }
         _ => {}
@@ -747,9 +749,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     }],
                     boxes: Vec::new(),
                 },
-                s @ (Shape::Subject {} | Shape::Luminance { .. } | Shape::Color { .. }) => {
-                    s.clone()
-                }
+                s @ (Shape::Subject {}
+                | Shape::Luminance { .. }
+                | Shape::Color { .. }
+                | Shape::Unknown) => s.clone(),
             };
             let name = shape.name();
             let component = Component {
@@ -857,7 +860,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         placing.boxed = true;
                     }
                 }
-                Shape::Subject {} | Shape::Luminance { .. } | Shape::Color { .. } => {}
+                Shape::Subject {}
+                | Shape::Luminance { .. }
+                | Shape::Color { .. }
+                | Shape::Unknown => {}
             }
             app.window().request_redraw();
         });
@@ -920,7 +926,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     | Shape::Subject {}
                     | Shape::Object { .. }
                     | Shape::Luminance { .. }
-                    | Shape::Color { .. } => true,
+                    | Shape::Color { .. }
+                    | Shape::Unknown => true,
                 });
             if drawn {
                 app.set_status("".into());
@@ -1110,10 +1117,32 @@ mod tests {
             read(&app).adjustments[0].mask.components[1].shape,
             Shape::skin()
         );
+        // A fade longer than the floor is read as the floor: it cannot
+        // run under no chroma.
+        app.set_range_chroma(0.02);
+        app.set_range_chroma_feather(0.05);
+        let Shape::Color {
+            chroma,
+            chroma_feather,
+            ..
+        } = read(&app).adjustments[0].mask.components[1].shape
+        else {
+            panic!()
+        };
+        assert_eq!((chroma, chroma_feather), (0.02, 0.02));
+        app.invoke_skin_preset();
         // Back to the luminance: its own numbers on the sliders.
         app.invoke_component_changed(0);
         assert_eq!(app.get_component_kind(), "Luminance");
         assert_eq!(app.get_lum_low(), 0.5);
         assert_eq!(app.get_lum_high_feather(), 0.2);
+        // High under Low is read as High at Low.
+        app.set_lum_low(0.8);
+        app.set_lum_high(0.2);
+        let Shape::Luminance { low, high, .. } = read(&app).adjustments[0].mask.components[0].shape
+        else {
+            panic!()
+        };
+        assert_eq!((low, high), (0.8, 0.8));
     }
 }

@@ -142,20 +142,40 @@ impl Local {
     pub fn reads_picture(&self) -> bool {
         self.enabled && self.mask.reads_picture()
     }
+
+    /// Whether it reads the picture's color, switched on.
+    pub fn reads_color(&self) -> bool {
+        self.enabled && self.mask.reads_color()
+    }
 }
 
 /// The picture at a pixel as the range masks read it
-/// ([`greycard_edit::mask::Sample`]): `px`, the developed working-space
-/// pixel before any look, at `exposure` stops (the source's baseline
-/// and the global exposure, nothing local), to Oklab; its lightness
-/// its own, its a and b `ab`, the source's mean about it
+/// ([`greycard_edit::mask::Sample`]): `px`, a pixel of the picture the
+/// finish is handed, at `exposure` stops, to Oklab; its lightness its
+/// own, not clipped, its a and b `ab`, the mean about it
 /// ([`local_ab`]), brought to that exposure, when given, else its own.
+///
+/// What that pixel has been through: the whole develop — the white
+/// balance, the camera profile, the denoise, the lens corrections, the
+/// Detail section (texture, clarity, dehaze) and the capture sharpen —
+/// and the geometry, and in an export made smaller the resize, but not
+/// the output sharpen after it (`export::render` hands the finish the
+/// picture from before it). None of the look: not the tone controls,
+/// the curves, the mixer, the color, the tint, a look table, the
+/// vignette or any local. So a range mask never moves under its own
+/// adjustment or another's, and the Detail section moves one a little:
+/// dehaze at 0.6 took 5% of a sky window's pixels out on `3G0A4650`.
+///
+/// `exposure` is the global exposure alone, not the baseline a raw is
+/// shown brighter by (`Source::baseline`), so a lightness of 1 is the
+/// sensor's white at an exposure of nothing and the highlights above
+/// the display's white stay apart on the scale.
 pub fn sample(px: [f32; 3], ab: Option<[f32; 2]>, exposure: f32) -> Sample {
     let gain = 2f32.powf(exposure);
     let lab = oklab(px.map(|v| v * gain));
     let [a, b] = ab.map_or([lab[1], lab[2]], |ab| ab.map(|v| v * gain.cbrt()));
     Sample {
-        lightness: lab[0].clamp(0.0, 1.0),
+        lightness: lab[0],
         a,
         b,
     }
@@ -952,9 +972,14 @@ fn decode(v: f32) -> f32 {
 /// `position` too and a crop, a turn or a resize all find the same
 /// region they would in the viewport; `source` is that picture's width
 /// in pixels, which is what `position`'s units are.
+///
+/// `sampled` is the picture the range masks read ([`sample`]) when it
+/// is not `image`: an export's, from before its output sharpen, the
+/// same size. The mixer reads `image`.
 #[allow(clippy::too_many_arguments)]
 pub fn finish_with<T: Copy + Default + Send>(
     image: &WorkingImage,
+    sampled: Option<&WorkingImage>,
     global: &Baked,
     locals: &[Local],
     position: impl Fn(usize, usize) -> (f32, f32) + Sync,
@@ -966,15 +991,23 @@ pub fn finish_with<T: Copy + Default + Send>(
 ) -> Vec<T> {
     // The mean the mixer and the black and white read a hue from,
     // only when one of them acts.
-    // The range masks read the same mean, and their sample at the
-    // global exposure alone.
-    let sampled = locals.iter().any(Local::reads_picture);
     let reference = (global.mixer.enabled
         || global.bw.enabled
-        || sampled
         || locals.iter().any(|l| l.enabled && l.baked.mixer.enabled))
     .then(|| local_ab(image));
-    let exposure = global.source.baseline() + global.light.exposure;
+    // The range masks' sample, at the global exposure alone, and the
+    // same mean of their picture only when a color window reads it:
+    // the mixer's when that is the same picture.
+    let reads = locals.iter().any(Local::reads_picture);
+    let source = sampled.filter(|s| s.width == image.width && s.height == image.height);
+    let mean = locals
+        .iter()
+        .any(Local::reads_color)
+        .then(|| match (&reference, source) {
+            (Some(_), None) => None,
+            _ => Some(local_ab(source.unwrap_or(image))),
+        });
+    let exposure = global.light.exposure;
     let mut out = vec![T::default(); image.width * image.height * 3];
     out.par_chunks_mut(image.width * 3)
         .zip(image.data.par_chunks(image.width * 3))
@@ -990,10 +1023,19 @@ pub fn finish_with<T: Copy + Default + Send>(
             {
                 on.clear();
                 let mut g = None;
-                let ab = reference.as_ref().map(|r| r[y * image.width + x]);
+                let i = y * image.width + x;
+                let ab = reference.as_ref().map(|r| r[i]);
                 if !locals.is_empty() || guide.is_some() {
                     let (u, v) = position(x, y);
-                    let s = sampled.then(|| sample(*px, ab, exposure));
+                    let s = reads.then(|| {
+                        let px = source.map_or(*px, |s| s.pixel(x, y));
+                        let mean_ab = match &mean {
+                            Some(Some(m)) => Some(m[i]),
+                            Some(None) => ab,
+                            None => None,
+                        };
+                        sample(px, mean_ab, exposure)
+                    });
                     for local in locals.iter().filter(|l| l.enabled) {
                         let w = local.weight_sampled(u, v, s);
                         if w > 0.0 {
@@ -1219,6 +1261,7 @@ mod tests {
         let look = lut::Look::new(Arc::new(table), 0.7).unwrap();
         let out: Vec<u8> = finish_with(
             &image,
+            None,
             &global,
             &[],
             |_, _| (0.0, 0.0),
@@ -1236,6 +1279,7 @@ mod tests {
         // And it is not the picture without one.
         let bare: Vec<u8> = finish_with(
             &image,
+            None,
             &global,
             &[],
             |_, _| (0.0, 0.0),
@@ -2952,8 +2996,10 @@ mod tests {
         assert!(grey.a.abs() < 1e-4 && grey.b.abs() < 1e-4);
         let up = sample([0.18; 3], None, 1.0);
         assert!((up.lightness - 2f32.cbrt() * grey.lightness).abs() < 2e-3);
-        // Past display white it is clipped at the top of the scale.
-        assert_eq!(sample([4.0; 3], None, 0.0).lightness, 1.0);
+        // The sensor's white is 1, and past it the scale goes on: a
+        // highlight is not clipped into the ones under it.
+        assert!((sample([1.0; 3], None, 0.0).lightness - 1.0).abs() < 2e-3);
+        assert!((sample([4.0; 3], None, 0.0).lightness - 4f32.cbrt()).abs() < 5e-3);
         // The hue is the pixel's, whatever the exposure; its chroma
         // takes the cube root of the gain, as Oklab's a and b do, and
         // a mean handed in is used in place of the pixel's own.
@@ -3006,6 +3052,7 @@ mod tests {
         let render = |global: &Baked, locals: &[Local]| -> Vec<u8> {
             finish_with(
                 &image,
+                None,
                 global,
                 locals,
                 |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
@@ -3055,6 +3102,28 @@ mod tests {
         let blue = render(&global, &[local(Shape::color_at(250.0), 1.0)]);
         assert_eq!(px(&blue, 3), want(3, 1.0));
         assert_eq!(px(&blue, 2), px(&bare, 2));
+        // Handed a picture of its own to sample (an export's, before
+        // its output sharpen), the masks read that one and the finish
+        // the other: here the sample has the dark and the bright
+        // greys swapped, so the push lands on the dark one.
+        let mut swapped = image.clone();
+        for (i, px) in swapped.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+            *px = colors[[1, 0, 2, 3][(i % w) / 5]];
+        }
+        let out = finish_with(
+            &image,
+            Some(&swapped),
+            &global,
+            std::slice::from_ref(&lum),
+            |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
+            |_, _| (0.0, None),
+            None,
+            None,
+            &m,
+            |v| (v * 255.0).round() as u8,
+        );
+        assert_eq!(px(&out, 0), want(0, 1.0));
+        assert_eq!(px(&out, 1), px(&bare, 1));
     }
 }
 
@@ -3141,6 +3210,7 @@ mod shipped_presets {
     fn render(edit: &Edit) -> Vec<u8> {
         finish_with(
             &a_frame(),
+            None,
             &Baked::global(edit, Source::Scene),
             &[],
             |_, _| (0.0, 0.0),

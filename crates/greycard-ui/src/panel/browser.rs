@@ -541,6 +541,18 @@ pub(crate) fn load_sidecars(files: &[PathBuf], write_sidecars: bool) -> (Vec<Sid
             };
             let (mut sidecar, seed) = match Sidecar::load(f) {
                 Ok(Some(s)) => {
+                    // A shape from a later build: loaded as nothing,
+                    // the rest of the edit kept, and gone on the next
+                    // save.
+                    let unknown: usize =
+                        s.current.adjustments.iter().map(|a| a.mask.unknown()).sum();
+                    if unknown > 0 {
+                        tracing::warn!(
+                            "{}: sidecar: {unknown} mask shape(s) of a kind this build does not know; \
+                             left out, and dropped when the edit is saved",
+                            file_name(f)
+                        );
+                    }
                     let raw = !greycard_core::picture::is_picture_path(f);
                     let seed = raw && files::never_developed(&s);
                     (s, seed)

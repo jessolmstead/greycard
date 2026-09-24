@@ -654,7 +654,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 | Shape::Subject {}
                                 | Shape::Object { .. }
                                 | Shape::Luminance { .. }
-                                | Shape::Color { .. } => {}
+                                | Shape::Color { .. }
+                                | Shape::Unknown => {}
                             }
                             sync_rows(&st.mask_handles, handles);
                             app.set_mask_kind(component.shape.name().into());

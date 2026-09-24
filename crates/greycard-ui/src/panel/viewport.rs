@@ -838,7 +838,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     let px: [f32; 3] =
                         std::array::from_fn(|r| m[r][0] * px[0] + m[r][1] * px[1] + m[r][2] * px[2]);
                     let edit = read_edit(&app, &st.edit, st.target);
-                    let s = finish::sample(px, None, st.source.baseline() + edit.light.exposure);
+                    let s = finish::sample(px, None, edit.light.effective().exposure);
                     app.set_range_hue(s.hue());
                     // Under the floor the hue is the pixel's noise, and
                     // the window would not take it in anyway: say so.

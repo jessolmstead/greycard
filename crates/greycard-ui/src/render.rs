@@ -139,11 +139,28 @@ struct Params {
     /// The working space to the table's primaries and back, rows.
     look_in: [[f32; 4]; 3],
     look_out: [[f32; 4]; 3],
-    /// The range masks: in x whether a live shape reads the picture,
-    /// so the shader samples it once a pixel (`finish::sample`); in y
-    /// whether to draw the shown mask's weight alone, as grey, in
-    /// place of the picture, for measuring it against the CPU's.
+    /// The range masks: in x what of the picture a live shape reads,
+    /// so the shader samples it once a pixel (`finish::sample`): 0
+    /// nothing, 1 its lightness, 2 its color too, which is the mean
+    /// about it. In y whether to draw the shown mask's weight alone,
+    /// as grey, in place of the picture, for measuring it against the
+    /// CPU's; in z the sample's exposure, the global one without the
+    /// baseline.
     range: [f32; 4],
+}
+
+/// What of the picture the view's masks read, as `Params::range.x`
+/// has it: switched on or not, since a switched-off adjustment's mask
+/// can still be shown, and its weight is made whatever its switch.
+fn range_reads(locals: &[Local]) -> f32 {
+    let locals = &locals[..locals.len().min(MAX_LOCALS)];
+    if locals.iter().any(|l| l.mask.reads_color()) {
+        2.0
+    } else if locals.iter().any(|l| l.mask.reads_picture()) {
+        1.0
+    } else {
+        0.0
+    }
 }
 
 /// Eight band values as two vec4s.
@@ -252,6 +269,16 @@ impl ShapeGpu {
             // Without its raster — a model still working, its weights
             // not there, a brush not painted — it is nothing, as the
             // CPU reads a missing raster, and it takes no layer.
+            // Never uploaded (`Mask::live` leaves it out); nothing if
+            // it were.
+            Shape::Unknown => Self {
+                kind: 3,
+                flags,
+                layer: 0,
+                pad: 0,
+                a: [0.0; 4],
+                b: [0.0; 4],
+            },
             Shape::Brush { .. } | Shape::Subject {} | Shape::Object { .. } => match raster {
                 Some(r) => Self {
                     kind: 2,
@@ -1321,13 +1348,9 @@ impl Renderer {
             look_in: self.look.to_lut,
             look_out: self.look.from_lut,
             range: [
-                if v.locals.iter().take(MAX_LOCALS).any(Local::reads_picture) {
-                    1.0
-                } else {
-                    0.0
-                },
+                range_reads(&v.locals),
                 if v.mask_alone { 1.0 } else { 0.0 },
-                0.0,
+                v.light.exposure,
                 0.0,
             ],
         };
@@ -2269,7 +2292,7 @@ mod tests {
         let mut renderer = Renderer::new(device, queue);
         renderer.upload(&halves);
         let ab = local_ab(&seen);
-        let stops = Source::Scene.baseline() + exposure;
+        let stops = exposure;
         let mut worst = 0.0f32;
         let mut sum = 0.0f64;
         for (k, local) in locals.iter().enumerate() {
@@ -2333,8 +2356,9 @@ mod tests {
     }
 
     /// The masks the checks run: a luminance window, a color one at
-    /// the skin preset and one at a blue, and a color window
-    /// intersected with a drawn gradient.
+    /// the skin preset and one at a blue, and each kind intersected
+    /// with a drawn gradient: the skin, which a real frame of browns
+    /// and reds has plenty of, and the lightness from 30 up.
     fn range_locals() -> Vec<Local> {
         vec![
             local_of(vec![(
@@ -2351,24 +2375,37 @@ mod tests {
             local_of(vec![
                 (
                     Shape::Linear {
-                        from: [0.0, 0.0],
-                        to: [0.0, 0.6],
+                        from: [0.0, 0.7],
+                        to: [0.0, 0.0],
                     },
                     Mode::Add,
                 ),
-                (Shape::color_at(140.0), Mode::Intersect),
+                (Shape::skin(), Mode::Intersect),
+            ]),
+            local_of(vec![
+                (
+                    Shape::Linear {
+                        from: [0.0, 0.0],
+                        to: [0.0, 0.8],
+                    },
+                    Mode::Add,
+                ),
+                (
+                    Shape::Luminance {
+                        low: 0.3,
+                        high: 1.0,
+                        low_feather: 0.1,
+                        high_feather: 0.0,
+                    },
+                    Mode::Intersect,
+                ),
             ]),
         ]
     }
 
-    /// The shader's range masks are the CPU's, on a field that runs
-    /// every hue across and every lightness down, with a little noise
-    /// so the local mean has something to do.
-    #[test]
-    fn the_shaders_range_masks_are_the_cpus() {
-        let Some((device, queue)) = device("the range masks' GPU check") else {
-            return;
-        };
+    /// A field that runs every hue across and every lightness down,
+    /// with a little noise so the local mean has something to do.
+    fn field() -> WorkingImage {
         let (w, h) = (360usize, 240usize);
         let ok = greycard_core::color::Oklab::for_working_space();
         let from_lms = greycard_core::color::invert3(ok.to_lms).unwrap();
@@ -2384,15 +2421,96 @@ mod tests {
                 data.extend(greycard_core::color::apply3(&from_lms, lms).map(|v| v.max(0.0)));
             }
         }
-        let image = WorkingImage {
+        WorkingImage {
             width: w,
             height: h,
             data,
+        }
+    }
+
+    /// The shader's range masks are the CPU's, on the field.
+    #[test]
+    fn the_shaders_range_masks_are_the_cpus() {
+        let Some((device, queue)) = device("the range masks' GPU check") else {
+            return;
         };
+        let image = field();
         let (worst, mean) = gpu_against_cpu(&device, &queue, &image, &range_locals(), -0.3, true);
         eprintln!("range masks, GPU against CPU: max {worst:.4}, mean {mean:.5}");
         assert!(worst <= 3.0 / 255.0, "max {worst}");
         assert!(mean <= 0.5 / 255.0, "mean {mean}");
+    }
+
+    /// A switched-off adjustment's mask can still be shown, and its
+    /// range shapes read the picture for it even when no switched-on
+    /// one does: not an empty sample, which painted a window from 0
+    /// over the whole frame and a color window over none of it.
+    #[test]
+    fn a_switched_off_range_mask_shows_what_it_would_take() {
+        let off = |shape: Shape| {
+            let mut l = local_of(vec![(shape, Mode::Add)]);
+            l.enabled = false;
+            l
+        };
+        let dark = off(Shape::Luminance {
+            low: 0.0,
+            high: 0.3,
+            low_feather: 0.0,
+            high_feather: 0.05,
+        });
+        let color = off(Shape::color_at(250.0));
+        assert_eq!(range_reads(std::slice::from_ref(&dark)), 1.0);
+        assert_eq!(range_reads(&[dark.clone(), color.clone()]), 2.0);
+        assert_eq!(range_reads(&[local_of(vec![])]), 0.0);
+        let Some((device, queue)) = device("the switched-off range mask's check") else {
+            return;
+        };
+        let image = field();
+        for local in [dark, color] {
+            let (worst, _) = gpu_against_cpu(
+                &device,
+                &queue,
+                &image,
+                std::slice::from_ref(&local),
+                0.0,
+                true,
+            );
+            assert!(worst <= 3.0 / 255.0, "max {worst}");
+        }
+    }
+
+    /// The mixer reads the mean the color windows made, brought to its
+    /// own exposure, rather than making it again: a picture with the
+    /// mixer on and a color window whose look does nothing is the
+    /// picture without the window, to the byte.
+    #[test]
+    fn the_mixer_reads_the_color_windows_mean() {
+        let Some((device, queue)) = device("the shared mean's check") else {
+            return;
+        };
+        let image = field();
+        let (w, h) = (image.width, image.height);
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        let mut view = View::blank();
+        view.center = (w as f32 / 2.0, h as f32 / 2.0);
+        view.plane = (w as f32, h as f32);
+        view.frame_size = (w as f32, h as f32);
+        view.light.exposure = 0.7;
+        view.mixer.enabled = true;
+        view.mixer.hue[1] = 20.0;
+        view.mixer.saturation[5] = 0.6;
+        let mut shot = |view: &View| {
+            let target = renderer.render(w as u32, h as u32, view);
+            renderer.read_back(&target).expect("read back")
+        };
+        let without = shot(&view);
+        view.locals = vec![local_of(vec![(Shape::color_at(250.0), Mode::Add)])];
+        let with = shot(&view);
+        assert!(with == without, "the window changed the mixer's picture");
+        // And the mixer does act, so the check is of something.
+        view.mixer.enabled = false;
+        assert!(shot(&view) != without);
     }
 
     /// The same on a real frame, developed at the defaults, with the
@@ -2428,7 +2546,7 @@ mod tests {
                 for x in 0..w {
                     let i = y * w + x;
                     let px = image.pixel(x, y);
-                    let s = Some(sample(px, Some(ab[i]), Source::Scene.baseline()));
+                    let s = Some(sample(px, Some(ab[i]), 0.0));
                     let (u, v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32);
                     for l in &locals {
                         acc += l.weight_sampled(u, v, s);
@@ -2443,16 +2561,46 @@ mod tests {
             locals.len(),
             (start.elapsed() - mean_took).as_secs_f64() * 1e3
         );
+        // And what an export's finish pays whole, the least of five:
+        // with no local, a luminance window alone (no mean), a color
+        // window.
+        let global = Baked::global(&greycard_edit::Edit::default(), Source::Scene);
+        let to_out = crate::export::Space::Srgb.matrix();
+        let once = |locals: &[Local]| {
+            let start = std::time::Instant::now();
+            let out: Vec<u8> = crate::finish::finish_with(
+                &image,
+                None,
+                &global,
+                locals,
+                |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
+                |_, _| (0.0, None),
+                None,
+                None,
+                &to_out,
+                |v| (v * 255.0).round() as u8,
+            );
+            std::hint::black_box(out);
+            start.elapsed().as_secs_f64() * 1e3
+        };
+        let finish = |locals: &[Local]| (0..5).map(|_| once(locals)).fold(f64::MAX, f64::min);
+        eprintln!(
+            "finish: no local {:.0} ms, a luminance window {:.0} ms, a color window {:.0} ms",
+            finish(&[]),
+            finish(&locals[..1]),
+            finish(&locals[1..2])
+        );
         let Some((device, queue)) = device("the real frame's GPU check") else {
             return;
         };
-        let (worst, mean) = gpu_against_cpu(&device, &queue, &image, &locals, 0.0, false);
+        let (worst, mean) = gpu_against_cpu(&device, &queue, &image, &locals, 0.0, true);
         eprintln!("real frame, GPU against CPU: max {worst:.4}, mean {mean:.5}");
-        // Across a 45 MP texture the sampler's fixed-point position
-        // lands a hair off a texel's center and blends in a 256th of
-        // its neighbor, which a steep feather turns into a few levels
-        // on a few dozen pixels. The middle of the frame on its own,
-        // where the positions are small, is the two implementations.
+        // A few dozen pixels on the whole frame are a few levels out,
+        // all in the luminance window's steep high fade, where a small
+        // difference in what the shader reads for a pixel is multiplied
+        // by the fade's slope; the same pixels cut out on a texture of
+        // their own agree to half a level. Which difference in the
+        // read that is has not been pinned down.
         assert!(worst <= 4.0 / 255.0, "max {worst}");
         let (cw, ch) = (1024.min(w), 1024.min(h));
         let (x0, y0) = ((w - cw) / 2, (h - ch) / 2);

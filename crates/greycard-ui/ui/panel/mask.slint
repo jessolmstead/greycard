@@ -410,7 +410,11 @@ export component AdjustmentsSection inherits Section {
                     step: 0.01;
                     value <=> root.lum-low;
                     text: round(root.lum-low * 100);
-                    changed(v) => { root.view-changed(); }
+                    // Low pushes High ahead of it.
+                    changed(v) => {
+                        if (root.lum-high < v) { root.lum-high = v; }
+                        root.view-changed();
+                    }
                 }
                 EditSlider {
                     label: "Low fade";
@@ -430,7 +434,10 @@ export component AdjustmentsSection inherits Section {
                     step: 0.01;
                     value <=> root.lum-high;
                     text: round(root.lum-high * 100);
-                    changed(v) => { root.view-changed(); }
+                    changed(v) => {
+                        if (root.lum-low > v) { root.lum-low = v; }
+                        root.view-changed();
+                    }
                 }
                 EditSlider {
                     label: "High fade";
@@ -464,6 +471,7 @@ export component AdjustmentsSection inherits Section {
                 }
                 EditSlider {
                     label: "Hue";
+                    label-width: 84px;
                     tinted: true;
                     tint: root.hue-circle;
                     minimum: 0;
@@ -476,6 +484,7 @@ export component AdjustmentsSection inherits Section {
                 }
                 EditSlider {
                     label: "Width";
+                    label-width: 84px;
                     minimum: 0;
                     maximum: 180;
                     default: 60;
@@ -486,6 +495,7 @@ export component AdjustmentsSection inherits Section {
                 }
                 EditSlider {
                     label: "Hue fade";
+                    label-width: 84px;
                     minimum: 0;
                     maximum: 90;
                     default: 25;
@@ -496,23 +506,32 @@ export component AdjustmentsSection inherits Section {
                 }
                 EditSlider {
                     label: "Chroma";
+                    label-width: 84px;
                     minimum: 0;
                     maximum: 0.2;
                     default: 0.02;
                     step: 0.001;
                     value <=> root.range-chroma;
                     text: round(root.range-chroma * 1000) / 10;
-                    changed(v) => { root.view-changed(); }
+                    // The fade runs down to no chroma at most.
+                    changed(v) => {
+                        if (root.range-chroma-feather > v) { root.range-chroma-feather = v; }
+                        root.view-changed();
+                    }
                 }
                 EditSlider {
-                    label: "Fade";
+                    label: "Chroma fade";
+                    label-width: 84px;
                     minimum: 0;
                     maximum: 0.1;
                     default: 0.01;
                     step: 0.001;
                     value <=> root.range-chroma-feather;
                     text: round(root.range-chroma-feather * 1000) / 10;
-                    changed(v) => { root.view-changed(); }
+                    changed(v) => {
+                        if (v > root.range-chroma) { root.range-chroma-feather = root.range-chroma; }
+                        root.view-changed();
+                    }
                 }
             }
         }

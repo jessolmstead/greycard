@@ -160,13 +160,21 @@ pub enum Shape {
         chroma: f32,
         chroma_feather: f32,
     },
+    /// A shape this build does not know, from a sidecar written by a
+    /// later one: loaded so the rest of the edit is not lost with it,
+    /// counted as nothing (not even joined, as a shape switched off
+    /// is not), and dropped when the mask is written again.
+    #[serde(other)]
+    Unknown,
 }
 
 /// The picture at a point, as the range shapes read it: the developed
 /// picture there before any look — before the mask's own adjustments,
 /// before the global tone and color — brought to the picture's global
-/// exposure, in Oklab. `lightness` is the pixel's own L, clipped to 0
-/// to 1; `a` and `b` are the mean of a small box about it, the one the
+/// exposure (not the baseline a raw is shown brighter by), in Oklab.
+/// `lightness` is the pixel's own L, not clipped: 1 is the sensor's
+/// white at an exposure of nothing, and a highlight past it reads
+/// more. `a` and `b` are the mean of a small box about it, the one the
 /// mixer reads a hue from, so a color window does not pick noise.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Sample {
@@ -241,6 +249,12 @@ impl Shape {
         matches!(self, Shape::Luminance { .. } | Shape::Color { .. })
     }
 
+    /// Whether the shape reads the picture's color, which is the mean
+    /// about a pixel and costs a pass of its own.
+    pub fn is_color(&self) -> bool {
+        matches!(self, Shape::Color { .. })
+    }
+
     /// A range shape's value for the picture's `sample` at a point;
     /// nothing for any other shape.
     pub fn of_sample(&self, s: Sample) -> f32 {
@@ -250,13 +264,25 @@ impl Shape {
                 high,
                 low_feather,
                 high_feather,
-            } => window(
-                s.lightness.clamp(0.0, 1.0),
-                low,
-                high,
-                low_feather,
-                high_feather,
-            ),
+            } => {
+                // High under Low is High at Low: the sliders push one
+                // another, and a sidecar written by hand is read so.
+                let high = high.max(low);
+                // An edge at an end of the scale is open: a window up
+                // to 1 takes the highlights past the sensor's white,
+                // one down from 0 everything under it.
+                let rise = if low <= 0.0 {
+                    1.0
+                } else {
+                    smoothstep(low - low_feather.max(0.0), low, s.lightness)
+                };
+                let fall = if high >= 1.0 {
+                    1.0
+                } else {
+                    smoothstep(-high - high_feather.max(0.0), -high, -s.lightness)
+                };
+                rise * fall
+            }
             Shape::Color {
                 hue,
                 width,
@@ -264,11 +290,19 @@ impl Shape {
                 chroma,
                 chroma_feather,
             } => {
+                // No chroma, no hue: a true grey is in no color's window.
+                let c = s.chroma();
+                if c <= 0.0 {
+                    return 0.0;
+                }
                 let d = (s.hue() - hue + 180.0).rem_euclid(360.0) - 180.0;
                 let half = (width * 0.5).max(0.0);
                 let h = window(d.abs(), 0.0, half, 0.0, hue_feather.max(0.0));
-                let c = smoothstep(chroma - chroma_feather.max(0.0), chroma, s.chroma());
-                h * c
+                // The fade runs down from the floor to no chroma at
+                // most: under that there is nothing to fade to.
+                let floor = chroma.max(0.0);
+                let fade = chroma_feather.clamp(0.0, floor);
+                h * smoothstep(floor - fade, floor, c)
             }
             _ => 0.0,
         }
@@ -313,7 +347,7 @@ impl Shape {
                     stroke.turn(t);
                 }
             }
-            Shape::Subject {} | Shape::Luminance { .. } | Shape::Color { .. } => {}
+            Shape::Subject {} | Shape::Luminance { .. } | Shape::Color { .. } | Shape::Unknown => {}
             Shape::Object { picks, boxes } => {
                 for pick in picks {
                     pick.pos = t.pos(pick.pos);
@@ -403,6 +437,9 @@ impl Default for Component {
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Mask {
+    /// Its shapes in order; one this build does not know
+    /// ([`Shape::Unknown`]) is not written back.
+    #[serde(serialize_with = "known_only")]
     pub components: Vec<Component>,
     pub invert: bool,
 }
@@ -456,7 +493,8 @@ impl Shape {
             | Shape::Subject {}
             | Shape::Object { .. }
             | Shape::Luminance { .. }
-            | Shape::Color { .. } => Vec::new(),
+            | Shape::Color { .. }
+            | Shape::Unknown => Vec::new(),
             Shape::Linear { from, to } => vec![
                 ((from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0),
                 (from[0], from[1]),
@@ -487,7 +525,8 @@ impl Shape {
             | Shape::Subject {}
             | Shape::Object { .. }
             | Shape::Luminance { .. }
-            | Shape::Color { .. } => self.clone(),
+            | Shape::Color { .. }
+            | Shape::Unknown => self.clone(),
             Shape::Linear { from, to } => match handle {
                 1 => Shape::Linear {
                     from: [p.0, p.1],
@@ -550,6 +589,7 @@ impl Shape {
             Shape::Object { .. } => "Object",
             Shape::Luminance { .. } => "Luminance",
             Shape::Color { .. } => "Color",
+            Shape::Unknown => "Unknown shape",
         }
     }
 
@@ -579,7 +619,8 @@ impl Shape {
             | Shape::Subject {}
             | Shape::Object { .. }
             | Shape::Luminance { .. }
-            | Shape::Color { .. } => 0.0,
+            | Shape::Color { .. }
+            | Shape::Unknown => 0.0,
             Shape::Linear { from, to } => {
                 let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
                 let len2 = dx * dx + dy * dy;
@@ -666,7 +707,21 @@ impl Mask {
         self.components
             .iter()
             .enumerate()
-            .filter(|(_, c)| c.enabled)
+            .filter(|(_, c)| c.enabled && c.shape != Shape::Unknown)
+    }
+
+    /// Whether a live shape reads the picture's color, so the caller
+    /// has to make the mean about each pixel.
+    pub fn reads_color(&self) -> bool {
+        self.live().any(|(_, c)| c.shape.is_color())
+    }
+
+    /// How many of its shapes this build does not know.
+    pub fn unknown(&self) -> usize {
+        self.components
+            .iter()
+            .filter(|c| c.shape == Shape::Unknown)
+            .count()
     }
 
     /// Whether a live shape reads the picture, so the caller has to
@@ -679,8 +734,13 @@ impl Mask {
     /// Either way the adjustment does nothing, and the callers turn
     /// their local off rather than blend a mask of zeroes.
     pub fn is_empty(&self) -> bool {
-        self.components.iter().all(|c| !c.enabled)
+        self.live().next().is_none()
     }
+}
+
+/// A mask's components as written: the ones this build knows.
+fn known_only<S: serde::Serializer>(components: &[Component], s: S) -> Result<S::Ok, S::Error> {
+    s.collect_seq(components.iter().filter(|c| c.shape != Shape::Unknown))
 }
 
 /// Hermite's step from `e0` to `e1`, a hard step when they meet, `e1`
@@ -1235,5 +1295,118 @@ mod tests {
         let m: Mask = serde_json::from_str(written).unwrap();
         assert_eq!(m.components[0].mode, Mode::Intersect);
         assert_eq!(m.components[0].shape.name(), "Color");
+    }
+
+    #[test]
+    fn a_luminance_window_is_open_at_the_ends_and_high_never_under_low() {
+        let at = |w: &Shape, l: f32| w.of_sample(lab(l, 0.0, 0.0));
+        // Pushed to the top, it takes what is past the sensor's white;
+        // to the bottom, what is under nothing (a negative channel's
+        // cube root), whatever the fades say.
+        let top = Shape::Luminance {
+            low: 0.9,
+            high: 1.0,
+            low_feather: 0.0,
+            high_feather: 0.3,
+        };
+        assert_eq!(at(&top, 1.0), 1.0);
+        assert_eq!(at(&top, 1.8), 1.0);
+        let bottom = Shape::Luminance {
+            low: 0.0,
+            high: 0.2,
+            low_feather: 0.3,
+            high_feather: 0.0,
+        };
+        assert_eq!(at(&bottom, 0.0), 1.0);
+        assert_eq!(at(&bottom, -0.1), 1.0);
+        // Short of the top, the high edge falls as ever: a highlight
+        // past it is out.
+        let bright = Shape::Luminance {
+            low: 0.7,
+            high: 0.95,
+            low_feather: 0.0,
+            high_feather: 0.02,
+        };
+        assert_eq!(at(&bright, 0.95), 1.0);
+        assert_eq!(at(&bright, 1.2), 0.0);
+        // High under Low is High at Low: not a mask of nothing, nor a
+        // bump between the two fades.
+        let crossed = Shape::Luminance {
+            low: 0.8,
+            high: 0.2,
+            low_feather: 0.0,
+            high_feather: 0.0,
+        };
+        assert_eq!(at(&crossed, 0.8), 1.0);
+        assert_eq!(at(&crossed, 0.5), 0.0);
+        let soft = Shape::Luminance {
+            low: 0.5,
+            high: 0.4,
+            low_feather: 0.1,
+            high_feather: 0.1,
+        };
+        assert_eq!(at(&soft, 0.5), 1.0);
+        assert!(at(&soft, 0.45) < 1.0 && at(&soft, 0.55) < 1.0);
+    }
+
+    #[test]
+    fn a_grey_has_no_hue_and_the_chroma_fade_stops_at_none() {
+        // A floor of nothing and no fade: every color at its hue, and
+        // no true grey, which has no hue to be in the window by.
+        let bare = Shape::Color {
+            hue: 0.0,
+            width: 20.0,
+            hue_feather: 0.0,
+            chroma: 0.0,
+            chroma_feather: 0.0,
+        };
+        assert_eq!(bare.of_sample(lab(0.5, 0.0, 0.0)), 0.0);
+        assert_eq!(bare.of_sample(lab(0.5, 5.0, 0.001)), 1.0);
+        // A fade longer than the floor is the floor: it starts at no
+        // chroma, so a grey is out and half the floor is half in.
+        let long = Shape::Color {
+            hue: 0.0,
+            width: 20.0,
+            hue_feather: 0.0,
+            chroma: 0.02,
+            chroma_feather: 0.05,
+        };
+        assert_eq!(long.of_sample(lab(0.5, 0.0, 0.0)), 0.0);
+        assert!((long.of_sample(lab(0.5, 0.0, 0.01)) - 0.5).abs() < 1e-5);
+        assert_eq!(long.of_sample(lab(0.5, 0.0, 0.02)), 1.0);
+    }
+
+    #[test]
+    fn a_shape_from_a_later_build_is_nothing_and_the_rest_is_kept() {
+        // A made-up kind between two shapes this build knows, with
+        // fields of its own; the intersection it is in is not left
+        // multiplied by nothing.
+        let json = r#"{"components":[
+            {"shape":{"kind":"radial","center":[0.5,0.5],"radius":[0.2,0.2],
+                "angle":0.0,"feather":0.0},"mode":"add","invert":false},
+            {"shape":{"kind":"depth","near":0.2,"far":[1,2]},"mode":"intersect",
+                "invert":false,"enabled":true},
+            {"shape":{"kind":"luminance","low":0.5,"high":1.0,"low_feather":0.1,
+                "high_feather":0.0},"mode":"subtract","invert":false}],
+            "invert":false}"#;
+        let mask: Mask = serde_json::from_str(json).unwrap();
+        assert_eq!(mask.components.len(), 3);
+        assert_eq!(mask.components[1].shape, Shape::Unknown);
+        assert_eq!(mask.unknown(), 1);
+        assert_eq!(mask.at(0.5, 0.5), 1.0);
+        assert_eq!(mask.live().count(), 2);
+        assert!(mask.reads_picture());
+        // Written again, it is gone and the others are as they were.
+        let back: Mask = serde_json::from_str(&serde_json::to_string(&mask).unwrap()).unwrap();
+        assert_eq!(back.components.len(), 2);
+        assert_eq!(back.components[0], mask.components[0]);
+        assert_eq!(back.components[1], mask.components[2]);
+        // A mask of nothing but one is empty, not everywhere.
+        let only: Mask = serde_json::from_str(
+            r#"{"components":[{"shape":{"kind":"depth"},"mode":"add"}],"invert":true}"#,
+        )
+        .unwrap();
+        assert!(only.is_empty());
+        assert_eq!(only.at(0.5, 0.5), 0.0);
     }
 }

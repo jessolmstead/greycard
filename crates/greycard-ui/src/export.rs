@@ -340,9 +340,22 @@ pub fn render(
 ) -> Rendered {
     let framed = image.width as f32;
     let fitted;
+    // The range masks read the picture from before the output
+    // sharpen, so an export at any size samples the stage the
+    // viewport does (`finish::sample`); kept only when one reads it.
+    let unsharpened;
+    let mut sampled = None;
+    let reads = edit
+        .adjustments
+        .iter()
+        .any(|a| a.enabled && a.mask.reads_picture());
     let image = match fit(image, settings.long_edge) {
         Some(mut f) => {
             if let Some(options) = settings.sharpen.options() {
+                if reads {
+                    unsharpened = f.clone();
+                    sampled = Some(&unsharpened);
+                }
                 sharpen::sharpen(&mut f, &options, None, clip_level);
             }
             fitted = f;
@@ -412,6 +425,7 @@ pub fn render(
     let pixels = match settings.format {
         Format::Tiff => Pixels::Sixteen(finish::finish_with(
             image,
+            sampled,
             &global,
             &locals,
             position,
@@ -423,6 +437,7 @@ pub fn render(
         )),
         Format::Jpeg | Format::Png => Pixels::Eight(finish::finish_with(
             image,
+            sampled,
             &global,
             &locals,
             position,

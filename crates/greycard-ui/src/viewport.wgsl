@@ -127,9 +127,11 @@ struct Params {
     look_out0: vec4<f32>,
     look_out1: vec4<f32>,
     look_out2: vec4<f32>,
-    // The range masks: in x whether a live shape reads the picture, so
-    // it is sampled once here; in y draw the shown mask's weight alone,
-    // as grey, for measuring it against `Local::weight_sampled`.
+    // The range masks: in x what a live shape reads, so it is sampled
+    // once here: 0 nothing, 1 the lightness, 2 the color too (the
+    // mean about the pixel); in y draw the shown mask's weight alone,
+    // as grey, for measuring it against `Local::weight_sampled`; in z
+    // the sample's exposure, the global one without the baseline.
     range: vec4<f32>,
 };
 
@@ -326,14 +328,23 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var weights: array<f32, 16>;
     let uv = at / p.image.x;
     // The picture as the range masks read it, as `finish::sample`:
-    // the source before any look, at the global exposure alone (the
-    // baseline in it, the vignette and the locals not), in Oklab; its
-    // own lightness, clipped to 0 to 1, and the mean a and b about it.
+    // the source before any look, at the global exposure alone (not
+    // the baseline, the vignette or the locals), in Oklab; its own
+    // lightness, not clipped, and for a color window the mean a and b
+    // about it. The mean is made once, at no exposure, and kept for
+    // the mixer below.
     var sample = vec3<f32>(0.0);
+    var mean = vec2<f32>(0.0);
+    var have_mean = false;
     if (p.range.x > 0.5) {
-        let c0 = vec3<f32>(dot(p.w0.xyz, t), dot(p.w1.xyz, t), dot(p.w2.xyz, t)) * exp2(p.exposure);
-        let lab0 = to_oklab(c0);
-        sample = vec3<f32>(clamp(lab0.x, 0.0, 1.0), local_ab(at) * exp2(p.exposure / 3.0));
+        let gain = exp2(p.range.z);
+        let lab0 = to_oklab(vec3<f32>(dot(p.w0.xyz, t), dot(p.w1.xyz, t), dot(p.w2.xyz, t)) * gain);
+        sample = lab0;
+        if (p.range.x > 1.5) {
+            mean = local_ab(at);
+            have_mean = true;
+            sample = vec3<f32>(lab0.x, mean * exp2(p.range.z / 3.0));
+        }
     }
     for (var k = 0u; k < count; k = k + 1u) {
         let l = locals[k];
@@ -371,7 +382,10 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         var ab = vec2<f32>(0.0);
         let by_mean = look.mixer || look.bw;
         if (by_mean) {
-            ab = local_ab(at) * exp2(look.exposure / 3.0);
+            if (!have_mean) {
+                mean = local_ab(at);
+            }
+            ab = mean * exp2(look.exposure / 3.0);
         }
         c = mix_color(c, look, ab, by_mean);
     }
@@ -583,14 +597,28 @@ fn shape_at(sh: Shape, uv: vec2<f32>, sample: vec3<f32>) -> f32 {
         // its mode and its invert still act, as they do there.
         s = 0.0;
     } else if (sh.kind == 4u) {
-        s = range_window(sample.x, sh.a.x, sh.a.y, sh.a.z, sh.a.w);
+        // High never under low; an edge at an end of the scale open.
+        let low = sh.a.x;
+        let high = max(sh.a.y, low);
+        var rise = 1.0;
+        if (low > 0.0) {
+            rise = step_up(low - sh.a.z, low, sample.x);
+        }
+        var fall = 1.0;
+        if (high < 1.0) {
+            fall = step_up(-high - sh.a.w, -high, -sample.x);
+        }
+        s = rise * fall;
     } else if (sh.kind == 5u) {
-        // No chroma is hue 0, as Rust's atan2 has it; WGSL's is not
-        // pinned down there.
-        let hue = select(0.0, wrap360(degrees(atan2(sample.z, sample.y))), length(sample.yz) > 0.0);
-        let d = abs(wrap360(hue - sh.a.x + 180.0) - 180.0);
-        s = range_window(d, 0.0, sh.a.y, 0.0, sh.a.z)
-            * step_up(sh.a.w - sh.b.x, sh.a.w, length(sample.yz));
+        // No chroma, no hue: a true grey is in no window.
+        let chroma = length(sample.yz);
+        if (chroma > 0.0) {
+            let hue = wrap360(degrees(atan2(sample.z, sample.y)));
+            let d = abs(wrap360(hue - sh.a.x + 180.0) - 180.0);
+            let floor_c = max(sh.a.w, 0.0);
+            let fade = clamp(sh.b.x, 0.0, floor_c);
+            s = range_window(d, 0.0, sh.a.y, 0.0, sh.a.z) * step_up(floor_c - fade, floor_c, chroma);
+        }
     } else {
         let sc = vec2<f32>(sin(sh.b.x), cos(sh.b.x));
         let dxy = uv - sh.a.xy;
