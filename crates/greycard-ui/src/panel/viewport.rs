@@ -282,6 +282,11 @@ pub(crate) enum Shown {
     Export,
     /// The preset sheet, as Save preset opens it.
     Preset,
+    /// The sync sheet over the set `--also` made.
+    Sync,
+    /// The sync sheet answered with Apply on its defaults: the
+    /// sidecars written, the status line saying so.
+    Synced,
     /// The model sheet, with sample text where the download's goes.
     Fetch,
     /// The lens profiles' download as the first launch offers it.
@@ -305,8 +310,10 @@ impl Shown {
             "fetch" => Ok(Self::Fetch),
             "lenses" => Ok(Self::Lenses),
             "settings" => Ok(Self::Settings),
+            "sync" => Ok(Self::Sync),
+            "synced" => Ok(Self::Synced),
             _ => Err(format!(
-                "want export, preset, fetch, lenses or settings, not {name}"
+                "want export, preset, fetch, lenses, settings, sync or synced, not {name}"
             )),
         }
     }
@@ -327,6 +334,11 @@ impl Shown {
         match self {
             Self::Export => app.set_export_open(true),
             Self::Preset => app.invoke_preset_save_open(),
+            Self::Sync => app.invoke_sync_open_asked(),
+            Self::Synced => {
+                app.invoke_sync_open_asked();
+                app.invoke_sync_applied();
+            }
             Self::Fetch => {
                 app.set_fetch_title("Download the Subject model?".into());
                 app.set_fetch_text(
@@ -1068,6 +1080,8 @@ mod tests {
         let (_state, _worker) = crate::testing::retouch_state(&app);
         assert_eq!(Shown::sheet("export"), Ok(Shown::Export));
         assert_eq!(Shown::tool("guide"), Ok(Shown::Guide));
+        assert_eq!(Shown::sheet("sync"), Ok(Shown::Sync));
+        assert_eq!(Shown::sheet("synced"), Ok(Shown::Synced));
         assert!(Shown::sheet("guide").is_err());
         assert!(Shown::tool("export").is_err());
 

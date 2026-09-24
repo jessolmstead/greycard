@@ -132,7 +132,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             }
             app.set_sync_open(false);
             let asked = sync_targets(&st).len();
+            let start = std::time::Instant::now();
             let moved = sync_selection(&mut st, &app, &sections);
+            let took = start.elapsed();
             let said = if moved.is_empty() {
                 format!(
                     "the other {asked} frame{} had these already",
@@ -147,7 +149,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                     if moved.len() == 1 { "" } else { "s" }
                 )
             };
-            tracing::info!("{said}");
+            tracing::info!("{said} in {:.1} ms", took.as_secs_f64() * 1e3);
             app.set_status(said.into());
         });
     }

@@ -178,7 +178,8 @@ struct Cli {
     patch: Option<usize>,
     /// Open this sheet once the picture is up, for a snapshot:
     /// export, preset, fetch (the model sheet, with sample text),
-    /// lenses (the lens profiles' first-launch offer) or settings
+    /// lenses (the lens profiles' first-launch offer), settings, sync
+    /// (over the set `--also` makes) or synced (the same, applied)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Put this Crop-tab tool in hand once the picture is up, for a
@@ -261,6 +262,11 @@ struct Cli {
     /// --cull, the develop otherwise — for a snapshot of it
     #[arg(long, value_name = "N", hide = true)]
     turn: Option<i32>,
+    /// Put these browser rows (from 0, comma-separated) in the
+    /// selection beside the frame opened, as Ctrl+clicks would, for
+    /// a snapshot of a set or `--sheet sync`
+    #[arg(long, value_name = "ROWS", value_delimiter = ',', hide = true)]
+    also: Vec<usize>,
     /// In culling mode, open the move-rejects sheet once the first
     /// picture shows, for a snapshot of it (implies --cull)
     #[arg(long, hide = true)]
@@ -365,6 +371,8 @@ pub(crate) struct State {
     /// develop then runs where every later one does, so a screenshot
     /// or an export shows the same path a session would.
     pub(crate) select_at_start: Option<usize>,
+    /// `--also`: rows put in the set once the first frame is opened.
+    pub(crate) also_at_start: Vec<usize>,
     /// The white balance of the image on the GPU.
     pub(crate) base_white: Option<WhiteBase>,
     /// The open frame and its profile, for the white balance preview.
@@ -615,6 +623,7 @@ impl State {
             filter: filter::Filter::default(),
             compare_tiles: Rc::new(VecModel::default()),
             select_at_start: None,
+            also_at_start: Vec::new(),
             base_white: None,
             frame: None,
             source: finish::Source::Scene,

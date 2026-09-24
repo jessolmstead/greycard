@@ -292,6 +292,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         turn_at_start: cli.turn.filter(|q| q.rem_euclid(4) != 0),
         awaiting_turn: cli.turn.is_some_and(|q| q.rem_euclid(4) != 0),
         ask_rejects: cli.ask_rejects || cli.move_rejects,
+        also_at_start: cli.also.clone(),
         move_rejects: cli.move_rejects,
         cull_at_start: (cli.cull
             || cli.cull_compare.is_some()
@@ -438,6 +439,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             slint::Timer::single_shot(std::time::Duration::ZERO, move || {
                                 if let Some(app) = app_weak.upgrade() {
                                     app.invoke_select(row as i32);
+                                    // `--also`: Ctrl+clicks on those rows.
+                                    let also = STATE
+                                        .with(|s| s.borrow().clone())
+                                        .map(|s| std::mem::take(&mut s.borrow_mut().also_at_start))
+                                        .unwrap_or_default();
+                                    for r in also {
+                                        app.invoke_frame_clicked(r as i32, true, false);
+                                    }
                                 }
                             });
                         }
