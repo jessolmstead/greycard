@@ -430,8 +430,12 @@ impl Worker {
 
     /// Look thumbnails up in `cache`, and keep the ones made, from
     /// the next thumbnail on.
+    /// The cache's one walk to count what it holds starts at once, on
+    /// a thread of its own, so neither the window nor a thumbnail waits
+    /// on it.
     pub fn set_thumb_cache(&self, cache: Option<Thumbs>) {
         *self.thumbs.lock().expect("thumbnail cache") = cache;
+        count_thumb_cache(&self.thumbs, |_| {});
     }
 
     /// The thumbnail cache, for the settings sheet.
@@ -1939,83 +1943,143 @@ fn blend(model: &Arc<WorkingImage>, plain: &Arc<WorkingImage>, strength: f32) ->
 }
 
 /// How [`thumbnail`] makes a picture, as the cache's entries record
-/// it: raise it when the picture it makes changes (the downscale, the
-/// turn, the fallback develop), and every entry made the old way is a
-/// miss and is made again.
+/// it in their names: raise it when the picture it makes changes (the
+/// downscale, the turn, rawler's choice of preview, or the fallback
+/// develop through `DevelopSettings::default()`, whose definition in
+/// core names this constant), and every entry made the old way is a
+/// miss and is made again. The long edge is in the key already, so a
+/// change of the sizes made (`grid::MADE`) needs no bump.
 pub const THUMB_RECIPE: u16 = 1;
 
-/// What a cache entry for `path` must have been made under: this
-/// recipe, and for a picture file or a DNG its modification time as
-/// well. A re-export can leave a picture's head and length as they
-/// were while its pixels change; a DNG keeps its IFD0, its
-/// orientation and its previews wherever its writer put them — at
-/// the end, for DNGLab's — and Lightroom's "Update DNG previews" or
-/// an orientation set in place by a metadata tool rewrites them
-/// without touching the first 64 KB or, often, the length. The other
-/// raws carry their orientation tag and their preview's directory in
-/// the head, and nothing rewrites them in place, so their entries
-/// need only the hash. The cost of the stamp: a DNG copied without
-/// its modification time (a plain `cp`, not a move or a rename) is
-/// made once more.
-fn thumb_tag(path: &std::path::Path) -> Tag {
-    let dng = path
-        .extension()
-        .is_some_and(|e| e.eq_ignore_ascii_case("dng"));
-    let stamp = if dng || is_picture_path(path) {
-        std::fs::metadata(path)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map_or(0, |d| d.as_nanos() as u64)
-    } else {
-        0
-    };
+/// Count what `cache` holds on a thread of its own, walking the disk
+/// without its lock, and hand `then` what is known after: the count
+/// seeded, or the one some write had already made. A walk over a few
+/// hundred thousand entries takes a second or more, which is not the
+/// window's to wait through. Nothing to count is `None`.
+pub fn count_thumb_cache(
+    cache: &ThumbCache,
+    then: impl FnOnce(Option<greycard_library::thumbs::Usage>) + Send + 'static,
+) {
+    let cache = cache.clone();
+    let spawned = std::thread::Builder::new()
+        .name("thumbnail cache count".into())
+        .spawn(move || {
+            let root = cache
+                .lock()
+                .expect("thumbnail cache")
+                .as_ref()
+                .map(|c| c.root().to_path_buf());
+            let Some(root) = root else {
+                return then(None);
+            };
+            let counted = greycard_library::thumbs::usage_at(&root);
+            let known = cache
+                .lock()
+                .expect("thumbnail cache")
+                .as_mut()
+                .and_then(|c| {
+                    c.seed_usage(counted);
+                    c.known_usage()
+                });
+            then(known);
+        });
+    if let Err(e) = spawned {
+        tracing::warn!("thumbnail cache not counted: {e}");
+    }
+}
+
+/// A file's length and modification time in nanoseconds, the two a
+/// change to it past its first 64 KB shows in.
+fn file_stat(path: &std::path::Path) -> Option<(u64, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_nanos() as u64);
+    Some((meta.len(), mtime))
+}
+
+/// What a cache entry for a file of this stat must have been made
+/// under: this recipe and the file's modification time. The hash reads
+/// the head and the length, and a file can change past its head with
+/// neither moving: a picture re-exported (an uncompressed TIFF
+/// retouched in its lower half), a DNG's previews or orientation
+/// rewritten in place (DNGLab's IFD0 is at the end of the file), and a
+/// raw still being copied by a copier that set its length first —
+/// Windows' CopyFile, `rsync --preallocate`, many card importers — whose
+/// preview is half zeros and decodes mostly grey. The time tells all
+/// three apart. A move or rename keeps it; the cost is one more making
+/// of each thumbnail after a copy that does not keep it (`cp` without
+/// `-p`, a drag to another disk on some desktops).
+fn thumb_tag(stat: (u64, u64)) -> Tag {
     Tag {
         recipe: THUMB_RECIPE,
-        stamp,
+        stamp: stat.1,
     }
 }
 
 /// A file's thumbnail from the cache when it holds one for the file's
-/// content, else made by [`thumbnail`] and kept. The lookup costs the
-/// content hash, a read of the file's first 64 KB, and nothing else
-/// of the file; a cache that cannot be read or written is a miss and
-/// a thumbnail made, never an error of its own. Says whether it came
-/// from the cache.
+/// content, else made by [`thumbnail`] and kept. The lookup costs a
+/// stat and the content hash, a read of the file's first 64 KB, and
+/// nothing else of the file; a cache that cannot be read or written is
+/// a miss and a thumbnail made, never an error of its own. Says
+/// whether it came from the cache.
 fn cached_thumbnail(
     cache: &ThumbCache,
     path: &std::path::Path,
     size: u32,
 ) -> anyhow::Result<(Thumb, bool)> {
-    let on = cache.lock().expect("thumbnail cache").is_some();
-    let key = if on {
-        match greycard_library::hash_file(path) {
-            Ok(hash) => Some((hash, thumb_tag(path))),
-            Err(e) => {
-                tracing::debug!("thumbnail {}: not hashed: {e}", path.display());
-                None
-            }
+    cached_thumbnail_with(cache, path, size, thumbnail)
+}
+
+/// [`cached_thumbnail`] with the making handed in, for the tests. The
+/// file is stat'd before it is hashed and again after the picture is
+/// made, and a picture made while the file was changing — its length
+/// or its time moved — is shown but not kept: it may be of a file
+/// half written, and kept under the key the finished file will have.
+fn cached_thumbnail_with(
+    cache: &ThumbCache,
+    path: &std::path::Path,
+    size: u32,
+    make: impl FnOnce(&std::path::Path, u32) -> anyhow::Result<(u32, u32, Vec<u8>)>,
+) -> anyhow::Result<(Thumb, bool)> {
+    let on = cache
+        .lock()
+        .expect("thumbnail cache")
+        .as_ref()
+        .is_some_and(|c| c.cap() > 0);
+    let before = if on { file_stat(path) } else { None };
+    let key = before.and_then(|stat| match greycard_library::hash_file(path) {
+        Ok(hash) => Some((hash, thumb_tag(stat))),
+        Err(e) => {
+            tracing::debug!("thumbnail {}: not hashed: {e}", path.display());
+            None
         }
-    } else {
-        None
-    };
+    });
     if let Some((hash, tag)) = &key {
         let hit = cache
             .lock()
             .expect("thumbnail cache")
-            .as_ref()
+            .as_mut()
             .and_then(|c| c.get(hash, size, *tag));
         if let Some(thumb) = hit {
             return Ok((thumb, true));
         }
     }
-    let (width, height, rgb) = thumbnail(path, size)?;
+    let (width, height, rgb) = make(path, size)?;
     let thumb = Thumb { width, height, rgb };
-    if let Some((hash, tag)) = key
-        && let Some(c) = cache.lock().expect("thumbnail cache").as_mut()
-        && let Err(e) = c.put(&hash, size, tag, &thumb)
-    {
-        tracing::debug!("thumbnail {}: not cached: {e}", path.display());
+    if let Some((hash, tag)) = key {
+        if file_stat(path) != before {
+            tracing::debug!(
+                "thumbnail {}: the file changed while it was made; not cached",
+                path.display()
+            );
+        } else if let Some(c) = cache.lock().expect("thumbnail cache").as_mut()
+            && let Err(e) = c.put(&hash, size, tag, &thumb)
+        {
+            tracing::debug!("thumbnail {}: not cached: {e}", path.display());
+        }
     }
     Ok((thumb, false))
 }
@@ -2436,7 +2500,12 @@ mod tests {
             .unwrap()
             .as_mut()
             .unwrap()
-            .put(&hash, THUMB_WIDTH, thumb_tag(&raw), &kept)
+            .put(
+                &hash,
+                THUMB_WIDTH,
+                thumb_tag(file_stat(&raw).unwrap()),
+                &kept,
+            )
             .unwrap();
         // Renamed into another folder: still the cache's.
         let moved_dir = dir.join("renamed");
@@ -2487,28 +2556,147 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A DNG's entry is stamped with its modification time, which a
-    /// rename keeps and a rewrite in place does not; a CR3's is not.
-    #[test]
-    fn a_dng_is_stamped_and_a_cr3_is_not() {
-        let dir = thumb_scratch("stamp");
-        let dng = dir.join("A.dng");
-        let cr3 = dir.join("B.CR3");
-        std::fs::write(&dng, b"dng").unwrap();
-        std::fs::write(&cr3, b"cr3").unwrap();
-        let tag = thumb_tag(&dng);
-        assert_ne!(tag.stamp, 0);
-        assert_eq!(thumb_tag(&cr3).stamp, 0);
-        let renamed = dir.join("wedding-A.DNG");
-        std::fs::rename(&dng, &renamed).unwrap();
-        assert_eq!(thumb_tag(&renamed), tag);
+    /// A stand-in for the decode: a picture whose every byte is the
+    /// file's last, which is zero while a preallocated copy has not
+    /// reached its tail, as a cut preview decodes grey.
+    fn tail_picture(path: &std::path::Path, _size: u32) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+        let bytes = std::fs::read(path)?;
+        let last = *bytes.last().unwrap_or(&0);
+        Ok((4, 3, vec![last; 36]))
+    }
+
+    fn set_time(path: &std::path::Path, secs_from_now: u64) {
         std::fs::File::options()
             .write(true)
-            .open(&renamed)
+            .open(path)
             .unwrap()
-            .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(9))
+            .set_modified(
+                std::time::SystemTime::now() + std::time::Duration::from_secs(secs_from_now),
+            )
             .unwrap();
-        assert_ne!(thumb_tag(&renamed), tag);
+    }
+
+    /// The review's recipe: a raw whose copier set its length first
+    /// and has written only its head. Its key is already the finished
+    /// file's, so what keeps the half-made picture from standing for
+    /// the finished file is the time the copy moves on.
+    #[test]
+    fn a_raw_caught_half_copied_is_made_again_when_the_copy_ends() {
+        let dir = thumb_scratch("halfcopied");
+        let whole: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8 | 1).collect();
+        let raw = dir.join("DSC_1981.NEF");
+        // `truncate -s` to the full length, then the first 192 KB.
+        let mut half = vec![0u8; whole.len()];
+        half[..196_608].copy_from_slice(&whole[..196_608]);
+        std::fs::write(&raw, &half).unwrap();
+        let cache = cache_at(&dir);
+        let (grey, cached) = cached_thumbnail_with(&cache, &raw, 176, tail_picture).unwrap();
+        assert!(!cached);
+        assert!(grey.rgb.iter().all(|v| *v == 0));
+        // The same head and the same length: the same hash.
+        let before = greycard_library::hash_file(&raw).unwrap();
+        std::fs::write(&raw, &whole).unwrap();
+        set_time(&raw, 7);
+        assert_eq!(greycard_library::hash_file(&raw).unwrap(), before);
+        let (done, cached) = cached_thumbnail_with(&cache, &raw, 176, tail_picture).unwrap();
+        assert!(
+            !cached,
+            "the half-copied picture is not the finished file's"
+        );
+        assert!(done.rgb.iter().all(|v| *v == *whole.last().unwrap()));
+        // And the finished file's picture is kept, and a rename keeps
+        // its time and finds it.
+        let renamed = dir.join("wedding-1981.NEF");
+        std::fs::rename(&raw, &renamed).unwrap();
+        let (again, cached) = cached_thumbnail_with(&cache, &renamed, 176, tail_picture).unwrap();
+        assert!(cached);
+        assert_eq!(again.rgb, done.rgb);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file that grows or is touched while its picture is being made
+    /// gets the picture shown and not kept.
+    #[test]
+    fn a_file_changing_under_the_making_is_not_kept() {
+        let dir = thumb_scratch("changing");
+        let raw = dir.join("IMG_0002.CR3");
+        std::fs::write(&raw, vec![5u8; 80_000]).unwrap();
+        let cache = cache_at(&dir);
+        let grows = |path: &std::path::Path, size: u32| {
+            let made = tail_picture(path, size);
+            let mut f = std::fs::File::options().append(true).open(path).unwrap();
+            std::io::Write::write_all(&mut f, &[9u8; 1000]).unwrap();
+            made
+        };
+        let (_, cached) = cached_thumbnail_with(&cache, &raw, 176, grows).unwrap();
+        assert!(!cached);
+        let touched = |path: &std::path::Path, size: u32| {
+            let made = tail_picture(path, size);
+            set_time(path, 30);
+            made
+        };
+        let (_, cached) = cached_thumbnail_with(&cache, &raw, 176, touched).unwrap();
+        assert!(!cached);
+        assert_eq!(
+            cache.lock().unwrap().as_ref().unwrap().usage().entries,
+            0,
+            "neither was kept"
+        );
+        // Left alone, it is made once and kept.
+        let (_, cached) = cached_thumbnail_with(&cache, &raw, 176, tail_picture).unwrap();
+        assert!(!cached);
+        let (_, cached) = cached_thumbnail_with(&cache, &raw, 176, tail_picture).unwrap();
+        assert!(cached);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A cache with a cap of nothing is off: nothing looked up, nothing
+    /// written, though it is still there to be cleared.
+    #[test]
+    fn a_cap_of_nothing_is_the_cache_off() {
+        let dir = thumb_scratch("capzero");
+        let png = dir.join("a.png");
+        image::RgbImage::from_pixel(8, 8, image::Rgb([9, 9, 9]))
+            .save(&png)
+            .unwrap();
+        let cache: ThumbCache = Arc::new(Mutex::new(Some(Thumbs::at(dir.join("thumbs"), 0))));
+        for _ in 0..2 {
+            let (_, cached) = cached_thumbnail(&cache, &png, 8).unwrap();
+            assert!(!cached);
+        }
+        assert!(!dir.join("thumbs").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The count runs off the caller's thread and seeds the cache.
+    #[test]
+    fn the_cache_is_counted_on_a_thread_of_its_own() {
+        let dir = thumb_scratch("count");
+        let root = dir.join("thumbs");
+        let mut filled = Thumbs::at(&root, greycard_library::thumbs::DEFAULT_CAP);
+        let kept = Thumb {
+            width: 3,
+            height: 2,
+            rgb: vec![128; 18],
+        };
+        filled
+            .put(&"ab".repeat(32), 128, Tag::default(), &kept)
+            .unwrap();
+        let cache: ThumbCache = Arc::new(Mutex::new(Some(Thumbs::at(
+            &root,
+            greycard_library::thumbs::DEFAULT_CAP,
+        ))));
+        let (tx, rx) = std::sync::mpsc::channel();
+        count_thumb_cache(&cache, move |known| tx.send(known).unwrap());
+        let known = rx
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .unwrap()
+            .expect("counted");
+        assert_eq!(known.entries, 1);
+        assert_eq!(
+            cache.lock().unwrap().as_ref().unwrap().known_usage(),
+            Some(known)
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

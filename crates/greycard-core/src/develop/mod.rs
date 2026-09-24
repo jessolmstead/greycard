@@ -87,6 +87,10 @@ pub struct DevelopSettings {
     pub orientation: Option<Orientation>,
 }
 
+// The editor's thumbnail of a raw with no preview is a develop under
+// these defaults, and the thumbnail cache keeps it on disk: a change
+// here that changes that picture wants `THUMB_RECIPE` in
+// greycard-ui's worker raised, or old thumbnails stay.
 impl Default for DevelopSettings {
     fn default() -> Self {
         Self {
