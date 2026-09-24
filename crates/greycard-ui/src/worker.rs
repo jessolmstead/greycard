@@ -19,6 +19,7 @@ use greycard_core::image::WorkingImage;
 use greycard_core::picture::{Picture, decode_picture_path, is_picture_path};
 use greycard_core::raw::CfaPattern;
 use greycard_core::raw::{Shot, ShotSummary};
+use greycard_library::thumbs::{Tag, Thumb, Thumbs};
 
 /// A developed picture for the viewport: half floats for it to
 /// upload, or a texture the engine's GPU op already left on the
@@ -282,6 +283,9 @@ pub enum Outcome {
     /// may have changed under it, so the index alone is not enough.
     /// `size` is the long edge it was asked for, which the grid uses
     /// to tell a picture it has outgrown from one it has not.
+    /// `cached` when it came from the thumbnail cache, and `seconds`
+    /// what the worker spent on it, for the folder's account in the
+    /// log.
     Thumbnail {
         index: usize,
         path: PathBuf,
@@ -289,6 +293,14 @@ pub enum Outcome {
         width: u32,
         height: u32,
         rgb: Vec<u8>,
+        cached: bool,
+        seconds: f64,
+    },
+    /// A file no thumbnail could be made of, so the folder's count
+    /// still closes.
+    NoThumbnail {
+        index: usize,
+        path: PathBuf,
     },
     Failed {
         generation: u64,
@@ -385,27 +397,46 @@ type Deliver = Arc<dyn Fn(Outcome) + Send + Sync>;
 /// before there was any waiting at all.
 pub const LEAVING: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// The thumbnail cache on disk, shared between the worker, which
+/// reads and writes it, and the settings sheet, which counts and
+/// clears it. `None` until the editor hands one over, and in tests.
+pub type ThumbCache = Arc<Mutex<Option<Thumbs>>>;
+
 pub struct Worker {
     queue: Arc<(Mutex<Queue>, Condvar)>,
     deliver: Deliver,
     /// The worker's thread, until it is joined on the way out.
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
+    thumbs: ThumbCache,
 }
 
 impl Worker {
     pub fn new(deliver: impl Fn(Outcome) + Send + Sync + 'static) -> Self {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let deliver: Deliver = Arc::new(deliver);
-        let (q, d) = (queue.clone(), deliver.clone());
+        let thumbs: ThumbCache = Arc::new(Mutex::new(None));
+        let (q, d, t) = (queue.clone(), deliver.clone(), thumbs.clone());
         let thread = std::thread::Builder::new()
             .name("greycard worker".into())
-            .spawn(move || run(q, d))
+            .spawn(move || run(q, d, t))
             .expect("spawning the worker");
         Self {
             queue,
             deliver,
             thread: Mutex::new(Some(thread)),
+            thumbs,
         }
+    }
+
+    /// Look thumbnails up in `cache`, and keep the ones made, from
+    /// the next thumbnail on.
+    pub fn set_thumb_cache(&self, cache: Option<Thumbs>) {
+        *self.thumbs.lock().expect("thumbnail cache") = cache;
+    }
+
+    /// The thumbnail cache, for the settings sheet.
+    pub fn thumb_cache(&self) -> ThumbCache {
+        self.thumbs.clone()
     }
 
     /// Stop the worker and wait for it to put its GPU buffers down.
@@ -622,7 +653,7 @@ fn fetch_lenses(queue: &Arc<(Mutex<Queue>, Condvar)>, deliver: &dyn Fn(Outcome))
     }
 }
 
-fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver) {
+fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache) {
     let (lock, cv) = &*queue;
     let mut ai = Ai::new();
     match greycard_ai::Store::user() {
@@ -968,16 +999,22 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver) {
                     .expect("worker queue")
                     .thumb_size
                     .unwrap_or(THUMB_WIDTH);
-                match thumbnail(&path, size) {
-                    Ok((width, height, rgb)) => deliver(Outcome::Thumbnail {
+                let started = Instant::now();
+                match cached_thumbnail(&thumbs, &path, size) {
+                    Ok((thumb, cached)) => deliver(Outcome::Thumbnail {
                         index,
                         path,
                         size,
-                        width,
-                        height,
-                        rgb,
+                        width: thumb.width,
+                        height: thumb.height,
+                        rgb: thumb.rgb,
+                        cached,
+                        seconds: started.elapsed().as_secs_f64(),
                     }),
-                    Err(e) => tracing::debug!("thumbnail {}: {e}", path.display()),
+                    Err(e) => {
+                        tracing::debug!("thumbnail {}: {e}", path.display());
+                        deliver(Outcome::NoThumbnail { index, path });
+                    }
                 }
             }
         }));
@@ -1900,6 +1937,77 @@ fn blend(model: &Arc<WorkingImage>, plain: &Arc<WorkingImage>, strength: f32) ->
     Arc::new(out)
 }
 
+/// How [`thumbnail`] makes a picture, as the cache's entries record
+/// it: raise it when the picture it makes changes (the downscale, the
+/// turn, the fallback develop), and every entry made the old way is a
+/// miss and is made again.
+pub const THUMB_RECIPE: u16 = 1;
+
+/// What a cache entry for `path` must have been made under: this
+/// recipe, and for a picture file its modification time, since a
+/// re-export can leave a picture's head and length as they were
+/// while its pixels change. A raw is never rewritten in place by
+/// anything that keeps its head, so its entry needs only the hash.
+fn thumb_tag(path: &std::path::Path) -> Tag {
+    let stamp = if is_picture_path(path) {
+        std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos() as u64)
+    } else {
+        0
+    };
+    Tag {
+        recipe: THUMB_RECIPE,
+        stamp,
+    }
+}
+
+/// A file's thumbnail from the cache when it holds one for the file's
+/// content, else made by [`thumbnail`] and kept. The lookup costs the
+/// content hash, a read of the file's first 64 KB, and nothing else
+/// of the file; a cache that cannot be read or written is a miss and
+/// a thumbnail made, never an error of its own. Says whether it came
+/// from the cache.
+fn cached_thumbnail(
+    cache: &ThumbCache,
+    path: &std::path::Path,
+    size: u32,
+) -> anyhow::Result<(Thumb, bool)> {
+    let on = cache.lock().expect("thumbnail cache").is_some();
+    let key = if on {
+        match greycard_library::hash_file(path) {
+            Ok(hash) => Some((hash, thumb_tag(path))),
+            Err(e) => {
+                tracing::debug!("thumbnail {}: not hashed: {e}", path.display());
+                None
+            }
+        }
+    } else {
+        None
+    };
+    if let Some((hash, tag)) = &key {
+        let hit = cache
+            .lock()
+            .expect("thumbnail cache")
+            .as_ref()
+            .and_then(|c| c.get(hash, size, *tag));
+        if let Some(thumb) = hit {
+            return Ok((thumb, true));
+        }
+    }
+    let (width, height, rgb) = thumbnail(path, size)?;
+    let thumb = Thumb { width, height, rgb };
+    if let Some((hash, tag)) = key
+        && let Some(c) = cache.lock().expect("thumbnail cache").as_mut()
+        && let Err(e) = c.put(&hash, size, tag, &thumb)
+    {
+        tracing::debug!("thumbnail {}: not cached: {e}", path.display());
+    }
+    Ok((thumb, false))
+}
+
 /// A small sRGB rendering of a file, `size` on its long edge: the
 /// camera's own preview JPEG when the file has one, box downscaled
 /// and turned as the camera says; else a bilinear demosaic, box
@@ -2271,5 +2379,115 @@ mod tests {
         assert!(Arc::ptr_eq(&blend(&model, &plain, 2.0), &model));
         let half = blend(&model, &plain, 0.25);
         assert!(half.data.iter().all(|v| (*v - 0.25).abs() < 1e-6));
+    }
+
+    fn thumb_scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-thumbjob-{name}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn cache_at(dir: &std::path::Path) -> ThumbCache {
+        Arc::new(Mutex::new(Some(Thumbs::at(
+            dir.join("thumbs"),
+            greycard_library::thumbs::DEFAULT_CAP,
+        ))))
+    }
+
+    /// A raw nothing can decode: its thumbnail can only have come
+    /// from the cache.
+    #[test]
+    fn a_cached_thumbnail_is_not_made_again() {
+        let dir = thumb_scratch("hit");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, vec![0x17u8; 90_000]).unwrap();
+        let cache = cache_at(&dir);
+        assert!(
+            cached_thumbnail(&cache, &raw, THUMB_WIDTH).is_err(),
+            "not a raw, and nothing cached"
+        );
+        let kept = Thumb {
+            width: 3,
+            height: 2,
+            rgb: vec![128; 18],
+        };
+        let hash = greycard_library::hash_file(&raw).unwrap();
+        cache
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .put(&hash, THUMB_WIDTH, thumb_tag(&raw), &kept)
+            .unwrap();
+        // Renamed into another folder: still the cache's.
+        let moved_dir = dir.join("renamed");
+        std::fs::create_dir_all(&moved_dir).unwrap();
+        let moved = moved_dir.join("wedding-0001.CR3");
+        std::fs::rename(&raw, &moved).unwrap();
+        let (thumb, cached) = cached_thumbnail(&cache, &moved, THUMB_WIDTH).unwrap();
+        assert!(cached);
+        assert_eq!((thumb.width, thumb.height), (3, 2));
+        // Another size is not the same entry.
+        assert!(cached_thumbnail(&cache, &moved, 256).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A picture file is made once, kept, found; re-written in place,
+    /// it is made again, whatever its head says.
+    #[test]
+    fn a_picture_is_kept_until_it_is_written_again() {
+        let dir = thumb_scratch("picture");
+        let png = dir.join("export.png");
+        let write = |shade: u8| {
+            image::RgbImage::from_pixel(40, 20, image::Rgb([shade, shade, shade]))
+                .save(&png)
+                .unwrap();
+        };
+        write(200);
+        let cache = cache_at(&dir);
+        let (first, cached) = cached_thumbnail(&cache, &png, 16).unwrap();
+        assert!(!cached);
+        let (again, cached) = cached_thumbnail(&cache, &png, 16).unwrap();
+        assert!(cached);
+        assert_eq!((again.width, again.height), (first.width, first.height));
+        // Written again with another mtime.
+        write(20);
+        let later = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        std::fs::File::options()
+            .write(true)
+            .open(&png)
+            .unwrap()
+            .set_modified(later)
+            .unwrap();
+        let (fresh, cached) = cached_thumbnail(&cache, &png, 16).unwrap();
+        assert!(!cached);
+        assert!(
+            fresh.rgb.iter().all(|v| *v < 60),
+            "the new picture's pixels"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn without_a_cache_a_thumbnail_is_made_every_time() {
+        let dir = thumb_scratch("off");
+        let png = dir.join("a.png");
+        image::RgbImage::from_pixel(8, 8, image::Rgb([9, 9, 9]))
+            .save(&png)
+            .unwrap();
+        let off: ThumbCache = Arc::new(Mutex::new(None));
+        for _ in 0..2 {
+            let (_, cached) = cached_thumbnail(&off, &png, 8).unwrap();
+            assert!(!cached);
+        }
+        assert!(!dir.join("thumbs").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -8,6 +8,102 @@ use crate::panel::edit::{
 use crate::panel::history::show_history;
 use crate::*;
 
+/// A folder's first round of thumbnails as it comes back from the
+/// worker: which have not yet, and what the ones that have cost. The
+/// log gets one line when the last arrives, which is how a folder
+/// open is timed with the cache cold, warm, and after a rename.
+#[derive(Debug)]
+pub(crate) struct ThumbRun {
+    started: std::time::Instant,
+    waiting: Vec<bool>,
+    left: usize,
+    cached: usize,
+    made: usize,
+    failed: usize,
+    /// The worker's own time over them, without the develop that
+    /// goes first.
+    work: f64,
+}
+
+/// What a finished run says, for the log.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct RunTotals {
+    pub(crate) files: usize,
+    pub(crate) cached: usize,
+    pub(crate) made: usize,
+    pub(crate) failed: usize,
+    pub(crate) seconds: f64,
+    pub(crate) work: f64,
+}
+
+impl ThumbRun {
+    pub(crate) fn new(files: usize) -> Self {
+        Self {
+            started: std::time::Instant::now(),
+            waiting: vec![true; files],
+            left: files,
+            cached: 0,
+            made: 0,
+            failed: 0,
+            work: 0.0,
+        }
+    }
+
+    /// File `index`'s thumbnail came back — from the cache, made, or
+    /// not at all when `made` is `None` — and the worker spent
+    /// `seconds` on it. A second picture for the same file, a larger
+    /// one for the grid, is not the folder's first round and is not
+    /// counted. The totals when this was the last.
+    pub(crate) fn arrived(
+        &mut self,
+        index: usize,
+        made: Option<bool>,
+        seconds: f64,
+    ) -> Option<RunTotals> {
+        let waiting = self.waiting.get_mut(index)?;
+        if !*waiting {
+            return None;
+        }
+        *waiting = false;
+        self.left -= 1;
+        self.work += seconds;
+        match made {
+            Some(true) => self.cached += 1,
+            Some(false) => self.made += 1,
+            None => self.failed += 1,
+        }
+        (self.left == 0).then(|| RunTotals {
+            files: self.waiting.len(),
+            cached: self.cached,
+            made: self.made,
+            failed: self.failed,
+            seconds: self.started.elapsed().as_secs_f64(),
+            work: self.work,
+        })
+    }
+}
+
+/// Count a thumbnail into the folder's run, and say so in the log
+/// when it was the last.
+pub(crate) fn count_thumb(st: &mut State, index: usize, cached: Option<bool>, seconds: f64) {
+    let Some(run) = st.thumb_run.as_mut() else {
+        return;
+    };
+    if let Some(t) = run.arrived(index, cached, seconds) {
+        tracing::info!(
+            "thumbnails: {} files in {:.2} s from the folder's open, {:.2} s of it making them; \
+             {} from the cache, {} made, {} failed",
+            t.files,
+            t.seconds,
+            t.work,
+            t.cached,
+            t.made,
+            t.failed
+        );
+        st.thumb_run = None;
+    }
+}
+
 /// A browser row for a file: its name, the badges its meta asks for,
 /// and no picture until the worker has made one.
 pub(crate) fn thumb_for(path: &Path, meta: &Meta) -> Thumb {
@@ -701,6 +797,7 @@ fn open_files(
     st.thumb_asked = vec![worker::THUMB_WIDTH; files.len()];
     st.thumb_want = worker::THUMB_WIDTH;
     st.grid_shown = None;
+    st.thumb_run = Some(ThumbRun::new(files.len()));
     worker.set_thumb_size(worker::THUMB_WIDTH);
     st.files = files.clone();
     rebuild_browser(&mut st, app);
@@ -1748,5 +1845,24 @@ mod tests {
         // With sidecars off nothing is read and nothing is seeded.
         assert_eq!(load_sidecars(&files, false).1, vec![false; 4]);
         std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+    }
+
+    /// The folder's round of thumbnails closes on the last first
+    /// arrival, a failure counting as one, and a larger picture made
+    /// again for the grid not counting at all.
+    #[test]
+    fn a_folders_thumbnails_are_counted_once_each() {
+        let mut run = ThumbRun::new(3);
+        assert_eq!(run.arrived(0, Some(true), 0.001), None);
+        assert_eq!(run.arrived(0, Some(false), 0.2), None, "the grid's second");
+        assert_eq!(run.arrived(7, Some(false), 0.2), None, "not this folder's");
+        assert_eq!(run.arrived(2, None, 0.0), None);
+        let done = run.arrived(1, Some(false), 0.05).expect("the last one");
+        assert_eq!(
+            (done.files, done.cached, done.made, done.failed),
+            (3, 1, 1, 1)
+        );
+        assert!((done.work - 0.051).abs() < 1e-9);
+        assert_eq!(run.arrived(1, Some(true), 0.0), None);
     }
 }

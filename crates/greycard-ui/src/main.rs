@@ -474,6 +474,9 @@ pub(crate) struct State {
     pub(crate) thumb_made: Vec<u32>,
     pub(crate) thumb_asked: Vec<u32>,
     pub(crate) thumb_want: u32,
+    /// The folder's first round of thumbnails, counted as they come
+    /// back, for one line in the log when the last one has.
+    pub(crate) thumb_run: Option<panel::browser::ThumbRun>,
     /// The frames the grid last said it shows, first and last.
     pub(crate) grid_shown: Option<(i32, i32)>,
     /// How each frame stands in its own file — its orientation tag
@@ -692,6 +695,7 @@ impl State {
             thumb_made: vec![0; count],
             thumb_asked: vec![worker::THUMB_WIDTH; count],
             thumb_want: worker::THUMB_WIDTH,
+            thumb_run: None,
             grid_shown: None,
             stances: HashMap::new(),
             learned: HashMap::new(),

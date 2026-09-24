@@ -76,6 +76,10 @@ pub struct Settings {
     /// as it develops, not waited for the window to close; empty
     /// until then.
     pub last_file: String,
+    /// The most the thumbnail cache under the user's cache directory
+    /// may hold, in megabytes; past it the least recently used
+    /// pictures go. Zero turns the cache off.
+    pub thumb_cache_mb: u64,
 }
 
 impl Default for Settings {
@@ -100,6 +104,7 @@ impl Default for Settings {
             sidecars_in_folder: false,
             lenses_declined: false,
             last_file: String::new(),
+            thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
         }
     }
 }
@@ -223,6 +228,7 @@ mod tests {
             sidecars_in_folder: true,
             lenses_declined: true,
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
+            thumb_cache_mb: 1024,
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);

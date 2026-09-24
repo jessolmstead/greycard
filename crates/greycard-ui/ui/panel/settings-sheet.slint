@@ -25,6 +25,11 @@ export component SettingsSheet inherits Rectangle {
     callback placement-changed();
     callback xmp-changed();
     callback sidecars-move();
+    /// The thumbnail cache: whether this run has one, what it holds
+    /// in words, and the button that empties it.
+    in property <bool> thumb-cache-on;
+    in property <string> thumb-cache-words;
+    callback thumb-cache-clear();
     /// The move asked for and not yet confirmed.
     property <bool> confirming: false;
     property <string> elsewhere-words: root.sidecars-elsewhere == 1
@@ -141,6 +146,35 @@ export component SettingsSheet inherits Rectangle {
             }
             Text {
                 text: "The rating, the label and the keywords, in an .xmp beside the raw. An XMP that is there is read either way.";
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+            Rectangle { height: Theme.space-1; }
+            Text {
+                text: "THUMBNAILS";
+                font-size: Theme.font-xs;
+                font-weight: Theme.weight-medium;
+                color: Theme.text-secondary;
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                Text {
+                    text: root.thumb-cache-words;
+                    font-size: Theme.font-sm;
+                    color: Theme.text;
+                    vertical-alignment: center;
+                    wrap: word-wrap;
+                    horizontal-stretch: 1;
+                }
+                if root.thumb-cache-on: PanelButton {
+                    text: "Clear";
+                    width: 96px;
+                    clicked => { root.thumb-cache-clear(); }
+                }
+            }
+            Text {
+                text: "Kept by content, so a folder moved or renamed opens without making them again. The cap is thumb_cache_mb in settings.json.";
                 font-size: Theme.font-xs;
                 color: Theme.text-muted;
                 wrap: word-wrap;

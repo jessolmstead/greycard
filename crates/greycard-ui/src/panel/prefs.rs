@@ -110,14 +110,67 @@ fn keep(st: &State, change: impl FnOnce(&mut settings::Settings)) {
     kept.save();
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+/// The sheet's line about the thumbnail cache: what it holds against
+/// its cap, or that there is none.
+pub(crate) fn thumb_cache_words(held: Option<(greycard_library::thumbs::Usage, u64)>) -> String {
+    let Some((usage, cap)) = held else {
+        return "Off: thumbnails are made each time a folder opens.".into();
+    };
+    let mb = |b: u64| b as f64 / (1024.0 * 1024.0);
+    let n = usage.entries;
+    format!(
+        "{n} thumbnail{} kept, {:.1} MB of {:.0} MB.",
+        if n == 1 { "" } else { "s" },
+        mb(usage.bytes),
+        mb(cap)
+    )
+}
+
+/// The cache's line, counted on disk now.
+fn show_thumb_cache(app: &App, worker: &Worker) {
+    let cache = worker.thumb_cache();
+    let held = cache
+        .lock()
+        .expect("thumbnail cache")
+        .as_ref()
+        .map(|c| (c.usage(), c.cap()));
+    app.set_thumb_cache_on(held.is_some());
+    app.set_thumb_cache_words(thumb_cache_words(held).into());
+}
+
+pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+    // Clear the thumbnail cache: every folder's thumbnails are made
+    // again the next time it opens.
+    {
+        let (worker, app_weak) = (worker.clone(), app.as_weak());
+        app.on_thumb_cache_clear(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let cache = worker.thumb_cache();
+            let gone = cache
+                .lock()
+                .expect("thumbnail cache")
+                .as_mut()
+                .map(|c| c.clear());
+            if let Some(gone) = gone {
+                tracing::info!(
+                    "thumbnail cache cleared: {} entries, {} bytes",
+                    gone.entries,
+                    gone.bytes
+                );
+            }
+            show_thumb_cache(&app, &worker);
+        });
+    }
     // Ctrl+, or the gear: the count first, then the sheet.
     {
-        let (state, app_weak) = (state.clone(), app.as_weak());
+        let (state, app_weak, worker) = (state.clone(), app.as_weak(), worker.clone());
         app.on_settings_asked(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            show_thumb_cache(&app, &worker);
             let st = state.borrow();
             app.set_sidecar_placement(placement_name(st.placement).into());
             app.set_xmp_sidecars(st.xmp_sidecars);
@@ -356,5 +409,32 @@ mod tests {
             assert_eq!(placement_named(placement_name(p)), p);
         }
         assert_eq!(placement_named("anything"), Placement::Beside);
+    }
+
+    #[test]
+    fn the_thumbnail_cache_is_said_in_megabytes() {
+        use greycard_library::thumbs::Usage;
+        let mb = 1024 * 1024;
+        assert_eq!(
+            thumb_cache_words(Some((
+                Usage {
+                    bytes: 5 * mb / 2,
+                    entries: 312
+                },
+                300 * mb
+            ))),
+            "312 thumbnails kept, 2.5 MB of 300 MB."
+        );
+        assert_eq!(
+            thumb_cache_words(Some((
+                Usage {
+                    bytes: 0,
+                    entries: 1
+                },
+                mb
+            ))),
+            "1 thumbnail kept, 0.0 MB of 1 MB."
+        );
+        assert!(thumb_cache_words(None).starts_with("Off"));
     }
 }

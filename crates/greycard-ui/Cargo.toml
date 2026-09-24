@@ -18,6 +18,8 @@ greycard-edit = { path = "../greycard-edit" }
 greycard-ai = { path = "../greycard-ai" }
 greycard-lens = { path = "../greycard-lens" }
 greycard-gpu = { path = "../greycard-gpu" }
+# The thumbnail cache, keyed by the index's content hash.
+greycard-library = { path = "../greycard-library" }
 slint = { version = "1.18", features = ["unstable-wgpu-30", "renderer-femtovg-wgpu"] }
 bytemuck = { version = "1", features = ["derive"] }
 half = { version = "2", features = ["bytemuck"] }

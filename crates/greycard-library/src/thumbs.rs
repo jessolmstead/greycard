@@ -410,9 +410,7 @@ mod tests {
 
     fn raw_file(dir: &Path, name: &str, seed: u8) -> PathBuf {
         let path = dir.join(name);
-        let body: Vec<u8> = (0..100_000u32)
-            .map(|i| (i % 253) as u8 ^ seed)
-            .collect();
+        let body: Vec<u8> = (0..100_000u32).map(|i| (i % 253) as u8 ^ seed).collect();
         std::fs::write(&path, body).unwrap();
         path
     }
@@ -490,7 +488,9 @@ mod tests {
             recipe: 1,
             stamp: 1_700_000_000,
         };
-        cache.put(&key, 170, stamped, &picture(170, 113, 0)).unwrap();
+        cache
+            .put(&key, 170, stamped, &picture(170, 113, 0))
+            .unwrap();
         let later = Tag {
             recipe: 1,
             stamp: 1_700_000_500,
@@ -542,14 +542,18 @@ mod tests {
         // One entry to find its size, then a cap of ten of them.
         let mut probe = Thumbs::at(dir.join("probe"), DEFAULT_CAP);
         let thumb = |seed: u8| picture(128, 96, seed);
-        probe.put(&"00".repeat(32), 128, Tag::default(), &thumb(0)).unwrap();
+        probe
+            .put(&"00".repeat(32), 128, Tag::default(), &thumb(0))
+            .unwrap();
         let one = probe.usage().bytes;
         let cap = one * 10;
         let mut cache = Thumbs::at(dir.join("thumbs"), cap);
         let keys: Vec<String> = (0..30u8).map(|i| format!("{i:02x}").repeat(32)).collect();
         let t0 = SystemTime::now() - std::time::Duration::from_secs(3600);
         for (i, key) in keys.iter().enumerate() {
-            cache.put(key, 128, Tag::default(), &thumb(i as u8)).unwrap();
+            cache
+                .put(key, 128, Tag::default(), &thumb(i as u8))
+                .unwrap();
             // Recency by the clock, one second apart, so the order
             // does not rest on the filesystem's timestamp grain.
             let f = std::fs::File::options()
@@ -567,7 +571,10 @@ mod tests {
         }
         let usage = cache.usage();
         assert!(usage.bytes <= cap);
-        assert!(usage.entries >= 8, "evicted down to nine tenths, not to nothing");
+        assert!(
+            usage.entries >= 8,
+            "evicted down to nine tenths, not to nothing"
+        );
         assert!(cache.get(&keys[0], 128, Tag::default()).is_some());
         // The newest are kept, the oldest gone.
         assert!(cache.get(&keys[29], 128, Tag::default()).is_some());
@@ -589,7 +596,11 @@ mod tests {
             height: 10,
             rgb: vec![0; 5],
         };
-        assert!(cache.put(&"cd".repeat(32), 10, Tag::default(), &bad).is_err());
+        assert!(
+            cache
+                .put(&"cd".repeat(32), 10, Tag::default(), &bad)
+                .is_err()
+        );
         assert_eq!(cache.usage(), Usage::default());
         std::fs::remove_dir_all(&dir).unwrap();
     }

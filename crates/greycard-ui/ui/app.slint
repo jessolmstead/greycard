@@ -918,6 +918,11 @@ export component App inherits Window {
     callback placement-changed();
     callback xmp-changed();
     callback sidecars-move();
+    /// The thumbnail cache: whether there is one this run, what it
+    /// holds in words, and the Clear under it.
+    in property <bool> thumb-cache-on: false;
+    in property <string> thumb-cache-words: "";
+    callback thumb-cache-clear();
     /// Move to the file `by` places along the strip; with Shift held,
     /// the set keeps what it had and takes that file as well.
     callback step(int, bool);
@@ -1918,6 +1923,9 @@ export component App inherits Window {
         placement-changed => { root.placement-changed(); }
         xmp-changed => { root.xmp-changed(); }
         sidecars-move => { root.sidecars-move(); }
+        thumb-cache-on: root.thumb-cache-on;
+        thumb-cache-words: root.thumb-cache-words;
+        thumb-cache-clear => { root.thumb-cache-clear(); }
     }
 
 }

@@ -1,5 +1,5 @@
 use crate::panel::assets::{offer_lenses_once, offer_model, show_lens, show_looks, show_profiles};
-use crate::panel::browser::{file_name, show_thumb, thumb_turns};
+use crate::panel::browser::{count_thumb, file_name, show_thumb, thumb_turns};
 use crate::panel::cull::develop_landed;
 use crate::panel::edit::{current_turn, read_edit, schedule_save};
 use crate::panel::startup::remember_last_file;
@@ -178,6 +178,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             width,
             height,
             rgb,
+            cached,
+            seconds,
         } => {
             let mut st = state.borrow_mut();
             // A thumbnail of a list since replaced by another folder's
@@ -185,6 +187,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if st.files.get(index) != Some(&path) {
                 return;
             }
+            tracing::debug!(
+                "thumbnail {}: {} in {:.1} ms",
+                file_name(&path),
+                if cached { "from the cache" } else { "made" },
+                seconds * 1000.0
+            );
+            count_thumb(&mut st, index, Some(cached), seconds);
             st.thumb_base[index] = Some((width, height, rgb));
             st.thumb_made[index] = size;
             // One that was being made when the cells grew comes back
@@ -208,6 +217,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // has it, another's as its sidecar does.
             let (turns, flip) = thumb_turns(&st, app, index);
             show_thumb(&mut st, app, index, turns, flip);
+        }
+        Outcome::NoThumbnail { index, path } => {
+            let mut st = state.borrow_mut();
+            if st.files.get(index) == Some(&path) {
+                count_thumb(&mut st, index, None, 0.0);
+            }
         }
         Outcome::Opened {
             generation,

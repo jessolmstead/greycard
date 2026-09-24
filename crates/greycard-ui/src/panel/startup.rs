@@ -332,6 +332,22 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         })
     };
     let worker = Rc::new(worker);
+    // The thumbnail cache, before the first thumbnail is asked for.
+    // A cap of zero in the settings is the cache off.
+    if remembered.thumb_cache_mb > 0 {
+        match greycard_library::Thumbs::user(remembered.thumb_cache_mb * 1024 * 1024) {
+            Ok(cache) => {
+                tracing::info!(
+                    "thumbnail cache {} (cap {} MB)",
+                    cache.root().display(),
+                    remembered.thumb_cache_mb
+                );
+                worker.set_thumb_cache(Some(cache));
+            }
+            Err(e) => tracing::warn!("no thumbnail cache: {e}"),
+        }
+    }
+    state.borrow_mut().thumb_run = Some(crate::panel::browser::ThumbRun::new(files.len()));
     for (i, f) in files.iter().enumerate() {
         worker.send(Job::Thumbnail {
             index: i,
@@ -1016,6 +1032,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.xmp_sidecars = kept.xmp_sidecars;
         settings.sidecars_in_folder = kept.sidecars_in_folder;
         settings.lenses_declined = kept.lenses_declined;
+        settings.thumb_cache_mb = kept.thumb_cache_mb;
         settings.save();
     }
 
@@ -1200,6 +1217,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         sidecars_in_folder: false,
         lenses_declined: false,
         last_file: String::new(),
+        // Not the panel's either: the settings file is where it is set.
+        thumb_cache_mb: 0,
     }
 }
 
