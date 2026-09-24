@@ -40,7 +40,9 @@ rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "4b6164122c78f9
 # crash reporter and no symbolication step, and a panic's message and
 # file:line come from the panic machinery, not from the symbols; only
 # a backtrace from a release build loses its function names, and a
-# debug build is where one is read. greycard-ui 111.8 MB to 83.0 MB,
-# greycard 57.5 MB to 45.1 MB (Linux, 2026-09-23).
+# debug build is where one is read. On one tree, Linux, 2026-09-23:
+# greycard-ui 28.8 MB smaller (111.8 to 83.0 MB), greycard 12.4 MB
+# smaller (57.5 to 45.1 MB); the sizes move with the code, the saving
+# much less.
 [profile.release]
 strip = true
