@@ -78,8 +78,8 @@ Click a frame to open it. **Ctrl+click** adds a frame to the
 selection or takes it out again. **Shift+click** replaces the
 selection with every frame from the open one to the one you click;
 **Ctrl+Shift+click** adds that run to what is already selected.
-**Shift** with the arrow keys, in the filmstrip or the grid, moves to
-the next frame and adds it to the selection. The selected frames are
+**Shift** with the arrow keys, in the filmstrip or the grid, moves one
+frame along and adds it to the selection. The selected frames are
 highlighted in the filmstrip and the grid, and the frame on screen
 has the brighter outline. A plain arrow or a plain click goes back to
 one frame, and so does **Esc**.
@@ -88,10 +88,11 @@ Ratings, flags, labels and the [ ] turns act on every selected frame.
 
 **Sync settings** copies the open frame's edit onto the other
 selected frames. Edit one frame, Ctrl+click or Shift+click the
-others, then press **Sync…** under Presets, or Ctrl+Shift+S. Choose
-which sections to copy: all are ticked except Adjustments, because
-masks are drawn around one picture's subject. Ticking Adjustments
-replaces each frame's own masks with the open frame's. Noise brings
+others, then press **Sync…** under Presets in the left panel, or
+Ctrl+Shift+S. Choose which sections to copy: all are ticked except
+Adjustments, because masks are drawn around one picture's subject.
+Ticking Adjustments replaces each frame's own masks with the open
+frame's. Noise brings
 the learned denoiser and its blend along (a preset does not). A
 camera profile made for one camera is copied only onto frames from
 that camera; the status line names any frame it skipped. The crop,
