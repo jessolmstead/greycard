@@ -1113,7 +1113,31 @@ fn models(fetch: Option<&str>) -> Result<()> {
         }
         return Ok(());
     };
-    for model in models_named(what)? {
+    let failed = fetch_models(&store, &models_named(what)?);
+    if !failed.is_empty() {
+        anyhow::bail!(
+            "{} of the models could not be fetched: {}",
+            failed.len(),
+            failed
+                .iter()
+                .map(|(id, why)| format!("{id} ({why})"))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+    }
+    Ok(())
+}
+
+/// Fetch each of `models` the store lacks, printing what each is as
+/// it goes. A model that fails is reported and passed over, so one
+/// unreachable file does not keep the rest from arriving; the
+/// failures come back, by id, with why.
+fn fetch_models(
+    store: &greycard_ai::Store,
+    models: &[&'static greycard_ai::Model],
+) -> Vec<(&'static str, String)> {
+    let mut failed = Vec::new();
+    for model in models {
         println!();
         println!("{}", model.id);
         println!("  for         {}", model.purpose);
@@ -1138,14 +1162,19 @@ fn models(fetch: Option<&str>) -> Result<()> {
         // Close the rewritten line before anything else is printed,
         // so a failure does not land on the end of it.
         reporter.done();
-        fetched.with_context(|| format!("fetching {}", model.name))?;
-        println!(
-            "  fetched     into {} in {:.1} s",
-            store.dir(model).display(),
-            start.elapsed().as_secs_f32()
-        );
+        match fetched {
+            Ok(()) => println!(
+                "  fetched     into {} in {:.1} s",
+                store.dir(model).display(),
+                start.elapsed().as_secs_f32()
+            ),
+            Err(e) => {
+                println!("  failed      {e}");
+                failed.push((model.id, e.to_string()));
+            }
+        }
     }
-    Ok(())
+    failed
 }
 
 /// The download's progress on stderr: a line rewritten in place at a
@@ -2556,6 +2585,43 @@ mod tests {
         assert_eq!(path, file);
         assert!(model.is_none());
         std::fs::remove_file(&file).unwrap();
+    }
+
+    /// A model that cannot be fetched is reported and passed over:
+    /// the ones after it are still tried, and each failure comes back.
+    #[test]
+    fn a_failed_fetch_does_not_stop_the_rest() {
+        macro_rules! unreachable_model {
+            ($id:literal, $file:literal) => {
+                greycard_ai::Model {
+                    id: $id,
+                    name: "unreachable test model",
+                    purpose: "a test",
+                    source: "nowhere",
+                    license: greycard_ai::registry::License {
+                        name: "none",
+                        url: "https://example.invalid/",
+                    },
+                    modified: None,
+                    files: &[greycard_ai::registry::File {
+                        name: $file,
+                        // Port 9 (discard) on the loopback: refused at once.
+                        url: concat!("http://127.0.0.1:9/", $file),
+                        bytes: 1,
+                        sha256: "0000000000000000000000000000000000000000000000000000000000000000",
+                    }],
+                }
+            };
+        }
+        static FIRST: greycard_ai::Model = unreachable_model!("unreachable-first", "first.onnx");
+        static SECOND: greycard_ai::Model = unreachable_model!("unreachable-second", "second.onnx");
+        let store = greycard_ai::Store::at(
+            std::env::temp_dir().join(format!("greycard-fetch-failures-{}", std::process::id())),
+        );
+        let failed = fetch_models(&store, &[&FIRST, &SECOND]);
+        let ids: Vec<_> = failed.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, vec!["unreachable-first", "unreachable-second"]);
+        let _ = std::fs::remove_dir_all(store.root());
     }
 
     /// `--fetch` takes a tier, an id or `all`, and says so when it is
