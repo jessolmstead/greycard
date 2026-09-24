@@ -8,7 +8,7 @@ use crate::display::Lut3d;
 use crate::worker::Halves;
 use anyhow::{Context, Result};
 
-use crate::finish::{BASELINE_EXPOSURE, Local, MAX_LOCALS, RasterRef};
+use crate::finish::{Local, MAX_LOCALS, RasterRef, Source};
 use crate::gpu;
 use crate::scope::{self, Scope};
 use greycard_core::lut;
@@ -471,6 +471,9 @@ pub struct View {
     /// choice, matching what the Rectangle behind the viewport
     /// paints (`app.slint`'s `canvas-colors`), so the two agree.
     pub canvas: [f32; 3],
+    /// A raw's scene or a picture already rendered: whether the
+    /// baseline and the display curve apply (`finish::Source`).
+    pub source: Source,
 }
 
 /// The look table on the GPU, and what the shader needs beside it.
@@ -528,6 +531,7 @@ impl View {
             grain: Grain::default(),
             warn: Warn::default(),
             canvas: [0.0; 3],
+            source: Source::Scene,
         }
     }
 }
@@ -1200,8 +1204,14 @@ impl Renderer {
             ],
             clip: [v.warn.bits() as f32, 0.0, 0.0, 0.0],
             zoom: v.zoom,
-            exposure: BASELINE_EXPOSURE + v.light.exposure,
-            curve: if v.light.tone.enabled { 1.0 } else { 0.0 },
+            exposure: v.source.baseline() + v.light.exposure,
+            // 0 a clip, 1 the shape and the display curve, 2 the shape
+            // and a clip, for a picture that has had its curve.
+            curve: match (v.light.tone.enabled, v.source) {
+                (false, _) => 0.0,
+                (true, Source::Scene) => 1.0,
+                (true, Source::Display) => 2.0,
+            },
             contrast: v.light.tone.contrast,
             highlights: v.light.tone.highlights,
             shadows: v.light.tone.shadows,

@@ -784,6 +784,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         show_mask: app.get_show_mask().then_some(st.target).flatten(),
                         show_sharpen: app.get_show_sharpen_mask() && app.get_sharpen(),
                         canvas: render::canvas_rgb(app.get_canvas_choice()),
+                        source: st.source,
                     };
                     if app.get_crop_mode() {
                         // The crop's rectangle in view pixels, for the overlay.

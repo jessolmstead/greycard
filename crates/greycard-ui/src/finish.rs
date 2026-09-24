@@ -29,6 +29,43 @@ pub struct Baked {
     /// a mask carries one.
     pub tint: Tint,
     pub curves: CurveLut,
+    /// Global only, as the black and white is: what the picture under
+    /// the look is, which decides the baseline and the display curve.
+    pub source: Source,
+}
+
+/// What the finish is handed. A raw's develop is a scene, which the
+/// finish brightens by [`BASELINE_EXPOSURE`] and takes to a display
+/// through the curve. A JPEG, PNG or TIFF is a picture something has
+/// already rendered for a display (§50): it takes neither, so a
+/// picture with nothing done to it comes out as it went in, and the
+/// Light sliders act on it as they do on a scene, clipped at white
+/// where the curve would have rolled off.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Source {
+    #[default]
+    Scene,
+    Display,
+}
+
+impl Source {
+    /// Stops the exposure slider's zero stands for.
+    pub fn baseline(self) -> f32 {
+        match self {
+            Source::Scene => BASELINE_EXPOSURE,
+            Source::Display => 0.0,
+        }
+    }
+
+    /// The display curve, or a clip at white for a picture that has
+    /// been through one already.
+    #[inline]
+    fn curve(self, x: f32) -> f32 {
+        match self {
+            Source::Scene => tone(x),
+            Source::Display => x.clamp(0.0, 1.0),
+        }
+    }
 }
 
 impl Baked {
@@ -42,6 +79,7 @@ impl Baked {
             bw: BlackWhite::OFF,
             tint: look.tint,
             curves: look.curves.bake_with(&look.grading),
+            source: Source::Scene,
         }
     }
 
@@ -50,10 +88,11 @@ impl Baked {
     /// look and a picture is mono or it is not. The mixer comes
     /// through `Edit::acting_mixer`, which is nothing while the
     /// conversion is on.
-    pub fn global(edit: &Edit) -> Self {
+    pub fn global(edit: &Edit, source: Source) -> Self {
         Self {
             bw: edit.bw,
             mixer: edit.acting_mixer(),
+            source,
             ..Self::of(&edit.look())
         }
     }
@@ -122,12 +161,14 @@ pub const MAX_LOCALS: usize = 16;
 
 const MID_GREY: f32 = 0.18;
 
-/// Stops every picture is brightened by before its own exposure: the
-/// exposure slider at zero is this, so a picture with nothing done to
-/// it lands where the camera's JPEG and Lightroom put it rather than
-/// 0.8 stops under both (notes §141). Added where the exposure turns
-/// into a gain, here, in [`pick`] and in the viewport's uniform, so it
-/// acts exactly as the slider does, the guide plane included.
+/// Stops every raw is brightened by before its own exposure: the
+/// exposure slider at zero is this, so a raw with nothing done to it
+/// lands where the camera's JPEG and Lightroom put it rather than 0.8
+/// stops under both (notes §141). Added where the exposure turns into
+/// a gain, here, in [`pick`] and in the viewport's uniform, so it acts
+/// exactly as the slider does, the guide plane included. Never to a
+/// picture that is not a raw, which is the camera's JPEG or the like
+/// already ([`Source::baseline`]).
 pub const BASELINE_EXPOSURE: f32 = 0.8;
 /// Luminance weights of the working space, Rec.2020.
 const LUMA: [f32; 3] = [0.2627, 0.6780, 0.0593];
@@ -317,7 +358,7 @@ pub fn finish_pixel_with(
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
 ) -> [f32; 3] {
-    let mut exposure = BASELINE_EXPOSURE + global.light.exposure + stops;
+    let mut exposure = global.source.baseline() + global.light.exposure + stops;
     let mut t = global.light.tone;
     let mut mixer = global.mixer.effective();
     let mut color = global.color.effective();
@@ -367,7 +408,7 @@ pub fn finish_pixel_with(
         // at this pixel is a shift of it in stops and the contrast a
         // scale, which is what the power about mid grey is in stops.
         let g = guide.map(|g| t.contrast * (g + exposure));
-        c = shape(c, &t, g).map(tone);
+        c = shape(c, &t, g).map(|x| global.source.curve(x));
     } else {
         c = c.map(|v| v.min(1.0));
     }
@@ -431,6 +472,7 @@ pub struct Picked {
     pub lightness: f32,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn pick(
     px: [f32; 3],
     light: &Light,
@@ -439,6 +481,7 @@ pub fn pick(
     bw: &BlackWhite,
     tint: &Tint,
     curves: &CurveLut,
+    source: Source,
 ) -> Picked {
     // Each section as it acts, as `finish_pixel_with` takes it: a
     // switch off is nothing to do, whatever its sliders still say.
@@ -446,14 +489,14 @@ pub fn pick(
     // And the tint through the vector the finish blends looks with,
     // so the dropper reads the tint the render applies.
     let tint = Tint::from_vector(tint.vector());
-    let gain = 2f32.powf(BASELINE_EXPOSURE + light.exposure);
+    let gain = 2f32.powf(source.baseline() + light.exposure);
     let mut c = px.map(|v| v * gain);
     let hue = oklab(c)[2].atan2(oklab(c)[1]).to_degrees();
     if mixer.enabled || color.enabled || bw.enabled || !tint.is_identity() {
         c = mix_with(c, &mixer, &color, &bw, &tint, None);
     }
     if light.tone.enabled {
-        c = shape(c, &light.tone, None).map(tone);
+        c = shape(c, &light.tone, None).map(|x| source.curve(x));
     } else {
         c = c.map(|v| v.min(1.0));
     }
@@ -1035,6 +1078,7 @@ mod tests {
             bw: BlackWhite::OFF,
             tint: Tint::OFF,
             curves: *curves,
+            source: Source::Scene,
         };
         finish_pixel(px, &global, &[], m)
     }
@@ -1053,6 +1097,7 @@ mod tests {
             bw: BlackWhite::OFF,
             tint: Tint::OFF,
             curves: identity(),
+            source: Source::Scene,
         }
     }
 
@@ -1247,6 +1292,67 @@ mod tests {
         assert!((at(0.0, MID_GREY) - at(-BASELINE_EXPOSURE, lifted)).abs() < 1e-5);
         assert!(at(0.0, MID_GREY) > at(-BASELINE_EXPOSURE, MID_GREY) + 0.05);
         assert!((at(1.0, MID_GREY) - at(0.0, MID_GREY * 2.0)).abs() < 1e-5);
+    }
+
+    /// A picture that is not a raw has had its baseline and its curve
+    /// from whatever rendered it: with nothing done to it, it comes out
+    /// as it went in; a stop of exposure is still a stop; the Light
+    /// sliders still act; and the droppers read it the same way.
+    #[test]
+    fn a_rendered_picture_takes_no_baseline_and_no_curve() {
+        let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+        let picture = |tone: Tone, exposure: f32| Baked {
+            light: Light {
+                enabled: true,
+                exposure,
+                tone,
+            },
+            source: Source::Display,
+            ..Baked::global(&Edit::default(), Source::Display)
+        };
+        let plain = picture(Tone::default(), 0.0);
+        for px in [
+            [0.0; 3],
+            [0.02, 0.05, 0.01],
+            [MID_GREY; 3],
+            [0.6, 0.3, 0.9],
+            [1.0; 3],
+        ] {
+            let out = finish_pixel(px, &plain, &[], &m);
+            for k in 0..3 {
+                assert!((out[k] - encode(px[k])).abs() < 1e-5, "{px:?} {out:?}");
+            }
+            let picked = pick(
+                px,
+                &plain.light,
+                &plain.mixer,
+                &plain.color,
+                &plain.bw,
+                &plain.tint,
+                &plain.curves,
+                Source::Display,
+            );
+            for k in 0..3 {
+                assert!(
+                    (picked.encoded[k] - out[k]).abs() < 1e-5,
+                    "{picked:?} {out:?}"
+                );
+            }
+        }
+        let up = finish_pixel([0.1; 3], &picture(Tone::default(), 1.0), &[], &m);
+        assert!((up[1] - encode(0.2)).abs() < 1e-5, "{up:?}");
+        let hard = Tone {
+            contrast: 1.5,
+            ..Tone::default()
+        };
+        let a = finish_pixel(grey_at(1.0), &picture(hard, 0.0), &[], &m);
+        assert!(a[1] > encode(MID_GREY * 2.0) + 0.02, "{a:?}");
+        // The same scene as a raw is brighter and through the curve.
+        let raw = Baked {
+            source: Source::Scene,
+            ..plain.clone()
+        };
+        assert!(finish_pixel([MID_GREY; 3], &raw, &[], &m)[1] > encode(MID_GREY) + 0.05);
     }
 
     fn grey_at(stops: f32) -> [f32; 3] {
@@ -1560,6 +1666,7 @@ mod tests {
             bw: BlackWhite::OFF,
             tint: Tint::OFF,
             curves: identity(),
+            source: Source::Scene,
         };
         let g = guide.map(|g| g.at(x as f32 + 0.5, y as f32 + 0.5));
         let px = image.pixel(x, y);
@@ -2009,6 +2116,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
+            Source::Scene,
         );
         // The baseline is in the pick as it is in the render.
         let expect = encode(tone(
@@ -2034,6 +2142,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
+            Source::Scene,
         );
         let (band, w) = nearest_band(red.hue);
         assert!(band == 0 && w > 0.5, "{red:?} {band} {w}");
@@ -2049,6 +2158,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
+            Source::Scene,
         );
         assert!((red2.hue - red.hue).abs() < 1e-3, "{red:?} {red2:?}");
         assert!(red2.encoded[0] > red.encoded[0], "{red:?} {red2:?}");
@@ -2070,6 +2180,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
+            Source::Scene,
         );
         for (k, v) in [0.1f32, 0.2, 0.3].iter().enumerate() {
             assert!((raw.encoded[k] - encode(*v)).abs() < 1e-5, "{raw:?}");
@@ -2089,6 +2200,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
+            Source::Scene,
         );
         // Every section's sliders wound right up, every switch off:
         // the dropper reads what it read with none of them set.
@@ -2112,6 +2224,7 @@ mod tests {
             &off_bw,
             &Tint::OFF,
             &curves,
+            Source::Scene,
         );
         let bare = pick(
             px,
@@ -2127,6 +2240,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
+            Source::Scene,
         );
         assert_eq!(held, bare);
         // And that is the all-default answer to the last f32 place
@@ -2154,6 +2268,7 @@ mod tests {
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
+            Source::Scene,
         );
         assert!(moved.encoded[0] != plain.encoded[0], "{moved:?} {plain:?}");
         let mono = pick(
@@ -2164,6 +2279,7 @@ mod tests {
             &BlackWhite::with_filter(greycard_edit::bw::Filter::Red, true),
             &Tint::OFF,
             &curves,
+            Source::Scene,
         );
         assert!((mono.encoded[0] - mono.encoded[2]).abs() < 1e-4, "{mono:?}");
     }
@@ -2416,17 +2532,20 @@ mod tests {
             bw: BlackWhite::with_filter(Filter::None, true),
             ..Edit::default()
         };
-        let bare = finish_pixel(sky, &Baked::global(&edit), &[], &m);
+        let bare = finish_pixel(sky, &Baked::global(&edit, Source::Scene), &[], &m);
         edit.mixer.luminance = [0.8; BANDS];
         edit.mixer.saturation = [-0.5; BANDS];
-        let wound_up = finish_pixel(sky, &Baked::global(&edit), &[], &m);
+        let wound_up = finish_pixel(sky, &Baked::global(&edit, Source::Scene), &[], &m);
         assert_eq!(bare, wound_up, "the mixer is stood down");
         // With the conversion off it acts as it always did, and the
         // settings were never touched.
         edit.bw.enabled = false;
-        let color = finish_pixel(sky, &Baked::global(&edit), &[], &m);
+        let color = finish_pixel(sky, &Baked::global(&edit, Source::Scene), &[], &m);
         edit.mixer.enabled = false;
-        assert_ne!(color, finish_pixel(sky, &Baked::global(&edit), &[], &m));
+        assert_ne!(
+            color,
+            finish_pixel(sky, &Baked::global(&edit, Source::Scene), &[], &m)
+        );
         assert_eq!(edit.mixer.luminance[0], 0.8);
     }
 
@@ -2459,6 +2578,7 @@ mod tests {
             bw,
             tint: Tint::OFF,
             curves: identity(),
+            source: Source::Scene,
         };
         let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let out = finish_pixel(px, &global, &[], &m);
@@ -2499,6 +2619,7 @@ mod tests {
             bw: BlackWhite::OFF,
             tint: Tint::OFF,
             curves: identity(),
+            source: Source::Scene,
         };
         let bare = Baked {
             tint: idle,
@@ -2583,6 +2704,7 @@ mod tests {
             bw: BlackWhite::OFF,
             tint: Tint::OFF,
             curves: identity(),
+            source: Source::Scene,
         };
         let local = Baked {
             tint,
@@ -2860,7 +2982,7 @@ mod shipped_presets {
     fn render(edit: &Edit) -> Vec<u8> {
         finish_with(
             &a_frame(),
-            &Baked::global(edit),
+            &Baked::global(edit, Source::Scene),
             &[],
             |_, _| (0.0, 0.0),
             |_, _| (0.0, None),

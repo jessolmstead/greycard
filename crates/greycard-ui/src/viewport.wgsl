@@ -30,6 +30,8 @@ struct Params {
     zoom: f32,
     // Stops.
     exposure: f32,
+    // 0 a clip; 1 the shape and the display curve; 2 the shape and a
+    // clip, for a picture that is not a raw (`finish::Source`).
     curve: f32,
     // Slope at mid grey relative to the base curve's.
     contrast: f32,
@@ -366,7 +368,14 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         if (has_guide) {
             g = look.contrast * (textureSampleLevel(guide, samp, at / p.guide.xy, 0.0).r + look.exposure);
         }
-        c = tone(shape(c, look, g, has_guide));
+        let shaped = shape(c, look, g, has_guide);
+        // 2: a picture already rendered for a display, which takes the
+        // shape and a clip at white, not a second curve.
+        if (p.curve > 1.5) {
+            c = clamp(shaped, vec3<f32>(0.0), vec3<f32>(1.0));
+        } else {
+            c = tone(shaped);
+        }
     } else {
         c = min(c, vec3<f32>(1.0));
     }

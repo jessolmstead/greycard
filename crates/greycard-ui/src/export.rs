@@ -282,6 +282,9 @@ pub struct Rendered {
 /// component. `clip_level` is the develop's: the value a channel is
 /// clipped at or above, which the sharpen leaves alone.
 ///
+/// `kind` says whether the image is a raw's scene or a picture
+/// already rendered, which takes no baseline and no display curve.
+///
 /// `guide` is the tone equalizer's plane, the worker's own, made from
 /// the developed picture before the geometry; it is read through
 /// the same mapping the masks are, so the export and the viewport read
@@ -295,6 +298,7 @@ pub fn render(
     learned: &std::collections::HashMap<(u64, usize), std::sync::Arc<Raster>>,
     clip_level: f32,
     guide: Option<&finish::Guide>,
+    kind: finish::Source,
 ) -> Rendered {
     let framed = image.width as f32;
     let fitted;
@@ -308,7 +312,7 @@ pub fn render(
         }
         None => image,
     };
-    let global = finish::Baked::global(edit);
+    let global = finish::Baked::global(edit, kind);
     let (sw, sh) = (source.0 as f32, source.1 as f32);
     let locals: Vec<finish::Local> = edit
         .adjustments
@@ -1029,6 +1033,7 @@ mod tests {
                 &Default::default(),
                 1.0,
                 None,
+                finish::Source::Scene,
             );
             let Pixels::Sixteen(p) = rendered.pixels else {
                 panic!("a TIFF is sixteen bits")
@@ -1113,6 +1118,7 @@ mod tests {
             &Default::default(),
             1.0,
             None,
+            finish::Source::Scene,
         );
         let Pixels::Sixteen(p) = &rendered.pixels else {
             panic!("a TIFF is sixteen bits")
@@ -1131,7 +1137,16 @@ mod tests {
         };
         let path = dir.join("t.jpg");
         write(
-            &render(&image, &edit, source, &jpeg, &Default::default(), 1.0, None),
+            &render(
+                &image,
+                &edit,
+                source,
+                &jpeg,
+                &Default::default(),
+                1.0,
+                None,
+                finish::Source::Scene,
+            ),
             &jpeg,
             &path,
             None,
@@ -1184,6 +1199,7 @@ mod tests {
                 &Default::default(),
                 1.0,
                 None,
+                finish::Source::Scene,
             );
             let origin = Origin {
                 source_name: Some("IMG_0001.CR3".into()),

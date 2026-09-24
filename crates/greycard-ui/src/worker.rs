@@ -872,8 +872,14 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver) {
                         for a in &edit.adjustments {
                             for (i, c) in a.mask.live() {
                                 if c.shape.is_learned()
-                                    && let Ok(made) =
-                                        ai.raster(b.stamp, &b.image, &b.edit, (a.id, i), &c.shape)
+                                    && let Ok(made) = ai.raster(
+                                        b.stamp,
+                                        &b.image,
+                                        &b.edit,
+                                        b.source,
+                                        (a.id, i),
+                                        &c.shape,
+                                    )
                                 {
                                     learned.insert((a.id, i), made.raster);
                                 }
@@ -896,6 +902,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver) {
                         &learned,
                         clip_level,
                         base.as_ref().map(|b| &*b.guide),
+                        base.as_ref().map(|b| b.source).unwrap_or_default(),
                     );
                     let origin = crate::export::Origin {
                         source_name: opened_path
@@ -924,7 +931,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver) {
             }
             Job::Mask { key, shape } => {
                 let outcome = match &base {
-                    Some(b) => match ai.raster(b.stamp, &b.image, &b.edit, key, &shape) {
+                    Some(b) => match ai.raster(b.stamp, &b.image, &b.edit, b.source, key, &shape) {
                         Ok(made) => Outcome::Mask {
                             key,
                             shape,
@@ -1136,6 +1143,8 @@ struct Base {
     white: WhiteBase,
     radius: Option<f32>,
     clip_level: f32,
+    /// A raw's scene or a picture already rendered, for the finish.
+    source: crate::finish::Source,
     /// Counts the bases made, for the learned masks to know theirs.
     stamp: u64,
     /// The base with its retouch applied, for the retouch it was,
@@ -1348,6 +1357,7 @@ fn develop_job(
                 white: WhiteBase::IDENTITY,
                 radius: None,
                 clip_level: meta.clip_level(),
+                source: crate::finish::Source::Display,
                 stamp,
                 patched: None,
                 pre: None,
@@ -1721,6 +1731,7 @@ fn engine_base(
         white: WhiteBase::from(&d.white_balance),
         radius: d.sharpen_radius,
         clip_level: d.clip_level,
+        source: crate::finish::Source::Scene,
         stamp,
         patched: None,
         pre: None,
@@ -1777,6 +1788,7 @@ fn learned_base(
             white: l.white,
             radius: l.radius,
             clip_level: l.clip_level,
+            source: crate::finish::Source::Scene,
             stamp,
             patched: None,
             pre: None,

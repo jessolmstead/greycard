@@ -141,5 +141,3 @@ If the form doesn't work, the logs are here:
 | macOS | `~/Library/Logs/greycard` |
 | Windows | `%LOCALAPPDATA%\greycard\logs` |
 
-If the form or GitHub is more trouble than it's worth, email the same
-things to whoever sent you the link.

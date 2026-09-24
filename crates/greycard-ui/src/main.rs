@@ -340,6 +340,8 @@ pub(crate) struct State {
     pub(crate) base_white: Option<WhiteBase>,
     /// The open frame and its profile, for the white balance preview.
     pub(crate) frame: Option<(Arc<RawFrame>, Box<CameraProfile>)>,
+    /// A raw's scene or a picture already rendered, from the open.
+    pub(crate) source: finish::Source,
     /// The last preview matrix, keyed by what it was computed for.
     pub(crate) white_cache: Option<(WhiteKey, Matrix3)>,
     /// Holds a develop back until the sliders rest.
@@ -575,6 +577,7 @@ impl State {
             select_at_start: None,
             base_white: None,
             frame: None,
+            source: finish::Source::Scene,
             white_cache: None,
             debounce: slint::Timer::default(),
             save_timer: slint::Timer::default(),

@@ -317,12 +317,13 @@ impl Ai {
 
     /// The raster for `shape`, from the cache when it was made for this
     /// shape, else from the model on the preview of the base develop
-    /// `stamp` of `image` under `edit`.
+    /// `stamp` of `image` under `edit`, finished as `kind` is.
     pub fn raster(
         &mut self,
         stamp: u64,
         image: &WorkingImage,
         edit: &Edit,
+        kind: crate::finish::Source,
         key: Key,
         shape: &Shape,
     ) -> Result<Made, String> {
@@ -358,7 +359,7 @@ impl Ai {
             self.providers = Provider::available();
         }
         if self.preview.as_ref().is_none_or(|p| p.0 != stamp) {
-            let rgb = preview(image, edit);
+            let rgb = preview(image, edit, kind);
             let luma = rgb.luma();
             self.preview = Some((stamp, rgb, luma));
             self.embedding = None;
@@ -431,7 +432,7 @@ impl Ai {
 /// What a model sees: the picture under the global look alone, no
 /// geometry, no vignette or grain, in sRGB, no more than `PREVIEW`
 /// on its long side.
-fn preview(image: &WorkingImage, edit: &Edit) -> Rgb8 {
+fn preview(image: &WorkingImage, edit: &Edit, kind: crate::finish::Source) -> Rgb8 {
     let mut edit = edit.clone();
     edit.adjustments.clear();
     edit.geometry = Default::default();
@@ -458,6 +459,7 @@ fn preview(image: &WorkingImage, edit: &Edit) -> Rgb8 {
         &HashMap::new(),
         f32::INFINITY,
         None,
+        kind,
     );
     let crate::export::Pixels::Eight(data) = rendered.pixels else {
         unreachable!("a JPEG render is eight bit");

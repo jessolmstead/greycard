@@ -299,8 +299,8 @@ lists, text, icons. Polish there is a design-system problem solved once.
   professional; their design layer is open source and borrowable. Register the
   engine texture as a native texture or use a paint callback. Accessibility
   partial.
-- **iced:** shader widget with device/queue/target access; clean model; the
-  user has fought its styling before and wouldn't again.
+- **iced:** shader widget with device/queue/target access; clean model; we've
+  fought its styling before and wouldn't again.
 - **GPUI:** excellent text/perf, but not wgpu on Linux (blade), sparse docs.
 - **Makepad:** built for designed/animated UIs, own GPU backends, texture
   sharing is a project. **Xilem/Vello:** right long-term direction, not ready.
@@ -735,7 +735,7 @@ exceeds 8 in its units, on the sound reasoning that a tile that rough
 might be texture, not noise, and a wrong threshold would smear texture.
 So the dual quietly becomes AMaZE alone exactly when VNG4 alone would
 beat it by 0.65 dB and a fixed threshold of 100 by 1.06 dB. A fixed
-threshold from the user closes the gap; what closes it properly is a
+threshold we set closes the gap; what closes it properly is a
 noise model, which the profiled noise reduction will bring (a sensor's
 noise at a level gives the L* contrast the noise produces, and so the
 threshold, with no tile search). Until then the dual is an opt-in.
@@ -991,7 +991,7 @@ output with checked-in yaml files exactly, so the 44 yaml files for the
 five bodies must be regenerated from the samples, which is 2.8 GB from
 rawdb.dnglab.org; that is being done here with the patched `dnglab
 analyze`, and every file so far differs only in its `whitelevels` line.
-The PR goes up once the user has said
+The PR goes up once we've said
 so. Until it is released, greycard can consume the branch through
 `[patch.crates-io]`; that is a pointer at the upstream contribution, not
 a fork, and is removed when a rawler release carries the fix.
@@ -1754,7 +1754,7 @@ still takes `DevelopSettings`).
 
 Moved to `docs/roadmap.md` (2026-09-06, late): a list to glance at
 and add to, one line an item, blocked items saying what they wait on.
-It absorbed this section's list and the user's own list of what a
+It absorbed this section's list and our own list of what a
 professional editor has to have. New blocked items go there; the
 reasoning behind them stays here, by section. The rest of this section
 is the editor's feedback rounds, which are record, not roadmap.
@@ -1991,7 +1991,7 @@ complete round trip: a RAW in, an edit, a finished file out.
 ## 19. The tone sliders (2026-09-06, late)
 
 Asked whether the tone controls should be sliders first, a curve
-editor first, or both, the user chose sliders first: highlights,
+editor first, or both, we chose sliders first: highlights,
 shadows, whites and blacks under exposure and contrast, as in
 Lightroom's basic panel and darktable's. A curve editor can come later
 on top of the same edit.
@@ -2046,7 +2046,7 @@ with both. A local version is a mask and a blur on the working image,
 a develop op rather than a display one, and goes with local edits on
 the roadmap (§15).
 
-**Sliders and the wheel.** Also at the user's request: the wheel moves
+**Sliders and the wheel.** Also at our own request: the wheel moves
 a slider that has focus (a click on it gives focus) or any slider
 with Shift held, one step per notch, a touchpad's small deltas summed
 to steps; otherwise the event passes through. The view is that the
@@ -2101,12 +2101,12 @@ first file without asking, the format from the extension.
 
 **What is missing.** Metadata: the export carries no EXIF (roadmap,
 §15). The sheet's choices do not persist. And the sheet cannot be
-driven from the command line for a screenshot, so its look is the
-user's call, like the rest of the panel.
+driven from the command line for a screenshot, so its look is our
+call, like the rest of the panel.
 
 ## 21. Capture sharpening (2026-09-06, late)
 
-The first item off the user's list, and the one the resize made
+The first item off our list, and the one the resize made
 urgent. Ported from RawTherapee's capture sharpening (Ingo Weyrich,
 2019, GPL): Richardson–Lucy deconvolution of the luminance under a
 Gaussian point spread, blended in by local contrast so that flat
@@ -2240,7 +2240,7 @@ picture, looked at. The edit round-trips through the sidecar as plain
 point lists.
 
 **Not yet.** Color curves against luminance (r/g and b/y, the Lab
-`a` and `b` curves of the user's list) are a different domain and a
+`a` and `b` curves of our list) are a different domain and a
 different picture; on the roadmap. A curve on luminance alone, hue
 held, would be the master curve applied as a gain rather than per
 channel; not built until someone misses it.
@@ -2297,7 +2297,7 @@ this machinery.
 
 ## 24. Straighten and crop (2026-09-06, late)
 
-The top of the user's roadmap. Asked, the user wanted all three
+The top of our roadmap. Asked, we wanted all three
 together: a straighten angle, a level tool that takes a line dragged
 along a horizon or a wall, and aspect presets with a custom ratio and
 65:24 by name, plus a portrait toggle. `crates/greycard-edit/src/
@@ -2348,14 +2348,14 @@ be level or plumb; the nearer of horizontal and vertical is taken and
 the correction added to the angle in force.
 
 **Not yet.** The overlay cannot be driven from the command line, so
-its feel is the user's call. Lens corrections and perspective are
+its feel is our call. Lens corrections and perspective are
 separate ops. Flip and 90 degree turns belong here and are a few
 lines when wanted.
 
 ## 25. Color curves against lightness (2026-09-07)
 
 The first of the three color items left on the roadmap's Next up:
-the Lab `a` and `b` curves of the user's list, here two curves in the
+the Lab `a` and `b` curves of our list, here two curves in the
 CURVES section beside the point curves, R/G and B/Y. Each is a curve
 against lightness with the neutral through the middle: up is red or
 yellow, down is green or blue, and where the curve sits on the level
@@ -2475,7 +2475,7 @@ mask is the mask infrastructure's business, next.
 ## 27. The mask infrastructure (2026-09-07)
 
 The last of the three Next up items, and the one the masking items
-wait on. The user's word on the shape: curves, and ideally the mixer,
+wait on. Our word on the shape: curves, and ideally the mixer,
 must work inside a mask, which Lightroom does not offer. That settled
 the architecture: a local adjustment is not a subset of the controls
 but a whole look, the same struct the global edit has, and the panel
@@ -2553,7 +2553,7 @@ want a raster mask and a texture. Sixteen bits of look per pixel
 per local is the shader's cost: eight locals at 4K is fine on this
 box; a budget will be measured when someone has eight.
 
-**Modes, shapes and names (2026-09-07, later).** The user asked for
+**Modes, shapes and names (2026-09-07, later).** We asked for
 renaming, and for adding, subtracting and intersecting. A component's
 `subtract` flag became a `mode`: add (where either is), subtract
 (taken away from what is there) and intersect (only where both are),
@@ -2577,7 +2577,7 @@ viewport's parity (an odd crop for an odd viewport) or the rows
 sample between texels. A little loop that reads the sizes and
 re-exports when the parity is wrong does it.
 
-**Sixteen, and a tidier section (2026-09-07, later).** The user asked
+**Sixteen, and a tidier section (2026-09-07, later).** We asked
 whether the count was limited and for the section to be cleaned up.
 The bound was the shader's per-pixel weights array, eight; it is
 sixteen now, and nothing is paid for the ones not used, since the
@@ -2597,7 +2597,7 @@ the block.
 
 ## 28. Zoom keys and the click (2026-09-07)
 
-Two of the user's list. Space goes to 1:1 about the view's center
+Two off our list. Space goes to 1:1 about the view's center
 and back to fit; Z the same at 3:1; a click on the picture that does
 not become a drag (four logical pixels) zooms to 1:1 with the pixel
 under the pointer held, and a second click fits again. The
@@ -2668,7 +2668,7 @@ linear and radial, and in a mask's shapes "Brush" adds one by the
 mode chosen, or reads "Paint" when the chosen shape is already a
 brush and adds strokes to it. With the brush in hand the panel shows
 Size, Feather, Flow and Erase for the next stroke, the wheel over the
-picture sizes it (the user's ask), a circle under the pointer shows
+picture sizes it (our ask), a circle under the pointer shows
 the radius and where the feather begins, and the mask shows red as
 it is painted; a click is a dab; each release is one history entry;
 Escape or the button puts the brush down. A brush has no handles; its
@@ -2676,7 +2676,7 @@ strokes are undone, not moved.
 
 ### Subtract and erase
 
-The user's first go: the one "Erase" switch muddled two things, a
+Our first go: the one "Erase" switch muddled two things, a
 stroke that takes some paint away and one that removes it. A stroke
 now has an op, Add, Subtract or Erase, chosen in a segmented control
 where the switch was. Add and Subtract lay down and take away by the
@@ -2725,7 +2725,7 @@ the check of §18 on a turned, mirrored, four-degree frame agrees to
 
 ## 32. Vignette (2026-09-07)
 
-The user's list had it. A vignette is an exposure falloff over the
+Our list had it. A vignette is an exposure falloff over the
 frame as shown, in stops, so darkening keeps its hues as the exposure
 slider does and the same op brightens the corners when asked; it sits
 on the crop and any size of export, since its positions are fractions
@@ -2746,7 +2746,7 @@ frame, not a look.
 
 ### The wheels, enlarged, and put back by a double click
 
-Two asks from the user on §26's wheels. A wheel's name is now a
+Two things we asked for on §26's wheels. A wheel's name is now a
 button: it enlarges that wheel to the panel's width above the row,
 for a finer hand on hue and strength, and the name again puts it
 back; the three pictures live in one model and the enlarged one is
@@ -2756,7 +2756,7 @@ nothing, as a double click on a slider does, and records the edit.
 
 ## 33. Grain (2026-09-07)
 
-The user's list had it too. Grain is a noise over the frame as shown,
+Our list had it too. Grain is a noise over the frame as shown,
 its cell in thousandths of the frame's width, so a size looks the same
 at any size of export and follows the crop; it goes on last, on the
 encoded output, as luminance, weighted towards the shadows (one minus
@@ -2777,7 +2777,7 @@ giving the vignette's stops and the grain together.
 
 ### Crystals, cubic and tabular
 
-The user, before looking: it should be organic and filmic, a
+Our ask, before looking: it should be organic and filmic, a
 non-repeating pattern of shapes, not a noise laid over a digital
 photo; and could the grain be cubic or tabular, as film's crystals
 are. Value noise was neither, being bumps on a lattice, so the grain
@@ -2803,7 +2803,7 @@ cubic for its spread. The two paths still agree to 0.065% at 70%; a
 
 ### Crystals that stay put
 
-The user's nit: the size slider slid the pattern away from the top
+Our nit: the size slider slid the pattern away from the top
 left, since the lattice was of the size and scaled about the frame's
 corner. Now every crystal has a home in the finest lattice (a tenth of
 a thousandth of the width, the smallest size) and keeps it. Coarser
@@ -2952,7 +2952,7 @@ The plan, as §13g foresaw:
   packed four-channel Bayer at half resolution, outputting full
   resolution RGB by sub-pixel shuffle, so it replaces demosaic and
   denoise together. f16 weights.
-- Trained in PyTorch on the user's own low-ISO raws with synthetic
+- Trained in PyTorch on our own low-ISO raws with synthetic
   noise from our model, so the training data's license is ours.
   Exported to ONNX. Judged by the benchmark harness against the hybrid
   denoiser (§13) at high ISO, which is the acceptance test.
@@ -4633,7 +4633,7 @@ and the flag is an export.
 ## 44. The navigator, and a snapshot of the window (2026-09-15)
 
 **The navigator.** A left panel, new, 240 wide, as Lightroom and
-darktable keep theirs (the user's ask on seeing it on the right): the
+darktable keep theirs (our ask, on seeing it on the right): the
 whole frame as the screen shows it, with a rectangle over the part
 the view has when that is less than all; a press or a drag in it
 puts that point at the view's center, kept inside the frame while the
@@ -4652,8 +4652,8 @@ Slint over the picture, which is shown at the panel's width, or no
 taller than it is wide for a portrait frame, centered.
 
 **The snapshot.** `--screenshot` reads the viewport's texture back
-and has never shown the panel, so the panel's look was always the
-user's call. Slint's wgpu renderer can render the window to a
+and has never shown the panel, so the panel's look was always
+our call. Slint's wgpu renderer can render the window to a
 texture: `--snapshot PATH` takes it a moment after the first develop
 is on screen, panel and filmstrip included, then quits. This is how
 the navigator, the clipping marks and the histogram's corners were
@@ -5386,7 +5386,7 @@ room is short.
 
 ## 61. A Lightroom edit matched by hand: what differed (2026-09-18)
 
-The user edited `4Z4A3525.CR3` (R5 Mark II, RF 50mm f/1.2 at f/1.2,
+We edited `4Z4A3525.CR3` (R5 Mark II, RF 50mm f/1.2 at f/1.2,
 ISO 100) here to match an earlier Lightroom edit, not exactly, and
 asked what differed materially and where the artifacts seen at 1:1
 came from. Both exports sit in `~/Pictures/Test/export`; the
@@ -6546,7 +6546,7 @@ global color, last in it: `mix_with` does the mixer's shift, scale
 and gain, then vibrance and saturation's scale of chroma, then, when
 the section is on, throws the chroma away and applies the band's gain
 to the lightness. One Oklab round trip for all three, and the order
-is the guarantee the user asked for — nothing that scales chroma runs
+is the guarantee we asked for — nothing that scales chroma runs
 after the conversion, so neither the mixer's saturation nor the
 global Saturation and Vibrance can bring color back to a mono
 picture, however hard they are wound. That guarantee is about the
@@ -6983,7 +6983,7 @@ last section keeps the two apart and wants updating when items land.
 
 ## 83. A tint on a look (2026-09-19)
 
-The roadmap's "add a color (HSV?) to the mask area", which the user
+The roadmap's "add a color (HSV?) to the mask area", which we
 settled as a tint: Lightroom's local Color, a hue and a strength that
 pull the masked area toward one color. A TINT section after COLOR
 GRADING with two sliders, Hue and Amount, off at an amount of
@@ -7163,7 +7163,7 @@ space the edit lives in. The aside is struck.
 
 ## 85. The Light sliders: a tone equalizer and a white point (2026-09-19)
 
-The roadmap's complaint, in the user's words: whites did basically
+The roadmap's complaint, in our own words: whites did basically
 nothing, highlights did not recover a frame with a lot of range, and
 shadows was about right. §19's sliders were gains by the pixel's own
 luminance over ramps at 0..3, -3..0 and 2..5 stops over mid grey.
@@ -7405,7 +7405,7 @@ numbers to reproduce the old rendering: see the schema above.
 
 **Not.** No per-band tone equalizer with a curve over the exposure
 bands, which is what darktable's panel actually offers; four sliders
-was the user's instruction and the panel is unchanged. No mask on the
+was our instruction and the panel is unchanged. No mask on the
 guide plane and no way to see it in the interface — a "show the guide"
 overlay would be cheap and might be worth it later. No second
 iteration of the guided filter, which sharpens its edge preservation
@@ -8762,7 +8762,7 @@ Not done in this session; the roadmap carries the first two.
 
 ## 98. Highlights reaches the mid-tones, and the two shifts get ±2 (2026-09-19)
 
-The user's report, after §85 had been in for a day: the highlights
+Our report, after §85 had been in for a day: the highlights
 slider still does not do enough, not far off, but it does not reach
 quite far enough towards the mid-tones; and both shifts want more
 than a stop and a half of range.
@@ -8833,7 +8833,7 @@ conifers. The viewport and the export read the same constants from
 `finish.rs` and `viewport.wgsl`, and the shader test suite parses
 both.
 
-**Whites too, at ±2.** The user asked, and the answer is yes with
+**Whites too, at ±2.** We asked, and the answer is yes with
 one thing to know. Whites is a white point, and its exponent
 `2.47 / (2.47 - whites)` has a pole at scene white, so §85 held the
 blended value half a stop short of it, at 1.97, and the slider at
@@ -8859,7 +8859,7 @@ exactly what that item is for.
 
 ## 99. The "request to hide window failed" line is Slint's (2026-09-19)
 
-The user sees this on stderr on quitting, on multiple runs:
+We see this on stderr on quitting, on multiple runs:
 
     Slint winit backend: request to hide window failed because
     references to the window still exist. This could be an
@@ -14722,3 +14722,38 @@ anything outside `/usr/lib`, `/System/Library`, `@rpath` and
 `@executable_path`. A Mac has no package manager to fill in a missing
 library, so a stray path is always a bug, and the runner is exactly the
 machine that will have whatever it points at.
+
+## 152. A picture that is not a raw takes no baseline and no curve (2026-09-23)
+
+Issue #1: a JPEG opened 0.8 stops brighter than the file. The baseline
+of §141 was added wherever the exposure becomes a gain, and a picture
+goes through the same finish as a raw's develop, so it was brightened
+too. Worse, and older than the baseline: since §50 a picture has also
+gone through the display curve, which is made for a scene. A JPEG
+already has a curve, whatever rendered it applied one, so its tones
+went through two, the mid-tones lifted and the top compressed a
+second time.
+
+The finish now knows what it is handed: `finish::Source`, `Scene` for
+a raw's develop and `Display` for a JPEG, PNG or TIFF, carried on the
+worker's `Base`, the UI's state and the viewport's `View`. A `Display`
+picture takes no baseline, and in place of the curve a clip at white.
+The Light sliders' shape (contrast, the tone equalizer, whites and
+blacks) still acts on it, in the same linear working space, since
+those are edits and not a rendering. The shader's `curve` uniform
+takes a third value for the shape followed by a clip. The export, the
+droppers' `pick` and the mask models' preview all read it, so what
+the viewport shows, what a dropper reads, what a model is shown and
+what is written agree.
+
+Checked on a 640×480 JPEG through the release editor with the
+display profile off: the export against the file is 0.5% RMSE (14%
+before), and the 1:1 viewport the same, which is the JPEG's
+re-encoding and eight-bit rounding.
+
+Left as it is: whites aims at display white, which for a scene is
+where the raw clips plus the baseline, 3.27 stops over grey; a
+picture's white is 1.0, 2.47 stops over grey. So on a picture the
+slider moves the white point further than its number says near the
+top of its range. It works, and it can be given the picture's own
+white if it is found wanting.

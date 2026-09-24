@@ -158,10 +158,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             app.set_shot_exposure(shot.exposure.as_str().into());
             match &kind {
                 SourceKind::Raw => {
+                    st.source = finish::Source::Scene;
                     app.set_raw_input(true);
                     app.set_source_note("".into());
                 }
                 SourceKind::Picture { space, bits } => {
+                    st.source = finish::Source::Display;
                     app.set_raw_input(false);
                     app.set_source_note(
                         format!(

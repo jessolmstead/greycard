@@ -8,6 +8,13 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
+## 0.1.2, unreleased
+
+- Fix JPEG, PNG and TIFF files opening brighter and more contrasty
+  than the file: they took the 0.8-stop baseline and the display
+  curve meant for a raw. A picture with nothing done to it now looks
+  as it does anywhere else (#1, §152, 2026-09-23).
+
 ## 0.1.1, 2026-09-22
 
 - Fix the macOS package failing at launch with "Library not loaded:
