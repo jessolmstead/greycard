@@ -1106,16 +1106,25 @@ pub struct Sidecar {
     pub xmp: Option<xmp::Adopted>,
     /// How many times this sidecar, or the one it grew out of, has
     /// been written: [`Self::save`] and [`Self::save_in`] increment
-    /// it before every write. [`Self::find`] reads it from both
-    /// copies when a frame has one in each place and takes the
-    /// higher, falling back to mtime only on a tie, since a copy
-    /// tool, a backup restore or two clocks can make one file's
-    /// mtime lie about which save is newer but cannot make it lie
-    /// about how many saves it has seen. Defaulted, so a sidecar
-    /// from before this field reads as 0 and both the old file and
-    /// an older build opening a sidecar this build wrote are
-    /// unaffected: an unknown field is silently ignored by serde,
-    /// and 0 is what an old build already assumes.
+    /// it before every write, by a saturating add so a field this
+    /// large is never the one thing that fails a save. [`Self::find`]
+    /// reads it from both copies when a frame has one in each place,
+    /// and takes the higher *only when both are counted* — both
+    /// nonzero — since a copy tool, a backup restore or two clocks
+    /// can make one file's mtime lie about which save is newer but
+    /// cannot make it lie about how many saves it has seen. A copy
+    /// with no count, or an equal count, is not decided by the
+    /// counter: mtime is the fallback, exactly as before this field
+    /// existed. That "no count" case is not only a sidecar from
+    /// before this field existed: 0.1.1 does not know this field
+    /// either, so a sidecar it saves — even one that started as a
+    /// counted copy this build wrote — comes back out with no
+    /// `saved` at all, serde dropping what that build does not know,
+    /// and must lose to nothing just for having gone through a build
+    /// that cannot count. Read loosely, as [`Self::turn`] and
+    /// [`Self::meta`] are: anything that is not a plain non-negative
+    /// integer reads as 0 rather than failing the whole sidecar.
+    #[serde(default, deserialize_with = "meta::loose")]
     pub saved: u64,
     /// Earlier states, oldest first, each one a whole edit.
     pub history: Vec<Edit>,
@@ -1184,13 +1193,18 @@ fn under_folder(sidecar: &Path) -> bool {
     sidecar.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new(SIDECAR_FOLDER))
 }
 
-/// Just [`Sidecar::saved`], read without paying for the rest of the
-/// file: a struct of one field, so [`Sidecar::find`] does not parse
-/// the edit, the history and the snapshots twice over to compare two
-/// counters. Anything that keeps it from reading as a number — the
-/// file gone, not JSON, an object with no such field, a sidecar from
-/// before the field existed — reads as 0, which is exactly what
-/// [`Sidecar::find`] wants: fall back to mtime.
+/// Just [`Sidecar::saved`], read without building the rest of the
+/// file: a struct of one field, so [`Sidecar::find`] does not build
+/// the edit, the history and the snapshots — walk them into `Edit`s
+/// and `Vec`s, intern the strings, and so on — twice over just to
+/// compare two counters. `serde_json` still has to scan every byte
+/// of the file to know what to skip, so this is not a second read of
+/// less data; it is a read of the same data that stops at parsing
+/// instead of going on to build. Anything that keeps it from reading
+/// as a number — the file gone, not JSON, an object with no such
+/// field, a sidecar from before the field existed — reads as 0, which
+/// is exactly what [`Sidecar::find`] wants: an uncounted copy that
+/// mtime, not the counter, decides between.
 #[derive(Deserialize, Default)]
 struct SavedCount {
     #[serde(default)]
@@ -1232,14 +1246,20 @@ impl Sidecar {
 
     /// The sidecar `raw` has, wherever it is: both places are read
     /// whatever the setting says, so flipping the setting never
-    /// loses an edit. When both are there, the one with the higher
-    /// [`Self::saved`] wins; a copy tool, a backup restore or two
-    /// clocks can leave the older save with the newer mtime, but not
-    /// with the higher count. Only when the counts are equal — both
-    /// 0 for a pair from before the field existed, or a genuine tie —
-    /// does mtime decide, beside on a tie there too. The counters are
-    /// read only in this both-exist case, so the common one-copy
-    /// case costs nothing beyond the metadata call it already made.
+    /// loses an edit. When both are there and *both* carry a nonzero
+    /// [`Self::saved`], the higher one wins; a copy tool, a backup
+    /// restore or two clocks can leave the older save with the newer
+    /// mtime, but not with the higher count. A pair where either side
+    /// reads 0 is not decided by the counter at all, even when the
+    /// other side counts higher: 0 means either a sidecar from before
+    /// this field existed, or one a build that does not know the
+    /// field — 0.1.1, say — saved and so dropped it from, and neither
+    /// is "no saves", so the count cannot be trusted to mean anything
+    /// for that pair. mtime is the fallback for every such pair,
+    /// beside on a tie there too, exactly the rule before this field
+    /// existed. The counters are read only when both places have a
+    /// file, so the common one-copy case costs nothing beyond the
+    /// metadata call it already made.
     pub fn find(raw: &Path) -> Option<PathBuf> {
         let modified = |p: &Path| p.metadata().and_then(|m| m.modified()).ok();
         let (beside, under) = (
@@ -1250,12 +1270,16 @@ impl Sidecar {
             (None, None) => None,
             (Some(_), None) => Some(beside),
             (None, Some(_)) => Some(under),
-            (Some(b), Some(u)) => match saved_count(&beside).cmp(&saved_count(&under)) {
-                std::cmp::Ordering::Less => Some(under),
-                std::cmp::Ordering::Greater => Some(beside),
-                std::cmp::Ordering::Equal if u > b => Some(under),
-                std::cmp::Ordering::Equal => Some(beside),
-            },
+            (Some(b), Some(u)) => {
+                let (bc, uc) = (saved_count(&beside), saved_count(&under));
+                if bc > 0 && uc > 0 && bc != uc {
+                    Some(if bc > uc { beside } else { under })
+                } else if u > b {
+                    Some(under)
+                } else {
+                    Some(beside)
+                }
+            }
         }
     }
 
@@ -1497,7 +1521,7 @@ impl Sidecar {
     /// that lands is always the one [`Self::find`] will prefer over
     /// whatever it replaces.
     pub fn save_in(&mut self, raw: &Path, placement: Placement) -> Result<()> {
-        self.saved += 1;
+        self.saved = self.saved.saturating_add(1);
         let path = Self::path_in(raw, placement);
         if placement == Placement::Folder
             && let Some(folder) = path.parent()
@@ -2460,6 +2484,46 @@ mod tests {
         std::fs::write(&beside, r#"{"current":{"version":4}}"#).unwrap();
         let loaded = Sidecar::load(&raw).unwrap().unwrap();
         assert_eq!(loaded.saved, 0);
+    }
+
+    #[test]
+    fn a_saved_field_that_will_not_parse_costs_that_field_and_nothing_else() {
+        let dir = scratch("bad-saved");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        let beside = Sidecar::path_in(&raw, Placement::Beside);
+        // `saved` is read loosely, the way `turn`, `meta` and `xmp`
+        // are: a value that is not a plain non-negative integer must
+        // cost only this field, not the whole sidecar, the way
+        // `"turn":"x"` already does not fail a load.
+        std::fs::write(&beside, r#"{"current":{"version":4},"saved":-1}"#).unwrap();
+        let loaded = Sidecar::load(&raw).unwrap().unwrap();
+        assert_eq!(loaded.saved, 0);
+    }
+
+    #[test]
+    fn find_treats_an_uncounted_copy_as_mtime_only_however_high_the_other_counts() {
+        let dir = scratch("uncounted");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(&raw, b"raw").unwrap();
+        let (beside, under) = (
+            Sidecar::path_in(&raw, Placement::Beside),
+            Sidecar::path_in(&raw, Placement::Folder),
+        );
+        std::fs::create_dir_all(under.parent().unwrap()).unwrap();
+        // The shape that loses an edit under a plain "higher count
+        // wins" rule: this build saved under the folder three times
+        // (`saved: 3`); 0.1.1, which does not know the field and
+        // reads beside only, then starts from the default and saves
+        // beside with no `saved` key at all and a newer mtime. The
+        // beside copy is not "uncounted and behind" — it is the
+        // sidecar with the actual latest edit — so mtime, not the
+        // counter, must decide.
+        std::fs::write(&under, r#"{"saved":3}"#).unwrap();
+        set_modified(&under, 1_000_000_000);
+        std::fs::write(&beside, r#"{"current":{"version":4}}"#).unwrap();
+        set_modified(&beside, 2_000_000_000);
+        assert_eq!(Sidecar::find(&raw), Some(beside));
     }
 
     #[test]
