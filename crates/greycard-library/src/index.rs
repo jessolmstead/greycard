@@ -235,7 +235,7 @@ impl Library {
             });
         }
         let existing = rows_in_folder(self.conn_mut(), &folder)?;
-        index_paths(self.conn_mut(), &dir, &files, existing, progress)
+        index_paths(self.conn_mut(), &dir, &files, true, existing, progress)
     }
 
     /// Index a folder and every folder under it, hidden ones (a
@@ -339,7 +339,14 @@ impl Library {
         } else {
             Vec::new()
         };
-        index_paths(self.conn_mut(), &folder, &files, existing, &mut |_| {})
+        index_paths(
+            self.conn_mut(),
+            &folder,
+            &files,
+            false,
+            existing,
+            &mut |_| {},
+        )
     }
 }
 
@@ -437,13 +444,15 @@ enum Plan {
     Fresh { hash: String, exif: Option<Exif> },
 }
 
-/// One file looked at, with everything the disk had to say.
+/// One file looked at, with what the disk had to say of the file
+/// itself. Its sidecar is not read here: that is read under the lock
+/// in the second phase, so that a save made between the phases is
+/// what gets written.
 struct Looked<'a> {
     path: &'a Path,
     key: Vec<u8>,
     size: u64,
     mtime: i64,
-    sidecar: Option<SidecarNow>,
     plan: Plan,
 }
 
@@ -465,6 +474,7 @@ fn index_paths(
     conn: &mut Connection,
     folder: &Path,
     files: &[PathBuf],
+    whole_folder: bool,
     mut existing: HashMap<Vec<u8>, Row>,
     progress: &mut dyn FnMut(Progress<'_>),
 ) -> Result<Report> {
@@ -475,7 +485,7 @@ fn index_paths(
     let mut looked: Vec<Looked<'_>> = Vec::with_capacity(BATCH);
     let mut disk = Disk {
         folder: &folder_bytes,
-        listed: files.iter().map(|p| path_bytes(p)).collect(),
+        listed: whole_folder.then(|| files.iter().map(|p| path_bytes(p)).collect()),
         in_use: HashMap::new(),
     };
     let mut since = Instant::now();
@@ -490,7 +500,6 @@ fn index_paths(
             }
         };
         let (size, mtime) = (stat.len(), mtime_of(&stat));
-        let sidecar = sidecar_of(path);
         let hashed = |report: &mut Report| match hash::hash_file(path) {
             Ok(h) => Some(h),
             Err(e) => {
@@ -524,7 +533,6 @@ fn index_paths(
             key,
             size,
             mtime,
-            sidecar,
             plan,
         });
         if looked.len() >= BATCH || since.elapsed() >= BATCH_TIME {
@@ -586,18 +594,21 @@ fn write_batch(
         key,
         size,
         mtime,
-        sidecar,
         plan,
     } in looked.drain(..)
     {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
+        // The sidecar as it is now, under the lock: a save made since
+        // the first phase, or since another writer's pass, is what
+        // the row is held to.
+        let sidecar = sidecar_of(path);
         match plan {
             Plan::Same(row) => {
-                let (row, sidecar) = current(&tx, &key, row, path, sidecar)?;
+                let row = current(&tx, &key, row)?;
                 settle_same(&tx, row, sidecar.as_ref(), report)?;
             }
             Plan::Changed { row, hash, exif } => {
-                let (row, sidecar) = current(&tx, &key, row, path, sidecar)?;
+                let row = current(&tx, &key, row)?;
                 update_file(&tx, row.id, size, mtime, &hash, &exif)?;
                 if !row.same_sidecar(sidecar.as_ref()) {
                     write_meta(&tx, row.id, sidecar.as_ref())?;
@@ -736,21 +747,23 @@ fn update_file(
 /// What one pass knows about the disk, so that a question is asked
 /// of it once: the paths listed in the folder being indexed, which
 /// are on disk without a stat, and whether each folder asked about
-/// is there with something in it.
+/// is there with something in it. A pass over one file
+/// (`index_file`) has no listing — its one path would say every
+/// other file in the folder is gone, and a copy would take the
+/// original's row — and stats instead.
 struct Disk<'a> {
     folder: &'a [u8],
-    listed: HashSet<Vec<u8>>,
+    listed: Option<HashSet<Vec<u8>>>,
     in_use: HashMap<Vec<u8>, bool>,
 }
 
 impl Disk<'_> {
     /// Whether a row's file is on disk: for a row in the folder being
-    /// indexed, by the listing; for any other, by a stat.
+    /// indexed whole, by the listing; for any other, by a stat.
     fn has(&self, row_folder: &[u8], row_path: &[u8]) -> bool {
-        if row_folder == self.folder {
-            self.listed.contains(row_path)
-        } else {
-            path_from_bytes(row_path).exists()
+        match &self.listed {
+            Some(listed) if row_folder == self.folder => listed.contains(row_path),
+            _ => path_from_bytes(row_path).exists(),
         }
     }
 
@@ -801,31 +814,14 @@ fn gone_by_hash(
     Ok(None)
 }
 
-/// The row as it is now under the lock, and the sidecar to hold it
-/// to. Phase one read the sidecar before the lock was taken; when
-/// another writer has written the row's meta since the folder's rows
-/// were read — the editor saving a rating and calling `index_file`
-/// between the phases — what it wrote is newer than what phase one
-/// read, so the sidecar is read again here and the row is settled
-/// against its current state, not the snapshot's. A row gone
-/// meanwhile (a prune) is settled as the snapshot, and its updates
-/// by id touch nothing.
-fn current(
-    tx: &Transaction<'_>,
-    key: &[u8],
-    snapshot: Row,
-    path: &Path,
-    sidecar: Option<SidecarNow>,
-) -> Result<(Row, Option<SidecarNow>)> {
-    Ok(match row_at(tx, key)? {
-        Some(now)
-            if now.sidecar != snapshot.sidecar || now.sidecar_hash != snapshot.sidecar_hash =>
-        {
-            (now, sidecar_of(path))
-        }
-        Some(now) => (now, sidecar),
-        None => (snapshot, sidecar),
-    })
+/// The row as it is now under the lock, rather than as the folder's
+/// rows were read before the pass: another writer — the editor
+/// saving a rating and calling `index_file` between the phases — may
+/// have written it since, and the row is settled against what it
+/// wrote and the sidecar as it is now. A row gone meanwhile (a prune)
+/// is settled as the snapshot, and its updates by id touch nothing.
+fn current(tx: &Transaction<'_>, key: &[u8], snapshot: Row) -> Result<Row> {
+    Ok(row_at(tx, key)?.unwrap_or(snapshot))
 }
 
 /// The file's EXIF, a raw's through its decoder and a picture's
@@ -1681,8 +1677,56 @@ pub(crate) mod tests {
         let e = lib.by_path(&r5).unwrap().unwrap();
         assert_eq!(e.meta.rating, 1);
         assert_eq!(e.exif.camera, "SONY ILCE-7M4");
+        // Changed on disk before the pass, then set back to what the
+        // index holds in the seam: the row's sidecar hash is the
+        // snapshot's again, and the pass must still not write the
+        // change it would have read before the lock. The index says
+        // what the disk says.
+        let mut s = Sidecar::load(&r5).unwrap().unwrap();
+        s.meta.rating = 2;
+        s.save(&r5).unwrap();
+        let report = lib
+            .index_folder(&dir, &mut |p| {
+                if p.path == last {
+                    let mut s = Sidecar::load(&r5).unwrap().unwrap();
+                    s.meta.rating = 1;
+                    s.save(&r5).unwrap();
+                    other.index_file(&r5).unwrap();
+                }
+            })
+            .unwrap();
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 1);
+        assert_eq!(Sidecar::load(&r5).unwrap().unwrap().meta.rating, 1);
         drop(other);
         drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `index_file` on a copy in the same folder must not take the
+    /// original's row: a pass over one file knows nothing of the
+    /// folder's listing, and the original is on disk.
+    #[test]
+    fn an_index_file_on_a_copy_leaves_the_original_its_row() {
+        let dir = scratch("copyfile");
+        let (r5, _, a7) = shoot(&dir);
+        let mut lib = Library::open_in_memory().unwrap();
+        assert_eq!(lib.index_folder(&dir, &mut quiet()).unwrap().added, 3);
+        let original = lib.by_path(&r5).unwrap().unwrap();
+        let other = lib.by_path(&a7).unwrap().unwrap();
+        let copy = dir.join("r5_copy.tif");
+        std::fs::copy(&r5, &copy).unwrap();
+        let report = lib.index_file(&copy).unwrap();
+        assert_eq!((report.added, report.moved), (1, 0), "{report:?}");
+        assert_eq!(lib.len().unwrap(), 4);
+        assert_eq!(lib.by_path(&r5).unwrap().unwrap().id, original.id);
+        assert_eq!(lib.by_path(&a7).unwrap().unwrap().id, other.id);
+        let added = lib.by_path(&copy).unwrap().expect("the copy's own row");
+        assert_ne!(added.id, original.id);
+        assert_eq!(added.hash, original.hash);
+        // And the folder pass agrees: nothing to do.
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.unchanged, 4, "{report:?}");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
