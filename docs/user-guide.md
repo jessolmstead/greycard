@@ -72,6 +72,29 @@ an XMP** in Settings. With it on, greycard writes standard `.xmp`
 sidecars beside the raws; one that is there is read either way. Picks
 and rejects have no XMP field, so they stay in the `.gcd`.
 
+## Several frames at once
+
+Click a frame to open it. **Ctrl+click** adds a frame to the
+selection or takes it out again, and **Shift+click** selects every
+frame from the open one to the one you click; hold both to add a run
+to what is already selected. **Shift+←** and **Shift+→** (and the
+arrows in the grid) move to the next frame and keep the selection.
+The selected frames are highlighted in the filmstrip and the grid,
+and the frame on screen has the brighter outline. A plain arrow or a
+plain click goes back to one frame, and so does **Esc**.
+
+Ratings, flags, labels and the [ ] turns act on every selected frame.
+
+**Sync settings** copies the open frame's edit onto the other
+selected frames. Edit one frame, Ctrl+click or Shift+click the
+others, then press **Sync…** under Presets, or Ctrl+Shift+S. Choose
+which sections to copy: all are ticked except Adjustments, because
+masks are drawn around one picture's subject. The crop, the
+straighten and the retouch are never copied. Each frame keeps the
+sync as one step in its history, so Ctrl+Z on that frame undoes it.
+
+Export works on the open frame only, not the whole selection.
+
 ## Culling
 
 Press **C** to cull. In this mode greycard shows the camera's embedded
@@ -89,6 +112,8 @@ instant.
 | Key | Does |
 |---|---|
 | ← → | Previous or next frame |
+| Shift+← → | Next frame, keeping the selection |
+| Ctrl+click, Shift+click | Add a frame, or a run of frames, to the selection |
 | G | Grid, and back (in the grid, Ctrl+wheel or + and − resize it) |
 | C | Culling mode |
 | Tab | Hide the panels, the filmstrip and the status line, and bring them back |
@@ -104,8 +129,9 @@ instant.
 | Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y | Undo, redo |
 | Ctrl+O | Open a folder |
 | Ctrl+Shift+E | Export |
+| Ctrl+Shift+S | Sync settings onto the selected frames |
 | Ctrl+, | Settings |
-| Esc | Close a dialog, drop the tool in hand, or clear the filter |
+| Esc | Close a dialog, drop the tool in hand, go back to one frame, or clear the filter |
 
 On a Mac these are the Ctrl keys, not ⌘, for now.
 
