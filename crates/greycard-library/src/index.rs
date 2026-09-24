@@ -1081,4 +1081,60 @@ pub(crate) mod tests {
         let report = lib.index_folder(&samples, &mut |_| {}).unwrap();
         assert_eq!(report.unchanged, files.len(), "{report:?}");
     }
+
+    /// The numbers for the notes: a thousand frames, half with a
+    /// sidecar, into a library on disk. Prints the database's size
+    /// and the times; ignored, since it is a measurement and not a
+    /// check. `cargo test -p greycard-library -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn a_thousand_frames_for_the_numbers() {
+        let dir = scratch("thousand");
+        let frames = [R5, R6, A7];
+        for i in 0..1000u32 {
+            let path = dir.join(format!("IMG_{i:04}.tif"));
+            write_frame(&path, &frames[(i % 3) as usize], i as u16);
+            if i % 2 == 0 {
+                let mut s = Sidecar::default();
+                s.meta.rating = (i % 6) as u8;
+                s.meta.flag = if i % 5 == 0 { Flag::Pick } else { Flag::None };
+                s.meta
+                    .set_keywords(vec![format!("shoot{}", i / 100), "Skye".into()]);
+                s.save(&path).unwrap();
+            }
+        }
+        let db = dir.join("lib").join("library.sqlite");
+        let mut lib = Library::open(&db).unwrap();
+        let start = std::time::Instant::now();
+        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let first = start.elapsed();
+        assert_eq!(report.added, 1000, "{report:?}");
+        let start = std::time::Instant::now();
+        let report = lib.index_folder(&dir, &mut |_| {}).unwrap();
+        let second = start.elapsed();
+        assert_eq!(report.unchanged, 1000, "{report:?}");
+        lib.checkpoint().unwrap();
+        let size = lib.size_on_disk().unwrap();
+        let start = std::time::Instant::now();
+        let picks = lib
+            .query(&Filter::parse("flag:pick rating>=3 keyword:shoot4 camera:R6").unwrap())
+            .unwrap();
+        let listed = start.elapsed();
+        let start = std::time::Instant::now();
+        let n = lib
+            .count(&Filter::parse("iso>=3200 date:2026-09").unwrap())
+            .unwrap();
+        let counted = start.elapsed();
+        eprintln!(
+            "1000 frames: first pass {:.3} s, second {:.3} s; {size} bytes on disk, {} a row; \
+             a four-term query {:.1} ms for {} rows, a count {:.1} ms for {n}",
+            first.as_secs_f64(),
+            second.as_secs_f64(),
+            size / 1000,
+            listed.as_secs_f64() * 1000.0,
+            picks.len(),
+            counted.as_secs_f64() * 1000.0,
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }
