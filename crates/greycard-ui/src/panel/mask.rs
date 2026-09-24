@@ -629,7 +629,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     }],
                     boxes: Vec::new(),
                 },
-                Shape::Subject {} => Shape::Subject {},
+                s @ (Shape::Subject {} | Shape::Luminance { .. } | Shape::Color { .. }) => {
+                    s.clone()
+                }
             };
             let name = shape.name();
             let component = Component {
@@ -737,7 +739,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         placing.boxed = true;
                     }
                 }
-                Shape::Subject {} => {}
+                Shape::Subject {} | Shape::Luminance { .. } | Shape::Color { .. } => {}
             }
             app.window().request_redraw();
         });
@@ -796,7 +798,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     Shape::Radial { radius, .. } => {
                         radius[0] > MIN_RADIUS || radius[1] > MIN_RADIUS
                     }
-                    Shape::Brush { .. } | Shape::Subject {} | Shape::Object { .. } => true,
+                    Shape::Brush { .. }
+                    | Shape::Subject {}
+                    | Shape::Object { .. }
+                    | Shape::Luminance { .. }
+                    | Shape::Color { .. } => true,
                 });
             if drawn {
                 app.set_status("".into());

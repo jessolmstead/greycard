@@ -650,7 +650,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                     app.set_mask_ry((bx * bx + by * by).sqrt());
                                     app.set_mask_feather_scale(1.0 - feather.clamp(0.0, 1.0));
                                 }
-                                Shape::Brush { .. } | Shape::Subject {} | Shape::Object { .. } => {}
+                                Shape::Brush { .. }
+                                | Shape::Subject {}
+                                | Shape::Object { .. }
+                                | Shape::Luminance { .. }
+                                | Shape::Color { .. } => {}
                             }
                             sync_rows(&st.mask_handles, handles);
                             app.set_mask_kind(component.shape.name().into());
@@ -797,6 +801,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         },
                         show_mask: app.get_show_mask().then_some(st.target).flatten(),
                         show_sharpen: app.get_show_sharpen_mask() && app.get_sharpen(),
+                        mask_alone: false,
                         canvas: render::canvas_rgb(app.get_canvas_choice()),
                         source: st.source,
                     };

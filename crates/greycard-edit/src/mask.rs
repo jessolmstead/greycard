@@ -137,6 +137,140 @@ pub enum Shape {
         picks: Vec<Pick>,
         boxes: Vec<[Pos; 2]>,
     },
+    /// A window on the picture's lightness: one where the [`Sample`]'s
+    /// lightness lies from `low` to `high`, falling to nothing over
+    /// `low_feather` below `low` and `high_feather` above `high`. All
+    /// four in Oklab L, 0 to 1. It has no place of its own; it is
+    /// given the picture's sample at a point (`Mask::at_sampled`).
+    Luminance {
+        low: f32,
+        high: f32,
+        low_feather: f32,
+        high_feather: f32,
+    },
+    /// A window on the picture's color in Oklch: one where the
+    /// sample's hue lies within `width / 2` degrees of `hue` and its
+    /// chroma is `chroma` or more; nothing past `hue_feather` degrees
+    /// further round, or `chroma_feather` under the floor. Given the
+    /// sample as a luminance window is.
+    Color {
+        hue: f32,
+        width: f32,
+        hue_feather: f32,
+        chroma: f32,
+        chroma_feather: f32,
+    },
+}
+
+/// The picture at a point, as the range shapes read it: the developed
+/// picture there before any look — before the mask's own adjustments,
+/// before the global tone and color — brought to the picture's global
+/// exposure, in Oklab. `lightness` is the pixel's own L, clipped to 0
+/// to 1; `a` and `b` are the mean of a small box about it, the one the
+/// mixer reads a hue from, so a color window does not pick noise.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct Sample {
+    pub lightness: f32,
+    pub a: f32,
+    pub b: f32,
+}
+
+impl Sample {
+    /// The Oklch hue in degrees, 0 to 360.
+    pub fn hue(self) -> f32 {
+        self.b.atan2(self.a).to_degrees().rem_euclid(360.0)
+    }
+
+    pub fn chroma(self) -> f32 {
+        self.a.hypot(self.b)
+    }
+}
+
+/// The hue the vibrance protection centers on (notes §60), where skin
+/// sits in Oklab: the Skin preset's center.
+pub const SKIN_HUE: f32 = 55.0;
+
+impl Shape {
+    /// A luminance window over the bright part of the picture: what a
+    /// new one starts at, which a sky is usually in.
+    pub const LUMINANCE: Shape = Shape::Luminance {
+        low: 0.7,
+        high: 1.0,
+        low_feather: 0.1,
+        high_feather: 0.0,
+    };
+
+    /// A color window at `hue`: 30 degrees wide at full, a further 30
+    /// each side to nothing, and a floor on the chroma that keeps the
+    /// near-greys out, whose hue is their noise.
+    pub fn color_at(hue: f32) -> Shape {
+        Shape::Color {
+            hue: hue.rem_euclid(360.0),
+            width: 30.0,
+            hue_feather: 30.0,
+            chroma: 0.04,
+            chroma_feather: 0.03,
+        }
+    }
+
+    /// The Skin preset: the window at the vibrance protection's skin
+    /// hue, full within its 15 degrees each side and gone by the 45
+    /// where the protection is (§60), a low floor for pale skin.
+    pub fn skin() -> Shape {
+        Shape::Color {
+            hue: SKIN_HUE,
+            width: 30.0,
+            hue_feather: 30.0,
+            chroma: 0.03,
+            chroma_feather: 0.02,
+        }
+    }
+
+    /// Whether the shape reads the picture rather than a place in it.
+    pub fn is_range(&self) -> bool {
+        matches!(self, Shape::Luminance { .. } | Shape::Color { .. })
+    }
+
+    /// A range shape's value for the picture's `sample` at a point;
+    /// nothing for any other shape.
+    pub fn of_sample(&self, s: Sample) -> f32 {
+        match *self {
+            Shape::Luminance {
+                low,
+                high,
+                low_feather,
+                high_feather,
+            } => window(
+                s.lightness.clamp(0.0, 1.0),
+                low,
+                high,
+                low_feather,
+                high_feather,
+            ),
+            Shape::Color {
+                hue,
+                width,
+                hue_feather,
+                chroma,
+                chroma_feather,
+            } => {
+                let d = (s.hue() - hue + 180.0).rem_euclid(360.0) - 180.0;
+                let half = (width * 0.5).max(0.0);
+                let h = window(d.abs(), 0.0, half, 0.0, hue_feather.max(0.0));
+                let c = smoothstep(chroma - chroma_feather.max(0.0), chroma, s.chroma());
+                h * c
+            }
+            _ => 0.0,
+        }
+    }
+}
+
+/// One from `low` to `high`, both ends in; rising from nothing at
+/// `low - low_feather`, falling to nothing at `high + high_feather`,
+/// each by Hermite's step; a feather of nothing a hard edge.
+pub fn window(x: f32, low: f32, high: f32, low_feather: f32, high_feather: f32) -> f32 {
+    smoothstep(low - low_feather.max(0.0), low, x)
+        * smoothstep(-high - high_feather.max(0.0), -high, -x)
 }
 
 impl Shape {
@@ -169,7 +303,7 @@ impl Shape {
                     stroke.turn(t);
                 }
             }
-            Shape::Subject {} => {}
+            Shape::Subject {} | Shape::Luminance { .. } | Shape::Color { .. } => {}
             Shape::Object { picks, boxes } => {
                 for pick in picks {
                     pick.pos = t.pos(pick.pos);
@@ -283,6 +417,8 @@ impl Shape {
                 strokes: Vec::new(),
             },
             "Subject" => Shape::Subject {},
+            "Luminance" => Shape::LUMINANCE,
+            "Color" => Shape::color_at(SKIN_HUE),
             "Object" => Shape::Object {
                 picks: Vec::new(),
                 boxes: Vec::new(),
@@ -306,7 +442,11 @@ impl Shape {
     /// (+x, -x, +y, -y in its own frame). A brush has none.
     pub fn handles(&self) -> Vec<(f32, f32)> {
         match *self {
-            Shape::Brush { .. } | Shape::Subject {} | Shape::Object { .. } => Vec::new(),
+            Shape::Brush { .. }
+            | Shape::Subject {}
+            | Shape::Object { .. }
+            | Shape::Luminance { .. }
+            | Shape::Color { .. } => Vec::new(),
             Shape::Linear { from, to } => vec![
                 ((from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0),
                 (from[0], from[1]),
@@ -333,7 +473,11 @@ impl Shape {
     /// The shape with handle `handle` moved to `p`, in the masks' units.
     pub fn dragged(&self, handle: usize, p: (f32, f32)) -> Self {
         match *self {
-            Shape::Brush { .. } | Shape::Subject {} | Shape::Object { .. } => self.clone(),
+            Shape::Brush { .. }
+            | Shape::Subject {}
+            | Shape::Object { .. }
+            | Shape::Luminance { .. }
+            | Shape::Color { .. } => self.clone(),
             Shape::Linear { from, to } => match handle {
                 1 => Shape::Linear {
                     from: [p.0, p.1],
@@ -394,6 +538,8 @@ impl Shape {
             Shape::Brush { .. } => "Brush",
             Shape::Subject {} => "Subject",
             Shape::Object { .. } => "Object",
+            Shape::Luminance { .. } => "Luminance",
+            Shape::Color { .. } => "Color",
         }
     }
 
@@ -416,10 +562,14 @@ impl Shape {
     }
 
     /// The value at (u, v); nothing for a raster shape, whose raster
-    /// the caller has.
+    /// the caller has, or a range shape, whose sample it has.
     pub fn at(&self, u: f32, v: f32) -> f32 {
         match *self {
-            Shape::Brush { .. } | Shape::Subject {} | Shape::Object { .. } => 0.0,
+            Shape::Brush { .. }
+            | Shape::Subject {}
+            | Shape::Object { .. }
+            | Shape::Luminance { .. }
+            | Shape::Color { .. } => 0.0,
             Shape::Linear { from, to } => {
                 let (dx, dy) = (to[0] - from[0], to[1] - from[1]);
                 let len2 = dx * dx + dy * dy;
@@ -465,6 +615,19 @@ impl Mask {
     /// switching the last shape off does not turn the adjustment on
     /// over the whole frame.
     pub fn at_with(&self, u: f32, v: f32, raster: impl Fn(usize, f32, f32) -> f32) -> f32 {
+        self.at_sampled(u, v, None, raster)
+    }
+
+    /// `at_with`, the range shapes given the picture's `sample` at
+    /// (u, v). Without one they are nothing, as a raster shape is
+    /// without its raster.
+    pub fn at_sampled(
+        &self,
+        u: f32,
+        v: f32,
+        sample: Option<Sample>,
+        raster: impl Fn(usize, f32, f32) -> f32,
+    ) -> f32 {
         if self.is_empty() {
             return 0.0;
         }
@@ -472,6 +635,8 @@ impl Mask {
         for (i, c) in self.live() {
             let s = if c.shape.is_raster() {
                 raster(i, u, v)
+            } else if c.shape.is_range() {
+                sample.map_or(0.0, |s| c.shape.of_sample(s))
             } else {
                 c.shape.at(u, v)
             };
@@ -494,6 +659,12 @@ impl Mask {
             .filter(|(_, c)| c.enabled)
     }
 
+    /// Whether a live shape reads the picture, so the caller has to
+    /// sample it.
+    pub fn reads_picture(&self) -> bool {
+        self.live().any(|(_, c)| c.shape.is_range())
+    }
+
     /// Whether the mask says nothing: no shapes, or none switched on.
     /// Either way the adjustment does nothing, and the callers turn
     /// their local off rather than blend a mask of zeroes.
@@ -502,7 +673,8 @@ impl Mask {
     }
 }
 
-/// Hermite's step from `e0` to `e1`, a hard step when they meet.
+/// Hermite's step from `e0` to `e1`, a hard step when they meet, `e1`
+/// itself on the high side.
 pub fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
     if e1 - e0 < 1e-6 {
         return if x < e1 { 0.0 } else { 1.0 };
@@ -860,5 +1032,190 @@ mod tests {
             panic!("expected a radial shape");
         };
         assert_eq!(center, [0.5, 0.3]);
+    }
+
+    fn lab(lightness: f32, hue: f32, chroma: f32) -> Sample {
+        let (s, c) = hue.to_radians().sin_cos();
+        Sample {
+            lightness,
+            a: chroma * c,
+            b: chroma * s,
+        }
+    }
+
+    #[test]
+    fn a_luminance_window_is_one_inside_and_feathers_outward() {
+        let w = Shape::Luminance {
+            low: 0.4,
+            high: 0.6,
+            low_feather: 0.2,
+            high_feather: 0.1,
+        };
+        let at = |l: f32| w.of_sample(lab(l, 0.0, 0.0));
+        // In full from edge to edge, both edges in.
+        for l in [0.4, 0.5, 0.6] {
+            assert_eq!(at(l), 1.0, "{l}");
+        }
+        // Half way down each feather is half, by Hermite's step.
+        assert!((at(0.3) - 0.5).abs() < 1e-5, "{}", at(0.3));
+        assert!((at(0.65) - 0.5).abs() < 1e-5, "{}", at(0.65));
+        // And nothing past them.
+        assert!(at(0.2) < 1e-6);
+        assert!(at(0.7) < 1e-6);
+        assert_eq!(at(0.95), 0.0);
+        // No feather is a hard edge.
+        let hard = Shape::Luminance {
+            low: 0.4,
+            high: 0.6,
+            low_feather: 0.0,
+            high_feather: 0.0,
+        };
+        assert_eq!(hard.of_sample(lab(0.399, 0.0, 0.0)), 0.0);
+        assert_eq!(hard.of_sample(lab(0.601, 0.0, 0.0)), 0.0);
+        // The top of the scale includes what is past display white: a
+        // blown sky is in a window reaching one, not dropped out of it.
+        assert_eq!(Shape::LUMINANCE.of_sample(lab(1.4, 0.0, 0.0)), 1.0);
+        assert_eq!(Shape::LUMINANCE.of_sample(lab(1.0, 0.0, 0.0)), 1.0);
+        assert_eq!(Shape::LUMINANCE.of_sample(lab(0.5, 0.0, 0.0)), 0.0);
+        // A place means nothing to it.
+        assert_eq!(w.at(0.5, 0.5), 0.0);
+        assert!(w.is_range() && !w.is_raster());
+    }
+
+    #[test]
+    fn a_color_window_goes_round_the_hue_circle_and_keeps_greys_out() {
+        let w = Shape::Color {
+            hue: 350.0,
+            width: 20.0,
+            hue_feather: 20.0,
+            chroma: 0.05,
+            chroma_feather: 0.04,
+        };
+        let at = |hue: f32, chroma: f32| w.of_sample(lab(0.5, hue, chroma));
+        // Full within ten degrees either side, across the wrap.
+        for hue in [340.0, 350.0, 359.0, 0.0] {
+            assert_eq!(at(hue, 0.1), 1.0, "{hue}");
+        }
+        // Half way through the feather on both sides.
+        assert!((at(10.0, 0.1) - 0.5).abs() < 1e-4, "{}", at(10.0, 0.1));
+        assert!((at(330.0, 0.1) - 0.5).abs() < 1e-4, "{}", at(330.0, 0.1));
+        assert_eq!(at(20.0, 0.1), 0.0);
+        assert_eq!(at(170.0, 0.1), 0.0);
+        // The chroma floor: full at it, half half way down its
+        // feather, nothing under it, whatever the hue says.
+        assert_eq!(at(350.0, 0.05), 1.0);
+        assert!((at(350.0, 0.03) - 0.5).abs() < 1e-4);
+        assert_eq!(at(350.0, 0.005), 0.0);
+        assert_eq!(at(350.0, 0.0), 0.0);
+        // The lightness is none of its business.
+        assert_eq!(
+            w.of_sample(lab(0.05, 350.0, 0.1)),
+            w.of_sample(lab(0.95, 350.0, 0.1))
+        );
+    }
+
+    #[test]
+    fn the_skin_preset_sits_where_the_vibrance_protects() {
+        let skin = Shape::skin();
+        let Shape::Color {
+            hue,
+            width,
+            hue_feather,
+            ..
+        } = skin
+        else {
+            panic!()
+        };
+        assert_eq!(hue, SKIN_HUE);
+        // Full where vibrance acts at half (within 15 degrees), gone
+        // where it acts in full (45 degrees away), as §60 has it.
+        assert_eq!(width / 2.0, 15.0);
+        assert_eq!(width / 2.0 + hue_feather, 45.0);
+        assert_eq!(skin.of_sample(lab(0.7, 60.0, 0.06)), 1.0);
+        assert_eq!(skin.of_sample(lab(0.7, 240.0, 0.06)), 0.0);
+        // A new color shape starts there too, and a click moves it.
+        assert_eq!(Shape::of_kind("Color"), Shape::color_at(SKIN_HUE));
+        let Shape::Color { hue, .. } = Shape::color_at(-30.0) else {
+            panic!()
+        };
+        assert_eq!(hue, 330.0);
+    }
+
+    #[test]
+    fn a_range_shape_intersects_with_a_drawn_one() {
+        // A sky: the top of the frame, and of that only what is bright.
+        let mask = Mask {
+            components: vec![
+                Component {
+                    shape: Shape::Linear {
+                        from: [0.0, 0.0],
+                        to: [0.0, 0.5],
+                    },
+                    ..Default::default()
+                },
+                Component {
+                    shape: Shape::LUMINANCE,
+                    mode: Mode::Intersect,
+                    ..Default::default()
+                },
+            ],
+            invert: false,
+        };
+        assert!(mask.reads_picture());
+        let none = |_: usize, _: f32, _: f32| 0.0;
+        let bright = Some(lab(0.9, 0.0, 0.0));
+        let dark = Some(lab(0.3, 0.0, 0.0));
+        assert_eq!(mask.at_sampled(0.5, 0.0, bright, none), 1.0);
+        assert_eq!(mask.at_sampled(0.5, 0.0, dark, none), 0.0);
+        assert_eq!(mask.at_sampled(0.5, 0.9, bright, none), 0.0);
+        // Without a sample the range shape is nothing, as a raster is
+        // without its raster: the intersection is empty.
+        assert_eq!(mask.at(0.5, 0.0), 0.0);
+        // Switched off it is not read, and the mask does not ask.
+        let mut off = mask.clone();
+        off.components[1].enabled = false;
+        assert!(!off.reads_picture());
+        assert_eq!(off.at(0.5, 0.0), 1.0);
+        // Inverted, it is the dark part of the top.
+        let mut shade = mask.clone();
+        shade.components[1].invert = true;
+        assert_eq!(shade.at_sampled(0.5, 0.0, dark, none), 1.0);
+        // A turn leaves it as it is: it has no place to carry.
+        let mut turned = mask.clone();
+        turned.turn(Turned::new(1, 1.5));
+        assert_eq!(turned.components[1], mask.components[1]);
+        assert!(Shape::LUMINANCE.handles().is_empty());
+    }
+
+    #[test]
+    fn range_shapes_round_trip_and_older_sidecars_still_load() {
+        let mask = Mask {
+            components: vec![
+                Component {
+                    shape: Shape::LUMINANCE,
+                    ..Default::default()
+                },
+                Component {
+                    shape: Shape::skin(),
+                    mode: Mode::Subtract,
+                    invert: true,
+                    enabled: false,
+                },
+            ],
+            invert: true,
+        };
+        let json = serde_json::to_string(&mask).unwrap();
+        assert!(json.contains("\"kind\":\"luminance\""), "{json}");
+        assert!(json.contains("\"kind\":\"color\""), "{json}");
+        assert!(json.contains("\"low_feather\"") && json.contains("\"chroma_feather\""));
+        let back: Mask = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, mask);
+        // One written by hand, as a later sidecar would have it.
+        let written = r#"{"components":[{"shape":{"kind":"color","hue":200.0,"width":40.0,
+            "hue_feather":10.0,"chroma":0.05,"chroma_feather":0.02},"mode":"intersect",
+            "invert":false,"enabled":true}],"invert":false}"#;
+        let m: Mask = serde_json::from_str(written).unwrap();
+        assert_eq!(m.components[0].mode, Mode::Intersect);
+        assert_eq!(m.components[0].shape.name(), "Color");
     }
 }

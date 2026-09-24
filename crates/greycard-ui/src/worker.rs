@@ -55,7 +55,7 @@ impl Halves {
     /// The picture, with `mask` in the alpha when there is one: the
     /// sharpen's blend, for the viewport to paint where it acted.
     /// Zero alpha otherwise, so nothing is painted.
-    fn from_image(image: &WorkingImage, mask: Option<&[f32]>) -> Self {
+    pub(crate) fn from_image(image: &WorkingImage, mask: Option<&[f32]>) -> Self {
         use rayon::prelude::*;
         // A row at a time, in parallel: a 24 MP frame is a hundred
         // million conversions.

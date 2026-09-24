@@ -127,6 +127,10 @@ struct Params {
     look_out0: vec4<f32>,
     look_out1: vec4<f32>,
     look_out2: vec4<f32>,
+    // The range masks: in x whether a live shape reads the picture, so
+    // it is sampled once here; in y draw the shown mask's weight alone,
+    // as grey, for measuring it against `Local::weight_sampled`.
+    range: vec4<f32>,
 };
 
 // A local adjustment: its look's parameters as the global ones are
@@ -163,7 +167,10 @@ struct Local {
 // A mask's shape, as `mask.rs` has it: kind 0 is linear (a: from,
 // to), kind 1 radial (a: center, radii; b: angle in radians,
 // feather), kind 2 a brush (its layer of `brushes`, its raster's
-// aspect in b.x). The low two bits of the flags are the mode (0 adds,
+// aspect in b.x), kind 3 a raster not made yet; kind 4 a luminance
+// window (a: low, high, their feathers), kind 5 a color window (a:
+// hue in degrees, half its width, the hue's feather, the chroma
+// floor; b.x the floor's feather). The low two bits of the flags are the mode (0 adds,
 // 1 subtracts, 2 intersects); bit 2 inverts.
 struct Shape {
     kind: u32,
@@ -318,9 +325,19 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let count = min(u32(p.locals), MAX_LOCALS);
     var weights: array<f32, 16>;
     let uv = at / p.image.x;
+    // The picture as the range masks read it, as `finish::sample`:
+    // the source before any look, at the global exposure alone (the
+    // baseline in it, the vignette and the locals not), in Oklab; its
+    // own lightness, clipped to 0 to 1, and the mean a and b about it.
+    var sample = vec3<f32>(0.0);
+    if (p.range.x > 0.5) {
+        let c0 = vec3<f32>(dot(p.w0.xyz, t), dot(p.w1.xyz, t), dot(p.w2.xyz, t)) * exp2(p.exposure);
+        let lab0 = to_oklab(c0);
+        sample = vec3<f32>(clamp(lab0.x, 0.0, 1.0), local_ab(at) * exp2(p.exposure / 3.0));
+    }
     for (var k = 0u; k < count; k = k + 1u) {
         let l = locals[k];
-        let m = mask_at(l, uv);
+        let m = mask_at(l, uv, sample);
         weights[k] = m;
         let w = m * f32(l.enabled);
         if (w <= 0.0) { continue; }
@@ -414,6 +431,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if (p.show_mask > 0.5) {
         let k = u32(p.show_mask) - 1u;
         if (k < count) {
+            if (p.range.y > 0.5) {
+                return vec4<f32>(vec3<f32>(weights[k]), 1.0);
+            }
             d = mix(d, vec3<f32>(1.0, 0.15, 0.15), 0.6 * weights[k]);
         }
     }
@@ -546,7 +566,7 @@ fn vignette_at(uv: vec2<f32>, aspect: f32) -> f32 {
 
 // A shape's value at a source position in units of the width, as
 // `Shape::at` in `mask.rs`.
-fn shape_at(sh: Shape, uv: vec2<f32>) -> f32 {
+fn shape_at(sh: Shape, uv: vec2<f32>, sample: vec3<f32>) -> f32 {
     var s = 0.0;
     if (sh.kind == 0u) {
         let d = sh.a.zw - sh.a.xy;
@@ -562,6 +582,15 @@ fn shape_at(sh: Shape, uv: vec2<f32>) -> f32 {
         // no layer, so it cannot sample the next shape's paint, and
         // its mode and its invert still act, as they do there.
         s = 0.0;
+    } else if (sh.kind == 4u) {
+        s = range_window(sample.x, sh.a.x, sh.a.y, sh.a.z, sh.a.w);
+    } else if (sh.kind == 5u) {
+        // No chroma is hue 0, as Rust's atan2 has it; WGSL's is not
+        // pinned down there.
+        let hue = select(0.0, wrap360(degrees(atan2(sample.z, sample.y))), length(sample.yz) > 0.0);
+        let d = abs(wrap360(hue - sh.a.x + 180.0) - 180.0);
+        s = range_window(d, 0.0, sh.a.y, 0.0, sh.a.z)
+            * step_up(sh.a.w - sh.b.x, sh.a.w, length(sample.yz));
     } else {
         let sc = vec2<f32>(sin(sh.b.x), cos(sh.b.x));
         let dxy = uv - sh.a.xy;
@@ -578,17 +607,40 @@ fn shape_at(sh: Shape, uv: vec2<f32>) -> f32 {
     return s;
 }
 
+// Nothing below `e0`, one from `e1` on, Hermite's step between; a
+// hard step at `e1`, which is in, when the two meet: `smoothstep` in
+// `mask.rs`, which WGSL's own leaves undefined for that case.
+fn step_up(e0: f32, e1: f32, x: f32) -> f32 {
+    if (e1 - e0 < 1e-6) {
+        return select(0.0, 1.0, x >= e1);
+    }
+    let t = clamp((x - e0) / (e1 - e0), 0.0, 1.0);
+    return t * t * (3.0 - 2.0 * t);
+}
+
+// One from `low` to `high`, rising from nothing `low_f` below and
+// falling to nothing `high_f` above, as `window` in `mask.rs`.
+fn range_window(x: f32, low: f32, high: f32, low_f: f32, high_f: f32) -> f32 {
+    return step_up(low - low_f, low, x) * step_up(-high - high_f, -high, -x);
+}
+
+// A working-space color in Oklab, as `oklab` in `finish.rs`.
+fn to_oklab(c: vec3<f32>) -> vec3<f32> {
+    let lms = signed_cbrt(vec3<f32>(dot(p.ok_in0.xyz, c), dot(p.ok_in1.xyz, c), dot(p.ok_in2.xyz, c)));
+    return LMS_TO_LAB * lms;
+}
+
 // A local's mask at a source position: its shapes joined or taken
 // away in order, as `Mask::at`. Only the switched-on shapes are
 // uploaded (`Mask::live`), so one switched off is absent from the
 // join here as it is there, whatever its mode.
-fn mask_at(l: Local, uv: vec2<f32>) -> f32 {
+fn mask_at(l: Local, uv: vec2<f32>, sample: vec3<f32>) -> f32 {
     // Nothing live is nothing everywhere, `invert` or not, as `Mask::at_with`.
     if (l.shapes_count == 0u) { return 0.0; }
     var acc = 0.0;
     for (var i = 0u; i < l.shapes_count; i = i + 1u) {
         let sh = shapes[l.shapes_start + i];
-        let s = shape_at(sh, uv);
+        let s = shape_at(sh, uv, sample);
         let mode = sh.flags & 3u;
         if (mode == 1u) {
             acc = acc * (1.0 - s);

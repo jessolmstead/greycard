@@ -10,6 +10,7 @@ use greycard_core::image::WorkingImage;
 use greycard_core::lut;
 use greycard_edit::brush::Raster;
 use greycard_edit::curve::{CurveLut, color_shift, lookup};
+use greycard_edit::mask::Sample;
 use greycard_edit::mixer::{BANDS, MEAN_RADIUS, confidence};
 use greycard_edit::{BlackWhite, Color, Edit, Grain, Light, Look, Mask, Mixer, Tint};
 use rayon::prelude::*;
@@ -121,13 +122,42 @@ pub struct Local {
 
 impl Local {
     /// The mask's value at (u, v), its brushes from their rasters.
+    #[cfg(test)]
     pub fn weight(&self, u: f32, v: f32) -> f32 {
-        self.mask.at_with(u, v, |i, u, v| {
+        self.weight_sampled(u, v, None)
+    }
+
+    /// The mask's value at (u, v), its brushes from their rasters and
+    /// its range shapes from the picture's `sample` there ([`sample`]).
+    pub fn weight_sampled(&self, u: f32, v: f32, sample: Option<Sample>) -> f32 {
+        self.mask.at_sampled(u, v, sample, |i, u, v| {
             self.rasters
                 .get(i)
                 .and_then(|r| r.as_ref())
                 .map_or(0.0, |r| r.0.at(u, v))
         })
+    }
+
+    /// Whether this local's mask reads the picture, switched on.
+    pub fn reads_picture(&self) -> bool {
+        self.enabled && self.mask.reads_picture()
+    }
+}
+
+/// The picture at a pixel as the range masks read it
+/// ([`greycard_edit::mask::Sample`]): `px`, the developed working-space
+/// pixel before any look, at `exposure` stops (the source's baseline
+/// and the global exposure, nothing local), to Oklab; its lightness
+/// its own, its a and b `ab`, the source's mean about it
+/// ([`local_ab`]), brought to that exposure, when given, else its own.
+pub fn sample(px: [f32; 3], ab: Option<[f32; 2]>, exposure: f32) -> Sample {
+    let gain = 2f32.powf(exposure);
+    let lab = oklab(px.map(|v| v * gain));
+    let [a, b] = ab.map_or([lab[1], lab[2]], |ab| ab.map(|v| v * gain.cbrt()));
+    Sample {
+        lightness: lab[0].clamp(0.0, 1.0),
+        a,
+        b,
     }
 }
 
@@ -936,10 +966,15 @@ pub fn finish_with<T: Copy + Default + Send>(
 ) -> Vec<T> {
     // The mean the mixer and the black and white read a hue from,
     // only when one of them acts.
+    // The range masks read the same mean, and their sample at the
+    // global exposure alone.
+    let sampled = locals.iter().any(Local::reads_picture);
     let reference = (global.mixer.enabled
         || global.bw.enabled
+        || sampled
         || locals.iter().any(|l| l.enabled && l.baked.mixer.enabled))
     .then(|| local_ab(image));
+    let exposure = global.source.baseline() + global.light.exposure;
     let mut out = vec![T::default(); image.width * image.height * 3];
     out.par_chunks_mut(image.width * 3)
         .zip(image.data.par_chunks(image.width * 3))
@@ -955,10 +990,12 @@ pub fn finish_with<T: Copy + Default + Send>(
             {
                 on.clear();
                 let mut g = None;
+                let ab = reference.as_ref().map(|r| r[y * image.width + x]);
                 if !locals.is_empty() || guide.is_some() {
                     let (u, v) = position(x, y);
+                    let s = sampled.then(|| sample(*px, ab, exposure));
                     for local in locals.iter().filter(|l| l.enabled) {
-                        let w = local.weight(u, v);
+                        let w = local.weight_sampled(u, v, s);
                         if w > 0.0 {
                             on.push((&local.baked, w));
                         }
@@ -966,7 +1003,6 @@ pub fn finish_with<T: Copy + Default + Send>(
                     g = guide.map(|(plane, sw)| plane.at(u * sw, v * sw));
                 }
                 let (stops, grain) = frame(x, y);
-                let ab = reference.as_ref().map(|r| r[y * image.width + x]);
                 *o = finish_pixel_with(*px, global, &on, stops, grain, ab, g, look, to_out)
                     .map(&quantize);
             }
@@ -2896,6 +2932,129 @@ mod tests {
         // Every shape off is an empty mask, which the callers turn
         // the local off for rather than blend a mask of zeroes.
         assert!(brushed.is_empty());
+    }
+
+    /// A working-space color from Oklab lightness, hue and chroma.
+    fn from_lch(l: f32, hue: f32, chroma: f32) -> [f32; 3] {
+        let ok = Oklab::for_working_space();
+        let from_lms = greycard_core::color::invert3(ok.to_lms).unwrap();
+        let (s, c) = hue.to_radians().sin_cos();
+        let lms = apply3(&LAB_TO_LMS, [l, chroma * c, chroma * s]).map(|v| v * v * v);
+        apply3(&from_lms, lms)
+    }
+
+    #[test]
+    fn the_sample_is_the_picture_before_the_look_at_the_global_exposure() {
+        // Oklab L of mid grey is about 0.57; the sample adds the
+        // stops it is given and nothing else.
+        let grey = sample([0.18; 3], None, 0.0);
+        assert!((grey.lightness - 0.5647).abs() < 2e-3, "{grey:?}");
+        assert!(grey.a.abs() < 1e-4 && grey.b.abs() < 1e-4);
+        let up = sample([0.18; 3], None, 1.0);
+        assert!((up.lightness - 2f32.cbrt() * grey.lightness).abs() < 2e-3);
+        // Past display white it is clipped at the top of the scale.
+        assert_eq!(sample([4.0; 3], None, 0.0).lightness, 1.0);
+        // The hue is the pixel's, whatever the exposure; its chroma
+        // takes the cube root of the gain, as Oklab's a and b do, and
+        // a mean handed in is used in place of the pixel's own.
+        let skin = from_lch(0.6, 55.0, 0.08);
+        let s0 = sample(skin, None, 0.0);
+        let s1 = sample(skin, None, 1.5);
+        assert!((s0.hue() - 55.0).abs() < 0.1 && (s1.hue() - 55.0).abs() < 0.1);
+        assert!((s0.chroma() - 0.08).abs() < 1e-3, "{}", s0.chroma());
+        assert!((s1.chroma() / s0.chroma() - 2f32.powf(0.5)).abs() < 1e-3);
+        let meant = sample(skin, Some([0.0, 0.1]), 0.0);
+        assert!((meant.hue() - 90.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn a_range_mask_acts_where_the_picture_is_and_holds_under_its_own_edit() {
+        use greycard_edit::mask::{Component, Shape};
+        // Flat halves five pixels wide, so the mean about the middle of
+        // each is that half's own: a dark grey, a bright one, skin and
+        // a blue.
+        let colors = [
+            [0.02; 3],
+            [0.7; 3],
+            from_lch(0.5, 55.0, 0.08),
+            from_lch(0.4, 250.0, 0.1),
+        ];
+        let (w, h) = (20usize, 5usize);
+        let mut image = WorkingImage::new(w, h);
+        for (i, px) in image.data.as_chunks_mut::<3>().0.iter_mut().enumerate() {
+            *px = colors[(i % w) / 5];
+        }
+        let middle = |k: usize| 2 * w + k * 5 + 2;
+        let m = crate::export::Space::Srgb.matrix();
+        let global = plain_look();
+        let local = |shape: Shape, stops: f32| {
+            let mut look = greycard_edit::Look::default();
+            look.light.exposure = stops;
+            Local {
+                baked: Baked::of(&look),
+                mask: Mask {
+                    components: vec![Component {
+                        shape,
+                        ..Default::default()
+                    }],
+                    invert: false,
+                },
+                enabled: true,
+                rasters: vec![None],
+            }
+        };
+        let render = |global: &Baked, locals: &[Local]| -> Vec<u8> {
+            finish_with(
+                &image,
+                global,
+                locals,
+                |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
+                |_, _| (0.0, None),
+                None,
+                None,
+                &m,
+                |v| (v * 255.0).round() as u8,
+            )
+        };
+        let px = |out: &[u8], k: usize| out[middle(k) * 3..middle(k) * 3 + 3].to_vec();
+        let bare = render(&global, &[]);
+        // The bright grey, pushed a stop, and nothing else.
+        let lum = local(Shape::LUMINANCE, 1.0);
+        let out = render(&global, std::slice::from_ref(&lum));
+        let want = |k: usize, stops: f32| {
+            let mut look = greycard_edit::Look::default();
+            look.light.exposure = stops;
+            finish_pixel(colors[k], &global, &[(&Baked::of(&look), 1.0)], &m)
+                .map(|v| (v * 255.0).round() as u8)
+                .to_vec()
+        };
+        assert_eq!(px(&out, 1), want(1, 1.0));
+        for k in [0, 2, 3] {
+            assert_eq!(px(&out, k), px(&bare, k), "color {k}");
+        }
+        // The mask's own exposure does not move it: pushed three stops
+        // more, it is on the same pixels.
+        let out3 = render(&global, &[local(Shape::LUMINANCE, 3.0)]);
+        assert_eq!(px(&out3, 1), want(1, 3.0));
+        assert_eq!(px(&out3, 2), px(&bare, 2));
+        // The global exposure does: three stops down, the bright grey
+        // is under the window and the local is nowhere.
+        let mut dark = global.clone();
+        dark.light.exposure = -3.0;
+        assert_eq!(
+            render(&dark, std::slice::from_ref(&lum)),
+            render(&dark, &[])
+        );
+        // The skin preset takes the skin and leaves the blue and the
+        // greys; a window at the blue the other way round.
+        let skin = render(&global, &[local(Shape::skin(), 1.0)]);
+        assert_eq!(px(&skin, 2), want(2, 1.0));
+        for k in [0, 1, 3] {
+            assert_eq!(px(&skin, k), px(&bare, k), "color {k}");
+        }
+        let blue = render(&global, &[local(Shape::color_at(250.0), 1.0)]);
+        assert_eq!(px(&blue, 3), want(3, 1.0));
+        assert_eq!(px(&blue, 2), px(&bare, 2));
     }
 }
 

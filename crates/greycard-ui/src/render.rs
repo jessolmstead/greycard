@@ -139,6 +139,11 @@ struct Params {
     /// The working space to the table's primaries and back, rows.
     look_in: [[f32; 4]; 3],
     look_out: [[f32; 4]; 3],
+    /// The range masks: in x whether a live shape reads the picture,
+    /// so the shader samples it once a pixel (`finish::sample`); in y
+    /// whether to draw the shown mask's weight alone, as grey, in
+    /// place of the picture, for measuring it against the CPU's.
+    range: [f32; 4],
 }
 
 /// Eight band values as two vec4s.
@@ -177,7 +182,10 @@ struct LocalGpu {
 /// A mask's shape as the shader has it. A brush is a layer of the
 /// brush texture array (kind 2), with its raster's aspect in `b.x`;
 /// a raster shape still waiting for its raster is kind 3, nothing,
-/// and holds no layer.
+/// and holds no layer. A luminance window is kind 4, its low, high
+/// and their feathers in `a`; a color window kind 5, its hue, half
+/// its width, its hue feather and its chroma floor in `a` and the
+/// floor's feather in `b.x`.
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct ShapeGpu {
@@ -213,6 +221,33 @@ impl ShapeGpu {
                 pad: 0,
                 a: [center[0], center[1], radius[0], radius[1]],
                 b: [angle.to_radians(), *feather, 0.0, 0.0],
+            },
+            Shape::Luminance {
+                low,
+                high,
+                low_feather,
+                high_feather,
+            } => Self {
+                kind: 4,
+                flags,
+                layer: 0,
+                pad: 0,
+                a: [*low, *high, low_feather.max(0.0), high_feather.max(0.0)],
+                b: [0.0; 4],
+            },
+            Shape::Color {
+                hue,
+                width,
+                hue_feather,
+                chroma,
+                chroma_feather,
+            } => Self {
+                kind: 5,
+                flags,
+                layer: 0,
+                pad: 0,
+                a: [*hue, (width * 0.5).max(0.0), hue_feather.max(0.0), *chroma],
+                b: [chroma_feather.max(0.0), 0.0, 0.0, 0.0],
             },
             // Without its raster — a model still working, its weights
             // not there, a brush not painted — it is nothing, as the
@@ -463,6 +498,9 @@ pub struct View {
     /// Paint the sharpen's blend mask, which the worker put in the
     /// picture's alpha.
     pub show_sharpen: bool,
+    /// Draw the shown mask's weight alone, as grey, rather than the
+    /// picture under it: what the GPU check reads back.
+    pub mask_alone: bool,
     pub vignette: Vignette,
     pub grain: Grain,
     /// The clipping warnings to paint over the picture.
@@ -527,6 +565,7 @@ impl View {
             locals: Vec::new(),
             show_mask: None,
             show_sharpen: false,
+            mask_alone: false,
             vignette: Vignette::default(),
             grain: Grain::default(),
             warn: Warn::default(),
@@ -1281,6 +1320,16 @@ impl Renderer {
             look_max: self.look.max,
             look_in: self.look.to_lut,
             look_out: self.look.from_lut,
+            range: [
+                if v.locals.iter().take(MAX_LOCALS).any(Local::reads_picture) {
+                    1.0
+                } else {
+                    0.0
+                },
+                if v.mask_alone { 1.0 } else { 0.0 },
+                0.0,
+                0.0,
+            ],
         };
         // Each draw has its own uniform buffer, since two draws share a
         // submission.
@@ -1989,8 +2038,10 @@ const TARGET_FORMAT: gpu::TextureFormat = gpu::TextureFormat::Rgba8Unorm;
 mod tests {
     use super::*;
     use crate::finish::Baked;
+    use greycard_core::image::WorkingImage;
     use greycard_edit::mask::{Component, Mode, Shape};
     use greycard_edit::{Look, Mask};
+    use rayon::prelude::*;
 
     /// Both shaders parse and validate. Nothing else in `cargo test`
     /// reads the WGSL — the pipelines are built against a real
@@ -2142,5 +2193,277 @@ mod tests {
         assert_eq!(gpu.shapes[1].kind, 2);
         assert_eq!(gpu.shapes[1].layer, 0);
         assert_eq!(gpu.rasters.len(), 1);
+    }
+    /// A device of our own, off any window; none without an adapter,
+    /// and the test says so rather than passing in silence.
+    fn device(what: &str) -> Option<(gpu::Device, gpu::Queue)> {
+        let instance = gpu::Instance::new(gpu::InstanceDescriptor::new_without_display_handle());
+        let got = pollster::block_on(instance.request_adapter(&gpu::RequestAdapterOptions {
+            power_preference: gpu::PowerPreference::HighPerformance,
+            ..Default::default()
+        }))
+        .ok()
+        .and_then(|adapter| {
+            pollster::block_on(adapter.request_device(&gpu::DeviceDescriptor {
+                label: Some("mask test"),
+                ..Default::default()
+            }))
+            .ok()
+        });
+        if got.is_none() {
+            eprintln!("SKIPPED: {what} has no GPU to run on");
+            println!("SKIPPED: {what} has no GPU to run on");
+        }
+        got
+    }
+
+    /// A local with `shapes` joined in order and nothing to its look.
+    fn local_of(shapes: Vec<(Shape, Mode)>) -> Local {
+        Local {
+            baked: Baked::of(&Look::default()),
+            mask: Mask {
+                components: shapes
+                    .into_iter()
+                    .map(|(shape, mode)| Component {
+                        shape,
+                        mode,
+                        ..Default::default()
+                    })
+                    .collect(),
+                invert: false,
+            },
+            enabled: true,
+            rasters: Vec::new(),
+        }
+    }
+
+    /// How far the shader's weights for each of `locals` over `image`
+    /// at `exposure` stops of global exposure are from the CPU's
+    /// (`Local::weight_sampled` on `finish::sample`): the largest and
+    /// the mean difference, in weight, over every pixel and local.
+    /// The CPU is handed the picture the GPU has, rounded to half
+    /// floats, so what is measured is the two implementations; the
+    /// read back is eight bits, so half a level (0.002) is the floor.
+    /// With `covered`, every mask must take in some of the picture, so
+    /// that two blank answers cannot agree.
+    fn gpu_against_cpu(
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        image: &WorkingImage,
+        locals: &[Local],
+        exposure: f32,
+        covered: bool,
+    ) -> (f32, f32) {
+        use crate::finish::{local_ab, sample};
+        let (w, h) = (image.width, image.height);
+        let halves = crate::worker::Halves::from_image(image, None);
+        let seen = WorkingImage {
+            width: w,
+            height: h,
+            data: image
+                .data
+                .iter()
+                .map(|v| half::f16::from_f32(*v).to_f32())
+                .collect(),
+        };
+        let mut renderer = Renderer::new(device, queue);
+        renderer.upload(&halves);
+        let ab = local_ab(&seen);
+        let stops = Source::Scene.baseline() + exposure;
+        let mut worst = 0.0f32;
+        let mut sum = 0.0f64;
+        for (k, local) in locals.iter().enumerate() {
+            let mut view = View::blank();
+            view.center = (w as f32 / 2.0, h as f32 / 2.0);
+            view.plane = (w as f32, h as f32);
+            view.frame_size = (w as f32, h as f32);
+            view.light.exposure = exposure;
+            view.locals = locals.to_vec();
+            view.show_mask = Some(k);
+            view.mask_alone = true;
+            let target = renderer.render(w as u32, h as u32, &view);
+            let shown = renderer.read_back(&target).expect("read back");
+            // The largest difference, their sum, how many pixels are
+            // more than a level out, and how many the CPU has over half
+            // in and part in, so a check of two blank pictures cannot
+            // pass.
+            let (local_worst, local_sum, over, full, part) = (0..h)
+                .into_par_iter()
+                .map(|y| {
+                    let mut t = (0.0f32, 0.0f64, 0usize, 0usize, 0usize);
+                    for x in 0..w {
+                        let i = y * w + x;
+                        let px = seen.pixel(x, y);
+                        let (u, v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32);
+                        let cpu = local.weight_sampled(u, v, Some(sample(px, Some(ab[i]), stops)));
+                        let gpu = f32::from(shown.get_pixel(x as u32, y as u32)[0]) / 255.0;
+                        let d = (cpu - gpu).abs();
+                        if d > t.0 && std::env::var_os("GREYCARD_MASK_WORST").is_some() {
+                            let s = sample(px, Some(ab[i]), stops);
+                            eprintln!(
+                                "  worse: {d:.4} at {x},{y} px {px:?} cpu {cpu} gpu {gpu} {s:?}"
+                            );
+                        }
+                        t.0 = t.0.max(d);
+                        t.1 += f64::from(d);
+                        t.2 += usize::from(d > 1.5 / 255.0);
+                        t.3 += usize::from(cpu > 0.5);
+                        t.4 += usize::from(cpu > 0.0 && cpu < 1.0);
+                    }
+                    t
+                })
+                .reduce(
+                    || (0.0, 0.0, 0, 0, 0),
+                    |a, b| (a.0.max(b.0), a.1 + b.1, a.2 + b.2, a.3 + b.3, a.4 + b.4),
+                );
+            eprintln!(
+                "mask {k}: {:.1}% over half, {:.1}% part in, max difference {local_worst:.4}, \
+                 {over} pixels more than a level out",
+                100.0 * full as f32 / (w * h) as f32,
+                100.0 * part as f32 / (w * h) as f32
+            );
+            assert!(
+                !covered || (full > w * h / 200 && part > w * h / 200),
+                "mask {k} is blank"
+            );
+            worst = worst.max(local_worst);
+            sum += local_sum;
+        }
+        (worst, (sum / (w * h * locals.len()) as f64) as f32)
+    }
+
+    /// The masks the checks run: a luminance window, a color one at
+    /// the skin preset and one at a blue, and a color window
+    /// intersected with a drawn gradient.
+    fn range_locals() -> Vec<Local> {
+        vec![
+            local_of(vec![(
+                Shape::Luminance {
+                    low: 0.45,
+                    high: 0.8,
+                    low_feather: 0.1,
+                    high_feather: 0.05,
+                },
+                Mode::Add,
+            )]),
+            local_of(vec![(Shape::skin(), Mode::Add)]),
+            local_of(vec![(Shape::color_at(250.0), Mode::Add)]),
+            local_of(vec![
+                (
+                    Shape::Linear {
+                        from: [0.0, 0.0],
+                        to: [0.0, 0.6],
+                    },
+                    Mode::Add,
+                ),
+                (Shape::color_at(140.0), Mode::Intersect),
+            ]),
+        ]
+    }
+
+    /// The shader's range masks are the CPU's, on a field that runs
+    /// every hue across and every lightness down, with a little noise
+    /// so the local mean has something to do.
+    #[test]
+    fn the_shaders_range_masks_are_the_cpus() {
+        let Some((device, queue)) = device("the range masks' GPU check") else {
+            return;
+        };
+        let (w, h) = (360usize, 240usize);
+        let ok = greycard_core::color::Oklab::for_working_space();
+        let from_lms = greycard_core::color::invert3(ok.to_lms).unwrap();
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let l = 0.1 + 0.85 * y as f32 / h as f32;
+                let hue = (x as f32).to_radians();
+                let chroma = 0.12 * (0.5 + 0.5 * ((x * 7 + y * 3) as f32 * 0.37).sin());
+                let lab = [l, chroma * hue.cos(), chroma * hue.sin()];
+                let lms = greycard_core::color::apply3(&greycard_core::color::LAB_TO_LMS, lab)
+                    .map(|v| v * v * v);
+                data.extend(greycard_core::color::apply3(&from_lms, lms).map(|v| v.max(0.0)));
+            }
+        }
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data,
+        };
+        let (worst, mean) = gpu_against_cpu(&device, &queue, &image, &range_locals(), -0.3, true);
+        eprintln!("range masks, GPU against CPU: max {worst:.4}, mean {mean:.5}");
+        assert!(worst <= 3.0 / 255.0, "max {worst}");
+        assert!(mean <= 0.5 / 255.0, "mean {mean}");
+    }
+
+    /// The same on a real frame, developed at the defaults, with the
+    /// CPU's time for the masks over it: `GREYCARD_MASK_FRAME` names
+    /// the raw. Run it in release, ignored tests included, with the
+    /// output shown.
+    #[test]
+    #[ignore]
+    fn a_real_frames_range_masks() {
+        use crate::finish::{local_ab, sample};
+        let Some(path) = std::env::var_os("GREYCARD_MASK_FRAME") else {
+            panic!("set GREYCARD_MASK_FRAME to a raw");
+        };
+        let frame = greycard_core::decode::decode_path(&path).expect("decode");
+        let developed = greycard_core::develop::develop(
+            &frame,
+            &greycard_core::develop::DevelopSettings::default(),
+        )
+        .expect("develop");
+        let image = developed.image;
+        let (w, h) = (image.width, image.height);
+        eprintln!("{w} x {h}, {:.1} MP", (w * h) as f32 / 1e6);
+        let locals = range_locals();
+        // The CPU's cost: the mean a and b once, then each pixel's
+        // sample and every mask's weight, as `finish_with` pays it.
+        let start = std::time::Instant::now();
+        let ab = local_ab(&image);
+        let mean_took = start.elapsed();
+        let weights: f32 = (0..h)
+            .into_par_iter()
+            .map(|y| {
+                let mut acc = 0.0;
+                for x in 0..w {
+                    let i = y * w + x;
+                    let px = image.pixel(x, y);
+                    let s = Some(sample(px, Some(ab[i]), Source::Scene.baseline()));
+                    let (u, v) = ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32);
+                    for l in &locals {
+                        acc += l.weight_sampled(u, v, s);
+                    }
+                }
+                acc
+            })
+            .sum();
+        eprintln!(
+            "CPU: the mean {:.0} ms, then the sample and {} masks a pixel {:.0} ms (sum {weights:.0})",
+            mean_took.as_secs_f64() * 1e3,
+            locals.len(),
+            (start.elapsed() - mean_took).as_secs_f64() * 1e3
+        );
+        let Some((device, queue)) = device("the real frame's GPU check") else {
+            return;
+        };
+        let (worst, mean) = gpu_against_cpu(&device, &queue, &image, &locals, 0.0, false);
+        eprintln!("real frame, GPU against CPU: max {worst:.4}, mean {mean:.5}");
+        // Across a 45 MP texture the sampler's fixed-point position
+        // lands a hair off a texel's center and blends in a 256th of
+        // its neighbor, which a steep feather turns into a few levels
+        // on a few dozen pixels. The middle of the frame on its own,
+        // where the positions are small, is the two implementations.
+        assert!(worst <= 4.0 / 255.0, "max {worst}");
+        let (cw, ch) = (1024.min(w), 1024.min(h));
+        let (x0, y0) = ((w - cw) / 2, (h - ch) / 2);
+        let mut crop = WorkingImage::new(cw, ch);
+        for y in 0..ch {
+            let from = ((y0 + y) * w + x0) * 3;
+            crop.data[y * cw * 3..(y + 1) * cw * 3]
+                .copy_from_slice(&image.data[from..from + cw * 3]);
+        }
+        let (worst, mean) = gpu_against_cpu(&device, &queue, &crop, &locals, 0.0, false);
+        eprintln!("its middle, GPU against CPU: max {worst:.4}, mean {mean:.5}");
+        assert!(worst <= 1.5 / 255.0, "max {worst}");
     }
 }
