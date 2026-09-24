@@ -100,6 +100,12 @@ note a first tester reads.
   included, and the status says which it left off (§162, 2026-09-24).
 - A preset applied in culling now writes the frame's sidecar; before,
   the step lived only in memory until the next save (§162, 2026-09-24).
+- A thumbnail cache on disk, keyed by the file's content hash and its
+  time, so a folder reopened, moved or renamed shows its thumbnails at
+  once (the 35 sample files: 4 s to 0.01 s); 300 MB by default, with a
+  cap field and a Clear button in the Settings sheet's new THUMBNAILS
+  row; a thumbnail made while the file was still being copied is never
+  kept (§163, 2026-09-24).
 
 ## 0.1.1, 2026-09-22
 

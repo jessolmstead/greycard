@@ -11,7 +11,13 @@ on and nothing more; the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-None at present
+- [ ] A truncated CR3 panics the worker with "capacity overflow" inside
+      rawler's decoder; the job catches it, the frame shows nothing.
+      Found by the thumbnail cache's review on a half-copied file
+      (§163). Upstream, with a guard at the job meanwhile
+- [ ] `--grid --snapshot` over a folder where one thumbnail fails to
+      decode waits until it is killed, since the cell never fills; as
+      old as the grid (§163). Give the wait a limit and mark the cell
 
 ## v0.1.0: browse, develop, export
 
@@ -150,8 +156,6 @@ comes across with its ratings and collections.
   keyword; the folder filter's fields become the index's, with the
   facet counts (one GROUP BY a facet) the index leaves to the bar
   (§160). The index is there since §160
-- [ ] Thumbnail cache keyed by content hash rather than path, so a
-  moved shoot does not re-render. The index is there since §160
 - [ ] Roots: folders the user has added, an all-roots view, an inotify
   watcher on open roots and an mtime pass on launch; a moved file
   found by hash rather than flagged missing. The index is there
@@ -252,6 +256,9 @@ clears or a tester asks for it.
       color window beside its sliders (§158)
 - [ ] A way in the editor to take the GPU Subject model once the
       original is in the store; today it is fetched by id (§159)
+- [ ] Thumbnails made in parallel on a cold cache: today one at a time
+      on the worker behind the first develop, two seconds of decoding
+      for 35 files where a warm cache takes a hundredth (§163)
 - [ ] The vibrance protection's skin window (§60, 55 degrees plus or
       minus 15) against the 10 to 59 degrees a pale face measured
       (§158): widen it or not; a change to existing edits
