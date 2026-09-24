@@ -91,6 +91,16 @@ an XMP** in Settings. With it on, greycard writes standard `.xmp`
 sidecars beside the raws; one that is there is read either way. Picks
 and rejects have no XMP field, so they stay in the `.gcd`.
 
+The strip's and the grid's thumbnails are kept on disk under
+`~/.cache/greycard/thumbs` (`~/Library/Caches` on a Mac,
+`%LOCALAPPDATA%` on Windows), named by what is in each file rather
+than where it is, so a folder you open again, or move or rename, fills
+in at once instead of reading every raw's preview. Turning a frame
+does not make its thumbnail again. The cache keeps to 300 MB, about
+thirty thousand frames, dropping the ones used longest ago; set
+`thumb_cache_mb` in `settings.json` for another size, or 0 for none.
+**Clear** in Settings empties it.
+
 ### Masks by lightness and color
 
 On the Masks tab, **Luminance** and **Color** make a mask from the

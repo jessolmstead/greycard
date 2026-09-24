@@ -85,6 +85,24 @@ greycard library list camera:R6 'iso>=3200' 'rating>=3' flag:pick keyword:weddin
 greycard library list 'lens:RF 24' --paths
 ```
 
+The `thumbs` module is the browser's thumbnail cache, keyed by the
+same content hash as the index's `hash` column and the long edge, one
+file an entry under `greycard/thumbs/` in the platform's cache
+directory: a small header (format, the caller's recipe and stamp, the
+size, a checksum) and a JPEG. A damaged entry, or one made under
+another recipe or stamp, is a miss and is removed; past its cap the
+least recently used entries go, down to nine tenths of it.
+
+```rust
+let mut thumbs = greycard_library::Thumbs::user(300 << 20)?;
+let key = greycard_library::hash_file(&path)?;
+let tag = greycard_library::thumbs::Tag { recipe: 1, stamp: 0 };
+let thumb = match thumbs.get(&key, 176, tag) {
+    Some(t) => t,
+    None => { let t = make(&path); thumbs.put(&key, 176, tag, &t)?; t }
+};
+```
+
 This crate depends on `greycard-edit` for the sidecar and
 `greycard-core` for the probe, and never on a UI.
 
