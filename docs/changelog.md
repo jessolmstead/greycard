@@ -89,6 +89,11 @@ note a first tester reads.
   2026-09-24).
 - The probe reads the lens, focal length and date, and a JPEG or PNG's
   EXIF from its head without decoding it (§160, 2026-09-24).
+- A save counter in the sidecar: when a frame has a sidecar both beside
+  it and under `.greycard/`, the one saved more times wins, and the
+  files' times decide only when a copy carries no count, so a copy tool
+  or a restore cannot make the next save drop an edit (§161,
+  2026-09-24).
 
 ## 0.1.1, 2026-09-22
 

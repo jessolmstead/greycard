@@ -2496,9 +2496,17 @@ mod tests {
         // are: a value that is not a plain non-negative integer must
         // cost only this field, not the whole sidecar, the way
         // `"turn":"x"` already does not fail a load.
-        std::fs::write(&beside, r#"{"current":{"version":4},"saved":-1}"#).unwrap();
+        std::fs::write(
+            &beside,
+            r#"{"current":{"version":4,"light":{"exposure":2.0}},"saved":-1}"#,
+        )
+        .unwrap();
         let loaded = Sidecar::load(&raw).unwrap().unwrap();
         assert_eq!(loaded.saved, 0);
+        assert_eq!(
+            loaded.current.light.exposure, 2.0,
+            "the edit beside the bad field survives"
+        );
     }
 
     #[test]

@@ -67,11 +67,6 @@ sliders feel like the ones people learned on.
       editor mixes the channels, so None starts flatter across hues than
       people expect (§87). A change to the default look and to every
       mono edit written; waits on the reference frames
-- [ ] A save counter in the sidecar, so `find` chooses between a
-      beside and a folder copy by what was saved last and not by the
-      files' times, which a copy tool or two clocks can get wrong;
-      the time stays the fallback for sidecars written before the
-      field. The wrong choice loses an edit at the next save (§153)
 
 ## v0.3.0: speed
 
