@@ -136,10 +136,6 @@ one frame, and so does **Esc**.
 
 Ratings, flags, labels and the [ ] turns act on every selected frame.
 
-A preset click lands on every selected frame too: the open frame
-takes it as it always has, and each other frame the way a sync lays
-sections over its targets, one history step apiece.
-
 **Sync settings** copies the open frame's edit onto the other
 selected frames. Edit one frame, Ctrl+click or Shift+click the
 others, then press **Sync…** under Presets in the left panel, or
@@ -154,6 +150,11 @@ the straighten and the retouch are never copied. Each frame keeps the
 sync as one step in its history, named for what changed, so Ctrl+Z
 on that frame undoes it. While the sheet is open, the arrow keys and
 undo do nothing, so the frames it names are the frames it syncs.
+
+A preset click lands on every selected frame too, one history step
+apiece, with the same camera-profile check a sync gives its targets:
+a profile made for one camera reaches only frames of that camera, the
+open one included.
 
 Export works on the open frame only, not the whole selection.
 

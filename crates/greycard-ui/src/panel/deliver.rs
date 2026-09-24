@@ -414,19 +414,32 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     ", {name} left as it was: the fill model failed ({why})"
                 ));
             }
+            // A preset or a sync's own words ("Muted Slide onto 3
+            // frames"), left here for the develop this generation is,
+            // so the develop's line does not stand alone as the only
+            // word on what changed. Taken regardless of which branch
+            // below runs, so a generation it does not match, or a
+            // dropper's hint, never leaves it to be read against a
+            // later develop.
+            let suffix = st
+                .status_after_develop
+                .take_if(|(g, _)| *g == generation)
+                .map(|(_, s)| s);
             // A dropper in hand keeps its hint: the defringe's arms
             // itself by asking for a develop, and the instructions
             // must not be what that develop takes away.
             let picking = app.get_picking();
             if picking.is_empty() {
-                app.set_status(
-                    format!(
-                        "{}x{}, developed in {seconds:.2} s{detailed}{dehazed}{sharpened}{learned_note}{fill_note}",
-                        image.width(),
-                        image.height()
-                    )
-                    .into(),
+                let mut said = format!(
+                    "{}x{}, developed in {seconds:.2} s{detailed}{dehazed}{sharpened}{learned_note}{fill_note}",
+                    image.width(),
+                    image.height()
                 );
+                if let Some(suffix) = suffix {
+                    said.push_str("; ");
+                    said.push_str(&suffix);
+                }
+                app.set_status(said.into());
             } else {
                 app.set_status(picking_hint(picking.as_str()).into());
             }

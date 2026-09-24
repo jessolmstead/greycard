@@ -1,6 +1,6 @@
 use crate::panel::browser::file_name;
 use crate::panel::cull::{control_over_frame, leave_cull};
-use crate::panel::edit::{develop_soon, read_edit, schedule_save};
+use crate::panel::edit::{develop_soon, read_edit, schedule_save, write_sidecar};
 use crate::panel::history::take_current;
 use crate::panel::sync;
 use crate::*;
@@ -465,6 +465,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         return;
                     }
                     st.sidecars[c].record(applied);
+                    // `leave_cull(.., None)` reads the edit to leave
+                    // with off the sidecar it is itself about to
+                    // read, so its own "a control's change is written
+                    // once the panel rests" never sees a difference
+                    // and never schedules the write: the step just
+                    // recorded is saved here instead.
+                    write_sidecar(&mut st, c);
                     leave_cull(&mut st, &app, &worker, None);
                     return;
                 }
@@ -483,11 +490,18 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             }
             // Two or more selected: the current frame takes the
-            // preset the way it always has, and the rest of the set
-            // the way a sync lays sections over its targets.
+            // preset the way it always has, but with the same
+            // camera-profile fit check every other frame in the set
+            // gets — a preset naming a DCP is not the open frame's
+            // for the taking just because it is on screen — and the
+            // rest of the set the way a sync lays sections over its
+            // targets.
+            let profiles = camera::list();
+            let (current_preset, current_left_off) =
+                sync::preset_for_body(&st, &preset, c, &profiles, sync::probe);
             let current_changed = if st.cull.is_some() {
                 let edit = st.sidecars[c].current.clone();
-                let applied = preset.applied(&edit);
+                let applied = current_preset.applied(&edit);
                 let changed = applied != edit;
                 if changed {
                     st.sidecars[c].record(applied);
@@ -495,7 +509,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 changed
             } else {
                 let edit = read_edit(&app, &st.edit, st.target);
-                let applied = preset.applied(&edit);
+                let applied = current_preset.applied(&edit);
                 let changed = applied != edit;
                 if changed {
                     st.sidecars[c].record(edit);
@@ -503,8 +517,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 }
                 changed
             };
-            let profiles = camera::list();
-            let synced = sync::lay_over_targets(
+            let mut synced = sync::lay_over_targets(
                 &mut st,
                 &app,
                 &preset,
@@ -513,20 +526,47 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 &profiles,
                 sync::probe,
             );
+            if current_left_off {
+                synced.profile_left_off.push(c);
+                synced.profile_left_off.sort_unstable();
+            }
             let moved = synced.moved.len() + usize::from(current_changed);
             let asked = targets.len() + 1;
             let said = sync::preset_onto_words(&st, &preset.name, moved, asked, &synced);
-            // The develop (or the leaving of culling) sets its own
-            // "developing..." status; what happened across the set is
-            // the word that stands once it has had its say.
-            if current_changed {
-                if st.cull.is_some() {
-                    leave_cull(&mut st, &app, &worker, None);
+            if !current_changed {
+                // Nothing async is coming for the current frame: what
+                // happened across the set is the word that stands.
+                app.set_status(said.into());
+            } else if st.cull.is_some() {
+                // Saved here, as the single-frame culling branch
+                // above does: `leave_cull(.., None)` would otherwise
+                // never see its own edit differ from the sidecar's
+                // and never schedule the write.
+                write_sidecar(&mut st, c);
+                // The leaving develops the frame and sets its own
+                // status; culling's placeholder text can replace that
+                // again before the develop is on screen (`cull.rs`),
+                // so this line is not guaranteed to be the one left
+                // standing the way the non-culling one below is.
+                leave_cull(&mut st, &app, &worker, None);
+                app.set_status(said.into());
+            } else {
+                // The develop sets its own "developing..." now and,
+                // once it lands, its own "WxH, developed in ...". Left
+                // here for that generation, `said` is the line the
+                // develop's own words are appended to
+                // (`Outcome::Developed` in `deliver.rs`), so it is not
+                // lost the moment the develop finishes.
+                let before = st.generation;
+                take_current(&mut st, &app, &worker);
+                if st.generation == before {
+                    // No develop was asked for after all: the panel's
+                    // change did not reach the engine.
+                    app.set_status(said.into());
                 } else {
-                    take_current(&mut st, &app, &worker);
+                    st.status_after_develop = Some((st.generation, said));
                 }
             }
-            app.set_status(said.into());
         });
     }
     {

@@ -569,6 +569,11 @@ pub(crate) struct State {
     /// The frame and the targets the sync sheet was opened on, so an
     /// Apply can refuse a selection that moved under it.
     pub(crate) sync_asked: Option<(usize, Vec<usize>)>,
+    /// A preset click's own words ("Muted Slide onto 3 frames"),
+    /// waiting for the current frame's develop (its generation) to
+    /// land: the develop's own line would otherwise stand alone,
+    /// since it is set again once that develop is on screen.
+    pub(crate) status_after_develop: Option<(u64, String)>,
     /// A state shown in the viewport in place of the panel's while a
     /// history or snapshot row is under the pointer, and the status
     /// line it covers meanwhile.
@@ -725,6 +730,7 @@ impl State {
             sync_asked: None,
             peek: None,
             held: None,
+            status_after_develop: None,
             status_kept: None,
             view_kept: None,
             show_mask_kept: None,

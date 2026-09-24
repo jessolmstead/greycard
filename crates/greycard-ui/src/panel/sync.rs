@@ -99,6 +99,41 @@ pub(crate) fn profile_fits(entry: Option<&camera::Entry>, body: Option<(&str, &s
     body.is_some_and(|(make, model)| entry.fits(make, model))
 }
 
+/// `preset` as it reaches `file`: itself, when it carries no named
+/// camera profile or the profile fits `file`'s body; with Camera
+/// taken out, and `true`, when it does not. The check
+/// [`lay_over_targets`] gives every target in a set — a preset naming
+/// a DCP is not a frame's for the taking just because it is the one
+/// on screen, so a preset click's own frame goes through this too.
+pub(crate) fn preset_for_body(
+    st: &State,
+    preset: &Preset,
+    file: usize,
+    profiles: &[camera::Entry],
+    probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
+) -> (Preset, bool) {
+    let named = match &preset.edit.camera.profile {
+        ProfileChoice::Named(name) if preset.sections.contains(&Section::Camera) => {
+            profiles.iter().find(|e| &e.name == name)
+        }
+        _ => None,
+    };
+    let Some(entry) = named else {
+        return (preset.clone(), false);
+    };
+    let body = probe(st, file);
+    if profile_fits(
+        Some(entry),
+        body.as_ref().map(|p| (p.make.as_str(), p.model.as_str())),
+    ) {
+        (preset.clone(), false)
+    } else {
+        let mut without = preset.clone();
+        without.sections.retain(|s| *s != Section::Camera);
+        (without, true)
+    }
+}
+
 /// What a sync did: the frames it moved, and the frames the camera
 /// profile was left off because it was made for another body.
 #[derive(Debug, Default)]
@@ -874,5 +909,260 @@ mod tests {
         assert_eq!(state.borrow().sidecars[0].history.len(), 1);
 
         std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+    }
+
+    /// A store preset carrying Noise never brings the learned tier
+    /// the way a sync's does: `lay_over_targets` runs with
+    /// `learned_from: None` for a preset click, so a frame still
+    /// waiting on its first open takes its own ISO's blend, not the
+    /// preset's.
+    #[test]
+    fn a_preset_carrying_noise_leaves_the_learned_tier_to_each_frames_iso() {
+        let app = window(3);
+        let (state, _worker) = state_for(&app, folder(3));
+        let mut edit = Edit::default();
+        edit.noise.profiled = true;
+        edit.noise.strength = 1.8;
+        // Whatever tier the edit it was saved from had, a preset
+        // never carries it.
+        edit.noise.learned = Learned::Best;
+        edit.noise.learned_strength = 0.9;
+        let preset = Preset::from_edit("Clean", &edit, &[Section::Noise]);
+        assert_eq!(
+            preset.edit.noise.learned,
+            Learned::Off,
+            "a preset leaves it"
+        );
+
+        state.borrow_mut().seed_blend = vec![true, true, true];
+        let bodies = |_: &State, f: usize| match f {
+            0 => Some(body("Canon", "EOS R5", 100)),
+            1 => Some(body("Canon", "EOS R5", 3200)),
+            _ => None,
+        };
+        let synced = lay_over_targets(
+            &mut state.borrow_mut(),
+            &app,
+            &preset,
+            &[0, 1],
+            None,
+            &[],
+            bodies,
+        );
+        assert_eq!(synced.moved, [0, 1]);
+        let st = state.borrow();
+        let blend = |iso| greycard_edit::Noise::blend_for_iso(Some(iso));
+        for f in [0, 1] {
+            assert!(st.sidecars[f].current.noise.profiled, "frame {f}");
+            assert_eq!(st.sidecars[f].current.noise.strength, 1.8, "frame {f}");
+            assert_eq!(
+                st.sidecars[f].current.noise.learned,
+                Learned::Off,
+                "the preset's Noise never carries a tier, frame {f}"
+            );
+        }
+        assert_eq!(st.sidecars[0].current.noise.learned_strength, blend(100));
+        assert_eq!(st.sidecars[1].current.noise.learned_strength, blend(3200));
+        assert_eq!(st.seed_blend, [false, false, true], "the two seeded");
+    }
+
+    /// A preset naming a camera profile checks every frame's body the
+    /// same way, the open frame included: `preset_for_body` (what a
+    /// preset click gives its own frame) and `lay_over_targets` (what
+    /// it gives the rest of the set) agree over a mixed selection.
+    #[test]
+    fn a_preset_click_checks_every_bodys_fit_the_open_frame_included() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        let mut edit = Edit::default();
+        edit.camera.profile = ProfileChoice::Named("r5".into());
+        edit.light.exposure = 0.4;
+        let preset = Preset::from_edit("Portra 400", &edit, &[Section::Camera, Section::Light]);
+        let profiles = [entry("r5", Some("Canon EOS R5"))];
+        let bodies = |_: &State, f: usize| match f {
+            0 => Some(body("Canon", "EOS R5", 100)), // the open frame: fits
+            1 => Some(body("Canon", "EOS R5", 200)), // a target: fits
+            2 => Some(body("Fujifilm", "X-T5", 400)), // a target: does not
+            _ => None,
+        };
+
+        // The open frame (0) fits: the fit check leaves it whole.
+        let (current_preset, current_left_off) =
+            preset_for_body(&state.borrow(), &preset, 0, &profiles, bodies);
+        assert!(!current_left_off);
+        assert_eq!(current_preset.sections, preset.sections);
+
+        // The rest of the set, through the same loop a sync runs.
+        let mut synced = lay_over_targets(
+            &mut state.borrow_mut(),
+            &app,
+            &preset,
+            &[1, 2],
+            None,
+            &profiles,
+            bodies,
+        );
+        assert_eq!(synced.moved, [1, 2]);
+        assert_eq!(synced.profile_left_off, [2]);
+        if current_left_off {
+            synced.profile_left_off.push(0);
+            synced.profile_left_off.sort_unstable();
+        }
+        assert_eq!(
+            synced.profile_left_off,
+            [2],
+            "the open frame fit, so it stands alone"
+        );
+        let st = state.borrow();
+        assert_eq!(st.sidecars[1].current.camera.profile.name(), "r5");
+        assert!(st.sidecars[2].current.camera.profile.is_embedded());
+        assert_eq!(st.sidecars[1].current.light.exposure, 0.4);
+        assert_eq!(
+            st.sidecars[2].current.light.exposure, 0.4,
+            "Light still lands"
+        );
+        drop(st);
+
+        // Now the open frame is the one of another body: it gets the
+        // same protection the mismatched target got, not the profile
+        // just because it is the one on screen.
+        let (current_preset, current_left_off) =
+            preset_for_body(&state.borrow(), &preset, 2, &profiles, bodies);
+        assert!(current_left_off, "the open frame gets the same check");
+        assert!(!current_preset.sections.contains(&Section::Camera));
+        assert!(
+            current_preset.sections.contains(&Section::Light),
+            "the rest of the preset still reaches it"
+        );
+    }
+
+    /// In culling, `leave_cull(.., None)` reads the edit to leave with
+    /// off the very sidecar a preset click just recorded onto, so the
+    /// two never differ and its own "write once the panel rests"
+    /// never fires: the click saves the sidecar itself first, both
+    /// with one frame open and with a set of two or more. Each of the
+    /// two branches gets its own folder and its own app, so neither
+    /// leaves anything behind in the panel for the other to read.
+    #[test]
+    fn a_preset_click_in_culling_saves_the_open_frames_sidecar() {
+        // `also`: the rest of the set beside frame 0, empty for the
+        // single-frame branch.
+        for (tag, also) in [("one", vec![]), ("set", vec![1])] {
+            let dir = std::env::temp_dir()
+                .join(format!("greycard-preset-cull-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).expect("a temp dir");
+            let files: Vec<PathBuf> = (0..3)
+                .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
+                .collect();
+            let app = window(3);
+            let (state, _worker) = state_for(&app, files.clone());
+            let mut edit = Edit::default();
+            edit.light.exposure = 0.5;
+            let preset = Preset::from_edit("Portra 400", &edit, &[Section::Light]);
+            {
+                let mut st = state.borrow_mut();
+                st.write_sidecars = true;
+                st.placement = greycard_edit::Placement::Folder;
+                st.presets = vec![Entry {
+                    path: PathBuf::new(),
+                    preset,
+                }];
+                st.picked = also;
+            }
+            let on_disk = Sidecar::path_in(&files[0], greycard_edit::Placement::Folder);
+
+            app.invoke_select(0);
+            app.invoke_cull_toggled();
+            assert!(state.borrow().cull.is_some(), "{tag}");
+            app.invoke_preset_applied(0);
+            assert!(
+                state.borrow().cull.is_none(),
+                "{tag}: the click left culling"
+            );
+            assert_eq!(
+                state.borrow().sidecars[0].current.light.exposure,
+                0.5,
+                "{tag}"
+            );
+            assert!(
+                on_disk.exists(),
+                "{tag}: the step was saved, not just recorded in memory"
+            );
+            assert_eq!(
+                Sidecar::load(&files[0]).unwrap().unwrap().current,
+                state.borrow().sidecars[0].current,
+                "{tag}"
+            );
+            std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+        }
+    }
+
+    /// A preset click over a set whose current frame needs a real
+    /// develop leaves its own words for that develop to carry: the
+    /// develop's own "WxH, developed in ..." does not stand alone the
+    /// moment it lands, the two status lines racing.
+    #[test]
+    fn a_multi_frame_presets_words_ride_the_develop_that_lands() {
+        let app = window(2);
+        let (state, _worker) = state_for(&app, folder(2));
+        // A white balance, not a light control: `same_develop` reads
+        // the raw develop's own inputs, and exposure is the finish's,
+        // so only this asks the worker for a fresh one.
+        let edit = Edit {
+            white_balance: WhiteBalance::Custom {
+                temperature: 3200.0,
+                tint: 0.0,
+            },
+            ..Edit::default()
+        };
+        let preset = Preset::from_edit("Portra 400", &edit, &[Section::WhiteBalance]);
+        state.borrow_mut().presets = vec![Entry {
+            path: PathBuf::new(),
+            preset,
+        }];
+        app.invoke_select(0);
+        state.borrow_mut().picked = vec![0, 1];
+        app.invoke_preset_applied(0);
+        assert_eq!(
+            app.get_status(),
+            "developing...",
+            "take_current's own word, for now"
+        );
+        let generation = state.borrow().generation;
+        assert_eq!(
+            state.borrow().status_after_develop,
+            Some((generation, "Portra 400 onto 2 frames".to_string()))
+        );
+
+        crate::panel::deliver::deliver(
+            &app,
+            crate::worker::Outcome::Developed {
+                generation,
+                image: crate::worker::Developed::Halves(std::sync::Arc::new(
+                    crate::worker::Halves {
+                        width: 100,
+                        height: 80,
+                        pixels: Vec::new(),
+                    },
+                )),
+                guide: std::sync::Arc::new(crate::finish::Guide::NONE),
+                white: crate::worker::WhiteBase::IDENTITY,
+                seconds: 0.42,
+                detail: None,
+                sharpen: None,
+                dehaze: None,
+                sources: Vec::new(),
+                learned: crate::worker::LearnedReport::Off,
+                fills: crate::worker::FillReport::default(),
+            },
+        );
+        let status = app.get_status();
+        assert!(
+            status.starts_with("100x80, developed in 0.42 s"),
+            "{status}"
+        );
+        assert!(status.ends_with("Portra 400 onto 2 frames"), "{status}");
+        assert!(state.borrow().status_after_develop.is_none(), "taken");
     }
 }
