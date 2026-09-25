@@ -62,6 +62,12 @@ pub fn sync_label(from: &str) -> String {
     format!("Sync from {from}")
 }
 
+/// Settings pasted onto a frame, copied from the frame named `from`
+/// (its file name): a sync with the editor's clipboard between.
+pub fn paste_label(from: &str) -> String {
+    format!("Paste from {from}")
+}
+
 /// A snapshot restored.
 pub fn snapshot_label(name: &str) -> String {
     format!("Snapshot: {name}")
@@ -861,6 +867,7 @@ mod tests {
             preset_label(name),
             preset_over_set_label(250, name),
             sync_label("5M0A3021.CR3"),
+            paste_label("5M0A3021.CR3"),
             snapshot_label(name),
         ] {
             assert!(words.chars().count() <= ROW_CHARS, "{words}");
@@ -869,5 +876,6 @@ mod tests {
             preset_over_set_label(3, "Faded film"),
             "Preset ×3: Faded film"
         );
+        assert_eq!(paste_label("IMG_0001.CR3"), "Paste from IMG_0001.CR3");
     }
 }

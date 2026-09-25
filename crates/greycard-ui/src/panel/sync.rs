@@ -15,7 +15,14 @@
 //! learned-denoiser blend was still waiting on its ISO is given it
 //! before the sync (or the preset) makes its edit no longer the
 //! default.
+//!
+//! Copy and paste are a sync with the settings clipboard between
+//! (`crate::clipboard`): [`copy_settings`] takes the current frame's
+//! edit, and [`paste_selection`] lays the sections chosen on this
+//! same sheet over the whole selection, the frame copied from left
+//! out, through the same [`lay_over_targets`].
 
+use crate::clipboard::Clipboard;
 use crate::panel::browser::{
     chosen_frames, file_name, migrate_frame, show_badges, show_thumb, thumb_turns,
 };
@@ -532,6 +539,202 @@ pub(crate) fn preset_onto_words(
     said
 }
 
+/// Copy the current frame's edit, whole, into the settings clipboard:
+/// the panel's outside culling, recorded or not, since what is on
+/// screen is what is meant; the sidecar's in culling, where the panel
+/// is not the frame's.
+pub(crate) fn copy_settings(st: &mut State, app: &App) {
+    let Some(c) = st.current else {
+        app.set_status("open a frame to copy its settings".into());
+        return;
+    };
+    let edit = if st.cull.is_some() {
+        migrate_frame(st, c);
+        st.sidecars[c].current.clone()
+    } else {
+        read_edit(app, &st.edit, st.target)
+    };
+    let clip = Clipboard::copy(edit, &st.files[c]);
+    let name = clip.name();
+    st.clipboard = Some(clip);
+    app.set_clip_from(name.clone().into());
+    app.set_status(format!("copied the settings of {name}").into());
+}
+
+/// The sections a paste's sheet opens with: the last sync's or
+/// paste's choice this session, else what a sync ticks by default.
+fn paste_sections(st: &State) -> Vec<bool> {
+    Section::ALL
+        .iter()
+        .map(|s| match &st.sync_last {
+            Some(last) => last.contains(s),
+            None => s.syncs_by_default(),
+        })
+        .collect()
+}
+
+/// What the paste sheet says it will do: onto which frames, and the
+/// frame copied from left out when it is among them.
+fn paste_words(st: &State, clip: &Clipboard, targets: &[usize]) -> String {
+    let onto = match targets {
+        [one] => file_name(&st.files[*one]),
+        _ => format!("{} frames", targets.len()),
+    };
+    let set = chosen_frames(st);
+    if set.len() > targets.len() {
+        format!(
+            "Onto {onto}; {}, which they came from, is left as it is.",
+            clip.name()
+        )
+    } else {
+        format!("Onto {onto}.")
+    }
+}
+
+/// Ctrl+V, or the menu's Paste settings: the sync sheet, over the
+/// selection less the frame the clipboard came from, the sections as
+/// the last sync or paste had them.
+pub(crate) fn paste_open(st: &mut State, app: &App) {
+    let Some(clip) = st.clipboard.clone() else {
+        app.set_status(
+            "nothing copied yet: right-click a frame for Copy settings, or Ctrl+C".into(),
+        );
+        return;
+    };
+    if tool_in_hand(app) {
+        app.set_status("put the tool down first (Esc), then paste".into());
+        return;
+    }
+    let Some(c) = st.current else {
+        return;
+    };
+    let targets = clip.targets(&chosen_frames(st), &st.files);
+    if targets.is_empty() {
+        app.set_status(
+            format!(
+                "{} is the frame these came from; choose the frames to paste onto",
+                clip.name()
+            )
+            .into(),
+        );
+        return;
+    }
+    st.sync_asked = None;
+    st.paste_asked = Some((c, targets.clone()));
+    for (i, on) in paste_sections(st).into_iter().enumerate() {
+        st.sync_sections.set_row_data(i, on);
+    }
+    app.set_sync_section_names(ModelRc::new(VecModel::from(
+        Section::ALL
+            .iter()
+            .map(|s| slint::SharedString::from(sync_title(*s)))
+            .collect::<Vec<_>>(),
+    )));
+    app.set_sync_section_on(ModelRc::from(st.sync_sections.clone()));
+    app.set_sync_text(paste_words(st, &clip, &targets).into());
+    app.set_sync_paste(true);
+    app.set_sync_open(true);
+}
+
+/// Lay the clipboard's `sections` over the selection, the frame it
+/// came from left out: a sync with the clipboard between. The frame on
+/// screen, outside culling, takes it through the panel as a preset
+/// click does (the camera-profile fit checked the same way); the rest,
+/// and in culling every frame, through [`lay_over_targets`], exactly
+/// as a sync's targets. Each frame that moved gets one step, "Paste
+/// from" the frame copied. The status line says what happened, and
+/// rides the develop the frame on screen asks for.
+pub(crate) fn paste_selection(
+    st: &mut State,
+    app: &App,
+    worker: &Worker,
+    sections: &[Section],
+    profiles: &[camera::Entry],
+    probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
+) -> Synced {
+    let Some(clip) = st.clipboard.clone() else {
+        return Synced::default();
+    };
+    let targets = clip.targets(&chosen_frames(st), &st.files);
+    let preset = clip.preset(sections);
+    let label = clip.label();
+    // Outside culling the frame on screen is the panel's, and what
+    // the panel holds is a state first, then the paste over it.
+    let panel_frame = st
+        .current
+        .filter(|c| st.cull.is_none() && targets.contains(c));
+    let mut current_changed = false;
+    let mut current_left_off = false;
+    if let Some(c) = panel_frame {
+        let (fits, left_off) = preset_for_body(st, &preset, c, profiles, &probe);
+        current_left_off = left_off;
+        let edit = read_edit(app, &st.edit, st.target);
+        let applied = clip.applied(&fits, &edit);
+        if applied != edit {
+            st.sidecars[c].record(edit);
+            st.sidecars[c].record_as(applied, Some(label.clone()));
+            current_changed = true;
+        }
+    }
+    let rest: Vec<usize> = targets
+        .iter()
+        .copied()
+        .filter(|&f| Some(f) != panel_frame)
+        .collect();
+    let mut synced = lay_over_targets(
+        st,
+        app,
+        &preset,
+        &rest,
+        clip.learned_from(&preset),
+        Some(&label),
+        profiles,
+        probe,
+    );
+    if let Some(c) = panel_frame {
+        if current_changed {
+            synced.moved.push(c);
+            synced.moved.sort_unstable();
+        }
+        if current_left_off {
+            synced.profile_left_off.push(c);
+            synced.profile_left_off.sort_unstable();
+        }
+    }
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    let mut said = if synced.moved.is_empty() {
+        format!(
+            "the {} frame{} had these already",
+            targets.len(),
+            plural(targets.len())
+        )
+    } else {
+        format!(
+            "pasted {} section{} from {} onto {} frame{}",
+            sections.len(),
+            plural(sections.len()),
+            clip.name(),
+            synced.moved.len(),
+            plural(synced.moved.len())
+        )
+    };
+    said.push_str(&profile_left_off_words(st, &synced));
+    if current_changed {
+        // As a preset click's: the develop sets its own words, and
+        // these go first once it lands.
+        let before = st.generation;
+        take_current(st, app, worker);
+        if st.generation == before {
+            app.set_status(said.into());
+        } else {
+            st.status_after_develop = Some((st.generation, said));
+        }
+    } else {
+        app.set_status(said.into());
+    }
+    synced
+}
+
 /// The sections checked on the sheet, in `Section::ALL`'s order.
 fn checked(st: &State) -> Vec<Section> {
     Section::ALL
@@ -551,7 +754,24 @@ fn tool_in_hand(app: &App) -> bool {
         || app.get_level_mode()
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+    // Copy and paste: Ctrl+C and Ctrl+V, and the frame menu's two.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_copy_asked(move || {
+            if let Some(app) = app_weak.upgrade() {
+                copy_settings(&mut state.borrow_mut(), &app);
+            }
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_paste_asked(move || {
+            if let Some(app) = app_weak.upgrade() {
+                paste_open(&mut state.borrow_mut(), &app);
+            }
+        });
+    }
     // The sheet, on everything but the masks.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
@@ -572,6 +792,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             }
             st.sync_asked = Some((c, targets));
+            st.paste_asked = None;
+            app.set_sync_paste(false);
             for (i, s) in Section::ALL.iter().enumerate() {
                 st.sync_sections.set_row_data(i, s.syncs_by_default());
             }
@@ -593,7 +815,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
         });
     }
     {
-        let (state, app_weak) = (state.clone(), app.as_weak());
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_sync_applied(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
@@ -605,6 +827,34 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             }
             app.set_sync_open(false);
+            if app.get_sync_paste() {
+                app.set_sync_paste(false);
+                // As a sync's: what the sheet named, or nothing.
+                let asked = st.paste_asked.take();
+                let now = match (&st.clipboard, st.current) {
+                    (Some(clip), Some(c)) => {
+                        Some((c, clip.targets(&chosen_frames(&st), &st.files)))
+                    }
+                    _ => None,
+                };
+                if asked.is_none() || asked != now {
+                    tracing::warn!("paste refused: the selection moved while the sheet was open");
+                    app.set_status(
+                        "the selection changed while the sheet was open; nothing pasted".into(),
+                    );
+                    return;
+                }
+                st.sync_last = Some(sections.clone());
+                let profiles = camera::list();
+                let start = std::time::Instant::now();
+                let synced = paste_selection(&mut st, &app, &worker, &sections, &profiles, probe);
+                tracing::info!(
+                    "pasted onto {} frames in {:.1} ms",
+                    synced.moved.len(),
+                    start.elapsed().as_secs_f64() * 1e3
+                );
+                return;
+            }
             // What the sheet said is what is done, or nothing: a
             // selection that moved while the sheet was up is not the
             // one its words named.
@@ -622,6 +872,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 app.set_status("nothing to sync onto".into());
                 return;
             }
+            // A paste's sheet opens on this choice from now on.
+            st.sync_last = Some(sections.clone());
             let profiles = camera::list();
             let start = std::time::Instant::now();
             let synced = sync_selection(&mut st, &app, &sections, &profiles, probe);
@@ -1626,5 +1878,214 @@ mod tests {
         let st = state.borrow();
         assert!(st.sidecars[0].redo.is_empty());
         assert!((0..st.sidecars[0].states()).all(|i| st.sidecars[0].label(i).is_none()));
+    }
+
+    /// Ctrl (a Mac's Command, to Slint) held over `f`.
+    fn with_control(app: &App, f: impl FnOnce()) {
+        with_modifier(app, Key::Control, f);
+    }
+
+    fn history_rows(app: &App) -> Vec<String> {
+        let names = app.get_history_names();
+        (0..names.row_count())
+            .map(|r| names.row_data(r).unwrap().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn copy_and_paste_lay_the_copy_over_the_set_and_leave_its_source() {
+        let dir = std::env::temp_dir().join(format!("greycard-paste-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let files: Vec<PathBuf> = (0..4)
+            .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
+            .collect();
+        let app = window(4);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.write_sidecars = true;
+            st.placement = greycard_edit::Placement::Folder;
+            // A frame the paste goes onto, with a crop of its own.
+            let mut own = Edit::default();
+            own.geometry.crop = Some(greycard_edit::geometry::Crop {
+                x: 0.1,
+                y: 0.1,
+                w: 0.5,
+                h: 0.5,
+            });
+            st.sidecars[3].record(own);
+        }
+        // Nothing copied: Paste is greyed and the key says so.
+        assert_eq!(app.get_clip_from(), "");
+        app.invoke_select(1);
+        with_control(&app, || press(&app, "v"));
+        assert!(!app.get_sync_open());
+        assert!(app.get_status().starts_with("nothing copied yet"));
+
+        // Frame 1's panel, copied with Ctrl+C, unrecorded as it is.
+        app.set_exposure(0.8);
+        with_control(&app, || press(&app, "c"));
+        assert_eq!(app.get_clip_from(), "IMG_0001.CR3");
+        {
+            let st = state.borrow();
+            let clip = st.clipboard.as_ref().expect("a copy");
+            assert_eq!(clip.from, files[1]);
+            assert_eq!(clip.edit.light.exposure, 0.8);
+        }
+        // Onto the frame it came from alone: nothing to do.
+        with_control(&app, || press(&app, "v"));
+        assert!(!app.get_sync_open());
+        assert_eq!(
+            app.get_status(),
+            "IMG_0001.CR3 is the frame these came from; choose the frames to paste onto"
+        );
+
+        // Two more chosen: the sheet, over the two, the source said.
+        with_control(&app, || {
+            let (x, y) = strip_cell(0);
+            click(&app, x, y);
+            let (x, y) = strip_cell(3);
+            click(&app, x, y);
+        });
+        assert_eq!(chosen_frames(&state.borrow()), vec![0, 1, 3]);
+        with_control(&app, || press(&app, "v"));
+        assert!(app.get_sync_open());
+        assert!(app.get_sync_paste());
+        assert_eq!(
+            app.get_sync_text(),
+            "Onto 2 frames; IMG_0001.CR3, which they came from, is left as it is."
+        );
+        // Nobody synced yet this session: the sync's defaults.
+        let on = app.get_sync_section_on();
+        for (i, s) in Section::ALL.iter().enumerate() {
+            assert_eq!(on.row_data(i).unwrap(), s.syncs_by_default(), "{s:?}");
+        }
+        // Light alone, then Paste.
+        for (i, s) in Section::ALL.iter().enumerate() {
+            app.invoke_sync_section_toggled(i as i32, *s == Section::Light);
+        }
+        app.invoke_sync_applied();
+        assert!(!app.get_sync_open());
+        assert_eq!(
+            app.get_status(),
+            "pasted 1 section from IMG_0001.CR3 onto 2 frames"
+        );
+        {
+            let st = state.borrow();
+            for f in [0, 3] {
+                let s = &st.sidecars[f];
+                assert_eq!(s.current.light.exposure, 0.8, "{f}");
+                assert_eq!(s.current_label.as_deref(), Some("Paste from IMG_0001.CR3"));
+                let back = Sidecar::load(&files[f]).unwrap().unwrap();
+                assert_eq!(back.current, s.current);
+                assert_eq!(back.current_label, s.current_label);
+            }
+            // The crop stayed the frame's own; one step more.
+            assert!(st.sidecars[3].current.geometry.crop.is_some());
+            assert_eq!(st.sidecars[3].history.len(), 2);
+            // The source is untouched by the paste; the frame outside
+            // the set is untouched altogether.
+            assert_eq!(st.sidecars[1].current_label, None);
+            assert_eq!(st.sidecars[2], Sidecar::default());
+            assert_eq!(st.sync_last.as_deref(), Some(&[Section::Light][..]));
+        }
+        // A second paste opens on the choice the first made, and with
+        // nothing new to lay over, records nothing.
+        with_control(&app, || press(&app, "v"));
+        let on = app.get_sync_section_on();
+        for (i, s) in Section::ALL.iter().enumerate() {
+            assert_eq!(on.row_data(i).unwrap(), *s == Section::Light, "{s:?}");
+        }
+        app.invoke_sync_applied();
+        assert_eq!(app.get_status(), "the 2 frames had these already");
+        assert_eq!(state.borrow().sidecars[3].history.len(), 2);
+        // The sync's own sheet still opens on its defaults, as a sync.
+        app.invoke_sync_open_asked();
+        assert!(!app.get_sync_paste());
+        let on = app.get_sync_section_on();
+        for (i, s) in Section::ALL.iter().enumerate() {
+            assert_eq!(on.row_data(i).unwrap(), s.syncs_by_default(), "{s:?}");
+        }
+        press(&app, Key::Escape);
+        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+    }
+
+    #[test]
+    fn a_paste_onto_the_frame_on_screen_goes_through_the_panel_and_undoes() {
+        let app = window(3);
+        let (state, _worker) = state_for(&app, folder(3));
+        app.invoke_select(0);
+        app.set_exposure(-0.6);
+        app.invoke_copy_asked();
+        // Another frame opened: the paste is onto it, through the
+        // panel, as one step with the paste's words.
+        app.invoke_select(2);
+        assert_eq!(app.get_exposure(), 0.0);
+        app.invoke_paste_asked();
+        assert_eq!(app.get_sync_text(), "Onto IMG_0002.CR3.");
+        app.invoke_sync_applied();
+        assert_eq!(app.get_exposure(), -0.6);
+        assert_eq!(history_rows(&app), ["Paste from IMG_0000.CR3", "Original"]);
+        assert_eq!(
+            state.borrow().sidecars[2].current_label.as_deref(),
+            Some("Paste from IMG_0000.CR3")
+        );
+        // Undone as any step is: the frame back as it was.
+        app.invoke_undo();
+        assert_eq!(app.get_exposure(), 0.0);
+        assert_eq!(state.borrow().sidecars[2].current.light.exposure, 0.0);
+        // The frame it was copied from never took a step of it.
+        assert!(state.borrow().sidecars[0].current_label.is_none());
+    }
+
+    #[test]
+    fn a_selection_moved_under_the_paste_sheet_is_refused() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        app.invoke_select(0);
+        app.set_exposure(0.3);
+        app.invoke_copy_asked();
+        app.invoke_select(1);
+        state.borrow_mut().picked = vec![1, 2];
+        app.invoke_paste_asked();
+        assert!(app.get_sync_open());
+        state.borrow_mut().picked = vec![1, 3];
+        app.invoke_sync_applied();
+        assert_eq!(
+            app.get_status(),
+            "the selection changed while the sheet was open; nothing pasted"
+        );
+        let st = state.borrow();
+        assert!(
+            st.sidecars
+                .iter()
+                .skip(1)
+                .all(|s| s.current_label.is_none())
+        );
+    }
+
+    #[test]
+    fn the_filter_field_keeps_its_own_copy_and_paste() {
+        let app = window(3);
+        let (state, _worker) = state_for(&app, folder(3));
+        app.invoke_select(0);
+        // The grid's filter field, with the focus, typed into: the
+        // key opens the grid, whose field takes the focus on the next
+        // turn of the loop.
+        press(&app, "/");
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+        press(&app, "a");
+        assert_eq!(app.get_filter_text(), "a");
+        with_control(&app, || press(&app, "c"));
+        with_control(&app, || press(&app, "v"));
+        assert!(state.borrow().clipboard.is_none());
+        assert!(!app.get_sync_open());
+        // Given the keys back, the same Ctrl+C copies the frame.
+        press(&app, Key::Escape);
+        with_control(&app, || press(&app, "c"));
+        assert!(state.borrow().clipboard.is_some());
     }
 }

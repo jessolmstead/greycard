@@ -1,7 +1,8 @@
 // The sync sheet: which of the current frame's sections go over the
 // rest of the selection, until applied or left. The preset sheet's
 // twin, with no name to give: nothing is kept but the frames' own
-// sidecars.
+// sidecars. A paste opens the same sheet, the sections of the frame
+// copied going over the whole selection.
 
 import { Theme } from "../theme.slint";
 import { PanelButton } from "../controls.slint";
@@ -12,6 +13,10 @@ export component SyncSheet inherits Rectangle {
     /// What the sync will do, in words: from which frame onto how
     /// many.
     in property <string> sync-text;
+    /// A paste rather than a sync: the settings copied from
+    /// `paste-from`, over the selection.
+    in property <bool> paste;
+    in property <string> paste-from;
     in-out property <[string]> sync-section-names;
     in-out property <[bool]> sync-section-on;
     callback sync-section-toggled(int, bool);
@@ -33,7 +38,7 @@ export component SyncSheet inherits Rectangle {
             padding: Theme.space-5;
             spacing: Theme.space-3;
             Text {
-                text: "Sync settings";
+                text: root.paste ? "Paste settings from " + root.paste-from : "Sync settings";
                 font-size: Theme.font-lg;
                 font-weight: Theme.weight-medium;
                 color: Theme.text;
@@ -45,7 +50,9 @@ export component SyncSheet inherits Rectangle {
                 wrap: word-wrap;
             }
             Text {
-                text: "What goes across; on, all but the masks. Noise brings the learned denoiser with it. The camera profile goes only to frames of the camera it was made for. The crop and the retouch are each frame's own and never go.";
+                text: (root.paste ? "What goes across, as the last sync or paste had it. "
+                    : "What goes across; on, all but the masks. ")
+                    + "Noise brings the learned denoiser with it. The camera profile goes only to frames of the camera it was made for. The crop and the retouch are each frame's own and never go.";
                 font-size: Theme.font-xs;
                 color: Theme.text-secondary;
                 wrap: word-wrap;
@@ -63,7 +70,7 @@ export component SyncSheet inherits Rectangle {
                     clicked => { root.sync-open = false; }
                 }
                 PanelButton {
-                    text: "Apply";
+                    text: root.paste ? "Paste" : "Apply";
                     icon: @image-url("../icons/layers.svg");
                     primary: true;
                     clicked => { root.sync-applied(); }

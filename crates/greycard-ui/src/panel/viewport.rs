@@ -295,6 +295,15 @@ pub(crate) enum Shown {
     /// sheet involved: the current frame through the panel, the rest
     /// through `panel::sync::lay_over_targets`.
     PresetOntoSet,
+    /// The current frame copied and the paste sheet opened over the
+    /// set `--also` made.
+    Paste,
+    /// The same paste applied on the sheet's sections in the same
+    /// turn, so the sheet is never drawn.
+    Pasted,
+    /// The frame menu opened over this row of the strip, or of the
+    /// grid when it is open (`--menu`).
+    Menu(usize),
     /// The model sheet, with sample text where the download's goes.
     Fetch,
     /// The lens profiles' download as the first launch offers it.
@@ -321,9 +330,11 @@ impl Shown {
             "sync" => Ok(Self::Sync),
             "synced" => Ok(Self::Synced),
             "preset-onto-set" => Ok(Self::PresetOntoSet),
+            "paste" => Ok(Self::Paste),
+            "pasted" => Ok(Self::Pasted),
             _ => Err(format!(
-                "want export, preset, fetch, lenses, settings, sync, synced or \
-                 preset-onto-set, not {name}"
+                "want export, preset, fetch, lenses, settings, sync, synced, \
+                 preset-onto-set, paste or pasted, not {name}"
             )),
         }
     }
@@ -350,6 +361,16 @@ impl Shown {
                 app.invoke_sync_applied();
             }
             Self::PresetOntoSet => app.invoke_preset_applied(0),
+            Self::Paste => {
+                app.invoke_copy_asked();
+                app.invoke_paste_asked();
+            }
+            Self::Pasted => {
+                app.invoke_copy_asked();
+                app.invoke_paste_asked();
+                app.invoke_sync_applied();
+            }
+            Self::Menu(row) => app.set_menu_at(row as i32),
             Self::Fetch => {
                 app.set_fetch_title("Download the Subject model?".into());
                 app.set_fetch_text(
@@ -1164,6 +1185,8 @@ mod tests {
         assert_eq!(Shown::sheet("sync"), Ok(Shown::Sync));
         assert_eq!(Shown::sheet("synced"), Ok(Shown::Synced));
         assert_eq!(Shown::sheet("preset-onto-set"), Ok(Shown::PresetOntoSet));
+        assert_eq!(Shown::sheet("paste"), Ok(Shown::Paste));
+        assert_eq!(Shown::sheet("pasted"), Ok(Shown::Pasted));
         assert!(Shown::sheet("guide").is_err());
         assert!(Shown::tool("export").is_err());
 

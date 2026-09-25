@@ -72,6 +72,11 @@ export component Viewport inherits Rectangle {
     callback patch-dragged(int, length, length);
     callback patch-dropped();
     callback focus-keys();
+    /// A right-click on the picture (or, on a Mac, a Control+click)
+    /// with no tool in hand: the frame menu, over the frame on
+    /// screen, where the click was in the window's logical pixels.
+    callback frame-menu(length, length);
+    in property <bool> ctrl-click-menu;
     // The engine's texture, bound by App's `texture` through this
     // component's id as it was bound to the Image before.
     in property <image> source <=> view.source;
@@ -95,6 +100,9 @@ export component Viewport inherits Rectangle {
         // `picking` inside its own press handler still keeps the
         // release from reading as a plain click and zooming.
         property <bool> picked-down;
+        // Whether the press opened the frame menu: its release is
+        // then no click, and a Mac's Control+click no pan.
+        property <bool> menu-down;
         mouse-cursor: root.picking != "" ? (root.dropper.width > 0 ? MouseCursor.none : MouseCursor.crosshair)
             : root.placing != "" || root.retouch-mode != "" ? MouseCursor.crosshair
             : self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
@@ -107,6 +115,18 @@ export component Viewport inherits Rectangle {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down) {
                 root.focus-keys();
+                // The menu, not over a tool: a shape being placed and
+                // a repair take the right button for themselves, and
+                // a dropper, the level and a guide are half a gesture.
+                self.menu-down = (e.button == PointerEventButton.right
+                        || (root.ctrl-click-menu && e.button == PointerEventButton.left && e.modifiers.meta))
+                    && root.picking == "" && root.placing == "" && root.retouch-mode == ""
+                    && !root.level-mode && root.guide-mode == "";
+                if (self.menu-down) {
+                    root.frame-menu(self.absolute-position.x + self.mouse-x,
+                        self.absolute-position.y + self.mouse-y);
+                    return;
+                }
                 // While the camera's JPEG stands in for the
                 // develop there is nothing here to place a
                 // shape on or read a color off; the pan and
@@ -130,7 +150,9 @@ export component Viewport inherits Rectangle {
                 self.down-y = self.mouse-y;
                 self.dragged = false;
             } else if (e.kind == PointerEventKind.up) {
-                if (self.picked-down) {
+                if (self.menu-down) {
+                    self.menu-down = false;
+                } else if (self.picked-down) {
                     root.pick-released();
                 } else if (root.placing != "" || root.retouch-mode != "") {
                     root.place-released();
@@ -144,7 +166,7 @@ export component Viewport inherits Rectangle {
             }
         }
         moved => {
-            if (self.pressed) {
+            if (self.pressed && !self.menu-down) {
                 if (abs(self.mouse-x - self.down-x) > 4px || abs(self.mouse-y - self.down-y) > 4px) {
                     self.dragged = true;
                 }

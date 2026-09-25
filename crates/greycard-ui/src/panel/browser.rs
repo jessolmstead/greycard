@@ -1036,6 +1036,30 @@ fn step_to(
     }
 }
 
+/// A culling key's change over the whole selection, as the key and
+/// the frame menu both ask for it; false when nothing is selected.
+/// A frame that leaves the filtered list moves the selection on to
+/// the nearest, once the state is free.
+pub(crate) fn meta_on_selection(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    change: meta::Change,
+) -> bool {
+    let mut st = state.borrow_mut();
+    // The whole selection: the current frame and the set.
+    let frames = chosen_frames(&st);
+    if frames.is_empty() {
+        return false;
+    }
+    let next = set_meta(&mut st, app, &frames, change);
+    drop(st);
+    // The frame left the filtered list: on to the nearest.
+    if let Some(row) = next {
+        app.invoke_select(row as i32);
+    }
+    true
+}
+
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
     // The culling keys: a rating, a flag or a color label on the
     // selection. None of this is an edit, so nothing here records a
@@ -1051,19 +1075,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(change) = meta::Change::from_key(&key) else {
                 return false;
             };
-            let mut st = state.borrow_mut();
-            // The whole selection: the current frame and the set.
-            let frames = chosen_frames(&st);
-            if frames.is_empty() {
-                return false;
-            }
-            let next = set_meta(&mut st, &app, &frames, change);
-            drop(st);
-            // The frame left the filtered list: on to the nearest.
-            if let Some(row) = next {
-                app.invoke_select(row as i32);
-            }
-            true
+            meta_on_selection(&state, &app, change)
         });
     }
     // The frame's own turn, [ and ], and the panel's two buttons:

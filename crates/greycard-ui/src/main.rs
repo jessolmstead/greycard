@@ -13,6 +13,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod ai;
+mod clipboard;
 mod cull;
 mod display;
 mod export;
@@ -195,9 +196,15 @@ struct Cli {
     /// (over the frames selected), synced (the sync applied on its
     /// defaults at once, the sheet never drawn) or preset-onto-set
     /// (the first stored preset clicked over the frames selected, no
-    /// sheet involved)
+    /// sheet involved), paste (the first frame's settings copied and
+    /// the paste sheet opened over the frames selected) or pasted (that
+    /// paste applied at once, the sheet never drawn)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
+    /// Open the frame menu over this row of the strip (from 0), or of
+    /// the grid with --grid, once the picture is up, for a snapshot
+    #[arg(long, value_name = "ROW", conflicts_with_all = ["sheet", "tool"])]
+    menu: Option<usize>,
     /// Put this Crop-tab tool in hand once the picture is up, for a
     /// snapshot: crop, level or guide
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::tool)]
@@ -632,6 +639,18 @@ pub(crate) struct State {
     /// The frame and the targets the sync sheet was opened on, so an
     /// Apply can refuse a selection that moved under it.
     pub(crate) sync_asked: Option<(usize, Vec<usize>)>,
+    /// The same for a paste: the frame on screen and the frames the
+    /// sheet named, so an Apply can refuse a selection that moved.
+    pub(crate) paste_asked: Option<(usize, Vec<usize>)>,
+    /// The sections the last sync or paste laid over the selection,
+    /// for the session: a paste's sheet opens with them.
+    pub(crate) sync_last: Option<Vec<Section>>,
+    /// The settings clipboard: an edit copied from a frame, to paste
+    /// over the selection (`clipboard`). The session's, never the
+    /// system's.
+    pub(crate) clipboard: Option<clipboard::Clipboard>,
+    /// The frame the frame menu was opened over, for its Reveal.
+    pub(crate) menu_file: Option<usize>,
     /// A preset click's own words ("Muted Slide onto 3 frames"),
     /// waiting for the current frame's develop (its generation) to
     /// land: the develop's own line would otherwise stand alone,
@@ -808,6 +827,10 @@ impl State {
             preset_sections: Rc::new(VecModel::from(vec![false; Section::ALL.len()])),
             sync_sections: Rc::new(VecModel::from(vec![false; Section::ALL.len()])),
             sync_asked: None,
+            paste_asked: None,
+            sync_last: None,
+            clipboard: None,
+            menu_file: None,
             peek: None,
             held: None,
             status_after_develop: None,
@@ -842,6 +865,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::retouch::install(app, &state, &worker);
     panel::prefs::install(app, &state, &worker);
     panel::sync::install(app, &state, &worker);
+    panel::menu::install(app, &state, &worker);
     report::install(app, &state);
 
     // Deliveries from the worker need the state and the worker too.

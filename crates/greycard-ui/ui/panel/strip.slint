@@ -11,6 +11,24 @@ export component Filmstrip inherits Rectangle {
     /// A click on a frame, with Ctrl and Shift as they were held
     /// when it was pressed.
     callback frame-clicked(int, bool, bool);
+    /// A right-click on a frame (or, on a Mac, a Control+click): the
+    /// row and where, in the window's logical pixels.
+    callback frame-menu(int, length, length);
+    /// Whether Control+click is a right-click, as on a Mac. Slint
+    /// calls the Mac's Command key `control` and its Control key
+    /// `meta`, so it is `meta` held that is asked for.
+    in property <bool> ctrl-click-menu;
+    /// For a snapshot (`--menu`): the row to open the menu over, as
+    /// if right-clicked in its middle; -1 for none.
+    in property <int> menu-at: -1;
+    changed menu-at => {
+        if (self.menu-at >= 0 && self.menu-at < self.thumbs.length) {
+            self.frame-menu(self.menu-at,
+                strip.absolute-position.x + strip.content-x + self.strip-pad
+                    + self.menu-at * self.strip-pitch + self.strip-item / 2,
+                strip.absolute-position.y + strip.height / 2);
+        }
+    }
     in property <int> meta-stars;
     in property <length> strip-item;
     in property <length> strip-pitch;
@@ -104,17 +122,35 @@ export component Filmstrip inherits Rectangle {
                     }
                     // `clicked` carries no modifiers, so the press
                     // says which were held and the click reads them.
+                    // A right-click asks for the menu on the press,
+                    // as a desktop's menus open; a Mac's
+                    // Control+click is one, and its click is then
+                    // not also a click.
                     tt := TouchArea {
                         property <bool> ctrl;
                         property <bool> shift;
+                        property <bool> menu;
                         mouse-cursor: MouseCursor.pointer;
                         pointer-event(e) => {
                             if (e.kind == PointerEventKind.down) {
+                                self.menu = e.button == PointerEventButton.right
+                                    || (root.ctrl-click-menu && e.button == PointerEventButton.left
+                                        && e.modifiers.meta);
+                                if (self.menu) {
+                                    root.focus-keys();
+                                    root.frame-menu(i, self.absolute-position.x + self.mouse-x,
+                                        self.absolute-position.y + self.mouse-y);
+                                    return;
+                                }
                                 self.ctrl = e.modifiers.control;
                                 self.shift = e.modifiers.shift;
                             }
                         }
-                        clicked => { root.focus-keys(); root.frame-clicked(i, self.ctrl, self.shift); }
+                        clicked => {
+                            if (self.menu) { return; }
+                            root.focus-keys();
+                            root.frame-clicked(i, self.ctrl, self.shift);
+                        }
                     }
                 }
             }

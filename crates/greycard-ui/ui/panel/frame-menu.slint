@@ -1,0 +1,104 @@
+// The frame menu: what a right-click over a frame in the strip, the
+// grid or the viewport offers, on the whole selection. Slint's own
+// context menu, native where the platform has one (macOS, Windows)
+// and drawn by Slint in the window's style elsewhere. It is one menu
+// for the window, not one per cell: the surfaces say where the click
+// was, in the window's coordinates, and `open` puts it there. Every
+// item goes through the code its key does; this file only names them.
+
+export component FrameMenu inherits Rectangle {
+    /// How many frames the menu acts on, the current one among them.
+    in property <int> count: 1;
+    /// The frame the clipboard holds settings from; empty when
+    /// nothing has been copied, and Paste is greyed.
+    in property <string> paste-from;
+    /// What the whole selection shares, for the ticks: the stars, the
+    /// flag's code and the label's code; -1 when the frames differ.
+    in property <int> rating: -1;
+    in property <int> flag: -1;
+    in property <int> label: -1;
+    /// Whether Export... can open now, as Ctrl+Shift+E asks.
+    in property <bool> can-export;
+    callback copy();
+    callback paste();
+    /// A rating, a flag or a label ("rating", "flag", "label") and its
+    /// value: the stars, or the flag's or label's code.
+    callback meta(string, int);
+    callback reveal();
+    callback export();
+
+    // Nothing of its own to draw or to take a click: the menu is a
+    // popup, placed from this corner, and a zero-sized area at the
+    // window's origin never stands in front of anything.
+    width: 0px;
+    height: 0px;
+
+    /// Open the menu at (x, y), the window's logical pixels.
+    public function open(x: length, y: length) {
+        area.show({ x: x - self.absolute-position.x, y: y - self.absolute-position.y });
+    }
+
+    area := ContextMenuArea {
+        // The surfaces open it; a right-click on this zero-sized
+        // corner is never one.
+        enabled: false;
+        Menu {
+            MenuItem {
+                title: "Copy settings";
+                activated => { root.copy(); }
+            }
+            MenuItem {
+                title: root.paste-from == "" ? "Paste settings" : "Paste settings from " + root.paste-from;
+                enabled: root.paste-from != "";
+                activated => { root.paste(); }
+            }
+            MenuSeparator { }
+            Menu {
+                title: "Rating";
+                for n in 6: MenuItem {
+                    title: n == 0 ? "No stars" : n == 1 ? "1 star" : n + " stars";
+                    checkable: true;
+                    checked: root.rating == n;
+                    activated => { root.meta("rating", n); }
+                }
+            }
+            MenuItem {
+                title: "Pick";
+                checkable: true;
+                checked: root.flag == 1;
+                activated => { root.meta("flag", 1); }
+            }
+            MenuItem {
+                title: "Reject";
+                checkable: true;
+                checked: root.flag == 2;
+                activated => { root.meta("flag", 2); }
+            }
+            MenuItem {
+                title: "Unflag";
+                enabled: root.flag != 0;
+                activated => { root.meta("flag", 0); }
+            }
+            Menu {
+                title: "Label";
+                for name[n] in ["None", "Red", "Yellow", "Green", "Blue", "Purple"]: MenuItem {
+                    title: name;
+                    checkable: n > 0;
+                    checked: n > 0 && root.label == n;
+                    enabled: n > 0 || root.label != 0;
+                    activated => { root.meta("label", n); }
+                }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: "Reveal in file manager";
+                activated => { root.reveal(); }
+            }
+            MenuItem {
+                title: root.count > 1 ? "Export " + root.count + " frames..." : "Export...";
+                enabled: root.can-export;
+                activated => { root.export(); }
+            }
+        }
+    }
+}

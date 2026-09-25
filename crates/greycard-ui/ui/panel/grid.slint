@@ -12,6 +12,22 @@ export component GridSheet inherits Rectangle {
     /// A click on a frame, with Ctrl and Shift as they were held
     /// when it was pressed.
     callback frame-clicked(int, bool, bool);
+    /// A right-click on a frame (or, on a Mac, a Control+click), as
+    /// the strip has it: the row and where, in the window's pixels.
+    callback frame-menu(int, length, length);
+    in property <bool> ctrl-click-menu;
+    /// For a snapshot (`--menu`): the row to open the menu over, as
+    /// if right-clicked in its cell's middle; -1 for none.
+    in property <int> menu-at: -1;
+    changed menu-at => {
+        if (self.menu-at >= 0 && self.menu-at < self.thumbs.length) {
+            self.frame-menu(self.menu-at,
+                grid-sheet.absolute-position.x + self.grid-left
+                    + mod(self.menu-at, self.grid-cols) * self.grid-pitch + self.grid-cell / 2,
+                grid-sheet.absolute-position.y - self.grid-scroll + self.grid-pad
+                    + floor(self.menu-at / self.grid-cols) * self.grid-row + self.grid-cell / 2);
+        }
+    }
     /// How many frames the selection holds, for the header.
     in property <int> set-count;
     in property <int> meta-stars;
@@ -255,19 +271,36 @@ export component GridSheet inherits Rectangle {
                     }
                     // `clicked` carries no modifiers, so the press
                     // says which were held and the click reads them.
+                    // A right-click asks for the menu on the press;
+                    // a Mac's Control+click is one, and is then not
+                    // also a click.
                     ct := TouchArea {
                         property <bool> ctrl;
                         property <bool> shift;
+                        property <bool> menu;
                         mouse-cursor: MouseCursor.pointer;
                         pointer-event(e) => {
                             if (e.kind == PointerEventKind.down) {
+                                self.menu = e.button == PointerEventButton.right
+                                    || (root.ctrl-click-menu && e.button == PointerEventButton.left
+                                        && e.modifiers.meta);
+                                if (self.menu) {
+                                    root.focus-keys();
+                                    root.frame-menu(i, self.absolute-position.x + self.mouse-x,
+                                        self.absolute-position.y + self.mouse-y);
+                                    return;
+                                }
                                 self.ctrl = e.modifiers.control;
                                 self.shift = e.modifiers.shift;
                             }
                         }
-                        clicked => { root.focus-keys(); root.frame-clicked(i, self.ctrl, self.shift); }
+                        clicked => {
+                            if (self.menu) { return; }
+                            root.focus-keys();
+                            root.frame-clicked(i, self.ctrl, self.shift);
+                        }
                         // The frame under the pointer, in the loupe.
-                        double-clicked => { root.grid-open = false; }
+                        double-clicked => { if (!self.menu) { root.grid-open = false; } }
                     }
                 }
             }

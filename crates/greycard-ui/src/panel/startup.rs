@@ -292,7 +292,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         screenshot: cli.screenshot.clone(),
         snapshot: cli.snapshot.clone(),
         panel_scroll: cli.panel_scroll,
-        snapshot_shown: cli.sheet.or(cli.tool),
+        snapshot_shown: cli
+            .sheet
+            .or(cli.tool)
+            .or(cli.menu.map(crate::panel::viewport::Shown::Menu)),
         export_then_quit: cli.export.clone(),
         export_into_folder,
         export_presets: remembered.export_presets.clone(),

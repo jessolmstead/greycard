@@ -32,6 +32,7 @@ import { SettingsSheet } from "panel/settings-sheet.slint";
 import { GridSheet } from "panel/grid.slint";
 import { Filmstrip } from "panel/strip.slint";
 import { Viewport } from "panel/viewport.slint";
+import { FrameMenu } from "panel/frame-menu.slint";
 
 export component App inherits Window {
     title: "greycard";
@@ -83,6 +84,39 @@ export component App inherits Window {
     in-out property <[bool]> sync-section-on: [];
     callback sync-section-toggled(int, bool);
     callback sync-applied();
+    /// The sync sheet opened by a paste: the clipboard's sections
+    /// over the whole selection, the frame copied from left out.
+    in-out property <bool> sync-paste: false;
+    // The frame menu, on a right-click over a frame in the strip, the
+    // grid or the viewport (`panel::menu`).
+    /// The row right-clicked, -1 for the frame on screen: Rust makes
+    /// it current first when it is not in the selection
+    /// (`selection::right_click`), and fills the menu's ticks.
+    callback frame-menu-asked(int);
+    /// How many frames the menu acts on.
+    in property <int> menu-count: 1;
+    /// What the selection shares, for the ticks; -1 where it differs.
+    in property <int> menu-rating: -1;
+    in property <int> menu-flag: -1;
+    in property <int> menu-label: -1;
+    /// A rating, flag or label from the menu: through the keys' code.
+    callback menu-meta(string, int);
+    /// The frame right-clicked, shown in the desktop's file manager.
+    callback menu-reveal();
+    /// Whether a Control+click is a right-click: a Mac's.
+    in property <bool> ctrl-click-menu: false;
+    /// For a snapshot (`--menu`): the row of the strip, or of the grid
+    /// when it is open, to open the menu over.
+    in-out property <int> menu-at: -1;
+    /// The settings clipboard: the frame its edit was copied from,
+    /// empty when nothing is copied.
+    in property <string> clip-from: "";
+    /// Ctrl+C, or the menu's Copy settings: the current frame's edit
+    /// into the clipboard.
+    callback copy-asked();
+    /// Ctrl+V, or the menu's Paste settings: the sheet, over the
+    /// selection.
+    callback paste-asked();
     /// A culling key over the browser: the text of it, and true when
     /// it meant something. Rust reads the key, applies it to the
     /// whole selection and writes the sidecars; the badges follow.
@@ -958,6 +992,23 @@ export component App inherits Window {
     pure function tool-in-hand() -> bool {
         return root.placing != "" || root.picking != "" || root.guide-mode != "" || root.level-mode;
     }
+    /// Whether the export sheet can open now: a frame open, nothing
+    /// developing or exporting, not culling.
+    pure function can-export() -> bool {
+        return !root.export-open && !root.busy && !root.export-running && root.selected >= 0 && !root.culling;
+    }
+    /// Ctrl+Shift+E, and the frame menu's Export...
+    public function export-asked() {
+        if (root.can-export()) { root.export-open = true; }
+    }
+    /// A right-click over row `row` (-1: the viewport's frame), at
+    /// (x, y) in the window: the target settled, then the menu. Not
+    /// under a sheet, which a sheet's own frames would move under.
+    function frame-menu-at(row: int, x: length, y: length) {
+        if (root.sheet-open()) { return; }
+        root.frame-menu-asked(row);
+        frame-menu.open(x, y);
+    }
     /// Whether a sheet is over everything. The sheets are declared
     /// after the grid and draw over it, so the keys belong to them.
     /// Tab: everything but the picture put away, the left pane, the
@@ -1057,8 +1108,23 @@ export component App inherits Window {
                 if (!root.sheet-open()) { root.redo(); }
                 return accept;
             }
+            // Copy and paste the settings: Ctrl+C and Ctrl+V (Command
+            // on a Mac, which Slint calls control). Only here, where
+            // the keys are nobody's: a text field with the focus has
+            // its own Ctrl+C and Ctrl+V first. Under a sheet, nothing,
+            // as undo: the sync sheet reads the frame behind it.
+            if (e.modifiers.control && !e.modifiers.shift && !e.modifiers.alt
+                && (e.text == "c" || e.text == "C")) {
+                if (!root.sheet-open()) { root.copy-asked(); }
+                return accept;
+            }
+            if (e.modifiers.control && !e.modifiers.shift && !e.modifiers.alt
+                && (e.text == "v" || e.text == "V")) {
+                if (!root.sheet-open()) { root.paste-asked(); }
+                return accept;
+            }
             if (e.modifiers.control && e.modifiers.shift && (e.text == "e" || e.text == "E")) {
-                if (!root.export-open && !root.busy && !root.export-running && root.selected >= 0 && !root.culling) { root.export-open = true; }
+                root.export-asked();
                 return accept;
             }
             // Ctrl+, is where a desktop application keeps its
@@ -1308,6 +1374,8 @@ export component App inherits Window {
                 patch-dropped => { root.patch-dropped(); }
                 focus-keys => { keys.focus(); }
                 plate-hidden: root.panels-hidden;
+                ctrl-click-menu: root.ctrl-click-menu;
+                frame-menu(x, y) => { root.frame-menu-at(-1, x, y); }
             }
 
             // Panel.
@@ -1813,6 +1881,9 @@ export component App inherits Window {
             thumbs: root.thumbs;
             selected <=> root.selected;
             frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
+            frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
+            ctrl-click-menu: root.ctrl-click-menu;
+            menu-at: root.grid-open ? -1 : root.menu-at;
             meta-stars: root.meta-stars;
             strip-item: root.strip-item;
             strip-pitch: root.strip-pitch;
@@ -1832,6 +1903,9 @@ export component App inherits Window {
         thumbs: root.thumbs;
         selected <=> root.selected;
         frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
+        frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
+        ctrl-click-menu: root.ctrl-click-menu;
+        menu-at: root.menu-at;
         set-count: root.set-count;
         meta-stars: root.meta-stars;
         grid-open <=> root.grid-open;
@@ -1905,6 +1979,8 @@ export component App inherits Window {
     if root.sync-open: SyncSheet {
         sync-open <=> root.sync-open;
         sync-text: root.sync-text;
+        paste: root.sync-paste;
+        paste-from: root.clip-from;
         sync-section-names <=> root.sync-section-names;
         sync-section-on <=> root.sync-section-on;
         sync-section-toggled(a, b) => { root.sync-section-toggled(a, b); }
@@ -1967,4 +2043,22 @@ export component App inherits Window {
         thumb-cache-cap-changed => { root.thumb-cache-cap-changed(); }
     }
 
+    // The frame menu: one for the window, opened where the
+    // right-click was. Declared last, though its menu is a popup and
+    // draws over everything wherever it is declared.
+    frame-menu := FrameMenu {
+        x: 0;
+        y: 0;
+        count: root.menu-count;
+        paste-from: root.clip-from;
+        rating: root.menu-rating;
+        flag: root.menu-flag;
+        label: root.menu-label;
+        can-export: root.can-export();
+        copy => { root.copy-asked(); }
+        paste => { root.paste-asked(); }
+        meta(k, v) => { root.menu-meta(k, v); }
+        reveal => { root.menu-reveal(); }
+        export => { root.export-asked(); }
+    }
 }

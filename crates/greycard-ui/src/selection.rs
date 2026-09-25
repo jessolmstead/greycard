@@ -49,6 +49,21 @@ pub fn click(
     }
 }
 
+/// A right-click on `file`, as a file manager has it: on a frame in
+/// the set the menu is about the whole set, which stays as it is; on
+/// one outside it the frame is opened first and becomes the set, so
+/// the menu is about what the pointer is on and not about frames
+/// chosen somewhere else. The modifiers do not count: a right-click
+/// is not a way to grow the set.
+pub fn right_click(set: &[usize], current: Option<usize>, file: usize) -> Click {
+    let set = frames(set, current);
+    if set.binary_search(&file).is_ok() {
+        Click::Set(set)
+    } else {
+        Click::Open(file)
+    }
+}
+
 /// `file` in or out of the set, the current frame always in.
 pub fn toggle(set: &[usize], current: usize, file: usize) -> Vec<usize> {
     let mut out = frames(set, Some(current));
@@ -150,6 +165,20 @@ mod tests {
             click(&[2, 7], &shown, Some(2), 0, true, true),
             Click::Set(vec![0, 1, 2, 7])
         );
+    }
+
+    #[test]
+    fn a_right_click_in_the_set_keeps_it_and_one_outside_opens_the_frame() {
+        // On the current frame, or another frame of the set: the set
+        // as it is, the current frame in it.
+        assert_eq!(right_click(&[2, 5], Some(2), 2), Click::Set(vec![2, 5]));
+        assert_eq!(right_click(&[2, 5], Some(2), 5), Click::Set(vec![2, 5]));
+        // A set that forgot its current frame still counts it.
+        assert_eq!(right_click(&[5], Some(2), 2), Click::Set(vec![2, 5]));
+        // Outside it: that frame, opened and alone.
+        assert_eq!(right_click(&[2, 5], Some(2), 3), Click::Open(3));
+        // Nothing open: the frame clicked.
+        assert_eq!(right_click(&[], None, 4), Click::Open(4));
     }
 
     #[test]
