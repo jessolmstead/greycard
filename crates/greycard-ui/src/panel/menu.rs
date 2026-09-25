@@ -308,6 +308,41 @@ mod tests {
     }
 
     #[test]
+    fn a_macs_control_click_is_a_right_click_and_not_a_click() {
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, folder(6));
+        // What `install` sets on a Mac, set here on any platform.
+        app.set_ctrl_click_menu(true);
+        app.invoke_select(1);
+        state.borrow_mut().picked = vec![1, 3];
+        // A Mac's Control is Slint's `meta`.
+        let meta = slint::platform::Key::Meta;
+        app.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: meta.into() });
+        let (x, y) = strip_cell(3);
+        crate::testing::click(&app, x, y);
+        app.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: meta.into() });
+        // The menu, over the set: a plain click would have opened
+        // frame 3 and collapsed the set to it.
+        assert_eq!(state.borrow().menu_file, Some(3));
+        assert_eq!(state.borrow().current, Some(1));
+        assert_eq!(chosen_frames(&state.borrow()), vec![1, 3]);
+        // Off (Linux, Windows), the same is a plain click.
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        app.set_ctrl_click_menu(false);
+        app.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: meta.into() });
+        crate::testing::click(&app, x, y);
+        app.window()
+            .dispatch_event(WindowEvent::KeyReleased { text: meta.into() });
+        assert_eq!(state.borrow().current, Some(3));
+        assert_eq!(chosen_frames(&state.borrow()), vec![3]);
+    }
+
+    #[test]
     fn the_viewport_menu_is_the_frame_on_screen_and_its_set() {
         let app = window(4);
         app.window()

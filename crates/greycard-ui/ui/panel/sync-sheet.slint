@@ -50,7 +50,7 @@ export component SyncSheet inherits Rectangle {
                 wrap: word-wrap;
             }
             Text {
-                text: (root.paste ? "What goes across, as the last sync or paste had it. "
+                text: (root.paste ? "What goes across: as the last sync or paste this session chose, or else all but the masks. "
                     : "What goes across; on, all but the masks. ")
                     + "Noise brings the learned denoiser with it. The camera profile goes only to frames of the camera it was made for. The crop and the retouch are each frame's own and never go.";
                 font-size: Theme.font-xs;
