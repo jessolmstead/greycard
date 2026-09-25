@@ -265,14 +265,16 @@ and a package for each of Linux, macOS and Windows that installs
 where that desktop expects, with the file types registered; and a
 Report a problem button that opens the bug form with the version,
 the OS and the GPU filled in and the log beside it; several frames
-at once, with the settings of one synced across them and a preset laid
-over all of them; export presets and a watermark; masks by lightness
-and by color; the Subject mask on the GPU; and a library index behind
-a command with a filter language, not yet in the editor. Eight
-hundred and thirty tests.
+at once, with the settings of one synced across them, a preset laid
+over all of them and an export of all of them; export presets and a
+watermark; masks by lightness and by color; the Subject mask on the
+GPU; a history that names a step by the preset, sync or snapshot that
+made it; and a library index that fills the grid's filter with chips
+for camera, lens, ISO, focal length, day and keyword, with a filter
+language behind the text field. Nine hundred tests.
 
 Planned, in order: the tone controls made to feel right; sky and people masks and a
-generative fill; a look fitted from the camera's JPEG; the library's filter bar, roots
+generative fill; a look fitted from the camera's JPEG; the library's roots
 and collections; a Lightroom catalog import; HDR merge and panoramas, and the
 merges in the browser; tethering.
 

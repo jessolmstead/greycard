@@ -115,6 +115,36 @@ note a first tester reads.
   twice and the levels a quarter at one thread, the Gaussian blur, the
   dehaze, and the RCD demosaic 11 percent from an inlining decision
   pinned (§165, 2026-09-24).
+- Name a history step by what made it: "Preset: Faded film", "Preset
+  ×3: Faded film" over a set, "Sync from 5M0A3021.CR3", "Snapshot:
+  Before the crop", where the rows read as the list of sections that
+  moved. The words are kept with the step in the sidecar, an older
+  build reads the file as before, and a `--preset` step is now written
+  on quit (§166, 2026-09-24).
+- Export the frames selected, not only the one on screen: each under
+  its own edit, one at a time on the worker behind the develop, with
+  progress on the status line, a Stop, and a finished line that counts
+  what was skipped or failed. A set never writes over one of its own
+  sources. `--export DIR --also ROWS` does it from the command line
+  (§167, 2026-09-24).
+- The library index in the editor: the open folder is indexed on a
+  thread of its own and kept up to date as sidecars are saved, and
+  the grid's filter grows chips for camera, lens, ISO, focal length,
+  day and keyword with their counts, a text field that takes the
+  filter language (`camera:R6 iso>=3200 rating>=3`), and `--filter`
+  on the command line. The database is `greycard/library.sqlite`
+  under the platform's data directory, or `--library PATH` (§168,
+  2026-09-24).
+- Fix a click with the color range, white balance or defringe
+  dropper zooming the view as well, and a drag with one panning it
+  (§169, 2026-09-24).
+- Drop the color mask's Skin button: a new color window starts at the
+  skin already, and the button only put the sliders back there (§169,
+  2026-09-24).
+- Offer the GPU Subject model where the store holds the original and
+  it is on record as falling back to the CPU on this card, with the
+  reason on the sheet; an offer accepted mid-session is used at once,
+  and one declined leaves the original working (§169, 2026-09-24).
 
 ## 0.1.1, 2026-09-22
 

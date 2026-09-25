@@ -11,10 +11,10 @@ on and nothing more; the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A truncated CR3 panics the worker with "capacity overflow" inside
-      rawler's decoder; the job catches it, the frame shows nothing.
-      Found by the thumbnail cache's review on a half-copied file
-      (§163). Upstream, with a guard at the job meanwhile
+- [ ] A half-copied CR3 panics the worker with "capacity overflow"
+      inside rawler's decoder; the job catches it, the frame shows
+      nothing. Found by the thumbnail cache's review (§163). Filed as
+      dnglab/dnglab#849; a guard at the job meanwhile
 - [ ] `--grid --snapshot` over a folder where one thumbnail fails to
       decode waits until it is killed, since the cell never fills; as
       old as the grid (§163). Give the wait a limit and mark the cell
@@ -108,9 +108,6 @@ seconds.
 
 A shoot can be culled without developing a frame.
 
-- [ ] Camera, lens and ISO chips on the folder filter; waits on a
-      folder index or a cached probe, since reading every raw's EXIF
-      on open is twenty seconds on a wedding (§133)
 - [ ] Lightbox to see a whole collection and look for consistency
 
 ## v0.5.0: AI masks and fill
@@ -122,9 +119,21 @@ Decided (§34): ONNX Runtime through `ort`, CPU floor with CUDA, DirectML
 or CoreML when found; models downloaded on first use with their
 licenses, never bundled; a `greycard-ai` crate that core never sees.
 
-- [ ] AI masks: Sky (a small clean-license model, or SAM 2 seeded) and
-      People parts (MediaPipe landmarks driving SAM 2); SAM 3 ruled out
-      for now, gated weights and a 1.4 GB text encoder (§34 addendum)
+- [ ] AI masks: Sky first, and it must never paint where there is no
+      sky (a learned prior with the sky class, SAM 2 for the edge, a
+      "no sky" gate; the 41-frame set under the samples is the test);
+      then the landscape's other features as shapes, water, mountain,
+      foliage, ground, which a panoptic prior's stuff classes give at
+      once; then the body's parts as shapes of their own, each a mask to put a
+      look on: facial skin, body skin, hair, eyebrows, eyes and the
+      iris, lips, teeth, and clothing by name (top, dress, coat,
+      trousers, shoes, hat). A face parser and a human parser whose
+      licences and training data allow it (the CelebAMask-HQ, LIP,
+      ATR and DeepFashion2 families are research-only), or landmarks
+      driving SAM 2, which the Object shape already runs from a click;
+      the iris is a landmark fit inside the eye's mask; SAM 3 ruled
+      out for now, gated weights and a 1.4 GB text encoder (§34
+      addendum). The licence search is the user's choice to make
 - [ ] Generative fill behind the patch layer
 
 ## v0.6.0: color
@@ -155,11 +164,12 @@ Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.
 
-- [ ] The filter bar across roots and large folders with the EXIF
-  facets the index holds: camera, lens, ISO, focal length, date,
-  keyword; the folder filter's fields become the index's, with the
-  facet counts (one GROUP BY a facet) the index leaves to the bar
-  (§160). The index is there since §160
+- [ ] The filter bar across roots: the bar is there for the open
+  folder since §168; the roots bring the all-roots view, a "none"
+  chip for frames with no value for a facet (decide it with a
+  library of phone JPEGs in hand), an error row in the index for a
+  file whose hash fails so it stops showing under every chip, and a
+  filter remembered between sessions (§168)
 - [ ] Roots: folders the user has added, an all-roots view, an inotify
   watcher on open roots and an mtime pass on launch; a moved file
   found by hash rather than flagged missing. The index is there
@@ -238,9 +248,14 @@ clears or a tester asks for it.
       viewport does not. A tester on such a machine decides whether
       the viewport wants a CPU path too
 - [ ] Right click on photo for options. Set label, copy develop settings, etc
-- [ ] Export over the selection: a queue on the worker with progress
-      and the naming policy; today Export takes the frame on screen
-      (§156)
+- [ ] The single export's reuse of the viewport's last develop should
+      require a CPU CA: with the learned denoiser on and sharpen off
+      the picture comes back to the CPU with the GPU's CA in it, so a
+      frame exported on screen differs from the same frame exported in
+      a set (45 px at 2048 on 5M0A1023, §167). The base's `ca_on_gpu`
+      check is the model
+- [ ] Export naming patterns (a suffix, a sequence number, the date)
+      on the sheet and in an export preset, for a set (§167)
 - [ ] Export naming patterns and a destination folder on the sheet,
       and so in an export preset; a list of marks so text and a logo
       go on one export; a plate or shadow behind text; a bundled font
@@ -258,8 +273,6 @@ clears or a tester asks for it.
       hue (§158)
 - [ ] A dropper for the luminance window's edges and a swatch of the
       color window beside its sliders (§158)
-- [ ] A way in the editor to take the GPU Subject model once the
-      original is in the store; today it is fetched by id (§159)
 - [ ] Thumbnails made in parallel on a cold cache: today one at a time
       on the worker behind the first develop, two seconds of decoding
       for 35 files where a warm cache takes a hundredth (§163)
@@ -323,16 +336,15 @@ release when the wait clears.
       on the release after 1.18.0 (§99)
 - [ ] Drop the rawler `[patch.crates-io]`. Waits on a rawler release
       carrying dnglab/dnglab#840 (§13j)
-- [ ] rawler 0.8's `raw_metadata` on a corrupt CR3 spins to 29 GB of
-      resident memory before anything stops it, and its RW2 decoder
-      divides by zero on a fuzzed head; the recipes are in §160 and
-      the crate's fixture. File both upstream; until the first is
-      fixed a damaged CR3 on a card is the one way an index pass can
-      be brought down
+- [ ] rawler 0.8 on a CR3 with a zero-size box in `moov` loops
+      until it runs out of memory, and its RW2 decoder divides by
+      zero on a zero height (§160). Filed as dnglab/dnglab#848 and
+      #850; until the first is fixed a damaged CR3 on a card is the
+      one way an index pass can be brought down
 - [ ] ort rc.13 ignores every `ep::WebGPU` option (the key prefix is
       applied twice); greycard sets them through a config entry
-      instead. The issue text is in §159; file it, and drop the
-      workaround when a release carries the fix
+      instead (§159). Fixed on ort's main in pykeio/ort@bc23566;
+      drop the workaround when a release carries it
 - [ ] The GPU Subject model on Mac and Windows adapters: its remaining
       Splits need nine storage buffers; an adapter allowing fewer
       falls back to the CPU. Check on the machines (§159)
