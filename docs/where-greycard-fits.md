@@ -272,7 +272,9 @@ GPU; a history that names a step by the preset, sync or snapshot that
 made it; a right-click menu on a frame, with copy and paste of
 settings onto the selection; thumbnails made in parallel on a pool of
 threads, a cold folder of hundreds filling in seconds; an import from a card with
-renaming, a preset and a verified backup; and a library index that fills the grid's filter with chips
+renaming, a preset and a verified backup; roots, folders the library
+watches, with a view of every file under them and the filter
+remembered between sessions; and a library index that fills the grid's filter with chips
 for camera, lens, ISO, focal length, day and keyword, with a filter
 language behind the text field. Nine hundred tests.
 

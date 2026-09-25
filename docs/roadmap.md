@@ -163,27 +163,21 @@ Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.
 
-- [ ] The filter bar across roots: the bar is there for the open
-  folder since §168; the roots bring the all-roots view, a "none"
-  chip for frames with no value for a facet (decide it with a
-  library of phone JPEGs in hand), an error row in the index for a
-  file whose hash fails so it stops showing under every chip, and a
-  filter remembered between sessions (§168)
-- [ ] Roots: folders the user has added, an all-roots view, an inotify
-  watcher on open roots and an mtime pass on launch; a moved file
-  found by hash rather than flagged missing. The index is there
-  since §160; `index_tree` and `folders` are its start
+- [ ] The filter bar's last two chips: a "none" chip for frames with
+  no value for a facet (decide it with a library of phone JPEGs in
+  hand), and an error row in the index for a file whose hash fails so
+  it stops showing under every chip (§168). The all-roots view and
+  the filter remembered between sessions are there since §174
 - [ ] Archive roots, for a NAS or a mounted cloud folder: Back up
   copies a shoot's new and changed files and sidecars to the archive,
   hash-verified and never deleting there; Remove rejects finds the
   archive's copies by content hash, shows the list, and on confirm
   moves them into a rejects folder on the archive, as culling moves
   them locally; a removal queued while the root is offline. Cloud
-  through a mount or a configured command, never a provider's API.
-  Waits on roots
+  through a mount or a configured command, never a provider's API
 - [ ] Collections and smart collections in one file under
   `~/.local/share/greycard/`, referencing files by hash with the
-  path as a hint. Waits on roots
+  path as a hint
 - [ ] Virtual copies: named versions in the same sidecar, each with
   its own edit and history; a collection references hash plus
   version. Waits on collections

@@ -33,6 +33,15 @@ note a first tester reads.
   known by its size and its first and last 64 KiB, Verify compares
   every byte; `--import SRC --to DEST` runs one headless (§173,
   2026-09-25).
+- Roots: folders added to the library, kept in `roots.json` beside
+  the index; a pass over every root at launch and a watcher on them
+  while the editor runs, so a file copied into a root is in the grid
+  half a second later and a moved frame is found rather than flagged
+  missing; an all-roots view of every file under every root with the
+  filter bar over it, a root's chip narrowing to it, an unplugged
+  root shown offline and left alone; the filter remembered between
+  sessions; rejects moved to a rejects folder in each shoot's own
+  folder; `--roots DIR,DIR` and `--all-roots` (§174, 2026-09-25).
 
 ## 0.1.2, 2026-09-25
 
