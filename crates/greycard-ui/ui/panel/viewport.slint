@@ -90,6 +90,11 @@ export component Viewport inherits Rectangle {
         property <length> down-x;
         property <length> down-y;
         property <bool> dragged;
+        // Whether the press put a dropper down: latched there, so a
+        // single-shot dropper (White, Range, Defringe) that lets go of
+        // `picking` inside its own press handler still keeps the
+        // release from reading as a plain click and zooming.
+        property <bool> picked-down;
         mouse-cursor: root.picking != "" ? (root.dropper.width > 0 ? MouseCursor.none : MouseCursor.crosshair)
             : root.placing != "" || root.retouch-mode != "" ? MouseCursor.crosshair
             : self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
@@ -106,8 +111,10 @@ export component Viewport inherits Rectangle {
                 // develop there is nothing here to place a
                 // shape on or read a color off; the pan and
                 // the zoom still work, as in culling.
+                self.picked-down = false;
                 if (root.placeholder) {
                 } else if (root.picking != "") {
+                    self.picked-down = true;
                     if (e.button == PointerEventButton.left) {
                         root.pick-pressed(self.mouse-x, self.mouse-y);
                     }
@@ -120,7 +127,7 @@ export component Viewport inherits Rectangle {
                 self.down-y = self.mouse-y;
                 self.dragged = false;
             } else if (e.kind == PointerEventKind.up) {
-                if (root.picking != "") {
+                if (self.picked-down) {
                     root.pick-released();
                 } else if (root.placing != "" || root.retouch-mode != "") {
                     root.place-released();

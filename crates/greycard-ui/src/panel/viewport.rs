@@ -1115,6 +1115,45 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    use crate::testing::{click, window};
+
+    /// A pick with a single-shot dropper (White, Range, Defringe) does
+    /// not zoom: the press puts the dropper down and, for these three,
+    /// lets go of `picking` right there — which used to leave the
+    /// release reading as a plain click, since it read `picking` fresh
+    /// rather than remembering the press. Stands in for
+    /// `viewport::install`'s own wiring of `pick_pressed`'s "Range"
+    /// arm (`app.invoke_stop_placing()` before the release), which
+    /// needs a developed picture on a real device to drive for real;
+    /// this drives the same pointer-event routing the `.slint` side
+    /// does, through the compiled window, with no GPU behind it.
+    #[test]
+    fn a_pick_with_a_single_shot_dropper_does_not_zoom() {
+        let app = window(1);
+        app.set_picking("Range".into());
+        let zoomed = Rc::new(Cell::new(false));
+        {
+            let zoomed = zoomed.clone();
+            app.on_toggle_zoom(move |_, _| zoomed.set(true));
+        }
+        {
+            let app_weak = app.as_weak();
+            app.on_pick_pressed(move |_, _| {
+                let app = app_weak.upgrade().unwrap();
+                // As the "Range" dropper's own press does: read the
+                // color under the pointer (faked, here, as moving the
+                // hue) and let go of `picking` on the press itself.
+                app.set_range_hue(200.0);
+                app.set_picking("".into());
+            });
+        }
+        click(&app, 600.0, 400.0);
+        assert!(!zoomed.get(), "a pick must not zoom the view");
+        assert_eq!(app.get_range_hue(), 200.0, "the hue moved");
+    }
 
     #[test]
     fn a_sheet_or_a_tool_asked_for_is_on_screen() {
