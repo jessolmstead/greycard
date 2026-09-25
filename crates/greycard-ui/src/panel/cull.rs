@@ -1063,6 +1063,31 @@ pub(crate) fn shoot_rejects_dir(st: &State) -> Option<PathBuf> {
     Some(cull::rejects_dir(&shoot))
 }
 
+/// Where the rejects go, said: the one rejects folder by its whole
+/// path, or, over the all-roots view where the rejects are in several
+/// folders, that each goes to its own folder's.
+fn rejects_where(st: &State) -> Option<String> {
+    let mut folders: Vec<&Path> = Vec::new();
+    for (f, s) in st.files.iter().zip(&st.sidecars) {
+        if s.meta.flag == meta::Flag::Reject
+            && let Some(p) = f.parent()
+            && !folders.contains(&p)
+        {
+            folders.push(p);
+        }
+    }
+    match folders.len() {
+        0 => shoot_rejects_dir(st).map(|d| d.display().to_string()),
+        1 => {
+            let shoot = std::fs::canonicalize(folders[0]).unwrap_or_else(|_| folders[0].into());
+            Some(cull::rejects_dir(&shoot).display().to_string())
+        }
+        n => Some(format!(
+            "a rejects folder in each of the {n} folders they are in"
+        )),
+    }
+}
+
 /// The move-rejects sheet: how many frames and where they would go.
 pub(crate) fn ask_rejects(st: &State, app: &App) {
     let n = reject_count(st);
@@ -1070,7 +1095,7 @@ pub(crate) fn ask_rejects(st: &State, app: &App) {
         app.set_status("no frames are flagged reject".into());
         return;
     }
-    let Some(dir) = shoot_rejects_dir(st) else {
+    let Some(dir) = rejects_where(st) else {
         return;
     };
     app.set_rejects_text(
@@ -1079,7 +1104,7 @@ pub(crate) fn ask_rejects(st: &State, app: &App) {
             if n == 1 { "" } else { "s" },
             if n == 1 { "its" } else { "their" },
             if n == 1 { "" } else { "s" },
-            dir.display()
+            dir
         )
         .into(),
     );
@@ -1097,6 +1122,8 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
         .filter(|(_, s)| s.meta.flag == meta::Flag::Reject)
         .map(|(i, _)| i)
         .collect();
+    // Said before the move, while the frames are where they were.
+    let dir = rejects_where(st).unwrap_or_default();
     let moved = match cull::move_rejects(&st.files, &rejected) {
         Ok(m) => m,
         Err(e) => {
@@ -1108,14 +1135,13 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
     for (i, why) in &moved.skipped {
         tracing::warn!("{} left where it is: {why}", file_name(&st.files[*i]));
     }
-    let dir = shoot_rejects_dir(st).unwrap_or_default();
     let mut status = format!(
         "moved {} frame{} and {} sidecar{} to {}",
         moved.files.len(),
         if moved.files.len() == 1 { "" } else { "s" },
         moved.sidecars,
         if moved.sidecars == 1 { "" } else { "s" },
-        dir.display()
+        dir
     );
     if !moved.skipped.is_empty() {
         status.push_str(&format!(

@@ -589,16 +589,36 @@ pub struct Moved {
 /// made if it is not there.
 pub fn move_rejects(files: &[PathBuf], rejected: &[usize]) -> anyhow::Result<Moved> {
     let mut moved = Moved::default();
-    let Some(first) = rejected.iter().find_map(|&i| files.get(i)) else {
-        return Ok(moved);
-    };
-    let shoot = first
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let dir = rejects_dir(&shoot);
-    std::fs::create_dir_all(&dir)?;
+    // Each frame into the rejects folder of its own folder: a list
+    // from more than one (the library's all-roots view) sends each
+    // shoot's rejects to that shoot's, never all to the first one's.
+    let mut by_shoot: Vec<(PathBuf, Vec<usize>)> = Vec::new();
     for &i in rejected {
+        let Some(raw) = files.get(i) else {
+            continue;
+        };
+        let shoot = raw
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+        match by_shoot.iter_mut().find(|(s, _)| *s == shoot) {
+            Some((_, group)) => group.push(i),
+            None => by_shoot.push((shoot, vec![i])),
+        }
+    }
+    for (shoot, group) in by_shoot {
+        let dir = rejects_dir(&shoot);
+        std::fs::create_dir_all(&dir)?;
+        move_into(files, &group, &dir, &mut moved);
+    }
+    Ok(moved)
+}
+
+/// The frames at `group`, all in one folder, into its rejects folder
+/// `dir`.
+fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, moved: &mut Moved) {
+    for &i in group {
         let Some(raw) = files.get(i) else {
             continue;
         };
@@ -654,7 +674,7 @@ pub fn move_rejects(files: &[PathBuf], rejected: &[usize]) -> anyhow::Result<Mov
         moved.files.push(i);
         for (from, to) in &beside {
             if to.parent().is_some_and(|p| !p.exists())
-                && let Err(e) = greycard_edit::Sidecar::folder_under(&dir)
+                && let Err(e) = greycard_edit::Sidecar::folder_under(dir)
             {
                 tracing::warn!("{}: not moved: {e}", from.display());
                 continue;
@@ -666,7 +686,6 @@ pub fn move_rejects(files: &[PathBuf], rejected: &[usize]) -> anyhow::Result<Mov
             }
         }
     }
-    Ok(moved)
 }
 
 #[cfg(test)]
@@ -969,5 +988,34 @@ mod tests {
         assert!(!rejects_dir(&empty).exists());
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&empty);
+    }
+
+    /// A list from more than one folder, as the library's all-roots
+    /// view has: each shoot's rejects go to that shoot's own rejects
+    /// folder, never all to the first one's.
+    #[test]
+    fn rejects_from_two_shoots_go_to_their_own_folders() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-rejects-two-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let (one, two) = (dir.join("one"), dir.join("two"));
+        std::fs::create_dir_all(&one).unwrap();
+        std::fs::create_dir_all(&two).unwrap();
+        let files = vec![one.join("A.CR3"), one.join("B.CR3"), two.join("C.CR3")];
+        for f in &files {
+            std::fs::write(f, b"raw").unwrap();
+        }
+        let moved = move_rejects(&files, &[1, 2]).unwrap();
+        assert_eq!(moved.files, vec![1, 2]);
+        assert!(rejects_dir(&one).join("B.CR3").exists());
+        assert!(rejects_dir(&two).join("C.CR3").exists());
+        assert!(!rejects_dir(&one).join("C.CR3").exists());
+        assert!(files[0].exists());
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
