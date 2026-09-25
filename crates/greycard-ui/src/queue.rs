@@ -204,6 +204,11 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// "1 frame", "3 frames".
+pub fn frames(n: usize) -> String {
+    format!("{n} frame{}", if n == 1 { "" } else { "s" })
+}
+
 /// The status line while frame `index` (from zero) is being written.
 pub fn progress_line(index: usize, total: usize, name: &str) -> String {
     format!("exporting {} of {total}: {name}", index + 1)
@@ -212,7 +217,6 @@ pub fn progress_line(index: usize, total: usize, name: &str) -> String {
 /// The status line once the set is done with: how many were written,
 /// where, and what did not go.
 pub fn finished_line(tally: &Tally, total: usize, folder: Option<&Path>, seconds: f64) -> String {
-    let frames = |n: usize| format!("{n} frame{}", if n == 1 { "" } else { "s" });
     let mut s = if tally.canceled > 0 {
         format!("export stopped: {} of {total} exported", tally.exported)
     } else {

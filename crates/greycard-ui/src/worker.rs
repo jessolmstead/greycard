@@ -813,7 +813,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
                     let written = if opened_path.as_deref() == Some(frame.source.as_path()) {
                         open_picture(
                             &frame.edit,
-                            turn,
+                            frame.turn % 4,
                             input.as_ref(),
                             &mut last,
                             &mut base,

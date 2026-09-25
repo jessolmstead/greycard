@@ -868,15 +868,15 @@ pub(crate) fn start_set(
         .collect();
     let set = Arc::new(queue::Set::new(frames.len(), folder, settings, on_exists));
     tracing::info!(
-        "exporting {} frames {}: {}",
-        frames.len(),
+        "exporting {} {}: {}",
+        queue::frames(frames.len()),
         match &set.folder {
             Some(f) => format!("to {}", f.display()),
             None => "beside their files".to_string(),
         },
         set.settings.describe()
     );
-    app.set_status(format!("exporting {} frames...", frames.len()).into());
+    app.set_status(format!("exporting {}...", queue::frames(frames.len())).into());
     app.set_export_running(true);
     st.exporting = Some(set.clone());
     WORKER.with(|w| {
