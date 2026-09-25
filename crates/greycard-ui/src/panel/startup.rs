@@ -239,7 +239,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         match found {
             Some(entry) => {
                 let applied = entry.preset.applied(&sidecars[i].current);
-                sidecars[i].record(applied);
+                let label = greycard_edit::history::preset_label(&entry.preset.name);
+                sidecars[i].record_as(applied, Some(label));
             }
             None => anyhow::bail!("no preset called {name}"),
         }

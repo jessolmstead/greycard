@@ -1379,7 +1379,8 @@ fn presets(
                 }
             }
             let edit = entry.preset.applied(&sidecar.current);
-            if sidecar.record(edit) {
+            let label = greycard_edit::history::preset_label(&entry.preset.name);
+            if sidecar.record_as(edit, Some(label)) {
                 // Back where it was found: the CLI has no setting.
                 sidecar
                     .save_in(file, greycard_edit::Placement::of(file))

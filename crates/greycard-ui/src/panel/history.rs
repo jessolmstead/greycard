@@ -28,8 +28,9 @@ pub(crate) fn show_history(st: &State, app: &App) {
         .rev()
         .map(|i| {
             let state = sidecar.state(i).expect("a state within the count");
-            match i.checked_sub(1).and_then(|j| sidecar.state(j)) {
-                Some(before) => describe(before, state, &sidecar.snapshots),
+            // The words the step was recorded with, or what moved.
+            match sidecar.describe(i) {
+                Some(name) => name,
                 // A fresh raw's learned-denoiser blend starts from its
                 // ISO (`Noise::blend_for_iso`), not the plain default,
                 // so that field alone is left out of the comparison.
@@ -234,6 +235,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let edit = read_edit(&app, &st.edit, st.target);
             let dirty = st.sidecars[c].record(edit);
             let moved = if dirty && index > position {
+                // Named by what moved, not by the words it had: it
+                // follows the panel's state now, not the one the
+                // preset or sync was laid over.
                 target.is_some_and(|t| st.sidecars[c].record(t))
             } else {
                 st.sidecars[c].go_to(index)

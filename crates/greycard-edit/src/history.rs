@@ -14,10 +14,52 @@ pub fn describe(before: &Edit, after: &Edit, snapshots: &[Snapshot]) -> String {
         [] => "No change".to_string(),
         [one] => one.clone(),
         many => match snapshots.iter().find(|s| s.edit == *after) {
-            Some(s) => format!("Snapshot: {}", s.name),
+            Some(s) => snapshot_label(&s.name),
             None => many.join(", "),
         },
     }
+}
+
+/// What a row of the history says for the step from `before` to
+/// `after`: the words it was recorded with when it has any (see
+/// [`crate::Step::label`]), and otherwise what [`describe`] makes of
+/// the difference. A label that is blank reads as none.
+pub fn describe_step(
+    before: &Edit,
+    after: &Edit,
+    label: Option<&str>,
+    snapshots: &[Snapshot],
+) -> String {
+    match label.map(str::trim) {
+        Some(label) if !label.is_empty() => label.to_string(),
+        _ => describe(before, after, snapshots),
+    }
+}
+
+// The words a named step is recorded with. Short, since a row of the
+// history panel is a line of small type about forty characters wide
+// and elides the rest (the hover's status line has it whole): the
+// kind of step first, the preset's, snapshot's or frame's name after.
+
+/// A preset laid over the frame on its own.
+pub fn preset_label(name: &str) -> String {
+    format!("Preset: {name}")
+}
+
+/// A preset laid over a selected set, on each frame of it that took
+/// it, the one on screen too.
+pub fn preset_over_set_label(name: &str) -> String {
+    format!("Preset over the set: {name}")
+}
+
+/// A sync onto a frame, from the frame named `from` (its file name).
+pub fn sync_label(from: &str) -> String {
+    format!("Sync from {from}")
+}
+
+/// A snapshot restored.
+pub fn snapshot_label(name: &str) -> String {
+    format!("Snapshot: {name}")
 }
 
 /// One entry per section that differs, in the panel's order, each
@@ -784,5 +826,36 @@ mod tests {
         let mut q = p.clone();
         q.retouch.patches[0].radius = 0.05;
         assert_eq!(describe(&p, &q, &[]), "Heal 3 moved");
+    }
+
+    #[test]
+    fn a_step_with_words_is_named_by_them_and_one_without_as_before() {
+        let base = Edit::default();
+        let mut after = base.clone();
+        after.light.exposure = 0.5;
+        after.color.saturation = 0.2;
+        let label = preset_label("Faded film");
+        assert_eq!(
+            describe_step(&base, &after, Some(&label), &[]),
+            "Preset: Faded film"
+        );
+        assert_eq!(
+            describe_step(&base, &after, None, &[]),
+            describe(&base, &after, &[])
+        );
+        // Blank words are none.
+        assert_eq!(
+            describe_step(&base, &after, Some("  "), &[]),
+            describe(&base, &after, &[])
+        );
+        // The words are short enough for a row.
+        for words in [
+            preset_label("Faded film"),
+            preset_over_set_label("Faded film"),
+            sync_label("5M0A3021.CR3"),
+            snapshot_label("Snapshot 1"),
+        ] {
+            assert!(words.chars().count() <= 40, "{words}");
+        }
     }
 }

@@ -24,6 +24,7 @@ use crate::panel::edit::{read_edit, save_edit, write_sidecar};
 use crate::panel::history::{show_history, take_current};
 use crate::*;
 use greycard_edit::camera::{self, ProfileChoice};
+use greycard_edit::history::{preset_label, preset_over_set_label, sync_label};
 
 /// The frames a sync goes onto: the set, less the frame it comes
 /// from.
@@ -168,12 +169,19 @@ pub(crate) struct Synced {
 /// call does not bring one itself (`learned_from` is `None`): the
 /// call makes the target's edit no longer the default, and the next
 /// launch would take that to mean the blend was seeded already.
+///
+/// `label` is the words each target's step is recorded with, which
+/// its history row shows in place of the sections that moved: a
+/// sync's "Sync from" the frame it came from, a preset's "Preset
+/// over the set:" and its name.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn lay_over_targets(
     st: &mut State,
     app: &App,
     preset: &Preset,
     targets: &[usize],
     learned_from: Option<&Edit>,
+    label: &str,
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> Synced {
@@ -215,7 +223,13 @@ pub(crate) fn lay_over_targets(
             _ => fits.push(f),
         }
     }
-    let mut moved = greycard_edit::apply_preset_into(&mut st.sidecars, preset, &fits, learned_from);
+    let mut moved = greycard_edit::apply_preset_into(
+        &mut st.sidecars,
+        preset,
+        &fits,
+        learned_from,
+        Some(label),
+    );
     if !left_off.is_empty() {
         let mut without = preset.clone();
         without.sections.retain(|s| *s != Section::Camera);
@@ -224,6 +238,7 @@ pub(crate) fn lay_over_targets(
             &without,
             &left_off,
             learned_from,
+            Some(label),
         ));
     }
     moved.sort_unstable();
@@ -266,7 +281,20 @@ pub(crate) fn sync_selection(
     let targets = sync_targets(st);
     let preset = Preset::from_edit("", &from, sections);
     let learned_from = preset.sections.contains(&Section::Noise).then_some(&from);
-    lay_over_targets(st, app, &preset, &targets, learned_from, profiles, probe)
+    let label = st
+        .current
+        .map(|c| sync_label(&file_name(&st.files[c])))
+        .unwrap_or_default();
+    lay_over_targets(
+        st,
+        app,
+        &preset,
+        &targets,
+        learned_from,
+        &label,
+        profiles,
+        probe,
+    )
 }
 
 /// What a preset click does, for the current frame alone or for a
@@ -332,7 +360,7 @@ pub(crate) fn apply_preset(
                 app.set_status(format!("{} is on already{left_off_tail}", preset.name).into());
                 return;
             }
-            st.sidecars[c].record(applied);
+            st.sidecars[c].record_as(applied, Some(preset_label(&preset.name)));
             // `leave_cull(.., None)` reads the edit to leave with off
             // the sidecar it is itself about to read, so its own "a
             // control's change is written once the panel rests" never
@@ -355,7 +383,7 @@ pub(crate) fn apply_preset(
             return;
         }
         st.sidecars[c].record(edit);
-        st.sidecars[c].record(applied);
+        st.sidecars[c].record_as(applied, Some(preset_label(&preset.name)));
         let said = format!("{} applied{left_off_tail}", preset.name);
         // As the set's own non-culling branch below: left for the
         // develop this generation is when one is actually asked for,
@@ -371,13 +399,15 @@ pub(crate) fn apply_preset(
     }
     // Two or more selected: the current frame takes the preset the
     // way it always has, and the rest of the set the way a sync lays
-    // sections over its targets.
+    // sections over its targets, every frame's step under the same
+    // words.
+    let label = preset_over_set_label(&preset.name);
     let current_changed = if st.cull.is_some() {
         let edit = st.sidecars[c].current.clone();
         let applied = current_preset.applied(&edit);
         let changed = applied != edit;
         if changed {
-            st.sidecars[c].record(applied);
+            st.sidecars[c].record_as(applied, Some(label.clone()));
         }
         changed
     } else {
@@ -386,11 +416,11 @@ pub(crate) fn apply_preset(
         let changed = applied != edit;
         if changed {
             st.sidecars[c].record(edit);
-            st.sidecars[c].record(applied);
+            st.sidecars[c].record_as(applied, Some(label.clone()));
         }
         changed
     };
-    let mut synced = lay_over_targets(st, app, preset, &targets, None, profiles, probe);
+    let mut synced = lay_over_targets(st, app, preset, &targets, None, &label, profiles, probe);
     if current_left_off {
         synced.profile_left_off.push(c);
         synced.profile_left_off.sort_unstable();
@@ -773,11 +803,16 @@ mod tests {
         assert_eq!(s.current.sharpen, Edit::default().sharpen);
         assert!(s.current.geometry.crop.is_some());
         assert_eq!(s.history.len(), 2);
+        // Its step is named for the frame it came from; the frame
+        // synced from recorded its panel as a plain step.
+        assert_eq!(s.current_label.as_deref(), Some("Sync from IMG_0000.CR3"));
+        assert_eq!(st.sidecars[0].current_label, None);
         // Written where the setting says, and it reads back the same.
         let on_disk = Sidecar::path_in(&files[2], greycard_edit::Placement::Folder);
         assert!(on_disk.exists(), "{}", on_disk.display());
         let back = Sidecar::load(&files[2]).unwrap().unwrap();
         assert_eq!(back.current, s.current);
+        assert_eq!(back.current_label, s.current_label);
         assert!(!Sidecar::path_in(&files[1], greycard_edit::Placement::Folder).exists());
         drop(st);
         std::fs::remove_dir_all(&dir).expect("the temp dir goes");
@@ -853,7 +888,7 @@ mod tests {
         // blend, under the sync's step, and is not seeded again.
         let blend = |iso| greycard_edit::Noise::blend_for_iso(Some(iso));
         assert_eq!(
-            st.sidecars[1].history[0].noise.learned_strength,
+            st.sidecars[1].history[0].edit.noise.learned_strength,
             blend(3200)
         );
         assert_eq!(st.sidecars[2].current.noise.learned_strength, blend(100));
@@ -1017,6 +1052,20 @@ mod tests {
         assert_eq!(st.sidecars[1].history.len(), 1);
         // Already had it: no new step.
         assert_eq!(st.sidecars[2].history.len(), 1);
+        // Every frame that took it, the one on screen too, has the
+        // step under the set's words; the one that had it, none.
+        for f in [0, 1] {
+            assert_eq!(
+                st.sidecars[f].current_label.as_deref(),
+                Some("Preset over the set: Portra 400"),
+                "frame {f}"
+            );
+        }
+        assert_eq!(st.sidecars[2].current_label, None);
+        assert_eq!(
+            app.get_history_names().row_data(0).as_deref(),
+            Some("Preset over the set: Portra 400")
+        );
         // Outside the set: untouched.
         assert_eq!(st.sidecars[3], Sidecar::default());
         assert_eq!(
@@ -1029,6 +1078,7 @@ mod tests {
         assert!(on_disk.exists(), "{}", on_disk.display());
         let back = Sidecar::load(&files[1]).unwrap().unwrap();
         assert_eq!(back.current, st.sidecars[1].current);
+        assert_eq!(back.current_label, st.sidecars[1].current_label);
         assert!(!Sidecar::path_in(&files[3], greycard_edit::Placement::Folder).exists());
         drop(st);
         std::fs::remove_dir_all(&dir).expect("the temp dir goes");
@@ -1066,6 +1116,10 @@ mod tests {
         assert_eq!(state.borrow().sidecars[0].current.light.exposure, 0.5);
         assert_eq!(state.borrow().sidecars[0].history.len(), 1);
         assert_eq!(app.get_status(), "Portra 400 applied");
+        assert_eq!(
+            state.borrow().sidecars[0].current_label.as_deref(),
+            Some("Preset: Portra 400")
+        );
         assert_eq!(state.borrow().sidecars[1], Sidecar::default());
 
         // Applied again: already on, and nothing else moves.
@@ -1111,6 +1165,7 @@ mod tests {
             &preset,
             &[0, 1],
             None,
+            "Preset over the set: Film",
             &[],
             bodies,
         );
@@ -1164,6 +1219,7 @@ mod tests {
             &preset,
             &[1, 2],
             None,
+            "Preset over the set: Film",
             &profiles,
             bodies,
         );
@@ -1379,13 +1435,21 @@ mod tests {
                     path: PathBuf::new(),
                     preset,
                 }];
-                st.picked = also;
             }
             let on_disk = Sidecar::path_in(&files[0], greycard_edit::Placement::Folder);
 
             app.invoke_select(0);
             app.invoke_cull_toggled();
             assert!(state.borrow().cull.is_some(), "{tag}");
+            // The set is made once the frame is open: opening it
+            // makes the set that frame alone.
+            let set = !also.is_empty();
+            state.borrow_mut().picked = also;
+            assert_eq!(
+                chosen_frames(&state.borrow()).len(),
+                if set { 2 } else { 1 },
+                "{tag}"
+            );
             app.invoke_preset_applied(0);
             assert!(
                 state.borrow().cull.is_none(),
@@ -1405,6 +1469,26 @@ mod tests {
                 state.borrow().sidecars[0].current,
                 "{tag}"
             );
+            let words = if tag == "one" {
+                "Preset: Portra 400"
+            } else {
+                "Preset over the set: Portra 400"
+            };
+            assert_eq!(
+                Sidecar::load(&files[0])
+                    .unwrap()
+                    .unwrap()
+                    .current_label
+                    .as_deref(),
+                Some(words),
+                "{tag}"
+            );
+            if tag == "set" {
+                assert_eq!(
+                    state.borrow().sidecars[1].current_label.as_deref(),
+                    Some(words)
+                );
+            }
             std::fs::remove_dir_all(&dir).expect("the temp dir goes");
         }
     }
@@ -1474,5 +1558,72 @@ mod tests {
         assert!(status.starts_with("Portra 400 onto 2 frames; "), "{status}");
         assert!(status.ends_with("100x80, developed in 0.42 s"), "{status}");
         assert!(state.borrow().status_after_develop.is_none(), "taken");
+    }
+
+    /// The history panel names a preset's step by the preset, a
+    /// snapshot restored by the snapshot, and the rest by what moved;
+    /// an undo keeps the preset's row as a redo, and a new step after
+    /// it drops the row and its words.
+    #[test]
+    fn the_history_rows_read_a_named_step_by_its_words() {
+        let app = window(1);
+        let (state, _worker) = state_for(&app, folder(1));
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.5;
+        edit.light.tone.contrast = 0.25;
+        let preset = Preset::from_edit("Faded film", &edit, &[Section::Light]);
+        state.borrow_mut().presets = vec![Entry {
+            path: PathBuf::new(),
+            preset,
+        }];
+        app.invoke_select(0);
+        let rows = |app: &App| -> Vec<String> {
+            let names = app.get_history_names();
+            (0..names.row_count())
+                .map(|r| names.row_data(r).unwrap().to_string())
+                .collect()
+        };
+
+        app.invoke_preset_applied(0);
+        assert_eq!(rows(&app), ["Preset: Faded film", "Original"]);
+
+        // Undone, the row is still there to redo, under its words.
+        app.invoke_undo();
+        assert_eq!(rows(&app), ["Preset: Faded film", "Original"]);
+        assert_eq!(app.get_history_current(), 1);
+        app.invoke_redo();
+        assert_eq!(
+            state.borrow().sidecars[0].current_label.as_deref(),
+            Some("Preset: Faded film")
+        );
+
+        // A snapshot of it, a slider moved, the snapshot restored:
+        // the restore is named for the snapshot even though a single
+        // section moved.
+        app.invoke_snapshot_taken();
+        app.set_exposure(1.5);
+        app.invoke_snapshot_restored(0);
+        assert_eq!(
+            rows(&app),
+            [
+                "Snapshot: Snapshot 1",
+                "Exposure +1.50",
+                "Preset: Faded film",
+                "Original"
+            ]
+        );
+
+        // Back past the preset, and a new step: the preset's state
+        // and its words are gone with the redo stack.
+        app.invoke_undo();
+        app.invoke_undo();
+        app.invoke_undo();
+        assert_eq!(app.get_history_current(), 3);
+        app.set_exposure(-1.0);
+        app.invoke_snapshot_taken();
+        assert_eq!(rows(&app), ["Exposure -1.00", "Original"]);
+        let st = state.borrow();
+        assert!(st.sidecars[0].redo.is_empty());
+        assert!((0..st.sidecars[0].states()).all(|i| st.sidecars[0].label(i).is_none()));
     }
 }

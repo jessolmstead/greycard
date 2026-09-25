@@ -68,7 +68,7 @@ pub(crate) use greycard_edit::retouch::{Method as RetouchMethod, Patch};
 pub(crate) use greycard_edit::xmp;
 pub(crate) use greycard_edit::{
     Adjustment, Color, Curves, Demosaic, Edit, Grain, Learned, Light, Look, Mixer, Preset, Sidecar,
-    Tint, Vignette, WhiteBalance, describe,
+    Tint, Vignette, WhiteBalance,
 };
 
 use crate::panel::color::WhiteKey;

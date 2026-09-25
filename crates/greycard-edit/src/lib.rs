@@ -46,7 +46,7 @@ pub use curve::{CurveLut, Curves, Parametric};
 pub use geometry::Geometry;
 pub use grading::Grading;
 pub use grain::Grain;
-pub use history::describe;
+pub use history::{describe, describe_step};
 pub use lens::Lens;
 pub use look::LookLut;
 pub use mask::Mask;
@@ -904,7 +904,8 @@ pub fn meta_into(
 /// so its sidecar is not rewritten. Nothing but `current` and
 /// `history` is touched: the meta, the turn and the snapshots are the
 /// frame's own. A frame past the end of the list is passed over
-/// rather than a panic, as [`meta_into`] does.
+/// rather than a panic, as [`meta_into`] does. Each step is recorded
+/// with `label` as its words ([`Sidecar::record_as`]).
 ///
 /// This is what both `panel::sync::lay_over_targets` (a sync, and a
 /// preset click over two or more selected frames) build on, so a
@@ -914,6 +915,7 @@ pub fn apply_preset_into(
     preset: &Preset,
     frames: &[usize],
     learned_from: Option<&Edit>,
+    label: Option<&str>,
 ) -> Vec<usize> {
     if preset.sections.is_empty() {
         return Vec::new();
@@ -927,7 +929,7 @@ pub fn apply_preset_into(
                 if let Some(from) = learned_from {
                     sync_learned(from, &mut applied);
                 }
-                sidecar.record(applied)
+                sidecar.record_as(applied, label.map(str::to_string))
             })
         })
         .collect()
@@ -944,15 +946,18 @@ pub fn apply_preset_into(
 /// ([`sync_learned`]). A preset leaves those to each file's ISO; a
 /// sync is between frames of one shoot, and a frame taken to the
 /// learned tier is the one the others are meant to look like.
+/// `label` is each step's words, [`history::sync_label`] of the
+/// frame synced from as the editor has it.
 pub fn sync_into(
     sidecars: &mut [Sidecar],
     from: &Edit,
     frames: &[usize],
     sections: &[Section],
+    label: Option<&str>,
 ) -> Vec<usize> {
     let carried = Preset::from_edit("", from, sections);
     let learned = carried.sections.contains(&Section::Noise);
-    apply_preset_into(sidecars, &carried, frames, learned.then_some(from))
+    apply_preset_into(sidecars, &carried, frames, learned.then_some(from), label)
 }
 
 /// What a sync's Noise carries beyond a preset's: the learned
@@ -1148,11 +1153,24 @@ pub struct Sidecar {
     /// integer reads as 0 rather than failing the whole sidecar.
     #[serde(default, deserialize_with = "meta::loose")]
     pub saved: u64,
-    /// Earlier states, oldest first, each one a whole edit.
-    pub history: Vec<Edit>,
+    /// The words the step that made [`Self::current`] was recorded
+    /// with, when it was one with a name of its own (a preset, a
+    /// sync, a snapshot restored): see [`Step::label`]. Written as
+    /// `step` beside `current`, left out when there is none, and
+    /// read loosely.
+    #[serde(
+        rename = "step",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "meta::loose"
+    )]
+    pub current_label: Option<String>,
+    /// Earlier states, oldest first, each one a whole edit and the
+    /// words it was recorded with, if any.
+    pub history: Vec<Step>,
     /// States undone, newest first; kept for the session, not written.
     #[serde(skip)]
-    pub redo: Vec<Edit>,
+    pub redo: Vec<Step>,
     /// States kept by name, in the order they were taken, outside
     /// the history's cap.
     pub snapshots: Vec<Snapshot>,
@@ -1160,6 +1178,91 @@ pub struct Sidecar {
 
 fn is_no_turn(turn: &u8) -> bool {
     turn.rem_euclid(4) == 0
+}
+
+/// One state of the history: a whole edit, and the words the step
+/// that made it was recorded with when it had a name of its own.
+///
+/// The label goes with the state it produced, so an undo carries it
+/// to the redo stack and a redo brings it back, and a new step after
+/// an undo drops it along with the rest of the redo stack. Most steps
+/// have none, and the panel names those by what moved
+/// ([`history::describe`]); a preset, a sync and a snapshot restored
+/// are recorded with theirs ([`Sidecar::record_as`]), and the panel
+/// reads it in place of the list of sections that moved
+/// ([`history::describe_step`]).
+///
+/// Written as the edit's own object with a `step` key beside its
+/// fields, and that key left out when there is no label: a sidecar
+/// with no labels writes exactly as one did before labels existed,
+/// and a build from before them reads each state as the edit it is
+/// (an edit ignores a field it does not know), labels dropped. Read
+/// loosely, as the meta is: a `step` that is not a string reads as
+/// no label rather than costing the state.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Step {
+    pub edit: Edit,
+    pub label: Option<String>,
+}
+
+impl Step {
+    /// A state with no words of its own.
+    pub fn plain(edit: Edit) -> Self {
+        Self { edit, label: None }
+    }
+
+    fn parts(&self) -> (&Edit, Option<&str>) {
+        (&self.edit, self.label.as_deref())
+    }
+}
+
+impl From<Edit> for Step {
+    fn from(edit: Edit) -> Self {
+        Self::plain(edit)
+    }
+}
+
+impl PartialEq<Edit> for Step {
+    fn eq(&self, other: &Edit) -> bool {
+        self.edit == *other
+    }
+}
+
+impl Serialize for Step {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
+        #[derive(Serialize)]
+        struct Written<'a> {
+            #[serde(flatten)]
+            edit: &'a Edit,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            step: &'a Option<String>,
+        }
+        Written {
+            edit: &self.edit,
+            step: &self.label,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Step {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
+        let mut value = serde_json::Value::deserialize(deserializer)?;
+        let label = value
+            .as_object_mut()
+            .and_then(|o| o.remove("step"))
+            .and_then(|s| match s {
+                serde_json::Value::String(s) => Some(s),
+                _ => None,
+            });
+        let edit = Edit::deserialize(value).map_err(serde::de::Error::custom)?;
+        Ok(Self { edit, label })
+    }
 }
 
 /// A whole edit kept under a name.
@@ -1333,12 +1436,25 @@ impl Sidecar {
     }
 
     /// Record `edit` as the current state, keeping the one it replaces;
-    /// false when it was the current state already.
+    /// false when it was the current state already. The step has no
+    /// words of its own: the panel names it by what moved.
     pub fn record(&mut self, edit: Edit) -> bool {
+        self.record_as(edit, None)
+    }
+
+    /// Record `edit` as the current state with `label` as the step's
+    /// words ("Preset: Faded film"), which the history panel shows in
+    /// place of the sections that moved; `None` is [`Self::record`].
+    /// False, and the label not kept, when `edit` was the current
+    /// state already. What was undone goes, labels and all.
+    pub fn record_as(&mut self, edit: Edit, label: Option<String>) -> bool {
         if edit == self.current {
             return false;
         }
-        let previous = std::mem::replace(&mut self.current, edit);
+        let previous = Step {
+            edit: std::mem::replace(&mut self.current, edit),
+            label: std::mem::replace(&mut self.current_label, label),
+        };
         self.history.push(previous);
         if self.history.len() > HISTORY {
             // The earliest stays; what follows it goes.
@@ -1355,8 +1471,8 @@ impl Sidecar {
     /// crop must not be refitted until the frame is known.
     pub fn needs_frame(&self) -> bool {
         std::iter::once(&self.current)
-            .chain(self.history.iter())
-            .chain(self.redo.iter())
+            .chain(self.history.iter().map(|s| &s.edit))
+            .chain(self.redo.iter().map(|s| &s.edit))
             .chain(self.snapshots.iter().map(|s| &s.edit))
             .any(Edit::needs_frame)
     }
@@ -1398,16 +1514,46 @@ impl Sidecar {
 
     /// The state at `index` among [`Self::states`], oldest first.
     pub fn state(&self, index: usize) -> Option<&Edit> {
+        self.state_and_label(index).map(|(edit, _)| edit)
+    }
+
+    /// The words the step that made the state at `index` was recorded
+    /// with, when it had any; see [`Step::label`].
+    pub fn label(&self, index: usize) -> Option<&str> {
+        self.state_and_label(index).and_then(|(_, label)| label)
+    }
+
+    /// The state at `index` among [`Self::states`] and its words.
+    fn state_and_label(&self, index: usize) -> Option<(&Edit, Option<&str>)> {
         let position = self.position();
         if index < position {
-            self.history.get(index)
+            self.history.get(index).map(Step::parts)
         } else if index == position {
-            Some(&self.current)
+            Some((&self.current, self.current_label.as_deref()))
         } else {
             // The redo stack is newest first.
             let past = index - position - 1;
-            self.redo.len().checked_sub(past + 1).map(|i| &self.redo[i])
+            self.redo
+                .len()
+                .checked_sub(past + 1)
+                .map(|i| self.redo[i].parts())
         }
+    }
+
+    /// What the history panel calls the state at `index`: the words
+    /// it was recorded with, or what moved from the state before it
+    /// ([`history::describe_step`]). None for the earliest state,
+    /// which has nothing before it to be named against, and for an
+    /// index past the end.
+    pub fn describe(&self, index: usize) -> Option<String> {
+        let before = self.state(index.checked_sub(1)?)?;
+        let (after, label) = self.state_and_label(index)?;
+        Some(history::describe_step(
+            before,
+            after,
+            label,
+            &self.snapshots,
+        ))
     }
 
     /// Make the state at `index` current by undoing or redoing up to
@@ -1433,22 +1579,30 @@ impl Sidecar {
     /// Make snapshot `index` the current state as a new step, so the
     /// history stays a line and undo goes back to before; false when
     /// it is the current state already, or there is no such snapshot.
+    ///
+    /// The step is recorded as "Snapshot: " and the name the snapshot
+    /// had then, so the row keeps saying where it came from after the
+    /// snapshot is renamed or removed.
     pub fn restore_snapshot(&mut self, index: usize) -> bool {
         match self.snapshots.get(index) {
             Some(s) => {
-                let edit = s.edit.clone();
-                self.record(edit)
+                let (edit, label) = (s.edit.clone(), history::snapshot_label(&s.name));
+                self.record_as(edit, Some(label))
             }
             None => false,
         }
     }
 
-    /// Back to the previous state; false at the beginning.
+    /// Back to the previous state; false at the beginning. The state
+    /// undone keeps its words on the redo stack.
     pub fn undo(&mut self) -> bool {
         let Some(previous) = self.history.pop() else {
             return false;
         };
-        let undone = std::mem::replace(&mut self.current, previous);
+        let undone = Step {
+            edit: std::mem::replace(&mut self.current, previous.edit),
+            label: std::mem::replace(&mut self.current_label, previous.label),
+        };
         self.redo.push(undone);
         true
     }
@@ -1458,7 +1612,10 @@ impl Sidecar {
         let Some(next) = self.redo.pop() else {
             return false;
         };
-        let current = std::mem::replace(&mut self.current, next);
+        let current = Step {
+            edit: std::mem::replace(&mut self.current, next.edit),
+            label: std::mem::replace(&mut self.current_label, next.label),
+        };
         self.history.push(current);
         true
     }
@@ -1496,8 +1653,8 @@ impl Sidecar {
     /// undone, and the snapshots.
     fn edits_mut(&mut self) -> impl Iterator<Item = &mut Edit> {
         std::iter::once(&mut self.current)
-            .chain(self.history.iter_mut())
-            .chain(self.redo.iter_mut())
+            .chain(self.history.iter_mut().map(|s| &mut s.edit))
+            .chain(self.redo.iter_mut().map(|s| &mut s.edit))
             .chain(self.snapshots.iter_mut().map(|s| &mut s.edit))
     }
 
@@ -1505,8 +1662,8 @@ impl Sidecar {
     /// see [`Edit::placed`].
     pub fn placed(&self) -> bool {
         std::iter::once(&self.current)
-            .chain(self.history.iter())
-            .chain(self.redo.iter())
+            .chain(self.history.iter().map(|s| &s.edit))
+            .chain(self.redo.iter().map(|s| &s.edit))
             .chain(self.snapshots.iter().map(|s| &s.edit))
             .any(Edit::placed)
     }
@@ -1783,7 +1940,7 @@ mod tests {
         assert!(!sidecar.needs_frame());
         for edit in [
             &sidecar.current,
-            &sidecar.history[0],
+            &sidecar.history[0].edit,
             &sidecar.snapshots[0].edit,
         ] {
             assert_eq!(edit.version, VERSION);
@@ -1915,7 +2072,7 @@ mod tests {
         let before: Vec<Sidecar> = sidecars.clone();
 
         let sections = [Section::Light, Section::Color, Section::WhiteBalance];
-        let moved = sync_into(&mut sidecars, &from, &[1, 2, 3, 9], &sections);
+        let moved = sync_into(&mut sidecars, &from, &[1, 2, 3, 9], &sections, None);
         assert_eq!(moved, [1, 2, 3], "the frame past the end is passed over");
         for &i in &moved {
             let s = &sidecars[i];
@@ -1932,7 +2089,7 @@ mod tests {
             assert_eq!(s.current.retouch, was.retouch, "frame {i}");
             // One step on the history, the state before it kept.
             assert_eq!(s.history.len(), before[i].history.len() + 1, "frame {i}");
-            assert_eq!(s.history.last(), Some(was), "frame {i}");
+            assert_eq!(s.history.last().map(|s| &s.edit), Some(was), "frame {i}");
             // The meta and the turn are not the edit's.
             assert_eq!(s.meta, before[i].meta, "frame {i}");
             assert_eq!(s.turn, before[i].turn, "frame {i}");
@@ -1946,13 +2103,13 @@ mod tests {
 
         // Once more: every frame has it already, so nothing moves
         // and no sidecar needs writing.
-        let again = sync_into(&mut sidecars, &from, &[1, 2, 3], &sections);
+        let again = sync_into(&mut sidecars, &from, &[1, 2, 3], &sections, None);
         assert!(again.is_empty());
         assert_eq!(sidecars[1].history.len(), before[1].history.len() + 1);
 
         // The masks, asked for, come across with ids of their own,
         // exactly as a preset's do.
-        let moved = sync_into(&mut sidecars, &from, &[2], &[Section::Adjustments]);
+        let moved = sync_into(&mut sidecars, &from, &[2], &[Section::Adjustments], None);
         assert_eq!(moved, [2]);
         assert_eq!(sidecars[2].current.adjustments.len(), 1);
         assert_eq!(sidecars[2].current.adjustments[0].name, "Sky");
@@ -1964,7 +2121,7 @@ mod tests {
         learned.noise.strength = 0.8;
         learned.noise.learned = Learned::Balanced;
         learned.noise.learned_strength = 0.6;
-        let moved = sync_into(&mut sidecars, &learned, &[3], &[Section::Noise]);
+        let moved = sync_into(&mut sidecars, &learned, &[3], &[Section::Noise], None);
         assert_eq!(moved, [3]);
         assert_eq!(sidecars[3].current.noise, learned.noise);
         let preset = Preset::from_edit("", &learned, &[Section::Noise]);
@@ -1972,12 +2129,12 @@ mod tests {
         assert_eq!(laid.noise.strength, 0.8);
         assert_eq!(laid.noise.learned, Learned::Off, "a preset leaves it");
         // Without Noise chosen, the learned tier stays the frame's.
-        let moved = sync_into(&mut sidecars, &from, &[3], &[Section::Light]);
+        let moved = sync_into(&mut sidecars, &from, &[3], &[Section::Light], None);
         assert!(moved.is_empty(), "light was the source's already");
         assert_eq!(sidecars[3].current.noise.learned, Learned::Balanced);
 
         // Nothing chosen is nothing done.
-        assert!(sync_into(&mut sidecars, &from, &[0], &[]).is_empty());
+        assert!(sync_into(&mut sidecars, &from, &[0], &[], None).is_empty());
         assert_eq!(sidecars[0], before[0]);
     }
 
@@ -2952,8 +3109,8 @@ mod tests {
                 // One state behind it, one undone in front of it and
                 // one kept by name: every state `edits_mut` covers
                 // has to land on the same pixels.
-                sidecar.history.push(make());
-                sidecar.redo.push(make());
+                sidecar.history.push(make().into());
+                sidecar.redo.push(make().into());
                 sidecar.snapshots.push(Snapshot {
                     name: "before".into(),
                     taken: 0,
@@ -2970,8 +3127,8 @@ mod tests {
                 let scale = w / nw;
 
                 for edit in std::iter::once(&sidecar.current)
-                    .chain(sidecar.history.iter())
-                    .chain(sidecar.redo.iter())
+                    .chain(sidecar.history.iter().map(|s| &s.edit))
+                    .chain(sidecar.redo.iter().map(|s| &s.edit))
                     .chain(sidecar.snapshots.iter().map(|s| &s.edit))
                 {
                     let Shape::Radial {
@@ -3211,7 +3368,7 @@ mod tests {
         }
         assert_eq!(sidecar.history.len(), HISTORY);
         assert_eq!(sidecar.history[0], Edit::default());
-        assert_eq!(sidecar.history[1].light.exposure, 20.0);
+        assert_eq!(sidecar.history[1].edit.light.exposure, 20.0);
     }
 
     #[test]
@@ -3257,5 +3414,224 @@ mod tests {
         let migrated = Sidecar::load(&raw).unwrap().unwrap();
         assert!(migrated.snapshots[0].edit.noise.profiled);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+    fn exposed(stops: f32) -> Edit {
+        let mut e = Edit::default();
+        e.light.exposure = stops;
+        e
+    }
+
+    /// A labelled step is written with its words and read back with
+    /// them, the current state's and a history state's alike; a step
+    /// without words writes no `step` key, so a sidecar with no
+    /// labels writes as one did before labels existed.
+    #[test]
+    fn a_labelled_step_round_trips_and_an_unlabelled_one_writes_as_before() {
+        let mut sidecar = Sidecar::default();
+        sidecar.record(exposed(0.5));
+        assert!(sidecar.record_as(exposed(1.0), Some("Preset: Faded film".into())));
+        sidecar.record(exposed(1.5));
+        assert!(sidecar.record_as(exposed(2.0), Some("Sync from IMG_0001".into())));
+        assert_eq!(sidecar.current_label.as_deref(), Some("Sync from IMG_0001"));
+        assert_eq!(sidecar.label(2), Some("Preset: Faded film"));
+        assert_eq!(sidecar.label(1), None);
+
+        let dir = scratch("labels");
+        let raw = dir.join("IMG_0003.CR3");
+        sidecar.save(&raw).unwrap();
+        let back = Sidecar::load(&raw).unwrap().unwrap();
+        assert_eq!(back.current_label, sidecar.current_label);
+        assert_eq!(back.history, sidecar.history);
+        assert_eq!(back.label(2), Some("Preset: Faded film"));
+        assert_eq!(back.describe(2).as_deref(), Some("Preset: Faded film"));
+        assert_eq!(back.describe(4).as_deref(), Some("Sync from IMG_0001"));
+        // The rows without words read as they always have.
+        assert_eq!(back.describe(3).as_deref(), Some("Exposure +1.50"));
+
+        // Where the words sit in the file: beside the edit's own
+        // fields, and nowhere on a step that has none.
+        let tree: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(Sidecar::path_for(&raw)).unwrap())
+                .unwrap();
+        assert_eq!(tree["step"], "Sync from IMG_0001");
+        assert_eq!(tree["history"][2]["step"], "Preset: Faded film");
+        assert_eq!(tree["history"][2]["light"]["exposure"], 1.0);
+        assert!(tree["history"][1].get("step").is_none());
+
+        let mut plain = Sidecar::default();
+        plain.record(exposed(0.5));
+        plain.record(exposed(1.0));
+        let json = serde_json::to_string_pretty(&plain).unwrap();
+        assert!(!json.contains("\"step\""), "{json}");
+        // Byte for byte what a history of bare edits wrote.
+        #[derive(Serialize)]
+        struct Before<'a> {
+            current: &'a Edit,
+            saved: u64,
+            history: Vec<&'a Edit>,
+            snapshots: &'a [Snapshot],
+        }
+        let before = Before {
+            current: &plain.current,
+            saved: plain.saved,
+            history: plain.history.iter().map(|s| &s.edit).collect(),
+            snapshots: &plain.snapshots,
+        };
+        assert_eq!(json, serde_json::to_string_pretty(&before).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A build from before labels reads each state of a labelled
+    /// sidecar as the plain edit it is: what an edit does not know it
+    /// ignores, so the history loads whole and the words are dropped.
+    #[test]
+    fn a_build_before_labels_reads_a_labelled_history_as_plain_edits() {
+        let mut sidecar = Sidecar::default();
+        sidecar.record_as(exposed(1.0), Some("Preset: Faded film".into()));
+        sidecar.record_as(exposed(2.0), Some("Snapshot: Warm".into()));
+        let json = serde_json::to_string(&sidecar).unwrap();
+        #[derive(Deserialize)]
+        struct Before {
+            current: Edit,
+            history: Vec<Edit>,
+        }
+        let old: Before = serde_json::from_str(&json).unwrap();
+        assert_eq!(old.current, sidecar.current);
+        let edits: Vec<Edit> = sidecar.history.iter().map(|s| s.edit.clone()).collect();
+        assert_eq!(old.history, edits);
+    }
+
+    /// A sidecar written before labels, of every schema version,
+    /// loads with none and its rows read as they did.
+    #[test]
+    fn an_old_sidecar_loads_with_no_labels_and_its_rows_read_as_before() {
+        let dir = scratch("old-labels");
+        let raw = dir.join("IMG_0004.CR3");
+        std::fs::write(
+            Sidecar::path_for(&raw),
+            r#"{"current":{"version":4,"light":{"exposure":1.0,"tone":{"contrast":0.2}}},
+               "history":[{"version":1},
+                          {"version":2,"light":{"exposure":0.5}},
+                          {"version":3,"light":{"exposure":1.0}}],
+               "snapshots":[{"name":"a","taken":0,"edit":{"version":4}}]}"#,
+        )
+        .unwrap();
+        let old = Sidecar::load(&raw).unwrap().unwrap();
+        assert_eq!(old.current_label, None);
+        assert!(old.history.iter().all(|s| s.label.is_none()));
+        for i in 1..old.states() {
+            let (before, after) = (old.state(i - 1).unwrap(), old.state(i).unwrap());
+            assert_eq!(
+                old.describe(i),
+                Some(describe(before, after, &old.snapshots)),
+                "row {i}"
+            );
+        }
+        assert_eq!(old.describe(1).as_deref(), Some("Exposure +0.50"));
+        assert_eq!(old.describe(0), None);
+        // A `step` that is not words costs the label, not the state.
+        std::fs::write(
+            Sidecar::path_for(&raw),
+            r#"{"current":{"version":4},"step":7,
+               "history":[{"version":4,"light":{"exposure":1.0},"step":["x"]}]}"#,
+        )
+        .unwrap();
+        let odd = Sidecar::load(&raw).unwrap().unwrap();
+        assert_eq!(odd.current_label, None);
+        assert_eq!(odd.history[0], exposed(1.0));
+        assert_eq!(odd.history[0].label, None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The words go with the state they made: undo takes them to the
+    /// redo stack and redo brings them back; a new step after an
+    /// undo drops what was undone, words and all.
+    #[test]
+    fn undo_carries_a_label_and_a_new_step_drops_the_redos() {
+        let mut sidecar = Sidecar::default();
+        sidecar.record(exposed(1.0));
+        sidecar.record_as(exposed(2.0), Some("Preset: Faded film".into()));
+        assert!(sidecar.undo());
+        assert_eq!(sidecar.current_label, None);
+        assert_eq!(sidecar.redo[0].label.as_deref(), Some("Preset: Faded film"));
+        // The undone row still reads by its words.
+        assert_eq!(sidecar.describe(2).as_deref(), Some("Preset: Faded film"));
+        assert!(sidecar.redo());
+        assert_eq!(sidecar.current_label.as_deref(), Some("Preset: Faded film"));
+        assert!(sidecar.undo());
+        // A new step: the preset's state and its words are gone.
+        sidecar.record(exposed(3.0));
+        assert!(sidecar.redo.is_empty());
+        assert_eq!(sidecar.current_label, None);
+        assert!(
+            (0..sidecar.states()).all(|i| sidecar.label(i).is_none()),
+            "no state keeps the dropped words"
+        );
+        assert_eq!(sidecar.describe(2).as_deref(), Some("Exposure +3.00"));
+        // A step that changes nothing records nothing, words included.
+        assert!(!sidecar.record_as(exposed(3.0), Some("Preset: Faded film".into())));
+        assert_eq!(sidecar.current_label, None);
+        // go_to walks the words with the states.
+        sidecar.record_as(exposed(4.0), Some("Sync from IMG_0001".into()));
+        assert!(sidecar.go_to(0));
+        assert_eq!(sidecar.label(3), Some("Sync from IMG_0001"));
+        assert!(sidecar.go_to(3));
+        assert_eq!(sidecar.current_label.as_deref(), Some("Sync from IMG_0001"));
+    }
+
+    /// A snapshot restored is a step named for the snapshot, and the
+    /// row keeps its name after the snapshot is renamed, even when a
+    /// single control is all that moved.
+    #[test]
+    fn a_snapshot_restored_is_named_for_it() {
+        let mut sidecar = Sidecar::default();
+        sidecar.record(exposed(1.0));
+        sidecar.take_snapshot("Bright", 0);
+        sidecar.record(exposed(-1.0));
+        assert!(sidecar.restore_snapshot(0));
+        assert_eq!(sidecar.current_label.as_deref(), Some("Snapshot: Bright"));
+        sidecar.snapshots[0].name = "Renamed".into();
+        assert_eq!(sidecar.describe(3).as_deref(), Some("Snapshot: Bright"));
+    }
+
+    /// A preset over a set and a sync record their words on each
+    /// frame that took them, and none on a frame left alone.
+    #[test]
+    fn a_preset_and_a_sync_over_frames_record_their_words() {
+        let mut sidecars = vec![Sidecar::default(), Sidecar::default(), Sidecar::default()];
+        sidecars[2].record(exposed(1.0));
+        let preset = Preset::from_edit("Bright", &exposed(1.0), &[Section::Light]);
+        let moved = apply_preset_into(
+            &mut sidecars,
+            &preset,
+            &[0, 1, 2],
+            None,
+            Some("Preset over the set: Bright"),
+        );
+        assert_eq!(moved, [0, 1]);
+        for s in &sidecars[..2] {
+            assert_eq!(
+                s.current_label.as_deref(),
+                Some("Preset over the set: Bright")
+            );
+            assert_eq!(
+                s.describe(1).as_deref(),
+                Some("Preset over the set: Bright")
+            );
+        }
+        assert_eq!(sidecars[2].current_label, None);
+
+        let moved = sync_into(
+            &mut sidecars,
+            &exposed(2.0),
+            &[1, 2],
+            &[Section::Light],
+            Some("Sync from IMG_0001"),
+        );
+        assert_eq!(moved, [1, 2]);
+        for s in &sidecars[1..] {
+            assert_eq!(s.current_label.as_deref(), Some("Sync from IMG_0001"));
+        }
+        assert_eq!(sidecars[1].label(1), Some("Preset over the set: Bright"));
     }
 }
