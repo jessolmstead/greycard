@@ -253,6 +253,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         }
     }
 
+    let export_into_folder = cli
+        .export
+        .as_deref()
+        .is_some_and(|p| export_folder(p, !cli.also.is_empty()));
+    check_also(&cli, export_into_folder, files.len())?;
     let state = Rc::new(RefCell::new(State {
         sidecars,
         seed_blend,
@@ -271,7 +276,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         panel_scroll: cli.panel_scroll,
         snapshot_shown: cli.sheet.or(cli.tool),
         export_then_quit: cli.export.clone(),
-        export_into_folder: cli.export.as_deref().is_some_and(names_folder),
+        export_into_folder,
         export_presets: remembered.export_presets.clone(),
         settings_file: if cli.snapshot.is_some() || cli.screenshot.is_some() || cli.export.is_some()
         {
@@ -458,11 +463,22 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 if let Some(app) = app_weak.upgrade() {
                                     app.invoke_select(row as i32);
                                     // `--also`: Ctrl+clicks on those rows.
-                                    let also = STATE
-                                        .with(|s| s.borrow().clone())
-                                        .map(|s| std::mem::take(&mut s.borrow_mut().also_at_start))
+                                    let state = STATE.with(|s| s.borrow().clone());
+                                    let (also, rows) = state
+                                        .map(|s| {
+                                            let mut st = s.borrow_mut();
+                                            (std::mem::take(&mut st.also_at_start), st.shown.len())
+                                        })
                                         .unwrap_or_default();
                                     for r in also {
+                                        // A row the filter left out is
+                                        // said, not passed over quietly.
+                                        if r >= rows {
+                                            tracing::warn!(
+                                                "--also {r}: the browser shows {rows} rows (from 0); not in the set"
+                                            );
+                                            continue;
+                                        }
                                         app.invoke_frame_clicked(r as i32, true, false);
                                     }
                                 }
@@ -1230,13 +1246,42 @@ pub(crate) fn opening_sheet(
 
 /// Whether `--export` names a folder for the set rather than a file
 /// for one frame: a folder that is there, or a path that ends in a
-/// separator, which asks for one.
-pub(crate) fn names_folder(path: &Path) -> bool {
+/// separator, which asks for one. With `--also` (`set`), a path that
+/// is not there and names no picture format is a folder too: a set
+/// has no one file to go to.
+pub(crate) fn export_folder(path: &Path, set: bool) -> bool {
     path.is_dir()
         || path
             .as_os_str()
             .to_string_lossy()
             .ends_with(std::path::is_separator)
+        || (set && !path.exists() && export::Format::from_path(path).is_none())
+}
+
+/// `--also` with `--export` names a set: an error, not a quiet export
+/// of one frame, when the export is to one file or a row is not in the
+/// folder (rows from 0, as the browser has them).
+pub(crate) fn check_also(cli: &Cli, into_folder: bool, files: usize) -> Result<()> {
+    let Some(path) = &cli.export else {
+        return Ok(());
+    };
+    if cli.also.is_empty() {
+        return Ok(());
+    }
+    if !into_folder {
+        anyhow::bail!(
+            "--also names a set, and --export {} is one frame's file: give a folder (one that is there, or a path ending in a separator)",
+            path.display()
+        );
+    }
+    if let Some(row) = cli.also.iter().find(|r| **r >= files) {
+        anyhow::bail!(
+            "--also {row}: there {} {files} frame{} to export (rows from 0); open the folder, not a file, to export a set",
+            if files == 1 { "is" } else { "are" },
+            if files == 1 { "" } else { "s" }
+        );
+    }
+    Ok(())
 }
 
 /// The scope to open on: the command line's, else the last run's.
@@ -1368,6 +1413,38 @@ mod tests {
             export_preset: "Print".into(),
             ..settings::Settings::default()
         }
+    }
+
+    /// `--also` with `--export` is a set: into a folder, or an error,
+    /// never a quiet export of one frame.
+    #[test]
+    fn also_with_export_names_a_set_or_says_why_not() {
+        let parse = |args: &[&str]| Cli::try_parse_from(args).unwrap();
+        // A file to write: one frame, so --also is an error.
+        let cli = parse(&["greycard-ui", "shoot", "--export", "out.jpg", "--also", "1"]);
+        assert!(!export_folder(Path::new("out.jpg"), true));
+        let e = check_also(&cli, false, 3).unwrap_err().to_string();
+        assert!(e.contains("one frame's file"), "{e}");
+        // A path that is not there and names no format: a folder with
+        // --also, and the file it always was without.
+        let new = std::env::temp_dir().join("greycard-no-such-folder-for-also");
+        assert!(export_folder(&new, true));
+        assert!(!export_folder(&new, false));
+        // A row the folder has not got: an error naming it.
+        let cli = parse(&[
+            "greycard-ui",
+            "x.CR3",
+            "--export",
+            "out/",
+            "--also",
+            "0,1,2",
+        ]);
+        let e = check_also(&cli, true, 1).unwrap_err().to_string();
+        assert!(e.starts_with("--also 1: there is 1 frame"), "{e}");
+        assert!(check_also(&cli, true, 3).is_ok());
+        // Without --export, --also is the snapshot's and not checked.
+        let cli = parse(&["greycard-ui", "x.CR3", "--also", "5"]);
+        assert!(check_also(&cli, false, 1).is_ok());
     }
 
     #[test]

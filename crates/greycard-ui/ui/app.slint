@@ -812,6 +812,8 @@ export component App inherits Window {
     /// A set is being exported, a frame at a time; Stop (or Escape)
     /// finishes the frame in hand and stops.
     in property <bool> export-running: false;
+    /// The set was told to stop and is finishing the frame in hand.
+    in property <bool> export-stopping: false;
     callback export-stop();
     // Retouching: the tool in hand ("", "Heal" or "Clone"), the next
     // or chosen patch's size (of the picture's width), feather and
@@ -984,16 +986,17 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.patch != -1) { root.patch-changed(-1); return accept; }
             if (e.text == Key.Escape && root.guide-mode != "") { root.guide-mode = ""; root.guide-dropped(); return accept; }
             if (e.text == Key.Escape && root.level-mode) { root.level-mode = false; return accept; }
+            // A set being exported stops before Escape means anything
+            // else: the sheet is gone by then, and this is its cancel.
+            // Once stopping, Escape is the window's again.
+            if (e.text == Key.Escape && root.export-running && !root.export-stopping && !root.sheet-open()) {
+                root.export-stop();
+                return accept;
+            }
             // A set of frames goes back to the one on screen before
             // Escape means anything else: leaving the grid or the
             // culling mode with the set still held would leave it
             // chosen where it cannot be seen.
-            // A set being exported stops before Escape means anything
-            // else: the sheet is gone by then, and this is its cancel.
-            if (e.text == Key.Escape && root.export-running && !root.sheet-open()) {
-                root.export-stop();
-                return accept;
-            }
             if (e.text == Key.Escape && root.set-count > 1 && !root.sheet-open()) {
                 root.set-collapsed();
                 return accept;

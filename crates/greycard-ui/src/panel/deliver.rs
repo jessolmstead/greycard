@@ -508,23 +508,15 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     let settings = read_export_settings(app);
                     let on_exists = read_on_exists(app);
                     let frames = set_frames(&st, app);
+                    // Each frame's own look, as the single run says its one.
+                    for (source, edit, ..) in &frames {
+                        warn_missing_look(edit, source);
+                    }
                     start_set(&mut st, app, frames, Some(path), settings, on_exists);
                     return;
                 }
                 app.set_busy(true);
-                // A batch run has no panel to read the warning off, so
-                // a look the edit names and the directory has not got
-                // is said out loud. The file is still written, without
-                // it: an export is not worth failing over a look, but
-                // it is worth a line saying what came out.
-                if let greycard_edit::look::LutChoice::Named(name) = &st.edit.look_lut.lut
-                    && st.edit.look_lut.look().is_none()
-                {
-                    tracing::warn!(
-                        "look {name}: not in the look directory; {} is written without it",
-                        path.display()
-                    );
-                }
+                warn_missing_look(&st.edit, &path);
                 // The sheet's choices as remembered, the format from
                 // the path's extension.
                 let settings = batch_settings(&path, read_export_settings(app));
@@ -795,6 +787,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if exporting(&st, &set) {
                 st.exporting = None;
                 app.set_export_running(false);
+                app.set_export_stopping(false);
                 app.set_status(line.into());
             }
             // `--export DIR` is done: a frame that failed is a failure
@@ -842,6 +835,21 @@ pub(crate) fn set_frames(st: &State, app: &App) -> Vec<(PathBuf, Edit, u8, bool)
         .collect()
 }
 
+/// A batch run has no panel to read the warning off, so a look the
+/// edit names and the directory has not got is said out loud. The file
+/// is still written, without it: an export is not worth failing over a
+/// look, but it is worth a line saying what came out.
+fn warn_missing_look(edit: &Edit, written: &Path) {
+    if let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut
+        && edit.look_lut.look().is_none()
+    {
+        tracing::warn!(
+            "look {name}: not in the look directory; {} is written without it",
+            written.display()
+        );
+    }
+}
+
 /// Whether `set` is the one the window is exporting, rather than one
 /// it has already let go of.
 fn exporting(st: &State, set: &Arc<queue::Set>) -> bool {
@@ -858,6 +866,17 @@ pub(crate) fn start_set(
     settings: export::Settings,
     on_exists: export::OnExists,
 ) {
+    st.export_choosing = false;
+    // Nothing to write would never be said done: the spinner would run
+    // and a batch run would wait for ever.
+    if frames.is_empty() {
+        app.set_status("nothing to export".into());
+        if st.batch {
+            st.failed = true;
+            let _ = slint::quit_event_loop();
+        }
+        return;
+    }
     let sources: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
     let outs = queue::names(&sources, folder.as_deref(), settings.format);
     let frames: Vec<queue::Frame> = frames
@@ -883,6 +902,7 @@ pub(crate) fn start_set(
     );
     app.set_status(format!("exporting {}...", queue::frames(frames.len())).into());
     app.set_export_running(true);
+    app.set_export_stopping(false);
     st.exporting = Some(set.clone());
     WORKER.with(|w| {
         if let Some(w) = &*w.borrow() {
@@ -903,6 +923,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 && !set.is_canceled()
             {
                 set.cancel();
+                // Escape is the window's again while the frame in
+                // hand finishes.
+                app.set_export_stopping(true);
                 app.set_status("stopping the export after the frame in hand...".into());
             }
         });
@@ -1028,7 +1051,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 let Some(c) = st.current else {
                     return;
                 };
-                if st.exporting.is_some() {
+                // One set at a time, and one chooser for it: a second
+                // would start a set the first could not be told from.
+                if st.exporting.is_some() || st.export_choosing {
                     return;
                 }
                 (
@@ -1050,6 +1075,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             if frames.len() > 1 {
                 let start = raw.parent().map(Path::to_path_buf).unwrap_or_default();
                 let weak = app.as_weak();
+                state.borrow_mut().export_choosing = true;
                 app.set_status(
                     format!("choosing where to export {} frames...", frames.len()).into(),
                 );
@@ -1058,6 +1084,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                         let folder = match chosen {
                             Ok(Some(folder)) => Some(folder),
                             Ok(None) => {
+                                if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                                    state.borrow_mut().export_choosing = false;
+                                }
                                 app.set_status("export canceled".into());
                                 return;
                             }
@@ -1285,8 +1314,14 @@ mod tests {
             "{}",
             app.get_status()
         );
-        // The set collapses on the next Escape, not this one.
+        // The set collapses on the next Escape, not this one; the
+        // next is the window's again though the frame in hand runs on.
         assert_eq!(state.borrow().picked, vec![0, 2]);
+        assert!(app.get_export_stopping());
+        app.set_set_count(2);
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert_eq!(chosen_frames(&state.borrow()), vec![0]);
+        assert!(app.get_export_running(), "the frame in hand still runs");
 
         // Its end: the line, and the button is Export again.
         let tally = queue::Tally {
@@ -1296,6 +1331,7 @@ mod tests {
         };
         deliver(&app, Outcome::SetDone { set, tally });
         assert!(!app.get_export_running());
+        assert!(!app.get_export_stopping());
         assert!(state.borrow().exporting.is_none());
         assert!(
             app.get_status()

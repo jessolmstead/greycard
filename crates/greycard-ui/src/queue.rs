@@ -155,8 +155,15 @@ fn file_name(path: &Path) -> String {
 /// into its own folder) takes the `.greycard` name the editor writes
 /// beside a file when it has no chooser to ask.
 pub fn names(sources: &[PathBuf], folder: Option<&Path>, format: Format) -> Vec<PathBuf> {
-    let mut taken: Vec<String> = Vec::new();
     let key = |p: &Path| p.to_string_lossy().to_lowercase();
+    // Every source of the set is taken before any name is given: a
+    // frame's export must never land on another frame's file (a raw's
+    // `X.jpg` on the camera's `X.JPG`, which a case-blind file system
+    // holds as one), or that frame would be read back from the export.
+    let mut taken: Vec<String> = sources.iter().map(|s| key(s)).collect();
+    let clashes = |path: &Path, taken: &[String]| {
+        taken.contains(&key(path)) || sources.iter().any(|s| same_file(path, s))
+    };
     sources
         .iter()
         .map(|source| {
@@ -178,7 +185,7 @@ pub fn names(sources: &[PathBuf], folder: Option<&Path>, format: Format) -> Vec<
             }
             let base = path.clone();
             let mut n = 2;
-            while taken.contains(&key(&path)) || same_file(&path, source) {
+            while clashes(&path, &taken) {
                 let stem = base
                     .file_stem()
                     .map(|s| s.to_string_lossy().into_owned())
@@ -378,6 +385,28 @@ mod tests {
         assert_eq!(own, vec![a.join("IMG_3.greycard.jpg")]);
         let tiff = names(&[a.join("IMG_3.JPG")], Some(a), Format::Tiff);
         assert_eq!(tiff, vec![a.join("IMG_3.tif")]);
+        // A raw's export never lands on the camera's JPEG beside it,
+        // which is a frame of the set too; that JPEG's own export
+        // takes the `.greycard` name.
+        let pair = names(&[a.join("X.CR3"), a.join("X.jpg")], Some(a), Format::Jpeg);
+        assert_eq!(pair, vec![a.join("X (2).jpg"), a.join("X.greycard.jpg")]);
+        // The same in any case: one file on macOS and Windows.
+        let upper = names(&[a.join("A.CR3"), a.join("A.JPG")], Some(a), Format::Jpeg);
+        assert_eq!(upper, vec![a.join("A (2).jpg"), a.join("A.greycard.jpg")]);
+        // Beside the files, a source already named `.greycard` is not
+        // written over by another frame's export.
+        let beside = names(
+            &[a.join("X.CR3"), a.join("X.greycard.jpg")],
+            None,
+            Format::Jpeg,
+        );
+        assert_eq!(
+            beside,
+            vec![
+                a.join("X.greycard (2).jpg"),
+                a.join("X.greycard.greycard.jpg")
+            ]
+        );
         // No folder: each beside its own, a raw and its JPEG apart.
         let beside = names(
             &[a.join("IMG_4.CR3"), a.join("IMG_4.JPG")],

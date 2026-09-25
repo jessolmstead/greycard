@@ -792,13 +792,15 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
         if let Job::ExportFrame { set, index, frame } = job {
             let mut panicked = false;
             let (done, finished) = crate::queue::step(&set, index, &frame.source, || {
+                // The name the policy chose, which the status line says:
+                // the one written, not the one asked for.
+                let resolved = set.on_exists.resolve(&frame.out);
                 deliver(Outcome::SetFrameStarted {
                     set: set.clone(),
                     index,
-                    name: file_label(&frame.out),
+                    name: file_label(resolved.path().unwrap_or(&frame.out)),
                 });
                 let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let resolved = set.on_exists.resolve(&frame.out);
                     let note = resolved.note();
                     let Some(path) = resolved.path().map(std::path::Path::to_path_buf) else {
                         return crate::queue::Done::Skipped {
@@ -811,8 +813,9 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
                     // Any other is opened and developed on the side,
                     // and the open file's state is left as it was.
                     let written = if opened_path.as_deref() == Some(frame.source.as_path()) {
+                        let edit = seeded(&frame.edit, frame.seed_blend, input.as_ref());
                         open_picture(
-                            &frame.edit,
+                            &edit,
                             frame.turn % 4,
                             input.as_ref(),
                             &mut last,
@@ -826,7 +829,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
                         .and_then(|image| {
                             write_export(
                                 image,
-                                &frame.edit,
+                                &edit,
                                 base.as_ref(),
                                 &mut ai,
                                 opened_path.as_deref(),
@@ -1163,6 +1166,16 @@ fn open_picture(
     }
 }
 
+/// A set frame's edit with its learned-denoiser blend seeded from the
+/// raw's ISO when it has no sidecar yet, as its first open would.
+fn seeded(edit: &Edit, seed: bool, input: Option<&Input>) -> Edit {
+    let mut edit = edit.clone();
+    if seed && let Some(Input::Raw(f)) = input {
+        edit.noise.learned_strength = Noise::blend_for_iso(f.shot.iso);
+    }
+    edit
+}
+
 /// A frame of a set that is not the open file: opened and developed
 /// here under its own edit, with a base and a learned pair of its
 /// own so the open file's are there as they were for the next
@@ -1177,12 +1190,7 @@ fn export_other(
     path: &std::path::Path,
 ) -> Result<(), String> {
     let (input, metadata) = timed_open(&frame.source).map_err(|e| format!("{e:#}"))?;
-    let mut edit = frame.edit.clone();
-    if frame.seed_blend
-        && let Input::Raw(f) = &input
-    {
-        edit.noise.learned_strength = Noise::blend_for_iso(f.shot.iso);
-    }
+    let edit = seeded(&frame.edit, frame.seed_blend, Some(&input));
     ai.forget(Some(frame.source.clone()));
     let (mut base, mut learned) = (None, None);
     let image = match develop_job(

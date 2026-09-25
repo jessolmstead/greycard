@@ -567,6 +567,8 @@ pub(crate) struct State {
     /// A set being exported, until its last frame is done with: held
     /// to cancel it and to know its outcomes from a stale set's.
     pub(crate) exporting: Option<Arc<queue::Set>>,
+    /// The folder chooser for a set is up: Export waits for its answer.
+    pub(crate) export_choosing: bool,
     /// The export presets, as the settings file keeps them.
     pub(crate) export_presets: Vec<sheet::ExportPreset>,
     /// Where a preset saved, chosen or deleted is written at once;
@@ -738,6 +740,7 @@ impl State {
             export_then_quit: None,
             export_into_folder: false,
             exporting: None,
+            export_choosing: false,
             export_presets: Vec::new(),
             settings_file: None,
             presets: Vec::new(),
