@@ -2460,9 +2460,23 @@ mod tests {
 
     /// Run a set of `names` (files of junk, which nothing decodes)
     /// through a worker of its own, cancelling the set as frame
-    /// `cancel_at` is begun; what the worker said, in order, in short.
-    fn run_fake_set(tag: &str, names: &[&str], cancel_at: Option<usize>) -> Vec<String> {
+    /// `cancel_at` is begun, and asking for an open (of junk, generation
+    /// 7) as frame `open_at` is; what the worker said, in order, in
+    /// short.
+    fn run_fake_set(
+        tag: &str,
+        names: &[&str],
+        cancel_at: Option<usize>,
+        open_at: Option<usize>,
+    ) -> Vec<String> {
         let dir = thumb_scratch(tag);
+        let junk = dir.join("junk.CR3");
+        std::fs::write(&junk, vec![0x33u8; 4096]).unwrap();
+        // The worker's queue, for the deliver to put a job on as a
+        // window would, mid-set.
+        type Shared = Arc<(Mutex<Queue>, Condvar)>;
+        let slot: Arc<std::sync::OnceLock<Shared>> = Arc::new(std::sync::OnceLock::new());
+        let seen = slot.clone();
         let frames: Vec<crate::queue::Frame> = names
             .iter()
             .map(|n| {
@@ -2493,8 +2507,20 @@ mod tests {
                     if Some(index) == cancel_at {
                         set.cancel();
                     }
+                    if Some(index) == open_at {
+                        let (lock, cv) = &**seen.get().expect("the queue is handed over");
+                        lock.lock().unwrap().develop = Some(Job::Open {
+                            path: junk.clone(),
+                            edit: Edit::default(),
+                            generation: 7,
+                            seed_blend: false,
+                            turn: 0,
+                        });
+                        cv.notify_one();
+                    }
                     format!("begin {index} {name}")
                 }
+                Outcome::Failed { generation, .. } => format!("develop {generation} failed"),
                 Outcome::SetFrameDone { index, done, .. } => match done {
                     crate::queue::Done::Failed { message } => {
                         assert!(!message.is_empty());
@@ -2513,6 +2539,7 @@ mod tests {
             };
             tx.lock().unwrap().send(line).unwrap();
         });
+        slot.set(worker.queue.clone()).ok().unwrap();
         worker.send(Job::ExportSet {
             set: set.clone(),
             frames,
@@ -2539,7 +2566,7 @@ mod tests {
     /// set is said done once, after its last, with the count.
     #[test]
     fn a_set_runs_in_order_and_counts_its_failures() {
-        let said = run_fake_set("setfail", &["A.CR3", "B.CR3", "C.CR3"], None);
+        let said = run_fake_set("setfail", &["A.CR3", "B.CR3", "C.CR3"], None, None);
         assert_eq!(
             said,
             vec![
@@ -2558,7 +2585,12 @@ mod tests {
     /// finished, the last two are passed over without being begun.
     #[test]
     fn a_cancelled_set_finishes_the_frame_in_hand_and_stops() {
-        let said = run_fake_set("setcancel", &["A.CR3", "B.CR3", "C.CR3", "D.CR3"], Some(1));
+        let said = run_fake_set(
+            "setcancel",
+            &["A.CR3", "B.CR3", "C.CR3", "D.CR3"],
+            Some(1),
+            None,
+        );
         assert_eq!(
             said,
             vec![
@@ -2569,6 +2601,26 @@ mod tests {
                 "canceled 2",
                 "canceled 3",
                 "done 0 exported, 2 failed, 2 canceled",
+            ]
+        );
+    }
+
+    /// A develop asked for while a frame of a set is in hand goes
+    /// before the set's next frame: the set waits behind the window.
+    #[test]
+    fn a_develop_asked_for_mid_set_goes_before_the_next_frame() {
+        let said = run_fake_set("setdevelop", &["A.CR3", "B.CR3", "C.CR3"], None, Some(0));
+        assert_eq!(
+            said,
+            vec![
+                "begin 0 A.CR3.jpg",
+                "failed 0",
+                "develop 7 failed",
+                "begin 1 B.CR3.jpg",
+                "failed 1",
+                "begin 2 C.CR3.jpg",
+                "failed 2",
+                "done 0 exported, 3 failed, 0 canceled",
             ]
         );
     }

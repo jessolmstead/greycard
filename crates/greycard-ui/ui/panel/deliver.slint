@@ -124,7 +124,7 @@ export component ExportSheet inherits Rectangle {
                 }
                 Text {
                     text: root.set-count > 1
-                        ? root.file-name + " and " + (root.set-count - 1) + (root.set-count == 2 ? " other" : " others") + ", each under its own edit, one at a time"
+                        ? root.file-name + " and " + (root.set-count - 1) + (root.set-count == 2 ? " other" : " others") + ", each under its own edit"
                         : root.file-name;
                     wrap: word-wrap;
                     font-size: Theme.font-sm;
