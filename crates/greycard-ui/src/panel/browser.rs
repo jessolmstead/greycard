@@ -2218,4 +2218,44 @@ mod tests {
         assert!((done.work - 0.051).abs() < 1e-9);
         assert_eq!(run.arrived(1, Some(true), 0.0), None);
     }
+
+    /// For the numbers: every sidecar under `GREYCARD_SIDECAR_BENCH`,
+    /// read one after another as a folder's open reads them and on the
+    /// pool as the all-roots view does. `cargo test --release --
+    /// --ignored sidecars_for_the_numbers --nocapture`.
+    #[test]
+    #[ignore = "reads a tree named by GREYCARD_SIDECAR_BENCH"]
+    fn sidecars_for_the_numbers() {
+        let Some(top) = std::env::var_os("GREYCARD_SIDECAR_BENCH") else {
+            return;
+        };
+        let mut files = Vec::new();
+        let mut dirs = vec![PathBuf::from(top)];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    if !entry.file_name().to_string_lossy().starts_with('.') {
+                        dirs.push(p);
+                    }
+                } else if greycard_core::decode::is_raw_path(&p) {
+                    files.push(p);
+                }
+            }
+        }
+        files.sort();
+        for round in 0..2 {
+            let t = std::time::Instant::now();
+            let (one, _) = load_sidecars(&files, true);
+            let serial = t.elapsed().as_secs_f64();
+            let t = std::time::Instant::now();
+            let (pool, _) = load_sidecars_parallel(&files, true);
+            let parallel = t.elapsed().as_secs_f64();
+            assert_eq!(one.len(), pool.len());
+            eprintln!(
+                "round {round}: {} sidecars, {serial:.3} s one after another, {parallel:.3} s on the pool",
+                files.len()
+            );
+        }
+    }
 }

@@ -1217,4 +1217,37 @@ mod tests {
             "unflagged or pick"
         );
     }
+
+    /// The filter kept between sessions comes back as it was left:
+    /// every chip, the rows' reading, the text and the facets, by
+    /// name. A facet a later build dropped is left out, not a panic.
+    #[test]
+    fn the_filter_kept_comes_back_as_it_was_left() {
+        let mut filter = Filter {
+            stars: Stars::Exactly(3),
+            flags: vec![Flag::Pick, Flag::None],
+            labels: vec![Label::Red],
+            text: "harbor iso>=3200".into(),
+            ..Filter::default()
+        };
+        filter.toggle_facet(Facet::Camera, "Canon EOS R6m2");
+        filter.toggle_facet(Facet::Focal, "35");
+        filter.toggle_facet(Facet::Keyword, "dusk");
+        let saved = Saved::of(&filter);
+        let text = serde_json::to_string(&saved).unwrap();
+        let back: Saved = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.filter(), filter);
+        // Cleared, it is kept empty, and comes back empty.
+        assert_eq!(Saved::of(&Filter::default()).filter(), Filter::default());
+        assert!(Saved::of(&Filter::default()).facets.is_empty());
+        // A facet this build does not know, and stars past five.
+        let odd: Saved = serde_json::from_str(
+            r#"{"stars": 9, "facets": {"colour": ["red"], "lens": ["RF 50"]}}"#,
+        )
+        .unwrap();
+        let read = odd.filter();
+        assert_eq!(read.stars, Stars::AtLeast(STARS));
+        assert_eq!(read.chosen(Facet::Lens), ["RF 50".to_string()]);
+        assert_eq!(read.facets.iter().filter(|f| !f.is_empty()).count(), 1);
+    }
 }

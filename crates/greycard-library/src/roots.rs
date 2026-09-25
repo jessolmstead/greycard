@@ -648,8 +648,12 @@ mod tests {
         .unwrap();
         std::fs::write(root.join("shoot").join("a.CR3"), b"not a raw").unwrap();
         let all = wait(&|c| c.contains(&Change::Folder(root.join("shoot"))));
+        // Nothing under the hidden folder. A platform may say the
+        // folders the writes touched as well, which is a tree pass
+        // over them and harmless.
         assert!(
-            all.iter().all(|c| c.path() == root.join("shoot")),
+            all.iter().all(|c| c.path().starts_with(&root)
+                && !c.path().components().any(|p| p.as_os_str() == ".greycard")),
             "{all:?}"
         );
         std::fs::create_dir_all(root.join("new")).unwrap();

@@ -820,3 +820,295 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
         });
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing::{state_for, window};
+    use greycard_library::fixture::{A7, R5, R6, write_frame};
+    use std::time::Duration;
+
+    /// A folder of this test's own, canonical, as the index keys
+    /// folders (macOS's temporary directory is behind a link).
+    fn scratch(what: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-ui-roots-{what}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dunce::canonicalize(&dir).unwrap()
+    }
+
+    fn frames(dir: &Path, names: &[&str]) -> Vec<PathBuf> {
+        names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| {
+                let p = dir.join(n);
+                write_frame(&p, [&R5, &R6, &A7][i % 3], i as u16);
+                p
+            })
+            .collect()
+    }
+
+    /// A list merged keeps what each frame that stays already has, by
+    /// its path: the sidecar as edited in memory, the picture made,
+    /// its place in the selection. A frame new to the list has its
+    /// sidecar read from disk; one gone leaves the selection.
+    #[test]
+    fn a_list_merged_keeps_each_frames_own_by_its_path() {
+        let dir = scratch("merge");
+        let files = frames(&dir, &["a.tif", "b.tif", "c.tif"]);
+        let app = window(3);
+        let (state, worker) = state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.write_sidecars = true;
+            st.sidecars[1].meta.rating = 4;
+            st.thumb_base[2] = Some((1, 1, vec![9, 9, 9]));
+            st.thumb_made[2] = 128;
+            st.current = Some(1);
+            st.picked = vec![1, 2];
+            rebuild_browser_from(&mut st, &app, &[]);
+        }
+        let aa = frames(&dir, &["aa.tif"]).remove(0);
+        let mut s = Sidecar::default();
+        s.meta.rating = 2;
+        s.save(&aa).unwrap();
+        let next = vec![
+            files[0].clone(),
+            aa.clone(),
+            files[1].clone(),
+            files[2].clone(),
+        ];
+        let row = merge(&mut state.borrow_mut(), &app, &worker, next.clone());
+        {
+            let st = state.borrow();
+            assert_eq!(st.files, next);
+            assert_eq!(st.sidecars[2].meta.rating, 4, "b's own, as edited");
+            assert_eq!(st.sidecars[1].meta.rating, 2, "aa's, from its sidecar");
+            assert_eq!(st.thumb_made[3], 128);
+            assert!(st.thumb_base[3].is_some());
+            assert_eq!(st.current, Some(2));
+            assert_eq!(st.picked, vec![2, 3]);
+            assert_eq!(row, None, "the frame on screen stays");
+            assert_eq!(app.get_thumbs().row_count(), 4);
+            assert_eq!(app.get_selected(), 2);
+        }
+        // c goes from the list: out of the selection too.
+        let next = vec![files[0].clone(), aa.clone(), files[1].clone()];
+        assert_eq!(merge(&mut state.borrow_mut(), &app, &worker, next), None);
+        assert_eq!(state.borrow().picked, vec![2]);
+        // The same list again is nothing to do.
+        let same = state.borrow().files.clone();
+        assert_eq!(merge(&mut state.borrow_mut(), &app, &worker, same), None);
+        drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The frame on screen deleted from under the window: the nearest
+    /// row is what is opened next, and nothing is kept as current, so
+    /// no sidecar is written for a file that is gone.
+    #[test]
+    fn a_frame_on_screen_that_is_gone_hands_on_to_the_nearest() {
+        let dir = scratch("gone");
+        let files = frames(&dir, &["a.tif", "b.tif", "c.tif"]);
+        let app = window(3);
+        let (state, worker) = state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(2);
+            rebuild_browser_from(&mut st, &app, &[]);
+        }
+        std::fs::remove_file(&files[2]).unwrap();
+        let next = files[..2].to_vec();
+        let row = merge(&mut state.borrow_mut(), &app, &worker, next);
+        assert_eq!(row, Some(1), "c's row, clamped to the last");
+        assert_eq!(state.borrow().current, None);
+        assert!(!files[2].with_extension("tif.gcd").exists());
+        drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A frame on screen renamed, or moved to another folder, is
+    /// followed there by its row in the index: its path in the window
+    /// is the new one, its edit in memory is kept, and in a folder's
+    /// view it stays in the list though the folder no longer has it.
+    #[test]
+    fn a_frame_on_screen_that_moved_is_followed_to_its_new_path() {
+        let dir = scratch("follow");
+        let (shoot, other) = (dir.join("shoot"), dir.join("other"));
+        std::fs::create_dir_all(&shoot).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let files = frames(&shoot, &["a.tif", "b.tif", "c.tif"]);
+        frames(&other, &["o.tif"]);
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&dir, &mut |_| {}).unwrap();
+        let app = window(3);
+        let (state, worker) = state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            crate::library::refresh_ids(&mut st);
+            st.sidecars[1].meta.rating = 5;
+            st.current = Some(1);
+            rebuild_browser_from(&mut st, &app, &[]);
+        }
+        // Renamed within the folder.
+        let renamed = shoot.join("bb.tif");
+        std::fs::rename(&files[1], &renamed).unwrap();
+        writer.index_folder(&shoot, &mut |_| {}).unwrap();
+        let listed = crate::files::list_files(&shoot).unwrap();
+        assert_eq!(merge(&mut state.borrow_mut(), &app, &worker, listed), None);
+        {
+            let st = state.borrow();
+            let c = st.current.expect("still on screen");
+            assert_eq!(st.files[c], renamed);
+            assert_eq!(st.sidecars[c].meta.rating, 5);
+        }
+        // Moved to the other folder: followed, and kept in the list.
+        let moved = other.join("bb.tif");
+        std::fs::rename(&renamed, &moved).unwrap();
+        writer.index_tree(&dir, &mut |_| {}).unwrap();
+        let listed = crate::files::list_files(&shoot).unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(merge(&mut state.borrow_mut(), &app, &worker, listed), None);
+        {
+            let st = state.borrow();
+            let c = st.current.expect("still on screen");
+            assert_eq!(st.files[c], moved);
+            assert_eq!(st.files.len(), 3);
+            assert_eq!(st.sidecars[c].meta.rating, 5);
+        }
+        // The window's thread keeps the state, and with it the
+        // reader: closed by hand, since Windows will not remove a
+        // folder with a database open in it.
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The roots' row: a chip a root with its count from the index,
+    /// the all-roots chip with their sum, and "Add this folder" while
+    /// the folder open is under none of them.
+    #[test]
+    fn the_header_lists_the_roots_with_their_counts() {
+        let dir = scratch("header");
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(a.join("day")).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        frames(&a, &["x.tif"]);
+        frames(&a.join("day"), &["y.tif", "z.tif"]);
+        let open = frames(&b, &["o.tif"]);
+        let db = dir.join("index").join("library.sqlite");
+        greycard_library::Library::open(&db)
+            .unwrap()
+            .index_tree(&dir, &mut |_| {})
+            .unwrap();
+        let app = window(1);
+        let (state, _worker) = state_for(&app, open);
+        let mut st = state.borrow_mut();
+        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+        st.library.roots.add(&a).unwrap();
+        recount(&mut st);
+        show(&st, &app);
+        let chips = app.get_library_roots();
+        assert_eq!(chips.row_count(), 1);
+        let chip = chips.row_data(0).unwrap();
+        assert_eq!((chip.name.as_str(), chip.count, chip.on), ("a", 3, false));
+        assert_eq!(app.get_library_all_count(), 3);
+        assert!(!app.get_library_all_on());
+        assert!(app.get_library_can_add_open(), "b is under no root");
+        st.library.roots.add(&b).unwrap();
+        st.view = View::Roots(None);
+        recount(&mut st);
+        show(&st, &app);
+        assert_eq!(app.get_library_all_count(), 4);
+        assert!(app.get_library_all_on());
+        assert!(!app.get_library_can_add_open());
+        assert_eq!(app.get_library_note(), "");
+        st.index_reader = None;
+        drop(st);
+        drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The indexer's background: the launch pass over a root, and a
+    /// change the watcher saw, each said when done — on a library of
+    /// the test's own, beside which its roots would be kept.
+    #[test]
+    fn the_indexer_passes_over_the_roots_and_the_changes() {
+        use crate::library::Told;
+        let dir = scratch("indexer");
+        let root = dir.join("root");
+        std::fs::create_dir_all(root.join("day")).unwrap();
+        frames(&root, &["a.tif"]);
+        frames(&root.join("day"), &["b.tif", "c.tif"]);
+        let db = dir.join("data").join("library.sqlite");
+        assert_eq!(
+            Roots::path_beside(&db),
+            dir.join("data").join(greycard_library::roots::FILE_NAME)
+        );
+        let (tx, rx) = std::sync::mpsc::channel();
+        let indexer = crate::library::Indexer::start(db.clone(), move |told| {
+            let _ = tx.send(told);
+        })
+        .expect("the indexer starts");
+        let wait = |want: &dyn Fn(&Told) -> bool| loop {
+            let told = rx
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the indexer answers");
+            if want(&told) {
+                return told;
+            }
+        };
+        wait(&|t| matches!(t, Told::Opened(_)));
+        indexer.roots(vec![root.clone()]);
+        match wait(&|t| matches!(t, Told::Background { .. })) {
+            Told::Background {
+                path,
+                launch,
+                report,
+                error,
+                ..
+            } => {
+                assert_eq!(path, root);
+                assert!(launch);
+                assert_eq!(error, None);
+                assert_eq!(report.added, 3, "{report:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        frames(&root.join("day"), &["d.tif"]);
+        indexer
+            .asker()
+            .changes(vec![greycard_library::Change::Folder(root.join("day"))]);
+        match wait(&|t| matches!(t, Told::Background { .. })) {
+            Told::Background {
+                path,
+                launch,
+                report,
+                ..
+            } => {
+                assert_eq!(path, root.join("day"));
+                assert!(!launch);
+                assert_eq!(report.added, 1, "{report:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        let reader = greycard_library::Library::open_read_only(&db).unwrap();
+        assert_eq!(reader.count_under(&root).unwrap(), 4);
+        drop(reader);
+        // An asker still held, as the watcher holds one, does not keep
+        // the thread from leaving.
+        let _held = indexer.asker();
+        indexer.stop(Duration::from_secs(20));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
