@@ -431,6 +431,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         }
     }
     state.borrow_mut().thumb_run = Some(crate::panel::browser::ThumbRun::new(files.len()));
+    if !files.is_empty() {
+        crate::panel::browser::hold_thumbnails_for_develop(&app, &worker);
+    }
     for (i, f) in files.iter().enumerate() {
         worker.send(Job::Thumbnail {
             index: i,

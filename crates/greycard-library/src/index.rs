@@ -144,8 +144,10 @@ pub fn is_indexed_path(path: &Path) -> bool {
 fn list_folder(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_ok_and(|t| !t.is_dir()))
         .map(|e| e.path())
+        // Regular files, or links to them: a named pipe's read would
+        // never return.
+        .filter(|p| p.is_file())
         .filter(|p| is_indexed_path(p))
         .collect();
     files.sort();

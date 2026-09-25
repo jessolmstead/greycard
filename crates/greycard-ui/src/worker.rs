@@ -629,6 +629,17 @@ impl Worker {
         self.pool.forget();
     }
 
+    /// How many threads make thumbnails.
+    pub fn thumb_threads(&self) -> usize {
+        self.pool.threads()
+    }
+
+    /// Hold the thumbnails' threads for a develop the window is
+    /// about to ask for, or let them go: see `thumbpool::Pool::hold`.
+    pub fn hold_thumbnails(&self, on: bool) {
+        self.pool.hold(on);
+    }
+
     /// Make thumbnails at this long edge from now on. The grid's
     /// cells grow past the strip's 178, and a picture made for the
     /// strip is mush in a large one; the size follows the cell both

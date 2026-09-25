@@ -90,9 +90,12 @@ pub(crate) fn count_thumb(st: &mut State, index: usize, cached: Option<bool>, se
         return;
     };
     if let Some(t) = run.arrived(index, cached, seconds) {
+        // The work is summed over the pool's threads, so it can be
+        // more than the wall time.
+        let threads = WORKER.with(|w| w.borrow().as_ref().map_or(1, |w| w.thumb_threads()));
         tracing::info!(
-            "thumbnails: {} files in {:.2} s from the folder's open, {:.2} s of it making them; \
-             {} from the cache, {} made, {} failed",
+            "thumbnails: {} files in {:.2} s from the folder's open, {:.2} s of decoding across \
+             {threads} threads; {} from the cache, {} made, {} failed",
             t.files,
             t.seconds,
             t.work,
@@ -856,6 +859,9 @@ fn open_files(
     let row = row_of(&st, select).or_else(|| cull::nearest_row(&st.shown, select));
     drop(st);
 
+    if row.is_some() {
+        hold_thumbnails_for_develop(app, worker);
+    }
     for (i, f) in files.iter().enumerate() {
         worker.send(Job::Thumbnail {
             index: i,
@@ -870,6 +876,36 @@ fn open_files(
     }
 }
 
+/// The longest a folder opened in the loupe holds its thumbnails for
+/// its first develop: one that never comes (a device that never
+/// arrives, a frame whose open is lost) must not leave the strip
+/// empty for the session.
+pub(crate) const HOLD_AT_MOST: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// A folder opening in the loupe: its thumbnails wait for the first
+/// develop, which is what the window is waiting to show, and are let
+/// go when it is delivered (or fails, or the grid opens, or
+/// [`HOLD_AT_MOST`] passes). Made beside it they cost that develop's
+/// first paint a sixth of a second on a cold folder of 300. On the
+/// grid the thumbnails are the content, and nothing is held.
+pub(crate) fn hold_thumbnails_for_develop(app: &App, worker: &Worker) {
+    if app.get_grid_open() {
+        return;
+    }
+    worker.hold_thumbnails(true);
+    slint::Timer::single_shot(HOLD_AT_MOST, release_thumbnails);
+}
+
+/// Let the thumbnails go, from wherever the first develop's end is
+/// heard.
+pub(crate) fn release_thumbnails() {
+    WORKER.with(|w| {
+        if let Some(w) = &*w.borrow() {
+            w.hold_thumbnails(false);
+        }
+    });
+}
+
 /// How long a snapshot waits for the grid's pictures before it takes
 /// the grid as it stands. A cold folder of a few hundred fills in a
 /// few seconds; a picture that has not come by this is not coming.
@@ -882,22 +918,32 @@ pub(crate) fn give_up_on_grid(st: &mut State, app: &App) -> bool {
     if st.snapshot.is_none() || grid_filled(st, app) {
         return false;
     }
-    let missing: Vec<String> = st
-        .grid_shown
-        .map(|(first, last)| {
-            (first.max(0) as usize..=last.max(0) as usize)
-                .filter_map(|r| st.shown.get(r).copied())
-                .filter(|&f| !st.thumb_failed[f] && st.thumb_made[f] == 0)
-                .map(|f| file_name(&st.files[f]))
-                .collect()
-        })
-        .unwrap_or_default();
+    // What the grid still waits for: a picture that never came, and
+    // one that came too small for the cells and whose larger one has
+    // not.
+    let (mut missing, mut small) = (Vec::new(), Vec::new());
+    if let Some((first, last)) = st.grid_shown {
+        for f in (first.max(0) as usize..=last.max(0) as usize).filter_map(|r| st.shown.get(r)) {
+            if st.thumb_failed[*f] {
+                continue;
+            }
+            if st.thumb_made[*f] == 0 {
+                missing.push(file_name(&st.files[*f]));
+            } else if grid::wants_bigger(st.thumb_made[*f], st.thumb_want) {
+                small.push(file_name(&st.files[*f]));
+            }
+        }
+    }
     tracing::warn!(
-        "snapshot: the grid still waits for {} picture{} after {} s ({}); taking it as it stands",
+        "snapshot: after {} s the grid still waits for {} picture{} ({}) and {} larger one{} ({}); \
+         taking it as it stands",
+        GRID_WAIT.as_secs(),
         missing.len(),
         if missing.len() == 1 { "" } else { "s" },
-        GRID_WAIT.as_secs(),
-        missing.join(", ")
+        missing.join(", "),
+        small.len(),
+        if small.len() == 1 { "" } else { "s" },
+        small.join(", ")
     );
     st.grid_wait_over = true;
     app.window().request_redraw();
@@ -1325,6 +1371,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            // The grid is open: its pictures are what is on screen.
+            worker.hold_thumbnails(false);
             let cell = app.get_grid_cell();
             let mut st = state.borrow_mut();
             let count = st.shown.len() as i32;
@@ -1566,10 +1614,7 @@ mod tests {
         assert_eq!(Label::Blue.code(), 4);
     }
 
-    /// The filmstrip's picture, the grid's and the culling loupe's are
-    /// the camera's own, so a frame's turn rides in the same quarter
-    /// turns the edit's do: what comes out is the picture the develop
-    /// would make of the turned frame.
+    /// A two-pixel picture for file `index`, as the pool delivers one.
     fn picture_for(files: &[PathBuf], index: usize) -> crate::worker::Outcome {
         crate::worker::Outcome::Thumbnail {
             index,
@@ -1659,6 +1704,18 @@ mod tests {
         state.borrow_mut().snapshot = Some(PathBuf::from("grid.png"));
         assert!(give_up_on_grid(&mut state.borrow_mut(), &app));
         assert!(grid_filled(&state.borrow(), &app));
+        // Every picture in, but one too small for the cells, its
+        // larger one not come: still waited for, and given up on.
+        let app = window(2);
+        let files = crate::testing::folder(2);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        app.set_grid_open(true);
+        state.borrow_mut().grid_shown = Some((0, 1));
+        state.borrow_mut().snapshot = Some(PathBuf::from("grid.png"));
+        deliver(&app, picture_for(&files, 0));
+        deliver(&app, picture_for(&files, 1));
+        state.borrow_mut().thumb_want = 360;
+        assert!(give_up_on_grid(&mut state.borrow_mut(), &app));
         // A grid filled in time is not given up on.
         let app = window(2);
         let files = crate::testing::folder(2);
@@ -1671,6 +1728,10 @@ mod tests {
         assert!(!give_up_on_grid(&mut state.borrow_mut(), &app));
     }
 
+    /// The filmstrip's picture, the grid's and the culling loupe's are
+    /// the camera's own, so a frame's turn rides in the same quarter
+    /// turns the edit's do: what comes out is the picture the develop
+    /// would make of the turned frame.
     #[test]
     fn a_thumbnail_follows_the_frames_own_turn() {
         use greycard_core::WorkingImage;

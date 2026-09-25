@@ -1,6 +1,7 @@
 use crate::panel::assets::{offer_lenses_once, offer_model, show_lens, show_looks, show_profiles};
 use crate::panel::browser::{
-    chosen_frames, count_thumb, file_name, show_no_thumb, show_thumb, thumb_turns,
+    chosen_frames, count_thumb, file_name, release_thumbnails, show_no_thumb, show_thumb,
+    thumb_turns,
 };
 use crate::panel::cull::develop_landed;
 use crate::panel::edit::{current_turn, read_edit, schedule_save};
@@ -331,6 +332,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             learned,
             fills,
         } => {
+            release_thumbnails();
             let mut st = state.borrow_mut();
             if generation != st.generation || st.cull.is_some() {
                 return;
@@ -547,6 +549,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             generation,
             message,
         } => {
+            release_thumbnails();
             let mut st = state.borrow_mut();
             // Recorded whether or not the develop is still the wanted one.
             tracing::error!("failed: {message}");

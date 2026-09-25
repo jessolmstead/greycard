@@ -251,8 +251,13 @@ impl Thumbs {
                 bytes: u.bytes.saturating_sub(before.unwrap_or(0)) + bytes.len() as u64,
                 entries: u.entries + usize::from(before.is_none()),
             },
-            // The first write of a session counts the cache, on the
-            // caller's thread, which is the worker's.
+            // A write before any count is known counts the cache
+            // here, on the caller's thread and under whatever lock the
+            // caller holds on this cache: in the editor a thumbnail
+            // thread's, under the cache's mutex, so the other threads'
+            // lookups wait for the walk. The editor seeds the count
+            // from a thread of its own at startup (`seed_usage`), so
+            // this is only a write that beats that count.
             None => self.usage(),
         };
         self.used = Some(used);

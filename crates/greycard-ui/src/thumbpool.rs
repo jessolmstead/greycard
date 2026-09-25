@@ -63,6 +63,9 @@ struct Pending {
     making: Vec<PathBuf>,
     /// How many may be in hand at once now.
     limit: usize,
+    /// Held for the first develop of a folder opened in the loupe:
+    /// nothing is begun until it is let go.
+    held: bool,
     /// Whether the threads have been started: not until the first
     /// thumbnail is asked for.
     started: bool,
@@ -162,6 +165,19 @@ impl Pool {
         self.shared.cv.notify_all();
     }
 
+    /// Hold the pool, or let it go: while held nothing new is begun,
+    /// whatever the limit. The window holds it for the first develop
+    /// of a folder opened in the loupe and lets go when that develop
+    /// is delivered; the worker's own limit during every develop is
+    /// separate, so neither lets go of the other's hold.
+    pub(crate) fn hold(&self, on: bool) {
+        let mut q = self.lock();
+        if q.held != on {
+            q.held = on;
+            self.shared.cv.notify_all();
+        }
+    }
+
     /// The pool's size.
     pub(crate) fn threads(&self) -> usize {
         self.threads
@@ -192,7 +208,7 @@ fn serve(shared: &Shared, make: &MakeFn, deliver: &dyn Fn(Outcome)) {
                 if q.stopping {
                     return;
                 }
-                if q.making.len() < q.limit {
+                if !q.held && q.making.len() < q.limit {
                     let free = {
                         let p = &*q;
                         p.jobs.iter().position(|(_, f)| !p.making.contains(f))
@@ -332,6 +348,26 @@ mod tests {
         pool.set_limit(1);
         receive(&rx, 10);
         assert_eq!(*began.lock().unwrap(), vec![4, 5, 6, 3, 7, 2, 8, 1, 9, 0]);
+    }
+
+    /// Held for the loupe's first develop, nothing is begun, and the
+    /// worker's own limit going back up after a develop does not let
+    /// go of it; the window's release does.
+    #[test]
+    fn a_hold_outlasts_the_limit_and_ends_with_its_release() {
+        let (make, began) = recording();
+        let (deliver, rx) = collector();
+        let pool = Pool::new(2, make, deliver);
+        pool.hold(true);
+        for i in 0..3 {
+            pool.push(i, file(i));
+        }
+        pool.set_limit(0);
+        pool.set_limit(2);
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+        assert!(began.lock().unwrap().is_empty());
+        pool.hold(false);
+        assert_eq!(receive(&rx, 3).len(), 3);
     }
 
     /// A scroll while a picture is in hand re-orders what is left,

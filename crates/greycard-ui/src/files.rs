@@ -86,9 +86,12 @@ pub fn list_files(path: &std::path::Path) -> Result<Vec<PathBuf>> {
         // In a directory, just filter for actual raw and picture files.
         // .gcd sidecars are naturally excluded since .gcd is not a raw or
         // picture extension; they stay beside the raws they edit.
+        // Only regular files, or links to them: a folder, a named
+        // pipe or a socket with a raw's name would hold a thumbnail
+        // thread, and the indexer, on a read that never returns.
         let mut files: Vec<PathBuf> = std::fs::read_dir(path)?
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| opens(p))
+            .filter(|p| opens(p) && p.is_file())
             .collect();
         files.sort();
         Ok(files)
@@ -144,6 +147,34 @@ mod tests {
         assert_eq!(select_index(&files, Some(Path::new("/no/such/file"))), 0);
         // Nothing remembered: the first file.
         assert_eq!(select_index(&files, None), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Only regular files are listed: a folder named as a raw is not,
+    /// and on Unix neither is a named pipe, whose read never returns.
+    #[test]
+    fn a_folder_lists_only_its_regular_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-regular-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(dir.join("folder.CR3")).unwrap();
+        std::fs::write(dir.join("a.CR3"), b"").unwrap();
+        #[cfg(unix)]
+        {
+            let made = std::process::Command::new("mkfifo")
+                .arg(dir.join("pipe.CR3"))
+                .status();
+            // Without mkfifo on the machine the folder case stands alone.
+            if made.is_ok_and(|s| s.success()) {
+                assert!(dir.join("pipe.CR3").exists());
+            }
+        }
+        assert_eq!(list_files(&dir).unwrap(), vec![dir.join("a.CR3")]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
