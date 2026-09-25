@@ -501,6 +501,7 @@ pub enum NoSky {
 impl std::fmt::Display for NoSky {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            NoSky::Unsure(p) if *p <= 0.0 => write!(f, "the model calls nothing sky"),
             NoSky::Unsure(p) => write!(f, "the model is only {:.1}% sure of its sky", p * 100.0),
             NoSky::NoCore(core) => write!(
                 f,
