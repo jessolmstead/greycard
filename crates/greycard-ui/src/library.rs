@@ -206,6 +206,7 @@ pub(crate) fn index_open_folder(st: &mut State) {
         return;
     };
     st.index_generation += 1;
+    st.index_progress = Some((0, st.files.len()));
     indexer.folders(folders_of(&st.files), st.index_generation);
 }
 
@@ -468,6 +469,7 @@ pub(crate) fn told(app: &App, told: Told) {
             tracing::warn!("no library index: {message}");
             let mut st = state.borrow_mut();
             st.index = None;
+            st.index_progress = None;
             st.awaiting_index = false;
             crate::panel::cull::show_filter(&st, app);
             app.window().request_redraw();
