@@ -94,8 +94,7 @@ fn picture() -> Rgb8 {
 #[ignore]
 fn the_sky_model_answers_as_the_reference_on_the_cpu() {
     let Some(store) = store() else { return };
-    let Some(dir) = std::env::var_os("GREYCARD_SKY_REFERENCE").map(std::path::PathBuf::from)
-    else {
+    let Some(dir) = std::env::var_os("GREYCARD_SKY_REFERENCE").map(std::path::PathBuf::from) else {
         println!("no GREYCARD_SKY_REFERENCE: nothing to compare against");
         return;
     };
@@ -139,7 +138,13 @@ fn prior_difference(a: &Prior, b: &Prior) -> (f32, f32, f32) {
         .count() as f32
         / n;
     let max = max_diff(&a.sky, &b.sky);
-    let mean = a.sky.iter().zip(&b.sky).map(|(x, y)| (x - y).abs()).sum::<f32>() / n;
+    let mean = a
+        .sky
+        .iter()
+        .zip(&b.sky)
+        .map(|(x, y)| (x - y).abs())
+        .sum::<f32>()
+        / n;
     (flips, max, mean)
 }
 
@@ -222,4 +227,75 @@ fn the_sky_prior_finds_a_made_up_sky() {
     let seeds = sky::seeds(&prior);
     assert!(!seeds.positive.is_empty());
     assert!(seeds.positive.iter().all(|p| p[1] < 0.5), "{seeds:?}");
+}
+
+/// What the gate has to go on, frame by frame, for tuning it:
+/// `GREYCARD_SKY_PREVIEWS` names a folder of previews (the editor's,
+/// as the Sky acceptance test in greycard-ui writes them), and each
+/// gets a line: the sky queries kept and their class probabilities,
+/// the labeled area, the areas over 0.8, 0.9 and 0.95, the peak.
+#[test]
+#[ignore]
+fn what_the_gate_sees() {
+    let Some(store) = store() else { return };
+    let Some(dir) = std::env::var_os("GREYCARD_SKY_PREVIEWS").map(std::path::PathBuf::from) else {
+        return;
+    };
+    let mut sky = load(&store, &Provider::available());
+    let mut paths: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.extension().is_some_and(|e| e == "jpg" || e == "png")
+                && !p.file_stem().unwrap().to_string_lossy().ends_with("-sky")
+        })
+        .collect();
+    paths.sort();
+    for path in paths {
+        let rgb = image::open(&path).unwrap().to_rgb8();
+        let picture = Rgb8::new(rgb.width() as usize, rgb.height() as usize, rgb.into_raw());
+        let boxed = sky::letterbox(&picture);
+        let content = (boxed.width, boxed.height);
+        let logits = sky.logits(boxed.planes).unwrap();
+        let prior = Prior::label(&logits, content, picture.width, picture.height);
+        // Each query whose best class is sky: its probability, and how
+        // much of the frame its mask (over a half) covers.
+        let mut queries = Vec::new();
+        for q in 0..sky::QUERIES {
+            let l = &logits.class[q * sky::CLASSES..(q + 1) * sky::CLASSES];
+            let max = l.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+            let e: Vec<f32> = l.iter().map(|v| (v - max).exp()).collect();
+            let t: f32 = e.iter().sum();
+            let p = e[sky::SKY_CLASS as usize] / t;
+            let best = e[..sky::CLASSES - 1]
+                .iter()
+                .enumerate()
+                .fold((0, 0.0f32), |a, (i, &v)| if v > a.1 { (i, v) } else { a });
+            if best.0 == sky::SKY_CLASS as usize && p > 0.2 {
+                let m = &logits.masks[q * sky::MASK_SIDE * sky::MASK_SIDE
+                    ..(q + 1) * sky::MASK_SIDE * sky::MASK_SIDE];
+                let area = m.iter().filter(|&&v| v > 0.0).count() as f32 / m.len() as f32;
+                queries.push(format!("{p:.3}@{:.1}%", area * 100.0));
+            }
+        }
+        let n = prior.sky.len() as f32;
+        let over = |t: f32| prior.sky.iter().filter(|&&v| v > t).count() as f32 / n * 100.0;
+        let peak = prior.sky.iter().copied().fold(0.0f32, f32::max);
+        let (w, h) = (prior.width, prior.height);
+        let r = (0.01 * w.max(h) as f32).round() as usize;
+        let core: Vec<bool> = prior.sky.iter().map(|&v| v > 0.8).collect();
+        let core = sky::erode(&core, w, h, r).iter().filter(|&&v| v).count() as f32 / n * 100.0;
+        let core9: Vec<bool> = prior.sky.iter().map(|&v| v > 0.9).collect();
+        let core9 = sky::erode(&core9, w, h, r).iter().filter(|&&v| v).count() as f32 / n * 100.0;
+        println!(
+            "{}: labeled {:.2}% | >0.8 {:.2}% >0.9 {:.2}% >0.95 {:.2}% peak {peak:.3} | core0.8 {core:.2}% core0.9 {core9:.2}% | gate {:?} | sky queries {}",
+            path.file_stem().unwrap().to_string_lossy(),
+            prior.sky_area() * 100.0,
+            over(0.8),
+            over(0.9),
+            over(0.95),
+            sky::gate(&prior),
+            queries.join(" ")
+        );
+    }
 }

@@ -15,11 +15,15 @@
 //!    over all the queries. Not the transformers panoptic
 //!    post-processor, which gives the whole frame to a query that is
 //!    alone above its threshold.
-//! 2. **The gate** ([`gate`]): a confident core (probability over 0.8)
-//!    that survives an erosion of one percent of the long side, at
-//!    least half a percent of the frame labeled sky, and that sky
-//!    touching the top or a side of the frame. Fail any and there is
-//!    no sky.
+//! 2. **The gate** ([`gate`]): the model sure of its sky query (class
+//!    probability 0.98 or more), a core it is sure of (probability over
+//!    0.9) covering a quarter of a percent of the frame after an
+//!    erosion of one percent of the long side, at least half a percent
+//!    of the frame labeled sky, and that sky touching the top or a side
+//!    of the frame. Fail any and there is no sky. Stricter than the
+//!    trial's (a core over 0.8 surviving the erosion): on the editor's
+//!    own preview a defocused bluish snow slope passed that, and these
+//!    two reject it with a wide margin on the test set.
 //! 3. **The outline** ([`seeds`], [`outline`]): SAM 2.1 seeded with
 //!    up to eight points over the confident sky and eight negatives
 //!    over the confident not-sky, one decode per positive with every
@@ -70,8 +74,15 @@ const REFERENCE: f32 = 2048.0;
 
 /// The class probability a query needs to be kept.
 const KEEP: f32 = 0.5;
-/// Sky the prior is sure of: a seed's ground and the gate's core.
+/// Sky the prior is sure of: a seed's ground.
 const CONFIDENT: f32 = 0.8;
+/// The gate's core: sky the prior is surer of, and how much of the
+/// frame it must cover once eroded.
+const CORE: f32 = 0.9;
+const MIN_CORE: f32 = 0.0025;
+/// The gate: the class probability the model must give the query its
+/// sky comes from.
+const SURE: f32 = 0.98;
 /// Not-sky the prior is sure of: a negative seed's ground.
 const NOT_SKY: f32 = 0.1;
 /// The gate: the smallest share of the frame labeled sky.
@@ -284,6 +295,10 @@ pub struct Prior {
     pub sky: Vec<f32>,
     /// Each pixel's class, `UNLABELED` where no kept query claims it.
     pub labels: Vec<u8>,
+    /// How sure the model is of its sky: the highest class probability
+    /// of sky among the kept queries whose class is sky, nothing when
+    /// none is.
+    pub sure: f32,
 }
 
 impl Prior {
@@ -296,6 +311,11 @@ impl Prior {
         let s = (WORK as f64 / long as f64).min(1.0);
         let ww = ((width as f64 * s).round() as usize).max(1);
         let wh = ((height as f64 * s).round() as usize).max(1);
+        let sure = queries(&logits.class)
+            .iter()
+            .filter(|q| q.kept && q.label == SKY_CLASS)
+            .map(|q| q.best)
+            .fold(0.0f32, f32::max);
         let (sky, labels) = label_at(logits, content, ww, wh);
         if (ww, wh) == (width, height) {
             return Self {
@@ -303,6 +323,7 @@ impl Prior {
                 height,
                 sky,
                 labels,
+                sure,
             };
         }
         let sky = Mask::new(ww, wh, sky).resampled(width, height).data;
@@ -312,6 +333,7 @@ impl Prior {
             height,
             sky,
             labels,
+            sure,
         }
     }
 
@@ -364,12 +386,12 @@ fn queries(class: &[f32]) -> Vec<Query> {
             let exp: Vec<f32> = logits.iter().map(|l| (l - max).exp()).collect();
             let total: f32 = exp.iter().sum();
             let p: Vec<f32> = exp[..CLASSES - 1].iter().map(|e| e / total).collect();
-            let (label, best) = p
-                .iter()
-                .enumerate()
-                .fold((0, f32::NEG_INFINITY), |(bi, bv), (i, &v)| {
-                    if v > bv { (i, v) } else { (bi, bv) }
-                });
+            let (label, best) =
+                p.iter()
+                    .enumerate()
+                    .fold((0, f32::NEG_INFINITY), |(bi, bv), (i, &v)| {
+                        if v > bv { (i, v) } else { (bi, bv) }
+                    });
             Query {
                 sky: p[SKY_CLASS as usize],
                 any: p.iter().sum(),
@@ -416,7 +438,8 @@ fn label_at(logits: &Logits, content: (usize, usize), w: usize, h: usize) -> (Ve
             let mut win_m = vec![0.0f32; w];
             let mut win_l = vec![UNLABELED; w];
             for (q, query) in queries.iter().enumerate() {
-                let plane = &logits.masks[q * MASK_SIDE * MASK_SIDE..(q + 1) * MASK_SIDE * MASK_SIDE];
+                let plane =
+                    &logits.masks[q * MASK_SIDE * MASK_SIDE..(q + 1) * MASK_SIDE * MASK_SIDE];
                 let r0 = &plane[y0 * MASK_SIDE..y0 * MASK_SIDE + MASK_SIDE];
                 let r1 = &plane[y1 * MASK_SIDE..y1 * MASK_SIDE + MASK_SIDE];
                 for (x, &(x0, x1, tx)) in xs.iter().enumerate() {
@@ -438,11 +461,7 @@ fn label_at(logits: &Logits, content: (usize, usize), w: usize, h: usize) -> (Ve
             }
             for x in 0..w {
                 sky_row[x] = (num[x] / den[x].max(1e-6)).clamp(0.0, 1.0);
-                label_row[x] = if win_m[x] >= 0.5 {
-                    win_l[x]
-                } else {
-                    UNLABELED
-                };
+                label_row[x] = if win_m[x] >= 0.5 { win_l[x] } else { UNLABELED };
             }
         });
     (sky, labels)
@@ -463,8 +482,11 @@ fn nearest(labels: &[u8], w: usize, h: usize, nw: usize, nh: usize) -> Vec<u8> {
 /// Why the gate found no sky.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum NoSky {
-    /// Nothing the prior is sure is sky survives the erosion.
-    NoCore,
+    /// The model is not sure of its sky query: its class probability.
+    Unsure(f32),
+    /// Too little the prior is sure is sky survives the erosion: the
+    /// share of the frame that did.
+    NoCore(f32),
     /// Less than half a percent of the frame is labeled sky: the share
     /// it was.
     TooSmall(f32),
@@ -475,7 +497,12 @@ pub enum NoSky {
 impl std::fmt::Display for NoSky {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            NoSky::NoCore => write!(f, "nothing the model is sure is sky"),
+            NoSky::Unsure(p) => write!(f, "the model is only {:.1}% sure of its sky", p * 100.0),
+            NoSky::NoCore(core) => write!(
+                f,
+                "too little the model is sure is sky ({:.2}% of the frame)",
+                core * 100.0
+            ),
             NoSky::TooSmall(area) => write!(f, "only {:.2}% labeled sky", area * 100.0),
             NoSky::AwayFromEdges => write!(f, "the sky touches no edge of the frame"),
         }
@@ -488,20 +515,22 @@ pub fn gate(prior: &Prior) -> std::result::Result<(), NoSky> {
     let (w, h) = (prior.width, prior.height);
     let (long, _) = prior.scale();
     let r = ((CORE_EROSION * long as f32).round() as usize).max(1);
-    let confident: Vec<bool> = prior.sky.iter().map(|&p| p > CONFIDENT).collect();
-    if !erode(&confident, w, h, r).iter().any(|&v| v) {
-        return Err(NoSky::NoCore);
+    if prior.sure < SURE {
+        return Err(NoSky::Unsure(prior.sure));
+    }
+    let confident: Vec<bool> = prior.sky.iter().map(|&p| p > CORE).collect();
+    let core =
+        erode(&confident, w, h, r).iter().filter(|&&v| v).count() as f32 / (w * h).max(1) as f32;
+    if core < MIN_CORE {
+        return Err(NoSky::NoCore(core));
     }
     let area = prior.sky_area();
     if area < MIN_AREA {
         return Err(NoSky::TooSmall(area));
     }
     // Within the erosion's reach of the top, the left or the right.
-    let touches = (0..h).any(|y| {
-        (0..w).any(|x| {
-            prior.is_sky(y * w + x) && (y < r || x < r || x + r >= w)
-        })
-    });
+    let touches =
+        (0..h).any(|y| (0..w).any(|x| prior.is_sky(y * w + x) && (y < r || x < r || x + r >= w)));
     if !touches {
         return Err(NoSky::AwayFromEdges);
     }
@@ -599,7 +628,10 @@ fn spread(mask: &[bool], w: usize, h: usize, n: usize) -> Vec<[f32; 2]> {
                     .fold(f32::INFINITY, f32::min);
                 (i, d)
             })
-            .fold((0, f32::NEG_INFINITY), |acc, v| if v.1 > acc.1 { v } else { acc });
+            .fold(
+                (0, f32::NEG_INFINITY),
+                |acc, v| if v.1 > acc.1 { v } else { acc },
+            );
         chosen.push(candidates.remove(i).1);
     }
     chosen
@@ -714,7 +746,10 @@ pub struct Times {
 pub enum Found {
     /// The matte, at the preview's size, and whether SAM made the
     /// outline (not the prior's own labels).
-    Sky { matte: Mask, seeded: bool },
+    Sky {
+        matte: Mask,
+        seeded: bool,
+    },
     None(NoSky),
 }
 
@@ -828,6 +863,7 @@ mod tests {
             height: h,
             sky: map,
             labels,
+            sure: 0.999,
         }
     }
 
@@ -897,10 +933,18 @@ mod tests {
     #[test]
     fn the_resize_averages_rather_than_aliases() {
         // A one-pixel checkerboard shrunk four times is a flat grey.
-        let img = picture(64, 64, |x, y| if (x + y) % 2 == 0 { [255; 3] } else { [0; 3] });
+        let img = picture(
+            64,
+            64,
+            |x, y| if (x + y) % 2 == 0 { [255; 3] } else { [0; 3] },
+        );
         let src: Vec<f32> = img.data.iter().map(|&v| v as f32).collect();
         let out = resize_triangle(&src, 64, 64, 16, 16);
-        assert!(out.iter().all(|v| (v - 127.5).abs() < 20.0), "{:?}", &out[..6]);
+        assert!(
+            out.iter().all(|v| (v - 127.5).abs() < 20.0),
+            "{:?}",
+            &out[..6]
+        );
         // A flat picture stays flat at any size.
         let flat = vec![80.0f32; 30 * 20 * 3];
         let out = resize_triangle(&flat, 30, 20, 13, 7);
@@ -934,8 +978,13 @@ mod tests {
         assert!(prior.labels.iter().all(|&l| l == UNLABELED));
         assert!(prior.sky.iter().all(|&p| p > 0.95), "{}", prior.sky[0]);
         // The soft map is sure of a sky no query claims: the gate
-        // wants the labels too.
-        assert_eq!(gate(&prior), Err(NoSky::TooSmall(0.0)));
+        // wants a query sure of it.
+        assert_eq!(prior.sure, 0.0);
+        assert_eq!(gate(&prior), Err(NoSky::Unsure(0.0)));
+        // With the labels a query gives, it is as sure as that query.
+        let logits = logits_split((640, 427), 0.4, 10.0);
+        let prior = Prior::label(&logits, (640, 427), 300, 200);
+        assert!(prior.sure > 0.999, "{}", prior.sure);
     }
 
     #[test]
@@ -947,11 +996,43 @@ mod tests {
     fn the_gate_finds_nothing_in_a_frame_with_no_sky() {
         // Nothing the prior calls sky.
         let prior = prior_of(300, 200, |_, _| 0.03);
-        assert_eq!(gate(&prior), Err(NoSky::NoCore));
+        assert_eq!(gate(&prior), Err(NoSky::NoCore(0.0)));
         // A bluish slope the prior half believes: over a half here and
         // there, sure nowhere.
         let prior = prior_of(300, 200, |x, y| 0.4 + 0.3 * ((x + y) % 7) as f32 / 7.0);
-        assert_eq!(gate(&prior), Err(NoSky::NoCore));
+        assert_eq!(gate(&prior), Err(NoSky::NoCore(0.0)));
+    }
+
+    /// The defocused snow slope of the test set: labeled sky over a
+    /// tenth of the frame at the top left, the soft map over 0.8 on a
+    /// band of it, but the query it comes from only 95% sure, and
+    /// little of it over 0.9.
+    #[test]
+    fn the_gate_refuses_a_sky_the_model_is_not_sure_of() {
+        let slope = |x: usize, y: usize| {
+            if x < 120 && y < 150 {
+                if (30..90).contains(&x) { 0.93 } else { 0.85 }
+            } else {
+                0.05
+            }
+        };
+        let mut prior = prior_of(400, 300, slope);
+        prior.sure = 0.954;
+        assert_eq!(gate(&prior), Err(NoSky::Unsure(0.954)));
+        // Sure of the query, but the map over 0.9 on too little.
+        let mut prior = prior_of(400, 300, |x, y| {
+            if x < 120 && y < 150 {
+                if (50..62).contains(&x) && y < 30 {
+                    0.93
+                } else {
+                    0.85
+                }
+            } else {
+                0.05
+            }
+        });
+        prior.sure = 0.99;
+        assert!(matches!(gate(&prior), Err(NoSky::NoCore(c)) if c < MIN_CORE));
     }
 
     #[test]
@@ -959,14 +1040,19 @@ mod tests {
         // A confident line a pixel high: labeled, but thinner than the
         // erosion.
         let prior = prior_of(400, 300, |_, y| if y == 10 { 0.95 } else { 0.05 });
-        assert_eq!(gate(&prior), Err(NoSky::NoCore));
+        assert_eq!(gate(&prior), Err(NoSky::NoCore(0.0)));
     }
 
     #[test]
     fn the_gate_wants_half_a_percent_of_sky() {
-        // A confident 10 × 10 patch at the top: 0.08% of 400 × 300.
+        // A confident patch at the top whose core passes, 0.4% of the
+        // frame labeled.
         let prior = prior_of(400, 300, |x, y| {
-            if (100..110).contains(&x) && y < 10 { 0.95 } else { 0.05 }
+            if (100..140).contains(&x) && y < 14 {
+                0.95
+            } else {
+                0.05
+            }
         });
         assert!(matches!(gate(&prior), Err(NoSky::TooSmall(a)) if a < MIN_AREA));
     }
@@ -976,7 +1062,11 @@ mod tests {
         // A lake's reflection with no sky above it: a confident sky in
         // the middle of the frame, touching nothing.
         let prior = prior_of(400, 300, |x, y| {
-            if (100..300).contains(&x) && (100..200).contains(&y) { 0.95 } else { 0.05 }
+            if (100..300).contains(&x) && (100..200).contains(&y) {
+                0.95
+            } else {
+                0.05
+            }
         });
         assert_eq!(gate(&prior), Err(NoSky::AwayFromEdges));
     }
@@ -999,7 +1089,9 @@ mod tests {
         }
         // Spread: not all in one column.
         let xs: Vec<f32> = s.positive.iter().map(|p| p[0]).collect();
-        let (lo, hi) = xs.iter().fold((1.0f32, 0.0f32), |a, &x| (a.0.min(x), a.1.max(x)));
+        let (lo, hi) = xs
+            .iter()
+            .fold((1.0f32, 0.0f32), |a, &x| (a.0.min(x), a.1.max(x)));
         assert!(hi - lo > 0.4, "{xs:?}");
         // The same picture, the same seeds.
         assert_eq!(seeds(&prior), s);
@@ -1083,7 +1175,15 @@ mod tests {
         for prompts in &seen {
             let negatives = prompts
                 .iter()
-                .filter(|p| matches!(p, Prompt::Point { positive: false, .. }))
+                .filter(|p| {
+                    matches!(
+                        p,
+                        Prompt::Point {
+                            positive: false,
+                            ..
+                        }
+                    )
+                })
                 .count();
             assert_eq!(negatives, s.negative.len() + 1);
         }
@@ -1126,7 +1226,11 @@ mod tests {
 
     fn frame_parts(w: usize, h: usize) -> (Rgb8, Vec<f32>, WorkingImage) {
         let display = picture(w, h, |_, y| {
-            if y < h / 3 { [140, 180, 230] } else { [30, 30, 30] }
+            if y < h / 3 {
+                [140, 180, 230]
+            } else {
+                [30, 30, 30]
+            }
         });
         let luma = display.luma();
         (display, luma, WorkingImage::new(w, h))
@@ -1145,7 +1249,7 @@ mod tests {
             &mut |_| panic!("SAM on a frame with no sky");
         let mut times = Times::default();
         let found = find(&prior, &frame, &[], Some(never), &mut times).unwrap();
-        assert!(matches!(found, Found::None(NoSky::NoCore)));
+        assert!(matches!(found, Found::None(NoSky::NoCore(_))));
     }
 
     #[test]

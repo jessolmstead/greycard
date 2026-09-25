@@ -26,8 +26,8 @@ pub use fill::Fill;
 pub use image::{Mask, Rgb8, Rgbf};
 pub use refine::refine;
 pub use registry::{
-    DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST, DENOISERS, FILL, MODELS, Model, SAM, SKY, SUBJECT,
-    SUBJECT_WEBGPU, denoiser, model, tier_of,
+    DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST, DENOISERS, FILL, MODELS, Model, SAM, SKY,
+    SUBJECT, SUBJECT_WEBGPU, denoiser, model, tier_of,
 };
 pub use runtime::Provider;
 pub use sam::{Prompt, Sam};
