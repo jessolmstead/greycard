@@ -10,6 +10,11 @@
 //! for the first to finish, and an ask for one already waiting is
 //! dropped — and a folder change drops what is waiting and throws
 //! away what comes back from the old folder's numbering.
+//!
+//! While the pool is held (for a develop) nothing is made, but every
+//! thread still looks pictures up in the cache: a hit is a tenth of a
+//! millisecond and takes nothing from the develop, so a warm folder's
+//! strip fills at once whatever is running.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -24,6 +29,11 @@ use crate::worker::{Deliver, Outcome, THUMB_WIDTH, order_thumbnails, panic_messa
 /// picture and whether it came from the cache.
 pub(crate) type Make = Arc<MakeFn>;
 pub(crate) type MakeFn = dyn Fn(&Path, u32) -> anyhow::Result<(Thumb, bool)> + Send + Sync;
+
+/// How a picture is looked up in the cache alone, without making it:
+/// the picture, or `None` for a miss.
+pub(crate) type Lookup = Arc<LookupFn>;
+pub(crate) type LookupFn = dyn Fn(&Path, u32) -> Option<Thumb> + Send + Sync;
 
 /// How many threads make thumbnails on a machine of `cores`: half of
 /// them, at least two and at most eight. The develop runs on rayon's
@@ -59,9 +69,15 @@ struct Pending {
     /// Raised by a folder change: a picture begun under an older one
     /// is not delivered.
     epoch: u64,
-    /// The files in hand, one entry a thread at work.
+    /// The files in hand, one entry a thread at work, looking up or
+    /// making.
     making: Vec<PathBuf>,
-    /// How many may be in hand at once now.
+    /// How many of those are being made rather than looked up.
+    busy: usize,
+    /// Files looked up while the pool was held and not found: they
+    /// wait to be made, and are not looked up again meanwhile.
+    missed: std::collections::HashSet<PathBuf>,
+    /// How many may be made at once now.
     limit: usize,
     /// Held for the first develop of a folder opened in the loupe:
     /// nothing is begun until it is let go.
@@ -82,12 +98,30 @@ struct Shared {
 pub(crate) struct Pool {
     shared: Arc<Shared>,
     threads: usize,
+    lookup: Option<Lookup>,
     make: Make,
     deliver: Deliver,
 }
 
 impl Pool {
+    /// A pool with nothing to look up in: held, it does nothing.
+    #[cfg(test)]
     pub(crate) fn new(threads: usize, make: Make, deliver: Deliver) -> Self {
+        Self::build(threads, None, make, deliver)
+    }
+
+    /// A pool that looks pictures up with `lookup` while it is held,
+    /// and makes them (a lookup included) with `make` otherwise.
+    pub(crate) fn with_lookup(
+        threads: usize,
+        lookup: Lookup,
+        make: Make,
+        deliver: Deliver,
+    ) -> Self {
+        Self::build(threads, Some(lookup), make, deliver)
+    }
+
+    fn build(threads: usize, lookup: Option<Lookup>, make: Make, deliver: Deliver) -> Self {
         let threads = threads.max(1);
         Self {
             shared: Arc::new(Shared {
@@ -98,6 +132,7 @@ impl Pool {
                 cv: Condvar::new(),
             }),
             threads,
+            lookup,
             make,
             deliver,
         }
@@ -119,11 +154,15 @@ impl Pool {
         if !q.started {
             q.started = true;
             for n in 0..self.threads {
-                let (shared, make, deliver) =
-                    (self.shared.clone(), self.make.clone(), self.deliver.clone());
+                let (shared, lookup, make, deliver) = (
+                    self.shared.clone(),
+                    self.lookup.clone(),
+                    self.make.clone(),
+                    self.deliver.clone(),
+                );
                 let spawned = std::thread::Builder::new()
                     .name(format!("greycard thumbnails {n}"))
-                    .spawn(move || serve(&shared, &*make, &*deliver));
+                    .spawn(move || serve(&shared, lookup.as_deref(), &*make, &*deliver));
                 if let Err(e) = spawned {
                     tracing::warn!("thumbnail thread {n} not started: {e}");
                 }
@@ -153,6 +192,7 @@ impl Pool {
     pub(crate) fn forget(&self) {
         let mut q = self.lock();
         q.jobs.clear();
+        q.missed.clear();
         q.wanted = None;
         q.epoch += 1;
     }
@@ -198,38 +238,88 @@ impl Drop for Pool {
 
 /// A thread of the pool: the next picture wanted that no other thread
 /// has in hand, made, and delivered unless the folder has changed
-/// since it was begun. A panic in the making — rawler has a few on
-/// damaged files — costs that file its picture and nothing else.
-fn serve(shared: &Shared, make: &MakeFn, deliver: &dyn Fn(Outcome)) {
+/// since it was begun. While the pool is held, or as many are being
+/// made as it allows, the next one not yet looked up is looked up in
+/// the cache instead: a hit is delivered, a miss goes back to wait to
+/// be made. A panic in the making — rawler has a few on damaged files
+/// — costs that file its picture and nothing else.
+fn serve(shared: &Shared, lookup: Option<&LookupFn>, make: &MakeFn, deliver: &dyn Fn(Outcome)) {
     loop {
-        let (index, path, size, epoch) = {
+        let (index, path, size, epoch, full) = {
             let mut q = shared.pending.lock().expect("thumbnail pool");
             loop {
                 if q.stopping {
                     return;
                 }
-                if !q.held && q.making.len() < q.limit {
-                    let free = {
-                        let p = &*q;
-                        p.jobs.iter().position(|(_, f)| !p.making.contains(f))
+                let full = !q.held && q.busy < q.limit;
+                let free = {
+                    let p = &*q;
+                    p.jobs.iter().position(|(_, f)| {
+                        !p.making.contains(f)
+                            && (full || (lookup.is_some() && !p.missed.contains(f)))
+                    })
+                };
+                if let Some(at) = free {
+                    // One being made leaves the queue; one being looked
+                    // up keeps its place in it, in hand, and leaves only
+                    // when it is found.
+                    let (index, path) = if full {
+                        q.busy += 1;
+                        q.jobs.remove(at).expect("a job at a found place")
+                    } else {
+                        q.jobs[at].clone()
                     };
-                    if let Some(at) = free {
-                        let (index, path) = q.jobs.remove(at).expect("a job at a found place");
-                        q.making.push(path.clone());
-                        let size = crate::grid::made_size(q.size.unwrap_or(THUMB_WIDTH));
-                        break (index, path, size, q.epoch);
-                    }
+                    q.making.push(path.clone());
+                    let size = crate::grid::made_size(q.size.unwrap_or(THUMB_WIDTH));
+                    break (index, path, size, q.epoch, full);
                 }
                 q = shared.cv.wait(q).expect("thumbnail pool");
             }
         };
         let started = Instant::now();
-        let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| make(&path, size)));
+        let made = if full {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| make(&path, size)))
+        } else {
+            // A panic in a lookup is the making's to meet again, and
+            // to report.
+            let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                lookup.and_then(|l| l(&path, size))
+            }))
+            .ok()
+            .flatten();
+            {
+                let mut q = shared.pending.lock().expect("thumbnail pool");
+                if q.epoch == epoch {
+                    if hit.is_some() {
+                        let found = q.jobs.iter().position(|(i, f)| *i == index && *f == path);
+                        if let Some(at) = found {
+                            q.jobs.remove(at);
+                        }
+                    } else {
+                        q.missed.insert(path.clone());
+                    }
+                }
+                if hit.is_none() {
+                    if let Some(at) = q.making.iter().position(|f| *f == path) {
+                        q.making.swap_remove(at);
+                    }
+                    shared.cv.notify_all();
+                }
+            }
+            match hit {
+                Some(thumb) => Ok(Ok((thumb, true))),
+                None => continue,
+            }
+        };
         let seconds = started.elapsed().as_secs_f64();
         let current = {
             let mut q = shared.pending.lock().expect("thumbnail pool");
             if let Some(at) = q.making.iter().position(|f| *f == path) {
                 q.making.swap_remove(at);
+            }
+            if full {
+                q.busy -= 1;
+                q.missed.remove(&path);
             }
             // A thread may be waiting for this file, or for room.
             shared.cv.notify_all();
@@ -368,6 +458,39 @@ mod tests {
         assert!(began.lock().unwrap().is_empty());
         pool.hold(false);
         assert_eq!(receive(&rx, 3).len(), 3);
+    }
+
+    /// Held, the pool still looks pictures up: the cache's hits are
+    /// delivered at once, the misses are looked up once each and wait,
+    /// unmade, until the hold is let go, and are then made in order.
+    #[test]
+    fn held_the_cache_is_still_read_and_nothing_is_made() {
+        let (make, began) = recording();
+        let looked = Arc::new(Mutex::new(Vec::new()));
+        let seen = looked.clone();
+        let lookup: Lookup = Arc::new(move |path, _| {
+            let i = index_of(path);
+            seen.lock().unwrap().push(i);
+            i.is_multiple_of(2).then(picture)
+        });
+        let (deliver, rx) = collector();
+        let pool = Pool::with_lookup(2, lookup, make, deliver);
+        pool.hold(true);
+        for i in 0..6 {
+            pool.push(i, file(i));
+        }
+        let mut hits: Vec<usize> = receive(&rx, 3).into_iter().map(|(i, _)| i).collect();
+        hits.sort();
+        assert_eq!(hits, vec![0, 2, 4]);
+        assert!(rx.recv_timeout(Duration::from_millis(200)).is_err());
+        assert!(began.lock().unwrap().is_empty(), "nothing made while held");
+        let mut once = looked.lock().unwrap().clone();
+        once.sort();
+        assert_eq!(once, vec![0, 1, 2, 3, 4, 5], "each looked up once");
+        pool.set_limit(1);
+        pool.hold(false);
+        receive(&rx, 3);
+        assert_eq!(*began.lock().unwrap(), vec![1, 3, 5]);
     }
 
     /// A scroll while a picture is in hand re-orders what is left,

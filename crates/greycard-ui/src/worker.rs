@@ -458,8 +458,13 @@ impl Worker {
             let thumbs = thumbs.clone();
             Arc::new(move |path, size| cached_thumbnail(&thumbs, path, size))
         };
-        let pool = Arc::new(crate::thumbpool::Pool::new(
+        let lookup: crate::thumbpool::Lookup = {
+            let thumbs = thumbs.clone();
+            Arc::new(move |path, size| looked_up_thumbnail(&thumbs, path, size))
+        };
+        let pool = Arc::new(crate::thumbpool::Pool::with_lookup(
             crate::thumbpool::default_threads(),
+            lookup,
             make,
             deliver.clone(),
         ));
@@ -2331,17 +2336,21 @@ fn cached_thumbnail(
     cached_thumbnail_with(cache, path, size, thumbnail)
 }
 
-/// [`cached_thumbnail`] with the making handed in, for the tests. The
-/// file is stat'd before it is hashed and again after the picture is
-/// made, and a picture made while the file was changing — its length
-/// or its time moved — is shown but not kept: it may be of a file
-/// half written, and kept under the key the finished file will have.
-fn cached_thumbnail_with(
+/// A file's thumbnail from the cache alone, `None` on a miss or with
+/// no cache: what the thumbnails' threads do while a develop holds
+/// them, since a hit costs a tenth of a millisecond.
+fn looked_up_thumbnail(cache: &ThumbCache, path: &std::path::Path, size: u32) -> Option<Thumb> {
+    thumb_lookup(cache, path, size).2
+}
+
+/// The file's stat and cache key, when the cache is on and the file
+/// hashes, and the entry kept under that key if any.
+#[allow(clippy::type_complexity)]
+fn thumb_lookup(
     cache: &ThumbCache,
     path: &std::path::Path,
     size: u32,
-    make: impl FnOnce(&std::path::Path, u32) -> anyhow::Result<(u32, u32, Vec<u8>)>,
-) -> anyhow::Result<(Thumb, bool)> {
+) -> (Option<(u64, u64)>, Option<(String, Tag)>, Option<Thumb>) {
     let on = cache
         .lock()
         .expect("thumbnail cache")
@@ -2355,15 +2364,30 @@ fn cached_thumbnail_with(
             None
         }
     });
-    if let Some((hash, tag)) = &key {
-        let hit = cache
+    let hit = key.as_ref().and_then(|(hash, tag)| {
+        cache
             .lock()
             .expect("thumbnail cache")
             .as_mut()
-            .and_then(|c| c.get(hash, size, *tag));
-        if let Some(thumb) = hit {
-            return Ok((thumb, true));
-        }
+            .and_then(|c| c.get(hash, size, *tag))
+    });
+    (before, key, hit)
+}
+
+/// [`cached_thumbnail`] with the making handed in, for the tests. The
+/// file is stat'd before it is hashed and again after the picture is
+/// made, and a picture made while the file was changing — its length
+/// or its time moved — is shown but not kept: it may be of a file
+/// half written, and kept under the key the finished file will have.
+fn cached_thumbnail_with(
+    cache: &ThumbCache,
+    path: &std::path::Path,
+    size: u32,
+    make: impl FnOnce(&std::path::Path, u32) -> anyhow::Result<(u32, u32, Vec<u8>)>,
+) -> anyhow::Result<(Thumb, bool)> {
+    let (before, key, hit) = thumb_lookup(cache, path, size);
+    if let Some(thumb) = hit {
+        return Ok((thumb, true));
     }
     let (width, height, rgb) = make(path, size)?;
     let thumb = Thumb { width, height, rgb };
