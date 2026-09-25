@@ -23,7 +23,6 @@ export component AdjustmentsSection inherits Section {
     in property <brush> hue-circle;
     in-out property <string> picking;
     callback pick-started(string);
-    callback skin-preset();
     in-out property <bool> show-mask;
     callback show-mask-toggled();
     in-out property <bool> collapsed-adjustments;
@@ -462,11 +461,6 @@ export component AdjustmentsSection inherits Section {
                         icon: @image-url("../icons/pipette.svg");
                         primary: root.picking == "Range";
                         clicked => { root.pick-started("Range"); }
-                    }
-                    PanelButton {
-                        text: "Skin";
-                        icon: @image-url("../icons/user-round.svg");
-                        clicked => { root.skin-preset(); }
                     }
                 }
                 EditSlider {

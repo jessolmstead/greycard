@@ -377,7 +377,6 @@ export component App inherits Window {
     in-out property <float> range-hue-feather: 25;
     in-out property <float> range-chroma: 0.02;
     in-out property <float> range-chroma-feather: 0.01;
-    callback skin-preset();
     in-out property <bool> show-mask: false;
     // Thrown by hand, as against set while a shape is placed.
     callback show-mask-toggled();
@@ -1419,7 +1418,6 @@ export component App inherits Window {
                             hue-circle: root.hue-circle;
                             picking <=> root.picking;
                             pick-started(a) => { root.pick-started(a); }
-                            skin-preset => { root.skin-preset(); }
                             show-mask <=> root.show-mask;
                             show-mask-toggled => { root.show-mask-toggled(); }
                             collapsed-adjustments <=> root.collapsed-adjustments;

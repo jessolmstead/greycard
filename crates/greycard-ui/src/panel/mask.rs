@@ -373,18 +373,6 @@ fn arm_range_pick(app: &App, kind: &str) {
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
-    // The Skin preset: the chosen color range's window at the skin
-    // hue the vibrance protects, all of it.
-    {
-        let app_weak = app.as_weak();
-        app.on_skin_preset(move || {
-            let Some(app) = app_weak.upgrade() else {
-                return;
-            };
-            show_range(&Shape::skin(), &app);
-            app.invoke_view_changed();
-        });
-    }
     // The mask toggle thrown by hand while a tool is in hand: that
     // choice stands once the tool is down.
     {
@@ -1253,13 +1241,14 @@ mod tests {
             panic!("{:?}", mask.components[0].shape)
         };
         assert_eq!(low, 0.5);
-        // The hue slider moves it; Skin brings it back.
+        // The hue slider moves it; its default (the skin hue) is the
+        // way back.
         app.set_range_hue(200.0);
         let Shape::Color { hue, .. } = read(&app).adjustments[0].mask.components[1].shape else {
             panic!()
         };
         assert_eq!(hue, 200.0);
-        app.invoke_skin_preset();
+        app.set_range_hue(greycard_edit::mask::SKIN_HUE);
         assert_eq!(
             read(&app).adjustments[0].mask.components[1].shape,
             Shape::skin()
@@ -1277,7 +1266,6 @@ mod tests {
             panic!()
         };
         assert_eq!((chroma, chroma_feather), (0.02, 0.02));
-        app.invoke_skin_preset();
         // Back to the luminance: its own numbers on the sliders.
         app.invoke_component_changed(0);
         assert_eq!(app.get_component_kind(), "Luminance");
