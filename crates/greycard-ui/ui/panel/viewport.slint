@@ -110,7 +110,10 @@ export component Viewport inherits Rectangle {
                 // While the camera's JPEG stands in for the
                 // develop there is nothing here to place a
                 // shape on or read a color off; the pan and
-                // the zoom still work, as in culling.
+                // the zoom still work, as in culling — a dropper
+                // left in hand over the placeholder does not
+                // stop a click here from zooming, since nothing
+                // was picked to keep it from a plain click.
                 self.picked-down = false;
                 if (root.placeholder) {
                 } else if (root.picking != "") {
@@ -149,7 +152,7 @@ export component Viewport inherits Rectangle {
                     root.pick-dragged(self.mouse-x, self.mouse-y);
                 } else if (root.placing != "" || root.retouch-mode != "") {
                     root.place-dragged(self.mouse-x, self.mouse-y);
-                } else if (self.dragged) {
+                } else if (self.dragged && !self.picked-down) {
                     root.pan(self.mouse-x - self.last-x, self.mouse-y - self.last-y);
                 }
                 self.last-x = self.mouse-x;
