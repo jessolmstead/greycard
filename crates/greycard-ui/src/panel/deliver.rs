@@ -1,9 +1,10 @@
 use crate::panel::assets::{offer_lenses_once, offer_model, show_lens, show_looks, show_profiles};
-use crate::panel::browser::{count_thumb, file_name, show_thumb, thumb_turns};
+use crate::panel::browser::{chosen_frames, count_thumb, file_name, show_thumb, thumb_turns};
 use crate::panel::cull::develop_landed;
 use crate::panel::edit::{current_turn, read_edit, schedule_save};
 use crate::panel::startup::remember_last_file;
 use crate::panel::viewport::picking_hint;
+use crate::queue;
 use crate::settings;
 use crate::sheet::{self, ExportPreset, Sheet};
 use crate::*;
@@ -496,6 +497,20 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 st.awaiting_turn = false;
             }
             if let Some(path) = st.export_then_quit.take() {
+                // `--export DIR`: the set, into the folder.
+                if st.export_into_folder {
+                    if let Err(e) = std::fs::create_dir_all(&path) {
+                        tracing::error!("export: {}: {e}", path.display());
+                        st.failed = true;
+                        let _ = slint::quit_event_loop();
+                        return;
+                    }
+                    let settings = read_export_settings(app);
+                    let on_exists = read_on_exists(app);
+                    let frames = set_frames(&st, app);
+                    start_set(&mut st, app, frames, Some(path), settings, on_exists);
+                    return;
+                }
                 app.set_busy(true);
                 // A batch run has no panel to read the warning off, so
                 // a look the edit names and the directory has not got
@@ -730,6 +745,64 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             tracing::error!("the lens profiles could not be fetched: {message}");
             app.set_status(format!("the lens profiles could not be fetched: {message}").into());
         }
+        Outcome::SetFrameStarted { set, index, name } => {
+            if exporting(&state.borrow(), &set) {
+                app.set_status(queue::progress_line(index, set.total, &name).into());
+            }
+        }
+        Outcome::SetFrameDone {
+            set,
+            index,
+            source,
+            done,
+        } => {
+            let at = format!("{} of {}", index + 1, set.total);
+            match done {
+                queue::Done::Exported {
+                    path,
+                    seconds,
+                    note,
+                } => {
+                    tracing::info!("exported {at}: {} in {seconds:.2} s", path.display());
+                    if let Some(note) = note {
+                        tracing::warn!("exported {}: {note}", path.display());
+                    }
+                }
+                queue::Done::Skipped { path } => {
+                    tracing::warn!("skipped {at}: {} is there already", path.display());
+                }
+                // One line for the frame; the rest of the set goes on.
+                queue::Done::Failed { message } => {
+                    tracing::error!("export {at} failed: {}: {message}", source.display());
+                }
+                queue::Done::Canceled => {}
+            }
+        }
+        Outcome::SetDone { set, tally } => {
+            let mut st = state.borrow_mut();
+            let line = queue::finished_line(
+                &tally,
+                set.total,
+                set.folder.as_deref(),
+                set.started.elapsed().as_secs_f64(),
+            );
+            tracing::info!("{line}");
+            if exporting(&st, &set) {
+                st.exporting = None;
+                app.set_export_running(false);
+                app.set_status(line.into());
+            }
+            // `--export DIR` is done: a frame that failed is a failure
+            // a script can see.
+            if st.batch && st.export_into_folder {
+                if !tally.failed.is_empty() {
+                    st.failed = true;
+                }
+                if st.screenshot.is_none() {
+                    let _ = slint::quit_event_loop();
+                }
+            }
+        }
         Outcome::ExportFailed { message } => {
             app.set_status(format!("export failed: {message}").into());
             app.set_busy(false);
@@ -745,7 +818,90 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
     }
 }
 
+/// The frames an export takes as a set, in file order: each file with
+/// its own edit, its turn and whether its blend is still to be seeded;
+/// the frame on screen under the panel's edit. One frame when the
+/// selection is one frame.
+pub(crate) fn set_frames(st: &State, app: &App) -> Vec<(PathBuf, Edit, u8, bool)> {
+    chosen_frames(st)
+        .into_iter()
+        .map(|f| {
+            let edit = if Some(f) == st.current {
+                read_edit(app, &st.edit, st.target)
+            } else {
+                st.sidecars[f].current.clone()
+            };
+            let seed = st.seed_blend.get(f).copied().unwrap_or(false);
+            (st.files[f].clone(), edit, st.sidecars[f].turn, seed)
+        })
+        .collect()
+}
+
+/// Whether `set` is the one the window is exporting, rather than one
+/// it has already let go of.
+fn exporting(st: &State, set: &Arc<queue::Set>) -> bool {
+    st.exporting.as_ref().is_some_and(|s| Arc::ptr_eq(s, set))
+}
+
+/// Send `frames` to the worker as a set, into `folder` or beside each
+/// file, and hold the set to cancel it.
+pub(crate) fn start_set(
+    st: &mut State,
+    app: &App,
+    frames: Vec<(PathBuf, Edit, u8, bool)>,
+    folder: Option<PathBuf>,
+    settings: export::Settings,
+    on_exists: export::OnExists,
+) {
+    let sources: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
+    let outs = queue::names(&sources, folder.as_deref(), settings.format);
+    let frames: Vec<queue::Frame> = frames
+        .into_iter()
+        .zip(outs)
+        .map(|((source, edit, turn, seed_blend), out)| queue::Frame {
+            source,
+            edit,
+            turn,
+            seed_blend,
+            out,
+        })
+        .collect();
+    let set = Arc::new(queue::Set::new(frames.len(), folder, settings, on_exists));
+    tracing::info!(
+        "exporting {} frames {}: {}",
+        frames.len(),
+        match &set.folder {
+            Some(f) => format!("to {}", f.display()),
+            None => "beside their files".to_string(),
+        },
+        set.settings.describe()
+    );
+    app.set_status(format!("exporting {} frames...", frames.len()).into());
+    app.set_export_running(true);
+    st.exporting = Some(set.clone());
+    WORKER.with(|w| {
+        if let Some(w) = &*w.borrow() {
+            w.send(Job::ExportSet { set, frames });
+        }
+    });
+}
+
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+    // Stop a set after the frame in hand.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_export_stop(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            if let Some(set) = &state.borrow().exporting
+                && !set.is_canceled()
+            {
+                set.cancel();
+                app.set_status("stopping the export after the frame in hand...".into());
+            }
+        });
+    }
     // The sheet's typed size, read the way the export reads it.
     app.on_custom_edge(|text| export::parse_edge(&text).map_or(0, |n| n as i32));
     // Any choice on the sheet: is it still the preset?
@@ -862,12 +1018,19 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let (raw, edit) = {
+            let (raw, edit, frames) = {
                 let st = state.borrow();
                 let Some(c) = st.current else {
                     return;
                 };
-                (st.files[c].clone(), read_edit(&app, &st.edit, st.target))
+                if st.exporting.is_some() {
+                    return;
+                }
+                (
+                    st.files[c].clone(),
+                    read_edit(&app, &st.edit, st.target),
+                    set_frames(&st, &app),
+                )
             };
             let settings = read_export_settings(&app);
             // A mark asked for with nothing to draw: say so and keep
@@ -878,6 +1041,40 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             }
             let on_exists = read_on_exists(&app);
+            // Two frames or more: the set, into a folder.
+            if frames.len() > 1 {
+                let start = raw.parent().map(Path::to_path_buf).unwrap_or_default();
+                let weak = app.as_weak();
+                app.set_status(
+                    format!("choosing where to export {} frames...", frames.len()).into(),
+                );
+                export::choose_folder("Export to a folder", start, move |chosen| {
+                    let _ = weak.upgrade_in_event_loop(move |app| {
+                        let folder = match chosen {
+                            Ok(Some(folder)) => Some(folder),
+                            Ok(None) => {
+                                app.set_status("export canceled".into());
+                                return;
+                            }
+                            // No chooser to ask: each beside its own
+                            // file, under a name no camera writes.
+                            Err(e) => {
+                                tracing::warn!(
+                                    "folder chooser: {e:#}; exporting each beside its file"
+                                );
+                                None
+                            }
+                        };
+                        // The window's state, from its own thread.
+                        let Some(state) = STATE.with(|s| s.borrow().clone()) else {
+                            return;
+                        };
+                        let mut st = state.borrow_mut();
+                        start_set(&mut st, &app, frames, folder, settings, on_exists);
+                    });
+                });
+                return;
+            }
             let suggested = raw.with_extension(settings.format.extension());
             let weak = app.as_weak();
             app.set_status("choosing where to export...".into());
@@ -1036,6 +1233,71 @@ mod tests {
         assert_eq!(on_disk.export_presets[0].name, "Web");
         assert_eq!(on_disk.export_preset, "");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A set is read as each frame's own edit, the one on screen as
+    /// the panel has it; a running set stops on Escape, and its end
+    /// says what came of it and lets the Export button go.
+    #[test]
+    fn a_set_takes_each_frame_s_edit_and_stops_on_escape() {
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(0);
+            st.picked = vec![0, 2];
+            st.sidecars[2].current.light.exposure = 1.0;
+            st.sidecars[2].turn = 3;
+            st.sidecars[1].current.light.exposure = -2.0;
+        }
+        app.set_exposure(0.5);
+        let frames = set_frames(&state.borrow(), &app);
+        let got: Vec<(String, f32, u8)> = frames
+            .iter()
+            .map(|(f, e, t, _)| (file_name(f), e.light.exposure, *t))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("IMG_0000.CR3".to_string(), 0.5, 0),
+                ("IMG_0002.CR3".to_string(), 1.0, 3),
+            ]
+        );
+
+        // Running: Escape stops it after the frame in hand.
+        let set = Arc::new(queue::Set::new(
+            2,
+            Some(PathBuf::from("/nowhere/out")),
+            export::Settings::default(),
+            export::OnExists::Increment,
+        ));
+        state.borrow_mut().exporting = Some(set.clone());
+        app.set_export_running(true);
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(set.is_canceled());
+        assert!(
+            app.get_status().contains("stopping"),
+            "{}",
+            app.get_status()
+        );
+        // The set collapses on the next Escape, not this one.
+        assert_eq!(state.borrow().picked, vec![0, 2]);
+
+        // Its end: the line, and the button is Export again.
+        let tally = queue::Tally {
+            exported: 1,
+            canceled: 1,
+            ..queue::Tally::default()
+        };
+        deliver(&app, Outcome::SetDone { set, tally });
+        assert!(!app.get_export_running());
+        assert!(state.borrow().exporting.is_none());
+        assert!(
+            app.get_status()
+                .starts_with("export stopped: 1 of 2 exported to"),
+            "{}",
+            app.get_status()
+        );
     }
 
     #[test]

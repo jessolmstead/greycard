@@ -271,6 +271,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         panel_scroll: cli.panel_scroll,
         snapshot_shown: cli.sheet.or(cli.tool),
         export_then_quit: cli.export.clone(),
+        export_into_folder: cli.export.as_deref().is_some_and(names_folder),
         export_presets: remembered.export_presets.clone(),
         settings_file: if cli.snapshot.is_some() || cli.screenshot.is_some() || cli.export.is_some()
         {
@@ -1225,6 +1226,17 @@ pub(crate) fn opening_sheet(
         s.on_exists = policy.name().into();
     }
     Ok((s, preset))
+}
+
+/// Whether `--export` names a folder for the set rather than a file
+/// for one frame: a folder that is there, or a path that ends in a
+/// separator, which asks for one.
+pub(crate) fn names_folder(path: &Path) -> bool {
+    path.is_dir()
+        || path
+            .as_os_str()
+            .to_string_lossy()
+            .ends_with(std::path::is_separator)
 }
 
 /// The scope to open on: the command line's, else the last run's.

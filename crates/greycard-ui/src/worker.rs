@@ -125,6 +125,19 @@ pub enum Job {
         settings: crate::export::Settings,
         on_exists: crate::export::OnExists,
     },
+    /// Write a set of frames, each under its own edit and all under
+    /// the set's settings: queued as one export a frame, so a develop
+    /// asked for meanwhile goes first between any two of them.
+    ExportSet {
+        set: Arc<crate::queue::Set>,
+        frames: Vec<crate::queue::Frame>,
+    },
+    /// Frame `index` of a set, as the queue holds it.
+    ExportFrame {
+        set: Arc<crate::queue::Set>,
+        index: usize,
+        frame: crate::queue::Frame,
+    },
     /// A learned mask's raster for `shape`, the component `key`.
     Mask {
         key: Key,
@@ -320,6 +333,25 @@ pub enum Outcome {
     },
     ExportFailed {
         message: String,
+    },
+    /// Frame `index` of a set is begun; `name` is the name it is
+    /// asked to be written under.
+    SetFrameStarted {
+        set: Arc<crate::queue::Set>,
+        index: usize,
+        name: String,
+    },
+    /// What came of frame `index` of a set.
+    SetFrameDone {
+        set: Arc<crate::queue::Set>,
+        index: usize,
+        source: PathBuf,
+        done: crate::queue::Done,
+    },
+    /// The set's last frame is done with, whichever way.
+    SetDone {
+        set: Arc<crate::queue::Set>,
+        tally: crate::queue::Tally,
     },
     /// A learned mask made (or found made) for `shape` at `key`.
     Mask {
@@ -525,7 +557,16 @@ impl Worker {
                 q.wanted = None;
                 q.thumbnails.push_back((index, path));
             }
-            job @ Job::Export { .. } => q.exports.push_back(job),
+            job @ (Job::Export { .. } | Job::ExportFrame { .. }) => q.exports.push_back(job),
+            Job::ExportSet { set, frames } => {
+                for (index, frame) in frames.into_iter().enumerate() {
+                    q.exports.push_back(Job::ExportFrame {
+                        set: set.clone(),
+                        index,
+                        frame,
+                    });
+                }
+            }
             Job::Mask { key, shape } => {
                 q.masks.retain(|(k, _)| *k != key);
                 q.masks.push_back((key, shape));
@@ -690,6 +731,11 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
     let mut learned: Option<LearnedBase> = None;
     // The engine's GPU ops, once the window has a device to give.
     let mut gpu: Option<greycard_gpu::Context> = None;
+    // The learned models for a set's frames other than the open one,
+    // made on the first such frame and dropped with the set: what the
+    // open file's own `ai` holds (its masks, its fills) is for it, and
+    // a set run past it must not take that away.
+    let mut set_ai: Option<Ai> = None;
     loop {
         let mut device = None;
         let job = {
@@ -739,6 +785,105 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
             }
         }
         if matches!(job, Job::Gpu) {
+            continue;
+        }
+        // A frame of a set: written, counted, and the set said to be
+        // done after its last; a panic in it is that frame's failure.
+        if let Job::ExportFrame { set, index, frame } = job {
+            let mut panicked = false;
+            let (done, finished) = crate::queue::step(&set, index, &frame.source, || {
+                deliver(Outcome::SetFrameStarted {
+                    set: set.clone(),
+                    index,
+                    name: file_label(&frame.out),
+                });
+                let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    let resolved = set.on_exists.resolve(&frame.out);
+                    let note = resolved.note();
+                    let Some(path) = resolved.path().map(std::path::Path::to_path_buf) else {
+                        return crate::queue::Done::Skipped {
+                            path: frame.out.clone(),
+                        };
+                    };
+                    let start = Instant::now();
+                    // The frame on screen is the open file: its picture
+                    // is the last develop's when that was of this edit.
+                    // Any other is opened and developed on the side,
+                    // and the open file's state is left as it was.
+                    let written = if opened_path.as_deref() == Some(frame.source.as_path()) {
+                        open_picture(
+                            &frame.edit,
+                            turn,
+                            input.as_ref(),
+                            &mut last,
+                            &mut base,
+                            &mut learned,
+                            &mut ai,
+                            cache.as_ref(),
+                            lenses.as_deref(),
+                            &deliver,
+                        )
+                        .and_then(|image| {
+                            write_export(
+                                image,
+                                &frame.edit,
+                                base.as_ref(),
+                                &mut ai,
+                                opened_path.as_deref(),
+                                metadata.as_deref(),
+                                &set.settings,
+                                &path,
+                            )
+                        })
+                    } else {
+                        export_other(
+                            &frame,
+                            set_ai.get_or_insert_with(Ai::new),
+                            cache.as_ref(),
+                            lenses.as_deref(),
+                            &deliver,
+                            &set.settings,
+                            &path,
+                        )
+                    };
+                    match written {
+                        Ok(()) => crate::queue::Done::Exported {
+                            path,
+                            seconds: start.elapsed().as_secs_f64(),
+                            note,
+                        },
+                        Err(message) => crate::queue::Done::Failed { message },
+                    }
+                }));
+                held.unwrap_or_else(|payload| {
+                    panicked = true;
+                    crate::queue::Done::Failed {
+                        message: format!(
+                            "the worker panicked: {}",
+                            panic_message(payload.as_ref())
+                        ),
+                    }
+                })
+            });
+            if panicked {
+                discard_base(&mut base, gpu.as_ref());
+                learned = None;
+                last = None;
+                ai.forget(opened_path.clone());
+                set_ai = None;
+            }
+            deliver(Outcome::SetFrameDone {
+                set: set.clone(),
+                index,
+                source: frame.source,
+                done,
+            });
+            if finished {
+                // The set's own models go with it.
+                set_ai = None;
+                let tally = set.tally();
+                deliver(Outcome::SetDone { set, tally });
+            }
             continue;
         }
         let blame = Blame::of(&job);
@@ -871,109 +1016,38 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
                 };
                 // The turn is the open file's, which the export
                 // never sets: it develops what is on the screen.
-                let image = match &last {
-                    Some((e, t, image)) if *t == turn && e.same_develop(&edit) => {
-                        Some(image.clone())
-                    }
-                    _ => match &input {
-                        // The export's picture is the reference's,
-                        // on the CPU, whatever the viewport ran on.
-                        Some(f) => match develop_job(
-                            f,
-                            &edit,
-                            turn,
-                            0,
-                            &mut base,
-                            &mut learned,
-                            &mut ai,
-                            cache.as_ref(),
-                            lenses.as_deref(),
-                            &mut None,
-                            &deliver,
-                        ) {
-                            (_, Some(image)) => {
-                                last = Some((edit.clone(), turn, image.clone()));
-                                Some(image)
-                            }
-                            (Outcome::Failed { message, .. }, None) => {
-                                deliver(Outcome::ExportFailed { message });
-                                None
-                            }
-                            _ => None,
-                        },
-                        None => None,
-                    },
-                };
-                if let Some(image) = image {
-                    let source = (image.width as u32, image.height as u32);
-                    // The learned masks, made now if they are not yet.
-                    let mut learned = std::collections::HashMap::new();
-                    if let Some(b) = &base {
-                        for a in &edit.adjustments {
-                            for (i, c) in a.mask.live() {
-                                if c.shape.is_learned()
-                                    && let Ok(made) = ai.raster(
-                                        b.stamp,
-                                        &b.image,
-                                        &b.edit,
-                                        b.source,
-                                        (a.id, i),
-                                        &c.shape,
-                                    )
-                                {
-                                    learned.insert((a.id, i), made.raster);
-                                }
-                            }
-                        }
-                    }
-                    let framed;
-                    let image: &WorkingImage = if edit.geometry.is_identity() {
-                        &image
-                    } else {
-                        framed = crate::geometry::apply(&image, &edit.geometry);
-                        &framed
-                    };
-                    let clip_level = base.as_ref().map(|b| b.clip_level).unwrap_or(f32::INFINITY);
-                    let mut rendered = crate::export::render(
+                let written = open_picture(
+                    &edit,
+                    turn,
+                    input.as_ref(),
+                    &mut last,
+                    &mut base,
+                    &mut learned,
+                    &mut ai,
+                    cache.as_ref(),
+                    lenses.as_deref(),
+                    &deliver,
+                )
+                .and_then(|image| {
+                    write_export(
                         image,
                         &edit,
-                        source,
+                        base.as_ref(),
+                        &mut ai,
+                        opened_path.as_deref(),
+                        metadata.as_deref(),
                         &settings,
-                        &learned,
-                        clip_level,
-                        base.as_ref().map(|b| &*b.guide),
-                        base.as_ref().map(|b| b.source).unwrap_or_default(),
-                    );
-                    let origin = crate::export::Origin {
-                        source_name: opened_path
-                            .as_ref()
-                            .and_then(|s| s.file_name())
-                            .map(|n| n.to_string_lossy().into_owned()),
-                        edit: Some(edit.to_json()),
-                    };
-                    // The mark, on the export alone; one that cannot be
-                    // drawn fails the export rather than let an unmarked
-                    // picture out.
-                    let result = crate::export::mark(&mut rendered, &settings)
-                        .and_then(|()| {
-                            crate::export::write(
-                                &rendered,
-                                &settings,
-                                &path,
-                                metadata.as_deref(),
-                                &origin,
-                            )
-                        })
-                        .map_err(|e| format!("{e:#}"));
-                    deliver(match result {
-                        Ok(()) => Outcome::Exported {
-                            path,
-                            seconds: start.elapsed().as_secs_f64(),
-                            note,
-                        },
-                        Err(message) => Outcome::ExportFailed { message },
-                    });
-                }
+                        &path,
+                    )
+                });
+                deliver(match written {
+                    Ok(()) => Outcome::Exported {
+                        path,
+                        seconds: start.elapsed().as_secs_f64(),
+                        note,
+                    },
+                    Err(message) => Outcome::ExportFailed { message },
+                });
             }
             Job::Mask { key, shape } => {
                 let outcome = match &base {
@@ -994,8 +1068,14 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
                 };
                 deliver(outcome);
             }
-            Job::Fetch { .. } | Job::FetchLenses | Job::Gpu => {
-                unreachable!("fetches run on their own thread, and the device is taken above")
+            Job::Fetch { .. }
+            | Job::FetchLenses
+            | Job::Gpu
+            | Job::ExportSet { .. }
+            | Job::ExportFrame { .. } => {
+                unreachable!(
+                    "fetches run on their own thread; the device and a set's frames are taken above"
+                )
             }
             Job::Thumbnail { index, path } => {
                 let size = lock
@@ -1038,6 +1118,163 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
     }
 }
 
+/// A path's file name, for a status line.
+fn file_label(path: &std::path::Path) -> String {
+    path.file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string())
+}
+
+/// The open file's picture under `edit` at `turn`: the last develop's
+/// when it was of the same develop and turn, else developed afresh.
+/// The export's picture is the reference's, on the CPU, whatever the
+/// viewport ran on.
+#[allow(clippy::too_many_arguments)]
+fn open_picture(
+    edit: &Edit,
+    turn: u8,
+    input: Option<&Input>,
+    last: &mut Option<(Edit, u8, Arc<WorkingImage>)>,
+    base: &mut Option<Base>,
+    learned: &mut Option<LearnedBase>,
+    ai: &mut Ai,
+    cache: Option<&greycard_ai::DenoiseCache>,
+    lenses: Option<&greycard_lens::Database>,
+    deliver: &Deliver,
+) -> Result<Arc<WorkingImage>, String> {
+    if let Some((e, t, image)) = &*last
+        && *t == turn
+        && e.same_develop(edit)
+    {
+        return Ok(image.clone());
+    }
+    let Some(f) = input else {
+        return Err("no file is open".into());
+    };
+    match develop_job(
+        f, edit, turn, 0, base, learned, ai, cache, lenses, &mut None, deliver,
+    ) {
+        (_, Some(image)) => {
+            *last = Some((edit.clone(), turn, image.clone()));
+            Ok(image)
+        }
+        (Outcome::Failed { message, .. }, None) => Err(message),
+        _ => Err("the develop made no picture".into()),
+    }
+}
+
+/// A frame of a set that is not the open file: opened and developed
+/// here under its own edit, with a base and a learned pair of its
+/// own so the open file's are there as they were for the next
+/// develop, then written to `path`.
+fn export_other(
+    frame: &crate::queue::Frame,
+    ai: &mut Ai,
+    cache: Option<&greycard_ai::DenoiseCache>,
+    lenses: Option<&greycard_lens::Database>,
+    deliver: &Deliver,
+    settings: &crate::export::Settings,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let (input, metadata) = timed_open(&frame.source).map_err(|e| format!("{e:#}"))?;
+    let mut edit = frame.edit.clone();
+    if frame.seed_blend
+        && let Input::Raw(f) = &input
+    {
+        edit.noise.learned_strength = Noise::blend_for_iso(f.shot.iso);
+    }
+    ai.forget(Some(frame.source.clone()));
+    let (mut base, mut learned) = (None, None);
+    let image = match develop_job(
+        &input,
+        &edit,
+        frame.turn % 4,
+        0,
+        &mut base,
+        &mut learned,
+        ai,
+        cache,
+        lenses,
+        &mut None,
+        deliver,
+    ) {
+        (_, Some(image)) => image,
+        (Outcome::Failed { message, .. }, None) => return Err(message),
+        _ => return Err("the develop made no picture".into()),
+    };
+    write_export(
+        image,
+        &edit,
+        base.as_ref(),
+        ai,
+        Some(&frame.source),
+        Some(&metadata),
+        settings,
+        path,
+    )
+}
+
+/// Finish `image`, the develop `base` was made for, under `edit` and
+/// the sheet's `settings`, and write it to `path`: the learned masks
+/// made now if they are not yet, the edit's geometry, the finish, the
+/// mark, and the file with the source's EXIF.
+#[allow(clippy::too_many_arguments)]
+fn write_export(
+    image: Arc<WorkingImage>,
+    edit: &Edit,
+    base: Option<&Base>,
+    ai: &mut Ai,
+    source_path: Option<&std::path::Path>,
+    metadata: Option<&greycard_core::decode::RawMetadata>,
+    settings: &crate::export::Settings,
+    path: &std::path::Path,
+) -> Result<(), String> {
+    let source = (image.width as u32, image.height as u32);
+    // The learned masks, made now if they are not yet.
+    let mut rasters = std::collections::HashMap::new();
+    if let Some(b) = base {
+        for a in &edit.adjustments {
+            for (i, c) in a.mask.live() {
+                if c.shape.is_learned()
+                    && let Ok(made) =
+                        ai.raster(b.stamp, &b.image, &b.edit, b.source, (a.id, i), &c.shape)
+                {
+                    rasters.insert((a.id, i), made.raster);
+                }
+            }
+        }
+    }
+    let framed;
+    let image: &WorkingImage = if edit.geometry.is_identity() {
+        &image
+    } else {
+        framed = crate::geometry::apply(&image, &edit.geometry);
+        &framed
+    };
+    let clip_level = base.map(|b| b.clip_level).unwrap_or(f32::INFINITY);
+    let mut rendered = crate::export::render(
+        image,
+        edit,
+        source,
+        settings,
+        &rasters,
+        clip_level,
+        base.map(|b| &*b.guide),
+        base.map(|b| b.source).unwrap_or_default(),
+    );
+    let origin = crate::export::Origin {
+        source_name: source_path
+            .and_then(|s| s.file_name())
+            .map(|n| n.to_string_lossy().into_owned()),
+        edit: Some(edit.to_json()),
+    };
+    // The mark, on the export alone; one that cannot be drawn fails
+    // the export rather than let an unmarked picture out.
+    crate::export::mark(&mut rendered, settings)
+        .and_then(|()| crate::export::write(&rendered, settings, path, metadata, &origin))
+        .map_err(|e| format!("{e:#}"))
+}
+
 /// Who a job's panic is reported to: the outcome the UI is waiting
 /// on for that job, when it is waiting on one.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1055,6 +1292,9 @@ impl Blame {
                 Blame::Develop(*generation)
             }
             Job::Export { .. } => Blame::Export,
+            // A frame of a set is caught where it runs, and counted
+            // there as the set's failure.
+            Job::ExportSet { .. } | Job::ExportFrame { .. } => Blame::Nobody,
             Job::Mask { key, .. } => Blame::Mask(*key),
             Job::Thumbnail { .. } | Job::Fetch { .. } | Job::FetchLenses | Job::Gpu => {
                 Blame::Nobody
@@ -2216,6 +2456,121 @@ mod tests {
         let order: Vec<usize> = pending.iter().map(|(i, _)| *i).collect();
         // The range in file order, then outward from its middle, 5.
         assert_eq!(order, vec![4, 5, 6, 3, 7, 2, 8, 1, 9, 0]);
+    }
+
+    /// Run a set of `names` (files of junk, which nothing decodes)
+    /// through a worker of its own, cancelling the set as frame
+    /// `cancel_at` is begun; what the worker said, in order, in short.
+    fn run_fake_set(tag: &str, names: &[&str], cancel_at: Option<usize>) -> Vec<String> {
+        let dir = thumb_scratch(tag);
+        let frames: Vec<crate::queue::Frame> = names
+            .iter()
+            .map(|n| {
+                let source = dir.join(n);
+                std::fs::write(&source, vec![0x5au8; 4096]).unwrap();
+                crate::queue::Frame {
+                    source: source.clone(),
+                    edit: Edit::default(),
+                    turn: 0,
+                    seed_blend: false,
+                    out: dir.join("out").join(format!("{n}.jpg")),
+                }
+            })
+            .collect();
+        let set = Arc::new(crate::queue::Set::new(
+            frames.len(),
+            Some(dir.join("out")),
+            crate::export::Settings::default(),
+            crate::export::OnExists::Increment,
+        ));
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = Mutex::new(tx);
+        let worker = Worker::new(move |o| {
+            let line = match o {
+                Outcome::SetFrameStarted { set, index, name } => {
+                    // Pressed while this frame is in hand: the deliver
+                    // runs on the worker's thread, before the work.
+                    if Some(index) == cancel_at {
+                        set.cancel();
+                    }
+                    format!("begin {index} {name}")
+                }
+                Outcome::SetFrameDone { index, done, .. } => match done {
+                    crate::queue::Done::Failed { message } => {
+                        assert!(!message.is_empty());
+                        format!("failed {index}")
+                    }
+                    crate::queue::Done::Canceled => format!("canceled {index}"),
+                    other => format!("{other:?} {index}"),
+                },
+                Outcome::SetDone { tally, .. } => format!(
+                    "done {} exported, {} failed, {} canceled",
+                    tally.exported,
+                    tally.failed.len(),
+                    tally.canceled
+                ),
+                _ => return,
+            };
+            tx.lock().unwrap().send(line).unwrap();
+        });
+        worker.send(Job::ExportSet {
+            set: set.clone(),
+            frames,
+        });
+        let mut said = Vec::new();
+        loop {
+            let line = rx
+                .recv_timeout(std::time::Duration::from_secs(30))
+                .expect("the worker answers");
+            let done = line.starts_with("done");
+            said.push(line);
+            if done {
+                break;
+            }
+        }
+        worker.stop();
+        assert!(!dir.join("out").exists(), "nothing was written");
+        std::fs::remove_dir_all(&dir).unwrap();
+        said
+    }
+
+    /// A set whose every frame fails: each is begun in order and is
+    /// one failure, the rest of the set goes on regardless, and the
+    /// set is said done once, after its last, with the count.
+    #[test]
+    fn a_set_runs_in_order_and_counts_its_failures() {
+        let said = run_fake_set("setfail", &["A.CR3", "B.CR3", "C.CR3"], None);
+        assert_eq!(
+            said,
+            vec![
+                "begin 0 A.CR3.jpg",
+                "failed 0",
+                "begin 1 B.CR3.jpg",
+                "failed 1",
+                "begin 2 C.CR3.jpg",
+                "failed 2",
+                "done 0 exported, 3 failed, 0 canceled",
+            ]
+        );
+    }
+
+    /// Cancelled while the second of four is in hand: that one is
+    /// finished, the last two are passed over without being begun.
+    #[test]
+    fn a_cancelled_set_finishes_the_frame_in_hand_and_stops() {
+        let said = run_fake_set("setcancel", &["A.CR3", "B.CR3", "C.CR3", "D.CR3"], Some(1));
+        assert_eq!(
+            said,
+            vec![
+                "begin 0 A.CR3.jpg",
+                "failed 0",
+                "begin 1 B.CR3.jpg",
+                "failed 1",
+                "canceled 2",
+                "canceled 3",
+                "done 0 exported, 2 failed, 2 canceled",
+            ]
+        );
     }
 
     #[test]

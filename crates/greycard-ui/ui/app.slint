@@ -809,6 +809,10 @@ export component App inherits Window {
     callback undo();
     callback redo();
     callback export();
+    /// A set is being exported, a frame at a time; Stop (or Escape)
+    /// finishes the frame in hand and stops.
+    in property <bool> export-running: false;
+    callback export-stop();
     // Retouching: the tool in hand ("", "Heal" or "Clone"), the next
     // or chosen patch's size (of the picture's width), feather and
     // opacity, the patches by name, the chosen one, and its pins on the
@@ -984,6 +988,12 @@ export component App inherits Window {
             // Escape means anything else: leaving the grid or the
             // culling mode with the set still held would leave it
             // chosen where it cannot be seen.
+            // A set being exported stops before Escape means anything
+            // else: the sheet is gone by then, and this is its cancel.
+            if (e.text == Key.Escape && root.export-running && !root.sheet-open()) {
+                root.export-stop();
+                return accept;
+            }
             if (e.text == Key.Escape && root.set-count > 1 && !root.sheet-open()) {
                 root.set-collapsed();
                 return accept;
@@ -1041,7 +1051,7 @@ export component App inherits Window {
                 return accept;
             }
             if (e.modifiers.control && e.modifiers.shift && (e.text == "e" || e.text == "E")) {
-                if (!root.export-open && !root.busy && root.selected >= 0 && !root.culling) { root.export-open = true; }
+                if (!root.export-open && !root.busy && !root.export-running && root.selected >= 0 && !root.culling) { root.export-open = true; }
                 return accept;
             }
             // Ctrl+, is where a desktop application keeps its
@@ -1276,7 +1286,7 @@ export component App inherits Window {
                 placeholder-status: root.placeholder-status;
                 canvas-choice <=> root.canvas-choice;
                 canvas-colors: root.canvas-colors;
-                busy: root.busy;
+                busy: root.busy || root.export-running;
                 retouch-mode <=> root.retouch-mode;
                 patch-size <=> root.patch-size;
                 patch-feather <=> root.patch-feather;
@@ -1773,11 +1783,13 @@ export component App inherits Window {
                             clicked => { root.reset-view(); }
                         }
                         PanelButton {
-                            text: "Export...";
+                            text: root.export-running ? "Stop export" : "Export...";
                             icon: @image-url("icons/image-down.svg");
-                            primary: true;
-                            enabled: !root.busy && root.selected >= 0 && !root.culling;
-                            clicked => { root.export-open = true; }
+                            primary: !root.export-running;
+                            enabled: root.export-running || (!root.busy && root.selected >= 0 && !root.culling);
+                            clicked => {
+                                if (root.export-running) { root.export-stop(); } else { root.export-open = true; }
+                            }
                         }
                     }
                 }
@@ -1890,6 +1902,7 @@ export component App inherits Window {
     // The export sheet, over everything, until a choice is made.
     if root.export-open: ExportSheet {
         file-name: root.file-name;
+        set-count: root.set-count;
         export => { root.export(); }
         export-open <=> root.export-open;
         export-format <=> root.export-format;

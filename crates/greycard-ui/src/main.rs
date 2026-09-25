@@ -26,6 +26,7 @@ mod log;
 mod outline;
 mod panel;
 mod placeholder;
+mod queue;
 mod render;
 mod report;
 mod scope;
@@ -159,7 +160,10 @@ struct Cli {
     /// RUST_LOG, when set, decides instead
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
-    /// Export the first file under its edit to this path, then quit
+    /// Export the first file under its edit to this path, then quit.
+    /// A folder (one that is there, or a path ending in a separator)
+    /// takes the selection instead, the first file and the --also
+    /// rows, each frame under its own edit and its own name
     #[arg(long)]
     export: Option<PathBuf>,
     /// Fill the export sheet from this export preset, by name, for
@@ -275,8 +279,9 @@ struct Cli {
     turn: Option<i32>,
     /// Put these browser rows (from 0, comma-separated) in the
     /// selection beside the frame opened, as Ctrl+clicks would, for
-    /// a snapshot of a set or `--sheet sync`
-    #[arg(long, value_name = "ROWS", value_delimiter = ',', hide = true)]
+    /// a snapshot of a set, `--sheet sync`, or `--export DIR` over
+    /// the set
+    #[arg(long, value_name = "ROWS", value_delimiter = ',')]
     also: Vec<usize>,
     /// In culling mode, open the move-rejects sheet once the first
     /// picture shows, for a snapshot of it (implies --cull)
@@ -556,6 +561,12 @@ pub(crate) struct State {
     pub(crate) encoded_lut_for: Option<display::MonitorProfile>,
     /// An export to run once the first develop lands, then quit.
     pub(crate) export_then_quit: Option<PathBuf>,
+    /// `--export` named a folder: the set goes into it, each frame
+    /// under its own name, rather than the one frame to a file.
+    pub(crate) export_into_folder: bool,
+    /// A set being exported, until its last frame is done with: held
+    /// to cancel it and to know its outcomes from a stale set's.
+    pub(crate) exporting: Option<Arc<queue::Set>>,
     /// The export presets, as the settings file keeps them.
     pub(crate) export_presets: Vec<sheet::ExportPreset>,
     /// Where a preset saved, chosen or deleted is written at once;
@@ -725,6 +736,8 @@ impl State {
             lut_for: None,
             encoded_lut_for: None,
             export_then_quit: None,
+            export_into_folder: false,
+            exporting: None,
             export_presets: Vec::new(),
             settings_file: None,
             presets: Vec::new(),

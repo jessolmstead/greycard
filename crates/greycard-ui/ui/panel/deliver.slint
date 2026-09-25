@@ -40,6 +40,9 @@ component PositionGrid inherits Rectangle {
 
 export component ExportSheet inherits Rectangle {
     in property <string> file-name;
+    /// The frames selected: two or more are exported as a set, into a
+    /// folder, each under its own edit.
+    in property <int> set-count: 1;
     callback export();
     in-out property <bool> export-open;
     in-out property <string> export-format;
@@ -114,13 +117,16 @@ export component ExportSheet inherits Rectangle {
                 padding-bottom: Theme.space-3;
                 spacing: Theme.space-2;
                 Text {
-                    text: "Export";
+                    text: root.set-count > 1 ? "Export " + root.set-count + " frames" : "Export";
                     font-size: Theme.font-lg;
                     font-weight: Theme.weight-medium;
                     color: Theme.text;
                 }
                 Text {
-                    text: root.file-name;
+                    text: root.set-count > 1
+                        ? root.file-name + " and " + (root.set-count - 1) + (root.set-count == 2 ? " other" : " others") + ", each under its own edit, one at a time"
+                        : root.file-name;
+                    wrap: word-wrap;
                     font-size: Theme.font-sm;
                     color: Theme.text-secondary;
                 }
@@ -351,7 +357,7 @@ export component ExportSheet inherits Rectangle {
                     clicked => { root.export-open = false; }
                 }
                 PanelButton {
-                    text: "Choose file...";
+                    text: root.set-count > 1 ? "Export " + root.set-count + " frames..." : "Choose file...";
                     icon: @image-url("../icons/image-down.svg");
                     primary: true;
                     clicked => { root.export-open = false; root.export(); }
