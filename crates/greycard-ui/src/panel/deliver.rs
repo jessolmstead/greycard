@@ -786,7 +786,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 set.folder.as_deref(),
                 set.started.elapsed().as_secs_f64(),
             );
-            tracing::info!("{line}");
+            // Said on the terminal without -v when not all went.
+            if tally.failed.is_empty() && tally.canceled == 0 {
+                tracing::info!("{line}");
+            } else {
+                tracing::warn!("{line}");
+            }
             if exporting(&st, &set) {
                 st.exporting = None;
                 app.set_export_running(false);
