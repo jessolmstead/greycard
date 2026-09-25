@@ -83,6 +83,11 @@ pub struct Settings {
     /// The import sheet as it was last started: written when an
     /// import begins, not gathered when the window closes.
     pub import: ImportChoices,
+    /// The browser's filter as it was left: its chips, the rows'
+    /// reading and the text, put back on the next launch unless the
+    /// command line names one. Clear empties it, and an empty one is
+    /// what is kept then.
+    pub filter: crate::filter::Saved,
 }
 
 /// What the import sheet keeps for next time. The source is not
@@ -135,6 +140,7 @@ impl Default for Settings {
             last_file: String::new(),
             thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
             import: ImportChoices::default(),
+            filter: crate::filter::Saved::default(),
         }
     }
 }
@@ -265,6 +271,16 @@ mod tests {
                 name: "{date}-{seq}".into(),
                 backup: "/mnt/backup".into(),
                 preset: "Faded film".into(),
+            },
+            filter: crate::filter::Saved {
+                stars: 3,
+                exact: true,
+                flags: vec![greycard_edit::meta::Flag::Pick],
+                labels: vec![greycard_edit::meta::Label::Red],
+                text: "harbor iso>=3200".into(),
+                facets: [("camera".to_string(), vec!["Canon EOS R6m2".to_string()])]
+                    .into_iter()
+                    .collect(),
             },
         };
         let text = serde_json::to_string(&mine).unwrap();

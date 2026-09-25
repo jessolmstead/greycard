@@ -977,18 +977,28 @@ impl State {
 /// Row ids as the JSON array `json_each` takes.
 /// The `WHERE` clause for "under one of these roots", over the folder
 /// column's bytes, and its parameters. A root is compared canonical,
-/// as the index stores folders.
+/// as the index stores folders. "Starts with the root and a
+/// separator" is asked as a range, from that prefix up to the prefix
+/// with its last byte one higher, which the folder's index answers
+/// without reading every row; BLOBs compare as `memcmp` does, so the
+/// range holds exactly the folders that start with the prefix. The
+/// separator's last byte is `/` or `\`'s low byte or the zero after
+/// it in UTF-16, never 0xFF, so it always has a next.
 fn under_roots(roots: &[PathBuf]) -> (String, Vec<rusqlite::types::Value>) {
     use rusqlite::types::Value;
     let mut clauses = Vec::with_capacity(roots.len());
-    let mut params = Vec::with_capacity(roots.len() * 4);
+    let mut params = Vec::with_capacity(roots.len() * 3);
     for root in roots {
         let bytes = path_bytes(&nearest_canonical(root));
         let prefix = index::under_prefix(&bytes);
-        clauses.push("folder = ? OR substr(folder, 1, ?) = ?");
+        let mut past = prefix.clone();
+        if let Some(last) = past.last_mut() {
+            *last = last.saturating_add(1);
+        }
+        clauses.push("folder = ? OR (folder >= ? AND folder < ?)");
         params.push(Value::Blob(bytes));
-        params.push(Value::Integer(prefix.len() as i64));
         params.push(Value::Blob(prefix));
+        params.push(Value::Blob(past));
     }
     (clauses.join(" OR "), params)
 }

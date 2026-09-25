@@ -2,9 +2,10 @@
 // with the filter, and the cells riding on one scrolled offset.
 
 import { Theme } from "../theme.slint";
-import { Thumb, FilterChip, FacetRow } from "../structs.slint";
+import { Thumb, FilterChip, FacetRow, RootChip } from "../structs.slint";
 import { PanelButton, ThumbBadges } from "../controls.slint";
 import { FilterBar } from "filter.slint";
+import { RootsRow } from "roots.slint";
 
 export component GridSheet inherits Rectangle {
     in property <[Thumb]> thumbs;
@@ -80,6 +81,16 @@ export component GridSheet inherits Rectangle {
     callback import-asked();
     callback import-stop();
     callback focus-keys();
+    // The library's roots: see `RootsRow`.
+    in property <[RootChip]> library-roots;
+    in property <bool> library-all-on;
+    in property <int> library-all-count;
+    in property <bool> library-can-add-open;
+    in property <string> library-note;
+    callback library-root-picked(string);
+    callback library-root-removed(string);
+    callback library-root-add();
+    callback library-root-add-open();
 
     background: Theme.sheet;
     // Nothing may fall through to the viewport behind, the wheel
@@ -95,16 +106,17 @@ export component GridSheet inherits Rectangle {
         // words being looked for do not fit on one at a window
         // narrow enough to work on.
         Rectangle {
-            // Two rows of controls and two rows of chips, the
-            // filter bar's meta chips and its facets. Spelled out
+            // Two rows of controls and three rows of chips: the
+            // library's roots, the filter bar's meta chips and its
+            // facets. Spelled out
             // rather than asked of the layout: a header whose
             // height settles a frame late re-flows the sheet twice
             // on the way in, and the second re-flow is a folder's
             // worth of thumbnails asked for again. The facets' row
             // is there before the index has anything to put in it
             // for the same reason.
-            height: 2 * Theme.control-height + 2 * (Theme.control-height - 4px)
-                + 5 * Theme.space-2 + 1px;
+            height: 2 * Theme.control-height + 3 * (Theme.control-height - 4px)
+                + 6 * Theme.space-2 + 1px;
             background: Theme.surface;
             Rectangle { y: parent.height - 1px; height: 1px; width: 100%; background: Theme.border; }
             header := VerticalLayout {
@@ -172,6 +184,17 @@ export component GridSheet inherits Rectangle {
                         icon: @image-url("../icons/image.svg");
                         clicked => { root.focus-keys(); root.grid-open = false; }
                     }
+                }
+                RootsRow {
+                    roots: root.library-roots;
+                    all-on: root.library-all-on;
+                    all-count: root.library-all-count;
+                    can-add-open: root.library-can-add-open;
+                    note: root.library-note;
+                    picked(p) => { root.focus-keys(); root.library-root-picked(p); }
+                    removed(p) => { root.focus-keys(); root.library-root-removed(p); }
+                    add => { root.focus-keys(); root.library-root-add(); }
+                    add-open => { root.focus-keys(); root.library-root-add-open(); }
                 }
                 FilterBar {
                     takes-focus: true;

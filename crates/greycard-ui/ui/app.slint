@@ -8,7 +8,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { PanelButton, Segmented } from "controls.slint";
-import { Pt, Thumb, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip } from "structs.slint";
+import { Pt, Thumb, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -336,6 +336,19 @@ export component App inherits Window {
     in property <[FacetRow]> filter-facets: [];
     in property <string> filter-facet-note: "";
     callback filter-facet-toggled(int, string);
+    /// The library's roots, in the grid's header: each with its file
+    /// count, the all-roots view, and whether the folder open can be
+    /// added with a press.
+    in property <[RootChip]> library-roots: [];
+    in property <bool> library-all-on: false;
+    in property <int> library-all-count: 0;
+    in property <bool> library-can-add-open: false;
+    in property <string> library-note: "";
+    /// A root chosen by its path, or every root for an empty one.
+    callback library-root-picked(string);
+    callback library-root-removed(string);
+    callback library-root-add();
+    callback library-root-add-open();
     in-out property <bool> collapsed-culling: false;
     callback filter-star-picked(int);
     callback filter-flag-toggled(int);
@@ -2051,6 +2064,15 @@ export component App inherits Window {
         import-asked => { root.import-asked(); }
         import-stop => { root.import-stop(); }
         focus-keys => { keys.focus(); }
+        library-roots: root.library-roots;
+        library-all-on: root.library-all-on;
+        library-all-count: root.library-all-count;
+        library-can-add-open: root.library-can-add-open;
+        library-note: root.library-note;
+        library-root-picked(p) => { root.library-root-picked(p); }
+        library-root-removed(p) => { root.library-root-removed(p); }
+        library-root-add => { root.library-root-add(); }
+        library-root-add-open => { root.library-root-add-open(); }
     }
 
     // The model sheet: a download offered, with its license, until

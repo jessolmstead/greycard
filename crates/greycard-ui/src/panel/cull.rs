@@ -910,6 +910,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
         && !leave_next
         && !st.awaiting_turn
         && !st.awaiting_index
+        && !st.library.awaiting
         && st.asked.is_empty()
         && grid_filled_rows(
             &st.shown,

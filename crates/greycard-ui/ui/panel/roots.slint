@@ -1,0 +1,124 @@
+// The library's roots in the grid's header: the all-roots view, a
+// chip a root with its file count and a cross to take it out, and the
+// ways to add one. A root is a folder; taking one out forgets it and
+// touches nothing on disk.
+
+import { Theme } from "../theme.slint";
+import { RootChip } from "../structs.slint";
+
+// A pill: what it names, how many files, and a cross when it can be
+// taken out.
+component RootPill inherits Rectangle {
+    in property <string> text;
+    in property <int> count;
+    in property <bool> on;
+    in property <bool> removable: false;
+    in property <bool> shows-count: true;
+    callback clicked();
+    callback removed();
+    height: Theme.control-height - 4px;
+    border-radius: (Theme.control-height - 4px) / 2;
+    border-width: 1px;
+    border-color: root.on ? Theme.accent : Theme.border;
+    background: root.on ? Theme.selection : (ta.has-hover ? Theme.hover : Theme.base);
+    animate background { duration: Theme.quick; }
+    ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+    HorizontalLayout {
+        padding-left: Theme.space-2;
+        padding-right: root.removable ? Theme.space-1 : Theme.space-2;
+        spacing: Theme.space-1;
+        alignment: center;
+        Text {
+            text: root.text;
+            color: root.on ? Theme.text : Theme.text-secondary;
+            font-size: Theme.font-xs;
+            font-weight: root.on ? Theme.weight-medium : Theme.weight-regular;
+            vertical-alignment: center;
+            max-width: 220px;
+            overflow: elide;
+        }
+        if root.shows-count: Text {
+            text: root.count;
+            color: Theme.text-muted;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+        }
+        if root.removable: Rectangle {
+            width: 16px;
+            border-radius: 8px;
+            background: xa.has-hover ? Theme.hover : transparent;
+            Image {
+                source: @image-url("../icons/x.svg");
+                width: 10px;
+                height: 10px;
+                colorize: xa.has-hover ? Theme.text : Theme.text-muted;
+            }
+            xa := TouchArea {
+                mouse-cursor: MouseCursor.pointer;
+                clicked => { root.removed(); }
+            }
+        }
+    }
+}
+
+export component RootsRow inherits Rectangle {
+    in property <[RootChip]> roots;
+    in property <bool> all-on;
+    in property <int> all-count;
+    /// The folder open is not under a root, and can be added with a
+    /// press.
+    in property <bool> can-add-open;
+    in property <string> note;
+    /// A root chosen, by its path; empty for all of them.
+    callback picked(string);
+    callback removed(string);
+    callback add();
+    callback add-open();
+    height: Theme.control-height - 4px;
+    clip: true;
+    HorizontalLayout {
+        spacing: Theme.space-1;
+        alignment: start;
+        Text {
+            text: "Library";
+            color: Theme.text-secondary;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+        }
+        Rectangle { width: Theme.space-1; }
+        if root.roots.length > 0: RootPill {
+            text: "All roots";
+            count: root.all-count;
+            on: root.all-on;
+            clicked => { root.picked(""); }
+        }
+        for r in root.roots: RootPill {
+            text: r.name;
+            count: r.count;
+            on: r.on;
+            removable: true;
+            clicked => { root.picked(r.path); }
+            removed => { root.removed(r.path); }
+        }
+        if root.note != "": Text {
+            text: root.note;
+            color: Theme.text-muted;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+        }
+        Rectangle { width: Theme.space-2; }
+        if root.can-add-open: RootPill {
+            text: "+ Add this folder";
+            shows-count: false;
+            clicked => { root.add-open(); }
+        }
+        RootPill {
+            text: "+ Add a folder...";
+            shows-count: false;
+            clicked => { root.add(); }
+        }
+    }
+}

@@ -73,6 +73,16 @@ export struct FacetChip {
     on: bool,
 }
 
+/// One of the library's roots, as the grid's header lists it: the
+/// folder's name, its path (what a press hands back), how many files
+/// the index holds under it, and whether the browser shows it.
+export struct RootChip {
+    name: string,
+    path: string,
+    count: int,
+    on: bool,
+}
+
 /// A facet's row of chips: its caption, which facet it is (its place
 /// in `greycard_library::Facet::ALL`), and the chips.
 export struct FacetRow {

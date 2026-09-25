@@ -33,6 +33,7 @@ mod placeholder;
 mod queue;
 mod render;
 mod report;
+mod roots;
 mod scope;
 mod selection;
 mod settings;
@@ -285,6 +286,15 @@ struct Cli {
     /// user's (greycard/library.sqlite under the data directory)
     #[arg(long, value_name = "PATH")]
     library: Option<PathBuf>,
+    /// The library's roots for this run, in place of the ones kept in
+    /// roots.json beside the library, which are left alone; opens on
+    /// the all-roots view. Comma-separated
+    #[arg(long, value_name = "DIR,DIR", value_delimiter = ',')]
+    roots: Vec<PathBuf>,
+    /// Open on the all-roots view: every file under the library's
+    /// roots
+    #[arg(long)]
+    all_roots: bool,
     /// In culling mode, step to the next frame this many times, a
     /// tenth of a second apart, logging the time from each step to
     /// the frame that shows it, then quit with the mean (implies
@@ -467,6 +477,14 @@ pub(crate) struct State {
     /// The facets' counts as last read, kept when a read comes back
     /// busy.
     pub(crate) facets_last: RefCell<Vec<(filter::Facet, Vec<greycard_library::FacetCount>)>>,
+    /// The library's roots, their counts and their watcher.
+    pub(crate) library: roots::Library,
+    /// What the browser lists: a folder, or the files under the
+    /// roots.
+    pub(crate) view: roots::View,
+    /// Counts every list put in the browser, so a list read on
+    /// another thread that arrives after a later one is dropped.
+    pub(crate) view_generation: u64,
     /// The compare view's tiles on the view, one model for the life
     /// of the window, as the handles' are.
     pub(crate) compare_tiles: Rc<VecModel<CompareTile>>,
@@ -786,6 +804,9 @@ impl State {
             index_tries: 0,
             index_pass_ready: false,
             facets_last: RefCell::new(Vec::new()),
+            library: roots::Library::default(),
+            view: roots::View::Folder,
+            view_generation: 0,
             compare_tiles: Rc::new(VecModel::default()),
             select_at_start: None,
             also_at_start: Vec::new(),
@@ -912,6 +933,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::sync::install(app, &state, &worker);
     panel::menu::install(app, &state, &worker);
     panel::import::install(app, &state, &worker);
+    roots::install(app, &state, &worker);
     report::install(app, &state);
 
     // Deliveries from the worker need the state and the worker too.

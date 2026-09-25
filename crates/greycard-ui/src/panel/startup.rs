@@ -244,7 +244,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // facet terms wait for the index to name the chips they mean,
     // and the rest go in the text field as if typed there.
     let (filter, facets_wanted) = match cli.filter.as_deref() {
-        None => (filter::Filter::default(), Vec::new()),
+        // The filter as the last session left it.
+        None => (remembered.filter.filter(), Vec::new()),
         Some(name) => match filter::Filter::from_name(name) {
             Some(found) => (found, Vec::new()),
             // One of the three names in the wrong case is a mistyped
@@ -441,11 +442,34 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // The library index, on a thread of its own: the folder open is
     // indexed there, so the first frame never waits for a pass, and
     // the facets fill in as it goes.
-    match cli
+    let library_path = cli
         .library
         .clone()
-        .or_else(greycard_library::Library::user_path)
+        .or_else(greycard_library::Library::user_path);
+    // The roots: the command line's for this run, else the ones kept
+    // beside the library.
     {
+        let mut st = state.borrow_mut();
+        if cli.roots.is_empty() {
+            if let Some(path) = &library_path {
+                let file = greycard_library::Roots::path_beside(path);
+                st.library.roots = greycard_library::Roots::load(&file);
+                st.library.file = Some(file);
+            }
+        } else {
+            for dir in &cli.roots {
+                if let Err(e) = st.library.roots.add(dir) {
+                    tracing::warn!("--roots: {e}");
+                }
+            }
+        }
+        if !cli.roots.is_empty() || cli.all_roots {
+            st.library.wanted = Some(crate::roots::View::Roots(None));
+            // A capture waits for the view, not the folder under it.
+            st.library.awaiting = st.batch;
+        }
+    }
+    match library_path {
         Some(path) => {
             let app_weak = app.as_weak();
             let started = crate::library::Indexer::start(path, move |told| {
@@ -461,17 +485,24 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 Ok(indexer) => {
                     st.index = Some(indexer);
                     crate::library::index_open_folder(&mut st);
+                    // After the open folder's own pass is asked for,
+                    // so that one goes first.
+                    crate::roots::start(&mut st);
                 }
                 Err(e) => {
                     tracing::warn!("no library index: the indexer did not start: {e}");
                     st.awaiting_index = false;
+                    st.library.awaiting = false;
                 }
             }
             crate::panel::cull::show_filter(&st, &app);
+            crate::roots::show(&st, &app);
         }
         None => {
             tracing::warn!("no data directory for the library index; the facets are off");
-            state.borrow_mut().awaiting_index = false;
+            let mut st = state.borrow_mut();
+            st.awaiting_index = false;
+            st.library.awaiting = false;
         }
     }
     state.borrow_mut().thumb_run = Some(crate::panel::browser::ThumbRun::new(files.len()));
@@ -621,6 +652,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     let started = std::time::Instant::now();
                     let mut st = state.borrow_mut();
                     let st = &mut *st;
+                    // The first frame to show the all-roots view, or a
+                    // list merged, and how long since it was asked for.
+                    if let Some((at, what)) = st.library.painted.take() {
+                        tracing::info!(
+                            "library: on screen {:.0} ms after {what}",
+                            at.elapsed().as_secs_f64() * 1e3
+                        );
+                    }
                     let pending = st.pending.take();
                     // The develop the camera's picture was standing in
                     // for has landed — that one, or a later one of the
@@ -1042,6 +1081,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         && quiet
                         && !st.awaiting_turn
                         && !st.awaiting_index
+                        && !st.library.awaiting
                         && !st.snapshot_placeholder;
                     schedule_snapshot(
                         &mut st.snapshot,
@@ -1114,10 +1154,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         // device, so the first develop takes the same path as the
         // rest of the session.
         state.borrow_mut().select_at_start = Some(i);
-    } else {
+    } else if state.borrow().library.wanted.is_none() {
         // Nothing to open yet: ask the desktop for a folder once the
         // event loop is running. Canceled, the empty editor stays up
-        // with its Open folder button.
+        // with its Open folder button. The all-roots view asked for
+        // is something to open.
         let app_weak = app.as_weak();
         let start = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/"));
         // From a timer, which fires once the loop runs: a launch from
@@ -1175,6 +1216,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     {
         let mut st = state.borrow_mut();
         st.index_reader = None;
+        // The watcher first, which holds a way to the indexer's
+        // thread.
+        st.library.watcher = None;
         if let Some(indexer) = st.index.take() {
             indexer.stop(worker::LEAVING);
         }
@@ -1187,6 +1231,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if cli.screenshot.is_none() && cli.snapshot.is_none() && cli.export.is_none() {
         let mut settings = remember(&app);
         settings.export_presets = state.borrow().export_presets.clone();
+        settings.filter = filter::Saved::of(&state.borrow().filter);
         let kept = settings::Settings::load();
         settings.last_file = kept.last_file;
         settings.xmp_sidecars = kept.xmp_sidecars;
@@ -1465,6 +1510,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         thumb_cache_mb: 0,
         // Written as an import starts.
         import: settings::ImportChoices::default(),
+        // The state's, filled in by the caller.
+        filter: filter::Saved::default(),
     }
 }
 

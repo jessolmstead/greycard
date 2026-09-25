@@ -579,24 +579,50 @@ pub(crate) fn reject_count(st: &State) -> usize {
 /// and the selection kept on its row, or put on the nearest row when
 /// its frame is hidden (which the caller then opens).
 pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
+    let rows: Vec<Option<usize>> = st.shown.iter().map(|&f| Some(f)).collect();
+    rebuild_browser_from(st, app, &rows)
+}
+
+/// [`rebuild_browser`], told which file each of the rows on the window
+/// now stands for, in the files' numbering as it is now (`None` for a
+/// file no longer in the list): a picture already made for a row is
+/// carried to the file's new row rather than made again from its
+/// pixels. Making every picture again cost seconds a change of the
+/// filter over the all-roots view's twenty thousand frames.
+pub(crate) fn rebuild_browser_from(
+    st: &mut State,
+    app: &App,
+    rows: &[Option<usize>],
+) -> Option<usize> {
     if !std::mem::take(&mut st.index_pass_ready) {
         st.index_passed = crate::library::index_pass(st);
     }
+    let old = app.get_thumbs();
+    let mut made: HashMap<usize, slint::Image> = rows
+        .iter()
+        .enumerate()
+        .filter_map(|(row, f)| Some((f.as_ref().copied()?, old.row_data(row)?.image)))
+        .filter(|(_, image)| image.size().width > 0)
+        .collect();
     st.shown = st.filter.apply(&filter_frames(st));
     show_filter(st, app);
-    let thumbs = Rc::new(VecModel::<Thumb>::default());
+    let mut thumbs = Vec::with_capacity(st.shown.len());
+    let mut to_make = Vec::new();
     for &f in &st.shown {
-        let mut t = thumb_for(&st.files[f], &st.sidecars[f].meta);
-        t.failed = st.thumb_failed[f] && st.thumb_base[f].is_none();
-        thumbs.push(t);
-    }
-    app.set_thumbs(ModelRc::from(thumbs));
-    for row in 0..st.shown.len() {
-        let f = st.shown[row];
+        let mut thumb = thumb_for(&st.files[f], &st.sidecars[f].meta);
+        thumb.failed = st.thumb_failed[f] && st.thumb_base[f].is_none();
         if st.thumb_base[f].is_some() {
-            let (turns, flip) = thumb_turns(st, app, f);
-            show_thumb(st, app, f, turns, flip);
+            let turned = thumb_turns(st, app, f);
+            match made.remove(&f) {
+                Some(image) if st.thumb_shown[f] == Some(turned) => thumb.image = image,
+                _ => to_make.push((f, turned)),
+            }
         }
+        thumbs.push(thumb);
+    }
+    app.set_thumbs(ModelRc::new(VecModel::from(thumbs)));
+    for (f, (turns, flip)) in to_make {
+        show_thumb(st, app, f, turns, flip);
     }
     app.set_reject_count(reject_count(st) as i32);
     // A frame the filter now hides leaves the set: a key or a sync
@@ -658,94 +684,110 @@ pub(crate) fn grid_filled_rows(
 pub(crate) fn load_sidecars(files: &[PathBuf], write_sidecars: bool) -> (Vec<Sidecar>, Vec<bool>) {
     files
         .iter()
-        .map(|f| {
-            if !write_sidecars {
-                return (Sidecar::default(), false);
-            }
-            // A picture that is not a raw starts from its own default.
-            let fresh = || {
-                if greycard_core::picture::is_picture_path(f) {
-                    (
-                        Sidecar {
-                            current: Edit::for_picture(),
-                            ..Sidecar::default()
-                        },
-                        false,
-                    )
-                } else {
-                    (Sidecar::default(), true)
-                }
-            };
-            let (mut sidecar, seed) = match Sidecar::load(f) {
-                Ok(Some(s)) => {
-                    // A shape from a later build: loaded as nothing,
-                    // the rest of the edit kept, and gone on the next
-                    // save.
-                    let unknown: usize =
-                        s.current.adjustments.iter().map(|a| a.mask.unknown()).sum();
-                    if unknown > 0 {
-                        tracing::warn!(
-                            "{}: sidecar: {unknown} mask shape(s) of a kind this build does not know; \
-                             left out, and dropped when the edit is saved",
-                            file_name(f)
-                        );
-                    }
-                    let raw = !greycard_core::picture::is_picture_path(f);
-                    let seed = raw && files::never_developed(&s);
-                    (s, seed)
-                }
-                Ok(None) => fresh(),
-                Err(e) => {
-                    tracing::warn!(
-                        "{}: sidecar: {e}; starting from the default edit",
-                        file_name(f)
-                    );
-                    fresh()
-                }
-            };
-            // What an XMP beside the frame has to say, when it has
-            // changed since the sidecar last took its word. Reading
-            // one is not behind the setting: writing an XMP is a
-            // choice about somebody else's folder, believing one
-            // that is already there is not. Nothing is written
-            // here — the meta and the mark ride in memory until the
-            // frame's next real save — so opening a folder of
-            // somebody else's raws deposits nothing in it.
-            // The camera's tag, for the one field of a packet that
-            // is measured against it. The closure is called only for
-            // a packet that carries `tiff:Orientation` at all, so a
-            // folder whose XMPs are silent about it opens without
-            // reading a byte of any raw.
-            let took = xmp::adopt(f, &mut sidecar, || {
-                greycard_core::decode::orientation_path(f)
-                    .inspect_err(|e| tracing::warn!("{}: orientation: {e}", file_name(f)))
-                    .ok()
-            });
-            // A turn taken from somebody else's file turns the
-            // picture under the user without their having pressed
-            // anything, and records no state to undo it with, so it
-            // is said out loud and by name.
-            if took.turned.is_some() {
-                tracing::info!(
-                    "{}: the XMP beside it says the frame stands {}; turned to match",
-                    file_name(f),
-                    // Where it now stands, not how far it moved to
-                    // get there: a reader of the log wants the frame,
-                    // not the delta.
-                    turn_words(i32::from(sidecar.turn))
-                );
-                if took.left_placed {
-                    tracing::warn!(
-                        "{}: its masks and repair patches stay where they are on the \
-                         screen, since nothing is decoded at a folder's opening to \
-                         measure the frame by",
-                        file_name(f)
-                    );
-                }
-            }
-            (sidecar, seed)
-        })
+        .map(|f| load_sidecar(f, write_sidecars))
         .unzip()
+}
+
+/// [`load_sidecars`] on every core, for a list too long to read on
+/// the window's thread: the all-roots view's, which is the whole
+/// library. The order is the list's.
+pub(crate) fn load_sidecars_parallel(
+    files: &[PathBuf],
+    write_sidecars: bool,
+) -> (Vec<Sidecar>, Vec<bool>) {
+    use rayon::prelude::*;
+    files
+        .par_iter()
+        .map(|f| load_sidecar(f, write_sidecars))
+        .unzip()
+}
+
+/// One file's sidecar, as [`load_sidecars`] reads each.
+pub(crate) fn load_sidecar(f: &Path, write_sidecars: bool) -> (Sidecar, bool) {
+    if !write_sidecars {
+        return (Sidecar::default(), false);
+    }
+    // A picture that is not a raw starts from its own default.
+    let fresh = || {
+        if greycard_core::picture::is_picture_path(f) {
+            (
+                Sidecar {
+                    current: Edit::for_picture(),
+                    ..Sidecar::default()
+                },
+                false,
+            )
+        } else {
+            (Sidecar::default(), true)
+        }
+    };
+    let (mut sidecar, seed) = match Sidecar::load(f) {
+        Ok(Some(s)) => {
+            // A shape from a later build: loaded as nothing,
+            // the rest of the edit kept, and gone on the next
+            // save.
+            let unknown: usize = s.current.adjustments.iter().map(|a| a.mask.unknown()).sum();
+            if unknown > 0 {
+                tracing::warn!(
+                    "{}: sidecar: {unknown} mask shape(s) of a kind this build does not know; \
+                     left out, and dropped when the edit is saved",
+                    file_name(f)
+                );
+            }
+            let raw = !greycard_core::picture::is_picture_path(f);
+            let seed = raw && files::never_developed(&s);
+            (s, seed)
+        }
+        Ok(None) => fresh(),
+        Err(e) => {
+            tracing::warn!(
+                "{}: sidecar: {e}; starting from the default edit",
+                file_name(f)
+            );
+            fresh()
+        }
+    };
+    // What an XMP beside the frame has to say, when it has
+    // changed since the sidecar last took its word. Reading
+    // one is not behind the setting: writing an XMP is a
+    // choice about somebody else's folder, believing one
+    // that is already there is not. Nothing is written
+    // here — the meta and the mark ride in memory until the
+    // frame's next real save — so opening a folder of
+    // somebody else's raws deposits nothing in it.
+    // The camera's tag, for the one field of a packet that
+    // is measured against it. The closure is called only for
+    // a packet that carries `tiff:Orientation` at all, so a
+    // folder whose XMPs are silent about it opens without
+    // reading a byte of any raw.
+    let took = xmp::adopt(f, &mut sidecar, || {
+        greycard_core::decode::orientation_path(f)
+            .inspect_err(|e| tracing::warn!("{}: orientation: {e}", file_name(f)))
+            .ok()
+    });
+    // A turn taken from somebody else's file turns the
+    // picture under the user without their having pressed
+    // anything, and records no state to undo it with, so it
+    // is said out loud and by name.
+    if took.turned.is_some() {
+        tracing::info!(
+            "{}: the XMP beside it says the frame stands {}; turned to match",
+            file_name(f),
+            // Where it now stands, not how far it moved to
+            // get there: a reader of the log wants the frame,
+            // not the delta.
+            turn_words(i32::from(sidecar.turn))
+        );
+        if took.left_placed {
+            tracing::warn!(
+                "{}: its masks and repair patches stay where they are on the \
+                 screen, since nothing is decoded at a folder's opening to \
+                 measure the frame by",
+                file_name(f)
+            );
+        }
+    }
+    (sidecar, seed)
 }
 
 /// Replace the file list with `dir`'s files, the same scan the launch
@@ -792,7 +834,11 @@ pub(crate) fn open_paths(
     open_files(state, app, worker, files, 0);
 }
 
-/// A new list of files in the browser, `select` opened.
+/// A new list of files in the browser, a folder's or the desktop's,
+/// `select` opened. Its sidecars are read here, on the window's
+/// thread: a folder is a few hundred at most. The all-roots view,
+/// which can be the whole library, reads them elsewhere and comes in
+/// by [`open_loaded`].
 fn open_files(
     state: &Rc<RefCell<State>>,
     app: &App,
@@ -800,6 +846,27 @@ fn open_files(
     files: Vec<PathBuf>,
     select: usize,
 ) {
+    let (sidecars, seed_blend) = {
+        let mut st = state.borrow_mut();
+        st.view_generation += 1;
+        st.view = crate::roots::View::Folder;
+        load_sidecars(&files, st.write_sidecars)
+    };
+    open_loaded(state, app, worker, files, sidecars, seed_blend, select);
+}
+
+/// A new list of files in the browser with their sidecars read,
+/// `select` opened.
+pub(crate) fn open_loaded(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+    files: Vec<PathBuf>,
+    sidecars: Vec<Sidecar>,
+    seed_blend: Vec<bool>,
+    select: usize,
+) {
+    let started = std::time::Instant::now();
     let mut st = state.borrow_mut();
     // Leave the old file as a normal selection would: its edit saved,
     // its picture held on screen until the new one develops. In
@@ -827,7 +894,6 @@ fn open_files(
     st.prefetch.want(Vec::new());
     st.current = None;
     st.picked.clear();
-    let (sidecars, seed_blend) = load_sidecars(&files, st.write_sidecars);
     st.sidecars = sidecars;
     st.seed_blend = seed_blend;
     st.thumb_base = vec![None; files.len()];
@@ -853,10 +919,22 @@ fn open_files(
     st.index_tries = 0;
     st.index_error = None;
     crate::library::index_open_folder(&mut st);
+    let ids = started.elapsed();
     rebuild_browser(&mut st, app);
+    let listed = started.elapsed();
     // The file to open, as a row of the list; hidden by the filter,
     // the nearest one shown.
-    let row = row_of(&st, select).or_else(|| cull::nearest_row(&st.shown, select));
+    let mut row = row_of(&st, select).or_else(|| cull::nearest_row(&st.shown, select));
+    // A list that arrives before the window has its device (the
+    // all-roots view asked for on the command line, read in less time
+    // than the window takes to come up) opens its frame from the
+    // rendering setup, as the launch's own does, so the first develop
+    // runs on the GPU like every later one.
+    let deferred = st.renderer.is_none() && !files.is_empty();
+    if deferred {
+        st.select_at_start = Some(select);
+        row = None;
+    }
     drop(st);
 
     if row.is_some() {
@@ -868,9 +946,17 @@ fn open_files(
             path: f.clone(),
         });
     }
+    tracing::debug!(
+        "browser: {} frames in, rows read by {:.1} ms, the list made by {:.1} ms, \
+         thumbnails asked by {:.1} ms",
+        files.len(),
+        ids.as_secs_f64() * 1e3,
+        listed.as_secs_f64() * 1e3,
+        started.elapsed().as_secs_f64() * 1e3
+    );
     if let Some(row) = row {
         app.invoke_select(row as i32);
-    } else {
+    } else if !files.is_empty() && !deferred {
         tracing::warn!("no frames pass the filter");
         app.set_status(filter::NOTHING_SHOWN.into());
     }
@@ -1885,12 +1971,13 @@ mod tests {
         press(&app, "g");
         press(&app, Key::DownArrow);
         // Eight 176 cells across 1500, rows 206 apart: under a
-        // header of two rows, the filter's chips and its facets the
-        // sheet shows four rows and none of a fifth, so the first
-        // thirty-two frames are what the worker is told to make first.
+        // header of two rows, the library's roots, the filter's chips
+        // and its facets the sheet shows four rows and none of a
+        // fifth, so the first thirty-two frames are what the worker
+        // is told to make first.
         assert_eq!(*steps.borrow(), 8);
-        assert_eq!(*seen.borrow(), vec![(0.0, 805.0, 8)]);
-        assert_eq!(grid::visible(0.0, 805.0, 176.0, 8, 120), Some((0, 31)));
+        assert_eq!(*seen.borrow(), vec![(0.0, 773.0, 8)]);
+        assert_eq!(grid::visible(0.0, 773.0, 176.0, 8, 120), Some((0, 31)));
         // A frame at the foot of the sheet scrolls it there, and what
         // it says it shows follows the scroll.
         seen.borrow_mut().clear();
@@ -1898,11 +1985,11 @@ mod tests {
         // Slint runs the changed handlers with the next event, which
         // in a window is the next frame.
         press(&app, Key::Shift);
-        let scrolled = grid::reveal(0.0, 805.0, 176.0, 8, 120, 119);
-        assert_eq!(scrolled, grid::max_scroll(805.0, 176.0, 8, 120));
-        assert_eq!(*seen.borrow(), vec![(scrolled, 805.0, 8)]);
+        let scrolled = grid::reveal(0.0, 773.0, 176.0, 8, 120, 119);
+        assert_eq!(scrolled, grid::max_scroll(773.0, 176.0, 8, 120));
+        assert_eq!(*seen.borrow(), vec![(scrolled, 773.0, 8)]);
         assert_eq!(
-            grid::visible(scrolled, 805.0, 176.0, 8, 120),
+            grid::visible(scrolled, 773.0, 176.0, 8, 120),
             Some((88, 119))
         );
     }

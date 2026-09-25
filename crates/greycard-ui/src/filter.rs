@@ -106,6 +106,58 @@ impl Stars {
     }
 }
 
+/// The filter as the settings keep it between sessions: every chip,
+/// the rows' reading and the text, by names rather than by places on
+/// the bar, so a facet added to the bar later does not shift the
+/// ones kept. A facet's values are the index's own, as its chips hand
+/// them back.
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct Saved {
+    pub stars: u8,
+    pub exact: bool,
+    pub flags: Vec<Flag>,
+    pub labels: Vec<Label>,
+    pub text: String,
+    /// By the facet's field in the filter language: `camera`,
+    /// `lens`, `iso`, `focal`, `date`, `keyword`.
+    pub facets: std::collections::BTreeMap<String, Vec<String>>,
+}
+
+impl Saved {
+    pub fn of(filter: &Filter) -> Saved {
+        Saved {
+            stars: filter.stars.count(),
+            exact: filter.stars.is_exact(),
+            flags: filter.flags.clone(),
+            labels: filter.labels.clone(),
+            text: filter.text.clone(),
+            facets: Facet::ALL
+                .iter()
+                .filter(|f| !filter.chosen(**f).is_empty())
+                .map(|f| (f.field().to_string(), filter.chosen(*f).to_vec()))
+                .collect(),
+        }
+    }
+
+    /// The filter kept, a facet this build does not know left out.
+    pub fn filter(&self) -> Filter {
+        let mut filter = Filter {
+            stars: Stars::AtLeast(self.stars.min(STARS)).read_as(self.exact),
+            flags: self.flags.clone(),
+            labels: self.labels.clone(),
+            text: self.text.clone(),
+            ..Filter::default()
+        };
+        for (field, values) in &self.facets {
+            if let Some(facet) = Facet::from_field(field) {
+                filter.facets[facet_slot(facet)] = values.clone();
+            }
+        }
+        filter
+    }
+}
+
 /// What the browser says when the filter has hidden the whole
 /// folder. A blank grid and a zero is not an explanation, and the
 /// four places that can arrive at one say the same thing.

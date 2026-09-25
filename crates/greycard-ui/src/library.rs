@@ -25,12 +25,12 @@
 //! it opens a library of its own in its own directory, and the state
 //! it builds has none.
 
-use std::collections::{BTreeMap, HashSet};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use greycard_library::{FacetCount, Library, Report};
+use greycard_library::{Change, FacetCount, Library, Report};
 
 use crate::filter::{self, Facet};
 use crate::*;
@@ -39,6 +39,11 @@ use crate::*;
 /// facet fills in and a frame the filter does not want goes, while
 /// the pass is still running.
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
+
+/// How often a pass in the background says it has got further: less
+/// often than a folder's, since each word has the list under the
+/// roots read again.
+const BACKGROUND_EVERY: Duration = Duration::from_secs(2);
 
 /// The most chips a facet's row offers; the chips on are kept past
 /// it. A zoom's focal lengths or a day of ISOs can run to dozens,
@@ -64,6 +69,33 @@ enum Ask {
     Folders { dirs: Vec<PathBuf>, generation: u64 },
     /// Bring this file's row up to date after its sidecar was saved.
     File(PathBuf),
+    /// The launch pass: each root's tree, one after another, in the
+    /// background of everything else.
+    Roots(Vec<PathBuf>),
+    /// What the watcher saw change under the roots, in the
+    /// background too, but ahead of the launch pass.
+    Changes(Vec<Change>),
+    /// The editor is leaving: wakes a thread waiting on the next
+    /// ask, which the watcher's end of the channel would otherwise
+    /// keep waiting.
+    Leave,
+}
+
+/// A pass in the background: the launch pass over a root, or a
+/// change the watcher saw.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Background {
+    Root(PathBuf),
+    Change(Change),
+}
+
+impl Background {
+    fn path(&self) -> &Path {
+        match self {
+            Background::Root(p) => p,
+            Background::Change(c) => c.path(),
+        }
+    }
 }
 
 /// What the indexer tells the window.
@@ -91,6 +123,19 @@ pub(crate) enum Told {
     },
     /// Rows after saves are up to date.
     FilesIndexed,
+    /// A pass in the background is done: a root's tree for the
+    /// launch pass (`launch`), or a folder or a tree the watcher saw
+    /// change. `error` as for `Indexed`.
+    Background {
+        path: PathBuf,
+        launch: bool,
+        report: Report,
+        seconds: f64,
+        error: Option<String>,
+    },
+    /// A pass in the background has got further under `path`, and
+    /// has written what it found so far.
+    BackgroundProgress { path: PathBuf },
 }
 
 /// The indexer's thread, and the way to ask it things.
@@ -102,7 +147,21 @@ pub(crate) struct Indexer {
     /// Saves whose rows are waiting: a pass stops at its next batch
     /// to let them through, and takes up again after.
     files_waiting: Arc<AtomicUsize>,
+    /// A folder the window opened is waiting: a pass in the
+    /// background stops at its next batch for it.
+    folders_waiting: Arc<AtomicBool>,
     thread: std::thread::JoinHandle<()>,
+}
+
+/// The indexer's ear, for a thread that is not the window's: the
+/// watcher hands its changes on through this.
+#[derive(Clone)]
+pub(crate) struct Asker(mpsc::Sender<Ask>);
+
+impl Asker {
+    pub(crate) fn changes(&self, changes: Vec<Change>) {
+        let _ = self.0.send(Ask::Changes(changes));
+    }
 }
 
 impl Indexer {
@@ -115,21 +174,38 @@ impl Indexer {
         let (asks, waiting) = mpsc::channel();
         let wanted = Arc::new(AtomicU64::new(0));
         let files_waiting = Arc::new(AtomicUsize::new(0));
-        let (w, f) = (wanted.clone(), files_waiting.clone());
+        let folders_waiting = Arc::new(AtomicBool::new(false));
+        let waits = Waits {
+            wanted: wanted.clone(),
+            files: files_waiting.clone(),
+            folders: folders_waiting.clone(),
+        };
         let thread = std::thread::Builder::new()
             .name("greycard index".into())
-            .spawn(move || run(path, waiting, told, w, f))?;
+            .spawn(move || run(path, waiting, told, waits))?;
         Ok(Indexer {
             asks,
             wanted,
             files_waiting,
+            folders_waiting,
             thread,
         })
     }
 
     pub(crate) fn folders(&self, dirs: Vec<PathBuf>, generation: u64) {
         self.wanted.store(generation, Ordering::SeqCst);
+        self.folders_waiting.store(true, Ordering::SeqCst);
         let _ = self.asks.send(Ask::Folders { dirs, generation });
+    }
+
+    /// The launch pass over the roots, in this order, behind every
+    /// folder the window asks for and every save.
+    pub(crate) fn roots(&self, roots: Vec<PathBuf>) {
+        let _ = self.asks.send(Ask::Roots(roots));
+    }
+
+    pub(crate) fn asker(&self) -> Asker {
+        Asker(self.asks.clone())
     }
 
     pub(crate) fn file(&self, path: PathBuf) {
@@ -146,6 +222,10 @@ impl Indexer {
     /// Windows, and a session should not leave the two files behind.
     pub(crate) fn stop(self, within: Duration) {
         self.wanted.store(LEAVING, Ordering::SeqCst);
+        // The watcher may still hold an `Asker`, so the channel does
+        // not close with this end: the thread is woken to see
+        // `LEAVING` instead.
+        let _ = self.asks.send(Ask::Leave);
         drop(self.asks);
         let asked = Instant::now();
         while !self.thread.is_finished() && asked.elapsed() < within {
@@ -159,20 +239,24 @@ impl Indexer {
     }
 }
 
+/// What the window has asked for that a pass in hand gives way to.
+struct Waits {
+    /// The folder pass the window wants.
+    wanted: Arc<AtomicU64>,
+    /// Saves whose rows are waiting.
+    files: Arc<AtomicUsize>,
+    /// A folder pass asked for and not yet taken up.
+    folders: Arc<AtomicBool>,
+}
+
 /// The thread's body, a panic in it said to the window rather than
 /// leaving it waiting on a pass that will never end. The probe
 /// catches a decoder's panic at the file already; this is for
 /// everything else.
-fn run(
-    path: PathBuf,
-    waiting: mpsc::Receiver<Ask>,
-    told: impl Fn(Told),
-    wanted: Arc<AtomicU64>,
-    files_waiting: Arc<AtomicUsize>,
-) {
+fn run(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: impl Fn(Told), waits: Waits) {
     let told = &told;
     let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        serve(path, waiting, told, &wanted, &files_waiting)
+        serve(path, waiting, told, &waits)
     }));
     if let Err(payload) = held {
         told(Told::Failed(format!(
@@ -189,13 +273,26 @@ struct Pass {
     started: Instant,
 }
 
-fn serve(
-    path: PathBuf,
-    waiting: mpsc::Receiver<Ask>,
-    told: &dyn Fn(Told),
-    wanted: &AtomicU64,
-    files_waiting: &AtomicUsize,
-) {
+/// Put a pass in the background's queue, once: a folder the watcher
+/// names twice before it is reached is one pass. The watcher's go
+/// ahead of the launch pass's roots, which are long and can wait.
+fn queue(background: &mut VecDeque<Background>, job: Background) {
+    if background.contains(&job) {
+        return;
+    }
+    match job {
+        Background::Change(_) => {
+            let at = background
+                .iter()
+                .position(|b| matches!(b, Background::Root(_)))
+                .unwrap_or(background.len());
+            background.insert(at, job);
+        }
+        Background::Root(_) => background.push_back(job),
+    }
+}
+
+fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits: &Waits) {
     let mut lib = match Library::open(&path) {
         Ok(lib) => lib,
         Err(e) => {
@@ -204,14 +301,17 @@ fn serve(
         }
     };
     told(Told::Opened(path));
+    let wanted = &*waits.wanted;
+    let files_waiting = &*waits.files;
     let mut pending: Option<Pass> = None;
+    let mut background: VecDeque<Background> = VecDeque::new();
     loop {
         if wanted.load(Ordering::SeqCst) == LEAVING {
             return;
         }
         // With a pass to take up again, only what is already
         // waiting; with none, wait for the next ask.
-        let first = if pending.is_some() {
+        let first = if pending.is_some() || !background.is_empty() {
             waiting.try_recv().ok()
         } else {
             match waiting.recv() {
@@ -232,12 +332,24 @@ fn serve(
                     }
                 }
                 Ask::Folders { dirs, generation } => {
+                    waits.folders.store(false, Ordering::SeqCst);
                     pending = Some(Pass {
                         dirs,
                         generation,
                         started: Instant::now(),
                     });
                 }
+                Ask::Roots(roots) => {
+                    for root in roots {
+                        queue(&mut background, Background::Root(root));
+                    }
+                }
+                Ask::Changes(changes) => {
+                    for change in changes {
+                        queue(&mut background, Background::Change(change));
+                    }
+                }
+                Ask::Leave => return,
             }
         }
         if !files.is_empty() {
@@ -248,75 +360,133 @@ fn serve(
             }
             told(Told::FilesIndexed);
         }
-        let Some(pass) = pending.take() else {
-            continue;
-        };
-        let generation = pass.generation;
-        if wanted.load(Ordering::SeqCst) != generation {
+        if let Some(pass) = pending.take() {
+            pending = window_pass(&mut lib, pass, told, waits);
             continue;
         }
+        let Some(job) = background.pop_front() else {
+            continue;
+        };
+        // In the background: anything the window asks for comes
+        // first, and this pass takes up again after it.
         let stop = || {
-            wanted.load(Ordering::SeqCst) != generation || files_waiting.load(Ordering::SeqCst) > 0
+            wanted.load(Ordering::SeqCst) == LEAVING
+                || files_waiting.load(Ordering::SeqCst) > 0
+                || waits.folders.load(Ordering::SeqCst)
         };
-        let mut report = Report::default();
-        let mut error = None;
+        let started = Instant::now();
+        // A long pass says now and then that it has got further, so
+        // a view of the roots fills in while a large root is walked
+        // for the first time rather than all at once at the end.
         let mut last = Instant::now();
-        let mut before = 0;
-        for dir in &pass.dirs {
-            let passed = lib.index_folder_until(
-                dir,
-                &mut |p| {
-                    if last.elapsed() >= PROGRESS_EVERY {
-                        last = Instant::now();
-                        told(Told::Progress {
-                            generation,
-                            done: before + p.done,
-                            total: before + p.total,
-                        });
-                    }
-                },
-                &stop,
-            );
-            match passed {
-                Ok(r) => {
-                    before += r.seen();
-                    let stopped = r.stopped;
-                    report.added += r.added;
-                    report.moved += r.moved;
-                    report.changed += r.changed;
-                    report.meta_refreshed += r.meta_refreshed;
-                    report.unchanged += r.unchanged;
-                    report.returned += r.returned;
-                    report.missing += r.missing;
-                    report.unavailable.extend(r.unavailable);
-                    report.errors.extend(r.errors);
-                    if stopped {
-                        report.stopped = true;
-                        break;
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("index: {}: {e}", dir.display());
-                    error = Some(e.to_string());
-                }
+        let mut progress = |_: greycard_library::Progress<'_>| {
+            if last.elapsed() >= BACKGROUND_EVERY {
+                last = Instant::now();
+                told(Told::BackgroundProgress {
+                    path: job.path().to_path_buf(),
+                });
             }
-        }
-        if report.stopped {
-            // For a save: taken up again once its row is written,
-            // the files already done passing as unchanged. For a
-            // folder since left: dropped.
-            if wanted.load(Ordering::SeqCst) == generation {
-                pending = Some(pass);
+        };
+        let passed = match &job {
+            Background::Root(root) => lib.index_tree_until(root, &mut progress, &stop),
+            Background::Change(Change::Tree(dir)) => {
+                lib.index_tree_until(dir, &mut progress, &stop)
             }
-            continue;
-        }
-        told(Told::Indexed {
-            generation,
+            Background::Change(Change::Folder(dir)) => {
+                lib.index_folder_until(dir, &mut progress, &stop)
+            }
+        };
+        let (report, error) = match passed {
+            Ok(r) if r.stopped => {
+                background.push_front(job);
+                continue;
+            }
+            Ok(r) => (r, None),
+            Err(e) => {
+                // A folder the watcher named that went again before
+                // it was reached, most likely: the pass over its
+                // parent, which the same event brings, says it.
+                tracing::debug!("index: {}: {e}", job.path().display());
+                (Report::default(), Some(e.to_string()))
+            }
+        };
+        told(Told::Background {
+            path: job.path().to_path_buf(),
+            launch: matches!(job, Background::Root(_)),
             report,
-            seconds: pass.started.elapsed().as_secs_f64(),
+            seconds: started.elapsed().as_secs_f64(),
             error,
         });
     }
+}
+
+/// The window's folder pass, stopped for a save or for a folder
+/// since opened: what is left of it to take up again, if anything.
+fn window_pass(lib: &mut Library, pass: Pass, told: &dyn Fn(Told), waits: &Waits) -> Option<Pass> {
+    let wanted = &*waits.wanted;
+    let files_waiting = &*waits.files;
+    let generation = pass.generation;
+    if wanted.load(Ordering::SeqCst) != generation {
+        return None;
+    }
+    let stop =
+        || wanted.load(Ordering::SeqCst) != generation || files_waiting.load(Ordering::SeqCst) > 0;
+    let mut report = Report::default();
+    let mut error = None;
+    let mut last = Instant::now();
+    let mut before = 0;
+    for dir in &pass.dirs {
+        let passed = lib.index_folder_until(
+            dir,
+            &mut |p| {
+                if last.elapsed() >= PROGRESS_EVERY {
+                    last = Instant::now();
+                    told(Told::Progress {
+                        generation,
+                        done: before + p.done,
+                        total: before + p.total,
+                    });
+                }
+            },
+            &stop,
+        );
+        match passed {
+            Ok(r) => {
+                before += r.seen();
+                let stopped = r.stopped;
+                report.added += r.added;
+                report.moved += r.moved;
+                report.changed += r.changed;
+                report.meta_refreshed += r.meta_refreshed;
+                report.unchanged += r.unchanged;
+                report.returned += r.returned;
+                report.missing += r.missing;
+                report.unavailable.extend(r.unavailable);
+                report.errors.extend(r.errors);
+                if stopped {
+                    report.stopped = true;
+                    break;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("index: {}: {e}", dir.display());
+                error = Some(e.to_string());
+            }
+        }
+    }
+    if report.stopped {
+        // For a save: taken up again once its row is written, the
+        // files already done passing as unchanged. For a folder
+        // since left: dropped.
+        return (wanted.load(Ordering::SeqCst) == generation).then_some(pass);
+    }
+    told(Told::Indexed {
+        generation,
+        report,
+        seconds: pass.started.elapsed().as_secs_f64(),
+        error,
+    });
+    None
 }
 
 /// The folders a list of files is in, each once, in the order first
@@ -344,6 +514,12 @@ pub(crate) fn index_open_folder(st: &mut State) {
     let Some(indexer) = &st.index else {
         return;
     };
+    // The all-roots view's list came from the index: the launch pass
+    // and the watcher keep its rows, and a pass over every folder
+    // under every root for it would be the launch pass again.
+    if matches!(st.view, crate::roots::View::Roots(_)) {
+        return;
+    }
     st.index_generation += 1;
     st.index_progress = Some((0, st.files.len()));
     indexer.folders(folders_of(&st.files), st.index_generation);
@@ -719,7 +895,48 @@ pub(crate) fn told(app: &App, told: Told) {
             let mut st = state.borrow_mut();
             st.index_path = Some(path);
             open_reader(&mut st);
+            crate::roots::recount(&mut st);
+            crate::roots::show(&st, app);
+            let wanted = st.library.wanted.take();
             drop(st);
+            reread(&state, app, false);
+            if let (Some(view), Some(worker)) = (wanted, crate::WORKER.with(|w| w.borrow().clone()))
+            {
+                crate::roots::open_view(&state, app, &worker, view);
+            }
+        }
+        Told::Background {
+            path,
+            launch,
+            report,
+            seconds,
+            error,
+        } => {
+            let what = if launch { "root" } else { "change" };
+            match &error {
+                Some(e) => tracing::debug!("index: {what} {}: {e}", path.display()),
+                None => tracing::info!(
+                    "indexed {what} {} in {seconds:.3} s: {} added, {} moved, {} changed, \
+                     {} meta refreshed, {} unchanged, {} missing",
+                    path.display(),
+                    report.added,
+                    report.moved,
+                    report.changed,
+                    report.meta_refreshed,
+                    report.unchanged,
+                    report.missing,
+                ),
+            }
+            crate::roots::background_done(&state, app, &path, &report, false);
+            reread(&state, app, false);
+        }
+        Told::BackgroundProgress { path } => {
+            // Something may have been added: read as a pass that did.
+            let some = Report {
+                added: 1,
+                ..Report::default()
+            };
+            crate::roots::background_done(&state, app, &path, &some, true);
             reread(&state, app, false);
         }
         Told::Failed(message) => {
@@ -1208,9 +1425,9 @@ mod tests {
         let pressed = Rc::new(RefCell::new(Vec::new()));
         let seen = pressed.clone();
         app.on_filter_facet_toggled(move |_, key| seen.borrow_mut().push(key.to_string()));
-        // The facet row is the header's third, under the controls
-        // and the meta chips.
-        let (x, y) = (200.0, 88.0);
+        // The facet row is the header's fourth, under the controls,
+        // the library's roots and the meta chips.
+        let (x, y) = (200.0, 120.0);
         crate::testing::click(&app, x, y);
         let position = slint::LogicalPosition::new(x, y);
         app.window().dispatch_event(WindowEvent::PointerScrolled {
