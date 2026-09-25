@@ -57,8 +57,9 @@ pub(crate) fn write_sidecar(st: &mut State, c: usize) {
             Err(e) => tracing::warn!("{}: xmp not written: {e}", file_name(&st.files[c])),
         }
     }
-    if let Err(e) = st.sidecars[c].save_in(&st.files[c], st.placement) {
-        tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c]));
+    match st.sidecars[c].save_in(&st.files[c], st.placement) {
+        Ok(_) => crate::library::sidecar_written(st, c),
+        Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),
     }
 }
 
@@ -152,11 +153,11 @@ pub(crate) fn save_edit(st: &mut State, edit: Edit) {
     let Some(c) = st.current else {
         return;
     };
-    if st.sidecars[c].record(edit)
-        && st.write_sidecars
-        && let Err(e) = st.sidecars[c].save_in(&st.files[c], st.placement)
-    {
-        tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c]));
+    if st.sidecars[c].record(edit) && st.write_sidecars {
+        match st.sidecars[c].save_in(&st.files[c], st.placement) {
+            Ok(_) => crate::library::sidecar_written(st, c),
+            Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),
+        }
     }
 }
 

@@ -909,6 +909,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     let ready = ready
         && !leave_next
         && !st.awaiting_turn
+        && !st.awaiting_index
         && st.asked.is_empty()
         && grid_filled_rows(&st.shown, &st.thumb_made, st.thumb_want, st.grid_shown, app);
     // `--snapshot-placeholder` waits for the camera's picture instead,
@@ -1140,6 +1141,13 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
     st.thumb_shown = kept.iter().map(|&i| st.thumb_shown[i]).collect();
     st.thumb_made = kept.iter().map(|&i| st.thumb_made[i]).collect();
     st.thumb_asked = kept.iter().map(|&i| st.thumb_asked[i]).collect();
+    // The index's answers by the new numbering, and a pass over the
+    // folder, which marks the moved frames' rows missing.
+    st.index_passed = kept
+        .iter()
+        .map(|&i| st.index_passed.get(i).copied().unwrap_or(true))
+        .collect();
+    crate::library::index_open_folder(st);
     // The indices the previews and the worker's thumbnails were
     // keyed by have moved: the previews are decoded again (cheap),
     // and a thumbnail still owed is asked for again.
@@ -1248,6 +1256,10 @@ pub(crate) fn show_filter(st: &State, app: &App) {
     app.set_filter_shown(counts.shown as i32);
     app.set_filter_total(counts.total as i32);
     app.set_filter_on(!st.filter.is_empty());
+    // The EXIF facets, counted by the index; none until it has
+    // rows for the folder, when the note says why.
+    app.set_filter_facets(ModelRc::new(VecModel::from(crate::library::facet_rows(st))));
+    app.set_filter_facet_note(crate::library::facet_note(st).into());
 }
 
 /// The browser has nothing left to show and the filter is why, which
@@ -1282,6 +1294,13 @@ fn apply_filter_typed(state: &Rc<RefCell<State>>, app: &App) {
     apply_filter_said(state, app, false);
 }
 
+/// The same, for the index having moved under the filter: a pass
+/// has reached more of the folder, or a row was written after a
+/// save. `settled` when it is worth the log's line.
+pub(crate) fn refilter(state: &Rc<RefCell<State>>, app: &App, settled: bool) {
+    apply_filter_said(state, app, settled);
+}
+
 fn apply_filter_said(state: &Rc<RefCell<State>>, app: &App, settled: bool) {
     let mut st = state.borrow_mut();
     let next = rebuild_browser(&mut st, app);
@@ -1292,6 +1311,11 @@ fn apply_filter_said(state: &Rc<RefCell<State>>, app: &App, settled: bool) {
         tracing::debug!("browser filter: {what}, {shown} of {count} frames");
     }
     say_if_empty(&st, app);
+    // A term typed that does not parse is looked for as a word, as
+    // it was before the field took terms, and the reason is said.
+    if let Some(e) = st.filter.typed().errors.first() {
+        app.set_status(format!("filter: {e}").into());
+    }
     match next {
         Some(row) => {
             drop(st);
@@ -1426,6 +1450,19 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 let exact = st.filter.stars.is_exact();
                 st.filter.stars = st.filter.stars.read_as(!exact);
             }
+            apply_filter(&state, &app);
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_filter_facet_toggled(move |code, value| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let Some(&facet) = filter::Facet::ALL.get(code.max(0) as usize) else {
+                return;
+            };
+            state.borrow_mut().filter.toggle_facet(facet, &value);
             apply_filter(&state, &app);
         });
     }

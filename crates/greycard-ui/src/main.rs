@@ -22,6 +22,7 @@ mod finder;
 mod finish;
 mod geometry;
 mod grid;
+mod library;
 mod log;
 mod outline;
 mod panel;
@@ -258,9 +259,18 @@ struct Cli {
     /// or 4 (implies --cull)
     #[arg(long, value_name = "N")]
     cull_compare: Option<usize>,
-    /// The browser's filter to open with: All, Picks or "No rejects"
+    /// The browser's filter to open with: All, Picks or "No rejects",
+    /// or terms of the filter language, one argument, spaces
+    /// between them (`'camera:R6 iso>=3200 rating>=3'`). A camera,
+    /// lens, iso, focal, date or keyword term with `:` or `=` turns
+    /// on the chips it names once the folder is indexed; the rest go
+    /// in the text field
     #[arg(long, value_name = "WHAT")]
     filter: Option<String>,
+    /// Keep the library index in this database rather than the
+    /// user's (greycard/library.sqlite under the data directory)
+    #[arg(long, value_name = "PATH")]
+    library: Option<PathBuf>,
     /// In culling mode, step to the next frame this many times, a
     /// tenth of a second apart, logging the time from each step to
     /// the frame that shows it, then quit with the mean (implies
@@ -380,6 +390,28 @@ pub(crate) struct State {
     /// a file.
     pub(crate) shown: Vec<usize>,
     pub(crate) filter: filter::Filter,
+    /// The library index's thread, which indexes the open folder and
+    /// each frame after its sidecar is written; none in a test, or
+    /// when the library could not be opened.
+    pub(crate) index: Option<library::Indexer>,
+    /// The index read on this thread, read-only, for the filter's
+    /// EXIF tests and the facets' counts; none until the indexer has
+    /// opened the library.
+    pub(crate) index_reader: Option<greycard_library::Library>,
+    /// Each file's row in the index, where it has one yet.
+    pub(crate) index_ids: Vec<Option<i64>>,
+    /// Whether the index's tests passed each file when the browser's
+    /// list was last made (`filter::Frame::index`).
+    pub(crate) index_passed: Vec<bool>,
+    /// The folder pass the window last asked for, so a pass over a
+    /// folder since left says nothing.
+    pub(crate) index_generation: u64,
+    /// How far that pass is, while it runs.
+    pub(crate) index_progress: Option<(usize, usize)>,
+    /// `--filter`'s facet terms, chosen when the pass is done.
+    pub(crate) facets_wanted: Vec<(filter::Facet, String)>,
+    /// A capture waits for those to be chosen.
+    pub(crate) awaiting_index: bool,
     /// The compare view's tiles on the view, one model for the life
     /// of the window, as the handles' are.
     pub(crate) compare_tiles: Rc<VecModel<CompareTile>>,
@@ -665,6 +697,14 @@ impl State {
             cull_at_start: None,
             shown: (0..count).collect(),
             filter: filter::Filter::default(),
+            index: None,
+            index_reader: None,
+            index_ids: vec![None; count],
+            index_passed: vec![true; count],
+            index_generation: 0,
+            index_progress: None,
+            facets_wanted: Vec::new(),
+            awaiting_index: false,
             compare_tiles: Rc::new(VecModel::default()),
             select_at_start: None,
             also_at_start: Vec::new(),

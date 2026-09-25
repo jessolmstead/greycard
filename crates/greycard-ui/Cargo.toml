@@ -65,6 +65,8 @@ naga = { version = "30", features = ["wgsl-in"] }
 i-slint-backend-testing = "1.18"
 # For a device of our own in the worker's GPU fallback tests.
 pollster = "0.4"
+# Frames with real EXIF, for the library index's tests.
+greycard-library = { path = "../greycard-library", features = ["fixtures"] }
 
 # The file chooser portal and colord are the desktop's on Linux.
 # zbus needs an async runtime named even where only its blocking API

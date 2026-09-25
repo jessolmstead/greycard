@@ -2,7 +2,7 @@
 // with the filter, and the cells riding on one scrolled offset.
 
 import { Theme } from "../theme.slint";
-import { Thumb, FilterChip } from "../structs.slint";
+import { Thumb, FilterChip, FacetRow } from "../structs.slint";
 import { PanelButton, ThumbBadges } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 
@@ -43,6 +43,9 @@ export component GridSheet inherits Rectangle {
     in-out property <int> filter-total;
     in-out property <bool> filter-on;
     in-out property <bool> filter-focus;
+    in property <[FacetRow]> filter-facets;
+    in property <string> filter-facet-note;
+    callback filter-facet-toggled(int, string);
     callback filter-star-picked(int);
     callback filter-flag-toggled(int);
     callback filter-label-toggled(int);
@@ -66,14 +69,16 @@ export component GridSheet inherits Rectangle {
         // words being looked for do not fit on one at a window
         // narrow enough to work on.
         Rectangle {
-            // Two rows of controls and a row of chips, which is
-            // the filter bar's own two. Spelled out rather than
-            // asked of the layout: a header whose height settles
-            // a frame late re-flows the sheet twice on the way
-            // in, and the second re-flow is a folder's worth of
-            // thumbnails asked for again.
-            height: 2 * Theme.control-height + (Theme.control-height - 4px)
-                + 4 * Theme.space-2 + 1px;
+            // Two rows of controls and two rows of chips, the
+            // filter bar's meta chips and its facets. Spelled out
+            // rather than asked of the layout: a header whose
+            // height settles a frame late re-flows the sheet twice
+            // on the way in, and the second re-flow is a folder's
+            // worth of thumbnails asked for again. The facets' row
+            // is there before the index has anything to put in it
+            // for the same reason.
+            height: 2 * Theme.control-height + 2 * (Theme.control-height - 4px)
+                + 5 * Theme.space-2 + 1px;
             background: Theme.surface;
             Rectangle { y: parent.height - 1px; height: 1px; width: 100%; background: Theme.border; }
             header := VerticalLayout {
@@ -129,6 +134,9 @@ export component GridSheet inherits Rectangle {
                     stars: root.filter-stars;
                     flags: root.filter-flags;
                     labels: root.filter-labels;
+                    facets: root.filter-facets;
+                    facet-note: root.filter-facet-note;
+                    facet-toggled(c, k) => { root.filter-facet-toggled(c, k); }
                     exact: root.filter-exact;
                     shown: root.filter-shown;
                     total: root.filter-total;

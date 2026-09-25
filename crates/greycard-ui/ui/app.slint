@@ -8,7 +8,7 @@
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
 import { PanelButton, Segmented } from "controls.slint";
-import { Pt, Thumb, MaskBox, MaskPick, CompareTile, FilterChip } from "structs.slint";
+import { Pt, Thumb, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -284,6 +284,11 @@ export component App inherits Window {
     /// A key has asked for the filter's text field; the bar on
     /// screen answers it and puts it back to false.
     in-out property <bool> filter-focus: false;
+    /// The EXIF facets the library index counts for the folder, a
+    /// row a facet, and what to say while there are none.
+    in property <[FacetRow]> filter-facets: [];
+    in property <string> filter-facet-note: "";
+    callback filter-facet-toggled(int, string);
     in-out property <bool> collapsed-culling: false;
     callback filter-star-picked(int);
     callback filter-flag-toggled(int);
@@ -1382,6 +1387,9 @@ export component App inherits Window {
                             filter-total <=> root.filter-total;
                             filter-on <=> root.filter-on;
                             filter-focus <=> root.filter-focus;
+                            filter-facets: root.filter-facets;
+                            filter-facet-note: root.filter-facet-note;
+                            filter-facet-toggled(a, b) => { root.filter-facet-toggled(a, b); }
                             collapsed-culling <=> root.collapsed-culling;
                             filter-star-picked(a) => { root.filter-star-picked(a); }
                             filter-flag-toggled(a) => { root.filter-flag-toggled(a); }
@@ -1853,6 +1861,9 @@ export component App inherits Window {
         filter-total <=> root.filter-total;
         filter-on <=> root.filter-on;
         filter-focus <=> root.filter-focus;
+        filter-facets: root.filter-facets;
+        filter-facet-note: root.filter-facet-note;
+        filter-facet-toggled(a, b) => { root.filter-facet-toggled(a, b); }
         filter-star-picked(a) => { root.filter-star-picked(a); }
         filter-flag-toggled(a) => { root.filter-flag-toggled(a); }
         filter-label-toggled(a) => { root.filter-label-toggled(a); }

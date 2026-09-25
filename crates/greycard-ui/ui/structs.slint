@@ -57,3 +57,22 @@ export struct FilterChip {
     on: bool,
     code: int,
 }
+
+/// One chip of an EXIF facet: what it shows, the value it hands
+/// back when pressed, how many frames hold that value among the
+/// frames the other tests leave, and whether it is on. The count is
+/// the index's, one GROUP BY a facet; see `greycard_ui::library`.
+export struct FacetChip {
+    text: string,
+    key: string,
+    count: int,
+    on: bool,
+}
+
+/// A facet's row of chips: its caption, which facet it is (its place
+/// in `greycard_library::Facet::ALL`), and the chips.
+export struct FacetRow {
+    name: string,
+    code: int,
+    chips: [FacetChip],
+}

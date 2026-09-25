@@ -2,7 +2,7 @@
 // browser's filter, the compare view and the two ways out.
 
 import { Theme } from "../theme.slint";
-import { FilterChip } from "../structs.slint";
+import { FilterChip, FacetRow } from "../structs.slint";
 import { Section, PanelButton, Segmented } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 
@@ -21,6 +21,9 @@ export component CullSection inherits Section {
     in-out property <int> filter-total;
     in-out property <bool> filter-on;
     in-out property <bool> filter-focus;
+    in property <[FacetRow]> filter-facets;
+    in property <string> filter-facet-note;
+    callback filter-facet-toggled(int, string);
     in-out property <bool> collapsed-culling;
     callback filter-star-picked(int);
     callback filter-flag-toggled(int);
@@ -81,6 +84,9 @@ export component CullSection inherits Section {
         stars: root.filter-stars;
         flags: root.filter-flags;
         labels: root.filter-labels;
+        facets: root.filter-facets;
+        facet-note: root.filter-facet-note;
+        facet-toggled(c, k) => { root.filter-facet-toggled(c, k); }
         exact: root.filter-exact;
         shown: root.filter-shown;
         total: root.filter-total;

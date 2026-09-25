@@ -3,7 +3,7 @@
 
 import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { FilterChip } from "../structs.slint";
+import { FilterChip, FacetRow } from "../structs.slint";
 import { PanelButton } from "../controls.slint";
 
 // A chip of the filter: a pill that says what it asks and how many
@@ -79,15 +79,65 @@ component LabelChip inherits Chip {
         : transparent;
 }
 
+// A facet's row: its caption, then its chips, scrolled sideways when
+// they run past the bar rather than wrapped. The caption goes first
+// and stays with them, so a row of numbers says what it counts.
+component FacetChips inherits Rectangle {
+    in property <[FacetRow]> facets;
+    in property <string> note;
+    in property <bool> tight: false;
+    callback toggled(int, string);
+    height: Theme.control-height - 4px;
+    clip: true;
+    Flickable {
+        content-width: max(self.width, row.preferred-width);
+        content-height: self.height;
+        row := HorizontalLayout {
+            spacing: Theme.space-1;
+            alignment: start;
+            if root.facets.length == 0: Text {
+                text: root.note;
+                color: Theme.text-muted;
+                font-size: Theme.font-xs;
+                vertical-alignment: center;
+            }
+            for facet in root.facets: HorizontalLayout {
+                spacing: root.tight ? 3px : Theme.space-1;
+                Text {
+                    text: facet.name;
+                    color: Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                }
+                for chip in facet.chips: Chip {
+                    text: chip.text;
+                    count: chip.count;
+                    on: chip.on;
+                    tight: root.tight;
+                    clicked => { root.toggled(facet.code, chip.key); }
+                }
+                Rectangle { width: Theme.space-2; }
+            }
+        }
+    }
+}
+
 // The browser's filter: the rating chips and how they read, the flag
-// chips, the label chips, and a word looked for in the file name and
-// the keywords. One row of chips in the grid's header, and the same
-// chips a group to a row in the CULLING section, where the panel is
-// 320px wide and the header's row would not fit.
+// chips, the label chips, the EXIF facets the library index counts,
+// and words or terms looked for. One row of chips in the grid's
+// header and a row of facets under it, and the same chips a group to
+// a row in the CULLING section, where the panel is 320px wide and
+// the header's row would not fit.
 export component FilterBar inherits Rectangle {
     in property <[FilterChip]> stars;
     in property <[FilterChip]> flags;
     in property <[FilterChip]> labels;
+    /// The EXIF facets with a value in the folder: camera, lens, ISO,
+    /// focal length, day and keyword, as the library index holds
+    /// them. Empty until the index has rows for the folder, when
+    /// `facet-note` says why.
+    in property <[FacetRow]> facets;
+    in property <string> facet-note;
     in property <bool> exact;
     in property <int> shown;
     in property <int> total;
@@ -109,6 +159,8 @@ export component FilterBar inherits Rectangle {
     callback flag-toggled(int);
     callback label-toggled(int);
     callback exact-toggled();
+    /// A facet's chip, by the facet's code and the chip's value.
+    callback facet-toggled(int, string);
     callback text-edited(string);
     callback cleared();
     /// The field is done with: the window's keys want it back.
@@ -168,6 +220,11 @@ export component FilterBar inherits Rectangle {
                     clicked => { root.label-toggled(i); }
                 }
             }
+        }
+        if !root.stacked: FacetChips {
+            facets: root.facets;
+            note: root.facet-note;
+            toggled(code, key) => { root.facet-toggled(code, key); }
         }
         // The panel's, a group to a row with its name over it: at
         // 320px the header's row runs off the side, and a caption
@@ -237,12 +294,25 @@ export component FilterBar inherits Rectangle {
                     clicked => { root.label-toggled(i); }
                 }
             }
+            // A facet to a row here, each scrolled on its own: a
+            // lens's name alone can be most of the panel's width.
+            if root.facets.length == 0 && root.facet-note != "": Text {
+                text: root.facet-note;
+                color: Theme.text-muted;
+                font-size: Theme.font-xs;
+                wrap: word-wrap;
+            }
+            for facet in root.facets: FacetChips {
+                facets: [facet];
+                tight: true;
+                toggled(code, key) => { root.facet-toggled(code, key); }
+            }
         }
         HorizontalLayout {
             spacing: Theme.space-2;
             field := LineEdit {
                 text <=> root.text;
-                placeholder-text: "Name or keyword";
+                placeholder-text: "Name, keyword, or camera:R6 iso>=3200";
                 // Wide enough for a few words and no wider: a field
                 // the width of the window reads as the header rather
                 // than as one control in it.

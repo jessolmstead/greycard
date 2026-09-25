@@ -208,19 +208,28 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // The three names the flag's old three-way Show went by. The
     // chips say more than they can, but a flag on a command line
     // wants one word, and a script written against the old one still
-    // means what it meant.
-    let filter = cli
-        .filter
-        .as_deref()
-        .and_then(|name| {
-            let found = filter::Filter::from_name(name);
-            if found.is_none() {
-                tracing::warn!("--filter {name}: want All, Picks or \"No rejects\"; showing all");
+    // means what it meant. Anything else is the filter language: its
+    // facet terms wait for the index to name the chips they mean,
+    // and the rest go in the text field as if typed there.
+    let (filter, facets_wanted) = match cli.filter.as_deref() {
+        None => (filter::Filter::default(), Vec::new()),
+        Some(name) => match filter::Filter::from_name(name) {
+            Some(found) => (found, Vec::new()),
+            None => {
+                let (text, wanted) = filter::from_cli(name);
+                let filter = filter::Filter {
+                    text,
+                    ..filter::Filter::default()
+                };
+                for e in filter.typed().errors {
+                    tracing::warn!("--filter: {e}");
+                }
+                (filter, wanted)
             }
-            found
-        })
-        .unwrap_or_default();
+        },
+    };
     let filtering = !filter.is_empty();
+    app.set_filter_text(filter.text.clone().into());
     app.set_reject_count(
         sidecars
             .iter()
@@ -305,6 +314,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             || cli.move_rejects)
             .then(|| cli.cull_compare.unwrap_or(1)),
         filter,
+        awaiting_index: !facets_wanted.is_empty(),
+        facets_wanted,
         ..State::empty(files.clone(), &app)
     }));
     app.set_compare_tiles(ModelRc::from(state.borrow().compare_tiles.clone()));
@@ -360,6 +371,34 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             worker.set_thumb_cache(Some(cache));
         }
         Err(e) => tracing::warn!("no thumbnail cache: {e}"),
+    }
+    // The library index, on a thread of its own: the folder open is
+    // indexed there, so the first frame never waits for a pass, and
+    // the facets fill in as it goes.
+    match cli
+        .library
+        .clone()
+        .or_else(greycard_library::Library::user_path)
+    {
+        Some(path) => {
+            let app_weak = app.as_weak();
+            let indexer = crate::library::Indexer::start(path, move |told| {
+                let app_weak = app_weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(app) = app_weak.upgrade() {
+                        crate::library::told(&app, told);
+                    }
+                });
+            });
+            let mut st = state.borrow_mut();
+            st.index = Some(indexer);
+            crate::library::index_open_folder(&mut st);
+            crate::panel::cull::show_filter(&st, &app);
+        }
+        None => {
+            tracing::warn!("no data directory for the library index; the facets are off");
+            state.borrow_mut().awaiting_index = false;
+        }
     }
     state.borrow_mut().thumb_run = Some(crate::panel::browser::ThumbRun::new(files.len()));
     for (i, f) in files.iter().enumerate() {
@@ -925,6 +964,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     let ready = renderer.has_image()
                         && quiet
                         && !st.awaiting_turn
+                        && !st.awaiting_index
                         && !st.snapshot_placeholder;
                     schedule_snapshot(
                         &mut st.snapshot,

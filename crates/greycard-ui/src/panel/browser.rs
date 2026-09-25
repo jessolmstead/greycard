@@ -492,16 +492,19 @@ pub(crate) fn row_of(st: &State, file: usize) -> Option<usize> {
 }
 
 /// The folder as the filter reads it: each file beside the meta its
-/// sidecar holds. Nothing is read from disk for this — the sidecars
-/// of the open folder are already in hand, which is why the filter
-/// needs no index.
+/// sidecar holds, and whether the library index's tests passed it
+/// when the list was last made. Nothing is read from disk for this —
+/// the sidecars of the open folder are already in hand, and the
+/// index's answer is asked once a list, in `rebuild_browser`.
 pub(crate) fn filter_frames(st: &State) -> Vec<filter::Frame<'_>> {
     st.files
         .iter()
         .zip(&st.sidecars)
-        .map(|(path, s)| filter::Frame {
+        .enumerate()
+        .map(|(i, (path, s))| filter::Frame {
             path,
             meta: &s.meta,
+            index: st.index_passed.get(i).copied().unwrap_or(true),
         })
         .collect()
 }
@@ -512,6 +515,7 @@ pub(crate) fn filter_shows(st: &State, file: usize) -> bool {
         (Some(path), Some(s)) => st.filter.shows(filter::Frame {
             path,
             meta: &s.meta,
+            index: st.index_passed.get(file).copied().unwrap_or(true),
         }),
         _ => false,
     }
@@ -548,6 +552,7 @@ pub(crate) fn reject_count(st: &State) -> usize {
 /// and the selection kept on its row, or put on the nearest row when
 /// its frame is hidden (which the caller then opens).
 pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
+    st.index_passed = crate::library::index_pass(st);
     st.shown = st.filter.apply(&filter_frames(st));
     show_filter(st, app);
     let thumbs = Rc::new(VecModel::<Thumb>::default());
@@ -800,6 +805,11 @@ fn open_files(
     st.thumb_run = Some(ThumbRun::new(files.len()));
     worker.set_thumb_size(worker::THUMB_WIDTH);
     st.files = files.clone();
+    // The new folder's rows as the index has them now, and a pass
+    // over it on the indexer's thread to bring them up to date.
+    st.index_passed = vec![true; files.len()];
+    st.index_progress = None;
+    crate::library::index_open_folder(&mut st);
     rebuild_browser(&mut st, app);
     // The file to open, as a row of the list; hidden by the filter,
     // the nearest one shown.
@@ -1619,12 +1629,12 @@ mod tests {
         press(&app, "g");
         press(&app, Key::DownArrow);
         // Eight 176 cells across 1500, rows 206 apart: under a
-        // header of two rows and the filter's chips the sheet shows
-        // four whole rows and a sliver of a fifth, so the first
-        // forty frames are what the worker is told to make first.
+        // header of two rows, the filter's chips and its facets the
+        // sheet shows four rows and none of a fifth, so the first
+        // thirty-two frames are what the worker is told to make first.
         assert_eq!(*steps.borrow(), 8);
-        assert_eq!(*seen.borrow(), vec![(0.0, 837.0, 8)]);
-        assert_eq!(grid::visible(0.0, 837.0, 176.0, 8, 120), Some((0, 39)));
+        assert_eq!(*seen.borrow(), vec![(0.0, 805.0, 8)]);
+        assert_eq!(grid::visible(0.0, 805.0, 176.0, 8, 120), Some((0, 31)));
         // A frame at the foot of the sheet scrolls it there, and what
         // it says it shows follows the scroll.
         seen.borrow_mut().clear();
@@ -1632,12 +1642,12 @@ mod tests {
         // Slint runs the changed handlers with the next event, which
         // in a window is the next frame.
         press(&app, Key::Shift);
-        let scrolled = grid::reveal(0.0, 837.0, 176.0, 8, 120, 119);
-        assert_eq!(scrolled, grid::max_scroll(837.0, 176.0, 8, 120));
-        assert_eq!(*seen.borrow(), vec![(scrolled, 837.0, 8)]);
+        let scrolled = grid::reveal(0.0, 805.0, 176.0, 8, 120, 119);
+        assert_eq!(scrolled, grid::max_scroll(805.0, 176.0, 8, 120));
+        assert_eq!(*seen.borrow(), vec![(scrolled, 805.0, 8)]);
         assert_eq!(
-            grid::visible(scrolled, 837.0, 176.0, 8, 120),
-            Some((80, 119))
+            grid::visible(scrolled, 805.0, 176.0, 8, 120),
+            Some((88, 119))
         );
     }
 

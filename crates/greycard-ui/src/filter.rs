@@ -15,10 +15,30 @@
 //! too, in one pass over the sidecars the browser has already
 //! loaded, because a count that disagrees with what a click does is
 //! worse than no count at all.
+//!
+//! The EXIF is not in a sidecar, so the facets — camera, lens, ISO,
+//! focal length, day, and the keyword beside them — are the library
+//! index's (notes §160). What is asked of the index is decided here
+//! ([`Filter::index_filter`]) and answered in `library`, and comes
+//! back as one bit a frame, [`Frame::index`]: whether the index's
+//! tests pass it, or the index has no row for it yet. A frame the
+//! index has not reached is shown until it has; hiding it for want
+//! of a row would be the filter guessing. The facets' own counts are
+//! one `GROUP BY` a facet over the frames the other tests leave,
+//! which is this module's rule for a count, asked of SQL.
+//!
+//! The text field reads the §160 grammar as well as words: a token
+//! shaped like a term (`camera:R6`, `iso>=3200`, `rating>=3`) is a
+//! term, anything else the word it always was. A term the sidecar
+//! can answer — rating, flag, label, keyword, name — is answered
+//! from the sidecar, which is fresher than the row an `index_file`
+//! is still writing; the EXIF ones go to the index.
 
 use std::path::Path;
 
 use greycard_edit::meta::{Flag, Label, Meta, STARS};
+pub(crate) use greycard_library::filter::Facet;
+use greycard_library::filter::{ParseError, Term};
 
 /// How the rating chips read: at least so many stars, or exactly so
 /// many.
@@ -96,11 +116,83 @@ impl Stars {
 pub const NOTHING_SHOWN: &str = "no frames pass the filter; Clear shows the folder again";
 
 /// One frame as the filter reads it: where the file is, which is
-/// where its name is, and what its sidecar says about it.
+/// where its name is, what its sidecar says about it, and what the
+/// library index made of it.
 #[derive(Debug, Clone, Copy)]
 pub struct Frame<'a> {
     pub path: &'a Path,
     pub meta: &'a Meta,
+    /// Whether the index's tests — the EXIF facets and the EXIF
+    /// terms typed — pass this frame. True when nothing is asked of
+    /// the index, and when the index has no row for the frame yet:
+    /// it shows until the pass says otherwise.
+    pub index: bool,
+}
+
+/// The text field, read: the words looked for as they always were,
+/// the terms the sidecar answers, the terms only the index can, and
+/// what did not parse.
+#[derive(Debug, Clone, Default)]
+pub struct Typed {
+    pub words: Vec<String>,
+    pub meta: Vec<Term>,
+    pub index: Vec<Term>,
+    pub errors: Vec<ParseError>,
+}
+
+impl Typed {
+    /// Whether the words and the sidecar's terms pass this frame.
+    /// Every word has to be somewhere, in the name or in one
+    /// keyword, which is the search box's rule unchanged.
+    fn shows(&self, path: &Path, meta: &Meta) -> bool {
+        if !self.words.is_empty() {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .unwrap_or_default();
+            let words: Vec<String> = meta.keywords.iter().map(|k| k.to_lowercase()).collect();
+            let all = self
+                .words
+                .iter()
+                .all(|w| name.contains(w.as_str()) || words.iter().any(|k| k.contains(w.as_str())));
+            if !all {
+                return false;
+            }
+        }
+        self.meta
+            .iter()
+            .all(|t| t.on_meta(path, meta).unwrap_or(true))
+    }
+}
+
+/// A facet's place in [`Facet::ALL`], which is its slot in
+/// [`Filter::facets`] and its code on the window.
+pub fn facet_slot(facet: Facet) -> usize {
+    Facet::ALL
+        .iter()
+        .position(|f| *f == facet)
+        .expect("every facet is in ALL")
+}
+
+/// What a facet's row is captioned on the bar.
+pub fn facet_caption(facet: Facet) -> &'static str {
+    match facet {
+        Facet::Camera => "Camera",
+        Facet::Lens => "Lens",
+        Facet::Iso => "ISO",
+        Facet::Focal => "Focal",
+        Facet::Date => "Day",
+        Facet::Keyword => "Keyword",
+    }
+}
+
+/// A facet's value as its chip says it: a focal length in
+/// millimetres, the rest as the index has it.
+pub fn facet_chip_text(facet: Facet, label: &str) -> String {
+    match facet {
+        Facet::Focal => format!("{label} mm"),
+        _ => label.to_string(),
+    }
 }
 
 /// What the browser shows of the folder.
@@ -118,9 +210,15 @@ pub struct Filter {
     pub flags: Vec<Flag>,
     /// Any-of. Empty is every label, [`Label::None`] among them.
     pub labels: Vec<Label>,
-    /// Matched against the file name and the keywords. Empty is
+    /// Matched against the file name and the keywords, a word at a
+    /// time, with the §160 grammar's terms among the words. Empty is
     /// every frame.
     pub text: String,
+    /// The facets' chips, by the facet's slot in [`Facet::ALL`]:
+    /// any-of within a facet, as the flags and labels are, and an
+    /// empty facet asks nothing. The values are the index's own
+    /// ([`greycard_library::FacetCount::value`]).
+    pub facets: [Vec<String>; 6],
 }
 
 impl Filter {
@@ -158,40 +256,121 @@ impl Filter {
         any_of(&self.labels, label)
     }
 
-    /// Whether the text matches. Every word of the query has to be
-    /// somewhere — in the name or in one keyword — so typing a
-    /// second word narrows rather than widens, which is what a
-    /// search box means everywhere else. Case is ignored: nobody
-    /// culling a shoot means a different thing by "Sunset".
-    pub fn shows_text(&self, path: &Path, meta: &Meta) -> bool {
-        let query = self.text.trim().to_lowercase();
-        if query.is_empty() {
-            return true;
+    /// The text field read: words, the sidecar's terms, the index's
+    /// terms, and the terms that did not parse. A token shaped like a
+    /// term that does not parse (`rating>=9`) is kept as the word it
+    /// would have been before the field took terms, and its error is
+    /// said on the status line; a filter that silently asked nothing
+    /// would look like the folder and not like a mistake.
+    ///
+    /// Words are split exactly as the search box always split them —
+    /// on whitespace, quotes kept as characters — so a field with no
+    /// term in it means what it meant.
+    pub fn typed(&self) -> Typed {
+        use greycard_library::filter::{is_term, tokens};
+        let mut typed = Typed::default();
+        let text = self.text.trim();
+        if text.is_empty() {
+            return typed;
         }
-        let name = path
-            .file_name()
-            .map(|n| n.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        let words: Vec<String> = meta.keywords.iter().map(|k| k.to_lowercase()).collect();
-        query
-            .split_whitespace()
-            .all(|w| name.contains(w) || words.iter().any(|k| k.contains(w)))
+        for token in tokens(text) {
+            if is_term(&token) {
+                match greycard_library::Filter::from_terms(&[&token]) {
+                    Ok(parsed) => {
+                        for term in parsed.terms {
+                            if term.is_meta() {
+                                typed.meta.push(term);
+                            } else {
+                                typed.index.push(term);
+                            }
+                        }
+                        continue;
+                    }
+                    Err(e) => typed.errors.push(e),
+                }
+            }
+            typed
+                .words
+                .extend(token.to_lowercase().split_whitespace().map(str::to_string));
+        }
+        typed
+    }
+
+    /// The chips of one facet.
+    pub fn chosen(&self, facet: Facet) -> &[String] {
+        &self.facets[facet_slot(facet)]
+    }
+
+    /// Press a facet's chip: on if it was off, off if it was on.
+    pub fn toggle_facet(&mut self, facet: Facet, value: &str) {
+        let slot = &mut self.facets[facet_slot(facet)];
+        *slot = pressed(slot, value.to_string());
+    }
+
+    /// Whether the keyword chips pass this frame. The keyword is the
+    /// sidecar's, so it is asked of the sidecar, as the text field's
+    /// keyword terms are; its counts are still the index's.
+    pub fn shows_keyword(&self, meta: &Meta) -> bool {
+        let values = self.chosen(Facet::Keyword);
+        values.is_empty()
+            || Term::Facet {
+                facet: Facet::Keyword,
+                values: values.to_vec(),
+            }
+            .on_meta(Path::new(""), meta)
+            .unwrap_or(true)
+    }
+
+    /// What the index is asked: the EXIF terms typed and every facet
+    /// but the keyword with a chip on, less `except`'s own group —
+    /// which is how a facet's count sets its own row aside.
+    pub fn index_filter(&self, typed: &Typed, except: Option<Facet>) -> greycard_library::Filter {
+        let mut terms = typed.index.clone();
+        for facet in Facet::ALL {
+            let values = self.chosen(facet);
+            if facet == Facet::Keyword || Some(facet) == except || values.is_empty() {
+                continue;
+            }
+            terms.push(Term::Facet {
+                facet,
+                values: values.to_vec(),
+            });
+        }
+        greycard_library::Filter { terms }
+    }
+
+    /// Whether anything is asked of the index: without that, every
+    /// frame passes it and the index need not be asked.
+    pub fn asks_index(&self, typed: &Typed) -> bool {
+        !typed.index.is_empty()
+            || Facet::ALL
+                .iter()
+                .any(|f| *f != Facet::Keyword && !self.chosen(*f).is_empty())
+    }
+
+    /// Whether the tests the sidecars answer pass this frame: every
+    /// group but the index's, and with `keyword` false the keyword
+    /// chips set aside, for that facet's own count.
+    pub fn shows_meta(&self, typed: &Typed, frame: Frame, keyword: bool) -> bool {
+        self.stars.shows(frame.meta.rating)
+            && self.shows_flag(frame.meta.flag)
+            && self.shows_label(frame.meta.label)
+            && typed.shows(frame.path, frame.meta)
+            && (!keyword || self.shows_keyword(frame.meta))
     }
 
     /// Whether the whole filter shows this frame.
     pub fn shows(&self, frame: Frame) -> bool {
-        self.stars.shows(frame.meta.rating)
-            && self.shows_flag(frame.meta.flag)
-            && self.shows_label(frame.meta.label)
-            && self.shows_text(frame.path, frame.meta)
+        frame.index && self.shows_meta(&self.typed(), frame, true)
     }
 
     /// The file indices the browser lists, in file order.
     pub fn apply(&self, frames: &[Frame]) -> Vec<usize> {
+        let typed = self.typed();
         frames
             .iter()
             .enumerate()
-            .filter(|(_, f)| self.shows(**f))
+            .filter(|(_, f)| f.index && self.shows_meta(&typed, **f, true))
             .map(|(i, _)| i)
             .collect()
     }
@@ -229,12 +408,54 @@ impl Filter {
         if !text.is_empty() {
             parts.push(format!("\"{text}\""));
         }
+        for facet in Facet::ALL {
+            let values = self.chosen(facet);
+            if values.is_empty() {
+                continue;
+            }
+            let said = join(values.iter().cloned());
+            parts.push(match facet {
+                Facet::Camera => format!("camera {said}"),
+                Facet::Lens => format!("lens {said}"),
+                Facet::Iso => format!("ISO {said}"),
+                Facet::Focal => format!("{said} mm"),
+                Facet::Date => format!("taken {said}"),
+                Facet::Keyword => format!("keyword {said}"),
+            });
+        }
         if parts.is_empty() {
             "all frames".to_string()
         } else {
             parts.join(", ")
         }
     }
+}
+
+/// `--filter` in the filter language, split: a camera, lens, iso,
+/// focal, date or keyword term with `:` or `=` is a facet's chips to
+/// turn on once the index can name them, by the value's text (or the
+/// number it equals); every other token is left for the text field,
+/// in its order.
+pub fn from_cli(text: &str) -> (String, Vec<(Facet, String)>) {
+    let mut rest = Vec::new();
+    let mut wanted = Vec::new();
+    for token in greycard_library::filter::tokens(text) {
+        let name_len = token
+            .find(|c: char| !c.is_ascii_alphabetic())
+            .unwrap_or(token.len());
+        let (name, after) = token.split_at(name_len);
+        let value = after
+            .strip_prefix(':')
+            .or_else(|| after.strip_prefix('='))
+            .map(|v| v.trim_matches('"'));
+        match (Facet::from_field(name), value) {
+            (Some(facet), Some(v)) if !v.is_empty() && !v.starts_with('=') => {
+                wanted.push((facet, v.to_string()));
+            }
+            _ => rest.push(token),
+        }
+    }
+    (rest.join(" "), wanted)
 }
 
 /// Whether an any-of set lets a value through: an empty set is every
@@ -334,12 +555,16 @@ impl Counts {
             ..Counts::default()
         };
         let exact = filter.stars.is_exact();
+        let typed = filter.typed();
         for frame in frames {
             let meta = frame.meta;
             let stars = filter.stars.shows(meta.rating);
             let flag = filter.shows_flag(meta.flag);
             let label = filter.shows_label(meta.label);
-            let text = filter.shows_text(frame.path, meta);
+            // The text, the keyword chips and the index's tests are
+            // groups of their own whose rows are counted elsewhere,
+            // so here they are one more thing the other rows apply.
+            let text = typed.shows(frame.path, meta) && filter.shows_keyword(meta) && frame.index;
             if stars && flag && label && text {
                 counts.shown += 1;
             }
@@ -466,7 +691,11 @@ mod tests {
     fn view(folder: &[(PathBuf, Meta)]) -> Vec<Frame<'_>> {
         folder
             .iter()
-            .map(|(path, meta)| Frame { path, meta })
+            .map(|(path, meta)| Frame {
+                path,
+                meta,
+                index: true,
+            })
             .collect()
     }
 
@@ -525,6 +754,7 @@ mod tests {
             flags: vec![Flag::Pick],
             labels: vec![Label::Red],
             text: "harbor".into(),
+            ..Filter::default()
         };
         assert_eq!(both.apply(&frames), vec![1]);
     }
@@ -632,6 +862,7 @@ mod tests {
             flags: vec![Flag::Pick],
             labels: vec![Label::Red, Label::Green],
             text: "sunset".into(),
+            ..Filter::default()
         });
 
         // And the numbers themselves, so the rule above is anchored
@@ -730,6 +961,130 @@ mod tests {
         assert!(Filter::from_name("All").expect("all").is_empty());
     }
 
+    /// `--filter` in the filter language: a facet term with `:` or
+    /// `=` waits for the index to name its chips, and the rest is
+    /// the text field's.
+    #[test]
+    fn the_command_line_filter_splits_into_chips_and_text() {
+        let (text, wanted) = from_cli("camera:R6 iso>=3200 rating>=3 focal=50mm harbor");
+        assert_eq!(text, "iso>=3200 rating>=3 harbor");
+        assert_eq!(
+            wanted,
+            vec![
+                (Facet::Camera, "R6".to_string()),
+                (Facet::Focal, "50mm".to_string())
+            ]
+        );
+        let (text, wanted) = from_cli("lens:\"RF 50mm\" date:2026-09 kw:dusk");
+        assert_eq!(text, "");
+        assert_eq!(
+            wanted,
+            vec![
+                (Facet::Lens, "RF 50mm".to_string()),
+                (Facet::Date, "2026-09".to_string()),
+                (Facet::Keyword, "dusk".to_string())
+            ]
+        );
+        // Not a facet, or not a chip's operator: text.
+        let (text, wanted) = from_cli("aperture:2.8 iso!=100");
+        assert_eq!(text, "aperture:2.8 iso!=100");
+        assert!(wanted.is_empty());
+    }
+
+    /// The field reads terms among its words, and a field with no
+    /// term in it means exactly what the search box meant.
+    #[test]
+    fn the_text_field_reads_terms_and_leaves_words_as_they_were() {
+        let typed = |text: &str| {
+            Filter {
+                text: text.into(),
+                ..Filter::default()
+            }
+            .typed()
+        };
+        let t = typed("harbor Dusk \"low tide\" 12:30 foo:bar");
+        assert_eq!(
+            t.words,
+            ["harbor", "dusk", "\"low", "tide\"", "12:30", "foo:bar"]
+        );
+        assert!(t.meta.is_empty() && t.index.is_empty() && t.errors.is_empty());
+        let t = typed("camera:R6 rating>=3 iso>=3200 keyword:dusk lens:\"RF 50\"");
+        assert!(t.words.is_empty());
+        assert_eq!(t.meta.len(), 2, "rating and keyword are the sidecar's");
+        assert_eq!(t.index.len(), 3, "camera, iso and lens are the index's");
+        // One that does not parse is looked for as the word it was.
+        let t = typed("rating>=9");
+        assert_eq!(t.words, ["rating>=9"]);
+        assert_eq!(t.errors.len(), 1);
+
+        // A sidecar term narrows here; an index term is the index's.
+        let folder = folder();
+        let frames = view(&folder);
+        let find = |text: &str| {
+            Filter {
+                text: text.into(),
+                ..Filter::default()
+            }
+            .apply(&frames)
+        };
+        assert_eq!(find("rating>=3"), vec![1, 2, 4]);
+        assert_eq!(find("rating>=3 flag:pick"), vec![1, 2]);
+        assert_eq!(find("keyword=sunset"), vec![2, 3]);
+        assert_eq!(find("label:red dusk"), vec![4]);
+        assert_eq!(
+            find("camera:R6"),
+            vec![0, 1, 2, 3, 4],
+            "no index, no answer"
+        );
+    }
+
+    /// A facet's chips join their group as the flags do, and the
+    /// index's answer arrives as each frame's `index` bit.
+    #[test]
+    fn a_facet_chip_joins_its_group_and_the_index_decides_the_rest() {
+        let folder = folder();
+        let mut filter = Filter::default();
+        filter.toggle_facet(Facet::Camera, "Canon EOS R6");
+        filter.toggle_facet(Facet::Camera, "Canon EOS R5");
+        assert_eq!(
+            filter.chosen(Facet::Camera),
+            ["Canon EOS R6", "Canon EOS R5"]
+        );
+        assert!(!filter.is_empty());
+        assert!(filter.asks_index(&filter.typed()));
+        assert_eq!(filter.describe(), "camera Canon EOS R6 or Canon EOS R5");
+        // The index's tests less the camera's own, for its count.
+        let typed = filter.typed();
+        assert_eq!(filter.index_filter(&typed, None).terms.len(), 1);
+        assert!(filter.index_filter(&typed, Some(Facet::Camera)).is_empty());
+        // Frames 1 and 3 fail the index; the others pass or have no
+        // row yet, and show.
+        let frames: Vec<Frame> = folder
+            .iter()
+            .enumerate()
+            .map(|(i, (path, meta))| Frame {
+                path,
+                meta,
+                index: i != 1 && i != 3,
+            })
+            .collect();
+        assert_eq!(filter.apply(&frames), vec![0, 2, 4]);
+        let counts = Counts::of(&filter, &frames);
+        assert_eq!(counts.shown, 3);
+        assert_eq!(counts.flags, [2, 1, 0], "the rows read what the index left");
+
+        // The keyword chips are the sidecar's, any-of, case folded.
+        let mut words = Filter::default();
+        words.toggle_facet(Facet::Keyword, "harbor");
+        assert!(!words.asks_index(&words.typed()), "the keyword is in hand");
+        assert_eq!(words.apply(&view(&folder)), vec![1, 4]);
+        words.toggle_facet(Facet::Keyword, "sunset");
+        assert_eq!(words.apply(&view(&folder)), vec![1, 2, 3, 4]);
+        words.toggle_facet(Facet::Keyword, "harbor");
+        words.toggle_facet(Facet::Keyword, "sunset");
+        assert!(words.is_empty(), "pressed twice is not pressed");
+    }
+
     #[test]
     fn a_chip_pressed_twice_is_a_chip_not_pressed() {
         let mut filter = Filter::default();
@@ -768,6 +1123,7 @@ mod tests {
                 flags: vec![Flag::Pick],
                 labels: vec![Label::Red, Label::Green],
                 text: " harbor ".into(),
+                ..Filter::default()
             }
             .describe(),
             "4 stars or more, pick, red or green, \"harbor\""
