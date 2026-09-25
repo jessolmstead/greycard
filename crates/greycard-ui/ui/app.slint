@@ -974,6 +974,8 @@ export component App inherits Window {
     in property <string> import-folders-note: "";
     in property <int> import-count: 0;
     in property <bool> import-ready: false;
+    /// Compare a frame already there with the card byte for byte.
+    in-out property <bool> import-verify: false;
     /// An import is copying, a frame at a time; Stop (or Escape)
     /// finishes the frame in hand and stops.
     in property <bool> import-running: false;
@@ -2143,6 +2145,7 @@ export component App inherits Window {
         import-folders-note: root.import-folders-note;
         import-count: root.import-count;
         import-ready: root.import-ready;
+        import-verify <=> root.import-verify;
         import-choose(w) => { root.import-choose(w); }
         import-backup-cleared => { root.import-backup-cleared(); }
         import-started => { root.import-started(); }

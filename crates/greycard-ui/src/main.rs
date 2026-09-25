@@ -336,6 +336,11 @@ struct Cli {
     /// takes, `/` between levels; none without it
     #[arg(long, value_name = "PATTERN")]
     subfolder: Option<String>,
+    /// With --import, compare a frame already in the destination with
+    /// the card byte for byte, rather than by its size and its first
+    /// and last 64 KiB; reads the whole card again on a re-run
+    #[arg(long)]
+    verify: bool,
 }
 
 /// What the UI thread holds between events.

@@ -51,6 +51,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 }
             }),
             profiles: Vec::new(),
+            verify: cli.verify,
         };
         return crate::panel::import::headless(opts, cli.preset.as_deref());
     }

@@ -113,6 +113,7 @@ fn options(st: &State, app: &App) -> Option<Options> {
         preset,
         backup: st.import.backup.clone(),
         library: st.index_path.clone(),
+        verify: app.get_import_verify(),
         placement: st.write_sidecars.then_some(st.placement),
         profiles: st.profiles.clone(),
     })
@@ -147,6 +148,7 @@ pub(crate) fn preview(
         library: None,
         placement: None,
         profiles: Vec::new(),
+        verify: false,
     };
     match import::relative(&opts, &item.file, first) {
         Err(e) => (format!("Not a pattern: {e}"), false),
@@ -853,6 +855,7 @@ mod tests {
             library: None,
             placement: None,
             profiles: Vec::new(),
+            verify: false,
         }
     }
 

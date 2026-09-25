@@ -5,7 +5,7 @@
 
 import { ComboBox, LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { PanelButton } from "../controls.slint";
+import { PanelButton, Toggle } from "../controls.slint";
 
 // A folder: its path, or what is missing, and the button that asks
 // the desktop for one.
@@ -57,6 +57,7 @@ export component ImportSheet inherits Rectangle {
     /// Whether there is something to import, somewhere to put it and
     /// patterns that make names.
     in property <bool> import-ready;
+    in-out property <bool> import-verify;
     /// Which folder to ask the desktop for: source, destination or
     /// backup.
     callback import-choose(string);
@@ -174,6 +175,16 @@ export component ImportSheet inherits Rectangle {
                     font-size: Theme.font-xs;
                     color: Theme.text-secondary;
                 }
+            }
+            Toggle {
+                label: "Verify against the card";
+                checked <=> root.import-verify;
+            }
+            Text {
+                text: "A frame already in the destination is known by its size and its first and last 64 KiB; Verify compares every byte, which reads the whole card again.";
+                wrap: word-wrap;
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
             }
             Rectangle { height: Theme.space-2; }
             HorizontalLayout {

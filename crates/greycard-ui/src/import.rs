@@ -44,6 +44,11 @@ pub struct Options {
     pub backup: Option<PathBuf>,
     /// The library index to ask whether a file is imported already.
     pub library: Option<PathBuf>,
+    /// Compare a frame already there with the card byte for byte,
+    /// rather than by its size and its first and last 64 KiB (see
+    /// [`same_bytes`]). Off by default, since it reads the whole card
+    /// again on a re-run.
+    pub verify: bool,
     /// Where a preset's sidecar is written, as the Settings sheet
     /// says (§153); none when the run writes no sidecars, and then no
     /// preset is laid.
@@ -749,12 +754,50 @@ pub fn land_from(
     result
 }
 
+/// The hash of a file's last 64 KiB (all of it, when it is shorter)
+/// and its size: with the head hash, what a frame already there is
+/// known by. The tail catches a copy preallocated and never finished,
+/// and one whose last bytes changed.
+pub fn hash_tail(path: &Path) -> std::io::Result<String> {
+    use std::io::{Seek, SeekFrom};
+    let mut file = std::fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    let n = size.min(greycard_library::hash::HEAD as u64);
+    file.seek(SeekFrom::Start(size - n))?;
+    let mut tail = vec![0u8; n as usize];
+    file.read_exact(&mut tail)?;
+    Ok(greycard_library::hash::hash_bytes(&tail, size))
+}
+
+/// Whether `copy` holds `card`'s bytes, as a frame already there is
+/// judged: the same size, head and tail (64 KiB each), or with
+/// `verify`, every byte. A re-run over a card imported before reads
+/// 128 KiB a frame off the card rather than the whole card; a
+/// corruption in the middle of a file that was verified when it was
+/// first imported is what `verify` is for, not what a re-run looks for.
+pub fn same_bytes(card: &Path, copy: &Path, verify: bool) -> std::io::Result<bool> {
+    let size = |p: &Path| std::fs::metadata(p).map(|m| m.len());
+    if size(card)? != size(copy)? {
+        return Ok(false);
+    }
+    if greycard_library::hash_file(card)? != greycard_library::hash_file(copy)? {
+        return Ok(false);
+    }
+    Ok(if verify {
+        hash_whole(card)? == hash_whole(copy)?
+    } else {
+        hash_tail(card)? == hash_tail(copy)?
+    })
+}
+
 /// A frame on the card, its hashes read at most once each: the head's
-/// (the index's key, 64 KiB and the size) and the whole file's.
+/// (the index's key, 64 KiB and the size), the tail's, and the whole
+/// file's, which a frame already there needs only with `verify`.
 struct CardFile<'a> {
     path: &'a Path,
     size: u64,
     head: Option<String>,
+    tail: Option<String>,
     whole: Option<String>,
 }
 
@@ -764,8 +807,26 @@ impl<'a> CardFile<'a> {
             path,
             size,
             head: None,
+            tail: None,
             whole: None,
         }
+    }
+
+    fn tail(&mut self) -> Result<String> {
+        if self.tail.is_none() {
+            self.tail = Some(hash_tail(self.path).context("reading it")?);
+        }
+        Ok(self.tail.clone().unwrap_or_default())
+    }
+
+    /// The rest of the comparison once the head matched: the tail, or
+    /// with `verify` the whole file, against `copy`'s.
+    fn rest_matches(&mut self, copy: &Path, verify: bool) -> Result<bool> {
+        Ok(if verify {
+            hash_whole(copy).ok() == Some(self.whole()?)
+        } else {
+            hash_tail(copy).ok() == Some(self.tail()?)
+        })
     }
 
     fn head(&mut self) -> Result<String> {
@@ -785,12 +846,13 @@ impl<'a> CardFile<'a> {
 
 /// What is under the destination already, by size, so a frame is only
 /// hashed against the files that could be it: first by the head, which
-/// reads 64 KiB, and only on a head that matches by the whole file.
-/// Each file's hashes are read at most once.
+/// reads 64 KiB, and only on a head that matches by the tail (or with
+/// `verify` the whole file). Each file's hashes are read at most once.
 struct Existing {
     by_size: HashMap<u64, Vec<PathBuf>>,
     heads: HashMap<PathBuf, String>,
     wholes: HashMap<PathBuf, String>,
+    verify: bool,
 }
 
 impl Existing {
@@ -811,6 +873,7 @@ impl Existing {
             by_size,
             heads: HashMap::new(),
             wholes: HashMap::new(),
+            verify: false,
         }
     }
 
@@ -833,6 +896,12 @@ impl Existing {
                 },
             };
             if head != card.head()? {
+                continue;
+            }
+            if !self.verify {
+                if card.rest_matches(&f, false)? {
+                    return Ok(Some(f));
+                }
                 continue;
             }
             let whole = match self.wholes.get(&f) {
@@ -1093,9 +1162,9 @@ impl Run<'_> {
     }
 
     /// The library's copy of the card file, if it holds one with the
-    /// same bytes: found by the head hash, then read whole and
-    /// compared, so a copy cut short or changed past its head is not
-    /// taken for the frame. A row on a camera card (this one, or the
+    /// same bytes: found by the head hash, then compared by the tail
+    /// (or with `verify` the whole file), so a copy cut short or changed
+    /// at its end is not taken for the frame. A row on a camera card (this one, or the
     /// other slot of a two-slot body, browsed in the editor) is not an
     /// import.
     fn in_library(&mut self, card: &mut CardFile<'_>) -> Result<Option<PathBuf>> {
@@ -1111,9 +1180,8 @@ impl Run<'_> {
             if path.starts_with(&self.card) || on_a_card(&path) {
                 continue;
             }
-            match hash_whole(&path) {
-                Ok(h) if h == card.whole()? => return Ok(Some(path)),
-                _ => continue,
+            if card.rest_matches(&path, self.opts.verify)? {
+                return Ok(Some(path));
             }
         }
         Ok(None)
@@ -1141,7 +1209,8 @@ pub fn run(
     opts.destination = resolve(&opts.destination);
     opts.backup = opts.backup.as_deref().map(resolve);
     let looked = std::time::Instant::now();
-    let existing = Existing::under(&opts.destination);
+    let mut existing = Existing::under(&opts.destination);
+    existing.verify = opts.verify;
     tracing::info!(
         "import: {} files under {} looked over in {:.2} s",
         existing.files(),
@@ -1208,7 +1277,13 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
                 return Ok(());
             }
             run.given.insert(key(&there));
-            (there, card.whole()?, false)
+            // What the backup is checked against: the card's hash when
+            // it was read whole, else the copy's own, which is local.
+            let hash = match &card.whole {
+                Some(h) => h.clone(),
+                None => hash_whole(&there).context("reading the copy there")?,
+            };
+            (there, hash, false)
         }
         None => {
             let (to, moved) = run.free_name(&planned);
@@ -1243,9 +1318,9 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
     for companion in &item.companions {
         let c_to = frame.with_file_name(companion_name(&item.file, &frame, companion));
         if std::fs::symlink_metadata(&c_to).is_ok() {
-            let theirs = hash_whole(companion).context("reading it")?;
-            if hash_whole(&c_to).ok().as_deref() == Some(theirs.as_str()) {
-                copies.push((c_to, theirs));
+            if same_bytes(companion, &c_to, opts.verify).unwrap_or(false) {
+                let hash = hash_whole(&c_to).context("reading the copy there")?;
+                copies.push((c_to, hash));
             } else {
                 tracing::warn!(
                     "import: {} not copied: {} is another file",
@@ -1426,6 +1501,7 @@ mod tests {
             library: None,
             placement: Some(Placement::Folder),
             profiles: Vec::new(),
+            verify: false,
         }
     }
 
@@ -1834,6 +1910,47 @@ mod tests {
         o.library = Some(root.join("library.sqlite"));
         let r = go(&o);
         assert_eq!((r.frames, r.already), (0, 1), "{r:?}");
+    }
+
+    /// A frame already there is known by its size, its head and its
+    /// tail: a copy whose middle differs passes by default, which is
+    /// the price of a re-run that does not read the whole card, and
+    /// `verify` catches it. The tail catches a copy cut short or
+    /// changed at its end either way.
+    #[test]
+    fn verify_catches_a_middle_the_head_and_tail_do_not() {
+        let root = dir("middle");
+        let big = 3 * greycard_library::hash::HEAD;
+        let body: Vec<u8> = (0..big).map(|i| (i % 251) as u8).collect();
+        let card = root.join("card/DCIM");
+        write(&card.join("IMG_0001.CR3"), &body);
+        let mut middle = body.clone();
+        middle[big / 2] ^= 0xff;
+        let mut tail = body.clone();
+        *tail.last_mut().unwrap() ^= 0xff;
+
+        let dest = root.join("dest");
+        write(&dest.join("IMG_0001.CR3"), &middle);
+        let by_default = go(&options(&card, &dest));
+        assert_eq!((by_default.already, by_default.frames), (1, 0));
+        let mut o = options(&card, &dest);
+        o.verify = true;
+        let verified = go(&o);
+        assert_eq!((verified.already, verified.frames), (0, 1), "{verified:?}");
+        assert_eq!(std::fs::read(dest.join("IMG_0001 (2).CR3")).unwrap(), body);
+
+        let dest = root.join("tail");
+        write(&dest.join("IMG_0001.CR3"), &tail);
+        let r = go(&options(&card, &dest));
+        assert_eq!((r.already, r.frames), (0, 1), "{r:?}");
+        assert!(
+            !same_bytes(
+                &card.join("IMG_0001.CR3"),
+                &dest.join("IMG_0001.CR3"),
+                false
+            )
+            .unwrap()
+        );
     }
 
     /// Review item 5: a link out of the destination does not make the
