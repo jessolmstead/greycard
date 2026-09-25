@@ -24,6 +24,7 @@
 //! second. This crate depends on `greycard-edit` for the sidecar and
 //! `greycard-core` for the probe, and never on a UI.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,11 +34,13 @@ use greycard_edit::meta::Meta;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, TransactionBehavior, params};
 
 pub mod filter;
+#[cfg(any(test, feature = "fixtures"))]
+pub mod fixture;
 pub mod hash;
 mod index;
 pub mod thumbs;
 
-pub use filter::{Filter, ParseError};
+pub use filter::{Facet, Filter, ParseError};
 pub use hash::hash_file;
 pub use index::{Progress, Report, is_indexed_path, read_meta};
 pub use thumbs::{Thumb, Thumbs};
@@ -259,6 +262,27 @@ impl Entry {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
     }
+}
+
+/// One chip of a facet: a value the files hold and how many hold it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FacetCount {
+    /// The value as a [`filter::Term::Facet`] takes it back: the
+    /// camera or the lens as the row has it, the ISO and the focal
+    /// length as numbers (`35`, `23.9`), the day as `2026-09-21`, a
+    /// keyword folded to lower case.
+    pub value: String,
+    /// The value as a chip shows it: the same, except a keyword,
+    /// which keeps a case it was written in.
+    pub label: String,
+    pub count: usize,
+}
+
+/// A file's path as the index keys it — its folder canonical, its
+/// own name kept — for a caller that looks rows up by the paths it
+/// holds.
+pub fn key_path(path: &Path) -> PathBuf {
+    canonical_file(path)
 }
 
 /// A file's mtime as the index stores it.
@@ -599,6 +623,132 @@ impl Library {
         Ok(n as usize)
     }
 
+    /// The row id of each of `paths`, where the index holds the file
+    /// and last found it there; `None` for a file it has no row for
+    /// yet. One query a folder, each folder made canonical once, so
+    /// the filter bar can map its frames to rows on every refresh.
+    pub fn ids_of(&self, paths: &[PathBuf]) -> Result<Vec<Option<i64>>> {
+        let mut folders: HashMap<PathBuf, (PathBuf, HashMap<Vec<u8>, i64>)> = HashMap::new();
+        let mut out = Vec::with_capacity(paths.len());
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT path, id FROM files WHERE folder = ? AND missing_since IS NULL",
+        )?;
+        for path in paths {
+            let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+                out.push(None);
+                continue;
+            };
+            if !folders.contains_key(parent) {
+                let dir = if parent.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    parent
+                };
+                let canonical = nearest_canonical(dir);
+                let rows = stmt
+                    .query_map(params![path_bytes(&canonical)], |r| {
+                        Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?))
+                    })?
+                    .collect::<rusqlite::Result<HashMap<_, _>>>()?;
+                folders.insert(parent.to_path_buf(), (canonical, rows));
+            }
+            let (canonical, rows) = &folders[parent];
+            out.push(rows.get(&path_bytes(&canonical.join(name))).copied());
+        }
+        Ok(out)
+    }
+
+    /// Which of the rows `ids` pass `filter`, under the same rule as
+    /// [`Library::query`].
+    pub fn ids_passing(&self, ids: &[i64], filter: &Filter) -> Result<HashSet<i64>> {
+        let (body, params) = filter.to_sql();
+        let sql = format!(
+            "SELECT files.id FROM files WHERE files.id IN (SELECT value FROM json_each(?)) \
+             AND ({body}){}",
+            if filter.mentions_missing() {
+                ""
+            } else {
+                " AND files.missing_since IS NULL"
+            }
+        );
+        let mut all = vec![rusqlite::types::Value::Text(ids_json(ids))];
+        all.extend(params.iter().map(param));
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(all), |r| r.get::<_, i64>(0))?;
+        Ok(rows.collect::<rusqlite::Result<HashSet<_>>>()?)
+    }
+
+    /// A facet's chips: each value `facet` takes among the rows that
+    /// pass `filter`, with how many files hold it — one `GROUP BY`.
+    /// `within` narrows the rows to those ids first, which is how the
+    /// filter bar counts only the frames its other tests leave; `None`
+    /// is the whole library. A file that does not say (no lens, no
+    /// date) is on no chip. Cameras, lenses and keywords come most
+    /// held first; ISOs, focal lengths and days in their own order.
+    pub fn facet_counts(
+        &self,
+        facet: Facet,
+        within: Option<&[i64]>,
+        filter: &Filter,
+    ) -> Result<Vec<FacetCount>> {
+        let (body, params) = filter.to_sql();
+        let key = facet.key();
+        let (from, label, count) = match facet {
+            Facet::Keyword => (
+                "files JOIN keywords k ON k.file = files.id",
+                "min(k.word)",
+                "count(DISTINCT files.id)",
+            ),
+            _ => ("files", key, "count(*)"),
+        };
+        let order = match facet {
+            Facet::Camera | Facet::Lens | Facet::Keyword => "2 DESC, 1",
+            Facet::Iso | Facet::Focal | Facet::Date => "1",
+        };
+        let sql = format!(
+            "SELECT {key}, {count}, {label} FROM {from} \
+             WHERE {key} IS NOT NULL AND {key} <> '' AND ({body}){}{} \
+             GROUP BY 1 ORDER BY {order}",
+            if filter.mentions_missing() {
+                ""
+            } else {
+                " AND files.missing_since IS NULL"
+            },
+            if within.is_some() {
+                " AND files.id IN (SELECT value FROM json_each(?))"
+            } else {
+                ""
+            }
+        );
+        let mut all: Vec<rusqlite::types::Value> = params.iter().map(param).collect();
+        if let Some(ids) = within {
+            all.push(rusqlite::types::Value::Text(ids_json(ids)));
+        }
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(all), |r| {
+            use rusqlite::types::ValueRef;
+            let value = match r.get_ref(0)? {
+                ValueRef::Integer(i) => i.to_string(),
+                // `35.0` reads back as 35, and 23.9 as 23.9: the
+                // shortest spelling that parses to the same number,
+                // which is what a chip hands back to be matched.
+                ValueRef::Real(f) => f.to_string(),
+                ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
+                _ => String::new(),
+            };
+            let label = match r.get_ref(2)? {
+                ValueRef::Text(t) => String::from_utf8_lossy(t).into_owned(),
+                _ => value.clone(),
+            };
+            Ok(FacetCount {
+                value,
+                label,
+                count: r.get::<_, i64>(1)? as usize,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// Every file with this content hash, missing ones included: a
     /// copy on two disks is two rows with one hash.
     pub fn by_hash(&self, hash: &str) -> Result<Vec<Entry>> {
@@ -722,6 +872,20 @@ impl State {
             Judgement::ToMake
         }
     }
+}
+
+/// Row ids as the JSON array `json_each` takes.
+fn ids_json(ids: &[i64]) -> String {
+    let mut s = String::with_capacity(ids.len() * 6 + 2);
+    s.push('[');
+    for (n, id) in ids.iter().enumerate() {
+        if n > 0 {
+            s.push(',');
+        }
+        s.push_str(&id.to_string());
+    }
+    s.push(']');
+    s
 }
 
 fn param(p: &filter::Param) -> rusqlite::types::Value {

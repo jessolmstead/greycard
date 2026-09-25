@@ -45,8 +45,9 @@
 //! `WHERE` body and its parameters, and the library binds them.
 
 use std::fmt;
+use std::path::Path;
 
-use greycard_edit::meta::{Flag, Label, STARS};
+use greycard_edit::meta::{Flag, Label, Meta, STARS};
 
 /// A parsed filter: the terms a file must pass, all of them.
 #[derive(Debug, Clone, PartialEq, Default)]
@@ -86,6 +87,98 @@ pub enum Term {
     },
     /// Whether the file is one the index last found gone from disk.
     Missing(bool),
+    /// Any of a facet's values: the filter bar's chips, one group of
+    /// them. No text spells it; the bar builds it, from values the
+    /// index's own counts named ([`Facet`]), so a chip matches
+    /// exactly the files it counted. An empty list asks nothing.
+    Facet {
+        facet: Facet,
+        values: Vec<String>,
+    },
+}
+
+/// A field the filter bar offers as chips, a chip a value, each
+/// counted with one `GROUP BY` ([`crate::Library::facet_counts`]).
+///
+/// A value is matched through the same expression it was grouped
+/// by, so the count on a chip and what pressing it lists cannot
+/// disagree: a focal length is grouped to a tenth of a millimetre,
+/// a date to its day, a keyword with its case folded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Facet {
+    Camera,
+    Lens,
+    Iso,
+    Focal,
+    Date,
+    Keyword,
+}
+
+impl Facet {
+    pub const ALL: [Facet; 6] = [
+        Facet::Camera,
+        Facet::Lens,
+        Facet::Iso,
+        Facet::Focal,
+        Facet::Date,
+        Facet::Keyword,
+    ];
+
+    /// The field the filter language calls it.
+    pub fn field(self) -> &'static str {
+        match self {
+            Facet::Camera => "camera",
+            Facet::Lens => "lens",
+            Facet::Iso => "iso",
+            Facet::Focal => "focal",
+            Facet::Date => "date",
+            Facet::Keyword => "keyword",
+        }
+    }
+
+    /// The facet a field name stands for, under the names the
+    /// language takes for it.
+    pub fn from_field(name: &str) -> Option<Facet> {
+        Some(match name.to_ascii_lowercase().as_str() {
+            "camera" => Facet::Camera,
+            "lens" => Facet::Lens,
+            "iso" => Facet::Iso,
+            "focal" | "mm" => Facet::Focal,
+            "date" | "taken" => Facet::Date,
+            "keyword" | "keywords" | "kw" => Facet::Keyword,
+            _ => return None,
+        })
+    }
+
+    /// What a file's value is grouped and matched by. The keyword's
+    /// is over the keyword table, aliased `k`.
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Facet::Camera => "files.camera",
+            Facet::Lens => "files.lens",
+            Facet::Iso => "files.iso",
+            Facet::Focal => "round(files.focal, 1)",
+            Facet::Date => "substr(files.taken, 1, 10)",
+            Facet::Keyword => "ulower(k.word)",
+        }
+    }
+
+    /// A value as the key compares it: a number for ISO and focal
+    /// length, a keyword folded, the rest as written. `None` for a
+    /// number that does not read as one.
+    pub(crate) fn param(self, value: &str) -> Option<Param> {
+        match self {
+            Facet::Iso => value.trim().parse::<i64>().ok().map(Param::Int),
+            Facet::Focal => value
+                .trim()
+                .parse::<f64>()
+                .ok()
+                .filter(|v| v.is_finite())
+                .map(Param::Real),
+            Facet::Keyword => Some(Param::Text(value.to_lowercase())),
+            _ => Some(Param::Text(value.to_string())),
+        }
+    }
 }
 
 /// The fields that hold words.
@@ -241,7 +334,7 @@ impl Filter {
 
 /// The tokens of a filter: split on whitespace outside double
 /// quotes, the quotes kept for the term parser to strip.
-fn tokens(text: &str) -> Vec<String> {
+pub fn tokens(text: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut current = String::new();
     let mut quoted = false;
@@ -425,6 +518,14 @@ fn parse_term(token: &str) -> Result<Term, ParseError> {
             FIELDS.join(", ")
         ))),
     }
+}
+
+/// Whether a token is shaped like a term of this language — a field
+/// it has, an operator, something after it — rather than a word. The
+/// filter bar's field reads a token so shaped as a term and anything
+/// else as the word its search box always looked for.
+pub fn is_term(token: &str) -> bool {
+    looks_like_a_term(token)
 }
 
 /// Whether a token is shaped like a term: letters, an operator, and
@@ -716,7 +817,111 @@ impl Term {
                 "files.missing_since IS NULL"
             }
             .to_string(),
+            Term::Facet { facet, values } => {
+                if values.is_empty() {
+                    return "1".to_string();
+                }
+                let bound: Vec<Param> = values.iter().filter_map(|v| facet.param(v)).collect();
+                if bound.is_empty() {
+                    return "0".to_string();
+                }
+                let marks = vec!["?"; bound.len()].join(", ");
+                params.extend(bound);
+                match facet {
+                    Facet::Keyword => format!(
+                        "EXISTS (SELECT 1 FROM keywords k WHERE k.file = files.id \
+                         AND ulower(k.word) IN ({marks}))"
+                    ),
+                    _ => format!("{} IN ({marks})", facet.key()),
+                }
+            }
         }
+    }
+
+    /// This term answered from what a file's sidecar and its path
+    /// say, as the SQL would answer it from the row: a word, the
+    /// name, the folder, a keyword, the rating, the flag, the label.
+    /// `None` for a term only the index can answer — the EXIF.
+    ///
+    /// The editor holds every open frame's sidecar, fresher than the
+    /// row an `index_file` is still writing, so the filter bar asks
+    /// these of the sidecars and only the rest of the index.
+    /// `missing` is about the index's rows and a file on screen is
+    /// not missing, so `missing:yes` is false here.
+    pub fn on_meta(&self, path: &Path, meta: &Meta) -> Option<bool> {
+        let keywords = || meta.keywords.iter().map(|k| k.to_lowercase());
+        let name = || {
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_lowercase())
+                .unwrap_or_default()
+        };
+        let text_test = |text: String, op: TextOp, value: &str| match op {
+            TextOp::Contains => text.contains(value),
+            TextOp::Equals => text == value,
+            TextOp::NotEquals => text != value && !text.is_empty(),
+        };
+        Some(match self {
+            Term::Word(word) => {
+                name().contains(word.as_str()) || keywords().any(|k| k.contains(word.as_str()))
+            }
+            Term::Text {
+                field: TextField::Keyword,
+                op,
+                value,
+            } => match op {
+                TextOp::Contains => keywords().any(|k| k.contains(value.as_str())),
+                TextOp::Equals => keywords().any(|k| k == *value),
+                TextOp::NotEquals => !keywords().any(|k| k == *value),
+            },
+            Term::Text {
+                field: TextField::Name,
+                op,
+                value,
+            } => text_test(name(), *op, value),
+            Term::Text {
+                field: TextField::Folder,
+                op,
+                value,
+            } => text_test(
+                path.parent()
+                    .map(|p| p.to_string_lossy().to_lowercase())
+                    .unwrap_or_default(),
+                *op,
+                value,
+            ),
+            Term::Number {
+                field: NumberField::Rating,
+                op,
+                value,
+            } => {
+                let (r, v) = (i64::from(meta.rating), *value as i64);
+                match op {
+                    Cmp::Eq => r == v,
+                    Cmp::Ne => r != v,
+                    Cmp::Lt => r < v,
+                    Cmp::Le => r <= v,
+                    Cmp::Gt => r > v,
+                    Cmp::Ge => r >= v,
+                }
+            }
+            Term::Flag { is, flag } => (meta.flag == *flag) == *is,
+            Term::Label { is, label } => (meta.label == *label) == *is,
+            Term::Missing(yes) => !*yes,
+            Term::Facet {
+                facet: Facet::Keyword,
+                values,
+            } => {
+                values.is_empty()
+                    || keywords().any(|k| values.iter().any(|v| v.to_lowercase() == k))
+            }
+            _ => return None,
+        })
+    }
+
+    /// Whether [`Term::on_meta`] answers this term, or only the index
+    /// can.
+    pub fn is_meta(&self) -> bool {
+        self.on_meta(Path::new(""), &Meta::default()).is_some()
     }
 }
 

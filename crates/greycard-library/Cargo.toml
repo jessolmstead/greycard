@@ -26,6 +26,13 @@ blake3 = "1"
 dunce = "1"
 # The thumbnail cache's entries are JPEGs.
 image.workspace = true
+# The test frames' metadata is rawler's type; see `fixtures`.
+rawler = { workspace = true, optional = true }
+
+[features]
+# `fixture`: frames with real EXIF for another crate's tests, the
+# editor's among them. Not for a build anybody runs.
+fixtures = ["dep:rawler"]
 
 [dev-dependencies]
 # The tests write small TIFFs with real EXIF through the engine's
