@@ -45,6 +45,15 @@ fontique = "0.11"
 ab_glyph = "0.2"
 # A character's script, for the font fallback. Already in the tree.
 unicode-script = "0.5"
+# The import's verify, a hash of the whole file. The library's index
+# already brings it.
+blake3 = "1"
+# Paths compared as the file system has them, without the prefix
+# Windows puts on a canonical path. The library already brings it.
+dunce = "1"
+# A file's modification day in local time, for a name when the EXIF
+# has no date. rawler already brings it, clock and all.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [build-dependencies]
 slint-build = "1.18"
