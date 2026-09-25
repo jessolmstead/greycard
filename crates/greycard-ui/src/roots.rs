@@ -809,6 +809,9 @@ pub(crate) fn merge(
         drop_placeholder(st, app);
         st.hold = None;
         st.prefetch.want(Vec::new());
+        if let Some(run) = st.thumb_run.as_mut() {
+            run.renumber(&from);
+        }
     }
     st.picked = st.picked.iter().filter_map(|&i| to_new(i)).collect();
     let gone_row = old_current

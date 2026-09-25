@@ -49,6 +49,17 @@ impl ThumbRun {
         }
     }
 
+    /// The list renumbered under the run (a merge): `from` says, for
+    /// each file now, the number it had, `None` for one new, which is
+    /// waited for as well.
+    pub(crate) fn renumber(&mut self, from: &[Option<usize>]) {
+        self.waiting = from
+            .iter()
+            .map(|f| f.is_none_or(|i| self.waiting.get(i).copied().unwrap_or(false)))
+            .collect();
+        self.left = self.waiting.iter().filter(|w| **w).count();
+    }
+
     /// File `index`'s thumbnail came back — from the cache, made, or
     /// not at all when `made` is `None` — and the worker spent
     /// `seconds` on it. A second picture for the same file, a larger
