@@ -15,6 +15,9 @@ export component GridSheet inherits Rectangle {
     /// A right-click on a frame (or, on a Mac, a Control+click), as
     /// the strip has it: the row and where, in the window's pixels.
     callback frame-menu(int, length, length);
+    /// Whether the frame menu is up: a press that closes it reaches
+    /// the cell under it too, and is not a click there.
+    pure callback menu-shown() -> bool;
     in property <bool> ctrl-click-menu;
     /// For a snapshot (`--menu`): the row to open the menu over, as
     /// if right-clicked in its cell's middle; -1 for none.
@@ -281,9 +284,15 @@ export component GridSheet inherits Rectangle {
                         mouse-cursor: MouseCursor.pointer;
                         pointer-event(e) => {
                             if (e.kind == PointerEventKind.down) {
-                                self.menu = e.button == PointerEventButton.right
+                                let closing = root.menu-shown();
+                                self.menu = closing || e.button == PointerEventButton.right
                                     || (root.ctrl-click-menu && e.button == PointerEventButton.left
                                         && e.modifiers.meta);
+                                if (closing && e.button == PointerEventButton.left
+                                    && !(root.ctrl-click-menu && e.modifiers.meta)) {
+                                    // The press closed the menu: nothing more.
+                                    return;
+                                }
                                 if (self.menu) {
                                     root.focus-keys();
                                     root.frame-menu(i, self.absolute-position.x + self.mouse-x,

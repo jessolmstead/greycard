@@ -1405,7 +1405,11 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
 /// jump back to; skipped for a screenshot, a snapshot or a one-shot
 /// export, which should leave the user's settings alone.
 pub(crate) fn remember_last_file(st: &State) {
-    if st.screenshot.is_some() || st.snapshot.is_some() || st.export_then_quit.is_some() {
+    // `batch` as well: a snapshot's path is taken at the capture, and
+    // a develop that lands after it (a `--menu` over another frame)
+    // must not write the user's settings either.
+    if st.batch || st.screenshot.is_some() || st.snapshot.is_some() || st.export_then_quit.is_some()
+    {
         return;
     }
     let Some(path) = st.current.and_then(|i| st.files.get(i)) else {

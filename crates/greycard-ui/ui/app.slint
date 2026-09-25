@@ -91,11 +91,11 @@ export component App inherits Window {
     // grid or the viewport (`panel::menu`).
     /// The row right-clicked, -1 for the frame on screen: Rust makes
     /// it current first when it is not in the selection
-    /// (`selection::right_click`), and fills the menu's ticks.
+    /// (`selection::right_click`), and fills the menu's checks.
     callback frame-menu-asked(int);
     /// How many frames the menu acts on.
     in property <int> menu-count: 1;
-    /// What the selection shares, for the ticks; -1 where it differs.
+    /// What the selection shares, for the checks; -1 where it differs.
     in property <int> menu-rating: -1;
     in property <int> menu-flag: -1;
     in property <int> menu-label: -1;
@@ -105,6 +105,18 @@ export component App inherits Window {
     callback menu-reveal();
     /// Whether a Control+click is a right-click: a Mac's.
     in property <bool> ctrl-click-menu: false;
+    /// The name of the frame right-clicked, whose settings the menu's
+    /// Copy takes.
+    in property <string> menu-file: "";
+    /// Whether the selection has a frame for a rating, a flag or a
+    /// label to reach.
+    in property <bool> menu-can-meta: true;
+    /// The menu's Copy settings: the frame right-clicked, where Ctrl+C
+    /// copies the frame on screen.
+    callback menu-copy();
+    /// The menu's Export... asked while a develop was running: the
+    /// sheet opens once it lands.
+    in-out property <bool> export-waiting: false;
     /// For a snapshot (`--menu`): the row of the strip, or of the grid
     /// when it is open, to open the menu over.
     in-out property <int> menu-at: -1;
@@ -1004,6 +1016,34 @@ export component App inherits Window {
     /// A right-click over row `row` (-1: the viewport's frame), at
     /// (x, y) in the window: the target settled, then the menu. Not
     /// under a sheet, which a sheet's own frames would move under.
+    /// The menu's Export...: the sheet now, or once the develop in
+    /// progress lands (a right-click on a frame outside the selection
+    /// starts one).
+    public function menu-export() {
+        if (root.busy) { root.export-waiting = true; } else { root.export-asked(); }
+    }
+    changed busy => {
+        if (!self.busy && self.export-waiting) {
+            self.export-waiting = false;
+            self.export-asked();
+        }
+    }
+    // A paste's sheet closed, however: the next opening is a sync's
+    // unless a paste asks again.
+    changed sync-open => {
+        if (!self.sync-open) { self.sync-paste = false; }
+    }
+    /// Whether the frame menu is up, for the surfaces: a press outside
+    /// it closes it and is still delivered to what is under the
+    /// pointer, which lets that one go by. Slint 1.18 does not say
+    /// whether a ContextMenuArea's menu is open, so it is read off the
+    /// keys: Slint's own menu takes the focus from them while it is up
+    /// and gives it back when it closes, however it closes. A native
+    /// menu (macOS, Windows) takes neither the focus nor the click.
+    out property <bool> menu-up: false;
+    pure function menu-shown() -> bool {
+        return root.menu-up;
+    }
     function frame-menu-at(row: int, x: length, y: length) {
         if (root.sheet-open()) { return; }
         root.frame-menu-asked(row);
@@ -1026,6 +1066,10 @@ export component App inherits Window {
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
     forward-focus: keys;
     keys := FocusScope {
+        focus-lost(reason) => {
+            if (reason == FocusReason.popup-activation) { root.menu-up = true; }
+        }
+        focus-gained(reason) => { root.menu-up = false; }
         key-pressed(e) => {
             // The settings sheet is declared last and so drawn over the
             // rest: Escape closes it first.
@@ -1372,10 +1416,14 @@ export component App inherits Window {
                 patch-grabbed(a) => { root.patch-grabbed(a); }
                 patch-dragged(a, b, c) => { root.patch-dragged(a, b, c); }
                 patch-dropped => { root.patch-dropped(); }
-                focus-keys => { keys.focus(); }
+                // Not while the frame menu is up: the keys coming back
+                // are how the window knows it closed, and a pointer
+                // passing over the picture must not take them early.
+                focus-keys => { if (!root.menu-shown()) { keys.focus(); } }
                 plate-hidden: root.panels-hidden;
                 ctrl-click-menu: root.ctrl-click-menu;
                 frame-menu(x, y) => { root.frame-menu-at(-1, x, y); }
+                menu-shown => { return root.menu-shown(); }
             }
 
             // Panel.
@@ -1882,6 +1930,7 @@ export component App inherits Window {
             selected <=> root.selected;
             frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
             frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
+            menu-shown => { return root.menu-shown(); }
             ctrl-click-menu: root.ctrl-click-menu;
             menu-at: root.grid-open ? -1 : root.menu-at;
             meta-stars: root.meta-stars;
@@ -1904,6 +1953,7 @@ export component App inherits Window {
         selected <=> root.selected;
         frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
         frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
+        menu-shown => { return root.menu-shown(); }
         ctrl-click-menu: root.ctrl-click-menu;
         menu-at: root.menu-at;
         set-count: root.set-count;
@@ -2054,11 +2104,13 @@ export component App inherits Window {
         rating: root.menu-rating;
         flag: root.menu-flag;
         label: root.menu-label;
-        can-export: root.can-export();
-        copy => { root.copy-asked(); }
+        file: root.menu-file;
+        can-meta: root.menu-can-meta;
+        can-export: !root.export-open && !root.export-running && root.selected >= 0 && !root.culling;
+        copy => { root.menu-copy(); }
         paste => { root.paste-asked(); }
         meta(k, v) => { root.menu-meta(k, v); }
         reveal => { root.menu-reveal(); }
-        export => { root.export-asked(); }
+        export => { root.menu-export(); }
     }
 }

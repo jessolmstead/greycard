@@ -548,13 +548,24 @@ pub(crate) fn copy_settings(st: &mut State, app: &App) {
         app.set_status("open a frame to copy its settings".into());
         return;
     };
-    let edit = if st.cull.is_some() {
-        migrate_frame(st, c);
-        st.sidecars[c].current.clone()
-    } else {
+    copy_settings_of(st, app, c);
+}
+
+/// Copy frame `file`'s edit, whole, into the clipboard: the frame
+/// right-clicked, for the menu's Copy. The panel's edit when `file`
+/// is the frame the panel holds; its sidecar's current state
+/// otherwise, brought up to date first.
+pub(crate) fn copy_settings_of(st: &mut State, app: &App, file: usize) {
+    if file >= st.files.len() {
+        return;
+    }
+    let edit = if st.cull.is_none() && st.current == Some(file) {
         read_edit(app, &st.edit, st.target)
+    } else {
+        migrate_frame(st, file);
+        st.sidecars[file].current.clone()
     };
-    let clip = Clipboard::copy(edit, &st.files[c]);
+    let clip = Clipboard::copy(edit, &st.files[file]);
     let name = clip.name();
     st.clipboard = Some(clip);
     app.set_clip_from(name.clone().into());
@@ -562,7 +573,7 @@ pub(crate) fn copy_settings(st: &mut State, app: &App) {
 }
 
 /// The sections a paste's sheet opens with: the last sync's or
-/// paste's choice this session, else what a sync ticks by default.
+/// paste's choice this session, else what a sync checks by default.
 fn paste_sections(st: &State) -> Vec<bool> {
     Section::ALL
         .iter()
@@ -826,8 +837,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.set_status("choose what goes across".into());
                 return;
             }
+            // Read before the sheet closes: closing it clears the flag.
+            let paste = app.get_sync_paste();
             app.set_sync_open(false);
-            if app.get_sync_paste() {
+            if paste {
                 app.set_sync_paste(false);
                 // As a sync's: what the sheet named, or nothing.
                 let asked = st.paste_asked.take();
@@ -1918,7 +1931,7 @@ mod tests {
             });
             st.sidecars[3].record(own);
         }
-        // Nothing copied: Paste is greyed and the key says so.
+        // Nothing copied: Paste is grayed and the key says so.
         assert_eq!(app.get_clip_from(), "");
         app.invoke_select(1);
         with_control(&app, || press(&app, "v"));
@@ -2002,6 +2015,13 @@ mod tests {
         app.invoke_sync_applied();
         assert_eq!(app.get_status(), "the 2 frames had these already");
         assert_eq!(state.borrow().sidecars[3].history.len(), 2);
+        // A paste's sheet left by Escape leaves no paste behind it.
+        with_control(&app, || press(&app, "v"));
+        assert!(app.get_sync_paste());
+        press(&app, Key::Escape);
+        slint::platform::update_timers_and_animations();
+        assert!(!app.get_sync_open());
+        assert!(!app.get_sync_paste());
         // The sync's own sheet still opens on its defaults, as a sync.
         app.invoke_sync_open_asked();
         assert!(!app.get_sync_paste());

@@ -76,6 +76,9 @@ export component Viewport inherits Rectangle {
     /// with no tool in hand: the frame menu, over the frame on
     /// screen, where the click was in the window's logical pixels.
     callback frame-menu(length, length);
+    /// Whether the frame menu is up: the press that closes it is not
+    /// a click on the picture.
+    pure callback menu-shown() -> bool;
     in property <bool> ctrl-click-menu;
     // The engine's texture, bound by App's `texture` through this
     // component's id as it was bound to the Image before.
@@ -115,6 +118,12 @@ export component Viewport inherits Rectangle {
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down) {
                 root.focus-keys();
+                // The press that closed the menu: its release is not a
+                // click to zoom by, and its drag no pan.
+                if (root.menu-shown() && e.button == PointerEventButton.left) {
+                    self.menu-down = true;
+                    return;
+                }
                 // The menu, not over a tool: a shape being placed and
                 // a repair take the right button for themselves, and
                 // a dropper, the level and a guide are half a gesture.

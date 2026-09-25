@@ -16,7 +16,7 @@ use greycard_edit::meta::{Change, Flag, Label};
 /// What a menu item asks for, as a culling key would: a rating of
 /// `value` stars, the flag whose code is `value`, the label whose
 /// code is `value` (a toggle over the selection, as the key is; the
-/// menu ticks the one the selection wears, so a tick taken off is
+/// menu checks the one the selection wears, so a check taken off is
 /// what it looks like).
 pub(crate) fn menu_change(kind: &str, value: i32) -> Option<Change> {
     match kind {
@@ -37,7 +37,7 @@ pub(crate) fn menu_change(kind: &str, value: i32) -> Option<Change> {
 }
 
 /// The value every one of `values` has, or -1 when they differ (or
-/// there are none): what the menu ticks.
+/// there are none): what the menu checks.
 fn shared(values: impl IntoIterator<Item = i32>) -> i32 {
     let mut values = values.into_iter();
     let Some(first) = values.next() else {
@@ -50,47 +50,67 @@ fn shared(values: impl IntoIterator<Item = i32>) -> i32 {
     }
 }
 
-/// The command that shows `path` in the desktop's file manager: the
-/// Finder with the file chosen on a Mac, Explorer with it chosen on
-/// Windows, and elsewhere the folder through `xdg-open`, which has no
-/// way to choose a file in it.
+/// Explorer's argument for `path` chosen in its folder: "/select,"
+/// and the path, quoted, as one argument. Explorer does not take the
+/// quoting Rust would put around the whole of it, so the command is
+/// given it raw. Pure, and tested on every platform.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn explorer_select(path: &Path) -> String {
+    format!("/select,\"{}\"", path.display())
+}
+
+/// `path` made absolute against the working directory: a file opened
+/// by a relative name has an empty folder, and the file manager would
+/// be handed nothing.
+fn absolute(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// The command that shows `path` in the desktop's file
+/// manager: the Finder with the file chosen on a Mac, Explorer with it
+/// chosen on Windows, and elsewhere the folder through `xdg-open`,
+/// which has no way to choose a file in it.
 #[cfg(target_os = "macos")]
 pub(crate) fn reveal_command(path: &Path) -> std::process::Command {
     let mut cmd = std::process::Command::new("open");
-    cmd.arg("-R").arg(path);
+    cmd.arg("-R").arg(absolute(path));
     cmd
 }
 
 #[cfg(windows)]
 pub(crate) fn reveal_command(path: &Path) -> std::process::Command {
     use std::os::windows::process::CommandExt;
-    // Explorer reads "/select," and the path as one argument and does
-    // not take the quoting Rust would put around the whole of it.
     let mut cmd = std::process::Command::new("explorer");
-    cmd.raw_arg(format!("/select,\"{}\"", path.display()));
+    cmd.raw_arg(explorer_select(&absolute(path)));
     cmd
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
 pub(crate) fn reveal_command(path: &Path) -> std::process::Command {
     let mut cmd = std::process::Command::new("xdg-open");
-    cmd.arg(path.parent().unwrap_or(Path::new(".")));
+    let path = absolute(path);
+    cmd.arg(path.parent().unwrap_or(Path::new("/")));
     cmd
 }
 
 /// Show `path` in the file manager, without waiting on it.
 fn reveal(path: &Path) -> std::io::Result<()> {
-    let mut child = reveal_command(path).spawn()?;
+    let path = path.to_path_buf();
+    let mut child = reveal_command(&path).spawn()?;
     // Reaped on a thread of its own, so it is not left a zombie and
-    // the window never waits on the file manager.
-    std::thread::spawn(move || {
-        let _ = child.wait();
+    // the window never waits on the file manager; a failure is logged.
+    std::thread::spawn(move || match child.wait() {
+        Ok(status) if !status.success() => {
+            tracing::warn!("reveal {}: the file manager said {status}", path.display());
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("reveal {}: {e}", path.display()),
     });
     Ok(())
 }
 
 /// Settle what a right-click on browser row `row` (-1: the frame on
-/// screen, from the viewport) is about, and fill the menu's ticks
+/// screen, from the viewport) is about, and fill the menu's checks
 /// and counts for it.
 pub(crate) fn menu_asked(state: &Rc<RefCell<State>>, app: &App, row: i32) {
     let file = {
@@ -119,6 +139,14 @@ pub(crate) fn menu_asked(state: &Rc<RefCell<State>>, app: &App, row: i32) {
         .filter_map(|&f| st.sidecars.get(f))
         .map(|s| &s.meta)
         .collect();
+    app.set_menu_file(
+        st.files
+            .get(file)
+            .map(|p| file_name(p))
+            .unwrap_or_default()
+            .into(),
+    );
+    app.set_menu_can_meta(!frames.is_empty());
     app.set_menu_count(frames.len().max(1) as i32);
     app.set_menu_rating(shared(metas.iter().map(|m| i32::from(m.rating))));
     app.set_menu_flag(shared(metas.iter().map(|m| m.flag.code())));
@@ -148,6 +176,21 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             }
         });
     }
+    // The menu's Copy: the frame right-clicked, which is not always
+    // the frame on screen (another frame of the set).
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_menu_copy(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            match st.menu_file.or(st.current) {
+                Some(f) => crate::panel::sync::copy_settings_of(&mut st, &app, f),
+                None => crate::panel::sync::copy_settings(&mut st, &app),
+            }
+        });
+    }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_menu_reveal(move || {
@@ -159,7 +202,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             if let Err(e) = reveal(path) {
-                tracing::warn!("reveal {}: {e}", path.display());
+                tracing::warn!(
+                    "reveal {}: could not start the file manager: {e}",
+                    path.display()
+                );
                 app.set_status(format!("could not show {}: {e}", file_name(path)).into());
             }
         });
@@ -193,7 +239,7 @@ mod tests {
     }
 
     #[test]
-    fn the_ticks_are_what_the_whole_selection_shares() {
+    fn the_checks_are_what_the_whole_selection_shares() {
         assert_eq!(shared([3, 3, 3]), 3);
         assert_eq!(shared([3, 2]), -1);
         assert_eq!(shared([0]), 0);
@@ -229,6 +275,23 @@ mod tests {
     fn reveal_chooses_the_file_in_explorer() {
         let cmd = reveal_command(Path::new(r"C:\shoot\IMG_0001.CR3"));
         assert_eq!(cmd.get_program(), "explorer");
+    }
+
+    #[test]
+    fn explorers_argument_is_one_quoted_select() {
+        assert_eq!(
+            explorer_select(Path::new("/shoot/day one/IMG_0001.CR3")),
+            "/select,\"/shoot/day one/IMG_0001.CR3\""
+        );
+    }
+
+    #[cfg(not(any(target_os = "macos", windows)))]
+    #[test]
+    fn reveal_of_a_relative_name_opens_the_working_folder() {
+        let cmd = reveal_command(Path::new("5M0A3021.CR3"));
+        let args: Vec<_> = cmd.get_args().collect();
+        let here = std::env::current_dir().unwrap();
+        assert_eq!(args, [here.as_os_str()]);
     }
 
     /// A right-click at a point of the window.
@@ -340,6 +403,159 @@ mod tests {
             .dispatch_event(WindowEvent::KeyReleased { text: meta.into() });
         assert_eq!(state.borrow().current, Some(3));
         assert_eq!(chosen_frames(&state.borrow()), vec![3]);
+    }
+
+    #[test]
+    fn the_menus_copy_takes_the_frame_right_clicked_and_ctrl_c_the_one_on_screen() {
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let files = folder(6);
+        let (state, _worker) = state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            let mut edit = Edit::default();
+            edit.light.exposure = 0.9;
+            st.sidecars[3].record(edit);
+        }
+        app.invoke_select(1);
+        state.borrow_mut().picked = vec![1, 3];
+        let (x, y) = strip_cell(3);
+        right_click(&app, x, y);
+        assert_eq!(app.get_menu_file(), "IMG_0003.CR3");
+        app.invoke_menu_copy();
+        {
+            let st = state.borrow();
+            let clip = st.clipboard.as_ref().expect("a copy");
+            assert_eq!(clip.from, files[3]);
+            assert_eq!(clip.edit.light.exposure, 0.9);
+        }
+        // On the frame on screen, the panel's edit, recorded or not.
+        app.set_exposure(-0.4);
+        let (x, y) = strip_cell(1);
+        right_click(&app, x, y);
+        app.invoke_menu_copy();
+        assert_eq!(
+            state
+                .borrow()
+                .clipboard
+                .as_ref()
+                .map(|c| c.edit.light.exposure),
+            Some(-0.4)
+        );
+        // Ctrl+C, after a right-click on another frame: the frame on
+        // screen still.
+        right_click(&app, strip_cell(3).0, strip_cell(3).1);
+        app.invoke_copy_asked();
+        assert_eq!(
+            state.borrow().clipboard.as_ref().map(|c| c.from.clone()),
+            Some(files[1].clone())
+        );
+    }
+
+    #[test]
+    fn the_press_that_closes_the_menu_is_not_a_click() {
+        let app = window(6);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = state_for(&app, folder(6));
+        app.invoke_select(1);
+        // The menu opened over frame 1, and left open.
+        let (x, y) = strip_cell(1);
+        let position = slint::LogicalPosition::new(x, y);
+        for event in [
+            WindowEvent::PointerMoved { position },
+            WindowEvent::PointerPressed {
+                position,
+                button: PointerEventButton::Right,
+            },
+            WindowEvent::PointerReleased {
+                position,
+                button: PointerEventButton::Right,
+            },
+        ] {
+            app.window().dispatch_event(event);
+        }
+        assert!(app.get_menu_up(), "the menu took the keys' focus");
+        // A left click on frame 4 closes it and opens nothing.
+        let (x, y) = strip_cell(4);
+        crate::testing::click(&app, x, y);
+        assert_eq!(state.borrow().current, Some(1));
+        assert!(!app.get_menu_up(), "and gave it back as it closed");
+        // The next one is a click again.
+        crate::testing::click(&app, x, y);
+        assert_eq!(state.borrow().current, Some(4));
+        // Closed by Escape instead: the next click is a click.
+        let (x, y) = strip_cell(2);
+        let position = slint::LogicalPosition::new(x, y);
+        app.window().dispatch_event(WindowEvent::PointerPressed {
+            position,
+            button: PointerEventButton::Right,
+        });
+        app.window().dispatch_event(WindowEvent::PointerReleased {
+            position,
+            button: PointerEventButton::Right,
+        });
+        assert!(app.get_menu_up());
+        assert_eq!(state.borrow().current, Some(2));
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_menu_up(), "Escape closed it");
+        let (x, y) = strip_cell(5);
+        crate::testing::click(&app, x, y);
+        assert_eq!(state.borrow().current, Some(5));
+    }
+
+    #[test]
+    fn the_press_that_closes_the_menu_over_the_picture_does_not_zoom() {
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = state_for(&app, folder(3));
+        app.invoke_select(0);
+        let zooms = Rc::new(RefCell::new(0));
+        let counted = zooms.clone();
+        app.on_toggle_zoom(move |_, _| *counted.borrow_mut() += 1);
+        // The middle of the picture, clear of the panels and the strip.
+        let position = slint::LogicalPosition::new(700.0, 400.0);
+        crate::testing::click(&app, 700.0, 400.0);
+        assert_eq!(*zooms.borrow(), 1, "a plain click zooms");
+        for event in [
+            WindowEvent::PointerPressed {
+                position,
+                button: PointerEventButton::Right,
+            },
+            WindowEvent::PointerReleased {
+                position,
+                button: PointerEventButton::Right,
+            },
+        ] {
+            app.window().dispatch_event(event);
+        }
+        assert!(app.get_menu_up());
+        crate::testing::click(&app, 720.0, 420.0);
+        assert!(!app.get_menu_up());
+        assert_eq!(*zooms.borrow(), 1, "the closing click did not");
+        crate::testing::click(&app, 720.0, 420.0);
+        assert_eq!(*zooms.borrow(), 2);
+    }
+
+    #[test]
+    fn the_menus_export_waits_for_the_develop() {
+        let app = window(3);
+        let (_state, _worker) = state_for(&app, folder(3));
+        app.invoke_select(0);
+        app.set_busy(true);
+        slint::platform::update_timers_and_animations();
+        app.invoke_menu_export();
+        assert!(!app.get_export_open());
+        assert!(app.get_export_waiting());
+        app.set_busy(false);
+        slint::platform::update_timers_and_animations();
+        assert!(
+            app.get_export_open(),
+            "the develop landed and the sheet opened"
+        );
+        assert!(!app.get_export_waiting());
     }
 
     #[test]
