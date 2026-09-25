@@ -18975,6 +18975,51 @@ unoptimized Python: 0.55 s at 2048, 3 to 4 s at 24 MP, 13 to 17 s at
 100 MP, so the editor runs it at preview size and brings the result
 up with the guided filter, as the other masks are.
 
+**Second addendum: a real alpha matte, tried classically.** The user's
+verdict on the sky-inside-trees sheet was "pretty rough, none of these
+are good enough", so the question became what makes a true alpha
+through branches and hair under the license rule. Every matting
+network in reach (ViTMatte, MatteFormer, FBA, IndexNet, GCA, MODNet's
+matting stage) is trained on Adobe's Composition-1k, Distinctions-646
+or AIM-500, all research-only, so the trial ran the training-free
+solvers: closed-form matting (Levin, Lischinski and Weiss, 2006) and
+KNN matting (Chen, Li and Tang, 2013) through pymatting (MIT, no
+weights), closed-form again on full-resolution tiles of the boundary
+band, SAM 2 on 1024 px tiles of the band, and the color-line matte and
+the unmix stage as the baselines, each fed one trimap from the prior:
+known sky the SAM-clipped mask shrunk by half a percent of the long
+side, known not-sky everything outside the prior's sky and the mask
+grown by two percent less the prior's tree, flower and unlabeled
+pixels within 20 percent of the known sky, unknown the rest, 10 to 33
+percent of a frame. Judged at 100 percent on the unclipped data with
+the sky taken down 1.5 EV and, since a color shift shows a bad alpha
+more than a darkening does, with a saturation and hue shift through
+the matte. The solvers were the disappointment: where clear sky is
+near they are clean but soft after the upsample from 2048, and where
+the known sky is far away and a different color they spread a haze of
+0.3 to 0.5 alpha over whole tree regions (mean alpha over the
+controls' unknown region 0.25 to 0.39 against 0.11 to 0.20 for the
+color-line matte); closed-form on full-size tiles gives hair as good
+as the color-line matte and branches worse, with tile seams, at 41 to
+457 s a frame; SAM on tiles is a sharper binary outline and not a
+matte. The color-line matte at full size is the one that passes: clean
+strands on the hair frame, crisp branches against overcast sky, a
+clean edge on the defocused tree top, the five no-sky frames untouched
+by every candidate, and its one flaw a yellow sunglass lens taking
+about 25 percent alpha, which keeping the prior's person and object
+classes out of the matte would fix. What no training-free method
+fixes is the dense canopy whose nearest clear sky is far off and a
+different color, twigs against sunset glare and the two blossom
+frames: those want better sky samples inside the canopy, which is a
+learned model's job, trained on data with a clean license that would
+have to be assembled. So the Sky shape's edge stage is the color-line
+matte at full resolution with unmix's growth passes to sample the sky
+color close to each gap and the person and object classes excluded:
+two blurred color estimates made at 512 px, a per-pixel projection
+and one guided filter, linear in pixels and no sparse solver, 1.3 to
+6 s a frame in Python at full size. The sky-inside-trees stage as a
+mask grower is dropped.
+
 ## 171. A menu on a frame, and copy and paste of settings (2026-09-25)
 
 Two roadmap lines that share a surface: "Right click on photo for
