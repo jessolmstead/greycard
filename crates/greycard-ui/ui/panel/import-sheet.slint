@@ -50,6 +50,8 @@ export component ImportSheet inherits Rectangle {
     in property <string> import-note;
     /// Where the first frame would land, or why nothing would.
     in property <string> import-preview;
+    /// A word on the folders, when there is one to say.
+    in property <string> import-folders-note;
     /// Frames to import; none keeps the button off.
     in property <int> import-count;
     /// Whether there is something to import, somewhere to put it and
@@ -84,7 +86,7 @@ export component ImportSheet inherits Rectangle {
                 color: Theme.text;
             }
             Text {
-                text: "Copied, checked against the card byte for byte, then renamed. Nothing on the card is changed or deleted.";
+                text: "Each copy is read back and checked against the card's bytes by a hash before it takes its name. Nothing on the card is changed or deleted.";
                 wrap: word-wrap;
                 font-size: Theme.font-xs;
                 color: Theme.text-secondary;
@@ -163,6 +165,15 @@ export component ImportSheet inherits Rectangle {
                 clearable: true;
                 choose => { root.import-choose("backup"); }
                 clear => { root.import-backup-cleared(); }
+            }
+            if root.import-folders-note != "": HorizontalLayout {
+                padding-left: 76px + Theme.space-2;
+                Text {
+                    text: root.import-folders-note;
+                    wrap: word-wrap;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-secondary;
+                }
             }
             Rectangle { height: Theme.space-2; }
             HorizontalLayout {

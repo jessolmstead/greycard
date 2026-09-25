@@ -30,17 +30,29 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     );
     if let Some(source) = cli.import.as_deref().filter(|_| !import_sheet) {
         let to = cli.to.as_deref().context("--import wants --to DEST")?;
-        return crate::panel::import::headless(
-            source,
-            to,
-            cli.subfolder.as_deref().unwrap_or_default(),
-            cli.name.as_deref().unwrap_or("{name}"),
-            cli.preset.as_deref(),
-            cli.backup.as_deref(),
-            cli.library
+        let opts = crate::import::Options {
+            source: source.to_path_buf(),
+            destination: to.to_path_buf(),
+            subfolder: cli.subfolder.clone().unwrap_or_default(),
+            name: cli.name.clone().unwrap_or_else(|| "{name}".into()),
+            preset: None,
+            backup: cli.backup.clone(),
+            library: cli
+                .library
                 .clone()
                 .or_else(greycard_library::Library::user_path),
-        );
+            // Where the Settings sheet puts sidecars, or the flag's
+            // choice; none for a run that writes none.
+            placement: (!cli.no_sidecars).then(|| {
+                if cli.sidecar_folder || settings::Settings::load().sidecars_in_folder {
+                    greycard_edit::Placement::Folder
+                } else {
+                    greycard_edit::Placement::Beside
+                }
+            }),
+            profiles: Vec::new(),
+        };
+        return crate::panel::import::headless(opts, cli.preset.as_deref());
     }
     let remembered = settings::Settings::load();
     match settings::path() {
@@ -1148,7 +1160,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // An import running stops as Stop stops it, after the file in
     // hand, which lands whole rather than being cut off with the
     // process.
-    crate::panel::import::leave(&mut state.borrow_mut().import);
+    crate::panel::import::leave(
+        &mut state.borrow_mut().import,
+        crate::panel::import::CLOSE_WAIT,
+    );
     // The window is closed: the worker finishes what it is in the
     // middle of and puts its buffers down before the process goes.
     worker.stop();

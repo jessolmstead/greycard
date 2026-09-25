@@ -970,6 +970,8 @@ export component App inherits Window {
     in-out property <string> import-preset: "None";
     in property <string> import-note: "";
     in property <string> import-preview: "";
+    /// A word on the folders: the backup on the destination's drive.
+    in property <string> import-folders-note: "";
     in property <int> import-count: 0;
     in property <bool> import-ready: false;
     /// An import is copying, a frame at a time; Stop (or Escape)
@@ -1121,11 +1123,6 @@ export component App inherits Window {
             // A set being exported stops before Escape means anything
             // else: the sheet is gone by then, and this is its cancel.
             // Once stopping, Escape is the window's again.
-            // An import likewise, first: it is the longer of the two.
-            if (e.text == Key.Escape && root.import-running && !root.import-stopping && !root.sheet-open()) {
-                root.import-stop();
-                return accept;
-            }
             if (e.text == Key.Escape && root.export-running && !root.export-stopping && !root.sheet-open()) {
                 root.export-stop();
                 return accept;
@@ -1167,6 +1164,15 @@ export component App inherits Window {
             // view; C is the way in and out.
             if (root.culling && !root.sheet-open() && (e.text == Key.Return || e.text == Key.Escape)) {
                 root.cull-leave();
+                return accept;
+            }
+            // An import stops on Escape only when nothing above took
+            // it: leaving the grid, leaving culling or letting go of a
+            // set is what Escape is for there, and an import is long
+            // enough that stopping it by the way would cost a card's
+            // worth of waiting. Its Stop button always stops it.
+            if (e.text == Key.Escape && root.import-running && !root.import-stopping && !root.sheet-open()) {
+                root.import-stop();
                 return accept;
             }
             if (root.culling && !root.sheet-open() && !e.modifiers.control && (e.text == "v" || e.text == "V")) {
@@ -2134,6 +2140,7 @@ export component App inherits Window {
         import-preset <=> root.import-preset;
         import-note: root.import-note;
         import-preview: root.import-preview;
+        import-folders-note: root.import-folders-note;
         import-count: root.import-count;
         import-ready: root.import-ready;
         import-choose(w) => { root.import-choose(w); }

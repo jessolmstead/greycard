@@ -32,7 +32,30 @@ pub(crate) struct Sheet {
     /// When the sheet was asked for, for the log's timing of the card
     /// search and the reading.
     pub(crate) asked_at: Option<std::time::Instant>,
+    /// Whether the destination and the backup are there, looked at on
+    /// a thread (a remembered `/mnt/backup` may be a drive not
+    /// mounted, and a stat of a network one can wait); none until
+    /// looked at. And whether the two are on one drive.
+    pub(crate) destination_there: Option<bool>,
+    pub(crate) backup_there: Option<bool>,
+    pub(crate) same_drive: bool,
+    pub(crate) folders_generation: u64,
+    /// The frame being copied, for the words while the window waits
+    /// on it to close.
+    pub(crate) in_hand: String,
+    /// The window was asked to close and waits for the frame in hand;
+    /// or gave up waiting on it.
+    pub(crate) closing: bool,
+    pub(crate) gave_up: bool,
+    /// The folder the browser showed when the import began: the
+    /// import opens its own at the end only if the user is still there.
+    pub(crate) folder_at_start: Option<PathBuf>,
 }
+
+/// How long a closing window waits for the frame in hand before it
+/// gives up and says so in the log. A 100 MB raw off a slow card
+/// reader at 10 MB/s is ten seconds; a read that hangs is forever.
+pub(crate) const CLOSE_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The picker's word for no preset.
 const NONE: &str = "None";
@@ -90,6 +113,8 @@ fn options(st: &State, app: &App) -> Option<Options> {
         preset,
         backup: st.import.backup.clone(),
         library: st.index_path.clone(),
+        placement: st.write_sidecars.then_some(st.placement),
+        profiles: st.profiles.clone(),
     })
 }
 
@@ -120,6 +145,8 @@ pub(crate) fn preview(
         preset: None,
         backup: None,
         library: None,
+        placement: None,
+        profiles: Vec::new(),
     };
     match import::relative(&opts, &item.file, first) {
         Err(e) => (format!("Not a pattern: {e}"), false),
@@ -145,9 +172,28 @@ fn item_name(p: &Path) -> String {
 /// Put what the state knows on the sheet: the folders, the note, the
 /// preview and whether Import is on.
 pub(crate) fn show(st: &State, app: &App) {
+    // A folder that is not there is said so, and never made: a
+    // remembered backup drive that is not plugged in would otherwise
+    // be recreated as a folder on the system disk.
+    let marked = |p: &Option<PathBuf>, there: Option<bool>| {
+        let text = path_text(p);
+        if p.is_some() && there == Some(false) {
+            format!("{text} (not there: is its drive connected?)").into()
+        } else {
+            text
+        }
+    };
     app.set_import_source(path_text(&st.import.source));
-    app.set_import_destination(path_text(&st.import.destination));
-    app.set_import_backup(path_text(&st.import.backup));
+    app.set_import_destination(marked(&st.import.destination, st.import.destination_there));
+    app.set_import_backup(marked(&st.import.backup, st.import.backup_there));
+    app.set_import_folders_note(
+        if st.import.backup.is_some() && st.import.same_drive {
+            "The backup is on the same drive as the destination: one failing drive takes both."
+        } else {
+            ""
+        }
+        .into(),
+    );
     let count = st.import.scan.as_ref().map_or(0, |s| s.items.len());
     app.set_import_count(count as i32);
     let (text, ready) = preview(
@@ -159,7 +205,58 @@ pub(crate) fn show(st: &State, app: &App) {
         st.import.first.as_ref(),
     );
     app.set_import_preview(text.into());
-    app.set_import_ready(ready && count > 0 && st.import.job.is_none());
+    let folders = st.import.destination_there == Some(true)
+        && (st.import.backup.is_none() || st.import.backup_there == Some(true));
+    app.set_import_ready(ready && folders && count > 0 && st.import.job.is_none());
+}
+
+/// Look at whether the destination and the backup are there, and on
+/// which drive, on a thread; the answer is heard by [`folders_looked`].
+pub(crate) fn look_at_folders(st: &mut State, app: &App) {
+    st.import.folders_generation += 1;
+    let generation = st.import.folders_generation;
+    st.import.destination_there = None;
+    st.import.backup_there = None;
+    st.import.same_drive = false;
+    show(st, app);
+    let (dest, backup) = (st.import.destination.clone(), st.import.backup.clone());
+    let weak = app.as_weak();
+    std::thread::spawn(move || {
+        let looked = look(dest.as_deref(), backup.as_deref());
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                folders_looked(&mut state.borrow_mut(), &app, generation, looked);
+            }
+        });
+    });
+}
+
+/// What [`look_at_folders`] finds: the destination there, the backup
+/// there, the two on one drive.
+pub(crate) type Looked = (Option<bool>, Option<bool>, bool);
+
+pub(crate) fn look(dest: Option<&Path>, backup: Option<&Path>) -> Looked {
+    let there = |p: Option<&Path>| p.map(Path::is_dir);
+    let same = match (dest, backup) {
+        (Some(d), Some(b)) => import::same_device(d, b).unwrap_or(false),
+        _ => false,
+    };
+    (there(dest), there(backup), same)
+}
+
+pub(crate) fn folders_looked(st: &mut State, app: &App, generation: u64, looked: Looked) {
+    if generation != st.import.folders_generation {
+        return;
+    }
+    (
+        st.import.destination_there,
+        st.import.backup_there,
+        st.import.same_drive,
+    ) = looked;
+    if st.import.same_drive {
+        tracing::warn!("import: the backup is on the same drive as the destination");
+    }
+    show(st, app);
 }
 
 /// Read what `source` holds, on a thread; the answer is heard by
@@ -287,6 +384,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
     }
     app.set_import_presets(ModelRc::new(VecModel::from(names)));
     app.set_import_open(true);
+    look_at_folders(st, app);
     match st.import.source.clone() {
         Some(source) => read_source(st, app, source),
         None => {
@@ -371,6 +469,9 @@ pub(crate) fn start(st: &mut State, app: &App) {
     }
     let job = Arc::new(Job::default());
     st.import.job = Some(job.clone());
+    st.import.folder_at_start = browsed_folder(st);
+    st.import.closing = false;
+    st.import.gave_up = false;
     app.set_import_open(false);
     app.set_import_running(true);
     app.set_import_stopping(false);
@@ -383,8 +484,16 @@ pub(crate) fn start(st: &mut State, app: &App) {
         let progress_weak = weak.clone();
         let report = import::run(&opts, &scan, &job, |i, n, name| {
             let line = import::progress_line(i, n, name);
+            let name = name.to_string();
             let _ = progress_weak.upgrade_in_event_loop(move |app| {
-                if app.get_import_running() {
+                let closing = STATE.with(|s| {
+                    s.borrow().as_ref().is_some_and(|state| {
+                        let mut st = state.borrow_mut();
+                        st.import.in_hand = name;
+                        st.import.closing
+                    })
+                });
+                if app.get_import_running() && !closing {
                     say(&app, line);
                 }
             });
@@ -402,20 +511,33 @@ pub(crate) fn start(st: &mut State, app: &App) {
 /// The import is done, however it went: the line said, and the folder
 /// that took the most frames opened in the browser.
 pub(crate) fn finished(state: &Rc<RefCell<State>>, app: &App, opts: &Options, report: Report) {
-    {
+    let (closing, moved) = {
         let mut st = state.borrow_mut();
         st.import.job = None;
         // Its last act was to post this; it ends on its own.
         st.import.thread = None;
-    }
+        let moved = browsed_folder(&st) != st.import.folder_at_start;
+        (std::mem::take(&mut st.import.closing), moved)
+    };
     app.set_import_running(false);
     app.set_import_stopping(false);
-    let line = report.line(Path::new(&tilde(&opts.destination)));
+    if closing {
+        // The window was asked to close and waited for this.
+        tracing::info!("import: the frame in hand landed; closing");
+        let _ = slint::quit_event_loop();
+        return;
+    }
+    let mut line = report.line(Path::new(&tilde(&opts.destination)));
+    // Nothing new is nothing to open; and a user who went to another
+    // folder while it ran is not taken away from it.
     if report.frames > 0
         && let Some(folder) = report.main_folder().map(Path::to_path_buf)
-        && let Some(worker) = WORKER.with(|w| w.borrow().clone())
     {
-        open_folder(state, app, &worker, &folder);
+        if moved {
+            line.push_str(&format!("; open {} to see them", tilde(&folder)));
+        } else if let Some(worker) = WORKER.with(|w| w.borrow().clone()) {
+            open_folder(state, app, &worker, &folder);
+        }
     }
     // After the open, whose own words would stand over these.
     say(app, line.clone());
@@ -434,16 +556,82 @@ pub(crate) fn finished(state: &Rc<RefCell<State>>, app: &App, opts: &Options, re
     show(&st, app);
 }
 
-/// The window is closing: an import running is stopped after the
-/// file in hand, and waited for, so that file lands whole.
-pub(crate) fn leave(sheet: &mut Sheet) {
+/// The folder the browser shows: its first file's.
+fn browsed_folder(st: &State) -> Option<PathBuf> {
+    st.files
+        .first()
+        .and_then(|f| f.parent())
+        .map(Path::to_path_buf)
+}
+
+/// The event loop has ended with an import still running (a batch
+/// run's capture, or a close that gave up): stop it after the file in
+/// hand and wait for that, but never longer than `limit`, and say so
+/// when it gives up. A read that hangs on a dying card must not keep
+/// a process alive with no window.
+pub(crate) fn leave(sheet: &mut Sheet, limit: std::time::Duration) {
     if let Some(job) = &sheet.job {
         job.cancel();
         tracing::info!("import: the window closed; stopping after the file in hand");
     }
-    if let Some(thread) = sheet.thread.take() {
-        let _ = thread.join();
+    let Some(thread) = sheet.thread.take() else {
+        return;
+    };
+    if sheet.gave_up {
+        return;
     }
+    let started = std::time::Instant::now();
+    while !thread.is_finished() {
+        if started.elapsed() >= limit {
+            tracing::warn!(
+                "import: gave up after {:.0} s waiting on {}; its temporary is left, and \
+                 a later import into that folder sweeps it",
+                limit.as_secs_f64(),
+                sheet.in_hand
+            );
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let _ = thread.join();
+}
+
+/// The window's close asked for while an import runs: the import is
+/// stopped after the frame in hand, the window stays up saying so, and
+/// closes itself once that frame lands ([`finished`]); if it has not
+/// landed after [`CLOSE_WAIT`], the window closes anyway and the log
+/// says what was left.
+pub(crate) fn close_asked(st: &mut State, app: &App) -> bool {
+    let Some(job) = &st.import.job else {
+        return false;
+    };
+    job.cancel();
+    st.import.closing = true;
+    app.set_import_stopping(true);
+    say(
+        app,
+        format!(
+            "finishing {}... the window closes once it has landed",
+            st.import.in_hand
+        ),
+    );
+    slint::Timer::single_shot(CLOSE_WAIT, move || {
+        let Some(state) = STATE.with(|s| s.borrow().clone()) else {
+            return;
+        };
+        let mut st = state.borrow_mut();
+        if !st.import.closing {
+            return;
+        }
+        st.import.gave_up = true;
+        tracing::warn!(
+            "import: {} had not landed after {:.0} s; closing without it",
+            st.import.in_hand,
+            CLOSE_WAIT.as_secs_f64()
+        );
+        let _ = slint::quit_event_loop();
+    });
+    true
 }
 
 /// `--sheet imported`: press Import once the source has been read,
@@ -475,6 +663,20 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
     {
         let state = state.clone();
         let weak = app.as_weak();
+        app.window().on_close_requested(move || {
+            let Some(app) = weak.upgrade() else {
+                return slint::CloseRequestResponse::HideWindow;
+            };
+            if close_asked(&mut state.borrow_mut(), &app) {
+                slint::CloseRequestResponse::KeepWindowShown
+            } else {
+                slint::CloseRequestResponse::HideWindow
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        let weak = app.as_weak();
         app.on_import_asked(move || {
             let app = weak.unwrap();
             ask(&mut state.borrow_mut(), &app);
@@ -495,7 +697,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let app = weak.unwrap();
             let mut st = state.borrow_mut();
             st.import.backup = None;
-            show(&st, &app);
+            look_at_folders(&mut st, &app);
         });
     }
     {
@@ -548,8 +750,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                     match chosen {
                         Ok(Some(folder)) => match which.as_str() {
                             "source" => read_source(&mut st, &app, folder),
-                            "destination" => st.import.destination = Some(folder),
-                            _ => st.import.backup = Some(folder),
+                            "destination" => {
+                                st.import.destination = Some(folder);
+                                look_at_folders(&mut st, &app);
+                            }
+                            _ => {
+                                st.import.backup = Some(folder);
+                                look_at_folders(&mut st, &app);
+                            }
                         },
                         Ok(None) => {}
                         Err(e) => {
@@ -566,16 +774,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
 
 /// `--import SRC --to DEST`: the import with no window, its progress
 /// and its end in the log and on the terminal. A failure is the exit
-/// code's.
-pub(crate) fn headless(
-    source: &Path,
-    destination: &Path,
-    subfolder: &str,
-    name: &str,
-    preset: Option<&str>,
-    backup: Option<&Path>,
-    library: Option<PathBuf>,
-) -> Result<std::process::ExitCode> {
+/// code's. `opts` as the flags give it; the preset is named by
+/// `preset` and looked up here, and the camera profiles listed here.
+pub(crate) fn headless(opts: Options, preset: Option<&str>) -> Result<std::process::ExitCode> {
     let preset = match preset {
         None => None,
         Some(name) => Some(
@@ -590,22 +791,24 @@ pub(crate) fn headless(
                 .preset,
         ),
     };
-    let canonical = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    std::fs::create_dir_all(destination)
-        .with_context(|| format!("making {}", destination.display()))?;
-    if let Some(b) = backup {
+    let opts = Options {
+        source: import::resolve(&opts.source),
+        destination: import::resolve(&opts.destination),
+        backup: opts.backup.as_deref().map(import::resolve),
+        preset,
+        profiles: greycard_edit::camera::list(),
+        ..opts
+    };
+    // Checked before anything is made: a destination on the card is
+    // refused, not made and then refused.
+    import::check(&opts)?;
+    // The command line named them, so they are made; the sheet only
+    // takes folders that are there.
+    std::fs::create_dir_all(&opts.destination)
+        .with_context(|| format!("making {}", opts.destination.display()))?;
+    if let Some(b) = &opts.backup {
         std::fs::create_dir_all(b).with_context(|| format!("making {}", b.display()))?;
     }
-    let opts = Options {
-        source: canonical(source),
-        destination: canonical(destination),
-        subfolder: subfolder.into(),
-        name: name.into(),
-        preset,
-        backup: backup.map(canonical),
-        library,
-    };
-    import::check(&opts)?;
     let scan = import::scan(&opts.source)?;
     let report = import::run(&opts, &scan, &Job::default(), |i, n, file| {
         tracing::info!("{}", import::progress_line(i, n, file));
@@ -635,6 +838,21 @@ mod tests {
             name: "IMG_0001".into(),
             camera: "Canon EOS R6".into(),
             seq: 1,
+        }
+    }
+
+    /// The options `--import SRC --to DEST [--backup DIR]` makes.
+    fn flags(source: &Path, to: &Path, backup: Option<&Path>) -> Options {
+        Options {
+            source: source.to_path_buf(),
+            destination: to.to_path_buf(),
+            subfolder: String::new(),
+            name: "{name}".into(),
+            preset: None,
+            backup: backup.map(Path::to_path_buf),
+            library: None,
+            placement: None,
+            profiles: Vec::new(),
         }
     }
 
@@ -772,6 +990,15 @@ mod tests {
             Ok((scan_of(&["IMG_0001.CR3"]), Some(fields()))),
             0.01,
         );
+        // Not until the destination has been looked at and is there.
+        assert!(!app.get_import_ready());
+        let folders = state.borrow().import.folders_generation;
+        folders_looked(
+            &mut state.borrow_mut(),
+            &app,
+            folders,
+            (Some(true), None, false),
+        );
         assert!(app.get_import_ready());
         assert_eq!(app.get_import_count(), 1);
         assert_eq!(app.get_import_note(), "1 frame");
@@ -826,16 +1053,13 @@ mod tests {
         ])
         .unwrap();
         let run = || {
-            headless(
+            let mut o = flags(
                 cli.import.as_deref().unwrap(),
                 cli.to.as_deref().unwrap(),
-                cli.subfolder.as_deref().unwrap_or_default(),
-                cli.name.as_deref().unwrap_or("{name}"),
                 None,
-                None,
-                None,
-            )
-            .unwrap()
+            );
+            o.name = cli.name.clone().unwrap();
+            headless(o, None).unwrap()
         };
         assert_eq!(run(), std::process::ExitCode::SUCCESS);
         assert_eq!(
@@ -848,7 +1072,147 @@ mod tests {
         );
         assert_eq!(run(), std::process::ExitCode::SUCCESS);
         assert_eq!(std::fs::read_dir(&dest).unwrap().count(), 2);
-        assert!(crate::Cli::try_parse_from(["greycard-ui", "--to", "x"]).is_err());
+        // `--to` alone is the sheet's, for `--sheet import`.
+        assert!(crate::Cli::try_parse_from(["greycard-ui", "--to", "x"]).is_ok());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Review item 1: `--import` checked before it made anything. A
+    /// destination under the card's DCIM was refused with the folder
+    /// already made on the card.
+    #[test]
+    fn the_command_line_refuses_the_card_before_it_makes_a_folder() {
+        let dir =
+            std::env::temp_dir().join(format!("greycard-import-first-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let card = dir.join("card2/EOS_DIGITAL");
+        std::fs::create_dir_all(card.join("DCIM/100CANON")).unwrap();
+        std::fs::write(card.join("DCIM/100CANON/IMG_0001.CR3"), b"raw").unwrap();
+        let source = card.join("DCIM");
+        let refused = |to: &Path, backup: Option<&Path>| {
+            let e = headless(flags(&source, to, backup), None).unwrap_err();
+            format!("{e:#}")
+        };
+        let e = refused(&source.join("out"), None);
+        assert!(e.contains("is on the card"), "{e}");
+        assert!(!source.join("out").exists());
+        let e = refused(&card.join("Imported"), None);
+        assert!(e.contains("is on the card"), "{e}");
+        assert!(!card.join("Imported").exists());
+        let e = refused(&dir.join("photos"), Some(&card.join("backup")));
+        assert!(e.contains("backup"), "{e}");
+        assert!(!card.join("backup").exists());
+        assert!(
+            !dir.join("photos").exists(),
+            "nothing made before the check"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Review item 14: a remembered folder that is not there (a backup
+    /// drive not plugged in) is said so and not made; and a backup on
+    /// the destination's drive is warned of.
+    #[test]
+    fn a_folder_that_is_not_there_is_said_and_refused() {
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let dir = std::env::temp_dir().join(format!("greycard-import-gone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("photos")).unwrap();
+        let gone = dir.join("mnt/backup");
+        let looked = look(Some(&dir.join("photos")), Some(&gone));
+        assert_eq!((looked.0, looked.1), (Some(true), Some(false)));
+        {
+            let mut st = state.borrow_mut();
+            st.import.source = Some(dir.join("card"));
+            st.import.destination = Some(dir.join("photos"));
+            st.import.backup = Some(gone.clone());
+            st.import.scan = Some(scan_of(&["IMG_0001.CR3"]));
+            st.import.first = Some(fields());
+            let generation = st.import.folders_generation;
+            folders_looked(&mut st, &app, generation, looked);
+        }
+        assert!(!app.get_import_ready());
+        assert!(
+            app.get_import_backup().contains("not there"),
+            "{}",
+            app.get_import_backup()
+        );
+        assert!(!gone.exists());
+        // Cleared, it is ready; the same drive is warned of.
+        {
+            let mut st = state.borrow_mut();
+            st.import.backup = Some(dir.join("backup"));
+            let generation = st.import.folders_generation;
+            folders_looked(&mut st, &app, generation, (Some(true), Some(true), true));
+        }
+        assert!(app.get_import_ready());
+        assert!(app.get_import_folders_note().contains("same drive"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Review item 12: Escape leaves the grid (or culling, or a set)
+    /// before it stops an import; only when nothing else takes it does
+    /// it stop one.
+    #[test]
+    fn escape_leaves_the_grid_before_it_stops_an_import() {
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let job = Arc::new(Job::default());
+        state.borrow_mut().import.job = Some(job.clone());
+        app.set_import_running(true);
+        app.set_grid_open(true);
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_grid_open());
+        assert!(!job.is_canceled());
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(job.is_canceled());
+        assert!(app.get_import_stopping());
+    }
+
+    /// Review item 13: a close while an import runs keeps the window up
+    /// saying what it waits on; and the wait after the event loop has
+    /// ended gives up after its limit rather than outliving the window.
+    #[test]
+    fn a_close_waits_for_the_frame_in_hand_but_not_forever() {
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        assert!(
+            !close_asked(&mut state.borrow_mut(), &app),
+            "nothing running"
+        );
+        let job = Arc::new(Job::default());
+        {
+            let mut st = state.borrow_mut();
+            st.import.job = Some(job.clone());
+            st.import.in_hand = "IMG_0042.CR3".into();
+        }
+        assert!(close_asked(&mut state.borrow_mut(), &app));
+        assert!(job.is_canceled());
+        assert!(state.borrow().import.closing);
+        assert!(
+            app.get_status().contains("finishing IMG_0042.CR3"),
+            "{}",
+            app.get_status()
+        );
+
+        let mut sheet = Sheet {
+            job: Some(Arc::new(Job::default())),
+            thread: Some(std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(3))
+            })),
+            in_hand: "IMG_0043.CR3".into(),
+            ..Sheet::default()
+        };
+        let started = std::time::Instant::now();
+        leave(&mut sheet, std::time::Duration::from_millis(100));
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        // One that finishes in time is joined.
+        let mut sheet = Sheet {
+            thread: Some(std::thread::spawn(|| {})),
+            ..Sheet::default()
+        };
+        leave(&mut sheet, std::time::Duration::from_secs(5));
+        assert!(sheet.thread.is_none());
     }
 }

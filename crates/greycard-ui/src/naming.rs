@@ -123,21 +123,38 @@ pub fn expand(pattern: &str, f: &Fields) -> Result<String, PatternError> {
 /// fills to nothing.
 pub fn file_name(pattern: &str, f: &Fields, extension: &str) -> Result<String, PatternError> {
     let stem = expand(pattern, f)?.replace(['/', '\\'], "_");
-    let mut stem = safe(&stem);
-    if stem.is_empty() {
-        stem = safe(&f.name);
-    }
-    if stem.is_empty() {
-        stem = "_".into();
-    }
-    Ok(if extension.is_empty() {
-        stem
+    let tail = if extension.is_empty() {
+        String::new()
     } else {
-        // The extension is the camera's and is safe; the stem is not
-        // to end in a dot a Windows file system would drop, so the
-        // pair is checked as a whole for a reserved name too.
-        safe(&format!("{stem}.{extension}"))
-    })
+        format!(".{extension}")
+    };
+    let mut name = with_tail(&stem, &tail);
+    if name.len() == tail.len() {
+        name = with_tail(&f.name, &tail);
+    }
+    if name.len() == tail.len() {
+        name = format!("_{tail}");
+    }
+    Ok(name)
+}
+
+/// `stem` made safe and cut so that `tail` (an extension with its dot,
+/// or a companion's `.CR3.xmp`) always fits after it within
+/// [`LONGEST`]: a long pattern loses the end of its stem, never its
+/// extension, and never half a character.
+pub fn with_tail(stem: &str, tail: &str) -> String {
+    let tail: String = tail
+        .chars()
+        .map(|c| {
+            if c.is_control() || REFUSED.contains(&c) {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    let room = LONGEST.saturating_sub(tail.len()).max(1);
+    format!("{}{tail}", safe_within(stem, room))
 }
 
 /// The folders under the destination from the subfolder pattern, one
@@ -161,7 +178,7 @@ const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
 
 /// The longest a name is let be, in bytes: under every file system's
 /// 255, with room for the import's temporary prefix and suffix.
-const LONGEST: usize = 200;
+pub const LONGEST: usize = 200;
 
 /// One level of a path made safe on every platform: each refused
 /// character and control is `_`; leading and trailing spaces and
@@ -171,6 +188,11 @@ const LONGEST: usize = 200;
 /// takes `_` before it; and the name is cut to [`LONGEST`] bytes on a
 /// character's edge. Empty when nothing is left.
 pub fn safe(name: &str) -> String {
+    safe_within(name, LONGEST)
+}
+
+/// [`safe`], cut to `limit` bytes rather than [`LONGEST`].
+fn safe_within(name: &str, limit: usize) -> String {
     let mut s: String = name
         .chars()
         .map(|c| {
@@ -181,8 +203,8 @@ pub fn safe(name: &str) -> String {
             }
         })
         .collect();
-    if s.len() > LONGEST {
-        let mut cut = LONGEST;
+    if s.len() > limit {
+        let mut cut = limit;
         while !s.is_char_boundary(cut) {
             cut -= 1;
         }
@@ -352,6 +374,35 @@ mod tests {
         let long = "é".repeat(300);
         let cut = safe(&long);
         assert!(cut.len() <= LONGEST && cut.chars().all(|c| c == 'é'));
+    }
+
+    /// The review's case: 197 letters and `{seq}` ran past the cut,
+    /// which took the last digit and the extension with it, and two
+    /// frames met. The stem is cut now, the extension kept whole, and
+    /// never inside a character.
+    #[test]
+    fn a_long_name_keeps_its_extension() {
+        let pattern = format!("{}{{seq}}", "a".repeat(197));
+        for seq in [1, 2] {
+            let f = Fields { seq, ..fields() };
+            let name = file_name(&pattern, &f, "CR3").unwrap();
+            assert!(name.ends_with(".CR3"), "{name}");
+            assert!(name.len() <= LONGEST, "{}", name.len());
+        }
+        // Where the stem's room allows, the digits survive.
+        let f = Fields { seq: 7, ..fields() };
+        let name = file_name(&format!("{}{{seq}}", "a".repeat(190)), &f, "CR3").unwrap();
+        assert!(name.ends_with("0007.CR3"), "{name}");
+        // A multibyte stem is cut on a character's edge.
+        let wide = Fields {
+            name: "é".repeat(150),
+            ..fields()
+        };
+        let name = file_name("{name}", &wide, "jpeg").unwrap();
+        assert!(name.ends_with(".jpeg") && name.len() <= LONGEST, "{name}");
+        // A companion's longer tail is kept whole too.
+        let c = with_tail(&"b".repeat(250), ".CR3.xmp");
+        assert!(c.ends_with(".CR3.xmp") && c.len() <= LONGEST);
     }
 
     #[test]

@@ -1,15 +1,18 @@
 //! Import from a card: every frame copied to the destination under
-//! its new name, verified by a hash of the whole file, then copied
-//! again to a backup folder if one is asked for, and given a preset.
+//! its new name, read back and checked against the card by a hash of
+//! the whole file, then copied again to a backup folder if one is
+//! asked for, and given a preset.
 //!
-//! Nothing here is written on the card or deleted from it. A file is
-//! written under a temporary name in its own destination folder and
-//! renamed once its copy reads back the same as the card's did, so a
-//! stop, a full disk or a dying card never leaves a half-written file
-//! under a real name; the temporary is in the destination folder and
-//! not a temp directory because a rename across drives is a copy
-//! (and on Windows an error). A name that is there already is never
-//! written over.
+//! Nothing here is written on the card or deleted from it, and no
+//! destination or backup on the card is taken (see [`card_root`]). A
+//! file is written under a temporary name of its own in its own
+//! destination folder and given its name only once its copy reads back
+//! the same as the card's bytes did, by a rename that never replaces a
+//! file, so a stop, a full disk or a dying card never leaves a
+//! half-written file under a real name. The temporary is in the
+//! destination folder and not a temp directory because a rename across
+//! drives is a copy (and on Windows an error). A name that is there
+//! already is never written over.
 //!
 //! No window here: the sheet (`panel::import`) and `--import` both
 //! run it on a thread of their own and hear its progress through a
@@ -17,11 +20,11 @@
 
 use crate::naming::{self, Day, Fields};
 use anyhow::{Context, Result, bail};
-use greycard_edit::Preset;
+use greycard_edit::{Placement, Preset};
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// What an import is asked to do.
 #[derive(Debug, Clone)]
@@ -41,6 +44,13 @@ pub struct Options {
     pub backup: Option<PathBuf>,
     /// The library index to ask whether a file is imported already.
     pub library: Option<PathBuf>,
+    /// Where a preset's sidecar is written, as the Settings sheet
+    /// says (§153); none when the run writes no sidecars, and then no
+    /// preset is laid.
+    pub placement: Option<Placement>,
+    /// The camera profiles the profile folder holds, for the preset's
+    /// fit check: a profile made for another body is left off (§162).
+    pub profiles: Vec<greycard_edit::camera::Entry>,
 }
 
 /// A frame on the card and the files that go with it: a raw's XMP
@@ -87,7 +97,26 @@ fn stem_of(p: &Path) -> String {
 
 /// Every file under `dir`, walked depth first, hidden files and
 /// folders left out (the Mac's `._` shadows, a `.greycard` folder).
+/// A symbolic link is not followed, to a folder or to a file: a link
+/// out of the destination would make the card's own files look
+/// imported, and a link back up a card's tree would list its frames
+/// over and over. A camera writes none. A folder reached twice (a
+/// bind mount, a Windows junction) is walked once, by its canonical
+/// path.
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+    let mut seen = HashSet::new();
+    walk_from(dir, out, &mut seen)
+}
+
+fn walk_from(
+    dir: &Path,
+    out: &mut Vec<PathBuf>,
+    seen: &mut HashSet<PathBuf>,
+) -> std::io::Result<()> {
+    let canonical = dunce::canonicalize(dir)?;
+    if !seen.insert(canonical) {
+        return Ok(());
+    }
     let mut entries: Vec<_> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
         .filter(|e| !e.file_name().to_string_lossy().starts_with('.'))
@@ -96,16 +125,11 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
     for e in entries {
         let path = e.path();
         match e.file_type() {
-            Ok(t) if t.is_dir() => walk(&path, out)?,
-            Ok(t) if t.is_file() => out.push(path),
-            // A link is followed as what it points at.
             Ok(t) if t.is_symlink() => {
-                if path.is_dir() {
-                    walk(&path, out)?;
-                } else if path.is_file() {
-                    out.push(path);
-                }
+                tracing::debug!("import: {} is a link, not followed", path.display());
             }
+            Ok(t) if t.is_dir() => walk_from(&path, out, seen)?,
+            Ok(t) if t.is_file() => out.push(path),
             _ => {}
         }
     }
@@ -119,6 +143,9 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
 /// goes along with it; a picture with no raw is a frame of its own,
 /// as a JPEG-only camera writes them. An XMP goes with the frame it
 /// names, `IMG.xmp` or `IMG.CR3.xmp`, and is left when there is none.
+/// Two raws of one stem in one folder (`DSCF0001.RAF` and a
+/// `DSCF0001.DNG` made from it) are two frames, and the companions of
+/// that stem go with the first of them in path order.
 pub fn scan(source: &Path) -> Result<Scan> {
     anyhow::ensure!(source.is_dir(), "{} is not a folder", source.display());
     let mut files = Vec::new();
@@ -174,6 +201,12 @@ pub fn scan(source: &Path) -> Result<Scan> {
 /// makes the decoder give up) is named from its modification time and
 /// no camera, and still imported.
 pub fn fields_of(file: &Path, seq: usize) -> Fields {
+    probe_file(file, seq).0
+}
+
+/// [`fields_of`], and the body (make and model) when the file says,
+/// for the preset's camera-profile check.
+pub fn probe_file(file: &Path, seq: usize) -> (Fields, Option<(String, String)>) {
     let probed = std::panic::catch_unwind(|| {
         if greycard_core::picture::is_picture_path(file) {
             greycard_core::picture::probe_path(file)
@@ -181,24 +214,28 @@ pub fn fields_of(file: &Path, seq: usize) -> Fields {
             greycard_core::decode::probe_path(file)
         }
     });
-    let (taken, camera) = match probed {
+    let (taken, camera, body) = match probed {
         Ok(Ok(p)) => (
             p.taken.as_deref().and_then(Day::from_exif),
             greycard_core::raw::camera_name(&p.make, &p.model),
+            Some((p.make, p.model)),
         ),
-        _ => (None, String::new()),
+        _ => (None, String::new(), None),
     };
     let day = taken.unwrap_or_else(|| modified_day(file));
-    Fields {
+    let fields = Fields {
         day,
         name: stem_of(file),
         camera,
         seq,
-    }
+    };
+    (fields, body)
 }
 
 /// The local day a file was last written: what a card's clock stamped
-/// it with, near enough, when the EXIF says nothing.
+/// it with, near enough, when the EXIF says nothing. On a FAT card the
+/// time is stored without a zone and read through the mount's idea of
+/// one, so a frame taken near midnight can land on the day either side.
 fn modified_day(file: &Path) -> Day {
     use chrono::Datelike;
     let when = std::fs::metadata(file)
@@ -238,7 +275,24 @@ pub fn companion_name(frame: &Path, new_frame: &Path, companion: &Path) -> Strin
     let new_stem = stem_of(new_frame);
     let name = name_of(companion);
     let tail = name.get(old_stem.len()..).unwrap_or_default();
-    naming::safe(&format!("{new_stem}{tail}"))
+    naming::with_tail(&new_stem, tail)
+}
+
+/// `path` with ` (n)` before its extension, the name kept within
+/// [`naming::LONGEST`] however long it was.
+fn numbered(path: &Path, n: usize) -> PathBuf {
+    let tail = path
+        .extension()
+        .map(|e| format!(".{}", e.to_string_lossy()))
+        .unwrap_or_default();
+    let suffix = format!(" ({n})");
+    let room = naming::LONGEST.saturating_sub(tail.len() + suffix.len());
+    let stem = naming::with_tail(&stem_of(path), "");
+    let mut cut = room.min(stem.len());
+    while !stem.is_char_boundary(cut) {
+        cut -= 1;
+    }
+    path.with_file_name(format!("{}{suffix}{tail}", &stem[..cut]))
 }
 
 /// Stop after the frame in hand.
@@ -269,13 +323,16 @@ pub struct Report {
     /// Files copied to the backup and verified there.
     pub backed_up: usize,
     /// Frames already imported: the same bytes under the destination,
-    /// or a file the library holds with the same content hash.
+    /// or a file the library holds with the same bytes.
     pub already: usize,
-    /// Frames not imported because their name was taken by another
-    /// file, which is never written over.
-    pub taken: usize,
-    /// Frames given the preset.
+    /// Frames whose name was another file's, given ` (2)` instead.
+    pub renamed: usize,
+    /// Companions not copied because their name was another file's.
+    pub companions_left: usize,
+    /// Frames given the preset, and frames the preset's camera
+    /// profile was left off because it was made for another body.
     pub preset: usize,
+    pub profile_left_off: usize,
     /// The stop was asked for before the last frame.
     pub canceled: bool,
     /// The file that stopped the import, and why.
@@ -343,10 +400,22 @@ impl Report {
         if self.already > 0 {
             s.push_str(&format!(", {} already there", self.already));
         }
-        if self.taken > 0 {
+        if self.renamed > 0 {
             s.push_str(&format!(
-                ", {} skipped (the name is another file's)",
-                self.taken
+                ", {} renamed with (2) (the name was another file's)",
+                self.renamed
+            ));
+        }
+        if self.companions_left > 0 {
+            s.push_str(&format!(
+                ", {} JPEG or XMP not copied (the name was another file's)",
+                self.companions_left
+            ));
+        }
+        if self.profile_left_off > 0 {
+            s.push_str(&format!(
+                ", the preset's camera profile left off {} (made for another camera)",
+                frames(self.profile_left_off)
             ));
         }
         if let Some((file, why)) = &self.error {
@@ -362,8 +431,8 @@ impl Report {
 pub fn log_report(opts: &Options, scan: &Scan, report: &Report) {
     let line = format!(
         "import: {} to {}: {} of {} imported ({} files, {} bytes in {:.2} s, {:.1} MB/s), \
-         {} backed up{}, {} already there, {} skipped (name taken), {} given {}, \
-         {} left on the card{}{}",
+         {} backed up{}, {} already there, {} renamed, {} companions not copied, \
+         {} given {}, profile left off {}, {} left on the card{}{}",
         opts.source.display(),
         opts.destination.display(),
         report.frames,
@@ -378,11 +447,13 @@ pub fn log_report(opts: &Options, scan: &Scan, report: &Report) {
             .map(|b| format!(" to {}", b.display()))
             .unwrap_or_default(),
         report.already,
-        report.taken,
+        report.renamed,
+        report.companions_left,
         report.preset,
         opts.preset
             .as_ref()
             .map_or_else(|| "no preset".to_string(), |p| format!("\"{}\"", p.name)),
+        report.profile_left_off,
         scan.left.len(),
         if report.canceled { "; stopped" } else { "" },
         report
@@ -391,7 +462,8 @@ pub fn log_report(opts: &Options, scan: &Scan, report: &Report) {
             .map(|(f, why)| format!("; failed on {}: {why}", f.display()))
             .unwrap_or_default(),
     );
-    if report.error.is_some() || report.canceled || report.taken > 0 {
+    if report.error.is_some() || report.canceled || report.renamed > 0 || report.companions_left > 0
+    {
         tracing::warn!("{line}");
     } else {
         tracing::info!("{line}");
@@ -439,37 +511,191 @@ fn hash_reader(r: &mut dyn Read) -> std::io::Result<(String, u64)> {
     Ok((hasher.finalize().to_hex().to_string(), n))
 }
 
-/// The temporary name a file is written under beside where it goes:
-/// hidden on Linux and macOS, and never a name a camera writes.
+/// The ending every temporary this program writes has.
+const TEMPORARY: &str = ".greycard-import";
+
+/// A temporary name for a file on its way to `to`, beside it: hidden on
+/// Linux and macOS, never a camera's name, and this process's own
+/// (its id and a counter), so two imports never share one.
 pub fn temporary(to: &Path) -> PathBuf {
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let name = name_of(to);
-    to.with_file_name(format!(".{name}.greycard-import"))
+    to.with_file_name(format!(".{name}.{}-{n}{TEMPORARY}", std::process::id()))
 }
 
-/// Copy `from` to `to` through [`temporary`], and rename it only once
+/// Remove this program's temporaries in `folder` last written more than
+/// a day ago: what a process killed mid-file leaves. A day, so another
+/// import writing into the same folder this moment is never touched.
+pub fn sweep(folder: &Path) {
+    let Ok(entries) = std::fs::read_dir(folder) else {
+        return;
+    };
+    let day = std::time::Duration::from_secs(24 * 60 * 60);
+    for e in entries.flatten() {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !(name.starts_with('.') && name.ends_with(TEMPORARY)) {
+            continue;
+        }
+        let old = e
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|m| m.elapsed().ok())
+            .is_some_and(|age| age > day);
+        if old && e.file_type().is_ok_and(|t| t.is_file()) {
+            match std::fs::remove_file(e.path()) {
+                Ok(()) => tracing::info!("import: removed a stale {}", e.path().display()),
+                Err(err) => tracing::warn!("import: {}: {err}", e.path().display()),
+            }
+        }
+    }
+}
+
+/// Rename `from` to `to` only when nothing is at `to`: an error of kind
+/// `AlreadyExists` otherwise, and `to` untouched. `std::fs::rename`
+/// replaces on every platform, so a check before it leaves a moment in
+/// which a file could appear and be written over; this has none where
+/// the platform can say it at once: `renameat2(RENAME_NOREPLACE)` on
+/// Linux, `renamex_np(RENAME_EXCL)` on macOS, `MoveFileExW` without
+/// `MOVEFILE_REPLACE_EXISTING` on Windows. Where the file system cannot
+/// (FAT and exFAT on Linux before the call learned the flag), a hard
+/// link then an unlink, which also cannot replace; and where it has no
+/// hard links either, the check and the rename, the moment and all.
+pub fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStrExt;
+        use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
+        let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(Some(0)).collect() };
+        let (f, t) = (wide(from), wide(to));
+        // SAFETY: both are null-terminated UTF-16 paths that outlive
+        // the call, which only reads them. No flags: no replacing and
+        // no copying across volumes.
+        let moved = unsafe { MoveFileExW(f.as_ptr(), t.as_ptr(), 0) };
+        if moved != 0 {
+            Ok(())
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        #[cfg(any(all(target_os = "linux", target_env = "gnu"), target_os = "macos"))]
+        {
+            use std::os::unix::ffi::OsStrExt;
+            let c = |p: &Path| std::ffi::CString::new(p.as_os_str().as_bytes());
+            let (f, t) = (c(from)?, c(to)?);
+            // SAFETY: both are null-terminated paths that outlive the
+            // call, which only reads them.
+            #[cfg(target_os = "linux")]
+            let r = unsafe {
+                libc::renameat2(
+                    libc::AT_FDCWD,
+                    f.as_ptr(),
+                    libc::AT_FDCWD,
+                    t.as_ptr(),
+                    libc::RENAME_NOREPLACE,
+                )
+            };
+            // SAFETY: as above.
+            #[cfg(target_os = "macos")]
+            let r = unsafe { libc::renamex_np(f.as_ptr(), t.as_ptr(), libc::RENAME_EXCL) };
+            if r == 0 {
+                return Ok(());
+            }
+            let e = std::io::Error::last_os_error();
+            let unsupported = matches!(
+                e.raw_os_error(),
+                Some(libc::EINVAL) | Some(libc::ENOSYS) | Some(libc::ENOTSUP)
+            );
+            if !unsupported {
+                return Err(e);
+            }
+        }
+        match std::fs::hard_link(from, to) {
+            Ok(()) => std::fs::remove_file(from),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
+            Err(_) => {
+                if std::fs::symlink_metadata(to).is_ok() {
+                    return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
+                }
+                std::fs::rename(from, to)
+            }
+        }
+    }
+}
+
+/// Ask the system to let go of what it holds in memory of `file`, so
+/// that a read after it comes from the drive and not from the pages
+/// just written. Linux only; the macOS read turns its cache off
+/// instead ([`open_uncached`]), and Windows offers nothing short of
+/// unbuffered reads in sector-sized pieces, so there the read-back
+/// checks the file system's copy.
+fn drop_cached(file: &std::fs::File) {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: the descriptor is open for as long as `file` is, and
+        // the call only advises the kernel.
+        unsafe {
+            libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = file;
+}
+
+/// `path` opened for a read that bypasses the cache where the system
+/// allows it per file (macOS's `F_NOCACHE`).
+fn open_uncached(path: &Path) -> std::io::Result<std::fs::File> {
+    let file = std::fs::File::open(path)?;
+    #[cfg(target_os = "macos")]
+    {
+        use std::os::fd::AsRawFd;
+        // SAFETY: the descriptor is open for as long as `file` is.
+        unsafe {
+            libc::fcntl(file.as_raw_fd(), libc::F_NOCACHE, 1);
+        }
+    }
+    Ok(file)
+}
+
+/// Copy `from` to `to` through a [`temporary`], and name it only once
 /// it reads back with the hash its bytes had going in; that hash is
 /// returned with the byte count. `want` is the hash the bytes must
 /// have (a backup is made from the destination's copy and checked
 /// against the card's hash). The file keeps `from`'s modification
 /// time. On any failure the temporary is gone and `to` untouched.
 pub fn land(from: &Path, to: &Path, want: Option<&str>) -> Result<(String, u64)> {
-    let mut src = std::fs::File::open(from).with_context(|| "reading it".to_string())?;
-    let modified = src.metadata().and_then(|m| m.modified()).ok();
-    land_from(&mut src, modified, to, want)
+    let mut src = std::fs::File::open(from).context("reading it")?;
+    let meta = src.metadata().context("reading it")?;
+    land_from(&mut src, meta.modified().ok(), Some(meta.len()), to, want)
 }
 
 /// [`land`] from any reader, so a read that fails halfway is tested.
+/// `length`, when given, is how many bytes the file says it has: a read
+/// that ends short of it is an error, not a smaller file.
 pub fn land_from(
     src: &mut dyn Read,
     modified: Option<std::time::SystemTime>,
+    length: Option<u64>,
     to: &Path,
     want: Option<&str>,
 ) -> Result<(String, u64)> {
     let folder = to.parent().context("no folder to write in")?;
     std::fs::create_dir_all(folder).with_context(|| format!("making {}", folder.display()))?;
     let tmp = temporary(to);
+    let mut made = false;
     let result = (|| -> Result<(String, u64)> {
-        let mut out = std::fs::File::create(&tmp).context("writing the copy")?;
+        // Made new, so a file or a link already at the name is an
+        // error rather than something followed and cut short.
+        let mut out = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .context("writing the copy")?;
+        made = true;
         let mut hasher = blake3::Hasher::new();
         let mut buf = vec![0u8; CHUNK];
         let mut bytes = 0u64;
@@ -484,11 +710,17 @@ pub fn land_from(
             out.write_all(&buf[..k]).context("writing the copy")?;
             bytes += k as u64;
         }
+        if let Some(length) = length
+            && bytes != length
+        {
+            bail!("read {bytes} bytes of the {length} it has");
+        }
         if let Some(when) = modified {
             // A name's date from the file's time wants the card's.
             let _ = out.set_modified(when);
         }
         out.sync_all().context("writing the copy")?;
+        drop_cached(&out);
         drop(out);
         let hash = hasher.finalize().to_hex().to_string();
         if let Some(want) = want
@@ -496,29 +728,69 @@ pub fn land_from(
         {
             bail!("the copy it was made from no longer matches the card");
         }
-        let back = hash_whole(&tmp).context("reading the copy back")?;
+        let (back, _) = open_uncached(&tmp)
+            .and_then(|mut f| hash_reader(&mut f))
+            .context("reading the copy back")?;
         if back != hash {
             bail!("the copy does not read back the same");
         }
-        // Checked as late as it can be: a file of this name that
-        // appeared meanwhile is not written over.
-        if to.exists() {
-            bail!("{} appeared while it was copied", to.display());
-        }
-        std::fs::rename(&tmp, to).context("naming the copy")?;
+        rename_noreplace(&tmp, to).map_err(|e| {
+            if e.kind() == std::io::ErrorKind::AlreadyExists {
+                anyhow::anyhow!("{} appeared while it was copied", to.display())
+            } else {
+                anyhow::Error::new(e).context("naming the copy")
+            }
+        })?;
         Ok((hash, bytes))
     })();
-    if result.is_err() {
+    if result.is_err() && made {
         let _ = std::fs::remove_file(&tmp);
     }
     result
 }
 
+/// A frame on the card, its hashes read at most once each: the head's
+/// (the index's key, 64 KiB and the size) and the whole file's.
+struct CardFile<'a> {
+    path: &'a Path,
+    size: u64,
+    head: Option<String>,
+    whole: Option<String>,
+}
+
+impl<'a> CardFile<'a> {
+    fn new(path: &'a Path, size: u64) -> Self {
+        Self {
+            path,
+            size,
+            head: None,
+            whole: None,
+        }
+    }
+
+    fn head(&mut self) -> Result<String> {
+        if self.head.is_none() {
+            self.head = Some(greycard_library::hash_file(self.path).context("reading it")?);
+        }
+        Ok(self.head.clone().unwrap_or_default())
+    }
+
+    fn whole(&mut self) -> Result<String> {
+        if self.whole.is_none() {
+            self.whole = Some(hash_whole(self.path).context("reading it")?);
+        }
+        Ok(self.whole.clone().unwrap_or_default())
+    }
+}
+
 /// What is under the destination already, by size, so a frame is only
-/// hashed against the files that could be it; each hashed at most once.
+/// hashed against the files that could be it: first by the head, which
+/// reads 64 KiB, and only on a head that matches by the whole file.
+/// Each file's hashes are read at most once.
 struct Existing {
     by_size: HashMap<u64, Vec<PathBuf>>,
-    hashes: HashMap<PathBuf, String>,
+    heads: HashMap<PathBuf, String>,
+    wholes: HashMap<PathBuf, String>,
 }
 
 impl Existing {
@@ -537,43 +809,187 @@ impl Existing {
         }
         Self {
             by_size,
-            hashes: HashMap::new(),
+            heads: HashMap::new(),
+            wholes: HashMap::new(),
         }
     }
 
-    /// A file here with these bytes, if any.
-    fn holds(&mut self, size: u64, hash: &str) -> Option<PathBuf> {
-        for f in self.by_size.get(&size).cloned().unwrap_or_default() {
-            let h = match self.hashes.get(&f) {
+    fn files(&self) -> usize {
+        self.by_size.values().map(Vec::len).sum()
+    }
+
+    /// A file here with the card file's bytes, if any.
+    fn holds(&mut self, card: &mut CardFile<'_>) -> Result<Option<PathBuf>> {
+        let candidates = self.by_size.get(&card.size).cloned().unwrap_or_default();
+        for f in candidates {
+            let head = match self.heads.get(&f) {
                 Some(h) => h.clone(),
-                None => match hash_whole(&f) {
+                None => match greycard_library::hash_file(&f) {
                     Ok(h) => {
-                        self.hashes.insert(f.clone(), h.clone());
+                        self.heads.insert(f.clone(), h.clone());
                         h
                     }
                     Err(_) => continue,
                 },
             };
-            if h == hash {
-                return Some(f);
+            if head != card.head()? {
+                continue;
+            }
+            let whole = match self.wholes.get(&f) {
+                Some(h) => h.clone(),
+                None => match hash_whole(&f) {
+                    Ok(h) => {
+                        self.wholes.insert(f.clone(), h.clone());
+                        h
+                    }
+                    Err(_) => continue,
+                },
+            };
+            if whole == card.whole()? {
+                return Ok(Some(f));
             }
         }
-        None
+        Ok(None)
     }
 
-    fn add(&mut self, path: PathBuf, size: u64, hash: String) {
+    fn add(&mut self, path: PathBuf, size: u64, whole: String) {
         self.by_size.entry(size).or_default().push(path.clone());
-        self.hashes.insert(path, hash);
+        self.wholes.insert(path, whole);
     }
 }
 
-/// Whether `path` is `root` or under it, compared canonically.
-fn is_under(path: &Path, root: &Path) -> bool {
-    let canon = |p: &Path| dunce::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-    canon(path).starts_with(canon(root))
+/// `p` as the file system has it: absolute, its nearest ancestor that
+/// is there made canonical (links and `..` resolved, no Windows `\\?\`
+/// prefix) and the part that is not there yet put back after it. So a
+/// destination that does not exist yet is compared with the card the
+/// same way as one that does.
+pub fn resolve(p: &Path) -> PathBuf {
+    let absolute = if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map(|d| d.join(p))
+            .unwrap_or_else(|_| p.to_path_buf())
+    };
+    let mut missing = Vec::new();
+    let mut at = absolute.as_path();
+    loop {
+        if let Ok(mut there) = dunce::canonicalize(at) {
+            for name in missing.iter().rev() {
+                there.push(name);
+            }
+            return there;
+        }
+        match (at.parent(), at.file_name()) {
+            (Some(parent), Some(name)) => {
+                missing.push(name.to_os_string());
+                at = parent;
+            }
+            // A `..` after a folder that is not there: nothing on disk
+            // to resolve it by, so it is taken as written.
+            _ => {
+                let plain = lexical(&absolute);
+                return if plain == absolute {
+                    absolute
+                } else {
+                    resolve(&plain)
+                };
+            }
+        }
+    }
 }
 
-/// Refuse what would write on the card or into itself.
+/// `p` with `.` dropped and each `..` taking the folder before it, by
+/// the letters alone.
+fn lexical(p: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for c in p.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
+/// The volume the source is read from, as far as writing goes: the
+/// nearest folder at or above it that holds a `DCIM` folder (a camera
+/// card's root, so a destination beside `DCIM` is on the card too);
+/// else the mount point it is on, found by the device id changing on
+/// the way up (the drive root on Windows); but when that is the
+/// system's own disk (the file system's root, or the one that holds
+/// the home folder), only the source folder itself, since a folder
+/// imported from the same disk it goes to is not a card.
+pub fn card_root(source: &Path) -> PathBuf {
+    let source = resolve(source);
+    if let Some(card) = source.ancestors().find(|a| a.join("DCIM").is_dir()) {
+        return card.to_path_buf();
+    }
+    let mount = mount_point(&source);
+    let home = dirs::home_dir().map(|h| resolve(&h));
+    let system = mount.parent().is_none() || home.is_some_and(|h| h.starts_with(&mount));
+    if system { source } else { mount }
+}
+
+#[cfg(unix)]
+fn mount_point(p: &Path) -> PathBuf {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(dev) = std::fs::metadata(p).map(|m| m.dev()) else {
+        return p.to_path_buf();
+    };
+    let mut top = p;
+    for a in p.ancestors().skip(1) {
+        match std::fs::metadata(a) {
+            Ok(m) if m.dev() == dev => top = a,
+            _ => break,
+        }
+    }
+    top.to_path_buf()
+}
+
+#[cfg(not(unix))]
+fn mount_point(p: &Path) -> PathBuf {
+    p.ancestors().last().unwrap_or(p).to_path_buf()
+}
+
+/// Whether some folder above `p` holds a `DCIM` folder: a file on a
+/// camera card, whichever card.
+fn on_a_card(p: &Path) -> bool {
+    p.ancestors().skip(1).any(|a| a.join("DCIM").is_dir())
+}
+
+/// Whether `a` and `b` (or the nearest folders above them that are
+/// there) are on one drive: a backup there is no backup when the drive
+/// fails. None when it cannot be told.
+pub fn same_device(a: &Path, b: &Path) -> Option<bool> {
+    let there = |p: &Path| {
+        let p = resolve(p);
+        p.ancestors().find(|a| a.exists()).map(Path::to_path_buf)
+    };
+    let (a, b) = (there(a)?, there(b)?);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let dev = |p: &Path| std::fs::metadata(p).ok().map(|m| m.dev());
+        Some(dev(&a)? == dev(&b)?)
+    }
+    #[cfg(not(unix))]
+    {
+        let root = |p: &Path| {
+            p.components()
+                .next()
+                .map(|c| c.as_os_str().to_string_lossy().to_lowercase())
+        };
+        Some(root(&a)? == root(&b)?)
+    }
+}
+
+/// Refuse what would write on the card or into the source, and a
+/// pattern that makes no name. Nothing is made or written by it.
 pub fn check(opts: &Options) -> Result<()> {
     anyhow::ensure!(
         opts.source.is_dir(),
@@ -584,19 +1000,29 @@ pub fn check(opts: &Options) -> Result<()> {
         !opts.destination.as_os_str().is_empty(),
         "no destination is chosen"
     );
-    anyhow::ensure!(
-        !is_under(&opts.destination, &opts.source),
-        "the destination is on the card, under {}",
-        opts.source.display()
-    );
+    let card = card_root(&opts.source);
+    let source = resolve(&opts.source);
+    let mut places = vec![("destination", resolve(&opts.destination))];
     if let Some(b) = &opts.backup {
+        places.push(("backup", resolve(b)));
+    }
+    for (what, place) in &places {
         anyhow::ensure!(
-            !is_under(b, &opts.source),
-            "the backup is on the card, under {}",
-            opts.source.display()
+            !source.starts_with(place),
+            "the {what} {} holds the source {}",
+            place.display(),
+            source.display()
         );
         anyhow::ensure!(
-            !is_under(b, &opts.destination) && !is_under(&opts.destination, b),
+            !place.starts_with(&card),
+            "the {what} {} is on the card ({})",
+            place.display(),
+            card.display()
+        );
+    }
+    if let [(_, dest), (_, backup)] = places.as_slice() {
+        anyhow::ensure!(
+            !backup.starts_with(dest) && !dest.starts_with(backup),
             "the backup is the destination, or inside it"
         );
     }
@@ -618,6 +1044,82 @@ fn sample() -> Fields {
     }
 }
 
+/// What a run keeps between frames.
+struct Run<'a> {
+    opts: &'a Options,
+    card: PathBuf,
+    existing: Existing,
+    library: Option<greycard_library::Library>,
+    /// The names this run has given, case-blind as two of the three
+    /// platforms' file systems are, so two frames never meet.
+    given: HashSet<String>,
+    /// The folders this run has swept of stale temporaries.
+    swept: HashSet<PathBuf>,
+}
+
+fn key(p: &Path) -> String {
+    p.to_string_lossy().to_lowercase()
+}
+
+impl Run<'_> {
+    /// [`land`], the folder swept of stale temporaries first.
+    fn land(&mut self, from: &Path, to: &Path, want: Option<&str>) -> Result<(String, u64)> {
+        if let Some(folder) = to.parent()
+            && self.swept.insert(folder.to_path_buf())
+        {
+            sweep(folder);
+        }
+        land(from, to, want)
+    }
+
+    /// `planned`, or ` (2)`, ` (3)` after it until the name is neither
+    /// on disk nor given in this run; and whether a file on disk moved
+    /// it.
+    fn free_name(&mut self, planned: &Path) -> (PathBuf, bool) {
+        let mut out = planned.to_path_buf();
+        let mut n = 2;
+        let mut moved = false;
+        loop {
+            let on_disk = std::fs::symlink_metadata(&out).is_ok();
+            if !on_disk && !self.given.contains(&key(&out)) {
+                break;
+            }
+            moved |= on_disk;
+            out = numbered(planned, n);
+            n += 1;
+        }
+        self.given.insert(key(&out));
+        (out, moved)
+    }
+
+    /// The library's copy of the card file, if it holds one with the
+    /// same bytes: found by the head hash, then read whole and
+    /// compared, so a copy cut short or changed past its head is not
+    /// taken for the frame. A row on a camera card (this one, or the
+    /// other slot of a two-slot body, browsed in the editor) is not an
+    /// import.
+    fn in_library(&mut self, card: &mut CardFile<'_>) -> Result<Option<PathBuf>> {
+        let Some(lib) = &self.library else {
+            return Ok(None);
+        };
+        let rows = lib.by_hash(&card.head()?).unwrap_or_default();
+        for row in rows {
+            if row.missing || row.size != card.size || !row.path.is_file() {
+                continue;
+            }
+            let path = resolve(&row.path);
+            if path.starts_with(&self.card) || on_a_card(&path) {
+                continue;
+            }
+            match hash_whole(&path) {
+                Ok(h) if h == card.whole()? => return Ok(Some(path)),
+                _ => continue,
+            }
+        }
+        Ok(None)
+    }
+}
+
 /// Run the import over `scan`'s frames. `progress` hears each frame as
 /// it begins, by its index and name. Stops at the first error, which
 /// the report names; a cancel takes effect before the next frame.
@@ -633,11 +1135,16 @@ pub fn run(
         total,
         ..Report::default()
     };
+    // Compared as the file system has them from here on: a library
+    // row's path is canonical.
+    let mut opts = opts.clone();
+    opts.destination = resolve(&opts.destination);
+    opts.backup = opts.backup.as_deref().map(resolve);
     let looked = std::time::Instant::now();
-    let mut existing = Existing::under(&opts.destination);
+    let existing = Existing::under(&opts.destination);
     tracing::info!(
         "import: {} files under {} looked over in {:.2} s",
-        existing.by_size.values().map(Vec::len).sum::<usize>(),
+        existing.files(),
         opts.destination.display(),
         looked.elapsed().as_secs_f64()
     );
@@ -650,24 +1157,21 @@ pub fn run(
                 .map_err(|e| tracing::warn!("import: the library at {}: {e}", p.display()))
                 .ok()
         });
-    // The names this run has given, case-blind as two of the three
-    // platforms' file systems are, so two frames never meet.
-    let mut given: HashSet<String> = HashSet::new();
+    let mut run = Run {
+        opts: &opts,
+        card: card_root(&opts.source),
+        existing,
+        library,
+        given: HashSet::new(),
+        swept: HashSet::new(),
+    };
     for (i, item) in scan.items.iter().enumerate() {
         if job.is_canceled() {
             report.canceled = true;
             break;
         }
         progress(i, total, &name_of(&item.file));
-        if let Err(e) = import_one(
-            opts,
-            item,
-            i + 1,
-            &mut existing,
-            library.as_ref(),
-            &mut given,
-            &mut report,
-        ) {
+        if let Err(e) = import_one(&mut run, item, i + 1, &mut report) {
             report.error = Some((item.file.clone(), format!("{e:#}")));
             break;
         }
@@ -676,136 +1180,137 @@ pub fn run(
     report
 }
 
-/// A path's name made unique within the run: ` (2)` before the
-/// extension, as an export's set does.
-fn unique(path: PathBuf, given: &mut HashSet<String>) -> PathBuf {
-    let key = |p: &Path| p.to_string_lossy().to_lowercase();
-    let mut out = path.clone();
-    let mut n = 2;
-    while given.contains(&key(&out)) {
-        let stem = stem_of(&path);
-        let name = match path.extension() {
-            Some(e) => format!("{stem} ({n}).{}", e.to_string_lossy()),
-            None => format!("{stem} ({n})"),
-        };
-        out = path.with_file_name(name);
-        n += 1;
-    }
-    given.insert(key(&out));
-    out
-}
-
-fn import_one(
-    opts: &Options,
-    item: &Item,
-    seq: usize,
-    existing: &mut Existing,
-    library: Option<&greycard_library::Library>,
-    given: &mut HashSet<String>,
-    report: &mut Report,
-) -> Result<()> {
-    let fields = fields_of(&item.file, seq);
+fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -> Result<()> {
+    let opts = run.opts;
+    let (fields, body) = probe_file(&item.file, seq);
     let rel = relative(opts, &item.file, &fields)?;
-    let to = unique(opts.destination.join(&rel), given);
+    let planned = opts.destination.join(&rel);
     let size = std::fs::metadata(&item.file).context("reading it")?.len();
+    let mut card = CardFile::new(&item.file, size);
 
-    // Imported before: the library knows the file by its head and
-    // size, somewhere that is not the card itself.
-    if let Some(lib) = library
-        && let Ok(head) = greycard_library::hash_file(&item.file)
-        && let Ok(rows) = lib.by_hash(&head)
-        && let Some(row) = rows.iter().find(|r| {
-            !r.missing && r.size == size && r.path.is_file() && !is_under(&r.path, &opts.source)
-        })
-    {
-        tracing::info!(
-            "import: {} is there already as {} (the library)",
-            item.file.display(),
-            row.path.display()
-        );
-        report.already += 1;
-        return Ok(());
-    }
-    // Or under the destination, byte for byte, under any name.
-    let whole = if existing.by_size.contains_key(&size) {
-        Some(hash_whole(&item.file).context("reading it")?)
-    } else {
-        None
+    // Imported before: the same bytes under the destination, under any
+    // name, or a copy the library knows of elsewhere.
+    let there = match run.existing.holds(&mut card)? {
+        Some(p) => Some(p),
+        None => run.in_library(&mut card)?,
     };
-    if let Some(hash) = &whole
-        && let Some(there) = existing.holds(size, hash)
-    {
-        tracing::info!(
-            "import: {} is there already as {}",
-            item.file.display(),
-            there.display()
-        );
-        report.already += 1;
-        return Ok(());
-    }
-    if to.exists() {
-        tracing::warn!(
-            "import: {} not imported: {} is another file",
-            item.file.display(),
-            to.display()
-        );
-        report.taken += 1;
-        return Ok(());
-    }
-
-    let (hash, bytes) = land(&item.file, &to, None)?;
-    if let Some(before) = &whole
-        && *before != hash
-    {
-        // Read twice and different: the card is not giving the same
-        // bytes back.
-        let _ = std::fs::remove_file(&to);
-        bail!("the card read differently twice");
-    }
-    existing.add(to.clone(), bytes, hash.clone());
-    report.files += 1;
-    report.bytes += bytes;
-    let mut landed = vec![(to.clone(), hash)];
+    let (frame, hash, new) = match there {
+        Some(there) => {
+            tracing::info!(
+                "import: {} is there already as {}",
+                item.file.display(),
+                there.display()
+            );
+            report.already += 1;
+            if !there.starts_with(&opts.destination) {
+                // Somewhere this import does not write: its JPEG, its
+                // XMP and its backup are that copy's business.
+                return Ok(());
+            }
+            run.given.insert(key(&there));
+            (there, card.whole()?, false)
+        }
+        None => {
+            let (to, moved) = run.free_name(&planned);
+            if moved {
+                tracing::warn!(
+                    "import: {} is another file; {} goes in as {}",
+                    planned.display(),
+                    item.file.display(),
+                    name_of(&to)
+                );
+                report.renamed += 1;
+            }
+            let (hash, bytes) = run.land(&item.file, &to, None)?;
+            if let Some(before) = &card.whole
+                && *before != hash
+            {
+                // Read twice and different: the card is not giving the
+                // same bytes back.
+                let _ = std::fs::remove_file(&to);
+                bail!("the card read differently twice");
+            }
+            run.existing.add(to.clone(), bytes, hash.clone());
+            report.files += 1;
+            report.bytes += bytes;
+            (to, hash, true)
+        }
+    };
+    // What the backup takes: the frame, and each companion that is
+    // there now with the card's bytes.
+    let mut copies = vec![(frame.clone(), hash)];
 
     for companion in &item.companions {
-        let name = companion_name(&item.file, &to, companion);
-        let c_to = unique(to.with_file_name(name), given);
-        if c_to.exists() {
-            tracing::warn!(
-                "import: {} not copied: {} is there already",
-                companion.display(),
-                c_to.display()
-            );
+        let c_to = frame.with_file_name(companion_name(&item.file, &frame, companion));
+        if std::fs::symlink_metadata(&c_to).is_ok() {
+            let theirs = hash_whole(companion).context("reading it")?;
+            if hash_whole(&c_to).ok().as_deref() == Some(theirs.as_str()) {
+                copies.push((c_to, theirs));
+            } else {
+                tracing::warn!(
+                    "import: {} not copied: {} is another file",
+                    companion.display(),
+                    c_to.display()
+                );
+                report.companions_left += 1;
+            }
             continue;
         }
-        let (h, b) = land(companion, &c_to, None)
+        if !run.given.insert(key(&c_to)) {
+            report.companions_left += 1;
+            continue;
+        }
+        let (h, b) = run
+            .land(companion, &c_to, None)
             .with_context(|| format!("{} (with {})", name_of(companion), name_of(&item.file)))?;
-        existing.add(c_to.clone(), b, h.clone());
+        run.existing.add(c_to.clone(), b, h.clone());
         report.files += 1;
         report.bytes += b;
-        landed.push((c_to, h));
+        copies.push((c_to, h));
     }
 
     if let Some(backup) = &opts.backup {
-        for (file, hash) in &landed {
+        for (file, hash) in &copies {
             let rel = file.strip_prefix(&opts.destination).unwrap_or(file);
-            let b_to = backup.join(rel);
+            let mut b_to = backup.join(rel);
             if b_to.exists() {
                 if hash_whole(&b_to).ok().as_deref() == Some(hash.as_str()) {
                     continue;
                 }
-                bail!(
-                    "the backup's {} is another file, and is not written over",
-                    b_to.display()
+                let planned = b_to.clone();
+                let mut n = 2;
+                while std::fs::symlink_metadata(&b_to).is_ok() {
+                    b_to = numbered(&planned, n);
+                    n += 1;
+                }
+                tracing::warn!(
+                    "import: the backup's {} is another file; backed up as {}",
+                    planned.display(),
+                    name_of(&b_to)
                 );
             }
-            land(file, &b_to, Some(hash)).context("the backup copy")?;
+            // From the destination's copy, checked against the card's
+            // hash: the card is the slow disk and may be the dying one.
+            run.land(file, &b_to, Some(hash))
+                .context("the backup copy")?;
             report.backed_up += 1;
         }
     }
 
-    if let Some(preset) = &opts.preset {
-        let mut sidecar = greycard_edit::Sidecar::load(&to)
+    if !new {
+        return Ok(());
+    }
+    if let (Some(preset), Some(placement)) = (&opts.preset, opts.placement) {
+        let (preset, left_off) =
+            crate::panel::sync::preset_fitted(preset, &opts.profiles, || body.clone());
+        if left_off {
+            tracing::warn!(
+                "import: {}: the preset's camera profile was made for another camera, left off",
+                name_of(&frame)
+            );
+            report.profile_left_off += 1;
+        }
+        let mut sidecar = greycard_edit::Sidecar::load(&frame)
             .ok()
             .flatten()
             .unwrap_or_default();
@@ -813,17 +1318,16 @@ fn import_one(
         crate::panel::startup::preset_at_start(
             &mut sidecar,
             &mut seed,
-            &to,
-            preset,
-            Some(greycard_edit::Placement::Folder),
+            &frame,
+            &preset,
+            Some(placement),
         );
         if sidecar.current_label.is_some() {
             report.preset += 1;
         }
     }
-
     report.frames += 1;
-    if let Some(folder) = to.parent() {
+    if let Some(folder) = frame.parent() {
         report.landed_in(folder);
     }
     Ok(())
@@ -897,12 +1401,13 @@ mod tests {
     use super::*;
 
     /// A folder of this test's own under the temporary directory,
-    /// emptied first.
+    /// emptied first, as the file system spells it (macOS's temporary
+    /// directory is behind a link).
     fn dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("greycard-import-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
-        d
+        dunce::canonicalize(&d).unwrap()
     }
 
     fn write(path: &Path, bytes: &[u8]) {
@@ -919,27 +1424,35 @@ mod tests {
             preset: None,
             backup: None,
             library: None,
+            placement: Some(Placement::Folder),
+            profiles: Vec::new(),
         }
     }
 
-    /// No file in `dir` or under it has the temporary's name.
-    fn no_temporaries(dir: &Path) {
-        let mut files = Vec::new();
-        // The walk leaves hidden files out, so look for them by hand.
-        fn all(d: &Path, out: &mut Vec<PathBuf>) {
-            for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
-                let p = e.path();
-                if p.is_dir() {
-                    all(&p, out);
-                } else {
-                    out.push(p);
-                }
+    fn go(o: &Options) -> Report {
+        run(o, &scan(&o.source).unwrap(), &Job::default(), |_, _, _| {})
+    }
+
+    /// Every file under `dir`, hidden ones included, links not followed.
+    fn all(d: &Path) -> Vec<PathBuf> {
+        let mut out = Vec::new();
+        for e in std::fs::read_dir(d).into_iter().flatten().flatten() {
+            let p = e.path();
+            if e.file_type().unwrap().is_dir() {
+                out.extend(all(&p));
+            } else {
+                out.push(p);
             }
         }
-        all(dir, &mut files);
-        let tmp: Vec<_> = files
-            .iter()
-            .filter(|f| name_of(f).ends_with(".greycard-import"))
+        out.sort();
+        out
+    }
+
+    /// No file in `dir` or under it has a temporary's name.
+    fn no_temporaries(dir: &Path) {
+        let tmp: Vec<_> = all(dir)
+            .into_iter()
+            .filter(|f| name_of(f).ends_with(TEMPORARY))
             .collect();
         assert!(tmp.is_empty(), "{tmp:?}");
     }
@@ -1007,16 +1520,13 @@ mod tests {
         write(&card.join("IMG_0001.CR3"), &vec![7u8; 3 * CHUNK + 5]);
         write(&card.join("IMG_0001.JPG"), b"camera jpeg");
         write(&card.join("IMG_0002.CR3"), &vec![9u8; 1000]);
-        let card_before: Vec<_> = std::fs::read_dir(&card)
-            .unwrap()
-            .map(|e| {
-                let p = e.unwrap().path();
-                (p.clone(), std::fs::read(&p).unwrap())
-            })
+        let card_before: Vec<_> = all(&root.join("card"))
+            .into_iter()
+            .map(|p| (p.clone(), std::fs::read(&p).unwrap()))
             .collect();
         let dest = root.join("photos");
         let backup = root.join("backup");
-        let mut o = options(&root.join("card"), &dest);
+        let mut o = options(&root.join("card/DCIM"), &dest);
         o.name = "shoot-{seq}".into();
         o.subfolder = "set".into();
         o.backup = Some(backup.clone());
@@ -1044,10 +1554,11 @@ mod tests {
         }
         assert_eq!(r.main_folder(), Some(dest.join("set").as_path()));
         // The card as it was, and no sidecar with no preset.
-        for (p, bytes) in &card_before {
-            assert_eq!(&std::fs::read(p).unwrap(), bytes);
-        }
-        assert_eq!(std::fs::read_dir(&card).unwrap().count(), card_before.len());
+        let card_after: Vec<_> = all(&root.join("card"))
+            .into_iter()
+            .map(|p| (p.clone(), std::fs::read(&p).unwrap()))
+            .collect();
+        assert_eq!(card_after, card_before);
         assert!(
             !dest
                 .join("set")
@@ -1068,24 +1579,89 @@ mod tests {
         );
     }
 
-    /// A name that is there with other bytes is never written over;
-    /// the frame is counted and left.
+    /// Review item 3: a frame already there still gets its companions
+    /// and its backup. A run with no backup, then one with a backup,
+    /// gave an empty backup; a companion missing from the destination
+    /// was never put back.
     #[test]
-    fn a_name_taken_by_another_file_is_skipped_not_overwritten() {
+    fn a_frame_already_there_still_gets_its_companions_and_backup() {
+        let root = dir("already");
+        let card = root.join("card/DCIM/100CANON");
+        write(&card.join("IMG_0001.CR3"), b"raw one");
+        write(&card.join("IMG_0001.JPG"), b"jpeg one");
+        write(&card.join("IMG_0002.CR3"), b"raw two");
+        let dest = root.join("dest");
+        let mut o = options(&root.join("card/DCIM"), &dest);
+        let first = go(&o);
+        assert_eq!((first.frames, first.files), (2, 3));
+        std::fs::remove_file(dest.join("IMG_0001.JPG")).unwrap();
+
+        let backup = root.join("backup");
+        o.backup = Some(backup.clone());
+        let second = go(&o);
+        assert_eq!(second.error, None);
+        assert_eq!((second.frames, second.already), (0, 2));
+        assert_eq!(second.files, 1, "the JPEG put back");
+        assert_eq!(
+            std::fs::read(dest.join("IMG_0001.JPG")).unwrap(),
+            b"jpeg one"
+        );
+        assert_eq!(second.backed_up, 3);
+        for name in ["IMG_0001.CR3", "IMG_0001.JPG", "IMG_0002.CR3"] {
+            assert_eq!(
+                std::fs::read(backup.join(name)).unwrap(),
+                std::fs::read(card.join(name)).unwrap()
+            );
+        }
+        // A third run has nothing left to do.
+        let third = go(&o);
+        assert_eq!((third.files, third.backed_up, third.already), (0, 0, 2));
+    }
+
+    /// Review item 10: a name that is there with other bytes is never
+    /// written over; the frame goes in as ` (2)` and the line says so.
+    #[test]
+    fn a_name_taken_by_another_file_goes_in_as_two() {
         let root = dir("taken");
-        let card = root.join("card");
+        let card = root.join("card/DCIM");
         write(&card.join("IMG_0001.CR3"), b"from the card");
+        write(&card.join("IMG_0001.JPG"), b"its jpeg");
         write(&card.join("IMG_0002.CR3"), b"second");
         let dest = root.join("dest");
         write(&dest.join("IMG_0001.CR3"), b"last year's frame");
-        let o = options(&card, &dest);
-        let r = run(&o, &scan(&card).unwrap(), &Job::default(), |_, _, _| {});
-        assert_eq!((r.frames, r.taken, r.already), (1, 1, 0));
+        let r = go(&options(&card, &dest));
+        assert_eq!((r.frames, r.renamed, r.already), (2, 1, 0));
         assert_eq!(
             std::fs::read(dest.join("IMG_0001.CR3")).unwrap(),
             b"last year's frame"
         );
-        assert!(r.line(&dest).contains("1 skipped"));
+        assert_eq!(
+            std::fs::read(dest.join("IMG_0001 (2).CR3")).unwrap(),
+            b"from the card"
+        );
+        // The JPEG follows its frame's new name.
+        assert_eq!(
+            std::fs::read(dest.join("IMG_0001 (2).JPG")).unwrap(),
+            b"its jpeg"
+        );
+        assert!(
+            r.line(&dest).contains("1 renamed with (2)"),
+            "{}",
+            r.line(&dest)
+        );
+
+        // A companion whose name is another file's is said too.
+        let card2 = root.join("card2/DCIM");
+        write(&card2.join("IMG_0009.CR3"), b"nine");
+        write(&card2.join("IMG_0009.JPG"), b"nine's jpeg");
+        write(&dest.join("IMG_0009.JPG"), b"some other jpeg");
+        let r = go(&options(&card2, &dest));
+        assert_eq!((r.frames, r.companions_left), (1, 1));
+        assert!(
+            r.line(&dest).contains("1 JPEG or XMP not copied"),
+            "{}",
+            r.line(&dest)
+        );
     }
 
     /// Two frames of one name in one run (two folders of the card)
@@ -1093,16 +1669,11 @@ mod tests {
     #[test]
     fn two_frames_of_one_name_in_a_run_both_land() {
         let root = dir("twice");
-        let card = root.join("card");
+        let card = root.join("card/DCIM");
         write(&card.join("100CANON/IMG_0001.CR3"), b"first body");
         write(&card.join("101CANON/IMG_0001.CR3"), b"second body");
         let dest = root.join("dest");
-        let r = run(
-            &options(&card, &dest),
-            &scan(&card).unwrap(),
-            &Job::default(),
-            |_, _, _| {},
-        );
+        let r = go(&options(&card, &dest));
         assert_eq!(r.frames, 2);
         assert_eq!(
             std::fs::read(dest.join("IMG_0001.CR3")).unwrap(),
@@ -1119,7 +1690,7 @@ mod tests {
     #[test]
     fn a_cancel_lands_the_frame_in_hand_and_leaves_no_partial_file() {
         let root = dir("cancel");
-        let card = root.join("card");
+        let card = root.join("card/DCIM");
         for i in 1..=4 {
             write(
                 &card.join(format!("IMG_000{i}.CR3")),
@@ -1140,11 +1711,7 @@ mod tests {
         );
         assert!(r.canceled);
         assert_eq!(r.frames, 2);
-        let mut landed: Vec<_> = std::fs::read_dir(&dest)
-            .unwrap()
-            .map(|e| name_of(&e.unwrap().path()))
-            .collect();
-        landed.sort();
+        let landed: Vec<_> = all(&dest).iter().map(|p| name_of(p)).collect();
         assert_eq!(landed, vec!["IMG_0001.CR3", "IMG_0002.CR3"]);
         assert_eq!(
             std::fs::read(dest.join("IMG_0002.CR3")).unwrap().len(),
@@ -1172,13 +1739,19 @@ mod tests {
         }
         let root = dir("dying");
         let to = root.join("dest/IMG_0001.CR3");
-        let e = land_from(&mut Dying(CHUNK + 100), None, &to, None).unwrap_err();
+        let e = land_from(&mut Dying(CHUNK + 100), None, None, &to, None).unwrap_err();
         assert!(format!("{e:#}").contains("I/O error on the card"), "{e:#}");
+        assert!(!to.exists());
+        no_temporaries(&root);
+        // A read that ends short of the file's size is not a smaller
+        // file.
+        let e = land_from(&mut &b"short"[..], None, Some(9), &to, None).unwrap_err();
+        assert!(format!("{e:#}").contains("read 5 bytes of the 9"), "{e:#}");
         assert!(!to.exists());
         no_temporaries(&root);
 
         // A bad file in a run stops the run there and says which.
-        let card = root.join("card");
+        let card = root.join("card/DCIM");
         write(&card.join("IMG_0001.CR3"), b"fine");
         write(&card.join("IMG_0002.CR3"), b"fine too");
         let dest = root.join("run");
@@ -1220,52 +1793,199 @@ mod tests {
         no_temporaries(&root);
     }
 
-    /// The preset is one named step in the sidecar under the
-    /// destination's hidden folder, as a preset laid by hand is.
+    /// Review item 4: the library knows a copy by its head and size; a
+    /// card file that differs only past its head is not that copy. And
+    /// a row on a camera card (the other slot of a two-slot body,
+    /// browsed in the editor) is not an import.
     #[test]
-    fn a_preset_is_one_named_step_in_the_hidden_folder() {
+    fn the_library_is_trusted_only_for_the_same_bytes_off_the_card() {
+        let root = dir("library");
+        let mut body = vec![4u8; greycard_library::hash::HEAD + 4096];
+        let dest = root.join("dest");
+        write(&dest.join("IMG_0001.CR3"), &body);
+        let slot2 = root.join("slot2/DCIM/100CANON");
+        write(&slot2.join("IMG_0002.CR3"), b"on the other card");
+        let db = root.join("library.sqlite");
+        {
+            let mut lib = greycard_library::Library::open(&db).unwrap();
+            lib.index_folder(&dest, &mut |_| {}).unwrap();
+            lib.index_folder(&slot2, &mut |_| {}).unwrap();
+        }
+        *body.last_mut().unwrap() = 5;
+        let card = root.join("card/DCIM");
+        write(&card.join("IMG_0001.CR3"), &body);
+        write(&card.join("IMG_0002.CR3"), b"on the other card");
+        // The destination is elsewhere, so only the library can say.
+        let elsewhere = root.join("elsewhere");
+        let mut o = options(&card, &elsewhere);
+        o.library = Some(db);
+        let r = go(&o);
+        assert_eq!(r.error, None);
+        assert_eq!((r.frames, r.already), (2, 0), "{r:?}");
+        assert_eq!(std::fs::read(elsewhere.join("IMG_0001.CR3")).unwrap(), body);
+
+        // The same bytes, off any card: already there.
+        let card3 = root.join("card3/DCIM");
+        write(
+            &card3.join("IMG_0001.CR3"),
+            &std::fs::read(dest.join("IMG_0001.CR3")).unwrap(),
+        );
+        let mut o = options(&card3, &root.join("third"));
+        o.library = Some(root.join("library.sqlite"));
+        let r = go(&o);
+        assert_eq!((r.frames, r.already), (0, 1), "{r:?}");
+    }
+
+    /// Review item 5: a link out of the destination does not make the
+    /// card's own files look imported, and a link back up the card's
+    /// tree does not list a frame over and over.
+    #[cfg(unix)]
+    #[test]
+    fn links_are_not_followed_in_either_walk() {
+        let root = dir("links");
+        let card = root.join("card/DCIM");
+        write(&card.join("100CANON/IMG_0001.CR3"), b"a raw");
+        std::os::unix::fs::symlink("..", card.join("100CANON/loop")).unwrap();
+        let s = scan(&card).unwrap();
+        assert_eq!(s.items.len(), 1, "{:?}", s.items);
+        let dest = root.join("dest");
+        std::fs::create_dir_all(&dest).unwrap();
+        std::os::unix::fs::symlink(&root, dest.join("loop")).unwrap();
+        let r = go(&options(&card, &dest));
+        assert_eq!((r.frames, r.already), (1, 0), "{r:?}");
+    }
+
+    /// The preset is one named step in the sidecar where the Settings
+    /// sheet puts sidecars, as a preset laid by hand is.
+    #[test]
+    fn a_preset_is_one_named_step_where_the_setting_puts_it() {
         let root = dir("preset");
-        let card = root.join("card");
+        let card = root.join("card/DCIM");
         std::fs::create_dir_all(&card).unwrap();
         greycard_library::fixture::write_frame(
             &card.join("IMG_0001.tif"),
             &greycard_library::fixture::R5,
             1,
         );
-        let dest = root.join("dest");
         let mut edit = greycard_edit::Edit::default();
         edit.light.exposure = 0.7;
         let preset = Preset::from_edit("Faded film", &edit, &[greycard_edit::Section::Light]);
-        let mut o = options(&card, &dest);
+        for (placement, dest) in [
+            (Placement::Folder, root.join("folder")),
+            (Placement::Beside, root.join("beside")),
+        ] {
+            let mut o = options(&card, &dest);
+            o.preset = Some(preset.clone());
+            o.placement = Some(placement);
+            o.subfolder = "{yyyy}/{date} {camera}".into();
+            let r = go(&o);
+            assert_eq!((r.frames, r.preset), (1, 1), "{r:?}");
+            // The EXIF's day and camera, not the file's time.
+            let file = dest.join("2024/2024-08-24 Canon EOS R5/IMG_0001.tif");
+            assert!(file.is_file());
+            assert_eq!(
+                greycard_edit::Sidecar::find(&file),
+                Some(greycard_edit::Sidecar::path_in(&file, placement))
+            );
+            let sidecar = greycard_edit::Sidecar::load(&file).unwrap().unwrap();
+            assert_eq!(sidecar.history.len(), 1);
+            assert_eq!(sidecar.current_label.as_deref(), Some("Preset: Faded film"));
+            assert_eq!(sidecar.current.light.exposure, 0.7);
+        }
+        // Sidecars off: no preset laid, nothing written.
+        let mut o = options(&card, &root.join("none"));
         o.preset = Some(preset);
-        o.subfolder = "{yyyy}/{date} {camera}".into();
-        let r = run(&o, &scan(&card).unwrap(), &Job::default(), |_, _, _| {});
-        assert_eq!((r.frames, r.preset), (1, 1), "{r:?}");
-        // The EXIF's day and camera, not the file's time.
-        let file = dest.join("2024/2024-08-24 Canon EOS R5/IMG_0001.tif");
-        assert!(file.is_file());
-        let sidecar = greycard_edit::Sidecar::load(&file).unwrap().unwrap();
-        assert_eq!(
-            greycard_edit::Sidecar::find(&file),
-            Some(greycard_edit::Sidecar::path_in(
-                &file,
-                greycard_edit::Placement::Folder
-            ))
-        );
-        assert_eq!(sidecar.history.len(), 1);
-        assert_eq!(sidecar.current_label.as_deref(), Some("Preset: Faded film"));
-        assert_eq!(sidecar.current.light.exposure, 0.7);
+        o.placement = None;
+        let r = go(&o);
+        assert_eq!((r.frames, r.preset), (1, 0));
+        assert!(greycard_edit::Sidecar::find(&root.join("none/IMG_0001.tif")).is_none());
     }
 
+    /// Review item 9: a preset's camera profile made for another body is
+    /// left off a frame, as §162 leaves it off a frame of a set.
     #[test]
-    fn the_card_and_the_backup_are_never_written_to_from_inside() {
+    fn a_preset_s_camera_profile_is_left_off_another_body() {
+        let root = dir("profile");
+        let card = root.join("card/DCIM");
+        std::fs::create_dir_all(&card).unwrap();
+        greycard_library::fixture::write_frame(
+            &card.join("IMG_0001.tif"),
+            &greycard_library::fixture::R5,
+            1,
+        );
+        let mut edit = greycard_edit::Edit::default();
+        edit.light.exposure = 0.4;
+        edit.camera.profile = greycard_edit::camera::ProfileChoice::Named("z9".into());
+        let preset = Preset::from_edit(
+            "Nikon look",
+            &edit,
+            &[
+                greycard_edit::Section::Light,
+                greycard_edit::Section::Camera,
+            ],
+        );
+        let mut o = options(&card, &root.join("dest"));
+        o.preset = Some(preset);
+        o.profiles = vec![greycard_edit::camera::Entry {
+            name: "z9".into(),
+            path: root.join("z9.dcp"),
+            title: None,
+            unique_camera_model: Some("Nikon Z 9".into()),
+            copyright: None,
+        }];
+        let r = go(&o);
+        assert_eq!((r.frames, r.preset, r.profile_left_off), (1, 1, 1), "{r:?}");
+        let sidecar = greycard_edit::Sidecar::load(&root.join("dest/IMG_0001.tif"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(sidecar.current.light.exposure, 0.4);
+        assert_eq!(
+            sidecar.current.camera.profile,
+            greycard_edit::Edit::default().camera.profile
+        );
+        assert!(
+            r.line(Path::new("x"))
+                .contains("camera profile left off 1 frame")
+        );
+    }
+
+    /// Review items 1 and 2: nothing on the card is a destination or a
+    /// backup, beside `DCIM` as well as under it, whether the folder is
+    /// there yet or not and however the path is spelled; nor is a folder
+    /// that holds the source.
+    #[test]
+    fn nothing_on_the_card_or_around_the_source_is_written_to() {
         let root = dir("check");
-        let card = root.join("card");
-        std::fs::create_dir_all(card.join("DCIM")).unwrap();
-        let mut o = options(&card, &card.join("DCIM/out"));
+        let card = root.join("EOS_DIGITAL");
+        std::fs::create_dir_all(card.join("DCIM/100CANON")).unwrap();
+        let source = card.join("DCIM");
+        let mut o = options(&source, &source.join("out"));
         assert!(check(&o).is_err());
+        // Beside DCIM, on the card: the review's 272 MB.
+        o.destination = card.join("Imported");
+        let e = check(&o).unwrap_err().to_string();
+        assert!(e.contains("is on the card"), "{e}");
+        // The card itself, which holds the source.
+        o.destination = card.clone();
+        assert!(check(&o).is_err());
+        // Spelled with `..`, and not there yet.
+        o.destination = root.join("elsewhere/../EOS_DIGITAL/new/deeper");
+        assert!(check(&o).is_err());
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&card, root.join("card-link")).unwrap();
+            o.destination = root.join("card-link/new");
+            assert!(check(&o).is_err());
+        }
+        // A folder of pictures imported into the folder holding it.
+        let pics = root.join("pics");
+        std::fs::create_dir_all(pics.join("dump")).unwrap();
+        let o2 = options(&pics.join("dump"), &pics);
+        let e = check(&o2).unwrap_err().to_string();
+        assert!(e.contains("holds the source"), "{e}");
+
         o.destination = root.join("dest");
-        o.backup = Some(card.clone());
+        o.backup = Some(card.join("backup"));
         assert!(check(&o).is_err());
         o.backup = Some(root.join("dest/backup"));
         assert!(check(&o).is_err());
@@ -1273,6 +1993,64 @@ mod tests {
         check(&o).unwrap();
         o.name = "{nope}".into();
         assert!(check(&o).is_err());
+        // The card is where the DCIM is, from any folder under it.
+        assert_eq!(card_root(&source.join("100CANON")), card);
+        assert_eq!(
+            resolve(&root.join("a/../EOS_DIGITAL/x/y")),
+            card.join("x").join("y")
+        );
+    }
+
+    /// Review item 6: the rename never replaces a file, and a temporary
+    /// a killed run left more than a day ago is swept, a fresh one not.
+    #[test]
+    fn the_rename_never_replaces_and_stale_temporaries_go() {
+        let root = dir("rename");
+        let (a, b) = (root.join("a"), root.join("b"));
+        std::fs::write(&a, b"new").unwrap();
+        std::fs::write(&b, b"there first").unwrap();
+        let e = rename_noreplace(&a, &b).unwrap_err();
+        assert_eq!(e.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read(&b).unwrap(), b"there first");
+        assert!(a.exists());
+        rename_noreplace(&a, &root.join("c")).unwrap();
+        assert!(!a.exists() && root.join("c").exists());
+
+        let dest = root.join("dest");
+        let stale = dest.join(".IMG_0001.CR3.1-0.greycard-import");
+        let fresh = dest.join(".IMG_0002.CR3.1-1.greycard-import");
+        write(&stale, b"half");
+        write(&fresh, b"in flight");
+        let two_days = std::time::Duration::from_secs(2 * 24 * 60 * 60);
+        std::fs::File::options()
+            .write(true)
+            .open(&stale)
+            .unwrap()
+            .set_modified(std::time::SystemTime::now() - two_days)
+            .unwrap();
+        let card = root.join("card/DCIM");
+        write(&card.join("IMG_0003.CR3"), b"three");
+        go(&options(&card, &dest));
+        assert!(!stale.exists());
+        assert!(fresh.exists());
+        // Two temporaries for one name are two names.
+        assert_ne!(temporary(&b), temporary(&b));
+    }
+
+    /// Review item 15: a file of the same size but another head is not
+    /// read whole.
+    #[test]
+    fn a_different_head_is_not_read_whole() {
+        let root = dir("heads");
+        let dest = root.join("dest");
+        write(&dest.join("other.CR3"), &vec![1u8; 5000]);
+        let card = root.join("IMG.CR3");
+        write(&card, &vec![2u8; 5000]);
+        let mut existing = Existing::under(&dest);
+        let mut c = CardFile::new(&card, 5000);
+        assert_eq!(existing.holds(&mut c).unwrap(), None);
+        assert!(existing.wholes.is_empty());
+        assert!(c.whole.is_none(), "the card file was not read whole");
     }
 
     #[test]
@@ -1286,5 +2064,9 @@ mod tests {
         assert_eq!(find_card(&v), Some(root.join("EOS_DIGITAL/DCIM")));
         assert_eq!(find_card(&v[..1]), None);
         assert!(volumes_under(&root.join("not there")).is_empty());
+        assert_eq!(
+            same_device(&root.join("BACKUP"), &root.join("ZZZ")),
+            Some(true)
+        );
     }
 }

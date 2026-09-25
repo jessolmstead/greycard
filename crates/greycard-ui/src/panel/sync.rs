@@ -121,6 +121,19 @@ pub(crate) fn preset_for_body(
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> (Preset, bool) {
+    preset_fitted(preset, profiles, || {
+        probe(st, file).map(|p| (p.make, p.model))
+    })
+}
+
+/// [`preset_for_body`] with no state: `body` says what took the frame
+/// (make and model), asked only when the preset names a profile. The
+/// import runs this on its own thread, where there is no `State`.
+pub(crate) fn preset_fitted(
+    preset: &Preset,
+    profiles: &[camera::Entry],
+    body: impl FnOnce() -> Option<(String, String)>,
+) -> (Preset, bool) {
     let named = match &preset.edit.camera.profile {
         ProfileChoice::Named(name) if preset.sections.contains(&Section::Camera) => {
             profiles.iter().find(|e| &e.name == name)
@@ -130,10 +143,11 @@ pub(crate) fn preset_for_body(
     let Some(entry) = named else {
         return (preset.clone(), false);
     };
-    let body = probe(st, file);
+    let body = body();
     if profile_fits(
         Some(entry),
-        body.as_ref().map(|p| (p.make.as_str(), p.model.as_str())),
+        body.as_ref()
+            .map(|(make, model)| (make.as_str(), model.as_str())),
     ) {
         (preset.clone(), false)
     } else {

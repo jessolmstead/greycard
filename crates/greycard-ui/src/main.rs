@@ -321,20 +321,20 @@ struct Cli {
     #[arg(long, value_name = "SRC")]
     import: Option<PathBuf>,
     /// Where --import copies the frames
-    #[arg(long, value_name = "DEST", requires = "import")]
+    #[arg(long, value_name = "DEST")]
     to: Option<PathBuf>,
     /// A second copy of every file --import copies, verified the same
     /// way
-    #[arg(long, value_name = "DIR", requires = "import")]
+    #[arg(long, value_name = "DIR")]
     backup: Option<PathBuf>,
     /// The names --import gives, a pattern of {date}, {yyyy}, {mm},
     /// {dd}, {name}, {camera} and {seq} with any text between; {name}
     /// without it
-    #[arg(long, value_name = "PATTERN", requires = "import")]
+    #[arg(long, value_name = "PATTERN")]
     name: Option<String>,
     /// The folders under --to that --import makes, a pattern as --name
     /// takes, `/` between levels; none without it
-    #[arg(long, value_name = "PATTERN", requires = "import")]
+    #[arg(long, value_name = "PATTERN")]
     subfolder: Option<String>,
 }
 

@@ -2132,6 +2132,7 @@ dependencies = [
  "i-slint-backend-testing",
  "image",
  "lcms2",
+ "libc",
  "log",
  "naga",
  "objc2 0.6.4",
@@ -2149,6 +2150,7 @@ dependencies = [
  "tracing-subscriber",
  "unicode-script",
  "webbrowser",
+ "windows-sys 0.59.0",
  "winresource",
  "zbus",
 ]
