@@ -266,6 +266,13 @@ clears or a tester asks for it.
       hue (§158)
 - [ ] A dropper for the luminance window's edges and a swatch of the
       color window beside its sliders (§158)
+- [ ] The thumbnail pool's deliveries on the UI thread: a folder of
+      20,000 whose pictures are all in the cache does not render its
+      window until every hit has been delivered, 5.7 to 6.3 s, where
+      the all-roots view brought the window up in a quarter second
+      before the pool (§172, found by §174's review). Batch the
+      deliveries, or deliver the visible range first and the rest in
+      idle time
 - [ ] The vibrance protection's skin window (§60, 55 degrees plus or
       minus 15) against the 10 to 59 degrees a pale face measured
       (§158): widen it or not; a change to existing edits
