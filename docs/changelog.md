@@ -8,7 +8,7 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
-## 0.1.2, unreleased
+## 0.1.2, 2026-09-25
 
 - Fix JPEG, PNG and TIFF files opening brighter and more contrasty
   than the file: they took the 0.8-stop baseline and the display
@@ -465,7 +465,7 @@ to attach.
   (camera, size, mosaic, black and white levels), the lens matched,
   and one line per develop with the denoiser's provider and each
   stage's seconds. Silent fallbacks warn: a file with no white
-  balance or colour matrix, a provider that would not load, a cache
+  balance or color matrix, a provider that would not load, a cache
   or settings write that failed, a sidecar that would not parse. A
   panic in any thread lands in the file with its backtrace, and a
   panic in a worker job becomes the failed outcome the editor was

@@ -1354,7 +1354,7 @@ mod tests {
         // One reject at the front, so every row is the file one
         // along: row 0 is file 1, and the file numbers 1 to 4 are
         // all rows that exist. The old code wrote file 1's badge at
-        // row 1, which is file 2 — a neighbour, in range, wrong.
+        // row 1, which is file 2 — a neighbor, in range, wrong.
         st.sidecars[0].meta.flag = Flag::Reject;
         st.filter = filter::Filter::from_name("No rejects").expect("it parses");
         rebuild_browser(&mut st, &app);
@@ -1369,7 +1369,7 @@ mod tests {
         assert_eq!(
             rows.row_data(1).unwrap().rating,
             0,
-            "and not its neighbour's"
+            "and not its neighbor's"
         );
         assert!(
             (2..4).all(|r| rows.row_data(r).unwrap().rating == 0),

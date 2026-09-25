@@ -512,7 +512,7 @@ fn join(names: impl IntoIterator<Item = String>) -> String {
 /// ignored, and every other group is applied as it stands. So the
 /// flag row under a three-star filter reads how the three-star
 /// frames are flagged, and the label row reads how they are
-/// labelled — the state of the cull, narrowed by everything else
+/// labeled — the state of the cull, narrowed by everything else
 /// being asked.
 ///
 /// It is worth being plain about what this is not, because the first

@@ -2625,7 +2625,7 @@ mod tests {
         );
     }
 
-    /// Cancelled while the second of four is in hand: that one is
+    /// Canceled while the second of four is in hand: that one is
     /// finished, the last two are passed over without being begun.
     #[test]
     fn a_cancelled_set_finishes_the_frame_in_hand_and_stops() {

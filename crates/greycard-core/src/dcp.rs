@@ -332,7 +332,7 @@ pub struct Dcp {
     /// `UniqueCameraModel`: which camera the profile was made for.
     pub unique_camera_model: Option<String>,
     /// `ProfileCopyright`: shown beside the profile's name, so a
-    /// profile whose licence says something says it.
+    /// profile whose license says something says it.
     pub copyright: Option<String>,
     /// `ProfileCalibrationSignature`: whose calibration the profile
     /// expects a file's `CameraCalibration` matrices to be. Read and

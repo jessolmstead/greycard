@@ -973,7 +973,7 @@ pub(crate) mod tests {
     }
 
     /// Three frames and their sidecars: the R5 rated and picked
-    /// beside the file, the R6 labelled under the hidden folder,
+    /// beside the file, the R6 labeled under the hidden folder,
     /// the A7 bare.
     fn shoot(dir: &Path) -> (PathBuf, PathBuf, PathBuf) {
         let (r5, r6, a7) = (dir.join("r5.tif"), dir.join("r6.tif"), dir.join("a7.tif"));

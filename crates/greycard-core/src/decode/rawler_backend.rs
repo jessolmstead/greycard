@@ -150,7 +150,7 @@ fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
     }
     if frame.calibrations.is_empty() {
         log::debug!(
-            "{} {}: no colour matrix in the file",
+            "{} {}: no color matrix in the file",
             frame.make,
             frame.model
         );

@@ -78,7 +78,7 @@ mod tests {
             // within rounding, and the hue either comes back as it
             // was or is not read at all — the radius lands a hair
             // either side of the edge. Both leave the control's hue
-            // where it was, which is what the dead centre is for.
+            // where it was, which is what the dead center is for.
             let (x, y) = place(hue, 0.0);
             let (back, s) = pick(x, y);
             assert!(s < 1e-6, "{hue} at nothing came back at {s}");

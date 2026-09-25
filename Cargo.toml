@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/greycard-core", "crates/greycard-edit", "crates/greycard-cli", "crates/greycard-bench", "crates/greycard-ui", "crates/greycard-ai", "crates/greycard-lens", "crates/greycard-gpu", "crates/greycard-library"]
 
 [workspace.package]
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 rust-version = "1.98"
 authors = ["Jess Olmstead"]

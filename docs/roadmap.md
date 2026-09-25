@@ -128,12 +128,12 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       look on: facial skin, body skin, hair, eyebrows, eyes and the
       iris, lips, teeth, and clothing by name (top, dress, coat,
       trousers, shoes, hat). A face parser and a human parser whose
-      licences and training data allow it (the CelebAMask-HQ, LIP,
+      licenses and training data allow it (the CelebAMask-HQ, LIP,
       ATR and DeepFashion2 families are research-only), or landmarks
       driving SAM 2, which the Object shape already runs from a click;
       the iris is a landmark fit inside the eye's mask; SAM 3 ruled
       out for now, gated weights and a 1.4 GB text encoder (§34
-      addendum). The licence search is the user's choice to make
+      addendum). The license search is the user's choice to make
 - [ ] Generative fill behind the patch layer
 
 ## v0.6.0: color

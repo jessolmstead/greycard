@@ -1,13 +1,13 @@
 # Professional RAW editor for Linux: working notes
 
-Started 2026-09-03, from the colour-management work that set the design rules
+Started 2026-09-03, from the color-management work that set the design rules
 in §3 and the strategy thinking around it.
 
 ---
 
 ## 1. Where things stand
 
-The engine starts from one conclusion about colour: that white balance
+The engine starts from one conclusion about color: that white balance
 applied in the wrong space, a camera matrix used without luminance
 normalization, and a pipeline with many disagreeing render paths are
 faults no patch fixes one at a time. §3 collects the rules that follow
@@ -28,7 +28,7 @@ will not take a pipeline-wide rewrite for colorimetric accuracy, and
 should not be expected to: it is a different product for a different
 photographer, and that is a legitimate position rather than a defect.
 
-Colour correctness is also not a thing that can be added at the edges.
+Color correctness is also not a thing that can be added at the edges.
 It constrains the decode, the buffer, the matrix, the working space and
 every consumer of the base image at once (§3, §4). Anything that applies
 white balance in the working space, or picks a matrix without reference
@@ -90,7 +90,7 @@ rule in the engine.
    nothing about the matrix, only about clip handling.
 10. **On the lantern scene**, seven patches of door and wall: an sRGB-assuming
     path renders olive (R/G ≈ 1.5) where the camera JPEG has R/G ≈ 1.9. A
-    colour-managed path lands closer to the camera on all seven and within a
+    color-managed path lands closer to the camera on all seven and within a
     few percent on five, and looks "very red" only because the scene really is
     lantern-orange relative to the 2986 K white point — the olive render was
     hiding that behind green.
@@ -98,7 +98,7 @@ rule in the engine.
     number is consistent within an app and across cameras; it will not match
     Lightroom's readout. Say so in the UI.
 12. **Test at the host boundary.** Every bug worth the name in integrating a
-    colour crate with a host was a mismatch at that boundary (working
+    color crate with a host was a mismatch at that boundary (working
     primaries, tint sign, highlight roll-off), not inside the crate.
 13. **Environment.** WebKitGTK on NVIDIA + Wayland crashes with
     `Error 71 (Protocol error)`; workaround `WEBKIT_DISABLE_DMABUF_RENDERER=1`.
@@ -7856,7 +7856,7 @@ performance core. Call it 1.5x the 6-thread column for the Air and
   first minute, so export throughput there is a sustained figure,
   not the burst one.
 
-What is fine, and it is most of the interaction: tone, colour, masks,
+What is fine, and it is most of the interaction: tone, color, masks,
 grain and white balance preview in the viewport shader per frame
 (§14, §17, §31), whose cost is per screen pixel and not per image
 pixel, and the base develop only re-runs when a base setting
@@ -8406,7 +8406,7 @@ own 0.12 of 255 and 0.2 percent, because this frame needed no
 half-pixel fudge: 8192-940 and 5464-802 are both even, so the 1:1
 crop lands on whole pixels. Worth saying how one knows: a sweep of
 the crop offset by a pixel each way puts RMSE at 51.7 in the middle
-against 668 one pixel across and 1530 one pixel down, so the centre
+against 668 one pixel across and 1530 one pixel down, so the center
 is not a coincidence of a soft picture.
 
 **What it costs.** An edit that had both the mixer and the conversion
@@ -8525,7 +8525,7 @@ The strip shows a dozen frames of a folder at a time and nothing
 else does. G now puts the whole folder on the window as a contact
 sheet, and G, Escape or Return bring the loupe back on the frame the
 selection landed on. It is a view over the folder that is already
-open, not a library: there is no catalogue, no database and no
+open, not a library: there is no catalog, no database and no
 thumbnail cache on disk, and closing the window forgets everything
 but the cell size.
 
@@ -8603,7 +8603,7 @@ to scroll and no scrollbar; the wheel, the keys, a Loupe button in
 the header and the reveal are the whole of it.
 
 Two things the keys had to be told. A sheet — the export, the preset,
-the model licence — is declared after the grid and draws over it, so
+the model license — is declared after the grid and draws over it, so
 while one is up the keys under it are not the grid's, G included; and
 a brush, a dropper, a guide or the level tool left in hand is put
 down on the way in, since nothing can be placed on a picture that is
@@ -8659,7 +8659,7 @@ state, and a snapshot of the grid waits for the pictures the grid
 shows the way a snapshot of the loupe waits for the develop — without
 that it catches a sheet of empty cells. Over the 33 frames in
 `~/Pictures/Test` at 1500 by 950: 14 columns at 96, 8 at 176, 2 at
-512, which is what `columns` makes of that width; the row centred in
+512, which is what `columns` makes of that width; the row centered in
 the window rather than against its left edge, which at 512 is a third
 of the window that would otherwise be empty on the right; the
 remembered frame outlined in the accent and revealed; and at 512 the
@@ -9515,7 +9515,7 @@ does), and a tighter neutrality floor that caught the skin would
 catch that sunset too. So there is no guard, the slider is a
 landscape tool, and a mask is how a face is kept out of it when
 Dehaze gets a place in the local adjustments. The test
-`a_neutral_scene_is_read_as_hazy` records the behaviour on a
+`a_neutral_scene_is_read_as_hazy` records the behavior on a
 synthetic low-saturation scene: at +50 its mean luminance drops
 22.7%, the worst pixel 33%, and the airlight is its brightest grey.
 
@@ -10045,7 +10045,7 @@ one line with base made or kept, the denoiser's provider and
 seconds or why it did not run, the fills, local contrast, dehaze,
 sharpen, and the total. Exports say the path and seconds at info
 and warn when a file was renamed or written over or skipped. The
-silent fallbacks that warn now: no white balance or colour matrix in
+silent fallbacks that warn now: no white balance or color matrix in
 the file, a provider that would not load (with the first line of
 why), the denoise cache or settings not written, a sidecar that
 would not parse, a dump under a `GREYCARD_UI_*` variable that failed
@@ -12223,7 +12223,7 @@ What that residual is, is worth being exact about, because a
 whole-frame RMSE cannot tell a shader that disagrees from a crop that
 is half a row off. A half-row resample can only show where the picture
 has detail: in a flat neighbourhood it has nothing to blend. Split the
-frame on that — the pixels whose four neighbours are identical to the
+frame on that — the pixels whose four neighbors are identical to the
 last 8-bit level, which is the only "local gradient under half a
 level" an 8-bit image can have — and the two sides separate cleanly:
 
@@ -12827,7 +12827,7 @@ screen in every view. There is a pair of buttons in the CULLING
 panel section, and another in the Crop tab under the ROTATE
 section's own quarter turns, since a turn is worth reaching for
 outside culling too. Two pairs of rotate buttons a finger apart
-wants saying out loud, so the second pair is labelled "Turn left"
+wants saying out loud, so the second pair is labeled "Turn left"
 and "Turn right" and carries a line under it: the four above are a
 step in developing the picture, these two say the camera recorded
 the wrong way up.
@@ -13267,7 +13267,7 @@ modules use it and it decides nothing: it is `Path::file_name` with a
 `String` on the end. Moving it would have touched seven files to no
 purpose.
 
-`frame_aspect` stayed too, and this one is a judgement. It is a priority
+`frame_aspect` stayed too, and this one is a judgment. It is a priority
 order over four sources — the develop on screen when it is this frame's, the
 size the file itself reports, the culling preview, the filmstrip's
 thumbnail — and three of them are only consulted if the ones before them had
@@ -13297,7 +13297,7 @@ Those are the same number only when the browser is showing everything, and
 down — someone else's picture, wearing your rating.
 `a_badge_set_under_a_filter_lands_on_the_filtered_row` hides one frame of
 five, so every row is the file one along and every wrong answer is a row
-that exists: the bug stamps a neighbour rather than running off the end,
+that exists: the bug stamps a neighbor rather than running off the end,
 which is why it never panicked and never got noticed.
 
 ### What the headless helpers bought
@@ -13321,7 +13321,7 @@ were just filed under the wiring. `clippy --all-targets` and `fmt --all
 Three tests were also caught claiming more than they held: a split fixture
 already in order, so nothing said the hit is read off `ordered_splits`;
 `not_previewed` naming two of its seven; and the hue circle's round trip
-never feeding the dead centre back, which is the one place the inverse is
+never feeding the dead center back, which is the one place the inverse is
 deliberately not total — at nothing the marker sits exactly on the dead
 edge, so the strength comes back as nothing to within rounding and the hue
 may or may not read, and either way the control keeps the hue it had. A
@@ -13373,7 +13373,7 @@ number is how many frames carry that chip's value among the frames
 the *other* groups leave: its own group's chips are set aside, and
 everything else being asked is applied. So with a three-star filter
 on, the flag row says how the three-star frames are flagged and the
-label row says how they are labelled. It is the state of the cull,
+label row says how they are labeled. It is the state of the cull,
 narrowed by whatever else is being asked, and it is what a culler
 came to the row to find out.
 
@@ -13936,7 +13936,7 @@ found" box with no other clue, and no machine capable of producing
 the package can reproduce it. The five are what the two binaries and
 Dawn import between them and they are closed under their own imports;
 they now go into `bin/` beside the binaries, app-local, which is a
-deployment Microsoft's redistributable licence allows. They are
+deployment Microsoft's redistributable license allows. They are
 copied out of the toolset's own `Redist` directory rather than out of
 `System32`, which holds the installed copy and is not ours to hand
 on, and the directory is found through `vswhere`. A package that
@@ -17934,7 +17934,7 @@ panel's `show_history` calls the latter.
 and the brief asked for one, with a migration. It was not done, because
 nothing here changes what a stored field means, which is the only thing
 the rule in `edit/lib.rs` bumps for; §117 (the meta) and §122 turned
-down bumps for new fields on the same ground. A labelled state is written as the edit's own JSON
+down bumps for new fields on the same ground. A labeled state is written as the edit's own JSON
 object with one extra key, `step`, beside its fields (a serialize-only
 `#[serde(flatten)]` wrapper, so the edit's key order and bytes are as
 before), and the current state's as a top-level `step` beside
@@ -18001,10 +18001,10 @@ panel changed re-records that row's state as a new step after the
 panel's. Its before is the panel's state now, not the one the preset
 or sync was laid over, so it is named by what moved.
 
-**Tests.** In `greycard-edit`: a labelled step round-trips through
+**Tests.** In `greycard-edit`: a labeled step round-trips through
 save and load, with the `step` keys where they belong and none on an
 unlabelled state, and an unlabelled sidecar writes byte for byte as
-before; a labelled sidecar reads as plain edits into the old shape; an
+before; a labeled sidecar reads as plain edits into the old shape; an
 old sidecar of every version loads with no labels, its rows equal to
 `describe`'s, and a malformed `step` costs only the label; undo carries
 a label to the redo stack and back, a new step drops it, `go_to` walks
@@ -18042,12 +18042,12 @@ gives a target, since a written non-default edit tells the next launch
 the blend was seeded already; a file that will not say its ISO keeps
 waiting. A unit test covers the write, the placement, a preset already
 on (no step, no write) and sidecars off; a real run with `--preset`
-and `--snapshot` left a sidecar with the labelled step, `step` just
+and `--snapshot` left a sidecar with the labeled step, `step` just
 after `current`, and the ISO 100 blend in both states.
 
 **Seen, not changed.** With `--preset` and `--exposure` or
 `--develop-temperature`, the startup sets the exposure or the white
-balance on the current state in place after the labelled step, so the
+balance on the current state in place after the labeled step, so the
 row says "Preset: X" of a state that also holds that value. Older than
 this item, and those two flags exist for measuring; applying them
 before the preset instead would let the preset's Light override the
@@ -18059,11 +18059,11 @@ already recorded from it, by choice.
 
 **The review.** The first pass held on the format: the reviewer built
 two probes, one against master's `greycard-edit` and one against the
-branch's, and read one labelled sidecar with both, six states, the
+branch's, and read one labeled sidecar with both, six states, the
 same position, snapshot and values, master ignoring `step`; a sidecar
 of four steps, a snapshot and an undo wrote 23,132 bytes with the
 same hash from either build; and master's `presets --apply` over a
-labelled file kept its three states and dropped the words. What it
+labeled file kept its three states and dropped the words. What it
 found was the row: a 21-character prefix on a 36-character row, the
 blank label that could have written `"step": ""`, a doc that put
 `step` beside `current` where the file put it after `saved`, and the
@@ -18131,13 +18131,13 @@ written (a slider dragged mid-set) runs as soon as that frame is done and
 before the next one; the set never holds the viewport for longer than one
 frame's export. The set is an `Arc` the window keeps as well: Stop sets an
 atomic flag on it, and the worker, taking each frame off the queue, passes
-over any frame of a cancelled set without beginning it. The frame in hand
+over any frame of a canceled set without beginning it. The frame in hand
 is never interrupted, which is what "finish the file in hand" asks, and
 needs no check inside the develop. The worker says the set is done after
 its last frame whichever way that frame went, so the finished line comes
 exactly once and always after the frame in hand; frames passed over are
-free, so a cancelled set ends as soon as the queue reaches them. The
-tally (exported, skipped, failed with name and reason, cancelled) lives
+free, so a canceled set ends as soon as the queue reaches them. The
+tally (exported, skipped, failed with name and reason, canceled) lives
 on the set and is recorded by the worker as each frame finishes, and the
 pure half of it (the step, the names, the lines) is `queue.rs`, tested
 without an engine.

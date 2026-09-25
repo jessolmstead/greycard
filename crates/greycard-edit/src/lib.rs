@@ -3424,7 +3424,7 @@ mod tests {
         e
     }
 
-    /// A labelled step is written with its words and read back with
+    /// A labeled step is written with its words and read back with
     /// them, the current state's and a history state's alike; a step
     /// without words writes no `step` key, so a sidecar with no
     /// labels writes as one did before labels existed.
@@ -3484,7 +3484,7 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A build from before labels reads each state of a labelled
+    /// A build from before labels reads each state of a labeled
     /// sidecar as the plain edit it is: what an edit does not know it
     /// ignores, so the history loads whole and the words are dropped.
     #[test]

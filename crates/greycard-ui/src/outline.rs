@@ -183,7 +183,7 @@ mod tests {
         let mut n = 0;
         for (i, (ka, a)) in segments.iter().enumerate() {
             for (kb, b) in &segments[i + 1..] {
-                // Neighbours on a ring share an end and do not count.
+                // Neighbors on a ring share an end and do not count.
                 if ka == kb && (a.1 == b.0 || a.0 == b.1) {
                     continue;
                 }
