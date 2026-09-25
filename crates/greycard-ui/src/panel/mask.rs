@@ -291,6 +291,14 @@ pub(crate) fn step(
             model,
             model.id == greycard_ai::SUBJECT_WEBGPU.id && have(&greycard_ai::SUBJECT),
         )
+    } else if have(&greycard_ai::SUBJECT) {
+        // Nothing to offer right now (another sheet is up, a fetch is
+        // running, or this model was already declined or failed this
+        // session), but the store's own original runs: use it rather
+        // than wait on an offer that is not coming this round. Only
+        // ever true for a Subject want, since `SUBJECT` names one
+        // specific model file.
+        Step::Ask(&greycard_ai::SUBJECT)
     } else {
         Step::Wait
     })
@@ -306,10 +314,13 @@ pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
         let store = st.store.clone();
         let have = |m: &greycard_ai::Model| store.as_ref().is_some_and(|s| s.have(m));
         let providers = crate::ai::providers();
+        // Cached: the first ask opens a `wgpu::Instance` to name the
+        // adapter and every one after reads and parses providers.json,
+        // neither of which belongs on the render path this runs from.
         let original_failed_on_webgpu = |_: &greycard_ai::Model| {
             store
                 .as_ref()
-                .is_some_and(|s| greycard_ai::subject::original_failed_on_webgpu(s, providers))
+                .is_some_and(crate::ai::subject_original_failed_on_webgpu)
         };
         let sheet_free = st.fetch.is_none() && !st.fetching;
         let Some(next) = step(
@@ -323,12 +334,13 @@ pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
         ) else {
             continue;
         };
-        if let Step::Ask(_) = next {
+        if let Step::Ask(model) = next {
             WORKER.with(|w| {
                 if let Some(w) = &*w.borrow() {
                     w.send(Job::Mask {
                         key,
                         shape: shape.clone(),
+                        model: Some(model),
                     });
                 }
             });
@@ -1209,6 +1221,14 @@ mod tests {
         let no_record = |_: &greycard_ai::Model| false;
         assert_eq!(
             step(&shape, original, &gpu, &[], &[], true, no_record),
+            Some(Step::Ask(&SUBJECT))
+        );
+        // Another sheet up, or a fetch already running: nothing can be
+        // offered this round, but the original already runs, so it is
+        // asked for rather than left waiting on an offer that is not
+        // coming.
+        assert_eq!(
+            step(&shape, original, &gpu, &[], &[], false, failed_on_webgpu),
             Some(Step::Ask(&SUBJECT))
         );
     }

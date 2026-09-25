@@ -32,6 +32,20 @@ pub fn providers() -> &'static [Provider] {
     PROVIDERS.get_or_init(Provider::available)
 }
 
+/// Whether the Subject original is on record as having failed on
+/// WebGPU, for the adapter and build this launch would use — asked,
+/// and cached, once: the first call opens a `wgpu::Instance` and
+/// blocks on `request_adapter` to name it, and every one after reads
+/// and parses `providers.json`, neither of which belongs on the
+/// render path, where a Subject want still waiting asks this every
+/// frame. The record cannot change under a launch already up:
+/// `runtime::open` is its only writer, and it never turns a WebGPU
+/// failure for this file back into a success mid-launch.
+pub fn subject_original_failed_on_webgpu(store: &Store) -> bool {
+    static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *CACHED.get_or_init(|| greycard_ai::subject::original_failed_on_webgpu(store, providers()))
+}
+
 /// The model a shape needs, if any. For Subject that depends on the
 /// providers, on what `store` already has, on which models cannot be
 /// had this session (`unavailable`: declined, or their fetch failed),
@@ -48,7 +62,7 @@ pub fn model_for(
         |m| store.is_some_and(|s| s.have(m)),
         providers(),
         unavailable,
-        |_| store.is_some_and(|s| greycard_ai::subject::original_failed_on_webgpu(s, providers())),
+        |_| store.is_some_and(subject_original_failed_on_webgpu),
     )
 }
 
@@ -185,6 +199,13 @@ impl Ai {
         self.fills.clear();
         self.preview = None;
         self.embedding = None;
+    }
+
+    /// A Subject model just arrived in the store: drop the one
+    /// loaded, if any, so the next Subject mask picks up the new
+    /// file rather than reusing the session's first choice forever.
+    pub fn forget_subject(&mut self) {
+        self.subject = None;
     }
 
     /// Whether the fill model is in the store, so a fill not kept
@@ -339,16 +360,32 @@ impl Ai {
         Ok(out)
     }
 
+    /// Which Subject file to use: the one already loaded, once there
+    /// is one, since the store may have gained the other file since
+    /// and the raster in hand is the loaded one's; else `model` — the
+    /// choice `panel::mask::step` already made, with the session's
+    /// declines and the providers record folded in, which nothing on
+    /// the worker's side can re-derive on its own; else, with
+    /// neither, the plain store-and-providers guess a caller outside
+    /// the panel's `ask_for` (the export path) is left to make.
+    fn subject_model(&self, model: Option<&'static Model>) -> Option<&'static Model> {
+        self.subject
+            .as_ref()
+            .map(|s| s.model())
+            .or(model)
+            .or_else(|| model_for(&Shape::Subject {}, self.store.as_ref(), &[]))
+    }
+
     /// Where a made raster for `shape` on the open file lives on disk:
     /// under the models' cache, named by a hash of the file, the
-    /// model's id and the shape.
-    fn cached_path(&self, shape: &Shape) -> Option<PathBuf> {
+    /// model's id and the shape. `model` is `raster`'s own, so the
+    /// cache is keyed on the exact file it is about to load or has
+    /// loaded, not a second, independent guess that can name a
+    /// different file (notes, the Subject rewrite offer).
+    fn cached_path(&self, shape: &Shape, model: Option<&'static Model>) -> Option<PathBuf> {
         let file = self.file.as_ref()?;
-        // The Subject model loaded, once there is one: the store may
-        // have gained the other file since, and the raster is that
-        // model's.
-        let model = match (shape, &self.subject) {
-            (Shape::Subject {}, Some(subject)) => subject.model(),
+        let model = match shape {
+            Shape::Subject {} => self.subject_model(model)?,
             _ => model_for(shape, self.store.as_ref(), &[])?,
         };
         let prompt = serde_json::to_string(shape).ok()?;
@@ -362,7 +399,14 @@ impl Ai {
 
     /// The raster for `shape`, from the cache when it was made for this
     /// shape, else from the model on the preview of the base develop
-    /// `stamp` of `image` under `edit`, finished as `kind` is.
+    /// `stamp` of `image` under `edit`, finished as `kind` is. `model`
+    /// is the file to load for a Subject shape when one is not loaded
+    /// already — `panel::mask::step`'s own choice, passed down through
+    /// `Job::Mask` so the worker never has to re-derive it (and
+    /// possibly land on a different file than the one the panel
+    /// offered or asked for); `None` from a caller with no session to
+    /// ask, which falls back to the plain store-and-providers guess.
+    #[allow(clippy::too_many_arguments)]
     pub fn raster(
         &mut self,
         stamp: u64,
@@ -371,6 +415,7 @@ impl Ai {
         kind: crate::finish::Source,
         key: Key,
         shape: &Shape,
+        model: Option<&'static Model>,
     ) -> Result<Made, String> {
         if let Some((s, r)) = self.cache.get(&key)
             && s == shape
@@ -386,7 +431,7 @@ impl Ai {
         }
         let aspect = image.height as f32 / image.width as f32;
         let height = ((RASTER_WIDTH as f32 * aspect).round() as usize).max(1);
-        let cached = self.cached_path(shape);
+        let cached = self.cached_path(shape, model);
         if let Some(data) = cached.as_deref().and_then(|p| read_raster(p, height)) {
             let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
             self.cache.insert(key, (shape.clone(), raster.clone()));
@@ -415,9 +460,15 @@ impl Ai {
             Shape::Subject {} => {
                 let subject = match &mut self.subject {
                     Some(s) => s,
-                    None => self
-                        .subject
-                        .insert(Subject::load(&store, &self.providers).map_err(|e| e.to_string())?),
+                    None => {
+                        let chosen = self
+                            .subject_model(model)
+                            .ok_or("no Subject model to load")?;
+                        self.subject.insert(
+                            Subject::load_model(&store, chosen, &self.providers)
+                                .map_err(|e| e.to_string())?,
+                        )
+                    }
                 };
                 (
                     subject.mask(rgb).map_err(|e| e.to_string())?,
@@ -636,5 +687,70 @@ mod tests {
         for &x in &[0.0f32, 0.002, 0.18, 0.5, 1.0] {
             assert!((decode(encode(x)) - x).abs() < 1e-5);
         }
+    }
+
+    /// An install with only the Subject original: `step` offers the
+    /// rewrite (the store's original is on record as falling back to
+    /// the CPU), the offer is declined, and `panel::mask::step` then
+    /// asks for the original by name (`mask.rs`'s own test covers
+    /// that choice). What used to go wrong from here is the worker's
+    /// side of it: `Subject::load`'s internal `model_for(store,
+    /// providers, &[])` had no way to know the rewrite was declined
+    /// this session, so with the same failure on record it picked the
+    /// rewrite anyway — not in the store, so the load failed with
+    /// "is not in the model store" even though the original the panel
+    /// asked for was sitting right there. `raster` and `cached_path`
+    /// now take the model `step` chose directly, rather than
+    /// re-deriving it, so they cannot land on a different one. No
+    /// real weights are wanted for this: a raster already on disk,
+    /// under the original's cache slot, comes back without a model
+    /// ever being loaded.
+    #[test]
+    fn a_subject_raster_is_cached_under_the_model_step_chose_not_a_fresh_guess() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-ai-subject-cache-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut ai = Ai::new();
+        ai.store = Some(Store::at(dir.join("models")));
+        ai.file = Some(PathBuf::from("open.CR3"));
+        ai.providers = vec![Provider::WebGpu, Provider::Cpu];
+        let shape = Shape::Subject {};
+
+        // The cache slot depends on which model is named: an install
+        // that declines the rewrite must not land on its slot by
+        // accident.
+        let original_path = ai
+            .cached_path(&shape, Some(&greycard_ai::SUBJECT))
+            .expect("a path with the original named");
+        let rewrite_path = ai
+            .cached_path(&shape, Some(&greycard_ai::SUBJECT_WEBGPU))
+            .expect("a path with the rewrite named");
+        assert_ne!(original_path, rewrite_path);
+
+        // A raster already made under the original's slot: what a
+        // Subject want gets back when `step` named the original,
+        // whether or not the file itself is in the store.
+        let data = vec![128u8; RASTER_WIDTH * RASTER_WIDTH];
+        write_raster(&original_path, RASTER_WIDTH, &data);
+        let made = ai
+            .raster(
+                1,
+                &WorkingImage::new(4, 4),
+                &Edit::default(),
+                crate::finish::Source::Scene,
+                (7, 0),
+                &shape,
+                Some(&greycard_ai::SUBJECT),
+            )
+            .expect("the cached raster comes back, no model load needed");
+        assert!(
+            made.provider.is_none(),
+            "a cache hit names no provider: nothing was loaded to make it"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

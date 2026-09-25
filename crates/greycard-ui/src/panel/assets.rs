@@ -79,6 +79,13 @@ Kept in {}.",
     app.set_fetch_open(true);
 }
 
+/// A model's size in whole MB, rounded rather than truncated: BiRefNet
+/// lite's rewrite is 113,778,088 bytes, which truncating division
+/// reads as 113 and rounding as the 114 the note gives.
+fn mb(bytes: u64) -> u64 {
+    (bytes + 500_000) / 1_000_000
+}
+
 /// The model sheet's note on where the model comes from: one greycard
 /// changed and publishes itself says so, and under whose license.
 pub(crate) fn model_note(model: &greycard_ai::Model) -> String {
@@ -109,9 +116,9 @@ pub(crate) fn offer_model(
     app.set_fetch_note(
         if falls_back {
             format!(
-                "the Subject model in your store falls back to the CPU on this card; a rewrite \
+                "The Subject model in your store falls back to the CPU on this card; a rewrite \
                  of the same weights runs on it, {} MB. {note}",
-                model.bytes() / 1_000_000,
+                mb(model.bytes()),
             )
         } else {
             note
@@ -124,7 +131,7 @@ pub(crate) fn offer_model(
             "{} MB from {}.
 License: {} ({}).
 Kept in {}.",
-            model.bytes() / 1_000_000,
+            mb(model.bytes()),
             model.files[0]
                 .url
                 .split('/')

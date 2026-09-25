@@ -518,6 +518,33 @@ mod tests {
         );
     }
 
+    /// A provider that worked is not read as one that failed:
+    /// `remembered_failure` (and `subject::pick`, which decides off
+    /// it) only ever wants to know about a failure, and a `Worked`
+    /// entry for the exact file, provider, adapter and build must not
+    /// be mistaken for one.
+    #[test]
+    fn plan_does_not_read_a_worked_entry_as_a_failure() {
+        let entries = vec![record::test_entry(
+            "birefnet-lite-2024-fp16",
+            "abc123",
+            Provider::WebGpu,
+            "Test GPU|Vulkan|1.2.3",
+            "WebGPU,CPU greycard 0.1.0",
+            record::Outcome::Worked,
+        )];
+        assert_eq!(
+            plan(
+                &entries,
+                "abc123",
+                Provider::WebGpu,
+                "Test GPU|Vulkan|1.2.3",
+                "WebGPU,CPU greycard 0.1.0"
+            ),
+            Some(record::Outcome::Worked)
+        );
+    }
+
     /// Drives the same wiring `open` does — a fake store root's file,
     /// read, then handed to `plan` with an adapter identity given
     /// directly rather than asked of real hardware — to check that a

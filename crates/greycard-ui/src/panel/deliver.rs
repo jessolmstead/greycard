@@ -650,6 +650,17 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             st.fetch_failed.retain(|id| *id != model.id);
             let short = model.name.split(',').next().unwrap_or(model.name);
             app.set_status(format!("{short} is ready").into());
+            // Either Subject file arriving means the worker's loaded
+            // one, if any, may no longer be the one to use: drop it,
+            // so the next Subject mask picks up the new choice rather
+            // than running on the session's first one until restart.
+            if model.id == greycard_ai::SUBJECT.id || model.id == greycard_ai::SUBJECT_WEBGPU.id {
+                WORKER.with(|w| {
+                    if let Some(w) = &*w.borrow() {
+                        w.forget_subject();
+                    }
+                });
+            }
             // A denoiser the edit is waiting for, or the fill model
             // with a fill to make: develop again with it.
             let denoiser = st

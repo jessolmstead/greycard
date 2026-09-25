@@ -138,10 +138,16 @@ pub enum Job {
         index: usize,
         frame: crate::queue::Frame,
     },
-    /// A learned mask's raster for `shape`, the component `key`.
+    /// A learned mask's raster for `shape`, the component `key`. For a
+    /// shape whose model can be more than one file (Subject), `model`
+    /// is the one the panel's `step` already chose — with the
+    /// session's declines and the providers record folded in, which
+    /// the worker has no way to re-derive on its own; `None` for a
+    /// shape whose model is not in question.
     Mask {
         key: Key,
         shape: Shape,
+        model: Option<&'static greycard_ai::Model>,
     },
     /// Fetch a model into the store; on its own thread.
     Fetch {
@@ -412,9 +418,16 @@ struct Queue {
     gpu: Option<(greycard_gpu::wgpu::Device, greycard_gpu::wgpu::Queue)>,
     /// The newest open or develop; an older one still queued is dropped.
     develop: Option<Job>,
-    /// Masks wanted, the newest shape for a key replacing an older.
-    masks: std::collections::VecDeque<(Key, Shape)>,
+    /// Masks wanted, the newest shape for a key replacing an older,
+    /// with the model chosen for a learned shape that needs one
+    /// picked (Subject; `None` for a shape whose model is not in
+    /// question, Object among them, which always wants SAM).
+    masks: std::collections::VecDeque<(Key, Shape, Option<&'static greycard_ai::Model>)>,
     exports: std::collections::VecDeque<Job>,
+    /// A Subject model arrived since the one loaded, if any: drop it,
+    /// so the next Subject mask picks up the new file rather than the
+    /// one already running.
+    forget_subject: bool,
     /// The editor is leaving: finish what is in hand and stop, so the
     /// engine's GPU context is dropped on this thread rather than
     /// under a process that is already on its way out.
@@ -567,9 +580,9 @@ impl Worker {
                     });
                 }
             }
-            Job::Mask { key, shape } => {
-                q.masks.retain(|(k, _)| *k != key);
-                q.masks.push_back((key, shape));
+            Job::Mask { key, shape, model } => {
+                q.masks.retain(|(k, _, _)| *k != key);
+                q.masks.push_back((key, shape, model));
             }
             job => q.develop = Some(job),
         }
@@ -582,6 +595,16 @@ impl Worker {
     pub fn set_gpu(&self, device: &greycard_gpu::wgpu::Device, queue: &greycard_gpu::wgpu::Queue) {
         let (lock, cv) = &*self.queue;
         lock.lock().expect("worker queue").gpu = Some((device.clone(), queue.clone()));
+        cv.notify_one();
+    }
+
+    /// A Subject model just arrived in the store: the worker's loaded
+    /// one, if any, is dropped, so the next Subject mask loads
+    /// whichever file `step` now picks rather than the one already
+    /// running.
+    pub fn forget_subject(&self) {
+        let (lock, cv) = &*self.queue;
+        lock.lock().expect("worker queue").forget_subject = true;
         cv.notify_one();
     }
 
@@ -755,11 +778,15 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
                 if let Some(d) = q.gpu.take() {
                     device = Some(d);
                 }
+                if q.forget_subject {
+                    q.forget_subject = false;
+                    ai.forget_subject();
+                }
                 if let Some(job) = q.develop.take() {
                     break job;
                 }
-                if let Some((key, shape)) = q.masks.pop_front() {
-                    break Job::Mask { key, shape };
+                if let Some((key, shape, model)) = q.masks.pop_front() {
+                    break Job::Mask { key, shape, model };
                 }
                 if let Some(job) = q.exports.pop_front() {
                     break job;
@@ -1052,18 +1079,20 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
                     Err(message) => Outcome::ExportFailed { message },
                 });
             }
-            Job::Mask { key, shape } => {
+            Job::Mask { key, shape, model } => {
                 let outcome = match &base {
-                    Some(b) => match ai.raster(b.stamp, &b.image, &b.edit, b.source, key, &shape) {
-                        Ok(made) => Outcome::Mask {
-                            key,
-                            shape,
-                            raster: made.raster,
-                            provider: made.provider.map(|p| p.name()),
-                            seconds: made.seconds,
-                        },
-                        Err(message) => Outcome::MaskFailed { key, message },
-                    },
+                    Some(b) => {
+                        match ai.raster(b.stamp, &b.image, &b.edit, b.source, key, &shape, model) {
+                            Ok(made) => Outcome::Mask {
+                                key,
+                                shape,
+                                raster: made.raster,
+                                provider: made.provider.map(|p| p.name()),
+                                seconds: made.seconds,
+                            },
+                            Err(message) => Outcome::MaskFailed { key, message },
+                        }
+                    }
                     None => Outcome::MaskFailed {
                         key,
                         message: "nothing developed yet".into(),
@@ -1244,8 +1273,15 @@ fn write_export(
         for a in &edit.adjustments {
             for (i, c) in a.mask.live() {
                 if c.shape.is_learned()
-                    && let Ok(made) =
-                        ai.raster(b.stamp, &b.image, &b.edit, b.source, (a.id, i), &c.shape)
+                    && let Ok(made) = ai.raster(
+                        b.stamp,
+                        &b.image,
+                        &b.edit,
+                        b.source,
+                        (a.id, i),
+                        &c.shape,
+                        None,
+                    )
                 {
                     rasters.insert((a.id, i), made.raster);
                 }
@@ -2664,6 +2700,7 @@ mod tests {
                 from: [0.0, 0.0],
                 to: [1.0, 1.0],
             },
+            model: None,
         };
         assert!(matches!(
             Blame::of(&mask).outcome("x".into()),
