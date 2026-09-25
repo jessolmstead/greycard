@@ -175,25 +175,21 @@ pub(crate) fn show(st: &State, app: &App) {
     // A folder that is not there is said so, and never made: a
     // remembered backup drive that is not plugged in would otherwise
     // be recreated as a folder on the system disk.
-    let marked = |p: &Option<PathBuf>, there: Option<bool>| {
-        let text = path_text(p);
-        if p.is_some() && there == Some(false) {
-            format!("{text} (not there: is its drive connected?)").into()
-        } else {
-            text
-        }
-    };
+    // Said on a line of its own: the end of a long path is elided.
+    let missing = |p: &Option<PathBuf>, there: Option<bool>| p.is_some() && there == Some(false);
     app.set_import_source(path_text(&st.import.source));
-    app.set_import_destination(marked(&st.import.destination, st.import.destination_there));
-    app.set_import_backup(marked(&st.import.backup, st.import.backup_there));
-    app.set_import_folders_note(
-        if st.import.backup.is_some() && st.import.same_drive {
-            "The backup is on the same drive as the destination: one failing drive takes both."
-        } else {
-            ""
-        }
-        .into(),
-    );
+    app.set_import_destination(path_text(&st.import.destination));
+    app.set_import_backup(path_text(&st.import.backup));
+    let note = if missing(&st.import.destination, st.import.destination_there) {
+        "The destination folder is not there: is its drive connected? It is not made anew here."
+    } else if missing(&st.import.backup, st.import.backup_there) {
+        "The backup folder is not there: is its drive connected? It is not made anew here."
+    } else if st.import.backup.is_some() && st.import.same_drive {
+        "The backup is on the same drive as the destination: one failing drive takes both."
+    } else {
+        ""
+    };
+    app.set_import_folders_note(note.into());
     let count = st.import.scan.as_ref().map_or(0, |s| s.items.len());
     app.set_import_count(count as i32);
     let (text, ready) = preview(
@@ -238,7 +234,9 @@ pub(crate) type Looked = (Option<bool>, Option<bool>, bool);
 pub(crate) fn look(dest: Option<&Path>, backup: Option<&Path>) -> Looked {
     let there = |p: Option<&Path>| p.map(Path::is_dir);
     let same = match (dest, backup) {
-        (Some(d), Some(b)) => import::same_device(d, b).unwrap_or(false),
+        (Some(d), Some(b)) if d.is_dir() && b.is_dir() => {
+            import::same_device(d, b).unwrap_or(false)
+        }
         _ => false,
     };
     (there(dest), there(backup), same)
@@ -364,7 +362,9 @@ pub(crate) fn ask(st: &mut State, app: &App) {
                             .filter(|p| p.is_dir())
                     });
         }
-        st.import.backup = path(&kept.backup);
+        if st.import.backup.is_none() {
+            st.import.backup = path(&kept.backup);
+        }
         app.set_import_subfolder(kept.subfolder.into());
         app.set_import_name(kept.name.into());
         app.set_import_preset(if kept.preset.is_empty() {
@@ -1134,9 +1134,10 @@ mod tests {
         }
         assert!(!app.get_import_ready());
         assert!(
-            app.get_import_backup().contains("not there"),
+            app.get_import_folders_note()
+                .contains("backup folder is not there"),
             "{}",
-            app.get_import_backup()
+            app.get_import_folders_note()
         );
         assert!(!gone.exists());
         // Cleared, it is ready; the same drive is warned of.
