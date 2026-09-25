@@ -15,9 +15,6 @@ on and nothing more; the reasoning lives in `docs/notes.md`.
       inside rawler's decoder; the job catches it, the frame shows
       nothing. Found by the thumbnail cache's review (§163). Filed as
       dnglab/dnglab#849; a guard at the job meanwhile
-- [ ] `--grid --snapshot` over a folder where one thumbnail fails to
-      decode waits until it is killed, since the cell never fills; as
-      old as the grid (§163). Give the wait a limit and mark the cell
 
 ## v0.1.0: browse, develop, export
 
@@ -120,20 +117,22 @@ or CoreML when found; models downloaded on first use with their
 licenses, never bundled; a `greycard-ai` crate that core never sees.
 
 - [ ] AI masks: Sky first, and it must never paint where there is no
-      sky (a learned prior with the sky class, SAM 2 for the edge, a
-      "no sky" gate; the 41-frame set under the samples is the test);
-      then the landscape's other features as shapes, water, mountain,
-      foliage, ground, which a panoptic prior's stuff classes give at
-      once; then the body's parts as shapes of their own, each a mask to put a
-      look on: facial skin, body skin, hair, eyebrows, eyes and the
-      iris, lips, teeth, and clothing by name (top, dress, coat,
-      trousers, shoes, hat). A face parser and a human parser whose
-      licenses and training data allow it (the CelebAMask-HQ, LIP,
-      ATR and DeepFashion2 families are research-only), or landmarks
-      driving SAM 2, which the Object shape already runs from a click;
-      the iris is a landmark fit inside the eye's mask; SAM 3 ruled
-      out for now, gated weights and a 1.4 GB text encoder (§34
-      addendum). The license search is the user's choice to make
+      sky. The trial is done (§170): EoMT-S panoptic's sky class
+      behind a gate, SAM 2 seeded from its confident core and clipped
+      back, painted no false sky on the 41-frame set; the edge at
+      100% is the work left, a matte stage on a band around the
+      boundary. Then Water, Mountain, Vegetation, Ground and Building
+      shapes from the same label map; then the body's parts as shapes
+      of their own, each a mask to put a look on: facial skin, body
+      skin, hair, eyebrows, eyes and the iris, lips, teeth, and
+      clothing by name (top, dress, coat, trousers, shoes, hat), on
+      EasyPortrait's face parser, MediaPipe's landmarks and multiclass
+      model, and SAM 2 from landmarks (the CelebAMask-HQ, LIP, ATR and
+      DeepFashion2 families are research-only; SAM 3 ruled out for
+      now, gated weights and a 1.4 GB text encoder, §34 addendum).
+      Waits on two calls of the user's: the ImageNet-backbone reading
+      of the license rule, and hosting a converted EasyPortrait file
+      ourselves rather than fetching from its publisher's bucket
 - [ ] Generative fill behind the patch layer
 
 ## v0.6.0: color
@@ -247,7 +246,6 @@ clears or a tester asks for it.
       WARP, slow but right; the develop already runs on the CPU, the
       viewport does not. A tester on such a machine decides whether
       the viewport wants a CPU path too
-- [ ] Right click on photo for options. Set label, copy develop settings, etc
 - [ ] The single export's reuse of the viewport's last develop should
       require a CPU CA: with the learned denoiser on and sharpen off
       the picture comes back to the CPU with the GPU's CA in it, so a
@@ -260,9 +258,6 @@ clears or a tester asks for it.
       and so in an export preset; a list of marks so text and a logo
       go on one export; a plate or shadow behind text; a bundled font
       so exports match across machines (§157)
-- [ ] Settings copied and pasted from a right-click: the sync's loop
-      with a clipboard between (§156, §162). There is no context menu
-      on the strip or the grid yet
 - [ ] Geometry in a sync, mapped through each frame's aspect and turn
       as masks already are (§156)
 - [ ] The range masks' sample from before the Detail section, so dehaze
@@ -273,9 +268,6 @@ clears or a tester asks for it.
       hue (§158)
 - [ ] A dropper for the luminance window's edges and a swatch of the
       color window beside its sliders (§158)
-- [ ] Thumbnails made in parallel on a cold cache: today one at a time
-      on the worker behind the first develop, two seconds of decoding
-      for 35 files where a warm cache takes a hundredth (§163)
 - [ ] The vibrance protection's skin window (§60, 55 degrees plus or
       minus 15) against the 10 to 59 degrees a pale face measured
       (§158): widen it or not; a change to existing edits

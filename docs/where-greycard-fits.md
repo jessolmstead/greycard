@@ -269,7 +269,9 @@ at once, with the settings of one synced across them, a preset laid
 over all of them and an export of all of them; export presets and a
 watermark; masks by lightness and by color; the Subject mask on the
 GPU; a history that names a step by the preset, sync or snapshot that
-made it; and a library index that fills the grid's filter with chips
+made it; a right-click menu on a frame, with copy and paste of
+settings onto the selection; thumbnails made in parallel on a pool of
+threads, a cold folder of hundreds filling in seconds; and a library index that fills the grid's filter with chips
 for camera, lens, ISO, focal length, day and keyword, with a filter
 language behind the text field. Nine hundred tests.
 

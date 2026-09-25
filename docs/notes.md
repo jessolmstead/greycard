@@ -18715,3 +18715,856 @@ accepted offer that would not be used until a restart, the sheet
 that could hold a ready model waiting, and "113 MB" for 113,778,088
 bytes. One round, then two rebases as the export set and the filter
 bar landed under it.
+
+## 170. AI masks: the model search, and a sky trial on 41 frames (2026-09-25)
+
+Roadmap v0.5.0's AI masks line, reworded on 2026-09-24 to say what is
+wanted: Sky first, and it must never paint where there is no sky; then
+the landscape's other features; then the body's parts and clothing as
+shapes of their own. Two opus agents did the legwork, a model search
+over the face, body and sky models with their licenses, and a trial
+of six sky priors on a test set. Nothing landed; this section records
+what was found so the Sky shape can be built from it.
+
+**The rule the search ran under.** No non-commercial terms on the
+weights or on the training data. Read literally that rules out two
+models the editor already ships: SAM 2.1 was trained on SA-1B, which
+is licensed for research only, and BiRefNet, like nearly everything,
+starts from an ImageNet-pretrained backbone whose terms are research
+only. The reading used from here on, which is the user's call to
+confirm: clean when the weights allow any use and either the data
+does too or the data's owner published the weights under that license
+(Meta with SA-1B, Google with its own captures); clean with the
+ImageNet caveat when the only non-commercial link is a pretrained
+backbone, which is where BiRefNet and SAM already sit; ruled out when
+a third party trained on someone else's non-commercial data or the
+weights' own license forbids commercial use.
+
+**Faces and bodies.** Every CelebAMask-HQ model (the dataset is for
+non-commercial research only), every LaPa and LIP and ATR model, the
+DeepFashion2 and ModaNet garment parsers, the FaceSynthetics heads
+(Microsoft's research-use agreement counts trained models as
+results) and NVIDIA's SegFormer lineage (its license says
+non-commercial) are out. Sapiens2 gives upper and lower garments,
+shoes and socks under a restrictive license and is out. What is left:
+EasyPortrait's FPN-ResNet50 face parser at 1024 (SberDevices; its own
+attribution license, a reworked CC BY-SA that says a format
+conversion is not an adaptation, so an ONNX file greycard hosted
+would owe attribution and not share-alike; classes skin, brows, eyes,
+lips, teeth; 114 MB as ONNX, rebuilt in plain PyTorch since the
+publisher ships a checkpoint only; the fetch bucket is on a sanctioned
+Russian cloud, which is the second call for the user: convert and
+host it ourselves as BiRefNet was, or not use it); MediaPipe's Face
+Landmarker and Selfie Multiclass (Apache-2.0 from the data's owner;
+the iris as a circle fitted to the landmarks and clipped to the eye's
+mask, body skin and clothes as one class each, coarse at 256 px);
+and SAM 2 seeded from landmarks for hair and for a garment by click,
+which the Object shape already runs. Teeth are a class in
+EasyPortrait and untested, since no trial frame showed them. Two
+WebGPU findings from the timing runs: a grouped convolution with a
+channel multiplier comes out wrong on the WebGPU provider (the
+BiSeNet-V2 export), and the small models are slower on the card than
+on the CPU. All of this waits on the user's two calls and on the sky.
+
+**The sky set.** Forty-one raws of the user's, picked for the
+purpose: 36 with sky, from clear skylines to sky in the gaps of a
+blossom canopy, and five without, which the user named before the
+trial and the agent was not told: two conifers against defocused
+snow slopes, backlit sheer curtains, a cream building facade, a forest
+path. The agent's own judgment of which frames had no sky matched
+that list exactly, five for five, so the scores below are against the
+user's ground truth. Two frames show sky through a window and were
+scored as having sky; a Sky shape that leaves windows alone would
+turn those two misses into correct answers. The frames were
+developed by the CLI to 2048 px previews and, for the edge crops, at
+full size. The frames and every overlay stay in the session's scratch
+and out of the repo.
+
+**Six priors, and the rule that matters.** A frame counts as a false
+sky if the mask touches anything that is not sky, a speck on a wall
+included, because a look on a sky mask that leaks is worse than no
+mask. Under that rule:
+
+| Prior | False skies of 41 | Missed of 36 |
+|---|---|---|
+| SAM 2.1 seeded from the top band (the earlier baseline) | 11 | 5 |
+| Grounding DINO box, then SAM | 8 | 0 |
+| Florence-2 grounding box, then SAM | 11 | 0 |
+| Florence-2 referring segmentation | 10 | 0 |
+| CLIPSeg, prompt "sky" | 4 | 0 |
+| OWL-ViT box, then SAM | 1 | 25 |
+| DETR-R50 panoptic's sky class, alone | 0 | 3 |
+| EoMT-S panoptic's sky class, alone | 1 | 3 |
+| DETR's sky seeding SAM, clipped to DETR's sky | 0 | 3 (2 partial) |
+| EoMT's sky seeding SAM, clipped to EoMT's sky | 0 | 5 |
+
+The text-prompted detectors fail the rule by construction: Grounding
+DINO returns a "sky" box on all 41 frames, at scores up to 0.78 on
+frames with none; Florence-2's grounding always returns a box;
+OWL-ViT does not detect sky at all (its best score was 0.16). CLIPSeg
+paints a facade, a snow slope and glass that reflects sky. The
+learned panoptic priors are the answer: a model that was taught what
+sky is, against a hundred other classes, does not see it in a
+curtain. DETR-R50 panoptic (Apache-2.0, COCO panoptic, 800 px short
+side) painted no false sky on any frame and missed three, the two
+windows and the blossom canopy. EoMT-S (MIT weights, DINOv2 backbone
+under Apache-2.0, 640 px, 96 MB) painted one false sky alone, a
+bluish defocused snow slope, and none once SAM was seeded from its
+confident core, since the erosion left no seed there.
+
+The labeling is not the transformers panoptic post-processor: when
+only one query clears its threshold that post-processor gives the
+whole frame to it, and DETR painted all of one snow frame as sky that
+way. Instead each query is kept at class probability 0.5 or more,
+each pixel takes the kept query with the highest class times mask
+probability, and the soft sky map is the sky-weighted sum over the
+queries. SAM is seeded with up to eight positive points over the
+prior's confident sky (probability above 0.8, eroded 20 px at 2048)
+and up to eight negatives over its confident non-sky, one decode per
+positive, unioned, then clipped to the prior's sky dilated 12 px. No
+confident core means no seeds, which means no sky.
+
+**The gate.** DETR's hard label is already a gate on this set: the
+labeled sky area is zero on all five no-sky frames, with a peak sky
+probability of 0.00 to 0.74 (the 0.74 is the snow slope), while every
+real sky had a peak of 0.92 or more and the smallest real sky was 5.3
+percent of the frame. The gate to build: at least one confident core
+(probability above 0.8 after an erosion of one percent of the long
+side), at least half a percent of the frame labeled sky, and as
+cheap insurance the sky touching the top or a side of the frame;
+otherwise the shape offers nothing. With DETR that admits every sky
+frame but the two windows and the canopy and rejects all five no-sky
+frames; with EoMT it also rejects the blossom frame. The fallback
+when the gate passes but the eroded core gives SAM no seed is the
+prior's own mask, which turns the canopy from a miss into a partial.
+The set has only five hard negatives; sky-blue walls, a lake
+reflecting sky with none above it, a snowfield filling the frame are
+what the gate still wants testing against.
+
+**Speed, and one crash.** On the 9950X3D, PyTorch on the CPU: DETR
+2.3 s a frame, EoMT-S 0.12 s, CLIPSeg 0.09 s, Grounding DINO 1.8 s,
+Florence-2 3.2 s for the grounding pass alone; the SAM image
+encoding 1.1 to 2.1 s through ONNX Runtime as the editor runs it,
+the eight decodes under a second. Exported to ONNX and run through
+the §159 bench on Dawn: EoMT-S 0.028 s on WebGPU against 0.145 s on
+the CPU, matching to 6e-5 on the class logits; CLIPSeg 0.010 s.
+DETR's export crashes the WebGPU provider outright (`munmap_chunk():
+invalid pointer`, at optimization levels 1 and 3, not bisected) and
+takes 1.2 to 1.4 s on the CPU through ONNX Runtime. So the pick for
+the editor is EoMT-S with SAM behind the gate, DETR kept as the
+reference while EoMT's two extra misses among branches and blossoms
+are studied, and bisecting DETR's crash the alternative if those
+frames matter more than a second.
+
+**Edges at 100 percent do not pass.** Crops at 100 percent from the
+full-size develops, the mask over the frame and the sky taken down
+1.5 EV through it, which is the job a sky mask does. DETR's raw mask
+is blocky: its mask head works at a quarter of an 800 px input, about
+a fortieth of a 100 MP frame's width, and on one frame it covers half
+a pole. DETR clipped to SAM has a smooth outline that stops 50 to 80
+px short of curly hair all the way round, because SAM's mask is a
+256-square logit map upsampled 45 times; darkened, that is a bright
+rim around the head. The editor's guided filter at the Subject rule
+(radius width/256, eps 1e-3) feathers the outline and cannot move it
+50 px, so the rim becomes a glow; at radius 8 and eps 1e-4 it keeps
+the rim. Sky among bare branches is not in the mask at all, since the
+prior called it tree. One test beyond the brief: a color-line matte
+on a band around the boundary (known sky the mask eroded by 4 percent
+of the long side, known not-sky the complement eroded the same, each
+pixel between projected onto the line from the local not-sky color to
+the local sky color, both from normalized Gaussian blurs of the known
+regions, then the tight guided filter) makes the hair a real matte
+with no rim at 1.5 EV, the one flaw about 20 percent alpha on the
+ear. It changes nothing among branches, which are farther than the
+band from any known sky, and nothing where the preview clipped the
+sky to white, since there is no color line to project onto. The
+verdict by use: darkening a sky is fine at fit-to-screen on clean
+silhouettes (skylines, ridges) and with the matte on hair against
+clear sky; a color shift of the sky is fine on skylines and wrong
+near hair without the matte; a sky replacement is out of reach on
+every route, wanting the branch gaps, decontaminated edge colors and
+the wires and lanterns in the sky handled.
+
+**The landscape classes, from the same two models.** The label maps
+give the roadmap's other features at no extra inference. Water: sea,
+river and water-other merged into one, usable, and the horizon
+between sea and sky clean on every open-water frame in both models;
+EoMT finds a lake and the sea through a ferry window that DETR leaves
+unassigned. Mountain: usable for distant ridges; on a near wooded
+snowy slope the mountain, snow and tree boundary is a model's opinion.
+Foliage: tree is usable, blossoms come out as tree with some flower,
+but grass against tree is confused (DETR calls gravel grass and both
+mislabel lavender), so one Vegetation shape (tree, grass, flower)
+would hold and separate Grass and Tree shapes would not. Ground: road,
+pavement and dirt merged, usable; separately arbitrary. Buildings:
+building, house, roof and the wall classes merged, usable; a glass
+tower's reflection of sky is not called sky. Snow: unreliable in both,
+and not confused with sky anywhere but EoMT's one false frame.
+
+**Training a sky model of our own: later.** The false-sky problem,
+which was the priority, is solved on this set by an off-the-shelf
+MIT prior plus a gate. What training would buy is the edge and the
+branch gaps, and that is a matting problem, sky alpha at full
+resolution, which a segmenter trained on polygon labels would not
+solve either; the data for it would have to be built. Revisit if the
+matte plus a sky-inside-tree test still fail on branch frames after
+they exist, or if the COCO images' mixed Flickr licenses come to
+matter.
+
+**What the Sky shape is, then.** EoMT-S on the preview, the gate, SAM
+2.1 seeded from the confident core with negatives in the confident
+non-sky, the mask clipped to the dilated prior, the prior's own mask
+when there is no seed; then a matte stage on a band around the
+boundary, with a CPU reference and a test like any other op, in
+linear scene data rather than the clipped preview; then a
+sky-inside-tree test with its own trial. Water, Mountain, Vegetation,
+Ground and Building shapes come from the same label map once Sky is
+in. The two license calls, the ImageNet reading and hosting the
+EasyPortrait conversion, stay with the user, and the face and body
+parts wait on them.
+
+**Addendum, the same night: sky inside the trees.** The user looked at
+the recommended sheet and said it "totally gives up around tree
+branches", which it did: the prior labels a canopy tree, gaps
+included, at a fortieth of the frame's width; SAM is only allowed
+inside the prior's sky; the matte's band reaches 4 percent past the
+boundary and the gaps sit deeper. So a fourth stage was built and
+run on the five branch and canopy frames, two clean-tree controls and
+the five no-sky frames. It starts from the prior-and-SAM mask shrunk
+to confident sky; the pixels in question are the prior's tree, flower
+and unlabeled pixels within reach of that sky (20 percent of the long
+side) plus the band around the mask's edge; the local sky color is a
+wide normalized blur of the confident sky; each pixel is scored by its
+brightness relative to the local sky and its color distance from it,
+which keeps out snow, walls and blossoms; then the tight guided
+filter, nothing clipped after. The sky grows in three passes, pixels
+scored as clearly sky joining the known sky after each, and that is
+what made it work: without it the sky color for one canopy came from
+the blue sky far to its right and the warmer sunset gaps were
+rejected. Of four settings the one to keep is "unmix", each pixel's
+share of sky on a brightness ramp rather than a threshold, which
+darkens most evenly with the faintest halos; a threshold leaves a
+halo on every twig.
+
+The data was the CLI's preview at two stops under, decoded to linear
+and multiplied back, since the linear TIFF clips the sky too (6.8
+percent of one frame at 1.0 where the sensor itself clips 0.8
+percent); unclipped data barely changes the mask but matters for
+judging it, since darkening a clipped sky turns it flat grey and draws
+a white rim wherever the mask is partial, which made the earlier
+crops look worse than the masks were. Results: bare branches against
+an overcast sky are filled and darken evenly at 100 percent with a
+faint rim on the twigs, a pass; the defocused white tree top's 50 to
+80 px gap closes to the blurred edge without painting the tree, a
+pass; branches against a sunset two stops over white gain the larger
+gaps and not the fine-twig haze, a partial; defocused blossoms
+against a grey sky gain the grey-blue gaps upper right with hard
+edges and none of the pink, a partial; the blossom canopy gains
+nothing, since the mask it grows from is empty there, though growing
+from the prior's own labels instead finds gaps across the canopy top
+that look like sky at 2048, a fallback worth having behind the gate.
+The controls gain about 2 percent along their tree edges and the snow
+stays unpainted. The five no-sky frames gain zero pixels under every
+setting and both priors, because the stage only grows from known sky
+and there is none. EoMT's mask is too small to survive the shrink on
+two of the frames, where DETR's gains; that is the second count
+against it. The remaining flaw is the guided filter spilling 1 to 5
+percent of the added area onto building and ridge edges beside the
+sky, invisible at fit-to-screen and a problem for a replacement. In
+unoptimized Python: 0.55 s at 2048, 3 to 4 s at 24 MP, 13 to 17 s at
+100 MP, so the editor runs it at preview size and brings the result
+up with the guided filter, as the other masks are.
+
+## 171. A menu on a frame, and copy and paste of settings (2026-09-25)
+
+Two roadmap lines that share a surface: "Right click on photo for
+options. Set label, copy develop settings, etc", and the backlog's
+"Settings copied and pasted from a right-click: the sync's loop with a
+clipboard between (§156, §162). There is no context menu on the strip
+or the grid yet." Wave C, an opus author and an opus reviewer, on
+d9b224e.
+
+**The menu, and which frames it is about.**
+
+A right-click over a frame in the strip, the grid or the viewport opens
+one menu: Copy settings of FILE; Paste settings (grayed when nothing is
+copied, and naming the frame copied when something is); a Rating
+submenu (No stars to 5 stars); Pick, Reject, Unflag; a Label submenu
+(None and the five colors); Reveal in file manager; Export...
+
+Which frames it acts on is `selection::right_click(set, current,
+file)`, a pure function beside `selection::click`, returning the same
+`Click`. On a frame in the selection the selection stays as it is and
+the menu is about all of it. On a frame outside it the frame is opened
+first, as a plain click opens it, and the menu is about that frame
+alone. That is the file manager's rule, and the reason for it is the
+same: a menu opened on one thing must not act on other things chosen
+earlier somewhere else on screen. The modifiers do not count; a
+right-click is not a way to grow the set. The viewport's right-click
+is about the current frame, which is always in the set, so it acts on
+the whole selection.
+
+The checks are filled when the menu opens (`panel::menu::menu_asked`):
+the rating, flag and label the whole selection shares, none when it
+differs. The label items keep the label key's toggle (a label every
+frame already wears is taken off, `meta::Change::settled`), and the
+check is what makes that readable: a checked Red unchecks. The Export
+item says "Export 3 frames..." over a set of three, since §167's sheet
+exports the selection. With nothing chosen (the loupe under a filter
+that hides every frame) the rating, flag and label items are grayed.
+
+**Every item is a key's code.** Rating, flag and label go through
+`browser::meta_on_selection`, the body of the culling keys' handler
+pulled out into a function the key and the menu both call; Purple and
+"no label" are reachable from the menu and from no key.
+`panel::menu::menu_change(kind, value)` turns an item into the
+`meta::Change` its key makes, and a test holds it against
+`Change::from_key` for every key. Paste is the Ctrl+V handler. Export
+goes through `export-asked()`, a public function the Ctrl+Shift+E key
+now calls too, so the rule for when the sheet may open is written
+once.
+
+Two items differ from their keys, on purpose:
+
+- **Copy** takes the frame right-clicked, and the item names it
+  ("Copy settings of 4Z4A3521.CR3"); Ctrl+C takes the frame on screen.
+  The first cut copied the frame on screen from the menu too, so a
+  right-click on another frame of the set, then Copy, copied a frame
+  the pointer was not on, while Reveal beside it followed the pointer.
+  `copy_settings_of(file)` takes the panel's live edit when the file
+  is the frame the panel holds, and otherwise the sidecar's current
+  state after `migrate_frame`.
+- **Export...** is not grayed while a develop runs. A right-click on a
+  frame outside the selection opens that frame and starts its develop,
+  and the first cut gated the item on `busy` as Ctrl+Shift+E is gated;
+  the review found the item stayed grayed with the menu still open
+  after the develop had landed, since the menu is not rebuilt while it
+  is up. The item now asks only that a frame be open, no export be
+  running, and culling be off. Chosen during a develop, it sets
+  `export-waiting`, and the sheet opens when `busy` falls
+  (`changed busy` on the window). Ctrl+Shift+E still refuses while
+  busy, as before.
+
+Reveal is the only new action. It is one command per platform, chosen
+by `cfg` when the editor is compiled: `open -R FILE` on macOS, which
+selects the file in the Finder; `explorer /select,"FILE"` on Windows,
+passed as a raw argument because Explorer does not accept the quoting
+Rust would put around the whole argument (the argument is built by
+`explorer_select`, a pure function tested on every platform);
+`xdg-open FOLDER` elsewhere, which opens the folder but cannot select a
+file in it. The path is made absolute first. The review launched the
+editor as `greycard-ui 5M0A3021.CR3` from inside the folder, and the
+first cut ran `xdg-open ""`: a relative name's parent is empty. The
+child is reaped on a thread of its own so it is never left a zombie,
+and a failed start or a non-zero exit is logged. The `open` crate is
+not a dependency, and three `Command`s did not justify adding it. The
+Freedesktop `FileManager1.ShowItems` D-Bus call would select the file
+on Linux; it was left out because not every file manager implements
+it.
+
+**Slint's ContextMenuArea, and where it lives.** The menu is Slint
+1.18's `ContextMenuArea` with `Menu` and `MenuItem`
+(`ui/panel/frame-menu.slint`). On macOS and Windows the winit backend
+shows it as the platform's own menu (muda); on Linux Slint draws it as
+a popup in the window's style (fluent-dark here). Under the editor's
+setup (winit on Xwayland, femtovg on wgpu) it drew correctly, placed
+where asked and kept inside the window at the strip's edge, and the
+snapshots show it. No fallback popup was needed.
+
+There is one menu for the window, not one per cell. A
+`ContextMenuArea` opens on the right-button press it receives, before
+any code of the editor's can run, so it cannot make the clicked frame
+current first; and hundreds of grid cells each holding a menu tree
+would be wasteful. Instead the `FrameMenu` is a zero-sized area at the
+window's origin with `enabled: false`, so it never takes a click of
+its own, and it is opened by its `show` function. Each strip and grid
+cell's TouchArea, and the viewport's, sees the right-button press in
+its `pointer-event`, reports the row and the point in window
+coordinates (`absolute-position` plus the mouse), and the window's
+`frame-menu-at` asks Rust to settle the target and then opens the
+menu there. The menu does not open under a sheet. In the viewport it
+does not open with a tool in hand (a shape being placed, a repair, a
+dropper, the level, a guide), since placing and the retouch use the
+right button for themselves.
+
+**The press that closes the menu.** A press outside Slint's menu closes
+it and is still delivered to what is under the pointer, which is Slint
+1.18's behavior (`WindowInner::process_mouse_input` closes the popup
+after the dispatch). In the first cut, a left click to dismiss the
+menu over the picture zoomed it to 100%, and over a cell opened that
+frame. The fix is for the surfaces to let that one press go by, which
+needs them to know the menu is up. `ContextMenuArea` in Slint 1.18
+does not say so: its `is-open` belongs to the internal element and is
+not reachable from `.slint`, and there is no closed callback. So the
+window reads it off the keys. Slint's menu takes the focus when it
+opens and gives it back when it closes, whether by a choice, a click
+outside or Escape. The window's key FocusScope sets `menu-up` on
+`focus-lost` with reason `popup-activation` and clears it on any
+`focus-gained`. A strip or grid cell pressed with `menu-up` set takes
+no click from that press; the viewport takes no zoom and no pan. Two
+things could give the keys back early, and both are guarded: the
+viewport's `focus-keys` on hover and on press does nothing while the
+menu is up. A native menu (macOS, Windows) takes neither the focus nor
+the click, so `menu-up` never sets there and nothing is swallowed.
+
+On a Mac, Control+click is a right-click. Slint maps the Mac's Command
+key to its `control` modifier and the Control key to `meta` (the winit
+backend swaps them on Apple platforms), so the cells treat a left press
+with `meta` held as a right-click when the window's `ctrl-click-menu`
+is set, which `panel::menu::install` sets from `cfg!(target_os =
+"macos")`. The same swap means Ctrl+C and Ctrl+V as bound here fire on
+Command+C and Command+V on a Mac with no code for it, as every Ctrl
+binding in the window already did; the user guide's line saying the
+Mac's keys were Ctrl "for now" was wrong and is corrected.
+
+**Copy and paste.**
+
+Copy puts an edit, whole, into `State::clipboard`: from the menu, the
+frame right-clicked (above); from Ctrl+C, the frame on screen, the
+panel's edit outside culling, recorded or not, since what is on screen
+is what is meant, and the sidecar's current state in culling, where
+the panel is not the frame's. It keeps the source's path, not its
+index, because moving the rejects or opening another folder renumbers
+the files and the clipboard outlives both. It is not the system
+clipboard. An edit is not text, nothing else on the desktop reads it,
+and a paste needs the source's path, which the system clipboard would
+not carry. It lasts for the session. `crate::clipboard` holds the pure
+parts: what a copy holds, its name and label, the targets (the set
+less the source, by path), the `Preset::from_edit` of the chosen
+sections, and the learned-denoiser source when Noise is chosen.
+
+Paste opens the sync sheet itself, `SyncSheet` with a `paste` flag:
+titled "Paste settings from FILE.CR3", the button reading Paste, the
+line saying "Onto 2 frames; 3G0A4650.CR3, which they came from, is
+left as it is." when the source is in the selection. The sections are
+checked as the last sync or paste this session left them
+(`State::sync_last`, set on either's apply), or the sync's defaults
+before either has run. The sync's own sheet still opens on its
+defaults, as §156 left it, so that line of §156's Left is unchanged.
+Closing the sheet any way clears the paste flag (`changed sync-open`),
+so a canceled paste leaves nothing that could make the next opening a
+paste.
+
+The apply is `panel::sync::paste_selection`. It is a sync with the
+clipboard between: the targets other than the frame on screen go
+through `lay_over_targets` exactly as a sync's targets do (migrate,
+the camera profile's fit per body, the learned blend seeded or
+carried, one step each, the sidecar written where the setting puts it,
+thumbnails and badges refreshed). Outside culling, the frame on screen
+is the panel's. It takes the paste the way a preset click takes a
+preset: the panel's state recorded first, the paste over it as one
+step, the same `preset_for_body` fit check, and `take_current` to
+develop it, with the status words riding the develop through
+`status_after_develop`. In culling every frame, the one on screen
+included, goes through the sidecars, and culling is not left. A preset
+click in culling does leave it, but a paste there is a culling action,
+so it stays. Geometry and retouch are left out because they are not
+`Section`s, as in a sync. Noise brings the learned tier and blend, as
+a sync's does, because the paste's source is one frame of the user's
+own.
+
+Each frame's step is recorded as "Paste from FILE.CR3"
+(`history::paste_label`, beside `sync_label`; it fits the history
+row's 36 characters with a camera's file name). A paste onto the
+source frame alone opens nothing and says "FILE is the frame these
+came from; choose the frames to paste onto". A paste the frames
+already have records nothing ("the 2 frames had these already"). As
+with the sync sheet, opening the paste sheet records `(current,
+targets)` in `State::paste_asked`, and an Apply after the selection
+moved is refused: "the selection changed while the sheet was open;
+nothing pasted".
+
+**Keys.** Ctrl+C and Ctrl+V are bound in the window's FocusScope, the
+place where the keys are nobody's. A focused text field (the filter's,
+which is also where keywords are searched) handles its own Ctrl+C and
+Ctrl+V first and accepts them, so they never reach the binding; a test
+types into the grid's filter field and presses both, and the clipboard
+stays empty. Under a sheet both do nothing, as undo does. Neither
+clashes with the bare C (culling) or V (compare), which check that
+Ctrl is not held.
+
+**Snapshot flags.** `--menu ROW` opens the menu over that row of the
+strip, or of the grid with `--grid`, as if right-clicked in the cell's
+middle. It works through a `menu-at` property that the strip and the
+grid watch, since the grid is a conditional element whose cells the
+window cannot reach. `--sheet paste` copies the first frame and opens
+the paste sheet over the `--also` set. `--sheet pasted` applies it on
+the sheet's sections in the same turn. A `--menu` over a frame outside
+the set starts a develop that can land after the capture; a snapshot
+run no longer writes `last_file` to the settings when it does
+(`remember_last_file` checks `State::batch`, which outlives the
+snapshot's path).
+
+**Measured.** Copies of four sample raws (3G0A4650.CR3, 4Z4A2978.CR3,
+4Z4A3521.CR3, 5M0A3021.CR3) in target/work, the editor on its own
+headless mutter's Xwayland with every XDG directory under target/work.
+
+- `--grid --menu 2`: the menu drawn over the third cell, which became
+  the current frame (the header reads 4Z4A3521.CR3), the first item
+  "Copy settings of 4Z4A3521.CR3", Export... enabled while that frame
+  developed; `settings.json` byte-identical before and after
+  (`menu-grid-2.png`).
+- `--grid --also 1,2 --menu 2`: right-click inside a set of three. The
+  set stayed and the header kept "3G0A4650.CR3 and 2 others". The item
+  read "Export 3 frames..." (`menu-grid-set.png`).
+- `--menu 1`: over the strip, the menu kept inside the window above
+  the strip's bottom edge (`menu-strip.png`).
+- `--also 1,2 --sheet paste`: the sheet titled "Paste settings from
+  3G0A4650.CR3", "Onto 2 frames; 3G0A4650.CR3, which they came from,
+  is left as it is.", 17 of 18 sections on (`paste-sheet.png`).
+- `--preset "Warm Negative" --also 1,2,3 --sheet pasted`: the paste
+  onto three frames, three sidecar writes included, took about a
+  millisecond (0.6 ms in this run, 1.1 ms in the reviewer's). Each of
+  the three new 8838-byte sidecars has `step: "Paste from
+  3G0A4650.CR3"` and one earlier state (the default); the source's own
+  sidecar has only its "Preset: Warm Negative". With one target
+  (`--also 1`), `jq -S .current` of the source and the target were
+  identical. (That the learned blend travels with Noise is held by the
+  unit test's 0.6 blend, not by these files: every sample here is ISO
+  200 or less, where `blend_for_iso` gives 0.35 anyway.)
+- The pasted frame reopened (`4Z4A2978.CR3 --snapshot`): its history
+  panel reads "Paste from 3G0A4650.CR3" above "Original"
+  (`history-paste.png`).
+- The closing press, on the real winit backend: a temporary hook in a
+  `--grid --menu 2` run dispatched events through the window 800 ms
+  after the menu opened (the same `dispatch_event` path the platform's
+  events take once winit has them). It logged `menu_up=true`, then
+  after an Escape `menu_up=false`; and in a second run, a left click
+  on cell 0 with the menu up left the selection on row 2 and cleared
+  `menu_up`, and the next click on cell 0 opened it. The hook was
+  removed.
+
+Input can be driven headless through mutter's
+`org.gnome.Mutter.RemoteDesktop` and `ScreenCast` D-Bus API; the
+reviewer's driver is at `target/review/rd.py`. In the author's own run
+of it the pointer did not move (the stream's absolute motion had no
+effect, maybe because nothing consumed the PipeWire stream), so the
+real right button was exercised on Slint's testing backend (pointer
+events dispatched at strip cells and the picture) and by the reviewer
+through the driver.
+
+**Tests added.**
+
+- `selection.rs`:
+  `a_right_click_in_the_set_keeps_it_and_one_outside_opens_the_frame`.
+- `clipboard.rs`: `a_copy_holds_the_whole_edit_and_the_frame_it_came_from`,
+  `a_paste_leaves_out_the_frame_it_was_copied_from` (by path, surviving
+  a renumbered folder), `a_paste_lays_the_chosen_sections_and_no_geometry`
+  (Light alone; every section without the geometry; Noise carrying
+  the learned tier and a 0.6 blend; the frame on screen's edit equal to
+  what a target's sidecar records; a second paste records nothing).
+- `panel/menu.rs`: `a_menu_item_is_the_change_its_key_makes`,
+  `the_checks_are_what_the_whole_selection_shares`, the Reveal command
+  per platform (one `cfg`'d test each for Linux, macOS and Windows),
+  `explorers_argument_is_one_quoted_select` (every platform),
+  `reveal_of_a_relative_name_opens_the_working_folder`,
+  `a_right_click_outside_the_set_opens_the_frame_and_inside_keeps_the_set`
+  (real right-button pointer events on the strip; a menu rating
+  reaches the whole set as the key does; flag and Purple from the
+  menu), `a_macs_control_click_is_a_right_click_and_not_a_click`,
+  `the_menus_copy_takes_the_frame_right_clicked_and_ctrl_c_the_one_on_screen`,
+  `the_press_that_closes_the_menu_is_not_a_click` (over the strip, by
+  a click and by Escape), `the_press_that_closes_the_menu_over_the_picture_does_not_zoom`,
+  `the_menus_export_waits_for_the_develop`, and
+  `the_viewport_menu_is_the_frame_on_screen_and_its_set`.
+- `panel/sync.rs`: `copy_and_paste_lay_the_copy_over_the_set_and_leave_its_source`
+  (Ctrl+C and Ctrl+V as keys; nothing copied; the source alone; the
+  sheet's words and checks; Light alone applied, labels in memory and
+  on disk, a crop kept, the source and a frame outside the set
+  untouched; the next paste opens on that choice and records nothing;
+  a canceled paste clears the flag; the sync's own sheet still on its
+  defaults),
+  `a_paste_onto_the_frame_on_screen_goes_through_the_panel_and_undoes`,
+  `a_paste_in_culling_goes_onto_the_sidecars_and_stays_in_culling`,
+  `a_selection_moved_under_the_paste_sheet_is_refused`,
+  `the_filter_field_keeps_its_own_copy_and_paste`.
+- `greycard-edit`: `paste_label` held to the history row's width with
+  the other labels.
+- `Shown::sheet` accepts `paste` and `pasted`.
+
+The existing sync tests are unchanged and pass.
+
+**The guide.** A paragraph on the menu and on copy and paste, and a
+Ctrl+C, Ctrl+V row in the keys. Two older lines were corrected on the
+way: "Export works on the open frame only" was stale since §167 and
+now says what a set's export does, and the Mac line now says the Ctrl
+keys are ⌘ and that Control+click is a right-click.
+
+**Left.**
+
+- Reveal on Linux opens the folder and does not select the file (see
+  above).
+- The menu shows no key hints: Slint 1.18 allows `shortcut` on a
+  MenuItem only in a MenuBar.
+- `menu-up` rests on Slint's menu taking and returning the keys'
+  focus. Anything that focuses the keys while the menu is up, other
+  than the two guarded paths, would clear it early and let the closing
+  press through again. Nothing else does now.
+- A Paste special that picks sections without the sheet (Lightroom's
+  "Paste settings from previous"), and remembering the sync sheet's
+  own choice (still §156's Left).
+- Not run on a Mac or on Windows: the native menus there (muda), the
+  Control+click path and the Reveal commands are compiled by `cfg` and
+  covered by the platform's own test in CI, not seen.
+
+**The review.** Land after fixes, nothing blocking, and every finding
+reproduced live: Copy from the menu took the frame on screen rather
+than the one right-clicked while Reveal beside it followed the
+pointer; Export stayed grayed in an open menu after the develop had
+landed, so from the menu it never worked on a frame outside the set;
+Reveal from an editor launched inside the folder ran `xdg-open ""`;
+the click that dismissed the menu zoomed the picture; and two lines
+of the user guide were stale, the one saying export works on the open
+frame only and the one saying the Mac's keys were Ctrl. One round
+fixed all six and the nits (a snapshot run writing `last_file`, the
+`explorer` argument untested, the items live over an empty
+selection, the paste flag left set by a canceled sheet). The reviewer
+also found that input can be driven into the headless mutter through
+its RemoteDesktop D-Bus API, which future reviews can use for real
+clicks.
+
+## 172. Thumbnails made in parallel, and a cell that has none (2026-09-25)
+
+Roadmap line: thumbnails made in parallel on a cold cache, and beside
+it the bug that a `--grid --snapshot` over a folder where one
+thumbnail fails waits until it is killed. Both from §163. Wave C, an
+opus author and an opus reviewer.
+
+**What was there.** A folder open sent one `Job::Thumbnail` a file to
+the worker, whose `run` loop took them last, after a develop, a mask
+and an export: one at a time, on the thread that develops, behind the
+first frame's develop. On the 35 sample files that was 2 s of decoding
+(12 to 253 ms a preview) that a warm cache (§163) answers in a
+hundredth.
+
+**The pool.** `crates/greycard-ui/src/thumbpool.rs`: a fixed set of
+plain threads of its own, not rayon's global pool. The develop runs
+rayon over every core, and a thumbnail job put on that pool would
+queue behind the develop's own splits, or split the develop's; plain
+threads can be held and let go without touching rayon. Its size is
+half the cores, at least two and at most eight (`threads_for`). The
+ceiling is memory and the disk as much as the CPU: each thread holds
+a full-frame preview while it downscales it, 134 MB for an R5 II's
+8192 by 5464, and sixteen threads made a folder of 300 no faster than
+eight (4.40 s against 4.31 s in the median) while slowing the
+window's start-up enough to cost the first paint a second (3.58 s
+against 2.61). The threads start with the first thumbnail asked for,
+so a window with nothing open, and every test that builds a `Worker`,
+never starts them.
+
+The worker keeps its API: `send(Job::Thumbnail)`, `want_thumbnails`
+and `set_thumb_size` go to the pool, and `forget_thumbnails`,
+`hold_thumbnails` and `thumb_threads` are new. What the pool keeps is
+what the worker's queue kept for thumbnails: the waiting jobs in the
+order wanted, the range they are ordered for and the size to make
+them at, read as each is begun, so the grid's step-up to a larger
+cell still takes effect for anything not yet begun.
+`order_thumbnails` is the worker's function, unchanged; a re-order
+sorts what is waiting, and what is in hand is finished.
+
+Three rules make parallel safe:
+
+- **One file, one thread.** A thread takes the first waiting job whose
+  file no other thread has in hand, so a second ask for a file being
+  made (the grid's larger picture) waits for the first to finish
+  rather than decoding the same preview twice at once; and an ask for
+  a file already waiting with the same index is dropped, since the
+  waiting one will be made at whatever size is wanted when it begins.
+  The cache's entries were already written to a temporary name of
+  this process's and this moment's and renamed into place (§163).
+  The cache's mutex covers every use of it: a lookup (`Thumbs::get`,
+  read, check and JPEG decode), a write, the first write's `usage()`
+  walk when no count is known yet, and an eviction's walk. So two
+  copies of one frame with one content key (a `cp -p`) made on two
+  threads write one after the other and the later rename wins with the
+  same picture; and while a walk runs, the other threads' lookups
+  wait. The startup count (`count_thumb_cache`, §163) seeds the count
+  from a thread of its own without the lock, so the first write's walk
+  under the lock happens only when a write beats that count. Moving
+  it off the lock would mean a write that does not know the count
+  yet skips its eviction check, which is a change to the cache's
+  contract and not this item's; the comment in `thumbs.rs` that said
+  the walk ran on the worker's thread now says what it does.
+- **A folder change drops what is pending.** `open_files` calls
+  `forget_thumbnails`, which empties the waiting list and raises an
+  epoch; a picture in hand when the folder changed is not delivered.
+  The UI's own check stays behind it: `Outcome::Thumbnail` carries the
+  path, and one lands only on the slot whose file is that path, so a
+  delivery that raced the change can land only where the new list has
+  the same file at the same index, which is the right picture. The
+  cull's renumbering after rejects are moved away (`cull.rs`) is not a
+  folder change and is left as it was: it asks again for what has no
+  picture, and a stale job's path no longer matches its index.
+- **A panic costs one cell.** Each job is made under its own
+  `catch_unwind` on its thread. On the worker a panic in a thumbnail
+  was caught but blamed on nobody and delivered nothing, so the cell
+  never filled; now it is `Outcome::NoThumbnail`, logged at warn with
+  the panic's text, and the thread goes on serving.
+
+The folder's log line now reads "N s of decoding across T threads":
+the seconds are summed over the threads and are more than the wall
+time.
+
+**The develop first.** Two holds, both measured.
+
+The worker holds the pool while any develop runs: it sets the pool's
+limit to nothing when it takes an `Open` or a `Develop` and back to
+the pool's size when it is done (panicked included). Pictures in hand
+finish; nothing new is begun. On a folder of 300, eight threads left
+running took the first develop from 1.28 s to 1.61 s in the median
+and four threads from 1.28 to 1.49; held, it was 1.21. An export, a
+mask or a set's frames do not hold it: the item was that thumbnails
+never queue behind those.
+
+That hold starts only when the worker begins the open, and on a cold
+folder the pool has had most of a second of the window's start-up by
+then. The review measured the first paint on the 300 at 2.64 s on
+master against 2.79 on the branch, five runs of six above master's
+median: the pool's eight decodes were taking the CPU from the window's
+own start-up and the GPU context's. So a folder opened in the loupe
+now holds its thumbnails from the moment it is listed until the first
+develop is delivered (`hold_thumbnails_for_develop` in `browser.rs`,
+from the launch and from `open_files`; let go by the `Developed` or
+`Failed` delivery, by the grid reporting its range, or after 10 s,
+`HOLD_AT_MOST`, for a develop that never comes). On the grid nothing
+is held: the thumbnails are what is on screen.
+
+Held, the threads still look pictures up in the cache and deliver the
+hits; only the making waits, and a miss is looked up once and left in
+its place in the queue. The first cut of this hold held the lookups
+as well, and a warm folder's strip, which the cache fills in a
+hundredth of a second, came up at 1.58 s, when the develop landed. A
+hit is a tenth of a millisecond and a 64 KB read; it takes nothing the
+develop wants.
+
+**The bug.** A file no picture could be made of now marks its cell:
+the grid and the strip draw the same quiet bordered box saying
+"Unreadable" where the picture would be. `Thumb` has a `failed`
+field, `State::thumb_failed` keeps it per file across a filter's
+re-made rows and the cull's renumbering, a picture that arrives after
+all clears it, and a larger picture that fails after a smaller one
+arrived keeps the smaller one unmarked. `grid_filled_rows` counts a
+failed file as filled, so a `--grid --snapshot` over such a folder is
+taken as soon as the rest are in. And the snapshot's wait for the grid
+has a limit: `GRID_WAIT`, 30 s from launch, after which
+`give_up_on_grid` logs at warn which cells are still waiting for a
+picture and which for a larger one, named apart, and the grid is taken
+as it stands. That covers what the mark cannot, a thumbnail that never
+comes back at all.
+
+Reproduced first on master: a folder of a whole CR3, a whole NEF and a
+CR3 cut to its first 1 KB (in the work dir, not committed);
+`--grid --snapshot` was killed by `timeout 60` with no picture written
+(exit 124), the log saying `3 files ... 2 made, 1 failed`. On the
+branch the same run writes the snapshot at 1.8 s, exit 0, the third
+cell marked; in the loupe the strip's cell is marked the same way.
+The limit was checked with a named pipe named as a raw in the folder,
+whose hash never returns: the log at 30.17 s said `the grid still
+waits for 1 picture after 30 s (HANG.CR3)` and the snapshot was
+written at 30.5 s. The library's indexer blocked on the pipe as well,
+and quitting waited 5 s on it.
+
+That pipe also showed that the folder listing took anything with a
+raw's name. `files::list_files` now lists only regular files (or
+links to them), and so does the index's `list_folder`, which had
+excluded folders only; a folder named `x.CR3` is not listed either.
+Over the same folder the pipe is now not listed, the snapshot is
+written at 2.2 s and quitting does not wait on the indexer. The give-up
+is therefore checked by the unit test and by the run above, made
+before the listing changed; nothing in the folder listing can make a
+thumbnail hang now that is known. Truncations of a CR3 to 192 KB and
+2 MB fail cleanly in rawler rather than panic, so the real "capacity
+overflow" panic of §163 was not reproduced here; the pool's panic
+path is tested with a maker that panics.
+
+**The numbers.** Release builds of master (fc403f5, "before") and the
+branch rebased on it, the editor on a headless mutter's Xwayland at
+1500 by 950, every run with its own empty `XDG_*` folders; each run
+opened the folder and was ended once the log had the folder's
+thumbnails line and the first develop. "Last thumbnail" is that line's
+time from the folder's open; "paint" is the process's uptime at the
+first `developed` line, and "develop" that develop's own total. The
+35 are the sample files hard-linked into the work dir (33 raws, 2
+JPEGs); the 300 are hard links to them under 300 names, run with the
+cache off (`thumb_cache_mb` 0), since 300 links to 35 contents would
+otherwise mostly hit the cache. Raws in the page cache throughout.
+Two blocks of eight interleaved runs each, load average 3 to 14;
+medians over the sixteen, the last thumbnail's from the final block.
+
+| | last thumbnail, before | after | paint, before | after |
+|---|---|---|---|---|
+| loupe, 35, cold cache | 3.49 s | 2.35 s | 2.30 s | 2.09 s |
+| loupe, 300, cache off | 17.00 s | 5.12 s | 2.31 s | 2.18 s |
+| loupe, 35, warm cache | 0.01 s | 0.01 s | 1.68 s | 1.65 s |
+| grid, 35, cold cache | 3.60 s | 0.63 s | 2.35 s | 2.25 s |
+| grid, 300, cache off | 16.94 s | 4.11 s | 2.31 s | 2.49 s |
+
+The develop's own total was 1.17 to 1.21 s in the median on every
+line, before and after. In the loupe the hold takes the first paint
+below master's, by 0.2 s on the 35 and 0.13 s on the 300, since
+master's worker was decoding thumbnails through the start-up until
+the open arrived, and the strip still fills well before master's: 2.35
+s against 3.49 on the 35, 5.1 against 17.0 on the 300. What the hold
+costs is the strip's first second: before it, the 35 were all in at
+0.6 s, before the picture. On the grid, unheld, the 35 fill in 0.63 s
+against 3.60 and the first paint is 0.1 s earlier; on the 300 it is
+0.18 s later (2.49 s against 2.31), which is the pool's decodes beside
+the window's start-up and is the price of the grid's 300 filling in
+4.1 s rather than 16.9. On the grid the develop is not what is on
+screen.
+
+The pool's own seconds (the "of decoding across 8 threads") are 2.6 to
+4.4 s over the 35 against the worker's 1.8 to 2.3: eight decodes at
+once are each slower, sharing memory bandwidth and cores, and the wall
+time is what falls. The grid's snapshot over the 35 on a cold cache is
+pixel for pixel master's (ImageMagick `compare -metric AE`: 0),
+written at 2.5 s against master's 3.8 s.
+
+**Tests.** In `thumbpool`: the pool's size from the cores; held while
+the folder is queued and let go one at a time, the frames shown are
+made first and the rest outward (4, 5, 6, 3, 7, 2, 8, 1, 9, 0); a
+re-order while a picture is in hand applies to the rest and the one in
+hand finishes; a file in hand is never begun by a second thread while
+three are free, a repeat of a waiting ask is dropped, and the second
+ask is made after the first; a folder change drops the waiting ones,
+the one in hand is not delivered and the new folder's is; a panic in
+one decode and an error in another cost those two cells and the
+threads go on serving; four slow pictures on four threads take about
+one's time; the size is the one wanted when a picture is begun,
+rounded to a made size; a hold outlasts the worker's limit going back
+up and ends with its release; held, the cache's hits are delivered,
+each file is looked up once, nothing is made, and after the release
+the misses are made in order. In the browser, on Slint's headless
+backend: a `NoThumbnail` marks the cell, fills the grid, survives the
+rows being made again, is ignored for a path not the slot's, and is
+cleared by a picture that arrives after; a larger picture that fails
+keeps the smaller unmarked and filled; the snapshot's give-up does
+nothing without a snapshot or with the grid filled, gives up on
+missing pictures and on cells waiting for a larger one, and fills the
+grid. In `files`: a folder named as a raw, and on Unix a named pipe,
+are not listed. The worker's existing thumbnail and cache tests pass
+unchanged.
+
+**What is left.** The hold on every develop could become a smaller
+limit if thumbnails stalling during a slider drag on a cold folder
+turn out to matter; the cache's hits are not held. The first write's
+count walk under the cache's lock, when it beats the startup count. A
+decode that hangs rather than fails holds its thread for good; the
+snapshot's limit covers the snapshot, not the thread.
+
+**The review.** Land after small fixes, no concurrency or correctness
+bug found: the reviewer built its own master binary and reproduced
+every number, then found the one the author's runs had hidden, a
+first paint on the 300 consistently 0.15 s later with the pool
+running beside the window's start-up, five runs of six above master's
+median. The author had left the hold-until-first-develop as a
+judgment call; the reviewer's answer, hold in the loupe where the
+picture is what the user waits for and never on the grid where the
+thumbnails are the content, is what was built, and the first cut of
+it held the cache lookups too and put a warm strip back to 1.58 s,
+which the author caught measuring. The rest was a doc comment that
+had landed on the wrong test, a give-up warning that could read
+"waits for 0 pictures ()", a log line whose seconds now sum across
+threads, and the folder listing taking a named pipe as a raw, which
+was the reviewer's follow-up suggestion and became the listing
+change. One round.

@@ -8,6 +8,22 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
+## 0.1.3, unreleased
+
+- A right-click menu on a frame in the strip, the grid or the
+  viewport: copy the settings of that frame, paste them onto the
+  selection through the sync sheet's section list, rating, flag and
+  label, reveal in the file manager, export; every item the code of
+  its key. Ctrl+C and Ctrl+V do the copy and paste from the keys, and
+  each pasted frame's history reads "Paste from FILE" (§171,
+  2026-09-25).
+- Thumbnails are made on a pool of threads of their own instead of one
+  at a time behind the develop: a cold folder of 35 fills the grid in
+  0.6 s instead of 3.6, and 300 in 4 s instead of 17, the first
+  picture no later; a file no picture can be made of marks its cell
+  "Unreadable", and a `--grid --snapshot` no longer waits forever on
+  it; a folder listing takes only regular files (§172, 2026-09-25).
+
 ## 0.1.2, 2026-09-25
 
 - Fix JPEG, PNG and TIFF files opening brighter and more contrasty
