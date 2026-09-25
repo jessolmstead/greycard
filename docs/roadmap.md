@@ -200,8 +200,6 @@ comes across with its ratings and collections.
   capstone, its own release if it grows
 - [ ] A map: the frames' EXIF GPS on tiles, a click to select them, a
   position given to a frame by hand. Low priority
-- [ ] Import from a card: copy, rename, apply a preset, a backup copy.
-  Last
 
 ## v0.8.0: merge
 

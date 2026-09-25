@@ -23,6 +23,16 @@ note a first tester reads.
   picture no later; a file no picture can be made of marks its cell
   "Unreadable", and a `--grid --snapshot` no longer waits forever on
   it; a folder listing takes only regular files (§172, 2026-09-25).
+- Import from a card: Ctrl+Shift+I or Import... in the grid's header,
+  a card found under the mount points, a destination with folder and
+  name patterns (`{date}`, `{seq}`, `{camera}`, `{name}` and the rest,
+  names safe on every file system), a preset laid on each frame as one
+  history step, and a backup copy; every file copied to a temporary,
+  hashed as read, synced, read back and renamed only when the hashes
+  agree, and never a write on the card; a frame already imported is
+  known by its size and its first and last 64 KiB, Verify compares
+  every byte; `--import SRC --to DEST` runs one headless (§173,
+  2026-09-25).
 
 ## 0.1.2, 2026-09-25
 
