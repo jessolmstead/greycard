@@ -351,6 +351,16 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     )));
     app.set_preset_section_on(ModelRc::from(state.borrow().preset_sections.clone()));
     show_presets(&state.borrow(), &app);
+    // A snapshot of the grid waits for the pictures its cells show,
+    // and one that never comes would hold it until it is killed.
+    if cli.snapshot.is_some() {
+        let (state, app_weak) = (Rc::downgrade(&state), app.as_weak());
+        slint::Timer::single_shot(crate::panel::browser::GRID_WAIT, move || {
+            if let (Some(state), Some(app)) = (state.upgrade(), app_weak.upgrade()) {
+                crate::panel::browser::give_up_on_grid(&mut state.borrow_mut(), &app);
+            }
+        });
+    }
 
     // Results come back to the UI thread through the event loop.
     let worker = {

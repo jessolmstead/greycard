@@ -1,5 +1,7 @@
 use crate::panel::assets::{offer_lenses_once, offer_model, show_lens, show_looks, show_profiles};
-use crate::panel::browser::{chosen_frames, count_thumb, file_name, show_thumb, thumb_turns};
+use crate::panel::browser::{
+    chosen_frames, count_thumb, file_name, show_no_thumb, show_thumb, thumb_turns,
+};
 use crate::panel::cull::develop_landed;
 use crate::panel::edit::{current_turn, read_edit, schedule_save};
 use crate::panel::startup::remember_last_file;
@@ -197,6 +199,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             count_thumb(&mut st, index, Some(cached), seconds);
             st.thumb_base[index] = Some((width, height, rgb));
             st.thumb_made[index] = size;
+            st.thumb_failed[index] = false;
             // One that was being made when the cells grew comes back
             // at the old size. Nothing else would ask for it again
             // until the grid next moved, and a snapshot waiting on
@@ -223,6 +226,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let mut st = state.borrow_mut();
             if st.files.get(index) == Some(&path) {
                 count_thumb(&mut st, index, None, 0.0);
+                show_no_thumb(&mut st, app, index);
             }
         }
         Outcome::Opened {

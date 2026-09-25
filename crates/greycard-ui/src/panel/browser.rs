@@ -114,6 +114,7 @@ pub(crate) fn thumb_for(path: &Path, meta: &Meta) -> Thumb {
         flag: meta.flag.code(),
         label: meta.label.code(),
         chosen: false,
+        failed: false,
     }
 }
 
@@ -363,6 +364,29 @@ pub(crate) fn show_thumb(st: &mut State, app: &App, i: usize, turns: u8, flip: b
     let model = app.get_thumbs();
     if let Some(mut t) = model.row_data(row) {
         t.image = slint::Image::from_rgb8(buf);
+        t.failed = false;
+        model.set_row_data(row, t);
+    }
+}
+
+/// No picture could be made of file `i`: its cell says so, and
+/// counts as filled for a snapshot of the grid. A file that already
+/// has a picture (a larger one failed) keeps it and is not marked,
+/// but is as filled as it will get.
+pub(crate) fn show_no_thumb(st: &mut State, app: &App, i: usize) {
+    let Some(had) = st.thumb_base.get(i).map(Option::is_some) else {
+        return;
+    };
+    st.thumb_failed[i] = true;
+    if had {
+        return;
+    }
+    let Some(row) = row_of(st, i) else {
+        return;
+    };
+    let model = app.get_thumbs();
+    if let Some(mut t) = model.row_data(row) {
+        t.failed = true;
         model.set_row_data(row, t);
     }
 }
@@ -559,7 +583,9 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     show_filter(st, app);
     let thumbs = Rc::new(VecModel::<Thumb>::default());
     for &f in &st.shown {
-        thumbs.push(thumb_for(&st.files[f], &st.sidecars[f].meta));
+        let mut t = thumb_for(&st.files[f], &st.sidecars[f].meta);
+        t.failed = st.thumb_failed[f] && st.thumb_base[f].is_none();
+        thumbs.push(t);
     }
     app.set_thumbs(ModelRc::from(thumbs));
     for row in 0..st.shown.len() {
@@ -595,11 +621,13 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
 pub(crate) fn grid_filled_rows(
     shown: &[usize],
     thumb_made: &[u32],
+    thumb_failed: &[bool],
     thumb_want: u32,
     grid_shown: Option<(i32, i32)>,
+    gave_up: bool,
     app: &App,
 ) -> bool {
-    if !app.get_grid_open() {
+    if !app.get_grid_open() || gave_up {
         return true;
     }
     let Some((first, last)) = grid_shown else {
@@ -607,7 +635,10 @@ pub(crate) fn grid_filled_rows(
     };
     (first.max(0) as usize..=last.max(0) as usize)
         .filter_map(|r| shown.get(r))
-        .all(|&f| thumb_made[f] > 0 && !grid::wants_bigger(thumb_made[f], thumb_want))
+        .all(|&f| {
+            thumb_failed.get(f) == Some(&true)
+                || (thumb_made[f] > 0 && !grid::wants_bigger(thumb_made[f], thumb_want))
+        })
 }
 
 /// Each file's edit, from its sidecar when there is one; the fresh
@@ -801,10 +832,14 @@ fn open_files(
     // A folder of its own: the grid's zoom does not carry its
     // appetite for large pictures over to it.
     st.thumb_made = vec![0; files.len()];
+    st.thumb_failed = vec![false; files.len()];
     st.thumb_asked = vec![worker::THUMB_WIDTH; files.len()];
     st.thumb_want = worker::THUMB_WIDTH;
     st.grid_shown = None;
     st.thumb_run = Some(ThumbRun::new(files.len()));
+    // The old folder's thumbnails still waiting are dropped: their
+    // numbering is its list's.
+    worker.forget_thumbnails();
     worker.set_thumb_size(worker::THUMB_WIDTH);
     st.files = files.clone();
     // The new folder's rows as the index has them now, and a pass
@@ -835,10 +870,52 @@ fn open_files(
     }
 }
 
+/// How long a snapshot waits for the grid's pictures before it takes
+/// the grid as it stands. A cold folder of a few hundred fills in a
+/// few seconds; a picture that has not come by this is not coming.
+pub(crate) const GRID_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The snapshot's wait for the grid is over: when it is still
+/// waiting, the cells without their picture are named in the log and
+/// the grid is taken as it stands. Says whether it gave up.
+pub(crate) fn give_up_on_grid(st: &mut State, app: &App) -> bool {
+    if st.snapshot.is_none() || grid_filled(st, app) {
+        return false;
+    }
+    let missing: Vec<String> = st
+        .grid_shown
+        .map(|(first, last)| {
+            (first.max(0) as usize..=last.max(0) as usize)
+                .filter_map(|r| st.shown.get(r).copied())
+                .filter(|&f| !st.thumb_failed[f] && st.thumb_made[f] == 0)
+                .map(|f| file_name(&st.files[f]))
+                .collect()
+        })
+        .unwrap_or_default();
+    tracing::warn!(
+        "snapshot: the grid still waits for {} picture{} after {} s ({}); taking it as it stands",
+        missing.len(),
+        if missing.len() == 1 { "" } else { "s" },
+        GRID_WAIT.as_secs(),
+        missing.join(", ")
+    );
+    st.grid_wait_over = true;
+    app.window().request_redraw();
+    true
+}
+
 /// Whether every frame the grid shows has its picture, at the size
 /// the cells ask for. True whenever the grid is closed.
 pub(crate) fn grid_filled(st: &State, app: &App) -> bool {
-    grid_filled_rows(&st.shown, &st.thumb_made, st.thumb_want, st.grid_shown, app)
+    grid_filled_rows(
+        &st.shown,
+        &st.thumb_made,
+        &st.thumb_failed,
+        st.thumb_want,
+        st.grid_shown,
+        st.grid_wait_over,
+        app,
+    )
 }
 
 /// A file's name without its directory, for the panel and the log.
@@ -1493,6 +1570,107 @@ mod tests {
     /// the camera's own, so a frame's turn rides in the same quarter
     /// turns the edit's do: what comes out is the picture the develop
     /// would make of the turned frame.
+    fn picture_for(files: &[PathBuf], index: usize) -> crate::worker::Outcome {
+        crate::worker::Outcome::Thumbnail {
+            index,
+            path: files[index].clone(),
+            size: 176,
+            width: 2,
+            height: 1,
+            rgb: vec![0; 6],
+            cached: false,
+            seconds: 0.0,
+        }
+    }
+
+    /// A file no picture can be made of marks its cell, on the grid
+    /// and after the rows are made again, and a snapshot of the grid
+    /// counts it as filled; a picture that does come clears it.
+    #[test]
+    fn a_file_with_no_picture_marks_its_cell_and_fills_the_grid() {
+        use crate::panel::deliver::deliver;
+        let app = window(3);
+        let files = crate::testing::folder(3);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        app.set_grid_open(true);
+        state.borrow_mut().grid_shown = Some((0, 2));
+        let failed = |row: usize| app.get_thumbs().row_data(row).unwrap().failed;
+        deliver(&app, picture_for(&files, 0));
+        deliver(&app, picture_for(&files, 2));
+        assert!(!grid_filled(&state.borrow(), &app));
+        deliver(
+            &app,
+            crate::worker::Outcome::NoThumbnail {
+                index: 1,
+                path: files[1].clone(),
+            },
+        );
+        assert!(failed(1));
+        assert!(!failed(0) && !failed(2));
+        assert!(grid_filled(&state.borrow(), &app));
+        rebuild_browser(&mut state.borrow_mut(), &app);
+        assert!(failed(1), "kept when the rows are made again");
+        // Another folder's failure, by the path it carries, is not
+        // this one's.
+        deliver(
+            &app,
+            crate::worker::Outcome::NoThumbnail {
+                index: 0,
+                path: PathBuf::from("/elsewhere/IMG_0000.CR3"),
+            },
+        );
+        assert!(!failed(0));
+        deliver(&app, picture_for(&files, 1));
+        assert!(!failed(1));
+        assert!(!state.borrow().thumb_failed[1]);
+        // A larger picture that fails leaves the one there, unmarked,
+        // and the cell filled.
+        state.borrow_mut().thumb_want = 360;
+        assert!(!grid_filled(&state.borrow(), &app));
+        deliver(
+            &app,
+            crate::worker::Outcome::NoThumbnail {
+                index: 0,
+                path: files[0].clone(),
+            },
+        );
+        assert!(!failed(0));
+        assert!(state.borrow().thumb_base[0].is_some());
+        state.borrow_mut().thumb_made[1] = 360;
+        state.borrow_mut().thumb_made[2] = 360;
+        assert!(grid_filled(&state.borrow(), &app));
+    }
+
+    /// A snapshot of a grid whose pictures have not all come stops
+    /// waiting at its limit and takes the grid as it stands; without
+    /// a snapshot, or with the grid filled, there is nothing to give
+    /// up.
+    #[test]
+    fn a_snapshot_of_the_grid_stops_waiting_at_its_limit() {
+        use crate::panel::deliver::deliver;
+        let app = window(3);
+        let files = crate::testing::folder(3);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        app.set_grid_open(true);
+        state.borrow_mut().grid_shown = Some((0, 2));
+        deliver(&app, picture_for(&files, 0));
+        assert!(!give_up_on_grid(&mut state.borrow_mut(), &app));
+        assert!(!grid_filled(&state.borrow(), &app));
+        state.borrow_mut().snapshot = Some(PathBuf::from("grid.png"));
+        assert!(give_up_on_grid(&mut state.borrow_mut(), &app));
+        assert!(grid_filled(&state.borrow(), &app));
+        // A grid filled in time is not given up on.
+        let app = window(2);
+        let files = crate::testing::folder(2);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        app.set_grid_open(true);
+        state.borrow_mut().grid_shown = Some((0, 1));
+        state.borrow_mut().snapshot = Some(PathBuf::from("grid.png"));
+        deliver(&app, picture_for(&files, 0));
+        deliver(&app, picture_for(&files, 1));
+        assert!(!give_up_on_grid(&mut state.borrow_mut(), &app));
+    }
+
     #[test]
     fn a_thumbnail_follows_the_frames_own_turn() {
         use greycard_core::WorkingImage;

@@ -111,6 +111,18 @@ export component Filmstrip inherits Rectangle {
                             overflow: elide;
                         }
                     }
+                    // Where the picture would be.
+                    if t.failed: Text {
+                        x: Theme.space-2;
+                        y: Theme.space-2;
+                        width: parent.width - 2 * Theme.space-2;
+                        height: 96px;
+                        text: "Unreadable";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-xs;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
                     // Over the picture's bottom corner, not in
                     // the row with the name: the badges must
                     // not push the name out of the middle, and

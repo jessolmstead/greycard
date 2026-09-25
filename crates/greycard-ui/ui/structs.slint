@@ -19,6 +19,10 @@ export struct Thumb {
     /// In the selection's set. The current frame, the one the
     /// viewport shows, is `selected`'s row and is always in it.
     chosen: bool,
+    /// No picture could be made of the file (damaged, truncated, a
+    /// format the decoder refuses): the cell says so rather than
+    /// staying empty as if one were on its way.
+    failed: bool,
 }
 
 /// A box drawn for an object, on the view, logical pixels.

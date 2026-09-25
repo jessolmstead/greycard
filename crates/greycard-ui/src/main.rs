@@ -37,6 +37,7 @@ mod settings;
 mod sheet;
 #[cfg(test)]
 pub(crate) mod testing;
+mod thumbpool;
 mod watermark;
 mod wheel;
 mod worker;
@@ -531,6 +532,12 @@ pub(crate) struct State {
     /// than climbing with it, so one look at the largest cell does
     /// not make every picture afterwards that size.
     pub(crate) thumb_made: Vec<u32>,
+    /// Files no picture could be made of: their cells are marked, and
+    /// a snapshot of the grid counts them as filled.
+    pub(crate) thumb_failed: Vec<bool>,
+    /// The snapshot has waited its limit for the grid's pictures and
+    /// takes the grid as it stands.
+    pub(crate) grid_wait_over: bool,
     pub(crate) thumb_asked: Vec<u32>,
     pub(crate) thumb_want: u32,
     /// The folder's first round of thumbnails, counted as they come
@@ -785,6 +792,8 @@ impl State {
             thumb_base: vec![None; count],
             thumb_shown: vec![None; count],
             thumb_made: vec![0; count],
+            thumb_failed: vec![false; count],
+            grid_wait_over: false,
             thumb_asked: vec![worker::THUMB_WIDTH; count],
             thumb_want: worker::THUMB_WIDTH,
             thumb_run: None,

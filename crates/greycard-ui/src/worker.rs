@@ -1,5 +1,6 @@
-//! The engine on its own thread: decodes, develops, and makes
-//! thumbnails, one job at a time, the newest develop winning.
+//! The engine on its own thread: decodes and develops, one job at a
+//! time, the newest develop winning. Thumbnails are made beside it,
+//! on a pool of their own (`thumbpool`).
 
 use std::path::PathBuf;
 use std::sync::{Arc, Condvar, Mutex};
@@ -402,16 +403,6 @@ struct Queue {
     /// A lens database fetched since the worker read its own, for it
     /// to take up before its next develop.
     lenses: Option<Arc<greycard_lens::Database>>,
-    /// Thumbnails, in the order they are wanted.
-    thumbnails: std::collections::VecDeque<(usize, PathBuf)>,
-    /// The long edge thumbnails are made at now, `THUMB_WIDTH` until
-    /// the grid asks otherwise. Read as each one is made, so a
-    /// picture still queued is made at the size wanted by then.
-    thumb_size: Option<u32>,
-    /// The range of the strip the thumbnails are ordered for, so the
-    /// strip can report where it stands as often as it likes. Cleared
-    /// when thumbnails are pushed, since that is a new folder's list.
-    wanted: Option<(usize, usize)>,
     /// The editor's device and queue, handed over once the window has
     /// them, for the engine's GPU ops to run on: the picture they
     /// leave is then the viewport's without a copy.
@@ -434,7 +425,7 @@ struct Queue {
     stopping: bool,
 }
 
-type Deliver = Arc<dyn Fn(Outcome) + Send + Sync>;
+pub(crate) type Deliver = Arc<dyn Fn(Outcome) + Send + Sync>;
 
 /// How long the editor waits on its way out for the worker to finish
 /// what it is in the middle of. A develop is a second or two; a job
@@ -453,6 +444,9 @@ pub struct Worker {
     /// The worker's thread, until it is joined on the way out.
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
     thumbs: ThumbCache,
+    /// The thumbnails' own threads, shared with the worker's thread,
+    /// which holds them back while the first develop runs.
+    pool: Arc<crate::thumbpool::Pool>,
 }
 
 impl Worker {
@@ -460,16 +454,26 @@ impl Worker {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let deliver: Deliver = Arc::new(deliver);
         let thumbs: ThumbCache = Arc::new(Mutex::new(None));
-        let (q, d, t) = (queue.clone(), deliver.clone(), thumbs.clone());
+        let make: crate::thumbpool::Make = {
+            let thumbs = thumbs.clone();
+            Arc::new(move |path, size| cached_thumbnail(&thumbs, path, size))
+        };
+        let pool = Arc::new(crate::thumbpool::Pool::new(
+            crate::thumbpool::default_threads(),
+            make,
+            deliver.clone(),
+        ));
+        let (q, d, p) = (queue.clone(), deliver.clone(), pool.clone());
         let thread = std::thread::Builder::new()
             .name("greycard worker".into())
-            .spawn(move || run(q, d, t))
+            .spawn(move || run(q, d, p))
             .expect("spawning the worker");
         Self {
             queue,
             deliver,
             thread: Mutex::new(Some(thread)),
             thumbs,
+            pool,
         }
     }
 
@@ -497,6 +501,7 @@ impl Worker {
     /// its window closes and waits [`LEAVING`] for it to say it has;
     /// longer than that and the run ends anyway, as it did before.
     pub fn stop(&self) {
+        self.pool.stop();
         {
             let (lock, cv) = &*self.queue;
             lock.lock().expect("worker queue").stopping = true;
@@ -563,13 +568,14 @@ impl Worker {
                 .expect("spawning the lens fetch");
             return;
         }
+        if let Job::Thumbnail { index, path } = job {
+            self.pool.push(index, path);
+            return;
+        }
         let (lock, cv) = &*self.queue;
         let mut q = lock.lock().expect("worker queue");
         match job {
-            Job::Thumbnail { index, path } => {
-                q.wanted = None;
-                q.thumbnails.push_back((index, path));
-            }
+            Job::Thumbnail { .. } => unreachable!("thumbnails go to the pool above"),
             job @ (Job::Export { .. } | Job::ExportFrame { .. }) => q.exports.push_back(job),
             Job::ExportSet { set, frames } => {
                 for (index, frame) in frames.into_iter().enumerate() {
@@ -613,13 +619,14 @@ impl Worker {
     /// it shows; a folder of hundreds is otherwise decoded in file
     /// order, and the frames on screen wait for every earlier one.
     pub fn want_thumbnails(&self, first: usize, last: usize) {
-        let (lock, _) = &*self.queue;
-        let mut q = lock.lock().expect("worker queue");
-        if q.thumbnails.len() < 2 || q.wanted == Some((first, last)) {
-            return;
-        }
-        q.wanted = Some((first, last));
-        order_thumbnails(q.thumbnails.make_contiguous(), first, last);
+        self.pool.want(first, last);
+    }
+
+    /// Another folder's list: the thumbnails still waiting are
+    /// dropped, and one in hand is not delivered. Its numbering is
+    /// the old list's, and a late picture must not land on the new.
+    pub fn forget_thumbnails(&self) {
+        self.pool.forget();
     }
 
     /// Make thumbnails at this long edge from now on. The grid's
@@ -629,15 +636,14 @@ impl Worker {
     /// before it. Whether a picture already made is made again is
     /// the caller's business, and that only ever steps up.
     pub fn set_thumb_size(&self, size: u32) {
-        let (lock, _) = &*self.queue;
-        lock.lock().expect("worker queue").thumb_size = Some(size);
+        self.pool.set_size(size);
     }
 }
 
 /// The frames on the strip first, in file order, then the rest
 /// outward from the middle of that range: what a scroll asks for
 /// next is whichever end it is heading towards.
-fn order_thumbnails(pending: &mut [(usize, PathBuf)], first: usize, last: usize) {
+pub(crate) fn order_thumbnails(pending: &mut [(usize, PathBuf)], first: usize, last: usize) {
     let center = (first + last) / 2;
     pending.sort_by_key(|(i, _)| {
         if (first..=last).contains(i) {
@@ -721,7 +727,7 @@ fn fetch_lenses(queue: &Arc<(Mutex<Queue>, Condvar)>, deliver: &dyn Fn(Outcome))
     }
 }
 
-fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache) {
+fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::thumbpool::Pool>) {
     let (lock, cv) = &*queue;
     let mut ai = Ai::new();
     match greycard_ai::Store::user() {
@@ -790,9 +796,6 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
                 }
                 if let Some(job) = q.exports.pop_front() {
                     break job;
-                }
-                if let Some((index, path)) = q.thumbnails.pop_front() {
-                    break Job::Thumbnail { index, path };
                 }
                 if device.is_some() {
                     // Nothing else to do: build the context now, off
@@ -915,6 +918,12 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
                 deliver(Outcome::SetDone { set, tally });
             }
             continue;
+        }
+        // A develop has the machine: the thumbnails' threads are held
+        // to what `during_develop` allows until it is done.
+        let developing = matches!(job, Job::Open { .. } | Job::Develop { .. });
+        if developing {
+            pool.set_limit(during_develop(pool.threads()));
         }
         let blame = Blame::of(&job);
         // A panic in a job is the hook's to write, with its
@@ -1103,36 +1112,12 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
             Job::Fetch { .. }
             | Job::FetchLenses
             | Job::Gpu
+            | Job::Thumbnail { .. }
             | Job::ExportSet { .. }
             | Job::ExportFrame { .. } => {
                 unreachable!(
-                    "fetches run on their own thread; the device and a set's frames are taken above"
+                    "fetches and thumbnails run on threads of their own; the device and a set's frames are taken above"
                 )
-            }
-            Job::Thumbnail { index, path } => {
-                let size = lock
-                    .lock()
-                    .expect("worker queue")
-                    .thumb_size
-                    .unwrap_or(THUMB_WIDTH);
-                let size = crate::grid::made_size(size);
-                let started = Instant::now();
-                match cached_thumbnail(&thumbs, &path, size) {
-                    Ok((thumb, cached)) => deliver(Outcome::Thumbnail {
-                        index,
-                        path,
-                        size,
-                        width: thumb.width,
-                        height: thumb.height,
-                        rgb: thumb.rgb,
-                        cached,
-                        seconds: started.elapsed().as_secs_f64(),
-                    }),
-                    Err(e) => {
-                        tracing::debug!("thumbnail {}: {e}", path.display());
-                        deliver(Outcome::NoThumbnail { index, path });
-                    }
-                }
             }
         }));
         if let Err(payload) = held {
@@ -1147,7 +1132,20 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, thumbs: ThumbCache
                 deliver(outcome);
             }
         }
+        if developing {
+            pool.set_limit(pool.threads());
+        }
     }
+}
+
+/// How many of the pool's `threads` may make thumbnails while a
+/// develop runs. `GREYCARD_THUMB_DURING_DEVELOP` overrides it, for
+/// measuring.
+fn during_develop(threads: usize) -> usize {
+    std::env::var("GREYCARD_THUMB_DURING_DEVELOP")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or(threads)
 }
 
 /// A path's file name, for a status line.

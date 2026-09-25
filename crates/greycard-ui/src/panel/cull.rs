@@ -911,7 +911,15 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
         && !st.awaiting_turn
         && !st.awaiting_index
         && st.asked.is_empty()
-        && grid_filled_rows(&st.shown, &st.thumb_made, st.thumb_want, st.grid_shown, app);
+        && grid_filled_rows(
+            &st.shown,
+            &st.thumb_made,
+            &st.thumb_failed,
+            st.thumb_want,
+            st.grid_shown,
+            st.grid_wait_over,
+            app,
+        );
     // `--snapshot-placeholder` waits for the camera's picture instead,
     // and for one standing in over a develop already on screen rather
     // than for the first file's own, which is up before anything has
@@ -1140,6 +1148,7 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
     st.thumb_base = kept.iter().map(|&i| st.thumb_base[i].take()).collect();
     st.thumb_shown = kept.iter().map(|&i| st.thumb_shown[i]).collect();
     st.thumb_made = kept.iter().map(|&i| st.thumb_made[i]).collect();
+    st.thumb_failed = kept.iter().map(|&i| st.thumb_failed[i]).collect();
     st.thumb_asked = kept.iter().map(|&i| st.thumb_asked[i]).collect();
     // The index's answers by the new numbering, and a pass over the
     // folder, which marks the moved frames' rows missing.
