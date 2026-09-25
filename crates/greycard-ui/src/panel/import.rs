@@ -257,7 +257,15 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         let path = |s: &str| (!s.is_empty()).then(|| PathBuf::from(s));
         // Where the last import went, else the desktop's pictures.
         if st.import.destination.is_none() {
-            st.import.destination = path(&kept.destination).or_else(dirs::picture_dir);
+            st.import.destination =
+                path(&kept.destination)
+                    .or_else(dirs::picture_dir)
+                    .or_else(|| {
+                        // A desktop with no user-dirs file still has one.
+                        dirs::home_dir()
+                            .map(|h| h.join("Pictures"))
+                            .filter(|p| p.is_dir())
+                    });
         }
         st.import.backup = path(&kept.backup);
         app.set_import_subfolder(kept.subfolder.into());
