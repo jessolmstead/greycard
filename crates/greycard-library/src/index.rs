@@ -83,6 +83,8 @@ pub struct Report {
     pub moved: usize,
     /// Files whose size or mtime changed, read again whole.
     pub changed: usize,
+    /// Those files, by path: whose pictures are to be made again.
+    pub changed_files: Vec<PathBuf>,
     /// Files unchanged whose sidecar changed: the meta written again.
     pub meta_refreshed: usize,
     /// Files whose row was right already.
@@ -117,6 +119,7 @@ impl Report {
         self.added += other.added;
         self.moved += other.moved;
         self.changed += other.changed;
+        self.changed_files.extend(other.changed_files);
         self.meta_refreshed += other.meta_refreshed;
         self.unchanged += other.unchanged;
         self.returned += other.returned;
@@ -141,6 +144,9 @@ pub struct TreeWalk {
     /// nothing under them is marked.
     shielded: Vec<Vec<u8>>,
     report: Report,
+    /// What a pass over the folder on top of `dirs` did before it
+    /// stopped partway, to be counted with the pass that finishes it.
+    partial: Option<Report>,
 }
 
 impl TreeWalk {
@@ -357,6 +363,7 @@ impl Library {
             visited: HashSet::new(),
             shielded: Vec::new(),
             report: Report::default(),
+            partial: None,
         })
     }
 
@@ -398,14 +405,22 @@ impl Library {
                 }
                 Err(e) => return Err(e),
             };
+            // The files a stopped pass over this folder already did are
+            // looked at again, and unchanged to the second look: counted
+            // once, as whatever the first look found them.
+            let mut one = one;
+            if let Some(partial) = walk.partial.take() {
+                one.unchanged = one.unchanged.saturating_sub(partial.seen());
+                one.add(partial);
+            }
             if one.stopped {
                 // Taken up again from this folder.
-                let mut one = one;
                 one.stopped = false;
-                walk.report.add(one);
+                walk.partial = Some(one);
                 walk.dirs.push(dir);
                 return Ok(walk.stopped());
             }
+
             if !one.unavailable.is_empty() {
                 walk.shielded.push(under_prefix(&path_bytes(&dir)));
             }
@@ -782,6 +797,7 @@ fn write_batch(
                     write_meta(&tx, row.id, sidecar.as_ref())?;
                 }
                 report.changed += 1;
+                report.changed_files.push(path.to_path_buf());
             }
             Plan::Fresh { hash, exif } => {
                 if let Some(row) = row_at(&tx, &key)? {
@@ -797,6 +813,7 @@ fn write_batch(
                             write_meta(&tx, row.id, sidecar.as_ref())?;
                         }
                         report.changed += 1;
+                        report.changed_files.push(path.to_path_buf());
                     }
                 } else if let Some((id, old_path)) = gone_by_hash(&tx, &hash, disk)? {
                     tx.prepare_cached(
@@ -2757,6 +2774,43 @@ pub(crate) mod tests {
         }
         assert_eq!(looked, 12, "each file looked at once");
         assert_eq!(lib.len().unwrap(), 12);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A walk stopped in the middle of a folder counts that folder's
+    /// files once when it is done, as the first look found them, not
+    /// again as unchanged to the second.
+    #[test]
+    fn a_walk_stopped_inside_a_folder_counts_its_files_once() {
+        let dir = scratch("tree-walk-once");
+        for i in 0..(BATCH + 10) {
+            write_frame(&dir.join(format!("f{i:03}.tif")), &R5, i as u16);
+        }
+        let mut lib = Library::open_in_memory().unwrap();
+        let mut walk = lib.tree_walk(&dir).unwrap();
+        let first = lib.walk_until(&mut walk, &mut |_| {}, &|| true).unwrap();
+        assert!(first.stopped, "stopped after the first batch");
+        let done = lib.walk_until(&mut walk, &mut |_| {}, &|| false).unwrap();
+        assert!(!done.stopped);
+        assert_eq!((done.added, done.unchanged), (BATCH + 10, 0), "{done:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A pass names the files it found changed, so a window makes
+    /// their pictures again and no others.
+    #[test]
+    fn a_pass_names_the_files_it_found_changed() {
+        let dir = scratch("changed-files");
+        write_frame(&dir.join("a.tif"), &R5, 1);
+        write_frame(&dir.join("b.tif"), &R6, 2);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        // A copy that finished: another length, another mtime.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        write_frame(&dir.join("b.tif"), &A7, 3);
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.changed, 1, "{report:?}");
+        assert_eq!(report.changed_files, [dir.join("b.tif")]);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }
