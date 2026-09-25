@@ -81,7 +81,10 @@ component LabelChip inherits Chip {
 
 // A facet's row: its caption, then its chips, scrolled sideways when
 // they run past the bar rather than wrapped. The caption goes first
-// and stays with them, so a row of numbers says what it counts.
+// and stays with them, so a row of numbers says what it counts. The
+// wheel scrolls it: Slint's Flickable moves sideways only for a drag
+// or Shift and the wheel, which most people would never find, so an
+// up-and-down turn over the row is taken as a sideways one.
 component FacetChips inherits Rectangle {
     in property <[FacetRow]> facets;
     in property <string> note;
@@ -89,9 +92,20 @@ component FacetChips inherits Rectangle {
     callback toggled(int, string);
     height: Theme.control-height - 4px;
     clip: true;
-    Flickable {
+    flick := Flickable {
         content-width: max(self.width, row.preferred-width);
         content-height: self.height;
+        TouchArea {
+            width: max(flick.width, row.preferred-width);
+            height: flick.height;
+            scroll-event(e) => {
+                if (row.preferred-width <= flick.width) {
+                    return reject;
+                }
+                flick.content-x = max(flick.width - row.preferred-width,
+                    min(0px, flick.content-x + (e.delta-x != 0px ? e.delta-x : e.delta-y)));
+                return accept;
+            }
         row := HorizontalLayout {
             spacing: Theme.space-1;
             alignment: start;
@@ -118,6 +132,7 @@ component FacetChips inherits Rectangle {
                 }
                 Rectangle { width: Theme.space-2; }
             }
+        }
         }
     }
 }

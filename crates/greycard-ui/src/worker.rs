@@ -1326,7 +1326,7 @@ impl Blame {
 
 /// A panic's message, which is a `&str` or a `String` for every
 /// `panic!` with a text, and nothing readable otherwise.
-fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
+pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
     payload
         .downcast_ref::<&str>()
         .map(|s| s.to_string())

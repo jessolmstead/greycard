@@ -431,12 +431,22 @@ impl Filter {
     }
 }
 
+/// A facet's chips `--filter` asked for, to be turned on once the
+/// index can name them: with `:` every value containing `value`,
+/// with `=` the value that is it, case aside, as the language reads
+/// the two on a text field; a number is equal either way.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Wanted {
+    pub facet: Facet,
+    pub value: String,
+    pub exact: bool,
+}
+
 /// `--filter` in the filter language, split: a camera, lens, iso,
 /// focal, date or keyword term with `:` or `=` is a facet's chips to
-/// turn on once the index can name them, by the value's text (or the
-/// number it equals); every other token is left for the text field,
-/// in its order.
-pub fn from_cli(text: &str) -> (String, Vec<(Facet, String)>) {
+/// turn on once the index can name them ([`Wanted`]); every other
+/// token is left for the text field, in its order.
+pub fn from_cli(text: &str) -> (String, Vec<Wanted>) {
     let mut rest = Vec::new();
     let mut wanted = Vec::new();
     for token in greycard_library::filter::tokens(text) {
@@ -444,13 +454,18 @@ pub fn from_cli(text: &str) -> (String, Vec<(Facet, String)>) {
             .find(|c: char| !c.is_ascii_alphabetic())
             .unwrap_or(token.len());
         let (name, after) = token.split_at(name_len);
-        let value = after
-            .strip_prefix(':')
-            .or_else(|| after.strip_prefix('='))
-            .map(|v| v.trim_matches('"'));
-        match (Facet::from_field(name), value) {
+        let (value, exact) = match (after.strip_prefix(':'), after.strip_prefix('=')) {
+            (Some(v), _) => (Some(v), false),
+            (None, Some(v)) => (Some(v), true),
+            (None, None) => (None, false),
+        };
+        match (Facet::from_field(name), value.map(|v| v.trim_matches('"'))) {
             (Some(facet), Some(v)) if !v.is_empty() && !v.starts_with('=') => {
-                wanted.push((facet, v.to_string()));
+                wanted.push(Wanted {
+                    facet,
+                    value: v.to_string(),
+                    exact,
+                });
             }
             _ => rest.push(token),
         }
@@ -966,23 +981,29 @@ mod tests {
     /// the text field's.
     #[test]
     fn the_command_line_filter_splits_into_chips_and_text() {
+        let want = |facet, value: &str, exact| Wanted {
+            facet,
+            value: value.to_string(),
+            exact,
+        };
         let (text, wanted) = from_cli("camera:R6 iso>=3200 rating>=3 focal=50mm harbor");
         assert_eq!(text, "iso>=3200 rating>=3 harbor");
         assert_eq!(
             wanted,
             vec![
-                (Facet::Camera, "R6".to_string()),
-                (Facet::Focal, "50mm".to_string())
+                want(Facet::Camera, "R6", false),
+                want(Facet::Focal, "50mm", true)
             ]
         );
-        let (text, wanted) = from_cli("lens:\"RF 50mm\" date:2026-09 kw:dusk");
+        let (text, wanted) = from_cli("lens:\"RF 50mm\" date:2026-09 kw:dusk camera=\"EOS R5\"");
         assert_eq!(text, "");
         assert_eq!(
             wanted,
             vec![
-                (Facet::Lens, "RF 50mm".to_string()),
-                (Facet::Date, "2026-09".to_string()),
-                (Facet::Keyword, "dusk".to_string())
+                want(Facet::Lens, "RF 50mm", false),
+                want(Facet::Date, "2026-09", false),
+                want(Facet::Keyword, "dusk", false),
+                want(Facet::Camera, "EOS R5", true)
             ]
         );
         // Not a facet, or not a chip's operator: text.

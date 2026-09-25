@@ -67,6 +67,9 @@ i-slint-backend-testing = "1.18"
 pollster = "0.4"
 # Frames with real EXIF, for the library index's tests.
 greycard-library = { path = "../greycard-library", features = ["fixtures"] }
+# A second connection that holds the library's write lock, for the
+# test of a locked index. The library's own, so nothing new in the tree.
+rusqlite = { version = "0.37", features = ["bundled"] }
 
 # The file chooser portal and colord are the desktop's on Linux.
 # zbus needs an async runtime named even where only its blocking API

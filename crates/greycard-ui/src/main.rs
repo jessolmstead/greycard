@@ -409,9 +409,24 @@ pub(crate) struct State {
     /// How far that pass is, while it runs.
     pub(crate) index_progress: Option<(usize, usize)>,
     /// `--filter`'s facet terms, chosen when the pass is done.
-    pub(crate) facets_wanted: Vec<(filter::Facet, String)>,
+    pub(crate) facets_wanted: Vec<filter::Wanted>,
     /// A capture waits for those to be chosen.
     pub(crate) awaiting_index: bool,
+    /// Where the indexer opened the library, for the window's own
+    /// read-only connection, tried again while it will not open.
+    pub(crate) index_path: Option<PathBuf>,
+    /// What the facets' row says instead of its note when the index
+    /// is busy or unavailable.
+    pub(crate) index_error: Option<String>,
+    /// Passes over this folder that have failed in a row; asked
+    /// again a few times before the window gives up on it.
+    pub(crate) index_tries: u32,
+    /// `index_passed` was just answered for this filter, and the list
+    /// about to be made need not ask again.
+    pub(crate) index_pass_ready: bool,
+    /// The facets' counts as last read, kept when a read comes back
+    /// busy.
+    pub(crate) facets_last: RefCell<Vec<(filter::Facet, Vec<greycard_library::FacetCount>)>>,
     /// The compare view's tiles on the view, one model for the life
     /// of the window, as the handles' are.
     pub(crate) compare_tiles: Rc<VecModel<CompareTile>>,
@@ -705,6 +720,11 @@ impl State {
             index_progress: None,
             facets_wanted: Vec::new(),
             awaiting_index: false,
+            index_path: None,
+            index_error: None,
+            index_tries: 0,
+            index_pass_ready: false,
+            facets_last: RefCell::new(Vec::new()),
             compare_tiles: Rc::new(VecModel::default()),
             select_at_start: None,
             also_at_start: Vec::new(),

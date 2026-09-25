@@ -215,6 +215,15 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         None => (filter::Filter::default(), Vec::new()),
         Some(name) => match filter::Filter::from_name(name) {
             Some(found) => (found, Vec::new()),
+            // One of the three names in the wrong case is a mistyped
+            // name, as it always was, and not a word to look for.
+            None if filter::Filter::NAMES
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(name)) =>
+            {
+                tracing::warn!("--filter {name}: want All, Picks or \"No rejects\"; showing all");
+                (filter::Filter::default(), Vec::new())
+            }
             None => {
                 let (text, wanted) = filter::from_cli(name);
                 let filter = filter::Filter {
@@ -382,7 +391,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     {
         Some(path) => {
             let app_weak = app.as_weak();
-            let indexer = crate::library::Indexer::start(path, move |told| {
+            let started = crate::library::Indexer::start(path, move |told| {
                 let app_weak = app_weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(app) = app_weak.upgrade() {
@@ -391,8 +400,16 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 });
             });
             let mut st = state.borrow_mut();
-            st.index = Some(indexer);
-            crate::library::index_open_folder(&mut st);
+            match started {
+                Ok(indexer) => {
+                    st.index = Some(indexer);
+                    crate::library::index_open_folder(&mut st);
+                }
+                Err(e) => {
+                    tracing::warn!("no library index: the indexer did not start: {e}");
+                    st.awaiting_index = false;
+                }
+            }
             crate::panel::cull::show_filter(&st, &app);
         }
         None => {
@@ -1084,6 +1101,17 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // The window is closed: the worker finishes what it is in the
     // middle of and puts its buffers down before the process goes.
     worker.stop();
+    // And the index's two connections close, the indexer's pass
+    // stopping at its next batch, so the write-ahead log and its
+    // index are folded in and removed rather than left beside the
+    // library.
+    {
+        let mut st = state.borrow_mut();
+        st.index_reader = None;
+        if let Some(indexer) = st.index.take() {
+            indexer.stop(worker::LEAVING);
+        }
+    }
 
     // The panel's choices, for the next run. Not from a screenshot or
     // a batch export, which should leave the user's alone. The last

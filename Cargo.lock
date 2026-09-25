@@ -2136,6 +2136,7 @@ dependencies = [
  "pollster",
  "rayon",
  "rfd",
+ "rusqlite",
  "serde",
  "serde_json",
  "slint",

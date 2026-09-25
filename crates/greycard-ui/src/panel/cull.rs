@@ -1286,22 +1286,23 @@ pub(crate) fn say_if_empty(st: &State, app: &App) {
 /// a word typed is a dozen filters of which only the last was meant,
 /// so that path goes to debug through [`apply_filter_typed`].
 pub(crate) fn apply_filter(state: &Rc<RefCell<State>>, app: &App) {
-    apply_filter_said(state, app, true);
+    apply_filter_said(state, app, true, true);
 }
 
 /// The same, for a character typed into the text field.
 fn apply_filter_typed(state: &Rc<RefCell<State>>, app: &App) {
-    apply_filter_said(state, app, false);
+    apply_filter_said(state, app, false, true);
 }
 
 /// The same, for the index having moved under the filter: a pass
 /// has reached more of the folder, or a row was written after a
 /// save. `settled` when it is worth the log's line.
 pub(crate) fn refilter(state: &Rc<RefCell<State>>, app: &App, settled: bool) {
-    apply_filter_said(state, app, settled);
+    // The index moving is no reason to say a typing mistake again.
+    apply_filter_said(state, app, settled, false);
 }
 
-fn apply_filter_said(state: &Rc<RefCell<State>>, app: &App, settled: bool) {
+fn apply_filter_said(state: &Rc<RefCell<State>>, app: &App, settled: bool, say_errors: bool) {
     let mut st = state.borrow_mut();
     let next = rebuild_browser(&mut st, app);
     let (what, shown, count) = (st.filter.describe(), st.shown.len(), st.files.len());
@@ -1313,7 +1314,7 @@ fn apply_filter_said(state: &Rc<RefCell<State>>, app: &App, settled: bool) {
     say_if_empty(&st, app);
     // A term typed that does not parse is looked for as a word, as
     // it was before the field took terms, and the reason is said.
-    if let Some(e) = st.filter.typed().errors.first() {
+    if say_errors && let Some(e) = st.filter.typed().errors.first() {
         app.set_status(format!("filter: {e}").into());
     }
     match next {

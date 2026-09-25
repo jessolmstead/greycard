@@ -6,17 +6,27 @@
 //! Two connections. The indexer's thread holds the one that writes:
 //! `index_folder` when a folder opens and `index_file` after a save,
 //! neither on the UI thread, so the first frame never waits for a
-//! pass. The UI thread holds one opened read-only once the indexer
-//! has made the file, and asks it the filter's questions — which
-//! frames pass the EXIF tests, and each facet's `GROUP BY` — which
-//! under write-ahead logging never waits for the writer. A folder of
-//! a few thousand frames is milliseconds a question.
+//! pass. A pass stops between batches when the window has moved to
+//! another folder, or when a save's row is waiting, and takes up
+//! again after. The UI thread holds one opened read-only once the
+//! indexer has made the file, and asks it the filter's questions —
+//! which frames pass the EXIF tests, and each facet's `GROUP BY`. Its
+//! busy timeout is a few milliseconds: under write-ahead logging a
+//! reader waits only while the log is recovered or checkpointed, and
+//! the window keeps its last answer then rather than wait.
+//!
+//! The keyword's chips are counted from the sidecars in hand, as the
+//! meta rows are: the keyword is the sidecar's, the window has it
+//! before any row does, and under `--no-sidecars` the rows say what
+//! the disk says and the window does not.
 //!
 //! The database is the user's, `Library::user_path()`, unless
-//! `--library` names another. A test never starts an indexer: it
-//! opens a library of its own in its own directory, and the state it
-//! builds has none.
+//! `--library` names another. A test never starts an indexer on it:
+//! it opens a library of its own in its own directory, and the state
+//! it builds has none.
 
+use std::collections::{BTreeMap, HashSet};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -35,6 +45,19 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(250);
 /// and the rest are a term away in the text field (`focal:70`).
 pub(crate) const CHIPS_A_FACET: usize = 12;
 
+/// How long the window's reads wait on a lock before keeping the
+/// last answer.
+const READ_WAIT: Duration = Duration::from_millis(20);
+
+/// A pass that failed — the library locked by another process past
+/// its timeout, say — is asked again this long after, this many
+/// times, before the window says the index is unavailable.
+const RETRY_AFTER: Duration = Duration::from_secs(2);
+const RETRIES: u32 = 5;
+
+/// The generation that stops every pass: the editor is leaving.
+const LEAVING: u64 = u64::MAX;
+
 /// What the window asks of the indexer.
 enum Ask {
     /// Index these folders, the generation saying which open asked.
@@ -48,7 +71,8 @@ enum Ask {
 pub(crate) enum Told {
     /// The library is open, at this path; the window may read it.
     Opened(PathBuf),
-    /// It could not be opened, and nothing will be indexed.
+    /// It could not be opened, or the thread died, and nothing more
+    /// will be indexed this session.
     Failed(String),
     /// A pass is `done` files of `total` into the folders asked for.
     Progress {
@@ -56,11 +80,14 @@ pub(crate) enum Told {
         done: usize,
         total: usize,
     },
-    /// The folders asked for are indexed.
+    /// The folders asked for are indexed, or the pass over one of
+    /// them failed with `error` — the library locked, most likely —
+    /// and the rest were done.
     Indexed {
         generation: u64,
         report: Report,
         seconds: f64,
+        error: Option<String>,
     },
     /// Rows after saves are up to date.
     FilesIndexed,
@@ -69,43 +96,106 @@ pub(crate) enum Told {
 /// The indexer's thread, and the way to ask it things.
 pub(crate) struct Indexer {
     asks: mpsc::Sender<Ask>,
-    /// Never joined in a session: a pass under way when the editor
-    /// leaves is left, its batches committed and the index whole.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// The folder pass the window wants. A pass for any other stops
+    /// at its next batch.
+    wanted: Arc<AtomicU64>,
+    /// Saves whose rows are waiting: a pass stops at its next batch
+    /// to let them through, and takes up again after.
+    files_waiting: Arc<AtomicUsize>,
     thread: std::thread::JoinHandle<()>,
 }
 
 impl Indexer {
     /// Open the library at `path` on a thread of its own and wait
     /// there for folders and files. `told` is called on that thread.
-    pub(crate) fn start(path: PathBuf, told: impl Fn(Told) + Send + 'static) -> Indexer {
+    pub(crate) fn start(
+        path: PathBuf,
+        told: impl Fn(Told) + Send + 'static,
+    ) -> std::io::Result<Indexer> {
         let (asks, waiting) = mpsc::channel();
+        let wanted = Arc::new(AtomicU64::new(0));
+        let files_waiting = Arc::new(AtomicUsize::new(0));
+        let (w, f) = (wanted.clone(), files_waiting.clone());
         let thread = std::thread::Builder::new()
             .name("greycard index".into())
-            .spawn(move || run(path, waiting, told))
-            .expect("spawning the indexer");
-        Indexer { asks, thread }
-    }
-
-    /// Stop asking and wait for the thread to put the library down:
-    /// a test's directory cannot go while the file is open on
-    /// Windows.
-    #[cfg(test)]
-    fn join(self) {
-        drop(self.asks);
-        self.thread.join().expect("the indexer ends");
+            .spawn(move || run(path, waiting, told, w, f))?;
+        Ok(Indexer {
+            asks,
+            wanted,
+            files_waiting,
+            thread,
+        })
     }
 
     pub(crate) fn folders(&self, dirs: Vec<PathBuf>, generation: u64) {
+        self.wanted.store(generation, Ordering::SeqCst);
         let _ = self.asks.send(Ask::Folders { dirs, generation });
     }
 
     pub(crate) fn file(&self, path: PathBuf) {
-        let _ = self.asks.send(Ask::File(path));
+        self.files_waiting.fetch_add(1, Ordering::SeqCst);
+        if self.asks.send(Ask::File(path)).is_err() {
+            self.files_waiting.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Stop the pass at its next batch, and wait up to `within` for
+    /// the thread to put the library down, so its connection closes
+    /// and the write-ahead log and its index go with it: a test's
+    /// directory cannot be removed while the file is open on
+    /// Windows, and a session should not leave the two files behind.
+    pub(crate) fn stop(self, within: Duration) {
+        self.wanted.store(LEAVING, Ordering::SeqCst);
+        drop(self.asks);
+        let asked = Instant::now();
+        while !self.thread.is_finished() && asked.elapsed() < within {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if self.thread.is_finished() {
+            let _ = self.thread.join();
+        } else {
+            tracing::warn!("index: still busy on the way out; leaving it");
+        }
     }
 }
 
-fn run(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: impl Fn(Told)) {
+/// The thread's body, a panic in it said to the window rather than
+/// leaving it waiting on a pass that will never end. The probe
+/// catches a decoder's panic at the file already; this is for
+/// everything else.
+fn run(
+    path: PathBuf,
+    waiting: mpsc::Receiver<Ask>,
+    told: impl Fn(Told),
+    wanted: Arc<AtomicU64>,
+    files_waiting: Arc<AtomicUsize>,
+) {
+    let told = &told;
+    let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        serve(path, waiting, told, &wanted, &files_waiting)
+    }));
+    if let Err(payload) = held {
+        told(Told::Failed(format!(
+            "the indexer panicked: {}",
+            crate::worker::panic_message(payload.as_ref())
+        )));
+    }
+}
+
+/// A folder pass under way, kept across the saves it stops for.
+struct Pass {
+    dirs: Vec<PathBuf>,
+    generation: u64,
+    started: Instant,
+}
+
+fn serve(
+    path: PathBuf,
+    waiting: mpsc::Receiver<Ask>,
+    told: &dyn Fn(Told),
+    wanted: &AtomicU64,
+    files_waiting: &AtomicUsize,
+) {
     let mut lib = match Library::open(&path) {
         Ok(lib) => lib,
         Err(e) => {
@@ -114,20 +204,40 @@ fn run(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: impl Fn(Told)) {
         }
     };
     told(Told::Opened(path));
-    while let Ok(first) = waiting.recv() {
+    let mut pending: Option<Pass> = None;
+    loop {
+        if wanted.load(Ordering::SeqCst) == LEAVING {
+            return;
+        }
+        // With a pass to take up again, only what is already
+        // waiting; with none, wait for the next ask.
+        let first = if pending.is_some() {
+            waiting.try_recv().ok()
+        } else {
+            match waiting.recv() {
+                Ok(ask) => Some(ask),
+                Err(_) => return,
+            }
+        };
         // Everything waiting, at once: the files deduplicated, and
-        // only the newest folders asked for, since a folder the
-        // window has already left is nobody's question.
+        // of the folders only the newest, since a folder the window
+        // has already left is nobody's question.
         let mut files: Vec<PathBuf> = Vec::new();
-        let mut folders = None;
-        for ask in std::iter::once(first).chain(waiting.try_iter()) {
+        for ask in first.into_iter().chain(waiting.try_iter()) {
             match ask {
                 Ask::File(p) => {
+                    files_waiting.fetch_sub(1, Ordering::SeqCst);
                     if !files.contains(&p) {
                         files.push(p);
                     }
                 }
-                Ask::Folders { dirs, generation } => folders = Some((dirs, generation)),
+                Ask::Folders { dirs, generation } => {
+                    pending = Some(Pass {
+                        dirs,
+                        generation,
+                        started: Instant::now(),
+                    });
+                }
             }
         }
         if !files.is_empty() {
@@ -138,27 +248,39 @@ fn run(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: impl Fn(Told)) {
             }
             told(Told::FilesIndexed);
         }
-        let Some((dirs, generation)) = folders else {
+        let Some(pass) = pending.take() else {
             continue;
         };
-        let started = Instant::now();
+        let generation = pass.generation;
+        if wanted.load(Ordering::SeqCst) != generation {
+            continue;
+        }
+        let stop = || {
+            wanted.load(Ordering::SeqCst) != generation || files_waiting.load(Ordering::SeqCst) > 0
+        };
         let mut report = Report::default();
+        let mut error = None;
         let mut last = Instant::now();
         let mut before = 0;
-        for dir in &dirs {
-            let passed = lib.index_folder(dir, &mut |p| {
-                if last.elapsed() >= PROGRESS_EVERY {
-                    last = Instant::now();
-                    told(Told::Progress {
-                        generation,
-                        done: before + p.done,
-                        total: before + p.total,
-                    });
-                }
-            });
+        for dir in &pass.dirs {
+            let passed = lib.index_folder_until(
+                dir,
+                &mut |p| {
+                    if last.elapsed() >= PROGRESS_EVERY {
+                        last = Instant::now();
+                        told(Told::Progress {
+                            generation,
+                            done: before + p.done,
+                            total: before + p.total,
+                        });
+                    }
+                },
+                &stop,
+            );
             match passed {
                 Ok(r) => {
                     before += r.seen();
+                    let stopped = r.stopped;
                     report.added += r.added;
                     report.moved += r.moved;
                     report.changed += r.changed;
@@ -168,14 +290,31 @@ fn run(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: impl Fn(Told)) {
                     report.missing += r.missing;
                     report.unavailable.extend(r.unavailable);
                     report.errors.extend(r.errors);
+                    if stopped {
+                        report.stopped = true;
+                        break;
+                    }
                 }
-                Err(e) => tracing::warn!("index: {}: {e}", dir.display()),
+                Err(e) => {
+                    tracing::warn!("index: {}: {e}", dir.display());
+                    error = Some(e.to_string());
+                }
             }
+        }
+        if report.stopped {
+            // For a save: taken up again once its row is written,
+            // the files already done passing as unchanged. For a
+            // folder since left: dropped.
+            if wanted.load(Ordering::SeqCst) == generation {
+                pending = Some(pass);
+            }
+            continue;
         }
         told(Told::Indexed {
             generation,
             report,
-            seconds: started.elapsed().as_secs_f64(),
+            seconds: pass.started.elapsed().as_secs_f64(),
+            error,
         });
     }
 }
@@ -218,18 +357,56 @@ pub(crate) fn sidecar_written(st: &State, file: usize) {
     }
 }
 
+/// The window's read-only connection, opened once the indexer has
+/// made the file, and tried again at each word from the indexer
+/// while it will not open.
+fn open_reader(st: &mut State) {
+    let Some(path) = st.index_path.clone() else {
+        return;
+    };
+    if st.index_reader.is_some() {
+        return;
+    }
+    let opened = Library::open_read_only(&path).and_then(|lib| {
+        lib.set_busy_timeout(READ_WAIT)?;
+        Ok(lib)
+    });
+    match opened {
+        Ok(lib) => {
+            st.index_reader = Some(lib);
+            if st.index_error.as_deref() == Some(READER_UNAVAILABLE) {
+                st.index_error = None;
+            }
+        }
+        Err(e) => {
+            tracing::warn!("library index {}: {e}", path.display());
+            st.index_error = Some(READER_UNAVAILABLE.to_string());
+        }
+    }
+}
+
+const READER_UNAVAILABLE: &str = "The library index could not be read";
+
 /// Each file's row id, as the index holds it now; `None` for a file
 /// it has no row for yet, and for every file while there is no index.
+/// A read that fails — busy past its few milliseconds — keeps the
+/// last answer.
 pub(crate) fn refresh_ids(st: &mut State) {
     let started = Instant::now();
     let Some(lib) = &st.index_reader else {
         st.index_ids = vec![None; st.files.len()];
         return;
     };
-    st.index_ids = lib.ids_of(&st.files).unwrap_or_else(|e| {
-        tracing::warn!("index: {e}");
-        vec![None; st.files.len()]
-    });
+    match lib.ids_of(&st.files) {
+        Ok(ids) => st.index_ids = ids,
+        Err(e) => {
+            tracing::debug!("index: {e}; keeping the last answer");
+            if st.index_ids.len() != st.files.len() {
+                st.index_ids = vec![None; st.files.len()];
+            }
+            return;
+        }
+    }
     tracing::debug!(
         "index: {} of {} frames have rows, read in {:.1} ms",
         st.index_ids.iter().flatten().count(),
@@ -241,7 +418,8 @@ pub(crate) fn refresh_ids(st: &mut State) {
 /// Which frames the index's tests pass, as [`filter::Frame::index`]
 /// reads them: every frame when nothing is asked of the index, or
 /// there is none; else a frame with a row passes when the row does,
-/// and a frame with none passes until it has one.
+/// and a frame with none passes until it has one. A failed read
+/// keeps the last answer.
 pub(crate) fn index_pass(st: &State) -> Vec<bool> {
     let typed = st.filter.typed();
     let everyone = vec![true; st.files.len()];
@@ -267,80 +445,139 @@ pub(crate) fn index_pass(st: &State) -> Vec<bool> {
                 .collect()
         }
         Err(e) => {
-            tracing::warn!("index: {e}");
-            everyone
+            tracing::debug!("index: {e}; keeping the last answer");
+            if st.index_passed.len() == st.files.len() {
+                st.index_passed.clone()
+            } else {
+                everyone
+            }
         }
     }
+}
+
+/// The keyword's chips, from the sidecars in hand: each keyword,
+/// case folded, and how many frames hold it among those the other
+/// groups leave — the meta tests, and the index's as the list was
+/// last made. The chip shows the first spelling met, in file order.
+fn keyword_counts(st: &State, typed: &filter::Typed) -> Vec<FacetCount> {
+    let mut by: BTreeMap<String, (String, usize)> = BTreeMap::new();
+    for (i, (path, s)) in st.files.iter().zip(&st.sidecars).enumerate() {
+        let frame = filter::Frame {
+            path,
+            meta: &s.meta,
+            index: st.index_passed.get(i).copied().unwrap_or(true),
+        };
+        if !frame.index || !st.filter.shows_meta(typed, frame, false) {
+            continue;
+        }
+        let mut seen = HashSet::new();
+        for word in &s.meta.keywords {
+            let folded = word.to_lowercase();
+            if seen.insert(folded.clone()) {
+                by.entry(folded).or_insert_with(|| (word.clone(), 0)).1 += 1;
+            }
+        }
+    }
+    let mut counts: Vec<FacetCount> = by
+        .into_iter()
+        .map(|(value, (label, count))| FacetCount {
+            value,
+            label,
+            count,
+        })
+        .collect();
+    counts.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.value.cmp(&b.value)));
+    counts
 }
 
 /// Every facet's chips: each value among the frames the filter's
-/// other tests leave, with its count, one `GROUP BY` a facet — the
-/// rule the meta rows keep (`filter::Counts`), asked of the index.
-/// The tests the sidecars answer pick the rows (`within`); the
-/// index's own tests, less the facet's, are the query's filter.
+/// other tests leave, with its count — the rule the meta rows keep
+/// (`filter::Counts`). The EXIF facets are one `GROUP BY` each on
+/// the index: the tests the sidecars answer pick the rows
+/// (`within`), and the index's own tests, less the facet's, are the
+/// query's filter. The keyword is counted from the sidecars. A read
+/// that fails keeps the last answer.
 pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
+    let typed = st.filter.typed();
+    let keywords = (Facet::Keyword, keyword_counts(st, &typed));
     let Some(lib) = &st.index_reader else {
-        return Vec::new();
+        return vec![keywords];
     };
     if st.index_ids.len() != st.files.len() {
-        return Vec::new();
+        return vec![keywords];
     }
-    let typed = st.filter.typed();
-    let within = |keyword: bool| -> Vec<i64> {
-        st.files
-            .iter()
-            .zip(&st.sidecars)
-            .zip(&st.index_ids)
-            .filter_map(|((path, s), id)| {
-                let frame = filter::Frame {
-                    path,
-                    meta: &s.meta,
-                    index: true,
-                };
-                id.filter(|_| st.filter.shows_meta(&typed, frame, keyword))
-            })
-            .collect()
-    };
-    let all_meta = within(true);
+    let within: Vec<i64> = st
+        .files
+        .iter()
+        .zip(&st.sidecars)
+        .zip(&st.index_ids)
+        .filter_map(|((path, s), id)| {
+            let frame = filter::Frame {
+                path,
+                meta: &s.meta,
+                index: true,
+            };
+            id.filter(|_| st.filter.shows_meta(&typed, frame, true))
+        })
+        .collect();
     let mut rows = Vec::new();
     for facet in Facet::ALL {
-        let (ids, asked) = if facet == Facet::Keyword {
-            (within(false), st.filter.index_filter(&typed, None))
-        } else {
-            (
-                all_meta.clone(),
-                st.filter.index_filter(&typed, Some(facet)),
-            )
-        };
-        match lib.facet_counts(facet, Some(&ids), &asked) {
+        if facet == Facet::Keyword {
+            continue;
+        }
+        let asked = st.filter.index_filter(&typed, Some(facet));
+        match lib.facet_counts(facet, Some(&within), &asked) {
             Ok(counts) => rows.push((facet, counts)),
-            Err(e) => tracing::warn!("index: {facet:?}: {e}"),
+            Err(e) => {
+                tracing::debug!("index: {facet:?}: {e}; keeping the last answer");
+                let mut last = st.facets_last.borrow().clone();
+                last.retain(|(f, _)| *f != Facet::Keyword);
+                last.push(keywords);
+                return last;
+            }
         }
     }
+    rows.push(keywords);
+    *st.facets_last.borrow_mut() = rows.clone();
     rows
 }
 
-/// A facet's chips as the bar shows them: at most
-/// [`CHIPS_A_FACET`], the most held first, the chips on kept
-/// whatever their count — a chip on with nothing left under it is
-/// how the filter is undone — and then in the facet's own order.
-pub(crate) fn chips_of(facet: Facet, counts: &[FacetCount], on: &[String]) -> Vec<FacetChip> {
-    let mut kept: Vec<&FacetCount> = counts.iter().collect();
-    if kept.len() > CHIPS_A_FACET {
-        let mut by_count = kept.clone();
-        by_count.sort_by_key(|c| std::cmp::Reverse(c.count));
-        let cut = by_count[CHIPS_A_FACET - 1].count;
-        let mut room = CHIPS_A_FACET;
-        kept.retain(|c| {
-            let keep = on.contains(&c.value) || (c.count >= cut && room > 0);
-            if keep && !on.contains(&c.value) {
-                room -= 1;
+/// A facet's chips as the bar shows them: at most [`CHIPS_A_FACET`]
+/// of the values not on — every value held more often than the
+/// twelfth most held, then as many of those tied with it as there is
+/// room for, in the facet's order — and every value on, whatever its
+/// count, a value no frame holds any more among them at zero, since
+/// a chip on is how the filter is undone. `label_of` names such a
+/// value. The chips stand in the facet's own order.
+pub(crate) fn chips_of(
+    facet: Facet,
+    counts: &[FacetCount],
+    on: &[String],
+    label_of: &dyn Fn(&str) -> String,
+) -> Vec<FacetChip> {
+    let off: Vec<&FacetCount> = counts.iter().filter(|c| !on.contains(&c.value)).collect();
+    let keep: HashSet<&str> = if off.len() > CHIPS_A_FACET {
+        let mut by_count: Vec<usize> = off.iter().map(|c| c.count).collect();
+        by_count.sort_unstable_by(|a, b| b.cmp(a));
+        let cut = by_count[CHIPS_A_FACET - 1];
+        let mut keep: HashSet<&str> = off
+            .iter()
+            .filter(|c| c.count > cut)
+            .map(|c| c.value.as_str())
+            .collect();
+        for c in off.iter().filter(|c| c.count == cut) {
+            if keep.len() >= CHIPS_A_FACET {
+                break;
             }
-            keep
-        });
-    }
-    let mut chips: Vec<FacetChip> = kept
+            keep.insert(&c.value);
+        }
+        keep
+    } else {
+        off.iter().map(|c| c.value.as_str()).collect()
+    };
+    let mut chips: Vec<FacetChip> = counts
         .iter()
+        .filter(|c| on.contains(&c.value) || keep.contains(c.value.as_str()))
         .map(|c| FacetChip {
             text: filter::facet_chip_text(facet, &c.label).into(),
             key: c.value.clone().into(),
@@ -351,7 +588,7 @@ pub(crate) fn chips_of(facet: Facet, counts: &[FacetCount], on: &[String]) -> Ve
     for value in on {
         if !counts.iter().any(|c| c.value == *value) {
             chips.push(FacetChip {
-                text: filter::facet_chip_text(facet, value).into(),
+                text: filter::facet_chip_text(facet, &label_of(value)).into(),
                 key: value.clone().into(),
                 count: 0,
                 on: true,
@@ -373,11 +610,25 @@ pub(crate) fn facet_rows(st: &State) -> Vec<FacetRow> {
             started.elapsed().as_secs_f64() * 1e3
         );
     }
+    // A keyword on that no frame the others leave holds is named as
+    // some sidecar in the folder spells it, not folded.
+    let label_of = |value: &str| -> String {
+        st.sidecars
+            .iter()
+            .flat_map(|s| s.meta.keywords.iter())
+            .find(|k| k.to_lowercase() == value)
+            .cloned()
+            .unwrap_or_else(|| value.to_string())
+    };
     counts
         .into_iter()
         .filter_map(|(facet, counts)| {
             let on = st.filter.chosen(facet);
-            let chips = chips_of(facet, &counts, on);
+            let chips = if facet == Facet::Keyword {
+                chips_of(facet, &counts, on, &label_of)
+            } else {
+                chips_of(facet, &counts, on, &|v| v.to_string())
+            };
             (!chips.is_empty()).then(|| FacetRow {
                 name: filter::facet_caption(facet).into(),
                 code: filter::facet_slot(facet) as i32,
@@ -389,6 +640,9 @@ pub(crate) fn facet_rows(st: &State) -> Vec<FacetRow> {
 
 /// What the facets' row says while it has no chips.
 pub(crate) fn facet_note(st: &State) -> String {
+    if let Some(e) = &st.index_error {
+        return e.clone();
+    }
     match (&st.index_reader, st.index_progress) {
         (_, Some((done, total))) => format!("Indexing the folder: {done} of {total}"),
         (Some(_), None) => "No camera, lens or date in these files' EXIF".to_string(),
@@ -398,46 +652,53 @@ pub(crate) fn facet_note(st: &State) -> String {
 }
 
 /// The facets `--filter` named, chosen once the index has rows to
-/// choose them from: a text facet's value by what it contains, a
-/// number's by what it equals, among the values the open frames
-/// hold. True when something was chosen.
+/// choose them from, among the values the open frames hold: with
+/// `:` a text facet's value by what it contains, with `=` by what it
+/// is, case aside; a number's by what it equals either way. True
+/// when something was chosen.
 pub(crate) fn choose_wanted(st: &mut State) -> bool {
     let wanted = std::mem::take(&mut st.facets_wanted);
-    let Some(lib) = &st.index_reader else {
-        return false;
-    };
     let ids: Vec<i64> = st.index_ids.iter().flatten().copied().collect();
     let mut chose = false;
-    for (facet, needle) in wanted {
-        let counts = match lib.facet_counts(facet, Some(&ids), &greycard_library::Filter::default())
-        {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::warn!("index: {e}");
+    for want in wanted {
+        let counts = if want.facet == Facet::Keyword {
+            keyword_counts(st, &filter::Typed::default())
+        } else {
+            let Some(lib) = &st.index_reader else {
                 continue;
+            };
+            match lib.facet_counts(want.facet, Some(&ids), &greycard_library::Filter::default()) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!("index: {e}");
+                    continue;
+                }
             }
         };
-        let needle_l = needle.to_lowercase();
+        let needle = want.value.to_lowercase();
         let number = |s: &str| s.trim().trim_end_matches("mm").parse::<f64>().ok();
         let hits: Vec<String> = counts
             .into_iter()
-            .filter(|c| match facet {
+            .filter(|c| match want.facet {
                 Facet::Iso | Facet::Focal => {
-                    number(&c.value).is_some() && number(&c.value) == number(&needle)
+                    number(&c.value).is_some() && number(&c.value) == number(&want.value)
                 }
-                _ => c.value.to_lowercase().contains(&needle_l),
+                _ if want.exact => c.value.to_lowercase() == needle,
+                _ => c.value.to_lowercase().contains(&needle),
             })
             .map(|c| c.value)
             .collect();
         if hits.is_empty() {
             tracing::warn!(
-                "--filter {}:{needle}: no frame here holds it",
-                facet.field()
+                "--filter {}{}{}: no frame here holds it",
+                want.facet.field(),
+                if want.exact { "=" } else { ":" },
+                want.value
             );
         }
         for value in hits {
-            if !st.filter.chosen(facet).contains(&value) {
-                st.filter.toggle_facet(facet, &value);
+            if !st.filter.chosen(want.facet).contains(&value) {
+                st.filter.toggle_facet(want.facet, &value);
                 chose = true;
             }
         }
@@ -450,18 +711,14 @@ pub(crate) fn told(app: &App, told: Told) {
     let Some(state) = crate::STATE.with(|s| s.borrow().clone()) else {
         return;
     };
+    // A reader that would not open is tried again at every word.
+    open_reader(&mut state.borrow_mut());
     match told {
         Told::Opened(path) => {
             tracing::info!("library index {}", path.display());
-            let reader = Library::open_read_only(&path);
             let mut st = state.borrow_mut();
-            match reader {
-                Ok(lib) => st.index_reader = Some(lib),
-                Err(e) => {
-                    tracing::warn!("library index {}: {e}", path.display());
-                    st.awaiting_index = false;
-                }
-            }
+            st.index_path = Some(path);
+            open_reader(&mut st);
             drop(st);
             reread(&state, app, false);
         }
@@ -470,6 +727,7 @@ pub(crate) fn told(app: &App, told: Told) {
             let mut st = state.borrow_mut();
             st.index = None;
             st.index_progress = None;
+            st.index_error = Some(format!("No library index: {message}"));
             st.awaiting_index = false;
             crate::panel::cull::show_filter(&st, app);
             app.window().request_redraw();
@@ -489,6 +747,7 @@ pub(crate) fn told(app: &App, told: Told) {
             generation,
             report,
             seconds,
+            error,
         } => {
             if generation != state.borrow().index_generation {
                 return;
@@ -512,6 +771,36 @@ pub(crate) fn told(app: &App, told: Told) {
                 tracing::debug!("index: {}: {e}", path.display());
             }
             let mut st = state.borrow_mut();
+            if let Some(e) = error {
+                st.index_tries += 1;
+                if st.index_tries <= RETRIES {
+                    // Busy, most likely: said, and asked again in a
+                    // moment. A capture waiting on the chips waits on.
+                    st.index_error = Some(format!("Library index busy; trying again ({e})"));
+                    st.index_progress = None;
+                    let app_weak = app.as_weak();
+                    slint::Timer::single_shot(RETRY_AFTER, move || {
+                        let Some(app) = app_weak.upgrade() else {
+                            return;
+                        };
+                        let Some(state) = crate::STATE.with(|s| s.borrow().clone()) else {
+                            return;
+                        };
+                        let mut st = state.borrow_mut();
+                        if st.index_generation == generation {
+                            index_open_folder(&mut st);
+                            crate::panel::cull::show_filter(&st, &app);
+                        }
+                    });
+                    crate::panel::cull::show_filter(&st, app);
+                    return;
+                }
+                tracing::warn!("index: giving up on the folder after {RETRIES} tries: {e}");
+                st.index_error = Some(format!("Library index unavailable: {e}"));
+            } else {
+                st.index_tries = 0;
+                st.index_error = None;
+            }
             st.index_progress = None;
             refresh_ids(&mut st);
             let chose = !st.facets_wanted.is_empty() && choose_wanted(&mut st);
@@ -532,6 +821,9 @@ fn reread(state: &Rc<RefCell<State>>, app: &App, changed: bool) {
     refresh_ids(&mut st);
     let pass = index_pass(&st);
     if changed || pass != st.index_passed {
+        // The list is made from this answer, not asked again.
+        st.index_passed = pass;
+        st.index_pass_ready = true;
         drop(st);
         crate::panel::cull::refilter(state, app, changed);
     } else {
@@ -619,7 +911,11 @@ mod tests {
         st.filter.apply(&frames)
     }
 
-    fn counts(st: &State, facet: Facet) -> Vec<(String, usize)> {
+    /// A facet's counts, the index's answer brought up to the filter
+    /// first, as `rebuild_browser` brings it before the chips are
+    /// shown.
+    fn counts(st: &mut State, facet: Facet) -> Vec<(String, usize)> {
+        st.index_passed = index_pass(st);
         facet_counts(st)
             .into_iter()
             .find(|(f, _)| *f == facet)
@@ -686,22 +982,22 @@ mod tests {
             .exif
             .camera;
         assert_eq!(
-            counts(&st, Facet::Camera),
+            counts(&mut st, Facet::Camera),
             pairs(&[("Canon EOS R6m2", 2), ("Canon EOS R5", 1), (&sony, 1)])
         );
         assert_eq!(
-            counts(&st, Facet::Iso),
+            counts(&mut st, Facet::Iso),
             pairs(&[("100", 1), ("3200", 1), ("6400", 2)])
         );
         assert_eq!(
-            counts(&st, Facet::Keyword),
+            counts(&mut st, Facet::Keyword),
             pairs(&[("harbor", 2), ("dusk", 1)])
         );
 
         // Three stars or more: the meta test narrows every facet.
         st.filter.stars = filter::Stars::AtLeast(3);
         assert_eq!(
-            counts(&st, Facet::Camera),
+            counts(&mut st, Facet::Camera),
             pairs(&[("Canon EOS R5", 1), ("Canon EOS R6m2", 1)])
         );
         st.filter.stars = filter::Stars::default();
@@ -710,16 +1006,17 @@ mod tests {
         // group is set aside; the others narrow to the R6s.
         st.filter.toggle_facet(Facet::Camera, "Canon EOS R6m2");
         assert_eq!(
-            counts(&st, Facet::Camera),
+            counts(&mut st, Facet::Camera),
             pairs(&[("Canon EOS R6m2", 2), ("Canon EOS R5", 1), (&sony, 1)])
         );
-        assert_eq!(counts(&st, Facet::Iso), pairs(&[("6400", 2)]));
-        assert_eq!(counts(&st, Facet::Keyword), pairs(&[("harbor", 1)]));
+        assert_eq!(counts(&mut st, Facet::Iso), pairs(&[("6400", 2)]));
+        assert_eq!(counts(&mut st, Facet::Keyword), pairs(&[("harbor", 1)]));
 
         // And the rule itself, chip by chip: a count is what that
         // chip alone, the other groups as they stand, would list of
         // the frames the index has rows for.
         st.filter.stars = filter::Stars::AtLeast(1);
+        st.index_passed = index_pass(&st);
         for facet in Facet::ALL {
             let rows = facet_counts(&st);
             let (_, chips) = rows.iter().find(|(f, _)| *f == facet).unwrap();
@@ -735,6 +1032,17 @@ mod tests {
                 assert_eq!(listed, chip.count, "{facet:?} {}", chip.value);
             }
         }
+
+        // The keyword is counted from the sidecars in hand: a keyword
+        // taken off in memory is off the count before any row knows,
+        // which is also what `--no-sidecars` needs.
+        st.filter = filter::Filter::default();
+        st.sidecars[2].meta.set_keywords(Vec::new());
+        assert_eq!(counts(&mut st, Facet::Keyword), pairs(&[("harbor", 1)]));
+        // And it needs no index at all.
+        st.index_reader = None;
+        refresh_ids(&mut st);
+        assert_eq!(counts(&mut st, Facet::Keyword), pairs(&[("harbor", 1)]));
         drop(st);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -808,6 +1116,121 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A panic on the indexer's thread is said to the window as a
+    /// failure, not left as a pass that never ends.
+    #[test]
+    fn a_panic_on_the_indexer_thread_is_a_failure_the_window_hears() {
+        let dir = scratch("panic");
+        let db = dir.join("library.sqlite");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let indexer = Indexer::start(db, move |told| {
+            if matches!(told, Told::Opened(_)) {
+                panic!("a bug");
+            }
+            let _ = tx.send(told);
+        })
+        .expect("the indexer starts");
+        match rx.recv_timeout(Duration::from_secs(20)) {
+            Ok(Told::Failed(message)) => assert!(message.contains("a bug"), "{message}"),
+            other => panic!("{other:?}"),
+        }
+        indexer.stop(Duration::from_secs(20));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A library another process holds locked past the writer's
+    /// timeout: the pass says so in `Indexed`, so the window can say
+    /// busy and ask again, rather than report a pass that did
+    /// nothing as a folder with no EXIF.
+    #[test]
+    fn a_locked_library_is_an_error_in_the_pass_not_an_empty_folder() {
+        let dir = scratch("locked");
+        let shoot = dir.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        write_frame(&shoot.join("a.tif"), &R6, 1);
+        let db = dir.join("library.sqlite");
+        drop(Library::open(&db).unwrap());
+        let (tx, rx) = std::sync::mpsc::channel();
+        let indexer = Indexer::start(db.clone(), move |told| {
+            let _ = tx.send(told);
+        })
+        .expect("the indexer starts");
+        let wait = || rx.recv_timeout(Duration::from_secs(30)).expect("an answer");
+        assert!(matches!(wait(), Told::Opened(_)));
+        let holder = rusqlite::Connection::open(&db).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        indexer.folders(vec![shoot.clone()], 1);
+        loop {
+            match wait() {
+                Told::Indexed { error, .. } => {
+                    assert!(error.is_some(), "the lock was said");
+                    break;
+                }
+                Told::Progress { .. } => {}
+                other => panic!("{other:?}"),
+            }
+        }
+        holder.execute_batch("ROLLBACK").unwrap();
+        drop(holder);
+        indexer.folders(vec![shoot], 2);
+        match wait() {
+            Told::Indexed { error, report, .. } => {
+                assert_eq!(error, None);
+                assert_eq!(report.added, 1);
+            }
+            other => panic!("{other:?}"),
+        }
+        indexer.stop(Duration::from_secs(20));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A facet row longer than the header scrolls sideways under a
+    /// plain wheel, which is the only wheel most mice have.
+    #[test]
+    fn a_plain_wheel_scrolls_a_long_facet_row_sideways() {
+        use slint::platform::WindowEvent;
+        let app = crate::testing::window(0);
+        app.window().set_size(slint::LogicalSize::new(800.0, 600.0));
+        app.set_grid_open(true);
+        let chips: Vec<FacetChip> = (0..40)
+            .map(|i| FacetChip {
+                text: format!("{}", 100 * (i + 1)).into(),
+                key: format!("k{i}").into(),
+                count: 1,
+                on: false,
+            })
+            .collect();
+        app.set_filter_facets(ModelRc::new(VecModel::from(vec![FacetRow {
+            name: "ISO".into(),
+            code: 2,
+            chips: ModelRc::new(VecModel::from(chips)),
+        }])));
+        let pressed = Rc::new(RefCell::new(Vec::new()));
+        let seen = pressed.clone();
+        app.on_filter_facet_toggled(move |_, key| seen.borrow_mut().push(key.to_string()));
+        // The facet row is the header's third, under the controls
+        // and the meta chips.
+        let (x, y) = (200.0, 88.0);
+        crate::testing::click(&app, x, y);
+        let position = slint::LogicalPosition::new(x, y);
+        app.window().dispatch_event(WindowEvent::PointerScrolled {
+            position,
+            delta_x: 0.0,
+            delta_y: -400.0,
+        });
+        // A pointer that has not moved since the wheel still points
+        // at the chip that was under it, as far as Slint's hover is
+        // concerned; a hand moves, and so does this.
+        crate::testing::click(&app, x + 5.0, y);
+        let pressed = pressed.borrow();
+        assert_eq!(pressed.len(), 2, "{pressed:?}");
+        let at = |k: &str| k[1..].parse::<i32>().unwrap();
+        assert!(
+            at(&pressed[1]) > at(&pressed[0]),
+            "down the wheel is along the row"
+        );
+    }
+
     /// The indexer's thread: it makes the library, indexes the folders
     /// asked for, and brings a row up to date after a save, saying
     /// each as it goes — on a database of the test's own.
@@ -823,7 +1246,8 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::channel();
         let indexer = Indexer::start(db.clone(), move |told| {
             let _ = tx.send(told);
-        });
+        })
+        .expect("the indexer starts");
         let wait = |want: &dyn Fn(&Told) -> bool| loop {
             let told = rx
                 .recv_timeout(Duration::from_secs(20))
@@ -853,7 +1277,7 @@ mod tests {
         indexer.file(a.clone());
         wait(&|t| matches!(t, Told::FilesIndexed));
         assert_eq!(reader.by_path(&a).unwrap().unwrap().meta.rating, 4);
-        indexer.join();
+        indexer.stop(Duration::from_secs(20));
         drop(reader);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -868,7 +1292,7 @@ mod tests {
             })
             .collect();
         let on = vec!["400".to_string(), "99999".to_string()];
-        let chips = chips_of(Facet::Iso, &counts, &on);
+        let chips = chips_of(Facet::Iso, &counts, &on, &|v| v.to_string());
         // Twelve by count, the one on kept past the cut, and a value
         // on that no frame holds any more, so it can be let go.
         assert_eq!(chips.len(), CHIPS_A_FACET + 2);
@@ -887,6 +1311,47 @@ mod tests {
         let mut sorted = keys.clone();
         sorted.sort();
         assert_eq!(keys, sorted);
-        assert_eq!(chips_of(Facet::Focal, &counts[..1], &[])[0].text, "100 mm");
+        assert_eq!(
+            chips_of(Facet::Focal, &counts[..1], &[], &|v| v.to_string())[0].text,
+            "100 mm"
+        );
+    }
+
+    /// Ties at the cut do not push out the values held more often:
+    /// a day's many one-frame focal lengths, first in the facet's
+    /// order, leave the 200 mm held three times on the row.
+    #[test]
+    fn a_facet_row_keeps_the_most_held_when_the_cut_is_a_tie() {
+        let mut counts: Vec<FacetCount> = (1..=16)
+            .map(|mm| FacetCount {
+                value: mm.to_string(),
+                label: mm.to_string(),
+                count: 1,
+            })
+            .collect();
+        for (mm, n) in [(120, 2), (200, 3), (400, 6)] {
+            counts.push(FacetCount {
+                value: mm.to_string(),
+                label: mm.to_string(),
+                count: n,
+            });
+        }
+        let chips = chips_of(Facet::Focal, &counts, &[], &|v| v.to_string());
+        assert_eq!(chips.len(), CHIPS_A_FACET);
+        for held in ["120", "200", "400"] {
+            assert!(chips.iter().any(|c| c.key == held), "{held} mm kept");
+        }
+        // The rest of the room goes to the ties, in the facet's order.
+        let ones: Vec<&str> = chips
+            .iter()
+            .filter(|c| c.count == 1)
+            .map(|c| c.key.as_str())
+            .collect();
+        assert_eq!(ones, ["1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+        // A keyword on that no frame holds is named as written.
+        let chips = chips_of(Facet::Keyword, &[], &["harbor".into()], &|_| {
+            "Harbor".into()
+        });
+        assert_eq!(chips[0].text, "Harbor");
     }
 }

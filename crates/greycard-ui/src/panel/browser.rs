@@ -552,7 +552,9 @@ pub(crate) fn reject_count(st: &State) -> usize {
 /// and the selection kept on its row, or put on the nearest row when
 /// its frame is hidden (which the caller then opens).
 pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
-    st.index_passed = crate::library::index_pass(st);
+    if !std::mem::take(&mut st.index_pass_ready) {
+        st.index_passed = crate::library::index_pass(st);
+    }
     st.shown = st.filter.apply(&filter_frames(st));
     show_filter(st, app);
     let thumbs = Rc::new(VecModel::<Thumb>::default());
@@ -808,7 +810,10 @@ fn open_files(
     // The new folder's rows as the index has them now, and a pass
     // over it on the indexer's thread to bring them up to date.
     st.index_passed = vec![true; files.len()];
+    st.index_pass_ready = false;
     st.index_progress = None;
+    st.index_tries = 0;
+    st.index_error = None;
     crate::library::index_open_folder(&mut st);
     rebuild_browser(&mut st, app);
     // The file to open, as a row of the list; hidden by the filter,
