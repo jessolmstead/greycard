@@ -3373,9 +3373,30 @@ mod tests {
                     r.raster,
                 )
             };
+            // The matte made from the frame brought down to the
+            // preview's size instead of at its own, for the time.
+            let at_preview = match (near.sky_prior(), &r.outline) {
+                (Some(prior), Some(outline)) => {
+                    let (w, h) = (prior.width, prior.height);
+                    let mut small = WorkingImage::new(w, h);
+                    for y in 0..h {
+                        for x in 0..w {
+                            let (sx, sy) = (x * b.image.width / w, y * b.image.height / h);
+                            let from = (sy * b.image.width + sx) * 3;
+                            small.data[(y * w + x) * 3..][..3]
+                                .copy_from_slice(&b.image.data[from..from + 3]);
+                        }
+                    }
+                    let t = Instant::now();
+                    let _ = greycard_ai::matte::color_line(outline, prior, &small, w, h);
+                    format!("{:.3}s at {w}x{h}", t.elapsed().as_secs_f64())
+                }
+                _ => "-".to_string(),
+            };
             let line = format!(
                 "{stem}: {} {:.1}% seeded {} | develop {develop:.1}s | {} | CPU: {} | \
-                 against the CPU: max {max}/255, mean {:.2e}, {:.4}% across a half",
+                 against the CPU: max {max}/255, mean {:.2e}, {:.4}% across a half | \
+                 matte at the preview's size {at_preview}, at the frame's {}x{}",
                 match r.no_sky {
                     Some(why) => format!("no sky ({why})"),
                     None => "sky".to_string(),
@@ -3386,6 +3407,8 @@ mod tests {
                 stages(&c, cpu_total),
                 sum as f64 / n / 255.0,
                 flips as f64 / n * 100.0,
+                b.image.width,
+                b.image.height,
             );
             println!("{line}");
             lines.push(line);
@@ -3399,6 +3422,28 @@ mod tests {
                     image::ExtendedColorType::Rgb8,
                 )
                 .unwrap();
+                // The trimap the matte started from: sky white, in
+                // question grey, not sky black; and the prior's labels.
+                if let (Some(prior), Some(outline)) = (near.sky_prior(), &r.outline) {
+                    let map: Vec<u8> = greycard_ai::matte::trimap(outline, prior)
+                        .into_iter()
+                        .map(|k| match k {
+                            greycard_ai::matte::Known::Sky => 255,
+                            greycard_ai::matte::Known::Unknown => 128,
+                            greycard_ai::matte::Known::NotSky => 0,
+                        })
+                        .collect();
+                    for (name, data) in [("trimap", &map), ("labels", &prior.labels)] {
+                        image::save_buffer(
+                            out.join(format!("{stem}-{name}.png")),
+                            data,
+                            prior.width as u32,
+                            prior.height as u32,
+                            image::ExtendedColorType::L8,
+                        )
+                        .unwrap();
+                    }
+                }
                 image::save_buffer(
                     out.join(format!("{stem}-sky.png")),
                     data,

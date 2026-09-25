@@ -32,7 +32,9 @@
 //!    prior's own labels.
 //! 4. **The edge** ([`refine_sky`]): one function between the outline
 //!    and the raster, so the edge solver can change without anything
-//!    else moving. For now the guided filter at the Subject rule.
+//!    else moving: a color-line matte at the frame's own resolution in
+//!    its linear values ([`crate::matte`]), brought to the raster's
+//!    size by averaging.
 //!
 //! The trial's reference is Python (the prior, the gate, the seeding
 //! and the clip); what differs here and why is said where it differs.
@@ -380,7 +382,9 @@ struct Query {
 
 fn queries(class: &[f32]) -> Vec<Query> {
     class
-        .chunks_exact(CLASSES)
+        .as_chunks::<CLASSES>()
+        .0
+        .iter()
         .map(|logits| {
             let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max);
             let exp: Vec<f32> = logits.iter().map(|l| (l - max).exp()).collect();
@@ -613,7 +617,7 @@ fn spread(mask: &[bool], w: usize, h: usize, n: usize) -> Vec<[f32; 2]> {
         return Vec::new();
     }
     // Fullest first, then farthest from those chosen.
-    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.0));
     let aspect = h as f32 / w as f32;
     let dist = |a: [f32; 2], b: [f32; 2]| (a[0] - b[0]).hypot((a[1] - b[1]) * aspect);
     let mut chosen = vec![candidates.remove(0).1];
@@ -716,21 +720,32 @@ pub struct Frame<'a> {
 }
 
 /// The sky's edge: the outline (one or nothing, at the preview's size)
-/// as the matte the raster is made from. The one place the edge is
-/// made, so a better solver replaces this body and nothing else. For
-/// now the guided filter at the Subject rule (radius a 256th of the
-/// preview's width, ε 1e-3, the preview's luma as the guide), which
-/// feathers the outline onto the picture's edges; it does not reach
-/// the sky among branches or move an outline SAM stopped short of
-/// hair, which is the edge solver's work to come.
-pub fn refine_sky(mask: &Mask, prior: &Prior, frame: &Frame) -> Mask {
-    // Neither is read yet: the prior's classes (tree, for sky among
-    // branches) and the linear frame are for the solver to come.
-    let _ = (prior, frame.linear);
+/// as the matte the raster is made from, `size` (width, height). The
+/// one place the edge is made, so a better solver replaces this body
+/// and nothing else. The color-line matte at the frame's own
+/// resolution ([`crate::matte::color_line`]), averaged down to `size`;
+/// where it has nothing to go on (no known sky left once the outline
+/// is shrunk, or no linear frame of the preview's shape), the outline
+/// feathered ([`feathered`]).
+pub fn refine_sky(mask: &Mask, prior: &Prior, frame: &Frame, size: (usize, usize)) -> Mask {
+    crate::matte::color_line(mask, prior, frame.linear, size.0, size.1)
+        .unwrap_or_else(|| feathered(mask, frame).resampled(size.0, size.1))
+}
+
+/// The outline brought to the preview's edges by the guided filter at
+/// the Subject rule (radius a 256th of the preview's width, ε 1e-3,
+/// the preview's luma as the guide): it feathers the outline and does
+/// not move it, so it neither reaches the sky among branches nor
+/// closes the gap SAM leaves round hair. The matte's fallback, and
+/// what the Sky shape had before it.
+pub fn feathered(mask: &Mask, frame: &Frame) -> Mask {
     let (w, h) = (frame.display.width, frame.display.height);
     let radius = (w / 256).max(2);
     crate::refine(mask, frame.luma, w, h, radius, 1e-3)
 }
+
+/// SAM for the outline: the prompts in, its mask in its own square out.
+pub type Decode<'a> = dyn FnMut(&[Prompt]) -> Result<Mask> + 'a;
 
 /// How long each stage took, in seconds.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
@@ -744,11 +759,14 @@ pub struct Times {
 
 /// The sky found, or why not.
 pub enum Found {
-    /// The matte, at the preview's size, and whether SAM made the
+    /// The matte, at the size asked for, and whether SAM made the
     /// outline (not the prior's own labels).
     Sky {
         matte: Mask,
         seeded: bool,
+        /// The outline the matte was made from, one or nothing at the
+        /// prior's size, for looking at.
+        outline: Mask,
     },
     None(NoSky),
 }
@@ -757,12 +775,13 @@ pub enum Found {
 /// from `decode` (called only once the gate has passed, so a frame
 /// with no sky never pays for SAM's embedding; `None` where SAM is not
 /// to be had, which leaves the prior's own labels as the outline),
-/// then the edge.
+/// then the edge, as a matte of `size` (width, height).
 pub fn find(
     prior: &Prior,
     frame: &Frame,
     picks: &[([f32; 2], bool)],
-    decode: Option<&mut dyn FnMut(&[Prompt]) -> Result<Mask>>,
+    decode: Option<&mut Decode>,
+    size: (usize, usize),
     times: &mut Times,
 ) -> Result<Found> {
     let t = std::time::Instant::now();
@@ -786,9 +805,13 @@ pub fn find(
     };
     times.outline = t.elapsed().as_secs_f64();
     let t = std::time::Instant::now();
-    let matte = refine_sky(&mask, prior, frame);
+    let matte = refine_sky(&mask, prior, frame, size);
     times.edge = t.elapsed().as_secs_f64();
-    Ok(Found::Sky { matte, seeded })
+    Ok(Found::Sky {
+        matte,
+        seeded,
+        outline: mask,
+    })
 }
 
 /// A binary erosion by a square of radius `r` (side 2r + 1): a pixel
@@ -1233,7 +1256,18 @@ mod tests {
             }
         });
         let luma = display.luma();
-        (display, luma, WorkingImage::new(w, h))
+        // The same picture in linear light, at twice the size.
+        let mut linear = WorkingImage::new(2 * w, 2 * h);
+        for y in 0..2 * h {
+            for x in 0..2 * w {
+                let d = &display.data[((y / 2) * w + x / 2) * 3..][..3];
+                let o = &mut linear.data[(y * 2 * w + x) * 3..][..3];
+                for (o, &v) in o.iter_mut().zip(d) {
+                    *o = (v as f32 / 255.0).powf(2.2);
+                }
+            }
+        }
+        (display, luma, linear)
     }
 
     #[test]
@@ -1248,7 +1282,7 @@ mod tests {
         let never: &mut dyn FnMut(&[Prompt]) -> Result<Mask> =
             &mut |_| panic!("SAM on a frame with no sky");
         let mut times = Times::default();
-        let found = find(&prior, &frame, &[], Some(never), &mut times).unwrap();
+        let found = find(&prior, &frame, &[], Some(never), (120, 80), &mut times).unwrap();
         assert!(matches!(found, Found::None(NoSky::NoCore(_))));
     }
 
@@ -1265,8 +1299,8 @@ mod tests {
         let mut sam = fake_sam(|_, v| v < 0.34);
         let sam: &mut dyn FnMut(&[Prompt]) -> Result<Mask> = &mut sam;
         let mut times = Times::default();
-        let Found::Sky { matte, seeded } =
-            find(&prior, &frame, &[], Some(sam), &mut times).unwrap()
+        let Found::Sky { matte, seeded, .. } =
+            find(&prior, &frame, &[], Some(sam), (w, h), &mut times).unwrap()
         else {
             panic!("no sky found over a plain sky");
         };
@@ -1275,7 +1309,8 @@ mod tests {
         assert!(matte.at(120, 10) > 0.95);
         assert!(matte.at(120, 150) < 0.05);
         // Without SAM: the prior's own labels, filtered the same way.
-        let Found::Sky { matte, seeded } = find(&prior, &frame, &[], None, &mut times).unwrap()
+        let Found::Sky { matte, seeded, .. } =
+            find(&prior, &frame, &[], None, (w, h), &mut times).unwrap()
         else {
             panic!("no sky found without SAM");
         };

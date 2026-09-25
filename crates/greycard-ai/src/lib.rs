@@ -12,6 +12,7 @@ pub mod cache;
 pub mod denoise;
 pub mod fill;
 pub mod image;
+pub mod matte;
 pub mod refine;
 pub mod registry;
 pub mod runtime;

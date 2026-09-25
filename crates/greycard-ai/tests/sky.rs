@@ -247,7 +247,7 @@ fn what_the_gate_sees() {
         .filter_map(|e| e.ok().map(|e| e.path()))
         .filter(|p| {
             p.extension().is_some_and(|e| e == "jpg" || e == "png")
-                && !p.file_stem().unwrap().to_string_lossy().ends_with("-sky")
+                && !p.file_stem().unwrap().to_string_lossy().contains('-')
         })
         .collect();
     paths.sort();

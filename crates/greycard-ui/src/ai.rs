@@ -186,6 +186,8 @@ pub(crate) struct SkyReport {
     pub(crate) raster: f64,
     pub(crate) seeded: bool,
     pub(crate) no_sky: Option<sky::NoSky>,
+    /// The outline the matte was made from, at the preview's size.
+    pub(crate) outline: Option<greycard_ai::Mask>,
 }
 
 /// Why a fill was not made: the patch is left as it was either way.
@@ -221,6 +223,12 @@ impl Ai {
             embedding: None,
             cache: HashMap::new(),
         }
+    }
+
+    /// The sky prior of the last develop a Sky raster was made on.
+    #[cfg(test)]
+    pub(crate) fn sky_prior(&self) -> Option<&Prior> {
+        self.sky_prior.as_ref().map(|p| &p.1)
     }
 
     /// Models from `store` on `providers` alone, and no file, so no
@@ -530,7 +538,8 @@ impl Ai {
         }
         if let Shape::Sky { picks } = shape {
             let start = Instant::now();
-            let (matte, provider) = self.sky_matte(stamp, image, picks, aspect, &store)?;
+            let (matte, provider) =
+                self.sky_matte(stamp, image, picks, aspect, (RASTER_WIDTH, height), &store)?;
             let t = Instant::now();
             let data = match &matte {
                 Some(m) => m.resampled(RASTER_WIDTH, height).to_u8(),
@@ -651,6 +660,7 @@ impl Ai {
         image: &WorkingImage,
         picks: &[greycard_edit::mask::Pick],
         aspect: f32,
+        size: (usize, usize),
         store: &Store,
     ) -> Result<(Option<greycard_ai::Mask>, Provider), String> {
         let mut report = SkyReport::default();
@@ -709,15 +719,13 @@ impl Ai {
                     report.decodes += 1;
                     s.decode(e, prompts).map(|(m, _)| m)
                 };
-            let decode: Option<
-                &mut dyn FnMut(&[Prompt]) -> greycard_ai::runtime::Result<greycard_ai::Mask>,
-            > = if store.have(&SAM) {
+            let decode: Option<&mut sky::Decode> = if store.have(&SAM) {
                 Some(&mut decode)
             } else {
                 None
             };
             let mut times = sky::Times::default();
-            let found = sky::find(prior, &frame, &picks, decode, &mut times);
+            let found = sky::find(prior, &frame, &picks, decode, size, &mut times);
             report.stages = times;
             found.map_err(|e| e.to_string())?
         };
@@ -726,8 +734,13 @@ impl Ai {
             .and_then(|f| f.file_name())
             .map_or(String::new(), |n| n.to_string_lossy().into_owned());
         let matte = match found {
-            sky::Found::Sky { matte, seeded } => {
+            sky::Found::Sky {
+                matte,
+                seeded,
+                outline,
+            } => {
                 report.seeded = seeded;
+                report.outline = Some(outline);
                 Some(matte)
             }
             sky::Found::None(why) => {
