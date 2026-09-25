@@ -118,8 +118,24 @@ impl Space {
     }
 
     /// An ICC profile for the space: its primaries and white, the sRGB
-    /// curve, and its name.
+    /// curve, and its name. Built once a process: lcms stamps the
+    /// header with the second the profile was made, so two builds
+    /// straddling a tick differ in four bytes, and an export's profile
+    /// and a check of it a moment later must be the same bytes.
     pub fn icc(self) -> Result<Vec<u8>> {
+        static BUILT: [std::sync::OnceLock<Vec<u8>>; 3] = [const { std::sync::OnceLock::new() }; 3];
+        let slot = &BUILT[Space::ALL
+            .iter()
+            .position(|s| *s == self)
+            .expect("every space")];
+        if let Some(bytes) = slot.get() {
+            return Ok(bytes.clone());
+        }
+        let bytes = self.build_icc()?;
+        Ok(slot.get_or_init(|| bytes).clone())
+    }
+
+    fn build_icc(self) -> Result<Vec<u8>> {
         use lcms2::{CIExyY, CIExyYTRIPLE, Locale, MLU, Profile, Tag, TagSignature, ToneCurve};
         let s = self.rgb();
         let point = |x: f64, y: f64| CIExyY { x, y, Y: 1.0 };
@@ -1336,6 +1352,20 @@ mod tests {
             assert_eq!((back.width(), back.height()), source);
         }
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// lcms writes the second of its making into a profile's header,
+    /// so a profile built per export differed from one built a moment
+    /// later whenever the clock ticked between them; the metadata test
+    /// below failed that way on a slow runner, comparing the file's
+    /// profile with a fresh one.
+    #[test]
+    fn a_spaces_profile_is_the_same_bytes_every_time() {
+        for space in Space::ALL {
+            let first = space.icc().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(1100));
+            assert_eq!(first, space.icc().unwrap(), "{}", space.name());
+        }
     }
 
     #[test]
