@@ -840,8 +840,9 @@ impl Term {
 
     /// This term answered from what a file's sidecar and its path
     /// say, as the SQL would answer it from the row: a word, the
-    /// name, the folder, a keyword, the rating, the flag, the label.
-    /// `None` for a term only the index can answer — the EXIF.
+    /// name, a keyword, the rating, the flag, the label. `None` for a
+    /// term only the index can answer — the EXIF, and the folder,
+    /// which the index holds canonical and a path in hand may not be.
     ///
     /// The editor holds every open frame's sidecar, fresher than the
     /// row an `index_file` is still writing, so the filter bar asks
@@ -878,17 +879,6 @@ impl Term {
                 op,
                 value,
             } => text_test(name(), *op, value),
-            Term::Text {
-                field: TextField::Folder,
-                op,
-                value,
-            } => text_test(
-                path.parent()
-                    .map(|p| p.to_string_lossy().to_lowercase())
-                    .unwrap_or_default(),
-                *op,
-                value,
-            ),
             Term::Number {
                 field: NumberField::Rating,
                 op,

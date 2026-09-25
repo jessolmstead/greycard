@@ -572,6 +572,17 @@ impl Library {
         self.read_only
     }
 
+    /// How long a query waits for a lock before it answers busy;
+    /// rusqlite's default is five seconds. A reader on a window's
+    /// thread wants to hear busy at once and keep its last answer
+    /// rather than hold the window: under write-ahead logging a
+    /// reader waits only while the log is being recovered or
+    /// checkpointed from under it, which is rare and short.
+    pub fn set_busy_timeout(&self, timeout: std::time::Duration) -> Result<()> {
+        self.conn.busy_timeout(timeout)?;
+        Ok(())
+    }
+
     /// How many files the index holds, the missing among them.
     pub fn len(&self) -> Result<usize> {
         let n: i64 = self

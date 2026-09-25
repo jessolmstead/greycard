@@ -97,6 +97,10 @@ pub struct Report {
     /// Folders a tree pass did not go into: symbolic links, which
     /// could lead back up the tree.
     pub skipped: Vec<PathBuf>,
+    /// The pass was asked to stop and did, between two batches: what
+    /// it wrote is written, and nothing was marked missing, since the
+    /// files it did not reach were not looked for.
+    pub stopped: bool,
 }
 
 impl Report {
@@ -116,6 +120,7 @@ impl Report {
         self.unavailable.extend(other.unavailable);
         self.errors.extend(other.errors);
         self.skipped.extend(other.skipped);
+        self.stopped |= other.stopped;
     }
 }
 
@@ -213,6 +218,22 @@ impl Library {
         dir: &Path,
         progress: &mut dyn FnMut(Progress<'_>),
     ) -> Result<Report> {
+        self.index_folder_until(dir, progress, &|| false)
+    }
+
+    /// [`Library::index_folder`], asking `stop` after each batch is
+    /// written and ending there when it says so, with
+    /// [`Report::stopped`] set: a pass over a folder the editor has
+    /// since left, or one a save's `index_file` should not wait
+    /// behind. The rows written stand; nothing is marked missing,
+    /// and the next pass takes up where this one left off, since
+    /// the files already written are unchanged to it.
+    pub fn index_folder_until(
+        &mut self,
+        dir: &Path,
+        progress: &mut dyn FnMut(Progress<'_>),
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Report> {
         let (dir, exists) = resolve_folder(dir)?;
         let folder = path_bytes(&dir);
         if !exists && !has_rows_under(self.conn_mut(), &folder)? {
@@ -235,7 +256,15 @@ impl Library {
             });
         }
         let existing = rows_in_folder(self.conn_mut(), &folder)?;
-        index_paths(self.conn_mut(), &dir, &files, true, existing, progress)
+        index_paths(
+            self.conn_mut(),
+            &dir,
+            &files,
+            true,
+            existing,
+            progress,
+            stop,
+        )
     }
 
     /// Index a folder and every folder under it, hidden ones (a
@@ -346,6 +375,7 @@ impl Library {
             false,
             existing,
             &mut |_| {},
+            &|| false,
         )
     }
 }
@@ -477,6 +507,7 @@ fn index_paths(
     whole_folder: bool,
     mut existing: HashMap<Vec<u8>, Row>,
     progress: &mut dyn FnMut(Progress<'_>),
+    stop: &dyn Fn() -> bool,
 ) -> Result<Report> {
     let mut report = Report::default();
     let total = files.len();
@@ -546,6 +577,10 @@ fn index_paths(
                 &mut report,
             )?;
             since = Instant::now();
+            if stop() {
+                report.stopped = true;
+                return Ok(report);
+            }
         }
     }
     write_batch(
@@ -1238,7 +1273,6 @@ pub(crate) mod tests {
             "name!=a7.tif",
             "missing:no",
             "missing:yes",
-            &folder,
         ] {
             let filter = Filter::parse(text).unwrap();
             let term = &filter.terms[0];
@@ -1259,6 +1293,10 @@ pub(crate) mod tests {
             "focal:50",
             "aperture:2",
             "shutter<1",
+            // The folder as the index keys it, canonical: `/var` on
+            // macOS is `/private/var` there, which a path in hand
+            // need not say.
+            &folder,
         ] {
             let filter = Filter::parse(text).unwrap();
             assert!(!filter.terms[0].is_meta(), "{text} is the index's");
@@ -2132,6 +2170,40 @@ pub(crate) mod tests {
         assert_eq!(reader.len().unwrap(), BATCH + 5);
         drop(reader);
         drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A pass asked to stop ends after the batch it is on, keeps what
+    /// it wrote, marks nothing missing, and the next pass takes up
+    /// where it left off.
+    #[test]
+    fn a_pass_stops_between_batches_and_the_next_takes_up_from_there() {
+        let dir = scratch("stop");
+        for i in 0..(BATCH + 5) {
+            write_frame(&dir.join(format!("f{i:03}.tif")), &R5, i as u16);
+        }
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib
+            .index_folder_until(&dir, &mut quiet(), &|| true)
+            .unwrap();
+        assert!(report.stopped);
+        assert_eq!(report.added, BATCH);
+        assert_eq!(lib.len().unwrap(), BATCH);
+        // A file gone before a stopped pass is not marked: the pass
+        // did not look for it.
+        std::fs::remove_file(dir.join("f000.tif")).unwrap();
+        let report = lib
+            .index_folder_until(&dir, &mut quiet(), &|| true)
+            .unwrap();
+        assert!(report.stopped);
+        assert_eq!(report.missing, 0);
+        // Its batch was f001 to f050, the last of them new.
+        assert_eq!((report.unchanged, report.added), (BATCH - 1, 1));
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert!(!report.stopped);
+        assert_eq!(report.added, 4);
+        assert_eq!(report.missing, 1);
+        assert_eq!(report.unchanged, BATCH);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
