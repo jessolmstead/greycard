@@ -579,9 +579,8 @@ pub(crate) fn thumb_turns(st: &State, app: &App, file: usize) -> (u8, bool) {
 
 /// How many frames of the folder are flagged reject.
 pub(crate) fn reject_count(st: &State) -> usize {
-    st.sidecars
-        .iter()
-        .filter(|s| s.meta.flag == meta::Flag::Reject)
+    (0..st.files.len())
+        .filter(|&i| crate::panel::cull::to_move_out(st, i))
         .count()
 }
 

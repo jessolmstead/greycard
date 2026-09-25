@@ -486,6 +486,7 @@ fn window_pass(lib: &mut Library, pass: Pass, told: &dyn Fn(Told), waits: &Waits
                 report.added += r.added;
                 report.moved += r.moved;
                 report.changed += r.changed;
+                report.changed_files.extend(r.changed_files);
                 report.meta_refreshed += r.meta_refreshed;
                 report.unchanged += r.unchanged;
                 report.returned += r.returned;

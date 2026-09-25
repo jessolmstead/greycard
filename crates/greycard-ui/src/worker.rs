@@ -651,10 +651,13 @@ impl Worker {
     /// would be made and thrown away on arrival (a delivery checks the
     /// path), and a frame whose job was among them would never get its
     /// picture, which is how a merge blanked the grid.
-    pub fn replace_thumbnails(&self, list: Vec<(usize, PathBuf)>) {
-        self.forget_thumbnails();
-        for (index, path) in list {
-            self.send(Job::Thumbnail { index, path });
+    /// `wanted`, the files on screen, are made first, as the grid's
+    /// range would have them.
+    pub fn replace_thumbnails(&self, list: Vec<(usize, PathBuf)>, wanted: Option<(usize, usize)>) {
+        self.pool.forget();
+        self.pool.push_all(list);
+        if let Some((first, last)) = wanted {
+            self.pool.want(first, last);
         }
     }
 

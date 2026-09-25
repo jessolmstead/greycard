@@ -171,6 +171,24 @@ impl Pool {
         self.shared.cv.notify_one();
     }
 
+    /// Make all of these, in place of nothing: for a list asked for
+    /// again after [`Pool::forget`], whose queue is empty, so the check
+    /// `push` makes for one waiting already (the whole queue, each
+    /// time, which is quadratic over a list of twenty thousand) is
+    /// skipped.
+    pub(crate) fn push_all(&self, list: Vec<(usize, PathBuf)>) {
+        let mut list = list.into_iter();
+        let Some((index, path)) = list.next() else {
+            return;
+        };
+        // The first through `push`, which starts the threads.
+        self.push(index, path);
+        let mut q = self.lock();
+        q.jobs.extend(list);
+        drop(q);
+        self.shared.cv.notify_all();
+    }
+
     /// Make `first..=last` before the rest, the rest outward from
     /// that range; applies to whatever has not been begun.
     pub(crate) fn want(&self, first: usize, last: usize) {

@@ -1067,10 +1067,21 @@ pub(crate) fn shoot_rejects_dir(st: &State) -> Option<PathBuf> {
 /// path, or, over the all-roots view where the rejects are in several
 /// folders, that each goes to its own folder's.
 fn rejects_where(st: &State) -> Option<String> {
+    let files: Vec<usize> = st
+        .files
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| to_move_out(st, *i))
+        .map(|(i, _)| i)
+        .collect();
+    rejects_where_of(st, &files)
+}
+
+/// Where these frames go, said as `rejects_where` says it.
+fn rejects_where_of(st: &State, files: &[usize]) -> Option<String> {
     let mut folders: Vec<&Path> = Vec::new();
-    for (f, s) in st.files.iter().zip(&st.sidecars) {
-        if s.meta.flag == meta::Flag::Reject
-            && let Some(p) = f.parent()
+    for &i in files {
+        if let Some(p) = st.files.get(i).and_then(|f| f.parent())
             && !folders.contains(&p)
         {
             folders.push(p);
@@ -1086,6 +1097,20 @@ fn rejects_where(st: &State) -> Option<String> {
             "a rejects folder in each of the {n} folders they are in"
         )),
     }
+}
+
+/// Whether file `i` is a reject still to be moved out: flagged, and
+/// not in a rejects folder already, as the all-roots view lists those.
+pub(crate) fn to_move_out(st: &State, i: usize) -> bool {
+    st.sidecars
+        .get(i)
+        .is_some_and(|s| s.meta.flag == meta::Flag::Reject)
+        && st
+            .files
+            .get(i)
+            .and_then(|f| f.parent())
+            .and_then(Path::file_name)
+            != Some(std::ffi::OsStr::new(cull::REJECTS))
 }
 
 /// The move-rejects sheet: how many frames and where they would go.
@@ -1115,15 +1140,11 @@ pub(crate) fn ask_rejects(st: &State, app: &App) {
 /// The frame the selection was on, if it went, gives way to the
 /// nearest one left.
 pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
-    let rejected: Vec<usize> = st
-        .sidecars
-        .iter()
-        .enumerate()
-        .filter(|(_, s)| s.meta.flag == meta::Flag::Reject)
-        .map(|(i, _)| i)
+    // Those already out, in a rejects folder, stay where they are and
+    // are not counted.
+    let rejected: Vec<usize> = (0..st.files.len())
+        .filter(|&i| to_move_out(st, i))
         .collect();
-    // Said before the move, while the frames are where they were.
-    let dir = rejects_where(st).unwrap_or_default();
     let moved = match cull::move_rejects(&st.files, &rejected) {
         Ok(m) => m,
         Err(e) => {
@@ -1135,6 +1156,9 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
     for (i, why) in &moved.skipped {
         tracing::warn!("{} left where it is: {why}", file_name(&st.files[*i]));
     }
+    // Where the ones that went, went: said while the list still has
+    // them where they were.
+    let dir = rejects_where_of(st, &moved.files).unwrap_or_default();
     let mut status = format!(
         "moved {} frame{} and {} sidecar{} to {}",
         moved.files.len(),
@@ -1200,7 +1224,15 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
     drop_placeholder(st, app);
     st.hold = None;
     st.prefetch.want(Vec::new());
-    worker.replace_thumbnails(crate::roots::owed_thumbnails(st));
+    if let Some(run) = st.thumb_run.as_mut() {
+        let from: Vec<Option<usize>> = kept.iter().map(|&i| Some(i)).collect();
+        run.renumber(&from);
+    }
+    worker.replace_thumbnails(
+        crate::roots::owed_thumbnails(st),
+        // The rows are the old list's until the rebuild below.
+        None,
+    );
     let went = current_path
         .as_ref()
         .map(|p| st.files.iter().position(|f| f == p));

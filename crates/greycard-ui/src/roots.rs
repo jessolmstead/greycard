@@ -428,31 +428,24 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worke
     if files.is_empty() {
         // Nothing indexed yet, most likely: the view is taken, empty,
         // and fills in as the launch pass reaches the roots. A capture
-        // of it waits for that pass, when there is one to wait for.
+        // of it waits for that pass, when there is one to wait for,
+        // and ends when there is none.
         st.view = view;
-        let empty = st.library.roots.is_empty();
         let passing = st.library.launch_left > 0;
         drop(st);
         open_loaded(state, app, worker, Vec::new(), Vec::new(), Vec::new(), 0);
-        {
-            let mut st = state.borrow_mut();
-            st.library.loading = false;
-            st.library.awaiting = st.library.awaiting && passing;
-            st.library.painted = Some((asked, "the view asked for"));
-            show(&st, app);
+        let mut st = state.borrow_mut();
+        st.library.loading = false;
+        st.library.painted = Some((asked, "the view asked for"));
+        show(&st, app);
+        if passing {
+            app.set_status("Nothing indexed under the roots yet; the pass is running".into());
+        } else {
+            empty_view(&mut st, app);
         }
-        app.set_status(
-            if empty {
-                "No folders in the library yet: add one to see it here"
-            } else if passing {
-                "Nothing indexed under the roots yet; the pass is running"
-            } else {
-                "Nothing under the roots"
-            }
-            .into(),
-        );
         return;
     }
+
     let write = st.write_sidecars;
     // The frame on screen stays on screen when it is in the new list;
     // else the last one open, as a folder's open does.
@@ -702,6 +695,19 @@ pub(crate) fn owed_thumbnails(st: &State) -> Vec<(usize, PathBuf)> {
         .collect()
 }
 
+/// The files the grid shows now, first and last, for their pictures
+/// to be made first; none while the grid has not said.
+pub(crate) fn on_screen(st: &State) -> Option<(usize, usize)> {
+    let (first, last) = st.grid_shown?;
+    let first = *st.shown.get(usize::try_from(first).ok()?)?;
+    let last = *st.shown.get(
+        usize::try_from(last)
+            .ok()?
+            .min(st.shown.len().checked_sub(1)?),
+    )?;
+    Some((first, last))
+}
+
 /// Put `next` in the browser in place of the list it has, keeping
 /// what each file that stays already has: its sidecar as edited, its
 /// picture, its row in the index and its place in the selection. A
@@ -719,9 +725,18 @@ pub(crate) fn merge(
     mut read: HashMap<PathBuf, (Sidecar, bool)>,
 ) -> Option<usize> {
     follow_current(st);
+    // The frame on screen gone and not followed anywhere is not in the
+    // list, whatever the index still says of it: the last file of a
+    // folder deleted leaves its row standing (§160's empty folder).
+    let gone = st
+        .current
+        .and_then(|c| st.files.get(c))
+        .filter(|p| !p.exists())
+        .cloned();
     let mut seen = HashSet::new();
     let mut next: Vec<PathBuf> = next
         .into_iter()
+        .filter(|p| Some(p) != gone.as_ref())
         .filter(|p| seen.insert(p.clone()))
         .collect();
     // A frame on screen that moved out of what this list covers (a
@@ -832,7 +847,7 @@ pub(crate) fn merge(
     crate::library::refresh_ids(st);
     let hidden = rebuild_browser(st, app);
     if renumbered {
-        worker.replace_thumbnails(owed_thumbnails(st));
+        worker.replace_thumbnails(owed_thumbnails(st), on_screen(st));
     }
     tracing::info!(
         "browser: the list merged, {} frames ({} new) in {:.1} ms",
@@ -875,8 +890,9 @@ pub(crate) fn background_done(
         + report.returned
         + report.meta_refreshed
         > 0;
-    let touches = {
+    let launch_done = {
         let mut st = state.borrow_mut();
+        let mut done = false;
         if launch {
             st.library.launch_left = st.library.launch_left.saturating_sub(1);
             if st.library.launch_left == 0 {
@@ -884,44 +900,112 @@ pub(crate) fn background_done(
                 // merged below, a frame is opened from it, and the
                 // capture waits for that frame's develop as ever.
                 st.library.awaiting = false;
+                done = true;
             }
         }
         recount(&mut st);
         show(&st, app);
         // A file changed on disk (a copy that finished) has another
-        // picture: asked for again, those under the pass's folder.
-        if report.changed > 0
+        // picture: asked for again, those files and no others.
+        let again = changed_rows(&st, report);
+        if !again.is_empty()
             && let Some(worker) = crate::WORKER.with(|w| w.borrow().clone())
         {
-            for (i, f) in st.files.iter().enumerate() {
-                if f.starts_with(path) {
-                    worker.send(Job::Thumbnail {
-                        index: i,
-                        path: f.clone(),
-                    });
-                }
+            for i in again {
+                worker.send(Job::Thumbnail {
+                    index: i,
+                    path: st.files[i].clone(),
+                });
             }
         }
-        if !changed {
-            return false;
-        }
-        match &st.view {
-            View::Roots(None) => true,
-            View::Roots(Some(r)) => path.starts_with(r) || r.starts_with(path),
-            View::Folder => {
-                st.files
+        done
+    };
+    // The frame on screen gone from under the window, whatever the
+    // pass says: the last file of a folder deleted leaves the folder
+    // empty, which the index takes for a drive not mounted (§160) and
+    // marks nothing, so no count moves.
+    let current_gone = {
+        let st = state.borrow();
+        st.current
+            .and_then(|c| st.files.get(c))
+            .is_some_and(|p| !p.exists())
+    };
+    let touches = current_gone || {
+        let st = state.borrow();
+        changed
+            && match &st.view {
+                View::Roots(None) => true,
+                View::Roots(Some(r)) => path.starts_with(r) || r.starts_with(path),
+                View::Folder => st
+                    .files
                     .first()
                     .and_then(|f| f.parent())
                     .and_then(|d| dunce::canonicalize(d).ok())
-                    .is_some_and(|d| d.starts_with(path))
-                    || st.current.is_some_and(|c| !st.files[c].exists())
+                    .is_some_and(|d| d.starts_with(path)),
             }
-        }
     };
-    touches
+    let merged = touches
         && crate::WORKER
             .with(|w| w.borrow().clone())
-            .is_some_and(|worker| refresh_view(state, app, &worker))
+            .is_some_and(|worker| refresh_view(state, app, &worker));
+    if launch_done {
+        let empty = {
+            let st = state.borrow();
+            matches!(st.view, View::Roots(_))
+                && st.files.is_empty()
+                && !st.library.loading
+                && !st.library.merging
+        };
+        if empty {
+            empty_view(&mut state.borrow_mut(), app);
+        }
+    }
+    merged
+}
+
+/// The rows of the files a pass found changed, by the paths it names:
+/// the list's own spelling first, else the index's canonical one for a
+/// file of the same name.
+pub(crate) fn changed_rows(st: &State, report: &greycard_library::Report) -> Vec<usize> {
+    if report.changed_files.is_empty() {
+        return Vec::new();
+    }
+    let changed: HashSet<&PathBuf> = report.changed_files.iter().collect();
+    let names: HashSet<&std::ffi::OsStr> = report
+        .changed_files
+        .iter()
+        .filter_map(|p| p.file_name())
+        .collect();
+    st.files
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| {
+            changed.contains(f)
+                || (f.file_name().is_some_and(|n| names.contains(n))
+                    && changed.contains(&greycard_library::key_path(f)))
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// The view is empty for good: nothing under the roots, and no pass
+/// left to bring anything. Said, and a capture of it ends here, failed,
+/// rather than wait for a picture that will never come.
+pub(crate) fn empty_view(st: &mut State, app: &App) {
+    let why = if st.library.roots.is_empty() {
+        "the library has no folders: nothing to show"
+    } else if st.library.roots.list().iter().all(|r| !online(r)) {
+        "every folder in the library is offline: nothing to show"
+    } else {
+        "nothing under the library's folders"
+    };
+    app.set_status(why.into());
+    tracing::warn!("library: {why}");
+    st.library.awaiting = false;
+    if st.batch {
+        st.failed = true;
+        let _ = slint::quit_event_loop();
+    }
 }
 
 /// The header's callbacks: a root chosen, all of them, one added by
@@ -1678,6 +1762,121 @@ mod tests {
         }
         st.index_reader = None;
         drop(st);
+        drop(state);
+        drop(writer);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// M1: a capture of an empty all-roots view ends, failed, with a
+    /// status saying so, rather than wait for a picture that will not
+    /// come: the only root offline, or a root with nothing in it once
+    /// the launch pass is done.
+    #[test]
+    fn a_capture_of_an_empty_view_ends() {
+        let dir = scratch("empty-view");
+        let (gone, empty) = (dir.join("unplugged"), dir.join("empty"));
+        std::fs::create_dir_all(&gone).unwrap();
+        std::fs::create_dir_all(&empty).unwrap();
+        let db = dir.join("index").join("library.sqlite");
+        drop(greycard_library::Library::open(&db).unwrap());
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.batch = true;
+            st.library.awaiting = true;
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.library.roots.add(&gone).unwrap();
+        }
+        std::fs::remove_dir(&gone).unwrap();
+        open_view(&state, &app, &worker, View::Roots(None));
+        {
+            let st = state.borrow();
+            assert!(st.failed, "the capture ends");
+            assert!(!st.library.awaiting);
+        }
+        assert!(app.get_status().contains("offline"), "{}", app.get_status());
+
+        // A fresh library over an empty root: the view waits for the
+        // launch pass, and ends when the pass brings nothing.
+        {
+            let mut st = state.borrow_mut();
+            st.failed = false;
+            st.library.awaiting = true;
+            st.library.roots = Roots::default();
+            st.library.roots.add(&empty).unwrap();
+            st.library.launch_left = 1;
+        }
+        open_view(&state, &app, &worker, View::Roots(None));
+        assert!(!state.borrow().failed, "the pass is still to come");
+        let report = greycard_library::Report::default();
+        background_done(&state, &app, &empty, &report, true);
+        assert!(state.borrow().failed, "nothing came of the pass");
+        assert!(app.get_status().contains("nothing"), "{}", app.get_status());
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// M2: a pass that found one file changed asks for that file's
+    /// picture again, and no other under the root.
+    #[test]
+    fn a_changed_file_asks_for_its_own_picture_only() {
+        let dir = scratch("changed-rows");
+        let files = frames(&dir, &["a.tif", "b.tif", "c.tif"]);
+        let app = window(3);
+        let (state, _worker) = state_for(&app, files.clone());
+        let report = greycard_library::Report {
+            changed: 1,
+            changed_files: vec![greycard_library::key_path(&files[1])],
+            ..greycard_library::Report::default()
+        };
+        assert_eq!(changed_rows(&state.borrow(), &report), [1]);
+        assert!(changed_rows(&state.borrow(), &greycard_library::Report::default()).is_empty());
+        drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// M3: the frame on screen, the last file in its folder, deleted.
+    /// The folder is left empty, which the index takes for a drive not
+    /// mounted and marks nothing; the window still lets the frame go,
+    /// and opens the nearest, rather than keep a frame whose next save
+    /// would write a sidecar beside nothing.
+    #[test]
+    fn the_last_frame_of_a_folder_deleted_goes_from_the_window() {
+        let dir = scratch("last-gone");
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        frames(&a, &["x.tif", "y.tif"]);
+        let lone = frames(&b, &["z.tif"]).remove(0);
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&dir, &mut |_| {}).unwrap();
+        let listed = writer.paths_under(std::slice::from_ref(&dir)).unwrap();
+        let app = window(3);
+        let (state, _worker) = state_for(&app, listed.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.library.roots.add(&dir).unwrap();
+            st.view = View::Roots(None);
+            crate::library::refresh_ids(&mut st);
+            st.current = listed.iter().position(|p| *p == lone);
+            rebuild_browser(&mut st, &app);
+        }
+        std::fs::remove_file(&lone).unwrap();
+        let report = writer.index_folder(&b, &mut |_| {}).unwrap();
+        assert_eq!(report.missing, 0, "the index keeps the row: {report:?}");
+        assert!(!report.unavailable.is_empty());
+        background_done(&state, &app, &b, &report, false);
+        {
+            let st = state.borrow();
+            assert_ne!(st.current.and_then(|c| st.files.get(c)), Some(&lone));
+            assert!(!st.files.contains(&lone), "{:?}", st.files);
+        }
+        assert!(!lone.with_extension("tif.gcd").exists());
+        state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
         std::fs::remove_dir_all(&dir).unwrap();
