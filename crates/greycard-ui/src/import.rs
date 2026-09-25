@@ -67,10 +67,6 @@ impl Scan {
     }
 }
 
-fn is_frame(p: &Path) -> bool {
-    greycard_core::decode::is_raw_path(p) || greycard_core::picture::is_picture_path(p)
-}
-
 fn extension_is(p: &Path, want: &str) -> bool {
     p.extension()
         .and_then(|e| e.to_str())
@@ -357,6 +353,51 @@ impl Report {
             s.push_str(&format!(": {}: {why}", name_of(file)));
         }
         s
+    }
+}
+
+/// The import's record in the log: from where to where, what came of
+/// it, and what was left. A warning when anything did not go, so a
+/// command-line run says it without -v.
+pub fn log_report(opts: &Options, scan: &Scan, report: &Report) {
+    let line = format!(
+        "import: {} to {}: {} of {} imported ({} files, {} bytes in {:.2} s, {:.1} MB/s), \
+         {} backed up{}, {} already there, {} skipped (name taken), {} given {}, \
+         {} left on the card{}{}",
+        opts.source.display(),
+        opts.destination.display(),
+        report.frames,
+        frames(report.total),
+        report.files,
+        report.bytes,
+        report.seconds,
+        report.rate(),
+        report.backed_up,
+        opts.backup
+            .as_deref()
+            .map(|b| format!(" to {}", b.display()))
+            .unwrap_or_default(),
+        report.already,
+        report.taken,
+        report.preset,
+        opts.preset
+            .as_ref()
+            .map_or_else(|| "no preset".to_string(), |p| format!("\"{}\"", p.name)),
+        scan.left.len(),
+        if report.canceled { "; stopped" } else { "" },
+        report
+            .error
+            .as_ref()
+            .map(|(f, why)| format!("; failed on {}: {why}", f.display()))
+            .unwrap_or_default(),
+    );
+    if report.error.is_some() || report.canceled || report.taken > 0 {
+        tracing::warn!("{line}");
+    } else {
+        tracing::info!("{line}");
+    }
+    for f in &scan.left {
+        tracing::debug!("import: left on the card: {}", f.display());
     }
 }
 
@@ -790,7 +831,15 @@ fn import_one(
 
 /// The folders a mounted volume may be under, as each desktop mounts
 /// them. On Windows each drive is a volume of its own.
+/// `GREYCARD_MOUNTS`, a list of folders in the platform's `PATH`
+/// form, is looked under instead when it is set: a card for a test
+/// or a snapshot, with nothing mounted.
 pub fn volumes() -> Vec<PathBuf> {
+    if let Some(list) = std::env::var_os("GREYCARD_MOUNTS") {
+        return std::env::split_paths(&list)
+            .flat_map(|p| volumes_under(&p))
+            .collect();
+    }
     let mut out = Vec::new();
     #[cfg(windows)]
     {

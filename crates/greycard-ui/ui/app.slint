@@ -28,6 +28,7 @@ import { RejectsSheet } from "panel/rejects-sheet.slint";
 import { PresetSheet } from "panel/preset-sheet.slint";
 import { SyncSheet } from "panel/sync-sheet.slint";
 import { ExportSheet } from "panel/deliver.slint";
+import { ImportSheet } from "panel/import-sheet.slint";
 import { SettingsSheet } from "panel/settings-sheet.slint";
 import { GridSheet } from "panel/grid.slint";
 import { Filmstrip } from "panel/strip.slint";
@@ -955,6 +956,37 @@ export component App inherits Window {
     changed export-mark-size => { root.export-sheet-changed(); }
     changed export-mark-margin => { root.export-sheet-changed(); }
     changed export-mark-opacity => { root.export-sheet-changed(); }
+    // The import sheet: frames from a card into a folder, renamed,
+    // verified, backed up and given a preset. Ctrl+Shift+I or the
+    // grid's Import button opens it, through Rust, which looks for a
+    // card and reads the source on threads of their own.
+    in-out property <bool> import-open: false;
+    in property <string> import-source: "";
+    in property <string> import-destination: "";
+    in property <string> import-backup: "";
+    in-out property <string> import-subfolder: "{date}";
+    in-out property <string> import-name: "{name}";
+    in property <[string]> import-presets: [];
+    in-out property <string> import-preset: "None";
+    in property <string> import-note: "";
+    in property <string> import-preview: "";
+    in property <int> import-count: 0;
+    in property <bool> import-ready: false;
+    /// An import is copying, a frame at a time; Stop (or Escape)
+    /// finishes the frame in hand and stops.
+    in property <bool> import-running: false;
+    in property <bool> import-stopping: false;
+    /// The import's progress, then its end, for the grid's header,
+    /// which covers the status plate; empty when there is nothing to say.
+    in property <string> import-status: "";
+    callback import-asked();
+    callback import-choose(string);
+    callback import-backup-cleared();
+    callback import-started();
+    callback import-stop();
+    callback import-pattern-changed();
+    changed import-subfolder => { root.import-pattern-changed(); }
+    changed import-name => { root.import-pattern-changed(); }
     // The settings sheet: what is the installation's and not a
     // picture's. Where a sidecar is written, "Beside the raw" or
     // "Hidden folder"; whether an XMP is written beside it; how many
@@ -1060,7 +1092,7 @@ export component App inherits Window {
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
-            || root.settings-open || root.sync-open;
+            || root.settings-open || root.sync-open || root.import-open;
     }
 
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
@@ -1075,6 +1107,7 @@ export component App inherits Window {
             // rest: Escape closes it first.
             if (e.text == Key.Escape && root.settings-open) { root.settings-open = false; return accept; }
             if (e.text == Key.Escape && root.export-open) { root.export-open = false; return accept; }
+            if (e.text == Key.Escape && root.import-open) { root.import-open = false; return accept; }
             if (e.text == Key.Escape && root.fetch-open) { root.fetch-answered(false); return accept; }
             if (e.text == Key.Escape && root.preset-open) { root.preset-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
@@ -1088,6 +1121,11 @@ export component App inherits Window {
             // A set being exported stops before Escape means anything
             // else: the sheet is gone by then, and this is its cancel.
             // Once stopping, Escape is the window's again.
+            // An import likewise, first: it is the longer of the two.
+            if (e.text == Key.Escape && root.import-running && !root.import-stopping && !root.sheet-open()) {
+                root.import-stop();
+                return accept;
+            }
             if (e.text == Key.Escape && root.export-running && !root.export-stopping && !root.sheet-open()) {
                 root.export-stop();
                 return accept;
@@ -1165,6 +1203,12 @@ export component App inherits Window {
             if (e.modifiers.control && !e.modifiers.shift && !e.modifiers.alt
                 && (e.text == "v" || e.text == "V")) {
                 if (!root.sheet-open()) { root.paste-asked(); }
+                return accept;
+            }
+            // Import: Lightroom's Ctrl+Shift+I. Needs no frame open,
+            // since an empty editor is where a first card goes.
+            if (e.modifiers.control && e.modifiers.shift && (e.text == "i" || e.text == "I")) {
+                if (!root.sheet-open() && !root.import-running) { root.import-asked(); }
                 return accept;
             }
             if (e.modifiers.control && e.modifiers.shift && (e.text == "e" || e.text == "E")) {
@@ -1403,7 +1447,7 @@ export component App inherits Window {
                 placeholder-status: root.placeholder-status;
                 canvas-choice <=> root.canvas-choice;
                 canvas-colors: root.canvas-colors;
-                busy: root.busy || root.export-running;
+                busy: root.busy || root.export-running || root.import-running;
                 retouch-mode <=> root.retouch-mode;
                 patch-size <=> root.patch-size;
                 patch-feather <=> root.patch-feather;
@@ -1993,6 +2037,11 @@ export component App inherits Window {
         filter-text-edited(a) => { root.filter-text-edited(a); }
         filter-cleared => { root.filter-cleared(); }
         open-folder => { root.open-folder(); }
+        import-running: root.import-running;
+        import-stopping: root.import-stopping;
+        import-line: root.import-status;
+        import-asked => { root.import-asked(); }
+        import-stop => { root.import-stop(); }
         focus-keys => { keys.focus(); }
     }
 
@@ -2071,6 +2120,25 @@ export component App inherits Window {
         export-preset-saved(n) => { root.export-preset-saved(n); }
         export-preset-deleted => { root.export-preset-deleted(); }
         export-preset-exists(n) => { return root.export-preset-exists(n); }
+    }
+
+    // The import sheet, over everything, until started or left.
+    if root.import-open: ImportSheet {
+        import-open <=> root.import-open;
+        import-source: root.import-source;
+        import-destination: root.import-destination;
+        import-backup: root.import-backup;
+        import-subfolder <=> root.import-subfolder;
+        import-name <=> root.import-name;
+        import-presets: root.import-presets;
+        import-preset <=> root.import-preset;
+        import-note: root.import-note;
+        import-preview: root.import-preview;
+        import-count: root.import-count;
+        import-ready: root.import-ready;
+        import-choose(w) => { root.import-choose(w); }
+        import-backup-cleared => { root.import-backup-cleared(); }
+        import-started => { root.import-started(); }
     }
 
     // The settings sheet, over everything, until closed.

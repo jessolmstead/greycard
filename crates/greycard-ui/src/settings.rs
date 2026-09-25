@@ -80,6 +80,35 @@ pub struct Settings {
     /// may hold, in megabytes; past it the least recently used
     /// pictures go. Zero turns the cache off.
     pub thumb_cache_mb: u64,
+    /// The import sheet as it was last started: written when an
+    /// import begins, not gathered when the window closes.
+    pub import: ImportChoices,
+}
+
+/// What the import sheet keeps for next time. The source is not
+/// among them: a card is looked for afresh each time.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ImportChoices {
+    pub destination: String,
+    pub subfolder: String,
+    pub name: String,
+    /// Empty for none.
+    pub backup: String,
+    /// The develop preset by name, empty for none.
+    pub preset: String,
+}
+
+impl Default for ImportChoices {
+    fn default() -> Self {
+        Self {
+            destination: String::new(),
+            subfolder: "{date}".into(),
+            name: "{name}".into(),
+            backup: String::new(),
+            preset: String::new(),
+        }
+    }
 }
 
 impl Default for Settings {
@@ -105,6 +134,7 @@ impl Default for Settings {
             lenses_declined: false,
             last_file: String::new(),
             thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
+            import: ImportChoices::default(),
         }
     }
 }
@@ -229,6 +259,13 @@ mod tests {
             lenses_declined: true,
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             thumb_cache_mb: 1024,
+            import: ImportChoices {
+                destination: "/home/x/Pictures".into(),
+                subfolder: "{yyyy}/{date}".into(),
+                name: "{date}-{seq}".into(),
+                backup: "/mnt/backup".into(),
+                preset: "Faded film".into(),
+            },
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);

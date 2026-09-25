@@ -23,6 +23,25 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(log) = log::start(cli.verbose) {
         eprintln!("log: {}", log.display());
     }
+    // `--import` with no sheet asked for is a run with no window.
+    let import_sheet = matches!(
+        cli.sheet,
+        Some(crate::panel::viewport::Shown::Import | crate::panel::viewport::Shown::Imported)
+    );
+    if let Some(source) = cli.import.as_deref().filter(|_| !import_sheet) {
+        let to = cli.to.as_deref().context("--import wants --to DEST")?;
+        return crate::panel::import::headless(
+            source,
+            to,
+            cli.subfolder.as_deref().unwrap_or_default(),
+            cli.name.as_deref().unwrap_or("{name}"),
+            cli.preset.as_deref(),
+            cli.backup.as_deref(),
+            cli.library
+                .clone()
+                .or_else(greycard_library::Library::user_path),
+        );
+    }
     let remembered = settings::Settings::load();
     match settings::path() {
         Some(p) => tracing::info!("settings: {}", p.display()),
@@ -331,6 +350,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         ..State::empty(files.clone(), &app)
     }));
     app.set_compare_tiles(ModelRc::from(state.borrow().compare_tiles.clone()));
+    // `--sheet import`: the sheet shows what the import flags name.
+    if import_sheet {
+        let mut st = state.borrow_mut();
+        st.import.source = cli.import.clone();
+        st.import.destination = cli.to.clone();
+        st.import.backup = cli.backup.clone();
+        if cli.name.is_some() || cli.subfolder.is_some() {
+            st.import.filled = true;
+            app.set_import_name(cli.name.clone().unwrap_or("{name}".into()).into());
+            app.set_import_subfolder(cli.subfolder.clone().unwrap_or_default().into());
+        }
+    }
     // The settings sheet's two, as this run has them: the flags'
     // over the file's.
     app.set_sidecar_placement(crate::panel::prefs::placement_name(state.borrow().placement).into());
@@ -1114,6 +1145,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         });
     }
     app.run()?;
+    // An import running stops as Stop stops it, after the file in
+    // hand, which lands whole rather than being cut off with the
+    // process.
+    crate::panel::import::leave(&mut state.borrow_mut().import);
     // The window is closed: the worker finishes what it is in the
     // middle of and puts its buffers down before the process goes.
     worker.stop();
@@ -1142,6 +1177,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.sidecars_in_folder = kept.sidecars_in_folder;
         settings.lenses_declined = kept.lenses_declined;
         settings.thumb_cache_mb = kept.thumb_cache_mb;
+        settings.import = kept.import;
         settings.save();
     }
 
@@ -1411,6 +1447,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         last_file: String::new(),
         // Not the panel's either: the settings file is where it is set.
         thumb_cache_mb: 0,
+        // Written as an import starts.
+        import: settings::ImportChoices::default(),
     }
 }
 

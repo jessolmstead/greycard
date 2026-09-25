@@ -197,11 +197,14 @@ struct Cli {
     /// export, preset, fetch (the model sheet, with sample text),
     /// lenses (the lens profiles' first-launch offer), settings, sync
     /// (over the frames selected), synced (the sync applied on its
-    /// defaults at once, the sheet never drawn) or preset-onto-set
+    /// defaults at once, the sheet never drawn), preset-onto-set
     /// (the first stored preset clicked over the frames selected, no
     /// sheet involved), paste (the first frame's settings copied and
-    /// the paste sheet opened over the frames selected) or pasted (that
-    /// paste applied at once, the sheet never drawn)
+    /// the paste sheet opened over the frames selected), pasted (that
+    /// paste applied at once, the sheet never drawn), import (the
+    /// import sheet, its source --import's when given, else a card
+    /// looked for) or imported (the same, its import started once the
+    /// source is read)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of
@@ -238,7 +241,8 @@ struct Cli {
     #[arg(long)]
     tab: Option<String>,
     /// Lay this preset (by name, or a preset file's path) over the
-    /// first file's edit on opening, as a step in its history
+    /// first file's edit on opening, as a step in its history; with
+    /// --import, over every frame imported
     #[arg(long, value_name = "NAME")]
     preset: Option<String>,
     /// Run the engine's ops on the CPU even where the GPU could take
@@ -311,6 +315,27 @@ struct Cli {
     /// are moved, for a snapshot of the browser after it
     #[arg(long, hide = true)]
     move_rejects: bool,
+    /// Import the frames under this folder (a card's DCIM, or any
+    /// folder of them) into --to, verified, then quit, with no window.
+    /// With --sheet import, the import sheet's source instead
+    #[arg(long, value_name = "SRC")]
+    import: Option<PathBuf>,
+    /// Where --import copies the frames
+    #[arg(long, value_name = "DEST", requires = "import")]
+    to: Option<PathBuf>,
+    /// A second copy of every file --import copies, verified the same
+    /// way
+    #[arg(long, value_name = "DIR", requires = "import")]
+    backup: Option<PathBuf>,
+    /// The names --import gives, a pattern of {date}, {yyyy}, {mm},
+    /// {dd}, {name}, {camera} and {seq} with any text between; {name}
+    /// without it
+    #[arg(long, value_name = "PATTERN", requires = "import")]
+    name: Option<String>,
+    /// The folders under --to that --import makes, a pattern as --name
+    /// takes, `/` between levels; none without it
+    #[arg(long, value_name = "PATTERN", requires = "import")]
+    subfolder: Option<String>,
 }
 
 /// What the UI thread holds between events.
@@ -690,6 +715,9 @@ pub(crate) struct State {
     /// Something a batch run asked for did not happen: the exit code
     /// says so.
     pub(crate) failed: bool,
+    /// The import sheet's folders and what the source holds, and the
+    /// import running.
+    pub(crate) import: panel::import::Sheet,
 }
 
 impl State {
@@ -851,6 +879,7 @@ impl State {
             generation: 0,
             batch: false,
             failed: false,
+            import: panel::import::Sheet::default(),
         }
     }
 }
@@ -877,6 +906,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::prefs::install(app, &state, &worker);
     panel::sync::install(app, &state, &worker);
     panel::menu::install(app, &state, &worker);
+    panel::import::install(app, &state, &worker);
     report::install(app, &state);
 
     // Deliveries from the worker need the state and the worker too.

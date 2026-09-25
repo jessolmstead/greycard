@@ -304,6 +304,12 @@ pub(crate) enum Shown {
     /// The frame menu opened over this row of the strip, or of the
     /// grid when it is open (`--menu`).
     Menu(usize),
+    /// The import sheet, as Ctrl+Shift+I opens it.
+    Import,
+    /// The import sheet's import started as soon as its source is
+    /// read, as its button would, for a snapshot of the run or of the
+    /// folder it opens.
+    Imported,
     /// The model sheet, with sample text where the download's goes.
     Fetch,
     /// The lens profiles' download as the first launch offers it.
@@ -332,9 +338,11 @@ impl Shown {
             "preset-onto-set" => Ok(Self::PresetOntoSet),
             "paste" => Ok(Self::Paste),
             "pasted" => Ok(Self::Pasted),
+            "import" => Ok(Self::Import),
+            "imported" => Ok(Self::Imported),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
-                 preset-onto-set, paste or pasted, not {name}"
+                 preset-onto-set, paste, pasted, import or imported, not {name}"
             )),
         }
     }
@@ -371,6 +379,11 @@ impl Shown {
                 app.invoke_sync_applied();
             }
             Self::Menu(row) => app.set_menu_at(row as i32),
+            Self::Import => app.invoke_import_asked(),
+            Self::Imported => {
+                app.invoke_import_asked();
+                crate::panel::import::start_when_read(app, 100);
+            }
             Self::Fetch => {
                 app.set_fetch_title("Download the Subject model?".into());
                 app.set_fetch_text(

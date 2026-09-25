@@ -7,6 +7,7 @@ pub(crate) mod curve;
 pub(crate) mod deliver;
 pub(crate) mod edit;
 pub(crate) mod history;
+pub(crate) mod import;
 pub(crate) mod mask;
 pub(crate) mod menu;
 pub(crate) mod prefs;

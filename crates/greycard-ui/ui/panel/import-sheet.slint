@@ -1,0 +1,185 @@
+// The import sheet: the export sheet's twin, the other way. Where the
+// frames come from (a card, found when there is one), where they go,
+// the folders and names they are given, a preset laid over each, and
+// a second copy for a backup; over everything until a choice is made.
+
+import { ComboBox, LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { PanelButton } from "../controls.slint";
+
+// A folder: its path, or what is missing, and the button that asks
+// the desktop for one.
+component FolderRow inherits HorizontalLayout {
+    in property <string> label;
+    in property <string> path;
+    in property <string> empty;
+    in property <bool> clearable: false;
+    callback choose();
+    callback clear();
+    spacing: Theme.space-2;
+    Text { text: root.label; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+    Text {
+        text: root.path == "" ? root.empty : root.path;
+        color: root.path == "" ? Theme.text-muted : Theme.text-secondary;
+        font-size: Theme.font-sm;
+        vertical-alignment: center;
+        horizontal-stretch: 1;
+        overflow: elide;
+    }
+    if root.clearable && root.path != "": PanelButton {
+        text: "Clear";
+        clicked => { root.clear(); }
+    }
+    PanelButton {
+        text: "Choose...";
+        clicked => { root.choose(); }
+    }
+}
+
+export component ImportSheet inherits Rectangle {
+    in-out property <bool> import-open;
+    in property <string> import-source;
+    in property <string> import-destination;
+    in property <string> import-backup;
+    in-out property <string> import-subfolder;
+    in-out property <string> import-name;
+    /// The presets by name, "None" first, and the one chosen.
+    in property <[string]> import-presets;
+    in-out property <string> import-preset;
+    /// What the source holds, or what is being looked for.
+    in property <string> import-note;
+    /// Where the first frame would land, or why nothing would.
+    in property <string> import-preview;
+    /// Frames to import; none keeps the button off.
+    in property <int> import-count;
+    /// Whether there is something to import, somewhere to put it and
+    /// patterns that make names.
+    in property <bool> import-ready;
+    /// Which folder to ask the desktop for: source, destination or
+    /// backup.
+    callback import-choose(string);
+    callback import-backup-cleared();
+    callback import-started();
+
+    background: #000000a0;
+    TouchArea { clicked => { root.import-open = false; } }
+    Rectangle {
+        width: 520px;
+        height: min(body.preferred-height, root.height - 2 * Theme.space-5);
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        clip: true;
+        TouchArea { }
+        body := VerticalLayout {
+            padding: Theme.space-5;
+            spacing: Theme.space-2;
+            Text {
+                text: "Import";
+                font-size: Theme.font-lg;
+                font-weight: Theme.weight-medium;
+                color: Theme.text;
+            }
+            Text {
+                text: "Copied, checked against the card byte for byte, then renamed. Nothing on the card is changed or deleted.";
+                wrap: word-wrap;
+                font-size: Theme.font-xs;
+                color: Theme.text-secondary;
+            }
+            Rectangle { height: Theme.space-1; }
+            FolderRow {
+                label: "From";
+                path: root.import-source;
+                empty: "No card found";
+                choose => { root.import-choose("source"); }
+            }
+            HorizontalLayout {
+                padding-left: 76px + Theme.space-2;
+                Text {
+                    text: root.import-note;
+                    wrap: word-wrap;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-secondary;
+                }
+            }
+            FolderRow {
+                label: "To";
+                path: root.import-destination;
+                empty: "No folder chosen";
+                choose => { root.import-choose("destination"); }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                Text { text: "Folders"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                LineEdit {
+                    horizontal-stretch: 1;
+                    text <=> root.import-subfolder;
+                    placeholder-text: "none: straight into the folder";
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                Text { text: "Name"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                LineEdit {
+                    horizontal-stretch: 1;
+                    text <=> root.import-name;
+                    placeholder-text: "{name}";
+                }
+            }
+            HorizontalLayout {
+                padding-left: 76px + Theme.space-2;
+                Text {
+                    text: "{date} {yyyy} {mm} {dd} {name} {camera} {seq}; a / in Folders makes a folder in a folder.";
+                    wrap: word-wrap;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                }
+            }
+            HorizontalLayout {
+                padding-left: 76px + Theme.space-2;
+                Text {
+                    text: root.import-preview;
+                    wrap: word-wrap;
+                    font-size: Theme.font-sm;
+                    color: Theme.text;
+                }
+            }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                Text { text: "Preset"; width: 76px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                ComboBox {
+                    horizontal-stretch: 1;
+                    model: root.import-presets;
+                    current-value <=> root.import-preset;
+                }
+            }
+            FolderRow {
+                label: "Backup";
+                path: root.import-backup;
+                empty: "None: one copy only";
+                clearable: true;
+                choose => { root.import-choose("backup"); }
+                clear => { root.import-backup-cleared(); }
+            }
+            Rectangle { height: Theme.space-2; }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                alignment: end;
+                PanelButton {
+                    text: "Cancel";
+                    clicked => { root.import-open = false; }
+                }
+                PanelButton {
+                    text: root.import-count == 1 ? "Import 1 frame" : "Import " + root.import-count + " frames";
+                    icon: @image-url("../icons/camera.svg");
+                    primary: true;
+                    enabled: root.import-ready;
+                    clicked => { root.import-started(); }
+                }
+            }
+        }
+    }
+}

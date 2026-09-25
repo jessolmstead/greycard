@@ -72,6 +72,13 @@ export component GridSheet inherits Rectangle {
     callback filter-text-edited(string);
     callback filter-cleared();
     callback open-folder();
+    /// An import running, and its progress and then its end, said here
+    /// in place of the selection since the grid covers the status plate.
+    in property <bool> import-running;
+    in property <bool> import-stopping;
+    in property <string> import-line;
+    callback import-asked();
+    callback import-stop();
     callback focus-keys();
 
     background: Theme.sheet;
@@ -116,7 +123,26 @@ export component GridSheet inherits Rectangle {
                         icon: @image-url("../icons/folder-open.svg");
                         clicked => { root.focus-keys(); root.open-folder(); }
                     }
-                    Text {
+                    // Beside it, the other way a folder fills: from a
+                    // card. Ctrl+Shift+I reaches the same sheet.
+                    PanelButton {
+                        text: root.import-running ? (root.import-stopping ? "Stopping..." : "Stop import") : "Import...";
+                        icon: @image-url("../icons/camera.svg");
+                        enabled: !root.import-stopping;
+                        clicked => {
+                            root.focus-keys();
+                            if (root.import-running) { root.import-stop(); } else { root.import-asked(); }
+                        }
+                    }
+                    if root.import-line != "": Text {
+                        text: root.import-line;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    if root.import-line == "": Text {
                         text: root.selected >= 0 && root.selected < root.thumbs.length
                             ? root.thumbs[root.selected].name
                                 + (root.set-count > 1 ? " and " + (root.set-count - 1)
