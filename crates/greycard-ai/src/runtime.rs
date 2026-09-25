@@ -353,6 +353,30 @@ fn plan(
         .map(|e| e.outcome.clone())
 }
 
+/// Whether `provider` is on record as having failed the file named by
+/// `hash`, on the adapter and build this launch would use — for a
+/// caller that wants the answer before ever opening a session, to
+/// decide what to offer rather than what to load
+/// (`subject::original_failed_on_webgpu`). `false` with nothing
+/// trusted on record, or where the adapter cannot even be named (no
+/// `webgpu` feature, or the probe failed).
+pub fn remembered_failure(
+    store_root: &Path,
+    hash: &str,
+    provider: Provider,
+    providers: &[Provider],
+) -> bool {
+    let Some(adapter) = provider.adapter_identity() else {
+        return false;
+    };
+    let entries = record::read(store_root);
+    let build = record::build_fingerprint(providers);
+    matches!(
+        plan(&entries, hash, provider, &adapter, &build),
+        Some(record::Outcome::Failed { .. })
+    )
+}
+
 /// Whether to skip the warm-up run: only for CPU, and only when it is
 /// the last provider tried (it always is, today, but a caller can
 /// pass any slice: `&[Provider::WebGpu]` alone is CPU-free, so

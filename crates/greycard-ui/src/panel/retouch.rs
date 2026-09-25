@@ -94,7 +94,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 && !st.store.as_ref().is_some_and(|s| s.have(&greycard_ai::FILL))
             {
                 if !st.fetching {
-                    offer_model(&mut st, &app, &greycard_ai::FILL);
+                    offer_model(&mut st, &app, &greycard_ai::FILL, false);
                 }
                 return;
             }

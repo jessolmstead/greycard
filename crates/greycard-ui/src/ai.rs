@@ -33,9 +33,10 @@ pub fn providers() -> &'static [Provider] {
 }
 
 /// The model a shape needs, if any. For Subject that depends on the
-/// providers, on what `store` already has, and on which models cannot
-/// be had this session (`unavailable`: declined, or their fetch
-/// failed), `greycard_ai::subject::model_for`; so the store the worker
+/// providers, on what `store` already has, on which models cannot be
+/// had this session (`unavailable`: declined, or their fetch failed),
+/// and on whether the original is on record as having failed on
+/// WebGPU (`greycard_ai::subject::model_for`); so the store the worker
 /// loads from is the one to pass.
 pub fn model_for(
     shape: &Shape,
@@ -47,22 +48,26 @@ pub fn model_for(
         |m| store.is_some_and(|s| s.have(m)),
         providers(),
         unavailable,
+        |_| store.is_some_and(|s| greycard_ai::subject::original_failed_on_webgpu(s, providers())),
     )
 }
 
-/// `model_for` with what the store has and the providers given, for
-/// a test.
+/// `model_for` with what the store has, the providers, and whether the
+/// original is on record as failing on WebGPU, given rather than read
+/// from a real store: for a test.
 pub fn model_with(
     shape: &Shape,
     have: impl Fn(&Model) -> bool,
     providers: &[Provider],
     unavailable: &[&str],
+    original_failed_on_webgpu: impl Fn(&Model) -> bool,
 ) -> Option<&'static Model> {
     match shape {
         Shape::Subject {} => Some(greycard_ai::subject::pick(
             providers.contains(&Provider::WebGpu),
             have,
             |m| unavailable.contains(&m.id),
+            original_failed_on_webgpu,
         )),
         Shape::Object { .. } => Some(&SAM),
         _ => None,

@@ -23,15 +23,20 @@ pub struct Subject {
 
 /// The Subject model to use, or to offer to fetch, with these
 /// providers and this store. What is in the store comes first: the
-/// rewrite when WebGPU is on offer and the store has it, else whichever
-/// of the two the store has, the original first. Either runs on
-/// either provider list: the rewrite answers on the CPU as the
-/// original does, and the original on WebGPU fails over to the CPU.
-/// With neither in the store, the one to offer: the rewrite where
-/// WebGPU is on offer, unless its id is in `unavailable` (its fetch
-/// failed, or it was declined, this session), then the original. So a
-/// rewrite that cannot be had never stands between a shape and the
-/// original.
+/// rewrite when WebGPU is on offer and the store has it, else the
+/// original when the store has it and either WebGPU is off or the
+/// original is not on record as failing on it — an install from
+/// before the rewrite shipped, still on a card the original runs on
+/// fine, fetches nothing a second time. Where the store has the
+/// original alone, WebGPU is on offer, and the original *is* on
+/// record as having failed on this adapter (`providers.json`, written
+/// by `runtime::open`), the rewrite is offered instead, so an install
+/// from before it existed comes off the CPU's three seconds a mask —
+/// unless its id is in `unavailable` (its fetch failed, or it was
+/// declined, this session), when the original stands. With neither
+/// file in the store, the one to offer: the rewrite where WebGPU is on
+/// offer, unless `unavailable`, then the original. So a rewrite that
+/// cannot be had never stands between a shape and the original.
 pub fn model_for(
     store: Option<&Store>,
     providers: &[Provider],
@@ -41,20 +46,42 @@ pub fn model_for(
         providers.contains(&Provider::WebGpu),
         |m| store.is_some_and(|s| s.have(m)),
         |m| unavailable.contains(&m.id),
+        |_| store.is_some_and(|s| original_failed_on_webgpu(s, providers)),
+    )
+}
+
+/// Whether the original (`SUBJECT`) is on record as having failed on
+/// WebGPU, for the adapter and build this launch would use: what
+/// turns [`model_for`] (and the offer sheet, `greycard-ui`) to the
+/// rewrite for a store that has only the original.
+pub fn original_failed_on_webgpu(store: &Store, providers: &[Provider]) -> bool {
+    runtime::remembered_failure(
+        store.root(),
+        SUBJECT.files[0].sha256,
+        Provider::WebGpu,
+        providers,
     )
 }
 
 /// [`model_for`]'s choice, given whether WebGPU is on offer, what the
-/// store has, and what cannot be fetched this session.
+/// store has, what cannot be fetched this session, and whether the
+/// original is on record as having failed on WebGPU (only ever asked
+/// of `SUBJECT`; a store with neither file, or a CPU-only launch,
+/// never calls it).
 pub fn pick(
     webgpu: bool,
     have: impl Fn(&Model) -> bool,
     unavailable: impl Fn(&Model) -> bool,
+    original_failed_on_webgpu: impl Fn(&Model) -> bool,
 ) -> &'static Model {
     if webgpu && have(&SUBJECT_WEBGPU) {
         &SUBJECT_WEBGPU
     } else if have(&SUBJECT) {
-        &SUBJECT
+        if webgpu && original_failed_on_webgpu(&SUBJECT) && !unavailable(&SUBJECT_WEBGPU) {
+            &SUBJECT_WEBGPU
+        } else {
+            &SUBJECT
+        }
     } else if have(&SUBJECT_WEBGPU) || (webgpu && !unavailable(&SUBJECT_WEBGPU)) {
         &SUBJECT_WEBGPU
     } else {
@@ -131,10 +158,17 @@ mod tests {
     use super::*;
 
     fn id(webgpu: bool, have: &[&str], unavailable: &[&str]) -> &'static str {
+        id_with(webgpu, have, unavailable, false)
+    }
+
+    /// `id`, with whether the original is on record as having failed
+    /// on WebGPU.
+    fn id_with(webgpu: bool, have: &[&str], unavailable: &[&str], failed: bool) -> &'static str {
         pick(
             webgpu,
             |m| have.contains(&m.id),
             |m| unavailable.contains(&m.id),
+            |_| failed,
         )
         .id
     }
@@ -164,6 +198,41 @@ mod tests {
             id(true, &[SUBJECT_WEBGPU.id], &[SUBJECT_WEBGPU.id]),
             SUBJECT_WEBGPU.id
         );
+    }
+
+    /// An install from before the rewrite shipped: the store has only
+    /// the original. On WebGPU, with the original on record as having
+    /// failed there, the rewrite is offered instead — the same weights
+    /// are not fetched twice for a card that runs the original fine,
+    /// but a card that cannot is not left at three seconds a mask
+    /// forever.
+    #[test]
+    fn an_original_on_record_as_failing_on_webgpu_offers_the_rewrite() {
+        let orig = SUBJECT.id;
+        assert_eq!(
+            id_with(true, &[orig], &[], true),
+            SUBJECT_WEBGPU.id,
+            "the original fails here: the rewrite is worth fetching"
+        );
+    }
+
+    /// The same store, with nothing on record: the original stands,
+    /// since a card that runs it needs no second download.
+    #[test]
+    fn an_original_with_no_record_of_failing_keeps_the_original() {
+        let orig = SUBJECT.id;
+        assert_eq!(id_with(true, &[orig], &[], false), orig);
+        // Off WebGPU the record does not even apply.
+        assert_eq!(id_with(false, &[orig], &[], true), orig);
+    }
+
+    /// The rewrite declined (or its fetch failed) this session: the
+    /// original stands even though it is on record as failing here,
+    /// same as when there was nothing in the store at all.
+    #[test]
+    fn a_declined_rewrite_falls_back_to_the_original() {
+        let orig = SUBJECT.id;
+        assert_eq!(id_with(true, &[orig], &[SUBJECT_WEBGPU.id], true), orig);
     }
 
     #[test]

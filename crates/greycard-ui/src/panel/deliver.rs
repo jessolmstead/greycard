@@ -390,7 +390,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 }
                 LearnedReport::Missing(model) => {
                     if st.fetch.is_none() && !st.fetching && !st.declined.contains(&model.id) {
-                        offer_model(&mut st, app, model);
+                        offer_model(&mut st, app, model, false);
                     }
                     ", the engine's denoise until the model is fetched".to_string()
                 }
@@ -421,7 +421,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 ));
                 let model = &greycard_ai::FILL;
                 if st.fetch.is_none() && !st.fetching && !st.declined.contains(&model.id) {
-                    offer_model(&mut st, app, model);
+                    offer_model(&mut st, app, model, false);
                 }
             }
             for (name, why) in &fills.failed {

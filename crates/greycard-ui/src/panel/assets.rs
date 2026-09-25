@@ -92,10 +92,32 @@ pub(crate) fn model_note(model: &greycard_ai::Model) -> String {
     }
 }
 
-/// Open the model sheet for `model`.
-pub(crate) fn offer_model(st: &mut State, app: &App, model: &'static greycard_ai::Model) {
+/// Open the model sheet for `model`. `falls_back` is set when this
+/// offer is the Subject rewrite standing in for an original already in
+/// the store — one on record as falling back to the CPU on this
+/// card — rather than a first Subject offer, which the sheet's opening
+/// line says plainly instead of leaving the reader to guess why a
+/// second Subject file is being offered at all.
+pub(crate) fn offer_model(
+    st: &mut State,
+    app: &App,
+    model: &'static greycard_ai::Model,
+    falls_back: bool,
+) {
     st.fetch = Some(Fetch::Model(model));
-    app.set_fetch_note(model_note(model).into());
+    let note = model_note(model);
+    app.set_fetch_note(
+        if falls_back {
+            format!(
+                "the Subject model in your store falls back to the CPU on this card; a rewrite \
+                 of the same weights runs on it, {} MB. {note}",
+                model.bytes() / 1_000_000,
+            )
+        } else {
+            note
+        }
+        .into(),
+    );
     app.set_fetch_title(format!("Download {}?", model.name).into());
     app.set_fetch_text(
         format!(
