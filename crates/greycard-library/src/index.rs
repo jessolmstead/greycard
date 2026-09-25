@@ -313,7 +313,22 @@ impl Library {
         let mut shielded: Vec<Vec<u8>> = Vec::new();
         let mut dirs = vec![root.clone()];
         while let Some(dir) = dirs.pop() {
-            let one = self.index_folder_until(&dir, progress, stop)?;
+            // A folder under the root that cannot be read (no
+            // permission, a mount gone bad) is said in the report and
+            // left as it was, rows and all; the rest of the tree is
+            // walked. The first cut let it end the pass, and a root
+            // with one locked folder in it was never indexed past it.
+            let one = match self.index_folder_until(&dir, progress, stop) {
+                Ok(one) => one,
+                Err(Error::Io(e)) if dir != root => {
+                    log::warn!("{}: {e}; left as it was", dir.display());
+                    report.errors.push((dir.clone(), e.to_string()));
+                    visited.insert(path_bytes(&dir));
+                    shielded.push(under_prefix(&path_bytes(&dir)));
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
             if !one.unavailable.is_empty() {
                 shielded.push(under_prefix(&path_bytes(&dir)));
             }
@@ -330,7 +345,16 @@ impl Library {
                 continue;
             }
             let mut under = Vec::new();
-            for entry in std::fs::read_dir(&dir)?.filter_map(|e| e.ok()) {
+            let listing = match std::fs::read_dir(&dir) {
+                Ok(l) => l,
+                Err(e) if dir != root => {
+                    report.errors.push((dir.clone(), e.to_string()));
+                    shielded.push(under_prefix(&path_bytes(&dir)));
+                    continue;
+                }
+                Err(e) => return Err(e.into()),
+            };
+            for entry in listing.filter_map(|e| e.ok()) {
                 let Ok(kind) = entry.file_type() else {
                     continue;
                 };
@@ -2517,6 +2541,40 @@ pub(crate) mod tests {
         std::fs::remove_file(new.join("x.tif")).unwrap();
         lib.index_folder(&new, &mut quiet()).unwrap();
         assert!(lib.found_at(&[id]).unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder under the root that cannot be read is an error in the
+    /// report, its rows left as they were, and the rest of the tree
+    /// is indexed.
+    #[cfg(unix)]
+    #[test]
+    fn a_locked_folder_under_a_root_is_said_and_walked_around() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("locked");
+        let (locked, open) = (dir.join("a-locked"), dir.join("b-open"));
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::create_dir_all(&open).unwrap();
+        write_frame(&locked.join("x.tif"), &R5, 1);
+        write_frame(&open.join("y.tif"), &R6, 2);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        write_frame(&open.join("z.tif"), &A7, 3);
+        let passed = lib.index_tree(&dir, &mut quiet());
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if std::fs::read_dir(&locked).is_ok() && passed.as_ref().is_ok_and(|r| r.errors.is_empty())
+        {
+            // Run as root, which reads the folder anyway.
+            std::fs::remove_dir_all(&dir).unwrap();
+            return;
+        }
+        let report = passed.unwrap();
+        assert_eq!(report.added, 1, "{report:?}");
+        assert_eq!(report.missing, 0, "the locked folder's row stands");
+        assert_eq!(report.errors.len(), 1, "{report:?}");
+        assert_eq!(report.errors[0].0, locked);
+        assert_eq!(lib.len().unwrap(), 3);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

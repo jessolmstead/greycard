@@ -1039,6 +1039,51 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// The row in the grid's header is wired: along it a press finds
+    /// the all-roots chip, then the root's own, then its cross, then
+    /// the chooser's chip, in that order.
+    #[test]
+    fn the_roots_row_hands_back_what_was_pressed() {
+        let app = window(0);
+        app.window()
+            .set_size(slint::LogicalSize::new(1200.0, 700.0));
+        app.set_grid_open(true);
+        app.set_library_roots(ModelRc::new(VecModel::from(vec![RootChip {
+            name: "shoots".into(),
+            path: "/x/shoots".into(),
+            count: 12,
+            on: false,
+        }])));
+        app.set_library_all_count(12);
+        let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+        let s = seen.clone();
+        app.on_library_root_picked(move |p| s.borrow_mut().push(format!("picked {p}")));
+        let s = seen.clone();
+        app.on_library_root_removed(move |p| s.borrow_mut().push(format!("removed {p}")));
+        let s = seen.clone();
+        app.on_library_root_add(move || s.borrow_mut().push("add".into()));
+        let s = seen.clone();
+        app.on_library_root_add_open(move || s.borrow_mut().push("add open".into()));
+        // The row is the header's second, under the controls.
+        for x in (0..600).step_by(3) {
+            crate::testing::click(&app, x as f32, 56.0);
+        }
+        // In the order first met: the chip's own edge past its cross
+        // picks it again, and that is the chip's.
+        let mut said: Vec<String> = Vec::new();
+        for s in seen.borrow().iter() {
+            if !said.contains(s) {
+                said.push(s.clone());
+            }
+        }
+        assert_eq!(
+            said,
+            ["picked ", "picked /x/shoots", "removed /x/shoots", "add"],
+            "{:?}",
+            seen.borrow()
+        );
+    }
+
     /// The indexer's background: the launch pass over a root, and a
     /// change the watcher saw, each said when done — on a library of
     /// the test's own, beside which its roots would be kept.
