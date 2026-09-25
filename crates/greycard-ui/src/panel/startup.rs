@@ -188,7 +188,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // Each file's edit, and its meta, from its sidecar when there is
     // one. Read before the strip is filled so a folder culled last
     // week opens with its badges on.
-    let (mut sidecars, seed_blend) = load_sidecars(&files, !cli.no_sidecars);
+    let (mut sidecars, mut seed_blend) = load_sidecars(&files, !cli.no_sidecars);
     let thumbs = Rc::new(VecModel::<Thumb>::default());
     for (f, sidecar) in files.iter().zip(&sidecars) {
         thumbs.push(thumb_for(f, &sidecar.meta));
@@ -234,14 +234,21 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(store) = &preset_store {
         store.seed();
     }
+    let placement = if cli.sidecar_folder || remembered.sidecars_in_folder {
+        greycard_edit::Placement::Folder
+    } else {
+        greycard_edit::Placement::Beside
+    };
     if let (Some(name), Some(i)) = (&cli.preset, initial_select) {
         let found = preset_store.as_ref().and_then(|s| s.find(name));
         match found {
-            Some(entry) => {
-                let applied = entry.preset.applied(&sidecars[i].current);
-                let label = greycard_edit::history::preset_label(&entry.preset.name);
-                sidecars[i].record_as(applied, Some(label));
-            }
+            Some(entry) => preset_at_start(
+                &mut sidecars[i],
+                &mut seed_blend[i],
+                &files[i],
+                &entry.preset,
+                (!cli.no_sidecars).then_some(placement),
+            ),
             None => anyhow::bail!("no preset called {name}"),
         }
     }
@@ -251,11 +258,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         seed_blend,
         write_sidecars: !cli.no_sidecars,
         xmp_sidecars: cli.xmp_sidecars || remembered.xmp_sidecars,
-        placement: if cli.sidecar_folder || remembered.sidecars_in_folder {
-            greycard_edit::Placement::Folder
-        } else {
-            greycard_edit::Placement::Beside
-        },
+        placement,
         zoom: cli.zoom.max(0.0),
         scope: opening_scope(&cli, &remembered),
         show_mask: cli.show_mask.and_then(|i| i.checked_sub(1)),
@@ -1059,6 +1062,49 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
 /// The monitor's profile as the panel has it, and where it is from,
 /// for the panel's note: colord's for the monitor named (the primary
 /// when none is, or the name is stale), a standard, or a file.
+/// `--preset`: lay `preset` over `file`'s edit as one step named for
+/// it, and write the sidecar where `placement` says (`None`: the run
+/// writes no sidecars). Written here and not left to the quit's
+/// `save_edit`, which finds the panel equal to the step already
+/// recorded and so writes nothing: the step would be lost on close.
+///
+/// A raw still waiting on its ISO's learned-denoiser blend (`seed`)
+/// is given it first, as `panel::sync::lay_over_targets` gives a
+/// target: the step makes the edit no longer the default, and once
+/// written the next launch would take that to mean the blend was
+/// seeded already. A preset that changes nothing records and writes
+/// nothing.
+pub(crate) fn preset_at_start(
+    sidecar: &mut Sidecar,
+    seed: &mut bool,
+    file: &Path,
+    preset: &Preset,
+    placement: Option<greycard_edit::Placement>,
+) {
+    let applied = preset.applied(&sidecar.current);
+    if applied == sidecar.current {
+        return;
+    }
+    let mut over = sidecar.current.clone();
+    if *seed
+        && !greycard_core::picture::is_picture_path(file)
+        && let Ok(p) = greycard_core::decode::probe_path(file)
+    {
+        over.noise.learned_strength = greycard_edit::Noise::blend_for_iso(p.iso);
+        sidecar.current.noise.learned_strength = over.noise.learned_strength;
+        *seed = false;
+    }
+    let label = greycard_edit::history::preset_label(&preset.name);
+    if !sidecar.record_as(preset.applied(&over), Some(label)) {
+        return;
+    }
+    if let Some(placement) = placement
+        && let Err(e) = sidecar.save_in(file, placement)
+    {
+        tracing::warn!("{}: sidecar not saved: {e}", file.display());
+    }
+}
+
 pub(crate) fn monitor_settings(
     app: &App,
     monitors: &[display::Monitor],
@@ -1407,5 +1453,63 @@ mod tests {
         assert_eq!(size_text(8192, 5464), "8192 \u{d7} 5464 \u{b7} 45 MP");
         assert_eq!(size_text(3000, 2000), "3000 \u{d7} 2000 \u{b7} 6.0 MP");
         assert_eq!(size_text(1, 1), "1 \u{d7} 1 \u{b7} 0.0 MP");
+    }
+
+    /// `--preset` leaves a sidecar carrying its named step, where the
+    /// setting puts it, and none when the run writes no sidecars; a
+    /// preset that changes nothing writes nothing.
+    #[test]
+    fn a_preset_at_start_is_written_with_its_name() {
+        let dir =
+            std::env::temp_dir().join(format!("greycard-preset-start-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let file = dir.join("IMG_0001.CR3");
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.5;
+        let preset = Preset::from_edit("Faded film", &edit, &[greycard_edit::Section::Light]);
+
+        let mut sidecar = Sidecar::default();
+        let mut seed = false;
+        preset_at_start(&mut sidecar, &mut seed, &file, &preset, None);
+        assert_eq!(sidecar.current.light.exposure, 0.5);
+        assert!(Sidecar::find(&file).is_none(), "no sidecars: none written");
+
+        let mut sidecar = Sidecar::default();
+        let placement = Some(greycard_edit::Placement::Folder);
+        preset_at_start(&mut sidecar, &mut seed, &file, &preset, placement);
+        let back = Sidecar::load(&file).unwrap().expect("the step was written");
+        assert_eq!(
+            Sidecar::find(&file),
+            Some(Sidecar::path_in(&file, greycard_edit::Placement::Folder))
+        );
+        assert_eq!(back.current.light.exposure, 0.5);
+        assert_eq!(back.current_label.as_deref(), Some("Preset: Faded film"));
+        assert_eq!(back.describe(1).as_deref(), Some("Preset: Faded film"));
+
+        // Again: on already, so no step and no write.
+        let saved = back.saved;
+        let mut again = back;
+        preset_at_start(&mut again, &mut seed, &file, &preset, placement);
+        assert_eq!(again.history.len(), 1);
+        assert_eq!(Sidecar::load(&file).unwrap().unwrap().saved, saved);
+
+        // A file that will not say its ISO keeps waiting for its
+        // blend rather than being given one made up.
+        let mut fresh = Sidecar::default();
+        let mut waiting = true;
+        preset_at_start(
+            &mut fresh,
+            &mut waiting,
+            &dir.join("IMG_0002.CR3"),
+            &preset,
+            None,
+        );
+        assert!(waiting);
+        assert_eq!(
+            fresh.current.noise.learned_strength,
+            Edit::default().noise.learned_strength
+        );
+        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
     }
 }
