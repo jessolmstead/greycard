@@ -116,12 +116,15 @@ Decided (§34): ONNX Runtime through `ort`, CPU floor with CUDA, DirectML
 or CoreML when found; models downloaded on first use with their
 licenses, never bundled; a `greycard-ai` crate that core never sees.
 
-- [ ] AI masks: Sky first, and it must never paint where there is no
-      sky. The trial is done (§170): EoMT-S panoptic's sky class
-      behind a gate, SAM 2 seeded from its confident core and clipped
-      back, painted no false sky on the 41-frame set; the edge at
-      100% is the work left, a matte stage on a band around the
-      boundary. Then Water, Mountain, Vegetation, Ground and Building
+- [ ] AI masks, after Sky (§175): the Sky shape's model hosted at
+      jessolmstead/greycard-sky (the export script reproduces the
+      bytes); a learned sky matte for dense canopies and twigs
+      against glare, where the color-line matte fails (needs clean
+      data we assemble); a 4096-wide raster for Sky so a 100 MP
+      frame's twigs are not averaged fourfold; more hard negatives
+      for the gate (sky-blue walls, a lake reflecting sky with none
+      above it, a snowfield filling the frame); the bimodal WebGPU
+      prior. Then Water, Mountain, Vegetation, Ground and Building
       shapes from the same label map; then the body's parts as shapes
       of their own, each a mask to put a look on: facial skin, body
       skin, hair, eyebrows, eyes and the iris, lips, teeth, and
@@ -130,9 +133,10 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       model, and SAM 2 from landmarks (the CelebAMask-HQ, LIP, ATR and
       DeepFashion2 families are research-only; SAM 3 ruled out for
       now, gated weights and a 1.4 GB text encoder, §34 addendum).
-      Waits on two calls of the user's: the ImageNet-backbone reading
-      of the license rule, and hosting a converted EasyPortrait file
-      ourselves rather than fetching from its publisher's bucket
+      The parts wait on two calls of the user's: the ImageNet-backbone
+      reading of the license rule, and hosting a converted
+      EasyPortrait file ourselves rather than fetching from its
+      publisher's bucket (SberDevices, a Sberbank company)
 - [ ] Generative fill behind the patch layer
 
 ## v0.6.0: color

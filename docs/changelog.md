@@ -42,6 +42,15 @@ note a first tester reads.
   root shown offline and left alone; the filter remembered between
   sessions; rejects moved to a rejects folder in each shoot's own
   folder; `--roots DIR,DIR` and `--all-roots` (§174, 2026-09-25).
+- A Sky mask on the Masks tab: a learned prior (EoMT-S, MIT weights,
+  96 MB, fetched on first use) finds the sky, a gate refuses a frame
+  with none rather than paint one, SAM 2 draws the outline, and a
+  color-line matte at the frame's full resolution takes the edge
+  through hair and bare branches; clicks add or remove sky. Under a
+  second from click to mask on the GPU at 24 MP. On the 41-frame test
+  set, no false sky on the five frames without one and 31 of 36 skies
+  found; sky through a window, and sky behind dense blossom, are
+  refused or missed (§175, 2026-09-25).
 
 ## 0.1.2, 2026-09-25
 
