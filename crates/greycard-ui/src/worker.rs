@@ -1138,14 +1138,19 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
     }
 }
 
-/// How many of the pool's `threads` may make thumbnails while a
-/// develop runs. `GREYCARD_THUMB_DURING_DEVELOP` overrides it, for
-/// measuring.
+/// How many of the pool's `threads` may begin a thumbnail while a
+/// develop runs: none. Those in hand finish; the rest wait for the
+/// develop to be done. Measured on a cold folder of 300, eight
+/// threads left running took the first develop from 1.28 s to 1.61 s
+/// and four from 1.28 to 1.49, where holding them all kept it at
+/// 1.21 and cost the folder 0.8 s of its 3.6. The develop runs rayon
+/// over every core and the thumbnails' decodes take cores it wanted.
+/// `GREYCARD_THUMB_DURING_DEVELOP` overrides it, for measuring.
 fn during_develop(threads: usize) -> usize {
     std::env::var("GREYCARD_THUMB_DURING_DEVELOP")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or(threads)
+        .map_or(0, |n| n.min(threads))
 }
 
 /// A path's file name, for a status line.

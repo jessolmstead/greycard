@@ -22,7 +22,8 @@ use crate::worker::{Deliver, Outcome, THUMB_WIDTH, order_thumbnails, panic_messa
 
 /// How a picture is made: a file and the long edge asked for, to the
 /// picture and whether it came from the cache.
-pub(crate) type Make = Arc<dyn Fn(&Path, u32) -> anyhow::Result<(Thumb, bool)> + Send + Sync>;
+pub(crate) type Make = Arc<MakeFn>;
+pub(crate) type MakeFn = dyn Fn(&Path, u32) -> anyhow::Result<(Thumb, bool)> + Send + Sync;
 
 /// How many threads make thumbnails on a machine of `cores`: half of
 /// them, at least two and at most eight. The develop runs on rayon's
@@ -183,11 +184,7 @@ impl Drop for Pool {
 /// has in hand, made, and delivered unless the folder has changed
 /// since it was begun. A panic in the making — rawler has a few on
 /// damaged files — costs that file its picture and nothing else.
-fn serve(
-    shared: &Shared,
-    make: &dyn Fn(&Path, u32) -> anyhow::Result<(Thumb, bool)>,
-    deliver: &dyn Fn(Outcome),
-) {
+fn serve(shared: &Shared, make: &MakeFn, deliver: &dyn Fn(Outcome)) {
     loop {
         let (index, path, size, epoch) = {
             let mut q = shared.pending.lock().expect("thumbnail pool");
@@ -378,6 +375,8 @@ mod tests {
         let gate = Mutex::new(gate);
         let made = Arc::new(Mutex::new(0usize));
         let count = made.clone();
+        let (began_tx, began) = mpsc::channel::<()>();
+        let began_tx = Mutex::new(began_tx);
         let make: Make = Arc::new(move |_, _| {
             {
                 let mut s = seen.lock().unwrap();
@@ -385,12 +384,10 @@ mod tests {
                 s.1 = s.1.max(s.0);
             }
             *count.lock().unwrap() += 1;
-            // The first making waits to be let go, so the second ask
-            // arrives while it is in hand.
-            let _ = gate
-                .lock()
-                .unwrap()
-                .recv_timeout(Duration::from_millis(200));
+            began_tx.lock().unwrap().send(()).unwrap();
+            // Each making waits to be let go, so the next ask arrives
+            // while it is in hand.
+            gate.lock().unwrap().recv_timeout(WAIT).unwrap();
             seen.lock().unwrap().0 -= 1;
             Ok((picture(), false))
         });
@@ -399,10 +396,14 @@ mod tests {
         pool.push(3, file(3));
         // In hand, then asked for twice more: one waits for it, and
         // the repeat of the one waiting is dropped.
-        std::thread::sleep(Duration::from_millis(50));
+        began.recv_timeout(WAIT).unwrap();
         pool.push(3, file(3));
         pool.push(3, file(3));
+        // Three threads are free, and none takes it while it is in
+        // hand.
+        assert!(began.recv_timeout(Duration::from_millis(200)).is_err());
         gate_tx.send(()).unwrap();
+        began.recv_timeout(WAIT).unwrap();
         gate_tx.send(()).unwrap();
         let got = receive(&rx, 2);
         assert_eq!(got, vec![(3, true), (3, true)]);
