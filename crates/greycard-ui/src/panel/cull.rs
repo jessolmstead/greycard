@@ -1143,14 +1143,19 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
         if moved.sidecars == 1 { "" } else { "s" },
         dir
     );
-    if !moved.skipped.is_empty() {
+    if let Some((_, why)) = moved.skipped.first() {
         status.push_str(&format!(
-            "; {} left where {} (a file of that name is there already)",
+            "; {} left where {} ({why}{})",
             moved.skipped.len(),
             if moved.skipped.len() == 1 {
                 "it was"
             } else {
                 "they were"
+            },
+            if moved.skipped.len() > 1 {
+                "; the log has each"
+            } else {
+                ""
             }
         ));
     }
@@ -1195,14 +1200,7 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
     drop_placeholder(st, app);
     st.hold = None;
     st.prefetch.want(Vec::new());
-    for (i, f) in st.files.iter().enumerate() {
-        if st.thumb_base[i].is_none() {
-            worker.send(Job::Thumbnail {
-                index: i,
-                path: f.clone(),
-            });
-        }
-    }
+    worker.replace_thumbnails(crate::roots::owed_thumbnails(st));
     let went = current_path
         .as_ref()
         .map(|p| st.files.iter().position(|f| f == p));

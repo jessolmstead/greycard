@@ -23,14 +23,16 @@
 //! ReadDirectoryChangesW on Windows. Its events are turned into
 //! [`Change`]s — a folder whose files changed, or a folder that
 //! appeared or went, to be walked — and handed on in batches once
-//! the disk has been quiet for a moment. A watcher that cannot
-//! start, or a root it cannot watch (too many inotify watches, a
-//! network mount), is said and left: the launch pass still brings
-//! the index up to date, only not while the editor runs.
+//! the disk has been quiet for a moment. A root with a folder under
+//! it that cannot be read is watched folder by folder, around it. A
+//! watcher that cannot start, or a root it cannot watch at all (too
+//! many inotify watches, a network mount), is said and left: the
+//! launch pass still brings the index up to date, only not while the
+//! editor runs.
 
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::canonical;
@@ -45,6 +47,15 @@ const VERSION: u64 = 1;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Roots {
     list: Vec<PathBuf>,
+}
+
+/// What a roots file said.
+enum Parsed {
+    Roots(Roots),
+    /// A version this build does not know.
+    Newer(u64),
+    /// Not a roots file.
+    Not,
 }
 
 /// What adding a folder did.
@@ -86,19 +97,23 @@ impl Roots {
     /// The roots in the file at `path`: none when it is not there.
     /// A file that will not parse is said and set aside as
     /// `roots.json.unreadable`, so the next save does not write an
-    /// empty list over something a person might want back.
-    pub fn load(path: &Path) -> Roots {
+    /// empty list over something a person might want back. A file
+    /// that cannot be read (a permission, a disk error), or one a
+    /// later build wrote, is an error: the caller then keeps no file
+    /// to save to, rather than write an empty or older list over it.
+    pub fn load(path: &Path) -> std::io::Result<Roots> {
         let bytes = match std::fs::read(path) {
             Ok(b) => b,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Roots::default(),
-            Err(e) => {
-                log::warn!("{}: {e}; no roots", path.display());
-                return Roots::default();
-            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Roots::default()),
+            Err(e) => return Err(e),
         };
         match Self::parse(&bytes) {
-            Some(roots) => roots,
-            None => {
+            Parsed::Roots(roots) => Ok(roots),
+            Parsed::Newer(v) => Err(std::io::Error::other(format!(
+                "{}: written by a later greycard (version {v}); left alone",
+                path.display()
+            ))),
+            Parsed::Not => {
                 let aside = path.with_extension("json.unreadable");
                 log::warn!(
                     "{}: not a roots file; set aside as {}",
@@ -106,26 +121,40 @@ impl Roots {
                     aside.display()
                 );
                 let _ = std::fs::rename(path, &aside);
-                Roots::default()
+                Ok(Roots::default())
             }
         }
     }
 
-    fn parse(bytes: &[u8]) -> Option<Roots> {
-        let value: serde_json::Value = serde_json::from_slice(bytes).ok()?;
-        let list = value.get("roots")?.as_array()?;
+    fn parse(bytes: &[u8]) -> Parsed {
+        let Ok(value) = serde_json::from_slice::<serde_json::Value>(bytes) else {
+            return Parsed::Not;
+        };
+        if let Some(v) = value.get("version").and_then(|v| v.as_u64())
+            && v > VERSION
+        {
+            return Parsed::Newer(v);
+        }
+        let Some(list) = value.get("roots").and_then(|l| l.as_array()) else {
+            return Parsed::Not;
+        };
         let mut roots = Roots::default();
         for item in list {
-            let path = PathBuf::from(item.as_str()?);
+            let Some(text) = item.as_str() else {
+                return Parsed::Not;
+            };
+            let path = PathBuf::from(text);
             if !roots.list.contains(&path) {
                 roots.list.push(path);
             }
         }
-        Some(roots)
+        Parsed::Roots(roots)
     }
 
     /// Write the list to `path`, through a file beside it renamed
-    /// over it, so a crash mid-write never leaves half a list.
+    /// over it, so a crash mid-write never leaves half a list. The
+    /// part file carries the process's id, so two editors saving at
+    /// once never write the same one.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
         let list: Vec<serde_json::Value> = self
             .list
@@ -140,9 +169,25 @@ impl Roots {
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }
-        let part = path.with_extension("json.part");
+        let part = path.with_extension(format!("json.{}.part", std::process::id()));
         std::fs::write(&part, text)?;
-        std::fs::rename(&part, path)
+        std::fs::rename(&part, path).inspect_err(|_| {
+            let _ = std::fs::remove_file(&part);
+        })
+    }
+
+    /// Change the list kept at `path` as it is on disk now, not as
+    /// this process last read it, and save it: another editor may have
+    /// added or removed a root since. `change` is applied to the list
+    /// read afresh; what it returns comes back beside the list saved.
+    pub fn edit<T>(
+        path: &Path,
+        change: impl FnOnce(&mut Roots) -> T,
+    ) -> std::io::Result<(Roots, T)> {
+        let mut roots = Self::load(path)?;
+        let out = change(&mut roots);
+        roots.save(path)?;
+        Ok((roots, out))
     }
 
     /// The roots, in the order they were added.
@@ -254,6 +299,13 @@ pub fn change_for(roots: &[PathBuf], path: &Path) -> Option<Change> {
     if hidden {
         return None;
     }
+    // A root that is not there (a drive unplugged, its mount point
+    // taken away with it) says nothing: a pass over it would mark the
+    // whole shoot missing, which is the exclamation mark §72 set out
+    // not to build.
+    if !root.is_dir() {
+        return None;
+    }
     if crate::is_indexed_path(path) {
         let parent = path.parent()?;
         return Some(Change::Folder(parent.to_path_buf()));
@@ -261,12 +313,15 @@ pub fn change_for(roots: &[PathBuf], path: &Path) -> Option<Change> {
     if path.is_dir() {
         return Some(Change::Tree(path.to_path_buf()));
     }
-    if path.exists() || path.extension().is_some() {
+    if path.exists() {
         return None;
     }
-    // Gone, and with no extension: a folder, as likely as not. The
-    // highest folder gone under the root is walked, since a tree pass
-    // over a folder whose parent is gone too is refused.
+    // Gone, and not a file the index holds: a folder, as likely as
+    // not, and one named like `2026.09.24` has what looks like an
+    // extension. A pass over a path the index has no rows under is
+    // refused at once, so a gone sidecar or temporary costs nothing.
+    // The highest folder gone under the root is walked, since a tree
+    // pass over a folder whose parent is gone too is refused.
     let mut gone = path.to_path_buf();
     while let Some(parent) = gone.parent() {
         if parent == root.as_path() || parent.exists() {
@@ -304,9 +359,13 @@ pub fn settle(changes: Vec<Change>) -> Vec<Change> {
 /// The roots watched, while this is held. Dropping it stops the
 /// watching and, once the last events are handed on, its thread.
 pub struct Watcher {
-    _watcher: notify::RecommendedWatcher,
-    /// The roots it watches: every root asked for less the ones it
-    /// could not.
+    /// Shared with the watcher's thread, which holds it weakly: a
+    /// root watched folder by folder has each new folder added as it
+    /// appears. Dropping this drops the platform's watcher, which ends
+    /// the thread.
+    _watcher: Arc<Mutex<notify::RecommendedWatcher>>,
+    /// The roots it watches, whole or in part: every root asked for
+    /// less the ones it could not watch at all.
     pub watched: Vec<PathBuf>,
 }
 
@@ -318,12 +377,40 @@ pub struct Watcher {
 pub const QUIET: Duration = Duration::from_millis(400);
 pub const LONGEST: Duration = Duration::from_secs(5);
 
+/// The folders under `dir` a watch can take, `dir` among them: not
+/// hidden, not a link, and readable. Those that cannot be read come
+/// back beside, with the reason.
+#[allow(clippy::type_complexity)]
+fn folders_under(dir: &Path) -> (Vec<PathBuf>, Vec<(PathBuf, String)>) {
+    let mut found = Vec::new();
+    let mut unreadable = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        match std::fs::read_dir(&d) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let hidden = entry.file_name().to_string_lossy().starts_with('.');
+                    if !hidden && entry.file_type().is_ok_and(|t| t.is_dir()) {
+                        stack.push(entry.path());
+                    }
+                }
+                found.push(d);
+            }
+            Err(e) => unreadable.push((d, e.to_string())),
+        }
+    }
+    (found, unreadable)
+}
+
 impl Watcher {
     /// Watch `roots`, recursively, and hand each batch of changes to
-    /// `changed` on a thread of the watcher's own. What could not be
-    /// watched comes back beside it, by root, with the reason: all of
-    /// them, and no watcher, when the platform's watcher would not
-    /// start at all.
+    /// `changed` on a thread of the watcher's own. A root the platform
+    /// will not watch whole (a folder under it that cannot be read,
+    /// a drive's `lost+found`) is watched folder by folder instead,
+    /// every folder that can be, and the ones that cannot come back
+    /// beside it, with the reason, as does a root not watched at all.
+    /// All the roots come back, and no watcher, when the platform's
+    /// watcher would not start.
     #[allow(clippy::type_complexity)]
     pub fn start(
         roots: &[PathBuf],
@@ -344,24 +431,57 @@ impl Watcher {
             }
         };
         let mut watched = Vec::new();
+        let mut by_folder = Vec::new();
         let mut failed = Vec::new();
         for root in roots {
-            match watcher.watch(root, notify::RecursiveMode::Recursive) {
-                Ok(()) => watched.push(root.clone()),
-                Err(e) => {
-                    // A recursive watch that ran out of inotify
-                    // watches halfway leaves the half it managed:
-                    // taken back, so the root is watched whole or not
-                    // at all.
-                    let _ = watcher.unwatch(root);
-                    failed.push((root.clone(), e.to_string()));
+            if watcher
+                .watch(root, notify::RecursiveMode::Recursive)
+                .is_ok()
+            {
+                watched.push(root.clone());
+                continue;
+            }
+            // Taken back, whatever part of it the recursive watch
+            // managed before it failed, and done a folder at a time.
+            let _ = watcher.unwatch(root);
+            let (folders, unreadable) = folders_under(root);
+            let mut any = false;
+            for folder in &folders {
+                match watcher.watch(folder, notify::RecursiveMode::NonRecursive) {
+                    Ok(()) => any = true,
+                    Err(e) => failed.push((folder.clone(), e.to_string())),
                 }
             }
+            failed.extend(unreadable);
+            if any {
+                watched.push(root.clone());
+                by_folder.push(root.clone());
+            }
         }
+        let shared = Arc::new(Mutex::new(watcher));
+        let weak = Arc::downgrade(&shared);
         let roots_seen = watched.clone();
         let spawned = std::thread::Builder::new()
             .name("greycard watch".into())
-            .spawn(move || debounce(&roots_seen, &events, quiet, longest, &changed));
+            .spawn(move || {
+                let add = |dir: &Path| {
+                    // A folder new under a root watched folder by
+                    // folder: it and whatever came with it.
+                    if !by_folder.iter().any(|r| dir.starts_with(r)) {
+                        return;
+                    }
+                    let Some(w) = weak.upgrade() else {
+                        return;
+                    };
+                    let Ok(mut w) = w.lock() else {
+                        return;
+                    };
+                    for folder in folders_under(dir).0 {
+                        let _ = w.watch(&folder, notify::RecursiveMode::NonRecursive);
+                    }
+                };
+                debounce(&roots_seen, &events, quiet, longest, &add, &changed)
+            });
         if let Err(e) = spawned {
             let why = e.to_string();
             return (
@@ -371,7 +491,7 @@ impl Watcher {
         }
         (
             Some(Watcher {
-                _watcher: watcher,
+                _watcher: shared,
                 watched,
             }),
             failed,
@@ -395,49 +515,65 @@ fn is_change(kind: &notify::EventKind) -> bool {
     }
 }
 
-/// The watcher's thread: events gathered into a batch until the disk
-/// is quiet for `quiet`, or `longest` has passed since the first,
-/// then handed on. It ends when the watcher is dropped.
+/// The watcher's thread: changes gathered into a batch until the
+/// disk has been quiet for `quiet`, or `longest` has passed since the
+/// first, then handed on. Only an event that is a change counts
+/// towards the quiet: the reads of a pass or of the thumbnails under
+/// a root being worked on do not hold a batch back. `add` is told of
+/// each folder that appears. It ends when the watcher is dropped.
 fn debounce(
     roots: &[PathBuf],
     events: &mpsc::Receiver<notify::Result<notify::Event>>,
     quiet: Duration,
     longest: Duration,
+    add: &dyn Fn(&Path),
     changed: &dyn Fn(Vec<Change>),
 ) {
     let mut batch: Vec<Change> = Vec::new();
-    let mut first: Option<Instant> = None;
+    // When the batch began, and when its last change came.
+    let mut first = Instant::now();
+    let mut last = first;
     loop {
-        let next = match first {
-            None => events
+        let next = if batch.is_empty() {
+            events
                 .recv()
-                .map_err(|_| mpsc::RecvTimeoutError::Disconnected),
-            Some(at) => {
-                let left = longest.saturating_sub(at.elapsed()).min(quiet);
-                events.recv_timeout(left)
+                .map_err(|_| mpsc::RecvTimeoutError::Disconnected)
+        } else {
+            let due = (last + quiet).min(first + longest);
+            match due.checked_duration_since(Instant::now()) {
+                Some(left) if !left.is_zero() => events.recv_timeout(left),
+                _ => Err(mpsc::RecvTimeoutError::Timeout),
             }
         };
         match next {
             Ok(Ok(event)) => {
+                let before = batch.len();
                 if event.need_rescan() {
                     // The platform dropped events (inotify's queue
                     // overflowed): every root walked again.
                     batch.extend(roots.iter().cloned().map(Change::Tree));
                 } else if is_change(&event.kind) {
-                    batch.extend(event.paths.iter().filter_map(|p| change_for(roots, p)));
+                    for change in event.paths.iter().filter_map(|p| change_for(roots, p)) {
+                        if let Change::Tree(dir) = &change
+                            && dir.is_dir()
+                        {
+                            add(dir);
+                        }
+                        batch.push(change);
+                    }
                 }
-                if !batch.is_empty() && first.is_none() {
-                    first = Some(Instant::now());
-                }
-                if first.is_some_and(|at| at.elapsed() < longest) {
-                    continue;
+                if batch.len() > before {
+                    let now = Instant::now();
+                    if before == 0 {
+                        first = now;
+                    }
+                    last = now;
                 }
             }
-            Ok(Err(e)) => {
-                log::warn!("watching the roots: {e}");
-                continue;
+            Ok(Err(e)) => log::warn!("watching the roots: {e}"),
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                changed(settle(std::mem::take(&mut batch)));
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 if !batch.is_empty() {
                     changed(settle(std::mem::take(&mut batch)));
@@ -445,10 +581,6 @@ fn debounce(
                 return;
             }
         }
-        if !batch.is_empty() {
-            changed(settle(std::mem::take(&mut batch)));
-        }
-        first = None;
     }
 }
 
@@ -517,20 +649,29 @@ mod tests {
         std::fs::create_dir_all(&a).unwrap();
         std::fs::create_dir_all(&b).unwrap();
         let path = Roots::path_beside(&dir.join("library.sqlite"));
-        assert_eq!(Roots::load(&path), Roots::default(), "no file is no roots");
+        assert_eq!(
+            Roots::load(&path).unwrap(),
+            Roots::default(),
+            "no file is no roots"
+        );
         let mut roots = Roots::default();
         roots.add(&a).unwrap();
         roots.add(&b).unwrap();
         roots.save(&path).unwrap();
-        assert_eq!(Roots::load(&path), roots);
-        assert!(!path.with_extension("json.part").exists());
+        assert_eq!(Roots::load(&path).unwrap(), roots);
+        let parts: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".part"))
+            .collect();
+        assert!(parts.is_empty(), "{parts:?}");
         // The library's own file can go, and the roots stay.
         std::fs::write(dir.join("library.sqlite"), b"").unwrap();
         std::fs::remove_file(dir.join("library.sqlite")).unwrap();
-        assert_eq!(Roots::load(&path).list(), [a.clone(), b.clone()]);
+        assert_eq!(Roots::load(&path).unwrap().list(), [a.clone(), b.clone()]);
 
         std::fs::write(&path, b"{ not json").unwrap();
-        assert_eq!(Roots::load(&path), Roots::default());
+        assert_eq!(Roots::load(&path).unwrap(), Roots::default());
         assert!(!path.exists());
         assert_eq!(
             std::fs::read(path.with_extension("json.unreadable")).unwrap(),
@@ -566,9 +707,19 @@ mod tests {
             change_for(&roots, &root.join("gone").join("deeper")),
             Some(Change::Tree(root.join("gone")))
         );
+        // A folder gone whose name has a dot in it is a folder gone,
+        // not a file (the review's `2026.09.24`, renamed away).
+        assert_eq!(
+            change_for(&roots, &root.join("2026.09.24")),
+            Some(Change::Tree(root.join("2026.09.24")))
+        );
         // The sidecars' hidden folder, a hidden temporary, a sidecar
         // beside its frame, an XMP, a part-copied file, and anything
         // outside the roots, are nobody's business.
+        std::fs::create_dir_all(shoot.join(".greycard")).unwrap();
+        for file in ["a.CR3.gcd", "a.xmp", "a.CR3.part"] {
+            std::fs::write(shoot.join(file), b"x").unwrap();
+        }
         for nothing in [
             shoot.join(".greycard").join("a.CR3.gcd"),
             shoot.join(".greycard"),
@@ -579,6 +730,21 @@ mod tests {
             dir.join("elsewhere").join("a.CR3"),
         ] {
             assert_eq!(change_for(&roots, &nothing), None, "{}", nothing.display());
+        }
+        // A root that is not there (a drive unplugged, its mount point
+        // gone with it) says nothing about itself or anything under it.
+        let offline = vec![dir.join("unplugged")];
+        for nothing in [
+            dir.join("unplugged"),
+            dir.join("unplugged").join("a.CR3"),
+            dir.join("unplugged").join("shoot"),
+        ] {
+            assert_eq!(
+                change_for(&offline, &nothing),
+                None,
+                "{}",
+                nothing.display()
+            );
         }
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -672,6 +838,153 @@ mod tests {
         assert_eq!(watcher.expect("a watcher").watched, [root]);
         assert_eq!(failed.len(), 1);
         assert_eq!(failed[0].0, dir.join("gone"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Two editors on one roots file: each edit reads the file as it
+    /// is now, so neither loses the other's root; a file a later build
+    /// wrote, or one that cannot be read, is an error and is left
+    /// alone rather than written over.
+    #[test]
+    fn two_editors_keep_each_others_roots() {
+        let dir = scratch("roots-two");
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let path = dir.join("roots.json");
+        // Both started with the file empty; each adds its own.
+        let (first, _) = Roots::edit(&path, |r| r.add(&a).unwrap()).unwrap();
+        let (second, _) = Roots::edit(&path, |r| r.add(&b).unwrap()).unwrap();
+        assert_eq!(first.list(), std::slice::from_ref(&a));
+        assert_eq!(second.list(), [a.clone(), b.clone()]);
+        assert_eq!(Roots::load(&path).unwrap(), second);
+        // And a removal by one keeps what the other added meanwhile.
+        let (_, removed) = Roots::edit(&path, |r| r.remove(&a)).unwrap();
+        assert!(removed);
+        assert_eq!(Roots::load(&path).unwrap().list(), std::slice::from_ref(&b));
+
+        let newer = br#"{"version": 9, "roots": ["/x"]}"#;
+        std::fs::write(&path, newer).unwrap();
+        assert!(Roots::load(&path).is_err());
+        assert!(Roots::edit(&path, |r| r.add(&a).map(|_| ())).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), newer, "left alone");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::write(&path, br#"{"version": 1, "roots": []}"#).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
+            let read = Roots::load(&path);
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            // Root reads it anyway; everyone else hears the error.
+            if read.is_ok() {
+                std::fs::remove_dir_all(&dir).unwrap();
+                return;
+            }
+            assert!(read.is_err());
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A root with a folder under it that cannot be read (a drive's
+    /// `lost+found`) is still watched, every folder that can be, and
+    /// the one that cannot is said; a folder made later under it is
+    /// watched too.
+    #[cfg(unix)]
+    #[test]
+    fn a_root_with_a_locked_folder_is_watched_around_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("roots-watch-locked");
+        let root = dir.join("root");
+        let (locked, shoot) = (root.join("lost+found"), root.join("shoot"));
+        std::fs::create_dir_all(&locked).unwrap();
+        std::fs::create_dir_all(&shoot).unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&locked).is_ok() {
+            // Run as root, which reads it anyway.
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::remove_dir_all(&dir).unwrap();
+            return;
+        }
+        let (send, got) = mpsc::channel();
+        let (watcher, failed) = Watcher::start(
+            std::slice::from_ref(&root),
+            Duration::from_millis(100),
+            Duration::from_secs(2),
+            move |changes| {
+                let _ = send.send(changes);
+            },
+        );
+        let watcher = watcher.expect("a watcher");
+        assert_eq!(watcher.watched, std::slice::from_ref(&root));
+        assert!(
+            failed.iter().all(|(p, _)| *p == locked),
+            "only the locked folder is said: {failed:?}"
+        );
+        let wait = |want: &Change| {
+            let until = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < until {
+                if let Ok(batch) = got.recv_timeout(Duration::from_millis(100))
+                    && batch.contains(want)
+                {
+                    return;
+                }
+            }
+            panic!("never saw {want:?}");
+        };
+        std::fs::write(shoot.join("a.CR3"), b"not a raw").unwrap();
+        wait(&Change::Folder(shoot.clone()));
+        let later = root.join("later");
+        std::fs::create_dir_all(&later).unwrap();
+        wait(&Change::Tree(later.clone()));
+        std::thread::sleep(Duration::from_millis(300));
+        std::fs::write(later.join("b.CR3"), b"not a raw").unwrap();
+        wait(&Change::Folder(later));
+        drop(watcher);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Reads under a root are not changes, and do not hold a batch
+    /// back: a change made while the root is being read all the time
+    /// comes after the quiet, not after the cap.
+    #[test]
+    fn reads_under_a_root_do_not_hold_a_batch_back() {
+        let dir = scratch("roots-watch-reads");
+        let root = dir.join("root");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("read.CR3"), b"x").unwrap();
+        let (send, got) = mpsc::channel();
+        let (watcher, _) = Watcher::start(
+            std::slice::from_ref(&root),
+            Duration::from_millis(150),
+            Duration::from_secs(8),
+            move |changes| {
+                let _ = send.send((Instant::now(), changes));
+            },
+        );
+        let _watcher = watcher.expect("a watcher");
+        let reading = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let r = reading.clone();
+        let file = root.join("read.CR3");
+        let reader = std::thread::spawn(move || {
+            while r.load(std::sync::atomic::Ordering::SeqCst) {
+                let _ = std::fs::read(&file);
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        });
+        std::thread::sleep(Duration::from_millis(200));
+        let wrote = Instant::now();
+        std::fs::write(root.join("new.CR3"), b"x").unwrap();
+        let (at, _) = got
+            .recv_timeout(Duration::from_secs(15))
+            .expect("the batch");
+        reading.store(false, std::sync::atomic::Ordering::SeqCst);
+        reader.join().unwrap();
+        assert!(
+            at.duration_since(wrote) < Duration::from_secs(4),
+            "handed on {:?} after the write",
+            at.duration_since(wrote)
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

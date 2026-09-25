@@ -305,6 +305,8 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
     let files_waiting = &*waits.files;
     let mut pending: Option<Pass> = None;
     let mut background: VecDeque<Background> = VecDeque::new();
+    // The tree passes stopped partway, by their folder.
+    let mut walks: HashMap<PathBuf, greycard_library::TreeWalk> = HashMap::new();
     loop {
         if wanted.load(Ordering::SeqCst) == LEAVING {
             return;
@@ -368,33 +370,60 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
             continue;
         };
         // In the background: anything the window asks for comes
-        // first, and this pass takes up again after it.
+        // first, and this pass takes up again after it, from where it
+        // stopped (a tree's walk is kept for that).
         let stop = || {
             wanted.load(Ordering::SeqCst) == LEAVING
                 || files_waiting.load(Ordering::SeqCst) > 0
                 || waits.folders.load(Ordering::SeqCst)
         };
         let started = Instant::now();
-        // A long pass says now and then that it has got further, so
+        // A long pass says now and then that it has written rows, so
         // a view of the roots fills in while a large root is walked
-        // for the first time rather than all at once at the end.
+        // for the first time rather than all at once at the end; and
+        // says nothing while it finds nothing new.
         let mut last = Instant::now();
-        let mut progress = |_: greycard_library::Progress<'_>| {
-            if last.elapsed() >= BACKGROUND_EVERY {
+        let mut written: (PathBuf, usize) = (PathBuf::new(), 0);
+        let mut unsaid = false;
+        let mut progress = |p: greycard_library::Progress<'_>| {
+            let folder = p.path.parent().unwrap_or(Path::new(""));
+            if folder != written.0 {
+                written = (folder.to_path_buf(), 0);
+            }
+            if p.written > written.1 {
+                written.1 = p.written;
+                unsaid = true;
+            }
+            if unsaid && last.elapsed() >= BACKGROUND_EVERY {
                 last = Instant::now();
+                unsaid = false;
                 told(Told::BackgroundProgress {
                     path: job.path().to_path_buf(),
                 });
             }
         };
-        let passed = match &job {
-            Background::Root(root) => lib.index_tree_until(root, &mut progress, &stop),
-            Background::Change(Change::Tree(dir)) => {
-                lib.index_tree_until(dir, &mut progress, &stop)
+        let tree = match &job {
+            Background::Root(dir) | Background::Change(Change::Tree(dir)) => Some(dir.clone()),
+            Background::Change(Change::Folder(_)) => None,
+        };
+        let passed = match (&job, &tree) {
+            (_, Some(dir)) => {
+                let walk = match walks.remove(dir) {
+                    Some(w) => Ok(w),
+                    None => lib.tree_walk(dir),
+                };
+                walk.and_then(|mut w| {
+                    let r = lib.walk_until(&mut w, &mut progress, &stop);
+                    if r.as_ref().is_ok_and(|r| r.stopped) {
+                        walks.insert(dir.clone(), w);
+                    }
+                    r
+                })
             }
-            Background::Change(Change::Folder(dir)) => {
+            (Background::Change(Change::Folder(dir)), None) => {
                 lib.index_folder_until(dir, &mut progress, &stop)
             }
+            _ => unreachable!("a tree job has its folder"),
         };
         let (report, error) = match passed {
             Ok(r) if r.stopped => {
@@ -516,8 +545,13 @@ pub(crate) fn index_open_folder(st: &mut State) {
     };
     // The all-roots view's list came from the index: the launch pass
     // and the watcher keep its rows, and a pass over every folder
-    // under every root for it would be the launch pass again.
+    // under every root for it would be the launch pass again. A folder
+    // pass still running for the list before is dropped, by the
+    // generation, so it does not report over the view.
     if matches!(st.view, crate::roots::View::Roots(_)) {
+        st.index_generation += 1;
+        st.index_progress = None;
+        indexer.folders(Vec::new(), st.index_generation);
         return;
     }
     st.index_generation += 1;
@@ -927,17 +961,22 @@ pub(crate) fn told(app: &App, told: Told) {
                     report.missing,
                 ),
             }
-            crate::roots::background_done(&state, app, &path, &report, false);
-            reread(&state, app, false);
+            // A merge reads the rows and the facets again with the
+            // list; only without one are they read here.
+            if !crate::roots::background_done(&state, app, &path, &report, launch) {
+                reread(&state, app, false);
+            }
         }
         Told::BackgroundProgress { path } => {
-            // Something may have been added: read as a pass that did.
+            // Rows written since the last word: read as a pass that
+            // added them.
             let some = Report {
                 added: 1,
                 ..Report::default()
             };
-            crate::roots::background_done(&state, app, &path, &some, true);
-            reread(&state, app, false);
+            if !crate::roots::background_done(&state, app, &path, &some, false) {
+                reread(&state, app, false);
+            }
         }
         Told::Failed(message) => {
             tracing::warn!("no library index: {message}");

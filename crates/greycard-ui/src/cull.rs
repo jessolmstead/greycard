@@ -568,8 +568,11 @@ fn turn_rgb8(w: u32, h: u32, rgb: &[u8], orientation: Orientation) -> (u32, u32,
 /// The folder the rejects go to: beside the frames, named for what
 /// they are.
 pub fn rejects_dir(shoot: &Path) -> PathBuf {
-    shoot.join("rejects")
+    shoot.join(REJECTS)
 }
+
+/// The rejects folder's name.
+pub const REJECTS: &str = "rejects";
 
 /// What a move of the rejects did.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -602,6 +605,15 @@ pub fn move_rejects(files: &[PathBuf], rejected: &[usize]) -> anyhow::Result<Mov
             .filter(|p| !p.as_os_str().is_empty())
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
+        // Already out: a frame in a rejects folder (the all-roots view
+        // lists those too) stays there, rather than going one folder
+        // deeper each time the rejects are moved.
+        if shoot.file_name() == Some(std::ffi::OsStr::new(REJECTS)) {
+            moved
+                .skipped
+                .push((i, "it is in a rejects folder already".into()));
+            continue;
+        }
         match by_shoot.iter_mut().find(|(s, _)| *s == shoot) {
             Some((_, group)) => group.push(i),
             None => by_shoot.push((shoot, vec![i])),
@@ -609,7 +621,16 @@ pub fn move_rejects(files: &[PathBuf], rejected: &[usize]) -> anyhow::Result<Mov
     }
     for (shoot, group) in by_shoot {
         let dir = rejects_dir(&shoot);
-        std::fs::create_dir_all(&dir)?;
+        // A shoot whose rejects folder cannot be made (a folder that
+        // is not the user's to write) keeps its rejects where they are,
+        // said; the other shoots' go on.
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            let why = format!("{}: {e}", dir.display());
+            moved
+                .skipped
+                .extend(group.iter().map(|&i| (i, why.clone())));
+            continue;
+        }
         move_into(files, &group, &dir, &mut moved);
     }
     Ok(moved)
@@ -1016,6 +1037,58 @@ mod tests {
         assert!(rejects_dir(&two).join("C.CR3").exists());
         assert!(!rejects_dir(&one).join("C.CR3").exists());
         assert!(files[0].exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A shoot whose rejects folder cannot be made keeps its rejects,
+    /// said in `skipped`, and the other shoots' go on; and a frame in
+    /// a rejects folder already (the all-roots view lists those) is
+    /// never moved a folder deeper.
+    #[cfg(unix)]
+    #[test]
+    fn a_shoot_that_cannot_take_a_rejects_folder_keeps_its_own_and_none_nest() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-rejects-locked-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(rejects_dir(&dir.join("c"))).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let files = vec![
+            a.join("A.CR3"),
+            b.join("B.CR3"),
+            rejects_dir(&dir.join("c")).join("C.CR3"),
+        ];
+        for f in &files {
+            std::fs::write(f, b"raw").unwrap();
+        }
+        std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let writable = std::fs::create_dir(b.join("probe")).is_ok();
+        let moved = move_rejects(&files, &[0, 1, 2]).unwrap();
+        std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if writable {
+            // Run as root, which writes anyway.
+            std::fs::remove_dir_all(&dir).unwrap();
+            return;
+        }
+        assert_eq!(moved.files, vec![0]);
+        assert!(rejects_dir(&a).join("A.CR3").exists());
+        assert!(files[1].exists(), "B stays where it was");
+        assert!(files[2].exists(), "C stays in its rejects folder");
+        assert!(!rejects_dir(&rejects_dir(&dir.join("c"))).exists());
+        let skipped: Vec<usize> = moved.skipped.iter().map(|(i, _)| *i).collect();
+        assert_eq!(skipped, vec![2, 1]);
+        assert!(
+            moved.skipped[1].1.contains("rejects"),
+            "{:?}",
+            moved.skipped
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

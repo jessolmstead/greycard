@@ -439,6 +439,10 @@ pub(crate) struct State {
     /// applied. `selected` on the window is a row; `current` here is
     /// a file.
     pub(crate) shown: Vec<usize>,
+    /// The path each of the window's rows was made for, when the
+    /// browser's list was last put on it: what a rebuild carries each
+    /// row's picture over by.
+    pub(crate) rows_shown: Vec<PathBuf>,
     pub(crate) filter: filter::Filter,
     /// The library index's thread, which indexes the open folder and
     /// each frame after its sidecar is written; none in a test, or
@@ -492,6 +496,9 @@ pub(crate) struct State {
     /// develop then runs where every later one does, so a screenshot
     /// or an export shows the same path a session would.
     pub(crate) select_at_start: Option<usize>,
+    /// The rendering setup has run and opened what it was to open: a
+    /// list put in the browser from then on opens its own frame.
+    pub(crate) setup_ran: bool,
     /// `--also`: rows put in the set once the first frame is opened.
     pub(crate) also_at_start: Vec<usize>,
     /// The white balance of the image on the GPU.
@@ -790,6 +797,7 @@ impl State {
             },
             cull_at_start: None,
             shown: (0..count).collect(),
+            rows_shown: Vec::new(),
             filter: filter::Filter::default(),
             index: None,
             index_reader: None,
@@ -809,6 +817,7 @@ impl State {
             view_generation: 0,
             compare_tiles: Rc::new(VecModel::default()),
             select_at_start: None,
+            setup_ran: false,
             also_at_start: Vec::new(),
             base_white: None,
             frame: None,

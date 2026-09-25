@@ -81,6 +81,9 @@ export struct RootChip {
     path: string,
     count: int,
     on: bool,
+    /// Not there now: a drive unplugged. Its files are left out of
+    /// the view and its rows as they were.
+    offline: bool,
 }
 
 /// A facet's row of chips: its caption, which facet it is (its place

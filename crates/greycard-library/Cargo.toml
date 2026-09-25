@@ -27,7 +27,7 @@ dunce = "1"
 # The roots' watcher: inotify on Linux, FSEvents on macOS,
 # ReadDirectoryChangesW on Windows. CC0-1.0; pinned, since a watcher's
 # events change shape between majors.
-notify = "=8.2.0"
+notify = "=8.0.0"
 # The thumbnail cache's entries are JPEGs.
 image.workspace = true
 # The test frames' metadata is rawler's type; see `fixtures`.

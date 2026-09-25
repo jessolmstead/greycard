@@ -645,6 +645,19 @@ impl Worker {
         self.pool.hold(on);
     }
 
+    /// Put these thumbnails in the queue in place of the ones there:
+    /// a new list, or the same list renumbered by a merge, whose
+    /// queued jobs name files by numbers that now mean others. Those
+    /// would be made and thrown away on arrival (a delivery checks the
+    /// path), and a frame whose job was among them would never get its
+    /// picture, which is how a merge blanked the grid.
+    pub fn replace_thumbnails(&self, list: Vec<(usize, PathBuf)>) {
+        self.forget_thumbnails();
+        for (index, path) in list {
+            self.send(Job::Thumbnail { index, path });
+        }
+    }
+
     /// Make thumbnails at this long edge from now on. The grid's
     /// cells grow past the strip's 178, and a picture made for the
     /// strip is mush in a large one; the size follows the cell both

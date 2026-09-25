@@ -43,7 +43,7 @@ pub mod thumbs;
 
 pub use filter::{Facet, Filter, ParseError};
 pub use hash::hash_file;
-pub use index::{Progress, Report, is_indexed_path, read_meta};
+pub use index::{Progress, Report, TreeWalk, is_indexed_path, read_meta};
 pub use roots::{Change, Roots, Watcher};
 pub use thumbs::{Thumb, Thumbs};
 
@@ -825,17 +825,22 @@ impl Library {
     }
 
     /// Where each of these rows' files is now, for a window holding
-    /// frames by path when a pass may have moved them: a row the
-    /// index last found at its path is there; a row marked missing
-    /// is where another row with its hash is, when that one's file
-    /// is on disk — a folder renamed, whose files the index takes
-    /// for new rows since a row whose folder is gone is never a
-    /// move's other end (§160) — the same name first. A row with no
-    /// answer is left out.
+    /// frames by path when a pass may have moved them. A row the index
+    /// last found at its path is there, which is a move within a root
+    /// (§160 keeps the row's id). A row marked missing is answered by
+    /// its hash in one case only, a folder renamed: the index takes a
+    /// renamed folder's files for new rows, since a row whose folder is
+    /// gone is never a move's other end (§160), so the answer is a row
+    /// with the same hash and the same name, present, added after the
+    /// missing one, with the missing row's own folder gone from the
+    /// disk. A copy is not an answer: the first cut took any present
+    /// row with the hash, and a frame deleted after it was backed up
+    /// was "followed" to the backup, whose sidecar its edit would then
+    /// have been saved over. A row with no answer is left out.
     pub fn found_at(&self, ids: &[i64]) -> Result<HashMap<i64, PathBuf>> {
         let mut out = HashMap::new();
         let mut stmt = self.conn.prepare_cached(
-            "SELECT id, path, hash, name, missing_since FROM files \
+            "SELECT id, path, folder, hash, name, missing_since FROM files \
              WHERE id IN (SELECT value FROM json_each(?))",
         )?;
         let rows = stmt
@@ -843,36 +848,31 @@ impl Library {
                 Ok((
                     r.get::<_, i64>(0)?,
                     r.get::<_, Vec<u8>>(1)?,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, Option<String>>(3)?,
-                    r.get::<_, Option<i64>>(4)?.is_some(),
+                    r.get::<_, Vec<u8>>(2)?,
+                    r.get::<_, String>(3)?,
+                    r.get::<_, Option<String>>(4)?,
+                    r.get::<_, Option<i64>>(5)?.is_some(),
                 ))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let mut twins = self.conn.prepare_cached(
-            "SELECT path, name FROM files WHERE hash = ? AND id <> ? \
+            "SELECT path FROM files WHERE hash = ? AND id > ? AND name IS ? \
              AND missing_since IS NULL ORDER BY id",
         )?;
-        for (id, path, hash, name, missing) in rows {
+        for (id, path, folder, hash, name, missing) in rows {
             if !missing {
                 out.insert(id, path_from_bytes(&path));
                 continue;
             }
+            if path_from_bytes(&folder).exists() {
+                continue;
+            }
             let found = twins
-                .query_map(params![hash, id], |r| {
-                    Ok((
-                        path_from_bytes(&r.get::<_, Vec<u8>>(0)?),
-                        r.get::<_, Option<String>>(1)?,
-                    ))
+                .query_map(params![hash, id, name], |r| {
+                    Ok(path_from_bytes(&r.get::<_, Vec<u8>>(0)?))
                 })?
                 .collect::<rusqlite::Result<Vec<_>>>()?;
-            let there: Vec<_> = found.into_iter().filter(|(p, _)| p.is_file()).collect();
-            let pick = there
-                .iter()
-                .find(|(_, n)| *n == name)
-                .or(there.first())
-                .map(|(p, _)| p.clone());
-            if let Some(p) = pick {
+            if let Some(p) = found.into_iter().find(|p| p.is_file()) {
                 out.insert(id, p);
             }
         }
@@ -974,7 +974,6 @@ impl State {
     }
 }
 
-/// Row ids as the JSON array `json_each` takes.
 /// The `WHERE` clause for "under one of these roots", over the folder
 /// column's bytes, and its parameters. A root is compared canonical,
 /// as the index stores folders. "Starts with the root and a
@@ -1003,6 +1002,7 @@ fn under_roots(roots: &[PathBuf]) -> (String, Vec<rusqlite::types::Value>) {
     (clauses.join(" OR "), params)
 }
 
+/// Row ids as the JSON array `json_each` takes.
 fn ids_json(ids: &[i64]) -> String {
     let mut s = String::with_capacity(ids.len() * 6 + 2);
     s.push('[');

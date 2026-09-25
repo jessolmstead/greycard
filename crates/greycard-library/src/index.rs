@@ -68,6 +68,10 @@ pub struct Progress<'a> {
     pub done: usize,
     pub total: usize,
     pub path: &'a Path,
+    /// Rows this folder's pass has written so far, added, moved,
+    /// changed, refreshed or back: whether there is anything new for
+    /// a window to read.
+    pub written: usize,
 }
 
 /// What an index run did.
@@ -121,6 +125,35 @@ impl Report {
         self.errors.extend(other.errors);
         self.skipped.extend(other.skipped);
         self.stopped |= other.stopped;
+    }
+}
+
+/// A tree pass in steps: where [`Library::walk_until`] got to. See
+/// [`Library::tree_walk`].
+#[derive(Debug)]
+pub struct TreeWalk {
+    root: PathBuf,
+    exists: bool,
+    /// The folders still to look at, the next on the end.
+    dirs: Vec<PathBuf>,
+    visited: HashSet<Vec<u8>>,
+    /// Folders found empty with rows under them, or unreadable:
+    /// nothing under them is marked.
+    shielded: Vec<Vec<u8>>,
+    report: Report,
+}
+
+impl TreeWalk {
+    /// The root, canonical.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    fn stopped(&self) -> Report {
+        Report {
+            stopped: true,
+            ..self.report.clone()
+        }
     }
 }
 
@@ -301,18 +334,54 @@ impl Library {
         progress: &mut dyn FnMut(Progress<'_>),
         stop: &dyn Fn() -> bool,
     ) -> Result<Report> {
+        let mut walk = self.tree_walk(root)?;
+        self.walk_until(&mut walk, progress, stop)
+    }
+
+    /// A tree pass to be taken in steps: [`Library::walk_until`] walks
+    /// it until it is asked to stop, and the next call takes up where
+    /// that one stopped rather than from the root. The launch pass
+    /// over a large root stops for every save while someone culls;
+    /// started again from the root each time it re-walked the part it
+    /// had done, a stat and a sidecar read a file, and at two or three
+    /// keys a second it could make no headway at all.
+    pub fn tree_walk(&mut self, root: &Path) -> Result<TreeWalk> {
         let (root, exists) = resolve_folder(root)?;
-        let root_bytes = path_bytes(&root);
-        if !exists && !has_rows_under(self.conn_mut(), &root_bytes)? {
+        if !exists && !has_rows_under(self.conn_mut(), &path_bytes(&root))? {
             return Err(no_such_folder(&root));
         }
-        let mut report = Report::default();
-        let mut visited: HashSet<Vec<u8>> = HashSet::new();
-        // Folders found empty with rows under them: nothing under
-        // them is marked.
-        let mut shielded: Vec<Vec<u8>> = Vec::new();
-        let mut dirs = vec![root.clone()];
-        while let Some(dir) = dirs.pop() {
+        Ok(TreeWalk {
+            dirs: vec![root.clone()],
+            root,
+            exists,
+            visited: HashSet::new(),
+            shielded: Vec::new(),
+            report: Report::default(),
+        })
+    }
+
+    /// Walk `walk` on until it is done, or until `stop` says so after
+    /// a batch or between folders, when the report comes back with
+    /// [`Report::stopped`] set and `walk` holds where it got to: the
+    /// folder it was in the middle of is done again, its finished
+    /// files unchanged to the second look. At least one folder is
+    /// looked at a call. The report is the whole walk's so far.
+    pub fn walk_until(
+        &mut self,
+        walk: &mut TreeWalk,
+        progress: &mut dyn FnMut(Progress<'_>),
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Report> {
+        let root = walk.root.clone();
+        let mut first = true;
+        while let Some(dir) = walk.dirs.pop() {
+            // Between folders as well as between batches: a tree of
+            // small folders never fills a batch.
+            if !first && stop() {
+                walk.dirs.push(dir);
+                return Ok(walk.stopped());
+            }
+            first = false;
             // A folder under the root that cannot be read (no
             // permission, a mount gone bad) is said in the report and
             // left as it was, rows and all; the rest of the tree is
@@ -322,34 +391,35 @@ impl Library {
                 Ok(one) => one,
                 Err(Error::Io(e)) if dir != root => {
                     log::warn!("{}: {e}; left as it was", dir.display());
-                    report.errors.push((dir.clone(), e.to_string()));
-                    visited.insert(path_bytes(&dir));
-                    shielded.push(under_prefix(&path_bytes(&dir)));
+                    walk.report.errors.push((dir.clone(), e.to_string()));
+                    walk.visited.insert(path_bytes(&dir));
+                    walk.shielded.push(under_prefix(&path_bytes(&dir)));
                     continue;
                 }
                 Err(e) => return Err(e),
             };
+            if one.stopped {
+                // Taken up again from this folder.
+                let mut one = one;
+                one.stopped = false;
+                walk.report.add(one);
+                walk.dirs.push(dir);
+                return Ok(walk.stopped());
+            }
             if !one.unavailable.is_empty() {
-                shielded.push(under_prefix(&path_bytes(&dir)));
+                walk.shielded.push(under_prefix(&path_bytes(&dir)));
             }
-            let stopped = one.stopped;
-            report.add(one);
-            // Between folders as well as between batches: a tree of
-            // small folders never fills a batch.
-            if stopped || stop() {
-                report.stopped = true;
-                return Ok(report);
-            }
-            visited.insert(path_bytes(&dir));
-            if !exists {
+            walk.report.add(one);
+            walk.visited.insert(path_bytes(&dir));
+            if !walk.exists {
                 continue;
             }
             let mut under = Vec::new();
             let listing = match std::fs::read_dir(&dir) {
                 Ok(l) => l,
                 Err(e) if dir != root => {
-                    report.errors.push((dir.clone(), e.to_string()));
-                    shielded.push(under_prefix(&path_bytes(&dir)));
+                    walk.report.errors.push((dir.clone(), e.to_string()));
+                    walk.shielded.push(under_prefix(&path_bytes(&dir)));
                     continue;
                 }
                 Err(e) => return Err(e.into()),
@@ -362,7 +432,7 @@ impl Library {
                     continue;
                 }
                 if kind.is_symlink() && entry.path().is_dir() {
-                    report.skipped.push(entry.path());
+                    walk.report.skipped.push(entry.path());
                 } else if kind.is_dir() {
                     under.push(entry.path());
                 }
@@ -370,11 +440,11 @@ impl Library {
             // Popped from the end, so reversed to walk in name order.
             under.sort();
             under.reverse();
-            dirs.extend(under);
+            walk.dirs.extend(under);
         }
         // Folders the index holds under the root that the walk did
         // not reach and that are not there: gone, with their files.
-        let prefix = under_prefix(&root_bytes);
+        let prefix = under_prefix(&path_bytes(&root));
         let gone: Vec<Vec<u8>> = {
             let mut stmt = self.conn_mut().prepare_cached(
                 "SELECT DISTINCT folder FROM files \
@@ -387,9 +457,9 @@ impl Library {
         };
         let now = now_secs();
         for folder in gone {
-            if visited.contains(&folder)
+            if walk.visited.contains(&folder)
                 || path_from_bytes(&folder).is_dir()
-                || shielded.iter().any(|s| folder.starts_with(s))
+                || walk.shielded.iter().any(|s| folder.starts_with(s))
             {
                 continue;
             }
@@ -401,9 +471,9 @@ impl Library {
                 "{}: gone, {marked} files marked missing",
                 path_from_bytes(&folder).display()
             );
-            report.missing += marked;
+            walk.report.missing += marked;
         }
-        Ok(report)
+        Ok(walk.report.clone())
     }
 
     /// Bring one file's row up to date, under the same rules as its
@@ -575,7 +645,16 @@ fn index_paths(
     };
     let mut since = Instant::now();
     for (done, path) in files.iter().enumerate() {
-        progress(Progress { done, total, path });
+        progress(Progress {
+            done,
+            total,
+            path,
+            written: report.added
+                + report.moved
+                + report.changed
+                + report.meta_refreshed
+                + report.returned,
+        });
         let key = path_bytes(path);
         let stat = match std::fs::metadata(path) {
             Ok(m) => m,
@@ -2617,6 +2696,67 @@ pub(crate) mod tests {
             lib.paths_under(std::slice::from_ref(&dir)).unwrap().len(),
             6
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The review's repro for a frame "followed" to its backup: the
+    /// frame copied to `backup/` and the original deleted. The copy is
+    /// not where the frame went, and `found_at` has no answer for it,
+    /// since the frame's own folder is still there.
+    #[test]
+    fn a_deleted_frame_is_not_found_at_its_copy() {
+        let dir = scratch("found-copy");
+        let (shoot, backup) = (dir.join("shoot"), dir.join("backup"));
+        std::fs::create_dir_all(&shoot).unwrap();
+        std::fs::create_dir_all(&backup).unwrap();
+        write_frame(&shoot.join("x.tif"), &R5, 1);
+        write_frame(&shoot.join("y.tif"), &R6, 2);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        let id = lib.by_path(&shoot.join("x.tif")).unwrap().unwrap().id;
+        std::fs::copy(shoot.join("x.tif"), backup.join("x.tif")).unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        std::fs::remove_file(shoot.join("x.tif")).unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert!(lib.by_path(&shoot.join("x.tif")).unwrap().unwrap().missing);
+        assert!(
+            lib.found_at(&[id]).unwrap().is_empty(),
+            "a copy is not a move"
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A tree pass stopped over and over, as the launch pass is while
+    /// someone culls, takes up where it stopped: every file is looked
+    /// at once, not once a stop.
+    #[test]
+    fn a_tree_walk_stopped_again_and_again_still_gets_there() {
+        let dir = scratch("tree-walk");
+        for d in ["a", "b", "c", "d"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+            for n in 0..3 {
+                write_frame(&dir.join(d).join(format!("f{n}.tif")), &R5, n);
+            }
+        }
+        let mut lib = Library::open_in_memory().unwrap();
+        let mut walk = lib.tree_walk(&dir).unwrap();
+        let mut looked = 0;
+        let mut calls = 0;
+        loop {
+            calls += 1;
+            // A stop asked for before every folder, as a save waiting
+            // does.
+            let report = lib
+                .walk_until(&mut walk, &mut |_| looked += 1, &|| true)
+                .unwrap();
+            if !report.stopped {
+                assert_eq!(report.added, 12, "{report:?}");
+                break;
+            }
+            assert!(calls < 20, "no headway");
+        }
+        assert_eq!(looked, 12, "each file looked at once");
+        assert_eq!(lib.len().unwrap(), 12);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

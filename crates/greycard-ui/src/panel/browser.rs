@@ -579,29 +579,21 @@ pub(crate) fn reject_count(st: &State) -> usize {
 /// and the selection kept on its row, or put on the nearest row when
 /// its frame is hidden (which the caller then opens).
 pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
-    let rows: Vec<Option<usize>> = st.shown.iter().map(|&f| Some(f)).collect();
-    rebuild_browser_from(st, app, &rows)
-}
-
-/// [`rebuild_browser`], told which file each of the rows on the window
-/// now stands for, in the files' numbering as it is now (`None` for a
-/// file no longer in the list): a picture already made for a row is
-/// carried to the file's new row rather than made again from its
-/// pixels. Making every picture again cost seconds a change of the
-/// filter over the all-roots view's twenty thousand frames.
-pub(crate) fn rebuild_browser_from(
-    st: &mut State,
-    app: &App,
-    rows: &[Option<usize>],
-) -> Option<usize> {
     if !std::mem::take(&mut st.index_pass_ready) {
         st.index_passed = crate::library::index_pass(st);
     }
+    // The pictures already on the window's rows, by the path each row
+    // was made for: carried to the file's new row rather than made
+    // again from its pixels, which cost seconds a change of the filter
+    // over the all-roots view's twenty thousand frames. By path, not
+    // by number: a list renumbered under the rows (the rejects moved
+    // out, a merge) would otherwise hand a frame its neighbor's
+    // picture, and the first cut did.
     let old = app.get_thumbs();
-    let mut made: HashMap<usize, slint::Image> = rows
-        .iter()
+    let mut made: HashMap<PathBuf, slint::Image> = std::mem::take(&mut st.rows_shown)
+        .into_iter()
         .enumerate()
-        .filter_map(|(row, f)| Some((f.as_ref().copied()?, old.row_data(row)?.image)))
+        .filter_map(|(row, path)| Some((path, old.row_data(row)?.image)))
         .filter(|(_, image)| image.size().width > 0)
         .collect();
     st.shown = st.filter.apply(&filter_frames(st));
@@ -613,17 +605,19 @@ pub(crate) fn rebuild_browser_from(
         thumb.failed = st.thumb_failed[f] && st.thumb_base[f].is_none();
         if st.thumb_base[f].is_some() {
             let turned = thumb_turns(st, app, f);
-            match made.remove(&f) {
+            match made.remove(&st.files[f]) {
                 Some(image) if st.thumb_shown[f] == Some(turned) => thumb.image = image,
                 _ => to_make.push((f, turned)),
             }
         }
         thumbs.push(thumb);
     }
+    st.rows_shown = st.shown.iter().map(|&f| st.files[f].clone()).collect();
     app.set_thumbs(ModelRc::new(VecModel::from(thumbs)));
     for (f, (turns, flip)) in to_make {
         show_thumb(st, app, f, turns, flip);
     }
+
     app.set_reject_count(reject_count(st) as i32);
     // A frame the filter now hides leaves the set: a key or a sync
     // must not reach a frame nobody can see is chosen.
@@ -831,6 +825,13 @@ pub(crate) fn open_paths(
         app.set_status(said.into());
         return;
     }
+    // Files asked for by name, not a folder: a filter left on from
+    // before must not hide what was just asked for.
+    if paths.iter().all(|p| !p.is_dir()) && !state.borrow().filter.is_empty() {
+        tracing::info!("browser filter cleared for the files asked for");
+        state.borrow_mut().filter = filter::Filter::default();
+        app.set_filter_text("".into());
+    }
     open_files(state, app, worker, files, 0);
 }
 
@@ -848,7 +849,10 @@ fn open_files(
 ) {
     let (sidecars, seed_blend) = {
         let mut st = state.borrow_mut();
+        // A view of the roots still being read is dropped by the
+        // generation, and nothing is loading any more.
         st.view_generation += 1;
+        st.library.loading = false;
         st.view = crate::roots::View::Folder;
         load_sidecars(&files, st.write_sidecars)
     };
@@ -930,9 +934,11 @@ pub(crate) fn open_loaded(
     // than the window takes to come up) opens its frame from the
     // rendering setup, as the launch's own does, so the first develop
     // runs on the GPU like every later one.
-    let deferred = st.renderer.is_none() && !files.is_empty();
+    // A frame the setup was to open belongs to the list just
+    // replaced, and goes with it.
+    let deferred = !st.setup_ran && !files.is_empty();
+    st.select_at_start = deferred.then_some(select);
     if deferred {
-        st.select_at_start = Some(select);
         row = None;
     }
     drop(st);

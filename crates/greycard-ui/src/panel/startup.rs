@@ -81,6 +81,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             };
             (files, Some(select))
         }
+        // The all-roots view asked for, and no path: the view is what
+        // opens, and nothing of the last file's folder is read or
+        // developed first.
+        None if cli.all_roots || !cli.roots.is_empty() => (Vec::new(), None),
         None => {
             let from_last = last_file
                 .as_deref()
@@ -244,8 +248,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // facet terms wait for the index to name the chips they mean,
     // and the rest go in the text field as if typed there.
     let (filter, facets_wanted) = match cli.filter.as_deref() {
-        // The filter as the last session left it.
-        None => (remembered.filter.filter(), Vec::new()),
+        // The filter as the last session left it, for a session: not
+        // for a batch run, whose export or capture is of the file it
+        // names, and not over a file named on the command line (a
+        // double-click from the desktop), which a filter must never
+        // hide from the person who asked for it.
+        None if restores_filter(&cli) => (remembered.filter.filter(), Vec::new()),
+        None => (filter::Filter::default(), Vec::new()),
         Some(name) => match filter::Filter::from_name(name) {
             Some(found) => (found, Vec::new()),
             // One of the three names in the wrong case is a mistyped
@@ -361,6 +370,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         filter,
         awaiting_index: !facets_wanted.is_empty(),
         facets_wanted,
+        // The rows as `thumbs` above put them on the window.
+        rows_shown: files.clone(),
         ..State::empty(files.clone(), &app)
     }));
     app.set_compare_tiles(ModelRc::from(state.borrow().compare_tiles.clone()));
@@ -453,8 +464,15 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         if cli.roots.is_empty() {
             if let Some(path) = &library_path {
                 let file = greycard_library::Roots::path_beside(path);
-                st.library.roots = greycard_library::Roots::load(&file);
-                st.library.file = Some(file);
+                match greycard_library::Roots::load(&file) {
+                    Ok(roots) => {
+                        st.library.roots = roots;
+                        st.library.file = Some(file);
+                    }
+                    // Kept as it is: with no file to save to, nothing
+                    // is written over it this session.
+                    Err(e) => tracing::warn!("library: roots not read: {e}"),
+                }
             }
         } else {
             for dir in &cli.roots {
@@ -585,6 +603,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     };
                     let row = {
                         let mut st = state.borrow_mut();
+                        st.setup_ran = true;
                         let at_start = st.select_at_start.take();
                         at_start
                             .filter(|_| from_finder.is_empty())
@@ -1472,6 +1491,15 @@ pub(crate) fn opening_scope(cli: &Cli, remembered: &settings::Settings) -> scope
         .and_then(scope::Scope::from_name)
         .or_else(|| scope::Scope::from_name(&remembered.scope))
         .unwrap_or_default()
+}
+
+/// Whether a launch puts back the filter the last session left: not
+/// for a batch run (a snapshot, a screenshot, an export), and not when
+/// the command line names a file rather than a folder.
+pub(crate) fn restores_filter(cli: &Cli) -> bool {
+    let batch = cli.snapshot.is_some() || cli.screenshot.is_some() || cli.export.is_some();
+    let names_a_file = cli.path.as_deref().is_some_and(|p| !p.is_dir());
+    !batch && !names_a_file
 }
 
 /// The panel's choices, to keep for the next run. What the panel
