@@ -172,8 +172,8 @@ pub(crate) struct Synced {
 ///
 /// `label` is the words each target's step is recorded with, which
 /// its history row shows in place of the sections that moved: a
-/// sync's "Sync from" the frame it came from, a preset's "Preset
-/// over the set:" and its name.
+/// sync's "Sync from" the frame it came from, a preset's "Preset ×3:"
+/// and its name; `None` records the steps with no words.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn lay_over_targets(
     st: &mut State,
@@ -181,7 +181,7 @@ pub(crate) fn lay_over_targets(
     preset: &Preset,
     targets: &[usize],
     learned_from: Option<&Edit>,
-    label: &str,
+    label: Option<&str>,
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> Synced {
@@ -223,13 +223,8 @@ pub(crate) fn lay_over_targets(
             _ => fits.push(f),
         }
     }
-    let mut moved = greycard_edit::apply_preset_into(
-        &mut st.sidecars,
-        preset,
-        &fits,
-        learned_from,
-        Some(label),
-    );
+    let mut moved =
+        greycard_edit::apply_preset_into(&mut st.sidecars, preset, &fits, learned_from, label);
     if !left_off.is_empty() {
         let mut without = preset.clone();
         without.sections.retain(|s| *s != Section::Camera);
@@ -238,7 +233,7 @@ pub(crate) fn lay_over_targets(
             &without,
             &left_off,
             learned_from,
-            Some(label),
+            label,
         ));
     }
     moved.sort_unstable();
@@ -281,17 +276,14 @@ pub(crate) fn sync_selection(
     let targets = sync_targets(st);
     let preset = Preset::from_edit("", &from, sections);
     let learned_from = preset.sections.contains(&Section::Noise).then_some(&from);
-    let label = st
-        .current
-        .map(|c| sync_label(&file_name(&st.files[c])))
-        .unwrap_or_default();
+    let label = st.current.map(|c| sync_label(&file_name(&st.files[c])));
     lay_over_targets(
         st,
         app,
         &preset,
         &targets,
         learned_from,
-        &label,
+        label.as_deref(),
         profiles,
         probe,
     )
@@ -401,7 +393,7 @@ pub(crate) fn apply_preset(
     // way it always has, and the rest of the set the way a sync lays
     // sections over its targets, every frame's step under the same
     // words.
-    let label = preset_over_set_label(&preset.name);
+    let label = preset_over_set_label(targets.len() + 1, &preset.name);
     let current_changed = if st.cull.is_some() {
         let edit = st.sidecars[c].current.clone();
         let applied = current_preset.applied(&edit);
@@ -420,7 +412,16 @@ pub(crate) fn apply_preset(
         }
         changed
     };
-    let mut synced = lay_over_targets(st, app, preset, &targets, None, &label, profiles, probe);
+    let mut synced = lay_over_targets(
+        st,
+        app,
+        preset,
+        &targets,
+        None,
+        Some(&label),
+        profiles,
+        probe,
+    );
     if current_left_off {
         synced.profile_left_off.push(c);
         synced.profile_left_off.sort_unstable();
@@ -1057,14 +1058,14 @@ mod tests {
         for f in [0, 1] {
             assert_eq!(
                 st.sidecars[f].current_label.as_deref(),
-                Some("Preset over the set: Portra 400"),
+                Some("Preset ×3: Portra 400"),
                 "frame {f}"
             );
         }
         assert_eq!(st.sidecars[2].current_label, None);
         assert_eq!(
             app.get_history_names().row_data(0).as_deref(),
-            Some("Preset over the set: Portra 400")
+            Some("Preset ×3: Portra 400")
         );
         // Outside the set: untouched.
         assert_eq!(st.sidecars[3], Sidecar::default());
@@ -1165,7 +1166,7 @@ mod tests {
             &preset,
             &[0, 1],
             None,
-            "Preset over the set: Film",
+            Some("Preset ×2: Film"),
             &[],
             bodies,
         );
@@ -1219,7 +1220,7 @@ mod tests {
             &preset,
             &[1, 2],
             None,
-            "Preset over the set: Film",
+            Some("Preset ×2: Film"),
             &profiles,
             bodies,
         );
@@ -1472,7 +1473,7 @@ mod tests {
             let words = if tag == "one" {
                 "Preset: Portra 400"
             } else {
-                "Preset over the set: Portra 400"
+                "Preset ×2: Portra 400"
             };
             assert_eq!(
                 Sidecar::load(&files[0])

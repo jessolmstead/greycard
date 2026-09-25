@@ -1092,6 +1092,18 @@ pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
 #[serde(default)]
 pub struct Sidecar {
     pub current: Edit,
+    /// The words the step that made [`Self::current`] was recorded
+    /// with, when it was one with a name of its own (a preset, a
+    /// sync, a snapshot restored): see [`Step::label`]. Written as
+    /// `step` just after `current`, left out when there is none, and
+    /// read loosely.
+    #[serde(
+        rename = "step",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "meta::loose"
+    )]
+    pub current_label: Option<String>,
     /// The rating, the flag, the label, the keywords and the words:
     /// see [`meta`]. Absent from every sidecar written before it
     /// existed, and the default there; left out again when it says
@@ -1153,18 +1165,6 @@ pub struct Sidecar {
     /// integer reads as 0 rather than failing the whole sidecar.
     #[serde(default, deserialize_with = "meta::loose")]
     pub saved: u64,
-    /// The words the step that made [`Self::current`] was recorded
-    /// with, when it was one with a name of its own (a preset, a
-    /// sync, a snapshot restored): see [`Step::label`]. Written as
-    /// `step` beside `current`, left out when there is none, and
-    /// read loosely.
-    #[serde(
-        rename = "step",
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "meta::loose"
-    )]
-    pub current_label: Option<String>,
     /// Earlier states, oldest first, each one a whole edit and the
     /// words it was recorded with, if any.
     pub history: Vec<Step>,
@@ -1445,12 +1445,15 @@ impl Sidecar {
     /// Record `edit` as the current state with `label` as the step's
     /// words ("Preset: Faded film"), which the history panel shows in
     /// place of the sections that moved; `None` is [`Self::record`].
-    /// False, and the label not kept, when `edit` was the current
-    /// state already. What was undone goes, labels and all.
+    /// A blank label is none. False, and the label not kept, when
+    /// `edit` was the current state already. What was undone goes,
+    /// labels and all.
     pub fn record_as(&mut self, edit: Edit, label: Option<String>) -> bool {
         if edit == self.current {
             return false;
         }
+        // Blank words are none, so nothing writes an empty `step`.
+        let label = label.filter(|l| !l.trim().is_empty());
         let previous = Step {
             edit: std::mem::replace(&mut self.current, edit),
             label: std::mem::replace(&mut self.current_label, label),
@@ -3606,18 +3609,12 @@ mod tests {
             &preset,
             &[0, 1, 2],
             None,
-            Some("Preset over the set: Bright"),
+            Some("Preset ×3: Bright"),
         );
         assert_eq!(moved, [0, 1]);
         for s in &sidecars[..2] {
-            assert_eq!(
-                s.current_label.as_deref(),
-                Some("Preset over the set: Bright")
-            );
-            assert_eq!(
-                s.describe(1).as_deref(),
-                Some("Preset over the set: Bright")
-            );
+            assert_eq!(s.current_label.as_deref(), Some("Preset ×3: Bright"));
+            assert_eq!(s.describe(1).as_deref(), Some("Preset ×3: Bright"));
         }
         assert_eq!(sidecars[2].current_label, None);
 
@@ -3632,6 +3629,46 @@ mod tests {
         for s in &sidecars[1..] {
             assert_eq!(s.current_label.as_deref(), Some("Sync from IMG_0001"));
         }
-        assert_eq!(sidecars[1].label(1), Some("Preset over the set: Bright"));
+        assert_eq!(sidecars[1].label(1), Some("Preset ×3: Bright"));
+    }
+
+    /// `Step` takes a `step` key off each state's object before the
+    /// edit reads the rest, so no field of the edit may be called
+    /// that: a fully populated edit, every section and list filled,
+    /// writes no such key among its own.
+    #[test]
+    fn no_field_of_an_edit_is_called_step() {
+        let mut edit = Edit::default();
+        edit.light.exposure = 1.0;
+        edit.white_balance = WhiteBalance::Custom {
+            temperature: 5000.0,
+            tint: 0.01,
+        };
+        edit.geometry.crop = Some(geometry::Crop {
+            x: 0.0,
+            y: 0.0,
+            w: 0.5,
+            h: 0.5,
+        });
+        edit.adjustments.push(Adjustment::default());
+        let tree: serde_json::Value = serde_json::from_str(&edit.to_json()).unwrap();
+        let keys: Vec<&String> = tree.as_object().unwrap().keys().collect();
+        assert!(!keys.iter().any(|k| *k == "step"), "{keys:?}");
+        // And a step with no words, blank or none, writes none.
+        let mut sidecar = Sidecar::default();
+        sidecar.record_as(exposed(1.0), Some("  ".into()));
+        assert_eq!(sidecar.current_label, None);
+        sidecar.record(exposed(2.0));
+        let json = serde_json::to_string(&sidecar).unwrap();
+        assert!(!json.contains("\"step\""), "{json}");
+        // The key sits just after `current` when there is one.
+        sidecar.record_as(exposed(3.0), Some("Preset: Faded film".into()));
+        let json = serde_json::to_string(&sidecar).unwrap();
+        let (current, step, history) = (
+            json.find("\"current\"").unwrap(),
+            json.find("\"step\"").unwrap(),
+            json.find("\"history\"").unwrap(),
+        );
+        assert!(current < step && step < history, "{json}");
     }
 }

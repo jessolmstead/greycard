@@ -36,20 +36,25 @@ pub fn describe_step(
     }
 }
 
-// The words a named step is recorded with. Short, since a row of the
-// history panel is a line of small type about forty characters wide
-// and elides the rest (the hover's status line has it whole): the
-// kind of step first, the preset's, snapshot's or frame's name after.
+/// How many characters a row of the history panel shows at a scale
+/// of one before it elides the rest (the hover's status line has it
+/// whole): a line of small type in the left column, measured.
+pub const ROW_CHARS: usize = 36;
+
+// The words a named step is recorded with. Short, to fit
+// [`ROW_CHARS`]: the kind of step first, in as few characters as say
+// it, and the preset's, snapshot's or frame's name after, so a name of
+// sixteen characters survives whole.
 
 /// A preset laid over the frame on its own.
 pub fn preset_label(name: &str) -> String {
     format!("Preset: {name}")
 }
 
-/// A preset laid over a selected set, on each frame of it that took
-/// it, the one on screen too.
-pub fn preset_over_set_label(name: &str) -> String {
-    format!("Preset over the set: {name}")
+/// A preset laid over a selected set of `frames`, on each frame of
+/// it that took it, the one on screen too: "Preset ×3: Faded film".
+pub fn preset_over_set_label(frames: usize, name: &str) -> String {
+    format!("Preset ×{frames}: {name}")
 }
 
 /// A sync onto a frame, from the frame named `from` (its file name).
@@ -848,14 +853,21 @@ mod tests {
             describe_step(&base, &after, Some("  "), &[]),
             describe(&base, &after, &[])
         );
-        // The words are short enough for a row.
+        // A name of sixteen characters survives whole in a row, even
+        // over a set in the hundreds; a camera's file name does too.
+        let name = "Kodachrome 64 Su";
+        assert_eq!(name.chars().count(), 16);
         for words in [
-            preset_label("Faded film"),
-            preset_over_set_label("Faded film"),
+            preset_label(name),
+            preset_over_set_label(250, name),
             sync_label("5M0A3021.CR3"),
-            snapshot_label("Snapshot 1"),
+            snapshot_label(name),
         ] {
-            assert!(words.chars().count() <= 40, "{words}");
+            assert!(words.chars().count() <= ROW_CHARS, "{words}");
         }
+        assert_eq!(
+            preset_over_set_label(3, "Faded film"),
+            "Preset ×3: Faded film"
+        );
     }
 }
