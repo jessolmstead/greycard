@@ -175,9 +175,10 @@ file manager and Export. On a frame that is selected the menu acts on
 the whole selection; on one that is not, that frame is opened first
 and the menu acts on it alone. On a Mac, Control+click does the same.
 
-**Copy settings** (Ctrl+C) takes the open frame's edit. **Paste
-settings** (Ctrl+V) opens the sync's sheet over the selected frames,
-the sections ticked as your last sync or paste left them, and lays
+**Copy settings** in the menu takes the edit of the frame you
+right-clicked; Ctrl+C takes the open frame's. **Paste settings**
+(Ctrl+V) opens the sync's sheet over the selected frames,
+the sections checked as your last sync or paste left them, and lays
 the copied edit over each frame as a sync does: the crop, the
 straighten and the retouch stay each frame's own, and each frame gets
 one history step, "Paste from" the frame you copied, which Ctrl+Z
@@ -185,7 +186,10 @@ undoes. The frame you copied from is left as it is. The copy is kept
 inside greycard until you quit, not on the system clipboard, so
 Ctrl+C in the filter's text field still copies text.
 
-Export works on the open frame only, not the whole selection.
+With two or more frames selected, **Export** writes them all into a
+folder you choose, each frame under its own edit and its own name, with
+the sheet's settings for every one. **Stop export** (or Esc) finishes
+the frame in hand and leaves the rest.
 
 ## Culling
 
@@ -227,7 +231,9 @@ instant.
 | Ctrl+, | Settings |
 | Esc | Close a dialog, drop the tool in hand, go back to one frame, or clear the filter |
 
-On a Mac these are the Ctrl keys, not ⌘, for now.
+On a Mac, the Ctrl keys here are ⌘ (so ⌘C and ⌘V copy and paste
+settings, ⌘Z undoes), and ⌘+click adds a frame to the selection. The
+Control key with a click is a right-click.
 
 ## Downloads on first use
 
