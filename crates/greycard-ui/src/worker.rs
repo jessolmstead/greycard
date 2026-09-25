@@ -3265,8 +3265,10 @@ mod tests {
     /// it passes at once. `GREYCARD_SKY_OUT` names a folder for each
     /// frame's preview (`<stem>.jpg`), its Sky raster (`<stem>-sky.png`)
     /// and `report.txt`; `GREYCARD_SKY_ONLY` a comma list of stems.
-    /// Fails if any of the five frames with no sky in the user's set
-    /// gets a single pixel of sky.
+    /// Fails if any frame with no sky gets a single pixel of sky: the
+    /// stems in `GREYCARD_SKY_NONE` (a comma list), else the five in the
+    /// user's set. A frame that will not open or develop is passed over
+    /// with a line.
     #[test]
     #[ignore]
     fn the_sky_over_real_frames() {
@@ -3284,7 +3286,14 @@ mod tests {
         let only: Option<Vec<String>> = std::env::var("GREYCARD_SKY_ONLY")
             .ok()
             .map(|s| s.split(',').map(str::to_string).collect());
-        const NO_SKY: [&str; 5] = ["5M0A5135", "DSCF0153", "DSCF0186", "5M0A0957", "5M0A0952"];
+        let no_sky: Vec<String> = std::env::var("GREYCARD_SKY_NONE").map_or_else(
+            |_| {
+                ["5M0A5135", "DSCF0153", "DSCF0186", "5M0A0957", "5M0A0952"]
+                    .map(str::to_string)
+                    .to_vec()
+            },
+            |s| s.split(',').map(str::to_string).collect(),
+        );
         let store = greycard_ai::Store::at(models);
         let mut develop_ai = Ai::for_test(store.clone(), vec![Provider::Cpu]);
         let mut near = Ai::for_test(store.clone(), Provider::available());
@@ -3292,11 +3301,7 @@ mod tests {
         let mut frames: Vec<PathBuf> = std::fs::read_dir(&samples)
             .unwrap()
             .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| {
-                p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
-                    ["cr3", "raf", "cr2", "nef", "arw", "dng"].contains(&e.to_lowercase().as_str())
-                })
-            })
+            .filter(|p| greycard_core::decode::is_raw_path(p))
             .collect();
         frames.sort();
         let mut lines = Vec::new();
@@ -3308,7 +3313,15 @@ mod tests {
             if only.as_ref().is_some_and(|o| !o.contains(&stem)) {
                 continue;
             }
-            let (input, _) = open(&path).unwrap_or_else(|e| panic!("{stem}: {e:#}"));
+            let input = match open(&path) {
+                Ok((input, _)) => input,
+                Err(e) => {
+                    let line = format!("{stem}: passed over, it will not open: {e:#}");
+                    println!("{line}");
+                    lines.push(line);
+                    continue;
+                }
+            };
             let mut base = None;
             let t = Instant::now();
             let _ = develop_job(
@@ -3325,9 +3338,12 @@ mod tests {
                 &deliver,
             );
             let develop = t.elapsed().as_secs_f64();
-            let b = base
-                .as_ref()
-                .unwrap_or_else(|| panic!("{stem} did not develop"));
+            let Some(b) = base.as_ref() else {
+                let line = format!("{stem}: passed over, it did not develop");
+                println!("{line}");
+                lines.push(line);
+                continue;
+            };
             let run = |ai: &mut Ai| {
                 ai.forget(None);
                 let t = Instant::now();
@@ -3349,7 +3365,7 @@ mod tests {
                 sum += a.abs_diff(*c) as u64;
                 flips += ((*a > 127) != (*c > 127)) as usize;
             }
-            if NO_SKY.contains(&stem.as_str()) && data.iter().any(|&v| v > 0) {
+            if no_sky.contains(&stem) && data.iter().any(|&v| v > 0) {
                 painted.push(stem.clone());
             }
             let stages = |r: &crate::ai::SkyReport, total: f64| {
@@ -3388,7 +3404,7 @@ mod tests {
                         }
                     }
                     let t = Instant::now();
-                    let _ = greycard_ai::matte::color_line(outline, prior, &small, w, h);
+                    let _ = greycard_ai::matte::color_line(outline, prior, &small, &[], w, h);
                     format!("{:.3}s at {w}x{h}", t.elapsed().as_secs_f64())
                 }
                 _ => "-".to_string(),

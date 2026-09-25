@@ -538,7 +538,7 @@ impl Ai {
         }
         if let Shape::Sky { picks } = shape {
             let start = Instant::now();
-            let (matte, provider) =
+            let (matte, provider, note) =
                 self.sky_matte(stamp, image, picks, aspect, (RASTER_WIDTH, height), &store)?;
             let t = Instant::now();
             let data = match &matte {
@@ -554,7 +554,7 @@ impl Ai {
             let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
             self.cache.insert(key, (shape.clone(), raster.clone()));
             return Ok(Made {
-                note: self.sky_note(shape, &raster),
+                note,
                 raster,
                 provider: Some(provider),
                 seconds: start.elapsed().as_secs_f64(),
@@ -631,20 +631,19 @@ impl Ai {
         })
     }
 
-    /// What the status line says of a Sky raster with nothing in it:
-    /// the gate found no sky. Nothing for any other shape.
+    /// What the status line says of a Sky raster that comes back from
+    /// a cache, in memory or on disk, with nothing in it: the gate
+    /// found no sky. The raster is the only record a cache keeps, and
+    /// an empty one means exactly that: once the gate passes, at least
+    /// half a percent of the frame is labeled sky, the outline is never
+    /// empty (the labels are its fallback), and so neither is the matte
+    /// made from it. A raster made just now carries the gate's own word
+    /// (`sky_matte`). Nothing for any other shape.
     fn sky_note(&self, shape: &Shape, raster: &Raster) -> Option<String> {
         if !matches!(shape, Shape::Sky { .. }) || raster.data().iter().any(|&v| v > 0) {
             return None;
         }
-        let name = self
-            .file
-            .as_deref()
-            .and_then(|f| f.file_name())
-            .map_or("this picture".to_string(), |n| {
-                n.to_string_lossy().into_owned()
-            });
-        Some(format!("no sky found in {name}"))
+        Some(no_sky_note(self.file.as_deref()))
     }
 
     /// A Sky shape's matte on the preview of base develop `stamp`, at
@@ -662,8 +661,9 @@ impl Ai {
         aspect: f32,
         size: (usize, usize),
         store: &Store,
-    ) -> Result<(Option<greycard_ai::Mask>, Provider), String> {
+    ) -> Result<(Option<greycard_ai::Mask>, Provider, Option<String>), String> {
         let mut report = SkyReport::default();
+        let any_positive = picks.iter().any(|p| p.positive);
         let Ai {
             sky: loaded,
             sky_prior,
@@ -733,20 +733,33 @@ impl Ai {
             .as_deref()
             .and_then(|f| f.file_name())
             .map_or(String::new(), |n| n.to_string_lossy().into_owned());
-        let matte = match found {
+        let have_sam = store.have(&SAM);
+        let (matte, note) = match found {
             sky::Found::Sky {
                 matte,
                 seeded,
                 outline,
+                sam_failed,
             } => {
                 report.seeded = seeded;
                 report.outline = Some(outline);
-                Some(matte)
+                let note = match sam_failed {
+                    Some(e) => Some(format!(
+                        "sky found from the model's labels alone: the outline model failed ({e})"
+                    )),
+                    None if any_positive && !have_sam => Some(
+                        "sky found; a pick that adds sky needs the Object model, which is not \
+                         downloaded"
+                            .to_string(),
+                    ),
+                    None => None,
+                };
+                (Some(matte), note)
             }
             sky::Found::None(why) => {
                 tracing::info!("no sky found in {name}: {why}");
                 report.no_sky = Some(why);
-                None
+                (None, Some(no_sky_note(file.as_deref())))
             }
         };
         let st = report.stages;
@@ -768,8 +781,18 @@ impl Ai {
             st.edge,
         );
         self.last_sky = Some(report);
-        Ok((matte, provider))
+        Ok((matte, provider, note))
     }
+}
+
+/// The status line for a Sky shape on a frame with no sky.
+fn no_sky_note(file: Option<&Path>) -> String {
+    let name = file
+        .and_then(|f| f.file_name())
+        .map_or("this picture".to_string(), |n| {
+            n.to_string_lossy().into_owned()
+        });
+    format!("no sky found in {name}")
 }
 
 /// What a model sees: the picture under the global look alone, no
@@ -1008,8 +1031,10 @@ mod tests {
     /// from the prior alone is made again once SAM arrives.
     #[test]
     fn an_empty_sky_says_no_sky_was_found_and_the_cache_follows_sam() {
-        let dir = std::env::temp_dir().join(format!(
-            "greycard-ai-sky-cache-{}-{:?}",
+        // Under the workspace's target, not the system's temp: the
+        // raster is written at the raster's full size.
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../target/test-scratch/greycard-ai-sky-cache-{}-{:?}",
             std::process::id(),
             std::thread::current().id()
         ));

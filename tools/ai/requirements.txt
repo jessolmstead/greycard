@@ -6,8 +6,10 @@ numpy==2.5.3
 onnxruntime==1.30.0
 pillow
 # eomt_export.py: the Sky prior's export gives the registry's bytes
-# with these (torch's CPU build; scipy only because transformers wants
-# it to import EoMT's training loss).
-torch==2.14.0
+# with these (scipy only because transformers wants it to import EoMT's
+# training loss). The bytes were checked with torch's CPU build,
+# 2.14.0+cpu; PyPI's torch on Linux is the CUDA one, hence the index.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.0+cpu
 transformers==5.17.0
 scipy

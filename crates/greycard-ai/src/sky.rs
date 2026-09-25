@@ -12,18 +12,20 @@
 //!    is kept at a class probability of 0.5 or more, each pixel goes
 //!    to the kept query with the highest class times mask probability
 //!    ([`Prior::label`]), and the soft sky map is the sky-weighted sum
-//!    over all the queries. Not the transformers panoptic
-//!    post-processor, which gives the whole frame to a query that is
-//!    alone above its threshold.
-//! 2. **The gate** ([`gate`]): the model sure of its sky query (class
-//!    probability 0.98 or more), a core it is sure of (probability over
-//!    0.9) covering a quarter of a percent of the frame after an
+//!    over the queries. Not the transformers panoptic post-processor,
+//!    which gives the whole frame to a query that is alone above its
+//!    threshold. Sky is only what a *sure* query (class probability
+//!    0.98 or more) says: a kept sky query the model is less sure of
+//!    labels its pixels [`DOUBT`], not sky, and adds nothing to the
+//!    soft map, so a bluish snow slope the model half believes is not
+//!    painted because a real sky elsewhere in the frame is sure.
+//! 2. **The gate** ([`gate`]): a sure sky query, a core (the soft map
+//!    over 0.8) covering a quarter of a percent of the frame after an
 //!    erosion of one percent of the long side, at least half a percent
 //!    of the frame labeled sky, and that sky touching the top or a side
-//!    of the frame. Fail any and there is no sky. Stricter than the
-//!    trial's (a core over 0.8 surviving the erosion): on the editor's
-//!    own preview a defocused bluish snow slope passed that, and these
-//!    two reject it with a wide margin on the test set.
+//!    of the frame. Fail any and there is no sky. The trial's gate
+//!    without the sure query let a defocused bluish snow slope through
+//!    on the editor's own preview (its query 95.2% sure).
 //! 3. **The outline** ([`seeds`], [`outline`]): SAM 2.1 seeded with
 //!    up to eight points over the confident sky and eight negatives
 //!    over the confident not-sky, one decode per positive with every
@@ -64,6 +66,10 @@ pub const MASK_SIDE: usize = 160;
 pub const SKY_CLASS: u8 = 119;
 /// A pixel no kept query claims.
 pub const UNLABELED: u8 = 255;
+/// A pixel a kept sky query claims that the model is not sure of
+/// (class probability under `SURE`): not sky, and not a class sky
+/// shows through either.
+pub const DOUBT: u8 = 254;
 
 /// The long side the labels are made at before they are brought to
 /// the preview, as in the trial: the mask logits are 160 across the
@@ -78,13 +84,11 @@ const REFERENCE: f32 = 2048.0;
 const KEEP: f32 = 0.5;
 /// Sky the prior is sure of: a seed's ground.
 const CONFIDENT: f32 = 0.8;
-/// The gate's core: sky the prior is surer of, and how much of the
-/// frame it must cover once eroded.
-const CORE: f32 = 0.9;
+/// The gate's core: how much of the frame the soft map over
+/// `CONFIDENT` must cover once eroded.
 const MIN_CORE: f32 = 0.0025;
-/// The gate: the class probability the model must give the query its
-/// sky comes from.
-const SURE: f32 = 0.98;
+/// The class probability a sky query needs for its pixels to be sky.
+pub const SURE: f32 = 0.98;
 /// Not-sky the prior is sure of: a negative seed's ground.
 const NOT_SKY: f32 = 0.1;
 /// The gate: the smallest share of the frame labeled sky.
@@ -293,9 +297,11 @@ fn resize_triangle(src: &[f32], w: usize, h: usize, nw: usize, nh: usize) -> Vec
 pub struct Prior {
     pub width: usize,
     pub height: usize,
-    /// The soft sky map, 0 to 1: Σ p(sky|q)·m_q / Σ p(any|q)·m_q.
+    /// The soft sky map, 0 to 1: Σ p(sky|q)·m_q over the sure sky
+    /// queries, over Σ p(any|q)·m_q over all of them.
     pub sky: Vec<f32>,
-    /// Each pixel's class, `UNLABELED` where no kept query claims it.
+    /// Each pixel's class, `UNLABELED` where no kept query claims it,
+    /// `DOUBT` where a sky query the model is not sure of does.
     pub labels: Vec<u8>,
     /// How sure the model is of its sky: the highest class probability
     /// of sky among the kept queries whose class is sky, nothing when
@@ -315,7 +321,7 @@ impl Prior {
         let wh = ((height as f64 * s).round() as usize).max(1);
         let sure = queries(&logits.class)
             .iter()
-            .filter(|q| q.kept && q.label == SKY_CLASS)
+            .filter(|q| q.kept && (q.label == SKY_CLASS || q.label == DOUBT))
             .map(|q| q.best)
             .fold(0.0f32, f32::max);
         let (sky, labels) = label_at(logits, content, ww, wh);
@@ -378,6 +384,8 @@ struct Query {
     best: f32,
     label: u8,
     kept: bool,
+    /// Its class is sky and the model is sure of it.
+    sure_sky: bool,
 }
 
 fn queries(class: &[f32]) -> Vec<Query> {
@@ -396,12 +404,21 @@ fn queries(class: &[f32]) -> Vec<Query> {
                     .fold((0, f32::NEG_INFINITY), |(bi, bv), (i, &v)| {
                         if v > bv { (i, v) } else { (bi, bv) }
                     });
+            let label = label as u8;
+            let kept = best >= KEEP;
+            let sure_sky = kept && label == SKY_CLASS && best >= SURE;
             Query {
                 sky: p[SKY_CLASS as usize],
                 any: p.iter().sum(),
                 best,
-                label: label as u8,
-                kept: best >= KEEP,
+                // A sky the model is not sure of is a doubt, not sky.
+                label: if label == SKY_CLASS && !sure_sky {
+                    DOUBT
+                } else {
+                    label
+                },
+                kept,
+                sure_sky,
             }
         })
         .collect()
@@ -451,7 +468,9 @@ fn label_at(logits: &Logits, content: (usize, usize), w: usize, h: usize) -> (Ve
                     let bottom = r1[x0] + (r1[x1] - r1[x0]) * tx;
                     let l = top + (bottom - top) * ty;
                     let m = 1.0 / (1.0 + (-l).exp());
-                    num[x] += query.sky * m;
+                    if query.sure_sky {
+                        num[x] += query.sky * m;
+                    }
                     den[x] += query.any * m;
                     if query.kept {
                         let p = query.best * m;
@@ -523,7 +542,7 @@ pub fn gate(prior: &Prior) -> std::result::Result<(), NoSky> {
     if prior.sure < SURE {
         return Err(NoSky::Unsure(prior.sure));
     }
-    let confident: Vec<bool> = prior.sky.iter().map(|&p| p > CORE).collect();
+    let confident: Vec<bool> = prior.sky.iter().map(|&p| p > CONFIDENT).collect();
     let core =
         erode(&confident, w, h, r).iter().filter(|&&v| v).count() as f32 / (w * h).max(1) as f32;
     if core < MIN_CORE {
@@ -728,8 +747,18 @@ pub struct Frame<'a> {
 /// where it has nothing to go on (no known sky left once the outline
 /// is shrunk, or no linear frame of the preview's shape), the outline
 /// feathered ([`feathered`]).
-pub fn refine_sky(mask: &Mask, prior: &Prior, frame: &Frame, size: (usize, usize)) -> Mask {
-    crate::matte::color_line(mask, prior, frame.linear, size.0, size.1)
+///
+/// `negatives` are a person's negative picks, in the preview's
+/// fractions: near one, the matte never makes sky of what the outline
+/// left out.
+pub fn refine_sky(
+    mask: &Mask,
+    prior: &Prior,
+    frame: &Frame,
+    negatives: &[[f32; 2]],
+    size: (usize, usize),
+) -> Mask {
+    crate::matte::color_line(mask, prior, frame.linear, negatives, size.0, size.1)
         .unwrap_or_else(|| feathered(mask, frame).resampled(size.0, size.1))
 }
 
@@ -768,6 +797,9 @@ pub enum Found {
         /// The outline the matte was made from, one or nothing at the
         /// prior's size, for looking at.
         outline: Mask,
+        /// SAM failed (to load, to embed or to decode), and the prior's
+        /// own labels were the outline: why.
+        sam_failed: Option<String>,
     },
     None(NoSky),
 }
@@ -775,8 +807,12 @@ pub enum Found {
 /// Stages 2 to 4 on a prior already made: the gate, then the outline
 /// from `decode` (called only once the gate has passed, so a frame
 /// with no sky never pays for SAM's embedding; `None` where SAM is not
-/// to be had, which leaves the prior's own labels as the outline),
-/// then the edge, as a matte of `size` (width, height).
+/// to be had, which leaves the prior's own labels as the outline, as
+/// does SAM failing), then the edge, as a matte of `size` (width,
+/// height). A positive pick needs SAM and adds nothing without it; a
+/// negative one holds in the matte either way. On a frame the gate
+/// refuses, picks add nothing, a positive one included, since the gate
+/// is the rule that must never fail.
 pub fn find(
     prior: &Prior,
     frame: &Frame,
@@ -799,19 +835,31 @@ pub fn find(
     };
     times.seeds = t.elapsed().as_secs_f64();
     let t = std::time::Instant::now();
-    let seeded = !seeds.positive.is_empty();
+    let mut seeded = !seeds.positive.is_empty();
+    let mut sam_failed = None;
     let mask = match decode {
-        Some(decode) => outline(prior, &seeds, picks, decode)?,
+        Some(decode) => match outline(prior, &seeds, picks, decode) {
+            Ok(mask) => mask,
+            Err(e) => {
+                log::warn!("sky: SAM failed ({e}); the prior's own labels are the outline");
+                seeded = false;
+                sam_failed = Some(e.to_string());
+                prior.labeled_sky()
+            }
+        },
         None => prior.labeled_sky(),
     };
     times.outline = t.elapsed().as_secs_f64();
     let t = std::time::Instant::now();
-    let matte = refine_sky(&mask, prior, frame, size);
+    // A negative pick holds in the matte whether or not SAM read it.
+    let negatives: Vec<[f32; 2]> = picks.iter().filter(|p| !p.1).map(|p| p.0).collect();
+    let matte = refine_sky(&mask, prior, frame, &negatives, size);
     times.edge = t.elapsed().as_secs_f64();
     Ok(Found::Sky {
         matte,
         seeded,
         outline: mask,
+        sam_failed,
     })
 }
 
@@ -990,9 +1038,9 @@ mod tests {
         assert!((area - 0.4).abs() < 0.03, "{area}");
     }
 
-    /// A query the model is not sure of labels nothing, however sure
-    /// its mask: the labels are unassigned, and the soft map falls to
-    /// what its class probability says.
+    /// A query the model is not sure of labels nothing as sky, however
+    /// sure its mask: not kept, its pixels are unassigned; and it adds
+    /// nothing to the soft map.
     #[test]
     fn an_unsure_query_labels_nothing() {
         let mut logits = logits_split((640, 640), 1.0, 0.0);
@@ -1000,9 +1048,7 @@ mod tests {
         logits.class[CLASSES - 1] = 0.0;
         let prior = Prior::label(&logits, (640, 640), 64, 64);
         assert!(prior.labels.iter().all(|&l| l == UNLABELED));
-        assert!(prior.sky.iter().all(|&p| p > 0.95), "{}", prior.sky[0]);
-        // The soft map is sure of a sky no query claims: the gate
-        // wants a query sure of it.
+        assert!(prior.sky.iter().all(|&p| p < 0.01), "{}", prior.sky[0]);
         assert_eq!(prior.sure, 0.0);
         assert_eq!(gate(&prior), Err(NoSky::Unsure(0.0)));
         // With the labels a query gives, it is as sure as that query.
@@ -1043,13 +1089,13 @@ mod tests {
         let mut prior = prior_of(400, 300, slope);
         prior.sure = 0.954;
         assert_eq!(gate(&prior), Err(NoSky::Unsure(0.954)));
-        // Sure of the query, but the map over 0.9 on too little.
+        // Sure of the query, but the map over 0.8 on too little.
         let mut prior = prior_of(400, 300, |x, y| {
             if x < 120 && y < 150 {
                 if (50..62).contains(&x) && y < 30 {
-                    0.93
-                } else {
                     0.85
+                } else {
+                    0.7
                 }
             } else {
                 0.05
@@ -1057,6 +1103,81 @@ mod tests {
         });
         prior.sure = 0.99;
         assert!(matches!(gate(&prior), Err(NoSky::NoCore(c)) if c < MIN_CORE));
+    }
+
+    /// Logits for a list of queries: (class, class probability, mask
+    /// region on the 160 grid), every other query "no object", and
+    /// `diluting` queries of no class in particular whose masks cover
+    /// the whole square faintly, as the model's leftover queries do.
+    type Region<'a> = &'a dyn Fn(usize, usize) -> bool;
+
+    fn logits_of(queries: &[(usize, f32, Region)], diluting: usize) -> Logits {
+        let mut class = vec![0.0f32; QUERIES * CLASSES];
+        let mut masks = vec![-10.0f32; QUERIES * MASK_SIDE * MASK_SIDE];
+        for q in 0..QUERIES {
+            class[q * CLASSES + CLASSES - 1] = 20.0;
+        }
+        for (q, (c, p, region)) in queries.iter().enumerate() {
+            let row = &mut class[q * CLASSES..(q + 1) * CLASSES];
+            row.fill(0.0);
+            // One class at L, 133 at 0: p = e^L / (e^L + 133).
+            row[*c] = (p * 133.0 / (1.0 - p)).ln();
+            for y in 0..MASK_SIDE {
+                for x in 0..MASK_SIDE {
+                    if region(x, y) {
+                        masks[q * MASK_SIDE * MASK_SIDE + y * MASK_SIDE + x] = 10.0;
+                    }
+                }
+            }
+        }
+        for q in queries.len()..queries.len() + diluting {
+            // Every class level: sure of nothing, not kept.
+            class[q * CLASSES..(q + 1) * CLASSES].fill(0.0);
+            masks[q * MASK_SIDE * MASK_SIDE..(q + 1) * MASK_SIDE * MASK_SIDE].fill(-4.4);
+        }
+        Logits { class, masks }
+    }
+
+    /// A pale hazy sky the model is sure of, whose soft map the leftover
+    /// queries dilute to under 0.9 (the reviewer's 6U3A7205: the query
+    /// 0.998 sure, the core over 0.9 at 0.06 percent): the core is
+    /// taken over 0.8 and the gate passes.
+    #[test]
+    fn a_sure_sky_diluted_under_nine_tenths_passes_the_gate() {
+        let top = |_: usize, y: usize| y < 50;
+        let logits = logits_of(&[(SKY_CLASS as usize, 0.998, &top)], 20);
+        let prior = Prior::label(&logits, (640, 640), 320, 320);
+        let middle = prior.sky[40 * 320 + 160];
+        assert!(middle > 0.8 && middle < 0.9, "{middle}");
+        assert!(prior.sky_area() > 0.25);
+        assert_eq!(gate(&prior), Ok(()));
+    }
+
+    /// One sure sky query over a strip at the top, and one only 90 percent
+    /// sure over a large block below it (a 0957-type slope): the gate
+    /// passes on the sure one, and the unsure block is labeled a doubt,
+    /// not sky, and is out of the soft map.
+    #[test]
+    fn a_sure_sky_elsewhere_does_not_make_an_unsure_one_sky() {
+        let strip = |_: usize, y: usize| y < 12;
+        let block = |x: usize, y: usize| (40..140).contains(&y) && (20..140).contains(&x);
+        let tree = |_: usize, y: usize| (12..40).contains(&y);
+        let logits = logits_of(
+            &[
+                (SKY_CLASS as usize, 0.995, &strip),
+                (SKY_CLASS as usize, 0.90, &block),
+                (116, 0.99, &tree),
+            ],
+            0,
+        );
+        let prior = Prior::label(&logits, (640, 640), 640, 640);
+        assert!(prior.sure > 0.99);
+        assert_eq!(gate(&prior), Ok(()));
+        let area = prior.sky_area();
+        assert!(area < 0.09, "labeled sky {area}");
+        let in_block = 400 * 640 + 320;
+        assert_eq!(prior.labels[in_block], DOUBT);
+        assert!(prior.sky[in_block] < 0.01, "{}", prior.sky[in_block]);
     }
 
     #[test]
@@ -1316,6 +1437,161 @@ mod tests {
             panic!("no sky found without SAM");
         };
         assert!(!seeded);
+        assert!(matte.at(120, 10) > 0.95 && matte.at(120, 150) < 0.05);
+    }
+
+    /// A wall the prior calls sky at 0.97, below a real sky, that SAM
+    /// leaves out, with and without a person's negative pick on it:
+    /// neither the trimap nor the prior's floor brings it back.
+    #[test]
+    fn what_sam_and_a_negative_pick_leave_out_stays_out() {
+        let (w, h) = (512usize, 512usize);
+        let wall = |x: usize, y: usize| (200..300).contains(&y) && (150..350).contains(&x);
+        let mut labels = vec![116u8; w * h];
+        let mut map = vec![0.0f32; w * h];
+        for y in 0..h {
+            for x in 0..w {
+                let i = y * w + x;
+                if y < 150 {
+                    (labels[i], map[i]) = (SKY_CLASS, 0.999);
+                } else if wall(x, y) {
+                    (labels[i], map[i]) = (SKY_CLASS, 0.97);
+                }
+            }
+        }
+        let prior = Prior {
+            width: w,
+            height: h,
+            sky: map,
+            labels,
+            sure: 0.999,
+        };
+        let mut linear = WorkingImage::new(2 * w, 2 * h);
+        for y in 0..2 * h {
+            for x in 0..2 * w {
+                let p = if y / 2 < 150 {
+                    [0.2, 0.3, 0.6]
+                } else if wall(x / 2, y / 2) {
+                    // Darker than the sky, so the floor would take it.
+                    [0.1, 0.12, 0.15]
+                } else {
+                    [0.03, 0.04, 0.02]
+                };
+                linear.data[(y * 2 * w + x) * 3..][..3].copy_from_slice(&p);
+            }
+        }
+        let display = Rgb8::new(w, h, vec![128; w * h * 3]);
+        let luma = vec![0.5f32; w * h];
+        let frame = Frame {
+            display: &display,
+            luma: &luma,
+            linear: &linear,
+        };
+        let mean_on_wall = |m: &Mask| {
+            let (mut s, mut n) = (0.0, 0);
+            for y in 220..280 {
+                for x in 170..330 {
+                    s += m.data[y * w + x];
+                    n += 1;
+                }
+            }
+            s / n as f32
+        };
+        for picks in [vec![], vec![([0.5f32, 0.49f32], false)]] {
+            // SAM gives the sky alone.
+            let mut sam = fake_sam(|_, v| v < 150.0 / 512.0);
+            let sam: &mut Decode = &mut sam;
+            let mut times = Times::default();
+            let Found::Sky { matte, outline, .. } =
+                find(&prior, &frame, &picks, Some(sam), (w, h), &mut times).unwrap()
+            else {
+                panic!("the sky is there");
+            };
+            assert_eq!(mean_on_wall(&outline), 0.0);
+            let on_wall = mean_on_wall(&matte);
+            assert!(on_wall < 0.02, "picks {picks:?}: the wall at {on_wall}");
+        }
+        // The same wall right under the outline, where the trimap has it
+        // in question: a negative pick keeps the floor off it.
+        let mut prior = prior;
+        for y in 150..160 {
+            for x in 150..350 {
+                let i = y * w + x;
+                (prior.labels[i], prior.sky[i]) = (SKY_CLASS, 0.97);
+            }
+        }
+        for y in 2 * 150..2 * 160 {
+            for x in 2 * 150..2 * 350 {
+                linear.data[(y * 2 * w + x) * 3..][..3].copy_from_slice(&[0.1, 0.12, 0.15]);
+            }
+        }
+        let frame = Frame {
+            display: &display,
+            luma: &luma,
+            linear: &linear,
+        };
+        let mean_near = |m: &Mask| {
+            let (mut s, mut n) = (0.0, 0);
+            for y in 152..158 {
+                for x in 170..330 {
+                    s += m.data[y * w + x];
+                    n += 1;
+                }
+            }
+            s / n as f32
+        };
+        let mut sam = fake_sam(|_, v| v < 150.0 / 512.0);
+        let sam: &mut Decode = &mut sam;
+        let picks = [([0.5f32, 155.0 / 512.0], false)];
+        let Found::Sky { matte, .. } = find(
+            &prior,
+            &frame,
+            &picks,
+            Some(sam),
+            (w, h),
+            &mut Times::default(),
+        )
+        .unwrap() else {
+            panic!("the sky is there");
+        };
+        assert!(mean_near(&matte) < 0.3, "{}", mean_near(&matte));
+    }
+
+    /// SAM failing (to load, to embed or to decode) leaves the prior's
+    /// own labels as the outline, not a failed mask.
+    #[test]
+    fn a_sam_failure_falls_back_to_the_priors_labels() {
+        let (w, h) = (240usize, 160usize);
+        let (display, luma, linear) = frame_parts(w, h);
+        let frame = Frame {
+            display: &display,
+            luma: &luma,
+            linear: &linear,
+        };
+        let prior = prior_of(w, h, |_, y| if y < h / 3 { 0.96 } else { 0.03 });
+        let mut broken =
+            |_: &[Prompt]| -> Result<Mask> { Err(Error::Shape("the device is lost".into())) };
+        let broken: &mut Decode = &mut broken;
+        let Found::Sky {
+            matte,
+            seeded,
+            outline,
+            sam_failed,
+        } = find(
+            &prior,
+            &frame,
+            &[],
+            Some(broken),
+            (w, h),
+            &mut Times::default(),
+        )
+        .unwrap()
+        else {
+            panic!("the gate passed");
+        };
+        assert!(!seeded);
+        assert!(sam_failed.is_some_and(|e| e.contains("device is lost")));
+        assert_eq!(outline, prior.labeled_sky());
         assert!(matte.at(120, 10) > 0.95 && matte.at(120, 150) < 0.05);
     }
 

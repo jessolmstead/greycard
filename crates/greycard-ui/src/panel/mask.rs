@@ -401,6 +401,24 @@ pub(crate) fn placing_hint(kind: &str) -> &'static str {
     }
 }
 
+/// Whether Pick on a sky takes the tool in hand, and what the status
+/// line says: on a frame the gate found no sky in there is nothing to
+/// correct (a click cannot add a sky the model does not see: the gate
+/// is the rule that must never fail); without SAM a click that adds
+/// sky does nothing, and a right click still takes what is not sky out.
+pub(crate) fn sky_pick(no_sky: bool, have_sam: bool) -> Result<&'static str, &'static str> {
+    if no_sky {
+        Err("no sky to correct: the model found none in this picture")
+    } else if !have_sam {
+        Ok(
+            "right-click what is not sky; a click that adds sky needs the Object model, \
+            which is not downloaded; Esc or the button when done",
+        )
+    } else {
+        Ok(placing_hint("Sky"))
+    }
+}
+
 /// After a shape made at once: its word on the status line, and for a
 /// color range the dropper in hand, so the next click on the picture
 /// centers the window. Called with the state let go of, since putting
@@ -607,6 +625,26 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                         || (kind == "Sky" && matches!(c.shape, Shape::Sky { .. }))
                 })
                 .map(|_| chosen);
+            // Picks on a sky: none on a frame the gate found no sky in,
+            // and only negative ones without SAM; the status line says
+            // which rather than leaving clicks to do nothing.
+            let mut hint = placing_hint(kind.as_str());
+            if let Some(c) = component
+                && kind == "Sky"
+            {
+                let id = st.edit.adjustments.get(index).map(|a| a.id);
+                let no_sky = id
+                    .and_then(|id| st.learned.get(&(id, c)))
+                    .is_some_and(|(_, r)| r.data().iter().all(|&v| v == 0));
+                let have_sam = st.store.as_ref().is_some_and(|s| s.have(&greycard_ai::SAM));
+                match sky_pick(no_sky, have_sam) {
+                    Ok(h) => hint = h,
+                    Err(why) => {
+                        app.set_status(why.into());
+                        return;
+                    }
+                }
+            }
             st.placing = Some(Placing {
                 kind: Shape::of_kind(kind.as_str()),
                 mode: Mode::from_name(mode.as_str()).unwrap_or_default(),
@@ -620,7 +658,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_placing_into(true);
             app.set_shapes_open(true);
             app.set_placing(kind.clone());
-            app.set_status(placing_hint(kind.as_str()).into());
+            app.set_status(hint.into());
         });
     }
     {
@@ -1412,6 +1450,40 @@ mod tests {
         app.invoke_add_shape("Sky".into(), "Add".into());
         assert!(app.get_placing().is_empty());
         assert!(state.borrow().placing.is_none());
+
+        // The test's state has no SAM: Pick says a click that adds sky
+        // needs it.
+        app.invoke_add_shape("Sky".into(), "Add".into());
+        assert!(app.get_status().contains("needs the Object model"));
+        app.invoke_add_shape("Sky".into(), "Add".into());
+        // The gate found no sky: an empty raster made for it. Pick does
+        // not take the tool, and says why.
+        {
+            let mut st = state.borrow_mut();
+            let id = st.edit.adjustments[0].id;
+            let shape = st.edit.adjustments[0].mask.components[0].shape.clone();
+            let empty = Arc::new(Raster::from_data(1.5, 16, vec![0u8; 16 * 11]));
+            st.learned.insert((id, 0), (shape, empty));
+        }
+        app.invoke_add_shape("Sky".into(), "Add".into());
+        assert!(app.get_placing().is_empty());
+        assert!(state.borrow().placing.is_none());
+        assert_eq!(
+            app.get_status(),
+            "no sky to correct: the model found none in this picture"
+        );
+    }
+
+    #[test]
+    fn pick_on_a_sky_says_what_it_can_do() {
+        assert!(sky_pick(true, true).is_err());
+        assert!(sky_pick(true, false).is_err());
+        assert!(
+            sky_pick(false, false)
+                .unwrap()
+                .contains("needs the Object model")
+        );
+        assert_eq!(sky_pick(false, true), Ok(placing_hint("Sky")));
     }
 
     /// The range masks from the panel: a button makes one whole, its

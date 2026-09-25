@@ -16,10 +16,12 @@
 //!
 //! - The trimap comes from the prior at the preview: known sky is the
 //!   outline shrunk by half a percent of the long side; known not-sky
-//!   is everything outside the prior's sky and the outline grown by
-//!   two percent, less the prior's tree, flower and unlabeled pixels
-//!   within a fifth of the long side of the known sky, which stay in
-//!   question since sky shows through them; the rest is in question.
+//!   is everything outside the outline grown by two percent, less the
+//!   prior's tree, flower and unlabeled pixels within a fifth of the
+//!   long side of the known sky, which stay in question since sky
+//!   shows through them; the rest is in question. What SAM, or a
+//!   person's negative pick, left out of the outline is not brought
+//!   back because the prior calls it sky.
 //! - The prior's things (people and objects: COCO's first 80 classes),
 //!   shrunk by half a percent, are known not-sky, so a lens or a shirt
 //!   the color of the sky takes no alpha (the trial's sunglasses took
@@ -41,8 +43,10 @@
 //!   share: none past a low probability outside the outline, since a
 //!   snowy ridge under a grey sky lies on the line between the sky and
 //!   the dark water below; all of it past a high one, since a dark
-//!   cloud SAM left out is sky. Tree, flower and unlabeled pixels, the
-//!   ones sky shows through, are the projection's alone.
+//!   cloud SAM left out is sky, but only for a pixel darker than the
+//!   local sky and not near a person's negative pick. Tree, flower and
+//!   unlabeled pixels, the ones sky shows through, are the
+//!   projection's alone.
 //!
 //! The known regions and their colors are made at the preview (the
 //! growth) and at about 512 pixels (the blurs); only the projection
@@ -56,7 +60,7 @@ use greycard_core::guided;
 use greycard_core::image::WorkingImage;
 
 use crate::image::Mask;
-use crate::sky::{Prior, SKY_CLASS, UNLABELED, dilate, erode};
+use crate::sky::{Prior, UNLABELED, dilate, erode};
 
 /// `tree-merged` and `flower` among the model's classes: sky shows
 /// through them.
@@ -96,6 +100,9 @@ const HUE: (f32, f32) = (0.04, 0.10);
 /// is held down to none outside the outline.
 const FLOOR: (f32, f32) = (0.7, 0.95);
 const CAP: (f32, f32) = (0.05, 0.35);
+/// How far a person's negative pick reaches over the region it was
+/// made on, as a share of the long side.
+const NEGATIVE_REACH: f32 = 0.2;
 /// The final guided filter.
 const RADIUS: usize = 8;
 const EPS: f32 = 1e-4;
@@ -129,10 +136,9 @@ pub fn trimap(outline: &Mask, prior: &Prior) -> Vec<Known> {
         .zip(&things)
         .map(|(s, t)| s && !t)
         .collect();
-    let skyish: Vec<bool> = (0..w * h)
-        .map(|i| m[i] || prior.labels[i] == SKY_CLASS || prior.sky[i] > 0.5)
-        .collect();
-    let grown = dilate(&skyish, w, h, px(GROW));
+    // In question near the outline, not near the prior's sky: what SAM
+    // (or a person's negative pick) left out of the outline stays out.
+    let grown = dilate(&m, w, h, px(GROW));
     let near_sky = dilate(&sky, w, h, px(REACH));
     (0..w * h)
         .map(|i| {
@@ -149,6 +155,48 @@ pub fn trimap(outline: &Mask, prior: &Prior) -> Vec<Known> {
             }
         })
         .collect()
+}
+
+/// What a person's negative picks say is not sky, at the prior's size:
+/// from each pick, the pixels outside the outline of the prior's class
+/// at the pick, connected to it, within `NEGATIVE_REACH` of the long
+/// side. So a click on a wall the prior calls sky covers the wall, and
+/// does not spread into the sky inside the outline.
+pub fn negated(outline: &[f32], prior: &Prior, negatives: &[[f32; 2]]) -> Vec<bool> {
+    let (w, h) = (prior.width, prior.height);
+    let mut out = vec![false; w * h];
+    let reach = (NEGATIVE_REACH * w.max(h) as f32).max(1.0);
+    for n in negatives {
+        let (x0, y0) = (
+            ((n[0] * w as f32) as usize).min(w - 1),
+            ((n[1] * h as f32) as usize).min(h - 1),
+        );
+        let start = y0 * w + x0;
+        if outline[start] > 0.5 {
+            continue;
+        }
+        let label = prior.labels[start];
+        let mut stack = vec![start];
+        out[start] = true;
+        while let Some(i) = stack.pop() {
+            let (x, y) = (i % w, i / w);
+            let steps = [
+                (x > 0).then(|| i - 1),
+                (x + 1 < w).then(|| i + 1),
+                (y > 0).then(|| i - w),
+                (y + 1 < h).then(|| i + w),
+            ];
+            for j in steps.into_iter().flatten() {
+                let (jx, jy) = (j % w, j / w);
+                let far = (jx as f32 - x0 as f32).hypot(jy as f32 - y0 as f32) > reach;
+                if !out[j] && !far && outline[j] <= 0.5 && prior.labels[j] == label {
+                    out[j] = true;
+                    stack.push(j);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A linear RGB plane, three values a pixel.
@@ -352,10 +400,22 @@ fn chroma_distance(p: [f32; 3], q: [f32; 3]) -> f32 {
 /// outside the outline (a snowy ridge on the line between a grey sky
 /// and dark water is not sky, however bright), and no less than its
 /// sky probability demands (a dark cloud SAM left out of the outline
-/// is sky).
-fn bounded(a: f32, p: f32, inside: bool) -> f32 {
-    let floor = ramp(p, FLOOR.0, FLOOR.1);
-    let cap = if inside { 1.0 } else { ramp(p, CAP.0, CAP.1) };
+/// is sky) where `floored` (the pixel is darker than the local sky and
+/// not near a negative pick). Outside the outline near a person's
+/// negative pick (`negated`), none at all.
+fn bounded(a: f32, p: f32, inside: bool, floored: bool, negated: bool) -> f32 {
+    let floor = if floored {
+        ramp(p, FLOOR.0, FLOOR.1)
+    } else {
+        0.0
+    };
+    let cap = if inside {
+        1.0
+    } else if negated {
+        0.0
+    } else {
+        ramp(p, CAP.0, CAP.1)
+    };
     a.max(floor).min(cap.max(floor))
 }
 
@@ -407,6 +467,7 @@ pub fn color_line(
     outline: &Mask,
     prior: &Prior,
     linear: &WorkingImage,
+    negatives: &[[f32; 2]],
     out_w: usize,
     out_h: usize,
 ) -> Option<Mask> {
@@ -499,6 +560,10 @@ pub fn color_line(
         );
     }
     let m: Vec<f32> = outline.data.clone();
+    let negated_map = negated(&m, prior, negatives);
+    let near_negative = |u: f32, v: f32| {
+        negated_map[((v * h as f32) as usize).min(h - 1) * w + ((u * w as f32) as usize).min(w - 1)]
+    };
 
     // Full size, a block of the output at a time.
     let (ow, oh) = (out_w.max(1), out_h.max(1));
@@ -520,7 +585,20 @@ pub fn color_line(
                 if treeish(prior.labels[i]) {
                     a
                 } else {
-                    bounded(a, sample(&prior.sky, w, h, u, v), m[i] > 0.5)
+                    // The floor is for a dark cloud the outline missed:
+                    // darker than the local sky, and nowhere near a
+                    // person's word that it is not sky.
+                    let dark = colors
+                        .at(u, v)
+                        .is_some_and(|(sky, _)| luminance(p) < luminance(sky));
+                    let negated = near_negative(u, v);
+                    bounded(
+                        a,
+                        sample(&prior.sky, w, h, u, v),
+                        m[i] > 0.5,
+                        dark && !negated,
+                        negated,
+                    )
                 }
             }
         }
@@ -631,6 +709,7 @@ pub fn color_line(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sky::SKY_CLASS;
 
     const TREE: u8 = TREE_CLASS;
     const PERSON: u8 = 0;
@@ -729,7 +808,7 @@ mod tests {
         assert_eq!(map[(h - 5) * w + 100], Known::NotSky);
         // At full size, so each line and gap can be read.
         let (fw, fh) = (w * s, h * s);
-        let matte = color_line(&sc.outline, &sc.prior, &sc.linear, fw, fh).expect("a matte");
+        let matte = color_line(&sc.outline, &sc.prior, &sc.linear, &[], fw, fh).expect("a matte");
         let row = (0.55 * fh as f32) as usize;
         let (mut gaps, mut lines) = (Vec::new(), Vec::new());
         for x in 20..fw - 20 {
@@ -758,7 +837,7 @@ mod tests {
     fn a_thing_takes_no_alpha() {
         let (w, h, s) = (200usize, 150usize, 2usize);
         let sc = scene(w, h, s, Some((100, 60, 12)));
-        let matte = color_line(&sc.outline, &sc.prior, &sc.linear, w * s, h * s).unwrap();
+        let matte = color_line(&sc.outline, &sc.prior, &sc.linear, &[], w * s, h * s).unwrap();
         assert!(
             matte.at(100 * s, 60 * s) < 0.02,
             "{}",
@@ -772,8 +851,8 @@ mod tests {
     fn the_matte_at_a_smaller_size_is_the_full_one_averaged() {
         let (w, h, s) = (120usize, 90usize, 4usize);
         let sc = scene(w, h, s, None);
-        let full = color_line(&sc.outline, &sc.prior, &sc.linear, w * s, h * s).unwrap();
-        let small = color_line(&sc.outline, &sc.prior, &sc.linear, w, h).unwrap();
+        let full = color_line(&sc.outline, &sc.prior, &sc.linear, &[], w * s, h * s).unwrap();
+        let small = color_line(&sc.outline, &sc.prior, &sc.linear, &[], w, h).unwrap();
         assert_eq!((small.width, small.height), (w, h));
         for y in [5usize, 40, 45, 80] {
             let a: f32 = (0..w).map(|x| small.at(x, y)).sum::<f32>() / w as f32;
@@ -793,11 +872,21 @@ mod tests {
         let (w, h, s) = (100usize, 80usize, 2usize);
         let mut sc = scene(w, h, s, None);
         sc.outline = Mask::new(w, h, vec![0.0; w * h]);
-        assert!(color_line(&sc.outline, &sc.prior, &sc.linear, w, h).is_none());
+        assert!(color_line(&sc.outline, &sc.prior, &sc.linear, &[], w, h).is_none());
         let sc = scene(w, h, s, None);
-        assert!(color_line(&sc.outline, &sc.prior, &WorkingImage::new(0, 0), w, h).is_none());
+        assert!(color_line(&sc.outline, &sc.prior, &WorkingImage::new(0, 0), &[], w, h).is_none());
         // A frame of another shape.
-        assert!(color_line(&sc.outline, &sc.prior, &WorkingImage::new(300, 50), w, h).is_none());
+        assert!(
+            color_line(
+                &sc.outline,
+                &sc.prior,
+                &WorkingImage::new(300, 50),
+                &[],
+                w,
+                h
+            )
+            .is_none()
+        );
     }
 
     /// Off the line or far past the sky, no share; a class sky does not
@@ -816,11 +905,15 @@ mod tests {
         // A mix half down the line keeps its share whatever its hue.
         assert_eq!(hue([0.3, 0.3, 0.2], sky, 0.5), 1.0);
         // A snowy ridge outside the outline, the prior sure it is not sky.
-        assert_eq!(bounded(0.9, 0.02, false), 0.0);
+        assert_eq!(bounded(0.9, 0.02, false, true, false), 0.0);
         // The same inside the outline keeps what the line says.
-        assert_eq!(bounded(0.9, 0.02, true), 0.9);
+        assert_eq!(bounded(0.9, 0.02, true, true, false), 0.9);
         // A dark cloud SAM left out, the prior sure it is sky.
-        assert_eq!(bounded(0.3, 0.97, false), 1.0);
+        assert_eq!(bounded(0.3, 0.97, false, true, false), 1.0);
+        // Not floored (bright, or by a negative pick): the line's word.
+        assert_eq!(bounded(0.3, 0.97, false, false, false), 0.3);
+        // Outside the outline by a person's negative pick: none.
+        assert_eq!(bounded(0.6, 0.97, false, false, true), 0.0);
     }
 
     /// A bright neutral ridge beside the sky, which the prior calls a
@@ -859,7 +952,7 @@ mod tests {
                 sc.linear.data[(y * fw + x) * 3..][..3].copy_from_slice(&p);
             }
         }
-        let matte = color_line(&sc.outline, &sc.prior, &sc.linear, fw, fh).unwrap();
+        let matte = color_line(&sc.outline, &sc.prior, &sc.linear, &[], fw, fh).unwrap();
         assert!(
             matte.at(fw / 2, (canopy + 8) * s) < 0.1,
             "{}",
