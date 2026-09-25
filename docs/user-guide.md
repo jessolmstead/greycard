@@ -169,6 +169,22 @@ camera — the frame on screen is no exception, whether or not others
 are selected — and the panel's "Made for X, not Y" warning is there
 for when you want the profile anyway.
 
+**Right-click** a frame in the filmstrip, the grid or the picture for
+a menu: copy and paste settings, a rating, a flag, a label, Reveal in
+file manager and Export. On a frame that is selected the menu acts on
+the whole selection; on one that is not, that frame is opened first
+and the menu acts on it alone. On a Mac, Control+click does the same.
+
+**Copy settings** (Ctrl+C) takes the open frame's edit. **Paste
+settings** (Ctrl+V) opens the sync's sheet over the selected frames,
+the sections ticked as your last sync or paste left them, and lays
+the copied edit over each frame as a sync does: the crop, the
+straighten and the retouch stay each frame's own, and each frame gets
+one history step, "Paste from" the frame you copied, which Ctrl+Z
+undoes. The frame you copied from is left as it is. The copy is kept
+inside greycard until you quit, not on the system clipboard, so
+Ctrl+C in the filter's text field still copies text.
+
 Export works on the open frame only, not the whole selection.
 
 ## Culling
@@ -207,6 +223,7 @@ instant.
 | Ctrl+O | Open a folder |
 | Ctrl+Shift+E | Export |
 | Ctrl+Shift+S | Sync settings onto the selected frames |
+| Ctrl+C, Ctrl+V | Copy the open frame's settings; paste them onto the selected frames |
 | Ctrl+, | Settings |
 | Esc | Close a dialog, drop the tool in hand, go back to one frame, or clear the filter |
 

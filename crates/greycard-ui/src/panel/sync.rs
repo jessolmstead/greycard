@@ -2042,6 +2042,60 @@ mod tests {
     }
 
     #[test]
+    fn a_paste_in_culling_goes_onto_the_sidecars_and_stays_in_culling() {
+        let dir = std::env::temp_dir().join(format!("greycard-paste-cull-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a temp dir");
+        let files: Vec<PathBuf> = (0..3)
+            .map(|i| dir.join(format!("IMG_{i:04}.CR3")))
+            .collect();
+        let app = window(3);
+        let (state, _worker) = state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.write_sidecars = true;
+            st.placement = greycard_edit::Placement::Folder;
+            let mut edit = Edit::default();
+            edit.light.exposure = 1.1;
+            st.sidecars[2].record(edit);
+        }
+        app.invoke_select(0);
+        app.invoke_cull_toggled();
+        assert!(state.borrow().cull.is_some());
+        // In culling the copy is the sidecar's, not the panel's.
+        state.borrow_mut().current = Some(2);
+        app.invoke_copy_asked();
+        assert_eq!(
+            state
+                .borrow()
+                .clipboard
+                .as_ref()
+                .map(|c| c.edit.light.exposure),
+            Some(1.1)
+        );
+        // Back on frame 0, with frame 1 beside it: both take it on
+        // their sidecars, the frame on screen as any other.
+        state.borrow_mut().current = Some(0);
+        state.borrow_mut().picked = vec![0, 1];
+        app.invoke_paste_asked();
+        app.invoke_sync_applied();
+        assert!(
+            state.borrow().cull.is_some(),
+            "the paste left culling alone"
+        );
+        for f in [0, 1] {
+            let st = state.borrow();
+            assert_eq!(st.sidecars[f].current.light.exposure, 1.1, "{f}");
+            let back = Sidecar::load(&files[f]).unwrap().unwrap();
+            assert_eq!(
+                back.current_label.as_deref(),
+                Some("Paste from IMG_0002.CR3")
+            );
+        }
+        std::fs::remove_dir_all(&dir).expect("the temp dir goes");
+    }
+
+    #[test]
     fn a_selection_moved_under_the_paste_sheet_is_refused() {
         let app = window(4);
         let (state, _worker) = state_for(&app, folder(4));
