@@ -144,13 +144,19 @@ export component AdjustmentsSection inherits Section {
             clicked => { root.add-adjustment("Brush"); }
         }
     }
-    // The learned masks: the subject found, or things picked.
+    // The learned masks: the subject or the sky found, or things
+    // picked.
     HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
             text: "Subject";
             icon: @image-url("../icons/user-round.svg");
             clicked => { root.add-adjustment("Subject"); }
+        }
+        PanelButton {
+            text: "Sky";
+            icon: @image-url("../icons/cloud.svg");
+            clicked => { root.add-adjustment("Sky"); }
         }
         PanelButton {
             text: "Object";
@@ -361,6 +367,13 @@ export component AdjustmentsSection inherits Section {
                     text: "Subject";
                     icon: @image-url("../icons/user-round.svg");
                     clicked => { root.add-shape("Subject", root.shape-mode); }
+                }
+                // On a chosen sky, clicks that correct it.
+                PanelButton {
+                    text: root.component-kind == "Sky" ? "Pick" : "Sky";
+                    icon: @image-url("../icons/cloud.svg");
+                    primary: root.placing == "Sky" && root.placing-into;
+                    clicked => { root.add-shape("Sky", root.shape-mode); }
                 }
                 PanelButton {
                     text: root.component-kind == "Object" ? "Pick" : "Object";

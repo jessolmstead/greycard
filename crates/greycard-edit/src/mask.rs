@@ -131,6 +131,14 @@ pub enum Shape {
     /// The picture's subject, found by a model (greycard-ai). Like a
     /// brush it has no value of its own.
     Subject {},
+    /// The picture's sky, found by a model (greycard-ai's `sky`), and
+    /// nothing on a picture with none. `picks` are clicks that correct
+    /// it: on sky it missed, or (not positive) on what is not sky.
+    /// Like a brush it has no value of its own.
+    Sky {
+        #[serde(default)]
+        picks: Vec<Pick>,
+    },
     /// Things picked out by a model from clicks and boxes. Like a
     /// brush it has no value of its own.
     Object {
@@ -348,6 +356,11 @@ impl Shape {
                 }
             }
             Shape::Subject {} | Shape::Luminance { .. } | Shape::Color { .. } | Shape::Unknown => {}
+            Shape::Sky { picks } => {
+                for pick in picks {
+                    pick.pos = t.pos(pick.pos);
+                }
+            }
             Shape::Object { picks, boxes } => {
                 for pick in picks {
                     pick.pos = t.pos(pick.pos);
@@ -466,6 +479,7 @@ impl Shape {
             "Subject" => Shape::Subject {},
             "Luminance" => Shape::LUMINANCE,
             "Color" => Shape::skin(),
+            "Sky" => Shape::Sky { picks: Vec::new() },
             "Object" => Shape::Object {
                 picks: Vec::new(),
                 boxes: Vec::new(),
@@ -491,6 +505,7 @@ impl Shape {
         match *self {
             Shape::Brush { .. }
             | Shape::Subject {}
+            | Shape::Sky { .. }
             | Shape::Object { .. }
             | Shape::Luminance { .. }
             | Shape::Color { .. }
@@ -523,6 +538,7 @@ impl Shape {
         match *self {
             Shape::Brush { .. }
             | Shape::Subject {}
+            | Shape::Sky { .. }
             | Shape::Object { .. }
             | Shape::Luminance { .. }
             | Shape::Color { .. }
@@ -586,6 +602,7 @@ impl Shape {
             Shape::Radial { .. } => "Radial",
             Shape::Brush { .. } => "Brush",
             Shape::Subject {} => "Subject",
+            Shape::Sky { .. } => "Sky",
             Shape::Object { .. } => "Object",
             Shape::Luminance { .. } => "Luminance",
             Shape::Color { .. } => "Color",
@@ -602,13 +619,16 @@ impl Shape {
     pub fn is_raster(&self) -> bool {
         matches!(
             self,
-            Shape::Brush { .. } | Shape::Subject {} | Shape::Object { .. }
+            Shape::Brush { .. } | Shape::Subject {} | Shape::Sky { .. } | Shape::Object { .. }
         )
     }
 
     /// Whether a model makes the shape's raster.
     pub fn is_learned(&self) -> bool {
-        matches!(self, Shape::Subject {} | Shape::Object { .. })
+        matches!(
+            self,
+            Shape::Subject {} | Shape::Sky { .. } | Shape::Object { .. }
+        )
     }
 
     /// The value at (u, v); nothing for a raster shape, whose raster
@@ -617,6 +637,7 @@ impl Shape {
         match *self {
             Shape::Brush { .. }
             | Shape::Subject {}
+            | Shape::Sky { .. }
             | Shape::Object { .. }
             | Shape::Luminance { .. }
             | Shape::Color { .. }
@@ -961,6 +982,37 @@ mod tests {
         assert!(json.contains("\"kind\":\"subject\"") && json.contains("\"kind\":\"object\""));
         let back: Mask = serde_json::from_str(&json).unwrap();
         assert_eq!(back, mask);
+    }
+
+    #[test]
+    fn a_sky_is_learned_and_round_trips_with_its_picks() {
+        let sky = Shape::Sky {
+            picks: vec![Pick {
+                pos: [0.7, 0.2],
+                positive: false,
+            }],
+        };
+        assert!(sky.is_raster() && sky.is_learned());
+        assert!(sky.handles().is_empty());
+        assert_eq!(sky.at(0.5, 0.5), 0.0);
+        assert_eq!(sky.name(), "Sky");
+        assert_eq!(Shape::of_kind("Sky"), Shape::Sky { picks: Vec::new() });
+        let json = serde_json::to_string(&sky).unwrap();
+        assert!(json.contains("\"kind\":\"sky\""), "{json}");
+        assert_eq!(serde_json::from_str::<Shape>(&json).unwrap(), sky);
+        // A sky with no picks written by hand, the field left out.
+        assert_eq!(
+            serde_json::from_str::<Shape>(r#"{"kind":"sky"}"#).unwrap(),
+            Shape::Sky { picks: Vec::new() }
+        );
+        // Its picks turn with the picture, as an object's do.
+        let mut turned = sky.clone();
+        let t = Turned::new(1, 1.5);
+        turned.turn(t);
+        let Shape::Sky { picks } = &turned else {
+            panic!("still a sky");
+        };
+        assert_eq!(picks[0].pos, t.pos([0.7, 0.2]));
     }
 
     #[test]

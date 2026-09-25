@@ -608,6 +608,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             raster,
             provider,
             seconds,
+            note,
         } => {
             let mut st = state.borrow_mut();
             st.asked.remove(&key);
@@ -623,11 +624,19 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 .find(|a| a.id == key.0)
                 .and_then(|a| a.mask.components.get(key.1))
                 .is_some_and(|c| c.enabled);
-            if live && matches!(shape, Shape::Subject {}) && provider.is_some() {
+            if live
+                && matches!(shape, Shape::Subject {} | Shape::Sky { .. })
+                && provider.is_some()
+                && note.is_none()
+            {
                 app.set_show_mask(true);
             }
             st.learned.insert(key, (shape, raster));
-            if let Some(p) = provider {
+            // A sky the gate did not find is said every time, cached or
+            // not: the empty mask is the answer, not a failure.
+            if let Some(note) = note {
+                app.set_status(note.into());
+            } else if let Some(p) = provider {
                 app.set_status(format!("{name} found on {p} in {seconds:.2} s").into());
             }
             app.window().request_redraw();

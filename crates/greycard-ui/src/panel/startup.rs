@@ -867,6 +867,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 }
                                 Shape::Brush { .. }
                                 | Shape::Subject {}
+                                | Shape::Sky { .. }
                                 | Shape::Object { .. }
                                 | Shape::Luminance { .. }
                                 | Shape::Color { .. }
@@ -877,8 +878,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }
                         None => app.set_mask_kind("".into()),
                     }
-                    // An object's boxes and picks: the chosen one's,
-                    // or, with the tool in hand, the one it adds to.
+                    // An object's boxes and picks, or a sky's picks:
+                    // the chosen one's, or, with the tool in hand, the
+                    // one it adds to.
                     let object = match &st.placing {
                         Some(p) => p.component.and_then(|c| {
                             edit.adjustments
@@ -888,7 +890,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         None => chosen.as_ref(),
                     }
                     .and_then(|c| match &c.shape {
-                        Shape::Object { picks, boxes } => Some((picks, boxes)),
+                        Shape::Object { picks, boxes } => Some((picks, boxes.as_slice())),
+                        Shape::Sky { picks } => Some((picks, &[][..])),
                         _ => None,
                     });
                     let (boxes, picks) = match object {

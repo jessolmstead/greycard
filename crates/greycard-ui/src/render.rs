@@ -279,24 +279,26 @@ impl ShapeGpu {
                 a: [0.0; 4],
                 b: [0.0; 4],
             },
-            Shape::Brush { .. } | Shape::Subject {} | Shape::Object { .. } => match raster {
-                Some(r) => Self {
-                    kind: 2,
-                    flags,
-                    layer,
-                    pad: 0,
-                    a: [0.0; 4],
-                    b: [r.0.aspect, 0.0, 0.0, 0.0],
-                },
-                None => Self {
-                    kind: 3,
-                    flags,
-                    layer: 0,
-                    pad: 0,
-                    a: [0.0; 4],
-                    b: [0.0; 4],
-                },
-            },
+            Shape::Brush { .. } | Shape::Subject {} | Shape::Sky { .. } | Shape::Object { .. } => {
+                match raster {
+                    Some(r) => Self {
+                        kind: 2,
+                        flags,
+                        layer,
+                        pad: 0,
+                        a: [0.0; 4],
+                        b: [r.0.aspect, 0.0, 0.0, 0.0],
+                    },
+                    None => Self {
+                        kind: 3,
+                        flags,
+                        layer: 0,
+                        pad: 0,
+                        a: [0.0; 4],
+                        b: [0.0; 4],
+                    },
+                }
+            }
         }
     }
 }

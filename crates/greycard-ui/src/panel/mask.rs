@@ -156,13 +156,14 @@ pub(crate) fn reveal_range(edit: &Edit, target: Option<usize>, app: &App) {
 /// Whether a shape is made whole by its button, with no drag on the
 /// picture: a model's subject, or a range of the picture's own.
 fn made_at_once(kind: &str) -> bool {
-    matches!(kind, "Subject" | "Luminance" | "Color")
+    matches!(kind, "Subject" | "Sky" | "Luminance" | "Color")
 }
 
 /// What the status line says once a shape made at once is in.
 fn made_hint(kind: &str) -> &'static str {
     match kind {
         "Subject" => "finding the subject",
+        "Sky" => "finding the sky",
         "Color" => "click a color in the picture to center the window on it; Esc to keep the skin",
         _ => "",
     }
@@ -291,13 +292,13 @@ pub(crate) fn step(
             model,
             model.id == greycard_ai::SUBJECT_WEBGPU.id && have(&greycard_ai::SUBJECT),
         )
-    } else if have(&greycard_ai::SUBJECT) {
+    } else if matches!(shape, Shape::Subject {}) && have(&greycard_ai::SUBJECT) {
         // Nothing to offer right now (another sheet is up, a fetch is
         // running, or this model was already declined or failed this
         // session), but the store's own original runs: use it rather
-        // than wait on an offer that is not coming this round. Only
-        // ever true for a Subject want, since `SUBJECT` names one
-        // specific model file.
+        // than wait on an offer that is not coming this round. For a
+        // Subject want alone: an Object or a Sky asked for with the
+        // Subject model would load the wrong file.
         Step::Ask(&greycard_ai::SUBJECT)
     } else {
         Step::Wait
@@ -392,6 +393,9 @@ pub(crate) fn placing_hint(kind: &str) -> &'static str {
         "Brush" => "paint on the picture; scroll for size; Esc or the button when done",
         "Object" => {
             "click a thing, right-click what is not it, or drag a box round it; Esc or the button when done"
+        }
+        "Sky" => {
+            "click sky the mask missed, right-click what is not sky; Esc or the button when done"
         }
         _ => "drag on the picture to place it",
     }
@@ -516,7 +520,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 st.placing = None;
                 app.set_placing("".into());
                 app.set_component(0);
-                if kind != "Subject" {
+                if kind != "Subject" && kind != "Sky" {
                     // Its sliders are the shape: show them.
                     app.set_shapes_open(true);
                 }
@@ -559,7 +563,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.set_status("".into());
                 return;
             }
-            if made_at_once(kind.as_str()) {
+            let chosen = app.get_component().max(0) as usize;
+            let sky_chosen = kind == "Sky"
+                && st
+                    .edit
+                    .adjustments
+                    .get(index)
+                    .and_then(|a| a.mask.components.get(chosen))
+                    .is_some_and(|c| matches!(c.shape, Shape::Sky { .. }));
+            if made_at_once(kind.as_str()) && !sky_chosen {
                 let edit = read_edit(&app, &st.edit, st.target);
                 st.edit = edit;
                 let Some(a) = st.edit.adjustments.get_mut(index) else {
@@ -583,8 +595,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             }
             // A brush chosen in the list takes more strokes rather
-            // than a new brush beside it; an object more picks.
-            let chosen = app.get_component().max(0) as usize;
+            // than a new brush beside it; an object or a sky more picks.
             let component = st
                 .edit
                 .adjustments
@@ -593,6 +604,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 .filter(|c| {
                     (kind == "Brush" && c.shape.is_brush())
                         || (kind == "Object" && matches!(c.shape, Shape::Object { .. }))
+                        || (kind == "Sky" && matches!(c.shape, Shape::Sky { .. }))
                 })
                 .map(|_| chosen);
             st.placing = Some(Placing {
@@ -806,7 +818,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             {
                 match shape {
                     Shape::Brush { strokes } => strokes.push(stroke_from(&app, at)),
-                    Shape::Object { picks, .. } => picks.push(Pick {
+                    Shape::Object { picks, .. } | Shape::Sky { picks } => picks.push(Pick {
                         pos: [at.0, at.1],
                         positive: !right,
                     }),
@@ -840,6 +852,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     boxes: Vec::new(),
                 },
                 s @ (Shape::Subject {}
+                | Shape::Sky { .. }
                 | Shape::Luminance { .. }
                 | Shape::Color { .. }
                 | Shape::Unknown) => s.clone(),
@@ -951,6 +964,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     }
                 }
                 Shape::Subject {}
+                | Shape::Sky { .. }
                 | Shape::Luminance { .. }
                 | Shape::Color { .. }
                 | Shape::Unknown => {}
@@ -989,8 +1003,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             // A brush stays in hand for the next stroke; a dab is a
-            // stroke. An object stays in hand for the next pick.
-            if placing.kind.is_brush() || matches!(placing.kind, Shape::Object { .. }) {
+            // stroke. An object or a sky stays in hand for the next pick.
+            if placing.kind.is_brush()
+                || matches!(placing.kind, Shape::Object { .. } | Shape::Sky { .. })
+            {
                 placing.fresh = false;
                 placing.boxed = false;
                 st.placing = Some(placing);
@@ -1014,6 +1030,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     }
                     Shape::Brush { .. }
                     | Shape::Subject {}
+                    | Shape::Sky { .. }
                     | Shape::Object { .. }
                     | Shape::Luminance { .. }
                     | Shape::Color { .. }
@@ -1233,6 +1250,78 @@ mod tests {
         );
     }
 
+    /// A Sky wants the prior, then SAM: each offered in turn, and asked
+    /// for once both are in. SAM declined or failing leaves the prior
+    /// alone asked for, its own labels the outline.
+    #[test]
+    fn a_sky_is_offered_the_prior_then_sam_and_runs_without_sam_if_it_must() {
+        use greycard_ai::{Provider, SAM, SKY, SUBJECT};
+        let gpu = [Provider::WebGpu, Provider::Cpu];
+        let shape = Shape::Sky { picks: Vec::new() };
+        let no_record = |_: &greycard_ai::Model| false;
+        let nothing = |_: &greycard_ai::Model| false;
+        assert_eq!(
+            step(&shape, nothing, &gpu, &[], &[], true, no_record),
+            Some(Step::Offer(&SKY, false))
+        );
+        let prior = |m: &greycard_ai::Model| m.id == SKY.id;
+        assert_eq!(
+            step(&shape, prior, &gpu, &[], &[], true, no_record),
+            Some(Step::Offer(&SAM, false))
+        );
+        let both = |m: &greycard_ai::Model| m.id == SKY.id || m.id == SAM.id;
+        assert_eq!(
+            step(&shape, both, &gpu, &[], &[], true, no_record),
+            Some(Step::Ask(&SKY))
+        );
+        assert_eq!(
+            step(&shape, prior, &gpu, &[SAM.id], &[], true, no_record),
+            Some(Step::Ask(&SKY))
+        );
+        assert_eq!(
+            step(&shape, prior, &gpu, &[], &[SAM.id], true, no_record),
+            Some(Step::Ask(&SKY))
+        );
+        // The prior declined: the shape waits, whatever else the store
+        // has; the Subject original is never asked for in its place.
+        let subject_too = |m: &greycard_ai::Model| m.id == SUBJECT.id || m.id == SAM.id;
+        assert_eq!(
+            step(&shape, subject_too, &gpu, &[SKY.id], &[], true, no_record),
+            Some(Step::Wait)
+        );
+        assert_eq!(
+            step(&shape, subject_too, &gpu, &[], &[], false, no_record),
+            Some(Step::Wait)
+        );
+    }
+
+    /// An Object waiting on SAM with the sheet busy waits: the Subject
+    /// original in the store is not asked for in SAM's place.
+    #[test]
+    fn an_object_waiting_on_sam_is_not_given_the_subject_model() {
+        use greycard_ai::{Provider, SUBJECT};
+        let shape = Shape::Object {
+            picks: vec![Pick {
+                pos: [0.5, 0.5],
+                positive: true,
+            }],
+            boxes: Vec::new(),
+        };
+        let subject = |m: &greycard_ai::Model| m.id == SUBJECT.id;
+        assert_eq!(
+            step(
+                &shape,
+                subject,
+                &[Provider::Cpu],
+                &[],
+                &[],
+                false,
+                |_: &greycard_ai::Model| false
+            ),
+            Some(Step::Wait)
+        );
+    }
+
     /// The sheet's note says who publishes the model.
     #[test]
     fn the_offer_says_who_publishes_the_model() {
@@ -1270,6 +1359,59 @@ mod tests {
         // The same handle on the picture is pressable, so the test is
         // about the clip and not about the wiring.
         assert!(at(360.0), "a handle on the picture is not pressable");
+    }
+
+    /// Sky from its button is made whole, like Subject; on a chosen sky
+    /// the same button is Pick, which puts the tool in hand and takes
+    /// clicks as picks on that sky, a right click a negative one,
+    /// rather than adding a second sky; and the button again puts the
+    /// tool down.
+    #[test]
+    fn a_sky_comes_from_its_button_and_takes_picks() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_add_adjustment("Sky".into());
+        {
+            let st = state.borrow();
+            assert_eq!(st.target, Some(0));
+            assert_eq!(
+                st.edit.adjustments[0].mask.components,
+                vec![Component {
+                    shape: Shape::Sky { picks: Vec::new() },
+                    mode: Mode::Add,
+                    invert: false,
+                    enabled: true,
+                }]
+            );
+            assert!(st.placing.is_none());
+        }
+        assert_eq!(app.get_component_kind(), "Sky");
+        assert_eq!(app.get_status(), "finding the sky");
+
+        app.invoke_add_shape("Sky".into(), "Add".into());
+        assert_eq!(app.get_placing(), "Sky");
+        assert!(app.get_placing_into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_released();
+        app.invoke_place_pressed(320.0, 260.0, true);
+        app.invoke_place_released();
+        {
+            let st = state.borrow();
+            let components = &st.edit.adjustments[0].mask.components;
+            assert_eq!(components.len(), 1, "a pick is not a second sky");
+            let Shape::Sky { picks } = &components[0].shape else {
+                panic!("{:?}", components[0].shape)
+            };
+            assert_eq!(
+                picks.iter().map(|p| p.positive).collect::<Vec<_>>(),
+                vec![true, false]
+            );
+            assert!(st.placing.is_some(), "the tool stays in hand");
+        }
+        app.invoke_add_shape("Sky".into(), "Add".into());
+        assert!(app.get_placing().is_empty());
+        assert!(state.borrow().placing.is_none());
     }
 
     /// The range masks from the panel: a button makes one whole, its

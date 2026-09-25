@@ -368,6 +368,9 @@ pub enum Outcome {
         /// The provider that ran it; none when it was cached.
         provider: Option<&'static str>,
         seconds: f64,
+        /// What the status line says instead: a Sky shape on a frame
+        /// with no sky.
+        note: Option<String>,
     },
     MaskFailed {
         key: Key,
@@ -1130,6 +1133,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                                 raster: made.raster,
                                 provider: made.provider.map(|p| p.name()),
                                 seconds: made.seconds,
+                                note: made.note,
                             },
                             Err(message) => Outcome::MaskFailed { key, message },
                         }
@@ -3248,5 +3252,169 @@ mod tests {
         }
         assert!(!dir.join("thumbs").exists());
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The Sky shape over real frames, the product's own path: each
+    /// file opened and developed as the worker does under the default
+    /// edit, then the Sky raster made by `Ai::raster` twice, once on
+    /// the providers this machine offers (WebGPU where there is one)
+    /// and once on the CPU alone, and the two compared. Set
+    /// `GREYCARD_SAMPLES` to a folder of frames (copies: nothing is
+    /// written beside them) and `GREYCARD_MODELS` to a store holding
+    /// the Sky model and SAM, and run with `--ignored`; without both
+    /// it passes at once. `GREYCARD_SKY_OUT` names a folder for each
+    /// frame's preview (`<stem>.jpg`), its Sky raster (`<stem>-sky.png`)
+    /// and `report.txt`; `GREYCARD_SKY_ONLY` a comma list of stems.
+    /// Fails if any of the five frames with no sky in the user's set
+    /// gets a single pixel of sky.
+    #[test]
+    #[ignore]
+    fn the_sky_over_real_frames() {
+        use greycard_ai::Provider;
+        let (Some(samples), Some(models)) = (
+            std::env::var_os("GREYCARD_SAMPLES"),
+            std::env::var_os("GREYCARD_MODELS"),
+        ) else {
+            return;
+        };
+        let out = std::env::var_os("GREYCARD_SKY_OUT").map(PathBuf::from);
+        if let Some(out) = &out {
+            std::fs::create_dir_all(out).unwrap();
+        }
+        let only: Option<Vec<String>> = std::env::var("GREYCARD_SKY_ONLY")
+            .ok()
+            .map(|s| s.split(',').map(str::to_string).collect());
+        const NO_SKY: [&str; 5] = ["5M0A5135", "DSCF0153", "DSCF0186", "5M0A0957", "5M0A0952"];
+        let store = greycard_ai::Store::at(models);
+        let mut develop_ai = Ai::for_test(store.clone(), vec![Provider::Cpu]);
+        let mut near = Ai::for_test(store.clone(), Provider::available());
+        let mut cpu = Ai::for_test(store, vec![Provider::Cpu]);
+        let mut frames: Vec<PathBuf> = std::fs::read_dir(&samples)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| {
+                p.extension().and_then(|e| e.to_str()).is_some_and(|e| {
+                    ["cr3", "raf", "cr2", "nef", "arw", "dng"].contains(&e.to_lowercase().as_str())
+                })
+            })
+            .collect();
+        frames.sort();
+        let mut lines = Vec::new();
+        let mut painted = Vec::new();
+        let shape = Shape::Sky { picks: Vec::new() };
+        let deliver: Deliver = Arc::new(|_| {});
+        for path in frames {
+            let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+            if only.as_ref().is_some_and(|o| !o.contains(&stem)) {
+                continue;
+            }
+            let (input, _) = open(&path).unwrap_or_else(|e| panic!("{stem}: {e:#}"));
+            let mut base = None;
+            let t = Instant::now();
+            let _ = develop_job(
+                &input,
+                &Edit::default(),
+                0,
+                1,
+                &mut base,
+                &mut None,
+                &mut develop_ai,
+                None,
+                None,
+                &mut None,
+                &deliver,
+            );
+            let develop = t.elapsed().as_secs_f64();
+            let b = base
+                .as_ref()
+                .unwrap_or_else(|| panic!("{stem} did not develop"));
+            let run = |ai: &mut Ai| {
+                ai.forget(None);
+                let t = Instant::now();
+                let made = ai
+                    .raster(b.stamp, &b.image, &b.edit, b.source, (1, 0), &shape, None)
+                    .unwrap_or_else(|e| panic!("{stem}: {e}"));
+                let total = t.elapsed().as_secs_f64();
+                (made, total, ai.last_sky.clone().expect("a sky report"))
+            };
+            let (made, total, r) = run(&mut near);
+            let (cpu_made, cpu_total, c) = run(&mut cpu);
+            let data = made.raster.data();
+            let cpu_data = cpu_made.raster.data();
+            let n = data.len() as f64;
+            let area = data.iter().filter(|&&v| v > 127).count() as f64 / n;
+            let (mut max, mut sum, mut flips) = (0u8, 0u64, 0usize);
+            for (a, c) in data.iter().zip(cpu_data) {
+                max = max.max(a.abs_diff(*c));
+                sum += a.abs_diff(*c) as u64;
+                flips += ((*a > 127) != (*c > 127)) as usize;
+            }
+            if NO_SKY.contains(&stem.as_str()) && data.iter().any(|&v| v > 0) {
+                painted.push(stem.clone());
+            }
+            let stages = |r: &crate::ai::SkyReport, total: f64| {
+                let s = r.stages;
+                let known = r.load + r.prior + s.gate + s.seeds + s.outline + s.edge + r.raster;
+                format!(
+                    "total {total:.2}s = preview {:.2} + prior {:.3} on {} + gate {:.3} + seeds {:.3} \
+                     + outline {:.3} (SAM load {:.2}, embed {:.3} on {}, {} decodes) + edge {:.3} \
+                     + raster {:.3}",
+                    total - known,
+                    r.prior,
+                    r.prior_on.map_or("-", |p| p.name()),
+                    s.gate,
+                    s.seeds,
+                    s.outline,
+                    r.sam_load,
+                    r.embed,
+                    r.sam_on.map_or("-", |p| p.name()),
+                    r.decodes,
+                    s.edge,
+                    r.raster,
+                )
+            };
+            let line = format!(
+                "{stem}: {} {:.1}% seeded {} | develop {develop:.1}s | {} | CPU: {} | \
+                 against the CPU: max {max}/255, mean {:.2e}, {:.4}% across a half",
+                match r.no_sky {
+                    Some(why) => format!("no sky ({why})"),
+                    None => "sky".to_string(),
+                },
+                area * 100.0,
+                r.seeded,
+                stages(&r, total),
+                stages(&c, cpu_total),
+                sum as f64 / n / 255.0,
+                flips as f64 / n * 100.0,
+            );
+            println!("{line}");
+            lines.push(line);
+            if let Some(out) = &out {
+                let rgb = crate::ai::preview(&b.image, &b.edit, b.source);
+                image::save_buffer(
+                    out.join(format!("{stem}.jpg")),
+                    &rgb.data,
+                    rgb.width as u32,
+                    rgb.height as u32,
+                    image::ExtendedColorType::Rgb8,
+                )
+                .unwrap();
+                image::save_buffer(
+                    out.join(format!("{stem}-sky.png")),
+                    data,
+                    made.raster.width as u32,
+                    made.raster.height as u32,
+                    image::ExtendedColorType::L8,
+                )
+                .unwrap();
+            }
+        }
+        if let Some(out) = &out {
+            std::fs::write(out.join("report.txt"), lines.join("\n") + "\n").unwrap();
+        }
+        assert!(
+            painted.is_empty(),
+            "sky painted on frames with none: {painted:?}"
+        );
     }
 }

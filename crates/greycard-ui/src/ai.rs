@@ -13,8 +13,9 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use greycard_ai::sam::Embedding;
+use greycard_ai::sky::{self, Prior};
 use greycard_ai::{
-    Denoiser, Fill, Model, Prompt, Provider, Rgb8, Rgbf, SAM, Sam, Store, Subject, refine,
+    Denoiser, Fill, Model, Prompt, Provider, Rgb8, Rgbf, SAM, SKY, Sam, Sky, Store, Subject, refine,
 };
 use greycard_core::develop::retouch::Region;
 use greycard_core::image::WorkingImage;
@@ -83,15 +84,36 @@ pub fn model_with(
             |m| unavailable.contains(&m.id),
             original_failed_on_webgpu,
         )),
+        Shape::Sky { .. } => Some(sky_model(have, unavailable)),
         Shape::Object { .. } => Some(&SAM),
         _ => None,
     }
 }
 
+/// The model a Sky shape waits on: the prior first, then SAM for the
+/// outline; with both in the store, the prior (asked for by name, the
+/// worker loads SAM beside it). SAM declined or not to be fetched this
+/// session leaves the prior alone, whose own labels are then the
+/// outline: a coarser sky, never a false one, since the gate is the
+/// prior's.
+fn sky_model(have: impl Fn(&Model) -> bool, unavailable: &[&str]) -> &'static Model {
+    if have(&SKY) && !have(&SAM) && !unavailable.contains(&SAM.id) {
+        &SAM
+    } else {
+        &SKY
+    }
+}
+
+/// What a Sky raster was made from, beside the file and the shape, in
+/// its disk cache's key: the stages' version, and whether SAM made the
+/// outline, so a sky made without SAM is made again once SAM is in,
+/// and one made by an older pipeline once the pipeline changes.
+const SKY_PIPELINE: &str = "sky-1";
+
 /// Whether the shape has anything for a model to go on.
 pub fn prompted(shape: &Shape) -> bool {
     match shape {
-        Shape::Subject {} => true,
+        Shape::Subject {} | Shape::Sky { .. } => true,
         Shape::Object { picks, boxes } => !picks.is_empty() || !boxes.is_empty(),
         _ => false,
     }
@@ -107,6 +129,12 @@ pub struct Ai {
     providers: Vec<Provider>,
     subject: Option<Subject>,
     sam: Option<Sam>,
+    sky: Option<Sky>,
+    /// The sky prior of base develop `stamp`, kept like the embedding,
+    /// so a pick on a Sky shape decodes again without running it.
+    sky_prior: Option<(u64, Prior)>,
+    /// What the last Sky raster took, stage by stage.
+    pub(crate) last_sky: Option<SkyReport>,
     fill: Option<Fill>,
     /// The learned denoiser loaded, by its model's id: one at a time,
     /// since each holds the GPU's memory.
@@ -135,6 +163,29 @@ pub struct Made {
     /// None when it came from the cache.
     pub provider: Option<Provider>,
     pub seconds: f64,
+    /// What the status line says in place of the usual: a Sky shape
+    /// on a frame with no sky, whose raster is empty.
+    pub note: Option<String>,
+}
+
+/// A Sky raster's making, stage by stage, in seconds.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SkyReport {
+    /// The prior's provider, and SAM's (encoder) when it ran.
+    pub(crate) prior_on: Option<Provider>,
+    pub(crate) sam_on: Option<Provider>,
+    /// Loading the prior, when this raster loaded it.
+    pub(crate) load: f64,
+    pub(crate) prior: f64,
+    /// SAM's loading and embedding, when this raster paid for them.
+    pub(crate) sam_load: f64,
+    pub(crate) embed: f64,
+    pub(crate) decodes: usize,
+    pub(crate) stages: sky::Times,
+    /// Bringing the matte to the raster's size.
+    pub(crate) raster: f64,
+    pub(crate) seeded: bool,
+    pub(crate) no_sky: Option<sky::NoSky>,
 }
 
 /// Why a fill was not made: the patch is left as it was either way.
@@ -160,12 +211,26 @@ impl Ai {
             providers: Vec::new(),
             subject: None,
             sam: None,
+            sky: None,
+            sky_prior: None,
+            last_sky: None,
             fill: None,
             denoiser: None,
             fills: HashMap::new(),
             preview: None,
             embedding: None,
             cache: HashMap::new(),
+        }
+    }
+
+    /// Models from `store` on `providers` alone, and no file, so no
+    /// disk cache: for a test that runs the models.
+    #[cfg(test)]
+    pub(crate) fn for_test(store: Store, providers: Vec<Provider>) -> Self {
+        Self {
+            store: Some(store),
+            providers,
+            ..Self::new()
         }
     }
 
@@ -199,6 +264,7 @@ impl Ai {
         self.fills.clear();
         self.preview = None;
         self.embedding = None;
+        self.sky_prior = None;
     }
 
     /// A Subject model just arrived in the store: drop the one
@@ -386,14 +452,20 @@ impl Ai {
         let file = self.file.as_ref()?;
         let model = match shape {
             Shape::Subject {} => self.subject_model(model)?,
+            Shape::Sky { .. } => &SKY,
             _ => model_for(shape, self.store.as_ref(), &[])?,
         };
         let prompt = serde_json::to_string(shape).ok()?;
-        let root = self.store.as_ref()?.root().parent()?.join("masks");
+        let store = self.store.as_ref()?;
+        let root = store.root().parent()?.join("masks");
         let mut h = std::collections::hash_map::DefaultHasher::new();
         file.hash(&mut h);
         model.id.hash(&mut h);
         prompt.hash(&mut h);
+        if matches!(shape, Shape::Sky { .. }) {
+            SKY_PIPELINE.hash(&mut h);
+            store.have(&SAM).hash(&mut h);
+        }
         Some(root.join(format!("{:016x}.png", h.finish())))
     }
 
@@ -421,6 +493,7 @@ impl Ai {
             && s == shape
         {
             return Ok(Made {
+                note: self.sky_note(shape, r),
                 raster: r.clone(),
                 provider: None,
                 seconds: 0.0,
@@ -436,6 +509,7 @@ impl Ai {
             let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
             self.cache.insert(key, (shape.clone(), raster.clone()));
             return Ok(Made {
+                note: self.sky_note(shape, &raster),
                 raster,
                 provider: None,
                 seconds: 0.0,
@@ -453,6 +527,29 @@ impl Ai {
             let luma = rgb.luma();
             self.preview = Some((stamp, rgb, luma));
             self.embedding = None;
+        }
+        if let Shape::Sky { picks } = shape {
+            let start = Instant::now();
+            let (matte, provider) = self.sky_matte(stamp, image, picks, aspect, &store)?;
+            let t = Instant::now();
+            let data = match &matte {
+                Some(m) => m.resampled(RASTER_WIDTH, height).to_u8(),
+                None => vec![0u8; RASTER_WIDTH * height],
+            };
+            if let Some(report) = &mut self.last_sky {
+                report.raster = t.elapsed().as_secs_f64();
+            }
+            if let Some(path) = &cached {
+                write_raster(path, height, &data);
+            }
+            let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+            self.cache.insert(key, (shape.clone(), raster.clone()));
+            return Ok(Made {
+                note: self.sky_note(shape, &raster),
+                raster,
+                provider: Some(provider),
+                seconds: start.elapsed().as_secs_f64(),
+            });
         }
         let (_, rgb, luma) = self.preview.as_ref().expect("a preview was just made");
         let start = Instant::now();
@@ -521,14 +618,151 @@ impl Ai {
             raster,
             provider: Some(provider),
             seconds: start.elapsed().as_secs_f64(),
+            note: None,
         })
+    }
+
+    /// What the status line says of a Sky raster with nothing in it:
+    /// the gate found no sky. Nothing for any other shape.
+    fn sky_note(&self, shape: &Shape, raster: &Raster) -> Option<String> {
+        if !matches!(shape, Shape::Sky { .. }) || raster.data().iter().any(|&v| v > 0) {
+            return None;
+        }
+        let name = self
+            .file
+            .as_deref()
+            .and_then(|f| f.file_name())
+            .map_or("this picture".to_string(), |n| {
+                n.to_string_lossy().into_owned()
+            });
+        Some(format!("no sky found in {name}"))
+    }
+
+    /// A Sky shape's matte on the preview of base develop `stamp`, at
+    /// the preview's size, or none when the gate finds no sky; and the
+    /// provider the prior ran on. The prior is kept for the develop,
+    /// as SAM's embedding is, so a pick decodes again and no more.
+    /// SAM is loaded and the preview embedded only once the gate has
+    /// passed, so a frame with no sky never pays for them; with SAM
+    /// not in the store the prior's own labels are the outline.
+    fn sky_matte(
+        &mut self,
+        stamp: u64,
+        image: &WorkingImage,
+        picks: &[greycard_edit::mask::Pick],
+        aspect: f32,
+        store: &Store,
+    ) -> Result<(Option<greycard_ai::Mask>, Provider), String> {
+        let mut report = SkyReport::default();
+        let Ai {
+            sky: loaded,
+            sky_prior,
+            sam,
+            embedding,
+            preview,
+            providers,
+            file,
+            ..
+        } = self;
+        let (_, rgb, luma) = preview.as_ref().expect("a preview is made before a mask");
+        if loaded.is_none() {
+            let t = Instant::now();
+            *loaded = Some(Sky::load(store, providers).map_err(|e| e.to_string())?);
+            report.load = t.elapsed().as_secs_f64();
+        }
+        let model = loaded.as_mut().expect("the Sky model was just loaded");
+        let provider = model.provider();
+        report.prior_on = Some(provider);
+        if sky_prior.as_ref().is_none_or(|p| p.0 != stamp) {
+            let t = Instant::now();
+            let prior = model.prior(rgb).map_err(|e| e.to_string())?;
+            report.prior = t.elapsed().as_secs_f64();
+            *sky_prior = Some((stamp, prior));
+        }
+        let prior = &sky_prior.as_ref().expect("the prior was just made").1;
+        let frame = sky::Frame {
+            display: rgb,
+            luma,
+            linear: image,
+        };
+        // Picks are in the masks' units, the height in widths.
+        let picks: Vec<([f32; 2], bool)> = picks
+            .iter()
+            .map(|p| ([p.pos[0], p.pos[1] / aspect], p.positive))
+            .collect();
+        let found = {
+            let mut decode =
+                |prompts: &[Prompt]| -> greycard_ai::runtime::Result<greycard_ai::Mask> {
+                    if sam.is_none() {
+                        let t = Instant::now();
+                        *sam = Some(Sam::load(store, providers)?);
+                        report.sam_load = t.elapsed().as_secs_f64();
+                    }
+                    let s = sam.as_mut().expect("SAM was just loaded");
+                    report.sam_on = Some(s.providers().0);
+                    if embedding.as_ref().is_none_or(|e| e.0 != stamp) {
+                        let t = Instant::now();
+                        *embedding = Some((stamp, s.embed(rgb)?));
+                        report.embed = t.elapsed().as_secs_f64();
+                    }
+                    let (_, e) = embedding.as_ref().expect("the preview was just embedded");
+                    report.decodes += 1;
+                    s.decode(e, prompts).map(|(m, _)| m)
+                };
+            let decode: Option<
+                &mut dyn FnMut(&[Prompt]) -> greycard_ai::runtime::Result<greycard_ai::Mask>,
+            > = if store.have(&SAM) {
+                Some(&mut decode)
+            } else {
+                None
+            };
+            let mut times = sky::Times::default();
+            let found = sky::find(prior, &frame, &picks, decode, &mut times);
+            report.stages = times;
+            found.map_err(|e| e.to_string())?
+        };
+        let name = file
+            .as_deref()
+            .and_then(|f| f.file_name())
+            .map_or(String::new(), |n| n.to_string_lossy().into_owned());
+        let matte = match found {
+            sky::Found::Sky { matte, seeded } => {
+                report.seeded = seeded;
+                Some(matte)
+            }
+            sky::Found::None(why) => {
+                tracing::info!("no sky found in {name}: {why}");
+                report.no_sky = Some(why);
+                None
+            }
+        };
+        let st = report.stages;
+        tracing::info!(
+            "sky of {name}: prior {:.3}s on {} (load {:.2}s), gate {:.3}s, seeds {:.3}s, \
+             outline {:.3}s ({} decodes; SAM load {:.2}s, embed {:.3}s{}), edge {:.3}s",
+            report.prior,
+            provider.name(),
+            report.load,
+            st.gate,
+            st.seeds,
+            st.outline,
+            report.decodes,
+            report.sam_load,
+            report.embed,
+            report
+                .sam_on
+                .map_or(String::new(), |p| format!(" on {}", p.name())),
+            st.edge,
+        );
+        self.last_sky = Some(report);
+        Ok((matte, provider))
     }
 }
 
 /// What a model sees: the picture under the global look alone, no
 /// geometry, no vignette or grain, in sRGB, no more than `PREVIEW`
 /// on its long side.
-fn preview(image: &WorkingImage, edit: &Edit, kind: crate::finish::Source) -> Rgb8 {
+pub(crate) fn preview(image: &WorkingImage, edit: &Edit, kind: crate::finish::Source) -> Rgb8 {
     let mut edit = edit.clone();
     edit.adjustments.clear();
     edit.geometry = Default::default();
@@ -752,5 +986,92 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A Sky raster with nothing in it is the gate's answer, said on
+    /// the status line whenever it comes back, from the disk cache
+    /// too; a sky with something in it says nothing of the kind. The
+    /// cache's slot follows whether SAM is in the store, so a sky made
+    /// from the prior alone is made again once SAM arrives.
+    #[test]
+    fn an_empty_sky_says_no_sky_was_found_and_the_cache_follows_sam() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-ai-sky-cache-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut ai = Ai::new();
+        let store = Store::at(dir.join("models"));
+        ai.store = Some(store.clone());
+        ai.file = Some(PathBuf::from("DSCF0153.RAF"));
+        let shape = Shape::Sky { picks: Vec::new() };
+        let without_sam = ai.cached_path(&shape, None).expect("a path");
+        write_raster(
+            &without_sam,
+            RASTER_WIDTH,
+            &vec![0u8; RASTER_WIDTH * RASTER_WIDTH],
+        );
+        let made = ai
+            .raster(
+                1,
+                &WorkingImage::new(4, 4),
+                &Edit::default(),
+                crate::finish::Source::Scene,
+                (9, 0),
+                &shape,
+                None,
+            )
+            .expect("the cached raster");
+        assert_eq!(made.note.as_deref(), Some("no sky found in DSCF0153.RAF"));
+        // Asked again, from the memory cache: said again.
+        let again = ai
+            .raster(
+                1,
+                &WorkingImage::new(4, 4),
+                &Edit::default(),
+                crate::finish::Source::Scene,
+                (9, 0),
+                &shape,
+                None,
+            )
+            .expect("the kept raster");
+        assert_eq!(again.note, made.note);
+        let some = Raster::from_data(1.0, RASTER_WIDTH, vec![7u8; RASTER_WIDTH * RASTER_WIDTH]);
+        assert_eq!(ai.sky_note(&shape, &some), None);
+        assert_eq!(
+            ai.sky_note(&Shape::Subject {}, &Raster::from_data(1.0, 4, vec![0; 16])),
+            None
+        );
+
+        // SAM arrives: another slot.
+        for f in SAM.files {
+            let path = store.path(&SAM, f);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::File::create(&path)
+                .unwrap()
+                .set_len(f.bytes)
+                .unwrap();
+        }
+        assert!(store.have(&SAM));
+        assert_ne!(ai.cached_path(&shape, None), Some(without_sam));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_sky_waits_on_the_prior_then_sam() {
+        let have = |ids: &'static [&'static str]| move |m: &Model| ids.contains(&m.id);
+        let sky = Shape::Sky { picks: Vec::new() };
+        let cpu = [Provider::Cpu];
+        let no = |_: &Model| false;
+        let pick = |h: &dyn Fn(&Model) -> bool, unavailable: &[&str]| {
+            model_with(&sky, h, &cpu, unavailable, no).map(|m| m.id)
+        };
+        assert_eq!(pick(&have(&[]), &[]), Some(SKY.id));
+        assert_eq!(pick(&have(&[SAM.id]), &[]), Some(SKY.id));
+        assert_eq!(pick(&have(&[SKY.id]), &[]), Some(SAM.id));
+        assert_eq!(pick(&have(&[SKY.id]), &[SAM.id]), Some(SKY.id));
+        assert_eq!(pick(&have(&[SKY.id, SAM.id]), &[]), Some(SKY.id));
+        assert!(prompted(&sky));
     }
 }
