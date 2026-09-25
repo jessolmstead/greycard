@@ -5,3 +5,9 @@ protobuf==7.36.2
 numpy==2.5.3
 onnxruntime==1.30.0
 pillow
+# eomt_export.py: the Sky prior's export gives the registry's bytes
+# with these (torch's CPU build; scipy only because transformers wants
+# it to import EoMT's training loss).
+torch==2.14.0
+transformers==5.17.0
+scipy

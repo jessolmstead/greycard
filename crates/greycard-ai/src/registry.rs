@@ -201,6 +201,59 @@ pub const SAM: Model = Model {
     ],
 };
 
+/// EoMT's license, as its repository gives it
+/// (https://github.com/tue-mps/eomt/blob/master/LICENSE), for the note
+/// beside the export greycard publishes.
+const EOMT_LICENSE: &str = "MIT License
+
+Copyright (c) 2025 Mobile Perception Systems Lab at TU/e
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the \"Software\"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+";
+
+/// EoMT-S (Kerssies et al.), COCO panoptic at 640: every pixel's class
+/// among COCO's 133, of which the Sky shape reads the sky
+/// (`sky::SKY_CLASS`). greycard's ONNX export of the published weights,
+/// made by `tools/ai/eomt_export.py`, which gives these exact bytes
+/// with the versions in `tools/ai/requirements.txt`. Its DINOv2
+/// backbone is Meta's, under Apache-2.0.
+pub const SKY: Model = Model {
+    id: "eomt-s-coco-panoptic-640",
+    name: "EoMT-S (Kerssies et al.), COCO panoptic 640, ONNX export by greycard",
+    purpose: "the Sky mask: where the picture's sky is",
+    source: "https://github.com/tue-mps/eomt and https://huggingface.co/tue-mps/coco_panoptic_eomt_small_640_2x (backbone: DINOv2, https://github.com/facebookresearch/dinov2, Apache-2.0), exported by https://github.com/jessolmstead/greycard (tools/ai/eomt_export.py)",
+    license: License {
+        name: "MIT",
+        url: "https://github.com/tue-mps/eomt/blob/master/LICENSE",
+    },
+    modified: Some(Modified {
+        what: "an ONNX export of the published weights (revision 10f5326) at a fixed 640 by 640 input, traced from the transformers port; the weights are untouched.",
+        notice: EOMT_LICENSE,
+    }),
+    files: &[File {
+        name: "eomt-s-coco-640.onnx",
+        url: "https://huggingface.co/jessolmstead/greycard-sky/resolve/main/eomt-s-coco-640.onnx",
+        bytes: 96_025_182,
+        sha256: "805ed0fb363784811a7f3979335c2c64a7d40f91ae943326f79a56ff477f372d",
+    }],
+};
+
 /// LaMa (big-lama): fills a hole from what is around it, for the
 /// eraser. A fixed 512×512 square in and out.
 pub const FILL: Model = Model {
@@ -280,6 +333,7 @@ pub const MODELS: &[Model] = &[
     SUBJECT,
     SUBJECT_WEBGPU,
     SAM,
+    SKY,
     FILL,
     DENOISE_FAST,
     DENOISE_BALANCED,
@@ -393,5 +447,11 @@ mod tests {
         assert!(note.contains("Copyright (c) 2024 ZhengPeng"));
         assert!(note.contains("The above copyright notice and this permission notice"));
         assert!(!note.contains("does not redistribute"));
+
+        let note = SKY.license_note();
+        assert!(note.contains("tue-mps/eomt"));
+        assert!(note.contains("Copyright (c) 2025 Mobile Perception Systems Lab at TU/e"));
+        assert!(note.contains("The above copyright notice and this permission notice"));
+        assert!(note.contains("eomt_export.py"));
     }
 }
