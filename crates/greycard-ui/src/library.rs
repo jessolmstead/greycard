@@ -69,6 +69,10 @@ pub(crate) enum Told {
 /// The indexer's thread, and the way to ask it things.
 pub(crate) struct Indexer {
     asks: mpsc::Sender<Ask>,
+    /// Never joined in a session: a pass under way when the editor
+    /// leaves is left, its batches committed and the index whole.
+    #[cfg_attr(not(test), allow(dead_code))]
+    thread: std::thread::JoinHandle<()>,
 }
 
 impl Indexer {
@@ -76,11 +80,20 @@ impl Indexer {
     /// there for folders and files. `told` is called on that thread.
     pub(crate) fn start(path: PathBuf, told: impl Fn(Told) + Send + 'static) -> Indexer {
         let (asks, waiting) = mpsc::channel();
-        std::thread::Builder::new()
+        let thread = std::thread::Builder::new()
             .name("greycard index".into())
             .spawn(move || run(path, waiting, told))
             .expect("spawning the indexer");
-        Indexer { asks }
+        Indexer { asks, thread }
+    }
+
+    /// Stop asking and wait for the thread to put the library down:
+    /// a test's directory cannot go while the file is open on
+    /// Windows.
+    #[cfg(test)]
+    fn join(self) {
+        drop(self.asks);
+        self.thread.join().expect("the indexer ends");
     }
 
     pub(crate) fn folders(&self, dirs: Vec<PathBuf>, generation: u64) {
@@ -649,6 +662,7 @@ mod tests {
         assert_eq!(shown(&st), [2]);
         st.filter.toggle_facet(Facet::Iso, "100");
         assert_eq!(shown(&st), [0, 1, 2, 4]);
+        drop(st);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -719,6 +733,7 @@ mod tests {
                 assert_eq!(listed, chip.count, "{facet:?} {}", chip.value);
             }
         }
+        drop(st);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -745,6 +760,49 @@ mod tests {
         st.filter.text = "rating>=9".into();
         assert_eq!(st.filter.typed().errors.len(), 1);
         assert_eq!(shown(&st), Vec::<usize>::new());
+        drop(st);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The window's side: a facet chip pressed on the bar narrows the
+    /// browser, and the bar shows the chip on with its count.
+    #[test]
+    fn a_chip_pressed_on_the_bar_narrows_the_browser() {
+        use crate::testing::{state_for, window};
+        let dir = scratch("bar");
+        let app = window(0);
+        let (files, sidecars, reader) = folder(&dir);
+        let (state, _worker) = state_for(&app, files);
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars = sidecars;
+            st.index_reader = Some(reader);
+            refresh_ids(&mut st);
+            crate::panel::browser::rebuild_browser(&mut st, &app);
+        }
+        assert_eq!(app.get_filter_shown(), 5);
+        let camera = app.get_filter_facets().row_data(0).expect("a camera row");
+        assert_eq!(camera.name, "Camera");
+        assert_eq!(camera.chips.row_count(), 3);
+        app.invoke_filter_facet_toggled(
+            filter::facet_slot(Facet::Camera) as i32,
+            "Canon EOS R6m2".into(),
+        );
+        assert_eq!(state.borrow().shown, [0, 1, 4]);
+        assert_eq!(app.get_filter_shown(), 3);
+        assert!(app.get_filter_on());
+        let camera = app.get_filter_facets().row_data(0).unwrap();
+        let chip = camera.chips.row_data(0).unwrap();
+        assert_eq!(
+            (chip.key.as_str(), chip.count, chip.on),
+            ("Canon EOS R6m2", 2, true)
+        );
+        // Clear lets it go with the rest.
+        app.invoke_filter_cleared();
+        assert_eq!(state.borrow().shown, [0, 1, 2, 3, 4]);
+        // The callbacks hold the state too; its connection goes here.
+        state.borrow_mut().index_reader = None;
+        drop(state);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -793,7 +851,7 @@ mod tests {
         indexer.file(a.clone());
         wait(&|t| matches!(t, Told::FilesIndexed));
         assert_eq!(reader.by_path(&a).unwrap().unwrap().meta.rating, 4);
-        drop(indexer);
+        indexer.join();
         drop(reader);
         std::fs::remove_dir_all(&dir).unwrap();
     }
