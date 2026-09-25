@@ -168,10 +168,16 @@ fn has_rows_under(conn: &Connection, folder: &[u8]) -> Result<bool> {
 }
 
 /// The folder's bytes with a separator on the end: what a folder
-/// under it starts with.
-fn under_prefix(folder: &[u8]) -> Vec<u8> {
+/// under it starts with. A folder that ends in one already, `/` or a
+/// drive's own root on Windows, keeps the one it has, or nothing
+/// would ever be under it.
+pub(crate) fn under_prefix(folder: &[u8]) -> Vec<u8> {
     let mut prefix = folder.to_vec();
-    prefix.extend_from_slice(&path_bytes(Path::new(std::path::MAIN_SEPARATOR_STR)));
+    let text = path_from_bytes(folder);
+    let text = text.to_string_lossy();
+    if !text.ends_with(std::path::MAIN_SEPARATOR) && !text.ends_with('/') {
+        prefix.extend_from_slice(&path_bytes(Path::new(std::path::MAIN_SEPARATOR_STR)));
+    }
     prefix
 }
 
@@ -280,6 +286,21 @@ impl Library {
         root: &Path,
         progress: &mut dyn FnMut(Progress<'_>),
     ) -> Result<Report> {
+        self.index_tree_until(root, progress, &|| false)
+    }
+
+    /// [`Library::index_tree`], asking `stop` after each batch as
+    /// [`Library::index_folder_until`] does, and ending there with
+    /// [`Report::stopped`] set: the launch pass over the roots, which
+    /// gives way to a folder the window has opened or a save's row.
+    /// Nothing is marked missing by a pass that stopped, since the
+    /// folders it did not reach were not looked for.
+    pub fn index_tree_until(
+        &mut self,
+        root: &Path,
+        progress: &mut dyn FnMut(Progress<'_>),
+        stop: &dyn Fn() -> bool,
+    ) -> Result<Report> {
         let (root, exists) = resolve_folder(root)?;
         let root_bytes = path_bytes(&root);
         if !exists && !has_rows_under(self.conn_mut(), &root_bytes)? {
@@ -292,11 +313,18 @@ impl Library {
         let mut shielded: Vec<Vec<u8>> = Vec::new();
         let mut dirs = vec![root.clone()];
         while let Some(dir) = dirs.pop() {
-            let one = self.index_folder(&dir, progress)?;
+            let one = self.index_folder_until(&dir, progress, stop)?;
             if !one.unavailable.is_empty() {
                 shielded.push(under_prefix(&path_bytes(&dir)));
             }
+            let stopped = one.stopped;
             report.add(one);
+            // Between folders as well as between batches: a tree of
+            // small folders never fills a batch.
+            if stopped || stop() {
+                report.stopped = true;
+                return Ok(report);
+            }
             visited.insert(path_bytes(&dir));
             if !exists {
                 continue;
@@ -2364,6 +2392,172 @@ pub(crate) mod tests {
             listed.as_secs_f64() * 1000.0,
             picks.len(),
             counted.as_secs_f64() * 1000.0,
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The roots' questions: every file under them by folder then
+    /// name, a root's count, the missing left out, and a folder
+    /// beside a root whose name starts like it not under it.
+    #[test]
+    fn the_files_under_the_roots_are_listed_by_folder_then_name() {
+        let dir = scratch("under");
+        let (a, a2, b, ab) = (
+            dir.join("a"),
+            dir.join("a2"),
+            dir.join("b"),
+            dir.join("a").join("day"),
+        );
+        for d in [&a, &a2, &b, &ab] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        write_frame(&a.join("z.tif"), &R5, 1);
+        write_frame(&ab.join("c.tif"), &R6, 2);
+        write_frame(&ab.join("b.tif"), &A7, 3);
+        write_frame(&a2.join("n.tif"), &R5, 4);
+        write_frame(&b.join("m.tif"), &R6, 5);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        let under =
+            |lib: &Library, roots: &[PathBuf]| -> Vec<PathBuf> { lib.paths_under(roots).unwrap() };
+        assert_eq!(
+            under(&lib, std::slice::from_ref(&a)),
+            [a.join("z.tif"), ab.join("b.tif"), ab.join("c.tif")]
+        );
+        assert_eq!(
+            under(&lib, &[b.clone(), a.clone()]),
+            [
+                a.join("z.tif"),
+                ab.join("b.tif"),
+                ab.join("c.tif"),
+                b.join("m.tif")
+            ]
+        );
+        assert_eq!(lib.count_under(&a).unwrap(), 3);
+        assert_eq!(lib.count_under(&a2).unwrap(), 1);
+        assert!(under(&lib, &[]).is_empty());
+        // The whole disk as a root (`/`, or a drive's own `D:\` on
+        // Windows): nothing is left out for want of a separator
+        // doubled.
+        let disk = dir.ancestors().last().unwrap().to_path_buf();
+        assert_eq!(under(&lib, &[disk]).len(), 5);
+        std::fs::remove_file(ab.join("b.tif")).unwrap();
+        lib.index_folder(&ab, &mut quiet()).unwrap();
+        assert_eq!(
+            under(&lib, std::slice::from_ref(&a)),
+            [a.join("z.tif"), ab.join("c.tif")]
+        );
+        assert_eq!(lib.count_under(&a).unwrap(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file moved from one folder under a root to another, either
+    /// way round the walk's order, keeps its row and is not missing
+    /// at the end of the tree pass; and the window can ask where the
+    /// row it knew is now.
+    #[test]
+    fn a_file_moved_across_folders_is_found_by_a_tree_pass() {
+        let dir = scratch("tree-move");
+        let (early, late) = (dir.join("a-early"), dir.join("z-late"));
+        std::fs::create_dir_all(&early).unwrap();
+        std::fs::create_dir_all(&late).unwrap();
+        // A frame left in each folder, so neither is ever empty (an
+        // emptied folder is an unmounted drive's mount point to the
+        // index, §160).
+        write_frame(&early.join("stay.tif"), &A7, 1);
+        write_frame(&late.join("stay2.tif"), &A7, 2);
+        write_frame(&early.join("x.tif"), &R5, 3);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        let id = lib.by_path(&early.join("x.tif")).unwrap().unwrap().id;
+
+        // Walked first, then its new folder: missing, then claimed.
+        std::fs::rename(early.join("x.tif"), late.join("x.tif")).unwrap();
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.moved, 1, "{report:?}");
+        assert_eq!(report.added, 0, "{report:?}");
+        let row = lib.by_path(&late.join("x.tif")).unwrap().unwrap();
+        assert_eq!((row.id, row.missing), (id, false));
+        assert_eq!(lib.found_at(&[id]).unwrap()[&id], late.join("x.tif"));
+
+        // And back, the new folder walked first: claimed at once.
+        std::fs::rename(late.join("x.tif"), early.join("x.tif")).unwrap();
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!((report.moved, report.missing, report.added), (1, 0, 0));
+        let row = lib.by_path(&early.join("x.tif")).unwrap().unwrap();
+        assert_eq!((row.id, row.missing), (id, false));
+        assert_eq!(lib.len().unwrap(), 3);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder renamed is not a move to the index — the old folder
+    /// is gone, which is what an unmounted drive looks like — so its
+    /// files are new rows. The window still finds its frame, by the
+    /// hash of the row it knew.
+    #[test]
+    fn a_frame_in_a_renamed_folder_is_found_by_its_hash() {
+        let dir = scratch("found-at");
+        let (old, new) = (dir.join("old"), dir.join("new"));
+        std::fs::create_dir_all(&old).unwrap();
+        write_frame(&old.join("x.tif"), &R5, 1);
+        write_frame(&old.join("y.tif"), &R6, 2);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        let id = lib.by_path(&old.join("x.tif")).unwrap().unwrap().id;
+        std::fs::rename(&old, &new).unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        let old_row = lib.by_hash(&hash::hash_file(&new.join("x.tif")).unwrap());
+        assert_eq!(
+            old_row.unwrap().len(),
+            2,
+            "the old row, missing, and a new one"
+        );
+        assert_eq!(lib.found_at(&[id]).unwrap()[&id], new.join("x.tif"));
+        // Gone for good: no answer.
+        std::fs::remove_file(new.join("x.tif")).unwrap();
+        lib.index_folder(&new, &mut quiet()).unwrap();
+        assert!(lib.found_at(&[id]).unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A tree pass asked to stop ends between folders, marks nothing
+    /// missing, and the next one finishes the walk.
+    #[test]
+    fn a_tree_pass_stops_between_folders_and_takes_up_again() {
+        let dir = scratch("tree-stop");
+        for d in ["a", "b", "c"] {
+            std::fs::create_dir_all(dir.join(d)).unwrap();
+            write_frame(&dir.join(d).join("f.tif"), &R5, d.len() as u16);
+        }
+        std::fs::create_dir_all(dir.join("gone")).unwrap();
+        write_frame(&dir.join("gone").join("g.tif"), &R6, 9);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        std::fs::remove_dir_all(dir.join("gone")).unwrap();
+        for d in ["a", "b", "c"] {
+            write_frame(&dir.join(d).join("new.tif"), &A7, 7);
+        }
+        let folders = std::cell::Cell::new(0);
+        let report = lib
+            .index_tree_until(
+                &dir,
+                &mut |p| {
+                    if p.done == 0 {
+                        folders.set(folders.get() + 1);
+                    }
+                },
+                &|| folders.get() >= 2,
+            )
+            .unwrap();
+        assert!(report.stopped, "{report:?}");
+        assert_eq!(report.missing, 0, "the gone folder was not looked for");
+        assert!(report.added < 3, "{report:?}");
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert!(!report.stopped);
+        assert_eq!(report.missing, 1);
+        assert_eq!(
+            lib.paths_under(std::slice::from_ref(&dir)).unwrap().len(),
+            6
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
