@@ -1080,9 +1080,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Review item 1: `--import` checked before it made anything. A
-    /// destination under the card's DCIM was refused with the folder
-    /// already made on the card.
+    /// `--import` checks before it makes anything: a destination or a
+    /// backup on the card is refused and no folder is made, on the card
+    /// or off it.
     #[test]
     fn the_command_line_refuses_the_card_before_it_makes_a_folder() {
         let dir =
@@ -1112,7 +1112,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Review item 14: a remembered folder that is not there (a backup
+    /// A remembered folder that is not there (a backup
     /// drive not plugged in) is said so and not made; and a backup on
     /// the destination's drive is warned of.
     #[test]
@@ -1155,7 +1155,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// Review item 12: Escape leaves the grid (or culling, or a set)
+    /// Escape leaves the grid (or culling, or a set)
     /// before it stops an import; only when nothing else takes it does
     /// it stop one.
     #[test]
@@ -1174,7 +1174,7 @@ mod tests {
         assert!(app.get_import_stopping());
     }
 
-    /// Review item 13: a close while an import runs keeps the window up
+    /// A close while an import runs keeps the window up
     /// saying what it waits on; and the wait after the event loop has
     /// ended gives up after its limit rather than outliving the window.
     #[test]

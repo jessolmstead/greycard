@@ -90,9 +90,13 @@ zbus = { version = "5", default-features = false, features = ["blocking-api", "a
 # Everywhere else the dialogs are the platform's own. Without the
 # default features rfd leaves out the GTK and portal backends, which
 # are Linux's and are not wanted here.
-# The import's rename that never replaces (renameat2, renamex_np), and
-# its read-back from the drive rather than the cache (posix_fadvise,
-# F_NOCACHE). Already in the tree.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+rfd = { version = "0.17", default-features = false }
+
+# The import's rename that never replaces (renameat2, renamex_np), its
+# read-back from the drive rather than the cache (posix_fadvise,
+# F_NOCACHE), and its sweep's check that a process is gone (kill with
+# signal 0). Already in the tree.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
@@ -100,9 +104,6 @@ libc = "0.2"
 # version and feature greycard-edit already asks for.
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Storage_FileSystem"] }
-
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-rfd = { version = "0.17", default-features = false }
 
 # The Finder's open: a method added to winit's application delegate,
 # and the URLs it is handed. winit carries both already on the Mac.

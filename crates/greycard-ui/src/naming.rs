@@ -122,15 +122,29 @@ pub fn expand(pattern: &str, f: &Fields) -> Result<String, PatternError> {
 /// source spells it) after it; the source's own stem when the pattern
 /// fills to nothing.
 pub fn file_name(pattern: &str, f: &Fields, extension: &str) -> Result<String, PatternError> {
+    file_name_within(pattern, f, extension, 0)
+}
+
+/// [`file_name`] with `reserve` bytes more kept free after the stem: a
+/// frame whose companion's tail (`.CR3.xmp`) is longer than its own
+/// extension leaves room for it, so the two keep one stem however long
+/// the pattern makes it.
+pub fn file_name_within(
+    pattern: &str,
+    f: &Fields,
+    extension: &str,
+    reserve: usize,
+) -> Result<String, PatternError> {
+    let longest = LONGEST.saturating_sub(reserve);
     let stem = expand(pattern, f)?.replace(['/', '\\'], "_");
     let tail = if extension.is_empty() {
         String::new()
     } else {
         format!(".{extension}")
     };
-    let mut name = with_tail(&stem, &tail);
+    let mut name = with_tail_in(&stem, &tail, longest);
     if name.len() == tail.len() {
-        name = with_tail(&f.name, &tail);
+        name = with_tail_in(&f.name, &tail, longest);
     }
     if name.len() == tail.len() {
         name = format!("_{tail}");
@@ -143,6 +157,11 @@ pub fn file_name(pattern: &str, f: &Fields, extension: &str) -> Result<String, P
 /// [`LONGEST`]: a long pattern loses the end of its stem, never its
 /// extension, and never half a character.
 pub fn with_tail(stem: &str, tail: &str) -> String {
+    with_tail_in(stem, tail, LONGEST)
+}
+
+/// [`with_tail`] within `longest` bytes rather than [`LONGEST`].
+pub fn with_tail_in(stem: &str, tail: &str, longest: usize) -> String {
     let tail: String = tail
         .chars()
         .map(|c| {
@@ -153,7 +172,7 @@ pub fn with_tail(stem: &str, tail: &str) -> String {
             }
         })
         .collect();
-    let room = LONGEST.saturating_sub(tail.len()).max(1);
+    let room = longest.saturating_sub(tail.len()).max(1);
     format!("{}{tail}", safe_within(stem, room))
 }
 
@@ -376,10 +395,9 @@ mod tests {
         assert!(cut.len() <= LONGEST && cut.chars().all(|c| c == 'é'));
     }
 
-    /// The review's case: 197 letters and `{seq}` ran past the cut,
-    /// which took the last digit and the extension with it, and two
-    /// frames met. The stem is cut now, the extension kept whole, and
-    /// never inside a character.
+    /// A 197-letter pattern with `{seq}` is cut in its stem: the
+    /// extension is kept whole, the name within the limit, and never
+    /// cut inside a character.
     #[test]
     fn a_long_name_keeps_its_extension() {
         let pattern = format!("{}{{seq}}", "a".repeat(197));

@@ -257,12 +257,23 @@ fn modified_day(file: &Path) -> Day {
 /// Where a frame goes, relative to the destination: its folders and
 /// its name. The folder part is the backup's as well.
 pub fn relative(opts: &Options, file: &Path, fields: &Fields) -> Result<PathBuf> {
+    relative_within(opts, file, fields, 0)
+}
+
+/// [`relative`], the name leaving `reserve` bytes free for a companion's
+/// longer tail (see [`naming::file_name_within`]).
+fn relative_within(
+    opts: &Options,
+    file: &Path,
+    fields: &Fields,
+    reserve: usize,
+) -> Result<PathBuf> {
     let folders = naming::folders(&opts.subfolder, fields)?;
     let extension = file
         .extension()
         .map(|e| e.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let name = naming::file_name(&opts.name, fields, &extension)?;
+    let name = naming::file_name_within(&opts.name, fields, &extension, reserve)?;
     let mut rel = PathBuf::new();
     for f in folders {
         rel.push(f);
@@ -283,15 +294,32 @@ pub fn companion_name(frame: &Path, new_frame: &Path, companion: &Path) -> Strin
     naming::with_tail(&new_stem, tail)
 }
 
+/// How many bytes longer than the frame's own extension its longest
+/// companion's tail is (`.CR3.xmp` against `.CR3`): room kept free in
+/// the frame's name so the companion's name keeps the frame's stem.
+fn companion_reserve(item: &Item) -> usize {
+    let stem = stem_of(&item.file).len();
+    let own = item
+        .file
+        .extension()
+        .map_or(0, |e| e.to_string_lossy().len() + 1);
+    item.companions
+        .iter()
+        .map(|c| name_of(c).len().saturating_sub(stem))
+        .max()
+        .unwrap_or(0)
+        .saturating_sub(own)
+}
+
 /// `path` with ` (n)` before its extension, the name kept within
-/// [`naming::LONGEST`] however long it was.
-fn numbered(path: &Path, n: usize) -> PathBuf {
+/// [`naming::LONGEST`] less `reserve` however long it was.
+fn numbered(path: &Path, n: usize, reserve: usize) -> PathBuf {
     let tail = path
         .extension()
         .map(|e| format!(".{}", e.to_string_lossy()))
         .unwrap_or_default();
     let suffix = format!(" ({n})");
-    let room = naming::LONGEST.saturating_sub(tail.len() + suffix.len());
+    let room = naming::LONGEST.saturating_sub(tail.len() + suffix.len() + reserve);
     let stem = naming::with_tail(&stem_of(path), "");
     let mut cut = room.min(stem.len());
     while !stem.is_char_boundary(cut) {
@@ -529,9 +557,41 @@ pub fn temporary(to: &Path) -> PathBuf {
     to.with_file_name(format!(".{name}.{}-{n}{TEMPORARY}", std::process::id()))
 }
 
+/// The process id a temporary's name carries, `.NAME.PID-N.greycard-import`.
+fn temporary_pid(name: &str) -> Option<u32> {
+    let rest = name.strip_suffix(TEMPORARY)?;
+    let (_, last) = rest.rsplit_once('.')?;
+    last.split_once('-')?.0.parse().ok()
+}
+
+/// Whether process `pid` is running. Unix asks with signal 0; elsewhere
+/// it cannot be told cheaply and a temporary is judged by its age alone.
+fn alive(pid: u32) -> bool {
+    if pid == std::process::id() {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        let Ok(pid) = libc::pid_t::try_from(pid) else {
+            return false;
+        };
+        // SAFETY: signal 0 sends nothing; it only asks whether the
+        // process is there.
+        let r = unsafe { libc::kill(pid, 0) };
+        r == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    }
+    #[cfg(not(unix))]
+    {
+        false
+    }
+}
+
 /// Remove this program's temporaries in `folder` last written more than
-/// a day ago: what a process killed mid-file leaves. A day, so another
-/// import writing into the same folder this moment is never touched.
+/// a day ago by a process no longer running: what a process killed
+/// mid-file leaves. The card's time is put on a file only after it has
+/// its name, so a temporary's time is when it was written; the day and
+/// the process check each keep another import's temporary, being
+/// written this moment, from being taken.
 pub fn sweep(folder: &Path) {
     let Ok(entries) = std::fs::read_dir(folder) else {
         return;
@@ -540,6 +600,9 @@ pub fn sweep(folder: &Path) {
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
         if !(name.starts_with('.') && name.ends_with(TEMPORARY)) {
+            continue;
+        }
+        if temporary_pid(&name).is_some_and(alive) {
             continue;
         }
         let old = e
@@ -563,11 +626,12 @@ pub fn sweep(folder: &Path) {
 /// which a file could appear and be written over; this has none where
 /// the platform can say it at once: `renameat2(RENAME_NOREPLACE)` on
 /// Linux, `renamex_np(RENAME_EXCL)` on macOS, `MoveFileExW` without
-/// `MOVEFILE_REPLACE_EXISTING` on Windows. Where the file system cannot
-/// (FAT and exFAT on Linux before the call learned the flag), a hard
-/// link then an unlink, which also cannot replace; and where it has no
-/// hard links either, the check and the rename, the moment and all.
-pub fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
+/// `MOVEFILE_REPLACE_EXISTING` on Windows. Where the file system refuses
+/// the flag (a FUSE mount without rename2, a macOS volume that refuses
+/// RENAME_EXCL), a hard link then an unlink, which also cannot replace;
+/// and where it has no hard links either, the check and the rename, the
+/// moment and all. Says which it took, for the log.
+pub fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<&'static str> {
     #[cfg(windows)]
     {
         use std::os::windows::ffi::OsStrExt;
@@ -579,7 +643,7 @@ pub fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
         // no copying across volumes.
         let moved = unsafe { MoveFileExW(f.as_ptr(), t.as_ptr(), 0) };
         if moved != 0 {
-            Ok(())
+            Ok("MoveFileExW")
         } else {
             Err(std::io::Error::last_os_error())
         }
@@ -607,7 +671,11 @@ pub fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
             #[cfg(target_os = "macos")]
             let r = unsafe { libc::renamex_np(f.as_ptr(), t.as_ptr(), libc::RENAME_EXCL) };
             if r == 0 {
-                return Ok(());
+                return Ok(if cfg!(target_os = "macos") {
+                    "renamex_np(RENAME_EXCL)"
+                } else {
+                    "renameat2(RENAME_NOREPLACE)"
+                });
             }
             let e = std::io::Error::last_os_error();
             let unsupported = matches!(
@@ -619,13 +687,13 @@ pub fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
             }
         }
         match std::fs::hard_link(from, to) {
-            Ok(()) => std::fs::remove_file(from),
+            Ok(()) => std::fs::remove_file(from).map(|()| "a hard link and an unlink"),
             Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(e),
             Err(_) => {
                 if std::fs::symlink_metadata(to).is_ok() {
                     return Err(std::io::Error::from(std::io::ErrorKind::AlreadyExists));
                 }
-                std::fs::rename(from, to)
+                std::fs::rename(from, to).map(|()| "a check and a rename")
             }
         }
     }
@@ -720,10 +788,6 @@ pub fn land_from(
         {
             bail!("read {bytes} bytes of the {length} it has");
         }
-        if let Some(when) = modified {
-            // A name's date from the file's time wants the card's.
-            let _ = out.set_modified(when);
-        }
         out.sync_all().context("writing the copy")?;
         drop_cached(&out);
         drop(out);
@@ -739,13 +803,22 @@ pub fn land_from(
         if back != hash {
             bail!("the copy does not read back the same");
         }
-        rename_noreplace(&tmp, to).map_err(|e| {
+        let how = rename_noreplace(&tmp, to).map_err(|e| {
             if e.kind() == std::io::ErrorKind::AlreadyExists {
                 anyhow::anyhow!("{} appeared while it was copied", to.display())
             } else {
                 anyhow::Error::new(e).context("naming the copy")
             }
         })?;
+        say_rename(how);
+        // The card's time, now that the file has its name: on the
+        // temporary it would make a file being written look days old
+        // to another import's sweep.
+        if let Some(when) = modified
+            && let Ok(file) = std::fs::File::options().write(true).open(to)
+        {
+            let _ = file.set_modified(when);
+        }
         Ok((hash, bytes))
     })();
     if result.is_err() && made {
@@ -788,6 +861,16 @@ pub fn same_bytes(card: &Path, copy: &Path, verify: bool) -> std::io::Result<boo
     } else {
         hash_tail(card)? == hash_tail(copy)?
     })
+}
+
+/// Log the rename a copy took, once a process for each kind.
+fn say_rename(how: &'static str) {
+    static SAID: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+    let mut said = SAID.lock().unwrap_or_else(|e| e.into_inner());
+    if !said.contains(&how) {
+        said.push(how);
+        tracing::info!("import: files are named by {how}");
+    }
 }
 
 /// A frame on the card, its hashes read at most once each: the head's
@@ -985,50 +1068,60 @@ fn lexical(p: &Path) -> PathBuf {
     out
 }
 
-/// The volume the source is read from, as far as writing goes: the
-/// nearest folder at or above it that holds a `DCIM` folder (a camera
-/// card's root, so a destination beside `DCIM` is on the card too);
-/// else the mount point it is on, found by the device id changing on
-/// the way up (the drive root on Windows); but when that is the
-/// system's own disk (the file system's root, or the one that holds
-/// the home folder), only the source folder itself, since a folder
-/// imported from the same disk it goes to is not a card.
+/// What of the source's disk the import keeps from: the card, the
+/// nearest folder at or above the source that holds a `DCIM` folder (a
+/// camera card's root, so a destination beside `DCIM` is on the card as
+/// much as one under it); with none, the source folder itself. The
+/// search stops at the mount point the source is on, and never looks
+/// at the home folder or above it: a phone-sync tool's `~/DCIM` must
+/// not make everything under home a card. A folder of pictures on a
+/// data drive or an external SSD is not a card, and a destination
+/// beside it on the same drive is taken.
 pub fn card_root(source: &Path) -> PathBuf {
     let source = resolve(source);
-    if let Some(card) = source.ancestors().find(|a| a.join("DCIM").is_dir()) {
-        return card.to_path_buf();
-    }
-    let mount = mount_point(&source);
     let home = dirs::home_dir().map(|h| resolve(&h));
-    let system = mount.parent().is_none() || home.is_some_and(|h| h.starts_with(&mount));
-    if system { source } else { mount }
+    dcim_root(&source, home.as_deref()).unwrap_or(source)
 }
 
-#[cfg(unix)]
-fn mount_point(p: &Path) -> PathBuf {
-    use std::os::unix::fs::MetadataExt;
-    let Ok(dev) = std::fs::metadata(p).map(|m| m.dev()) else {
-        return p.to_path_buf();
-    };
-    let mut top = p;
-    for a in p.ancestors().skip(1) {
-        match std::fs::metadata(a) {
-            Ok(m) if m.dev() == dev => top = a,
-            _ => break,
+/// The nearest folder at or above `p` holding a `DCIM` folder, looking
+/// no higher than `p`'s mount point and never at `home` or above it.
+pub fn dcim_root(p: &Path, home: Option<&Path>) -> Option<PathBuf> {
+    for a in p.ancestors() {
+        if home.is_some_and(|h| h.starts_with(a)) {
+            return None;
+        }
+        if a.join("DCIM").is_dir() {
+            return Some(a.to_path_buf());
+        }
+        if is_mount_point(a) {
+            return None;
         }
     }
-    top.to_path_buf()
+    None
+}
+
+/// Whether `a` is where a file system is mounted: its device differs
+/// from its parent's (the root of a drive on Windows).
+#[cfg(unix)]
+fn is_mount_point(a: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let dev = |p: &Path| std::fs::metadata(p).map(|m| m.dev()).ok();
+    match a.parent() {
+        None => true,
+        Some(parent) => dev(a) != dev(parent),
+    }
 }
 
 #[cfg(not(unix))]
-fn mount_point(p: &Path) -> PathBuf {
-    p.ancestors().last().unwrap_or(p).to_path_buf()
+fn is_mount_point(a: &Path) -> bool {
+    a.parent().is_none()
 }
 
-/// Whether some folder above `p` holds a `DCIM` folder: a file on a
-/// camera card, whichever card.
+/// Whether `p` is a file on a camera card, whichever card.
 fn on_a_card(p: &Path) -> bool {
-    p.ancestors().skip(1).any(|a| a.join("DCIM").is_dir())
+    let home = dirs::home_dir().map(|h| resolve(&h));
+    p.parent()
+        .is_some_and(|parent| dcim_root(parent, home.as_deref()).is_some())
 }
 
 /// Whether `a` and `b` (or the nearest folders above them that are
@@ -1142,19 +1235,22 @@ impl Run<'_> {
     }
 
     /// `planned`, or ` (2)`, ` (3)` after it until the name is neither
-    /// on disk nor given in this run; and whether a file on disk moved
-    /// it.
-    fn free_name(&mut self, planned: &Path) -> (PathBuf, bool) {
+    /// on disk nor given in this run; and whether a file that was on
+    /// disk before this run moved it.
+    fn free_name(&mut self, planned: &Path, reserve: usize) -> (PathBuf, bool) {
         let mut out = planned.to_path_buf();
         let mut n = 2;
         let mut moved = false;
         loop {
             let on_disk = std::fs::symlink_metadata(&out).is_ok();
-            if !on_disk && !self.given.contains(&key(&out)) {
+            let ours = self.given.contains(&key(&out));
+            if !on_disk && !ours {
                 break;
             }
-            moved |= on_disk;
-            out = numbered(planned, n);
+            // A name this run gave another frame is not "another
+            // file's"; one that was there before it is.
+            moved |= on_disk && !ours;
+            out = numbered(planned, n, reserve);
             n += 1;
         }
         self.given.insert(key(&out));
@@ -1252,7 +1348,8 @@ pub fn run(
 fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -> Result<()> {
     let opts = run.opts;
     let (fields, body) = probe_file(&item.file, seq);
-    let rel = relative(opts, &item.file, &fields)?;
+    let reserve = companion_reserve(item);
+    let rel = relative_within(opts, &item.file, &fields, reserve)?;
     let planned = opts.destination.join(&rel);
     let size = std::fs::metadata(&item.file).context("reading it")?.len();
     let mut card = CardFile::new(&item.file, size);
@@ -1277,16 +1374,13 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
                 return Ok(());
             }
             run.given.insert(key(&there));
-            // What the backup is checked against: the card's hash when
-            // it was read whole, else the copy's own, which is local.
-            let hash = match &card.whole {
-                Some(h) => h.clone(),
-                None => hash_whole(&there).context("reading the copy there")?,
-            };
-            (there, hash, false)
+            // A backup made from it is checked against the card's hash
+            // when Verify read the card whole, else against its own
+            // bytes as they are read; nothing is read here for it.
+            (there, card.whole.clone(), false)
         }
         None => {
-            let (to, moved) = run.free_name(&planned);
+            let (to, moved) = run.free_name(&planned, reserve);
             if moved {
                 tracing::warn!(
                     "import: {} is another file; {} goes in as {}",
@@ -1308,7 +1402,7 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
             run.existing.add(to.clone(), bytes, hash.clone());
             report.files += 1;
             report.bytes += bytes;
-            (to, hash, true)
+            (to, Some(hash), true)
         }
     };
     // What the backup takes: the frame, and each companion that is
@@ -1319,8 +1413,7 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
         let c_to = frame.with_file_name(companion_name(&item.file, &frame, companion));
         if std::fs::symlink_metadata(&c_to).is_ok() {
             if same_bytes(companion, &c_to, opts.verify).unwrap_or(false) {
-                let hash = hash_whole(&c_to).context("reading the copy there")?;
-                copies.push((c_to, hash));
+                copies.push((c_to, None));
             } else {
                 tracing::warn!(
                     "import: {} not copied: {} is another file",
@@ -1341,35 +1434,11 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
         run.existing.add(c_to.clone(), b, h.clone());
         report.files += 1;
         report.bytes += b;
-        copies.push((c_to, h));
+        copies.push((c_to, Some(h)));
     }
 
     if let Some(backup) = &opts.backup {
-        for (file, hash) in &copies {
-            let rel = file.strip_prefix(&opts.destination).unwrap_or(file);
-            let mut b_to = backup.join(rel);
-            if b_to.exists() {
-                if hash_whole(&b_to).ok().as_deref() == Some(hash.as_str()) {
-                    continue;
-                }
-                let planned = b_to.clone();
-                let mut n = 2;
-                while std::fs::symlink_metadata(&b_to).is_ok() {
-                    b_to = numbered(&planned, n);
-                    n += 1;
-                }
-                tracing::warn!(
-                    "import: the backup's {} is another file; backed up as {}",
-                    planned.display(),
-                    name_of(&b_to)
-                );
-            }
-            // From the destination's copy, checked against the card's
-            // hash: the card is the slow disk and may be the dying one.
-            run.land(file, &b_to, Some(hash))
-                .context("the backup copy")?;
-            report.backed_up += 1;
-        }
+        back_up(run, backup, &copies, reserve, report)?;
     }
 
     if !new {
@@ -1404,6 +1473,73 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
     report.frames += 1;
     if let Some(folder) = frame.parent() {
         report.landed_in(folder);
+    }
+    Ok(())
+}
+
+/// The frame and its companions (`copies`, the frame first, each with
+/// the card's hash when it is known) copied to the backup under the
+/// same folders and names, from the destination's copies: the card is
+/// the slow disk and may be the dying one. A name the backup already
+/// holds with these bytes (by size, head and tail, or every byte with
+/// Verify) is done; one holding other bytes moves the frame on to
+/// ` (2)`, ` (3)`, stopping at the first that is free or holds these
+/// bytes, so a re-run never makes another copy. The companions follow
+/// the frame's backup name, as they follow its name in the destination.
+fn back_up(
+    run: &mut Run<'_>,
+    backup: &Path,
+    copies: &[(PathBuf, Option<String>)],
+    reserve: usize,
+    report: &mut Report,
+) -> Result<()> {
+    let opts = run.opts;
+    let Some((frame, frame_hash)) = copies.first() else {
+        return Ok(());
+    };
+    let rel = frame.strip_prefix(&opts.destination).unwrap_or(frame);
+    let planned = backup.join(rel);
+    let mut b_frame = planned.clone();
+    let mut n = 2;
+    let held = loop {
+        if std::fs::symlink_metadata(&b_frame).is_err() {
+            break false;
+        }
+        if same_bytes(frame, &b_frame, opts.verify).unwrap_or(false) {
+            break true;
+        }
+        b_frame = numbered(&planned, n, reserve);
+        n += 1;
+    };
+    if b_frame != planned {
+        tracing::warn!(
+            "import: the backup's {} is another file; {} is backed up as {}",
+            planned.display(),
+            name_of(frame),
+            name_of(&b_frame)
+        );
+    }
+    if !held {
+        run.land(frame, &b_frame, frame_hash.as_deref())
+            .context("the backup copy")?;
+        report.backed_up += 1;
+    }
+    for (file, hash) in &copies[1..] {
+        let b_to = b_frame.with_file_name(companion_name(frame, &b_frame, file));
+        if std::fs::symlink_metadata(&b_to).is_ok() {
+            if !same_bytes(file, &b_to, opts.verify).unwrap_or(false) {
+                tracing::warn!(
+                    "import: the backup's {} is another file; {} is not backed up",
+                    b_to.display(),
+                    name_of(file)
+                );
+                report.companions_left += 1;
+            }
+            continue;
+        }
+        run.land(file, &b_to, hash.as_deref())
+            .context("the backup copy")?;
+        report.backed_up += 1;
     }
     Ok(())
 }
@@ -1655,10 +1791,9 @@ mod tests {
         );
     }
 
-    /// Review item 3: a frame already there still gets its companions
-    /// and its backup. A run with no backup, then one with a backup,
-    /// gave an empty backup; a companion missing from the destination
-    /// was never put back.
+    /// A frame already there still gets its companions and its backup:
+    /// a run with no backup then one with a backup leaves a full backup,
+    /// and a companion missing from the destination is put back.
     #[test]
     fn a_frame_already_there_still_gets_its_companions_and_backup() {
         let root = dir("already");
@@ -1694,7 +1829,7 @@ mod tests {
         assert_eq!((third.files, third.backed_up, third.already), (0, 0, 2));
     }
 
-    /// Review item 10: a name that is there with other bytes is never
+    /// A name that is there with other bytes is never
     /// written over; the frame goes in as ` (2)` and the line says so.
     #[test]
     fn a_name_taken_by_another_file_goes_in_as_two() {
@@ -1751,6 +1886,8 @@ mod tests {
         let dest = root.join("dest");
         let r = go(&options(&card, &dest));
         assert_eq!(r.frames, 2);
+        // Its own frame's name is not "another file's".
+        assert_eq!(r.renamed, 0);
         assert_eq!(
             std::fs::read(dest.join("IMG_0001.CR3")).unwrap(),
             b"first body"
@@ -1869,8 +2006,8 @@ mod tests {
         no_temporaries(&root);
     }
 
-    /// Review item 4: the library knows a copy by its head and size; a
-    /// card file that differs only past its head is not that copy. And
+    /// The library knows a copy by its head and size; a card file that
+    /// differs from it in its last byte is not that copy. And
     /// a row on a camera card (the other slot of a two-slot body,
     /// browsed in the editor) is not an import.
     #[test]
@@ -1953,7 +2090,7 @@ mod tests {
         );
     }
 
-    /// Review item 5: a link out of the destination does not make the
+    /// A link out of the destination does not make the
     /// card's own files look imported, and a link back up the card's
     /// tree does not list a frame over and over.
     #[cfg(unix)]
@@ -2018,7 +2155,7 @@ mod tests {
         assert!(greycard_edit::Sidecar::find(&root.join("none/IMG_0001.tif")).is_none());
     }
 
-    /// Review item 9: a preset's camera profile made for another body is
+    /// A preset's camera profile made for another body is
     /// left off a frame, as §162 leaves it off a frame of a set.
     #[test]
     fn a_preset_s_camera_profile_is_left_off_another_body() {
@@ -2066,7 +2203,7 @@ mod tests {
         );
     }
 
-    /// Review items 1 and 2: nothing on the card is a destination or a
+    /// Nothing on the card is a destination or a
     /// backup, beside `DCIM` as well as under it, whether the folder is
     /// there yet or not and however the path is spelled; nor is a folder
     /// that holds the source.
@@ -2078,7 +2215,7 @@ mod tests {
         let source = card.join("DCIM");
         let mut o = options(&source, &source.join("out"));
         assert!(check(&o).is_err());
-        // Beside DCIM, on the card: the review's 272 MB.
+        // Beside DCIM, on the card.
         o.destination = card.join("Imported");
         let e = check(&o).unwrap_err().to_string();
         assert!(e.contains("is on the card"), "{e}");
@@ -2118,7 +2255,7 @@ mod tests {
         );
     }
 
-    /// Review item 6: the rename never replaces a file, and a temporary
+    /// The rename never replaces a file, and a temporary
     /// a killed run left more than a day ago is swept, a fresh one not.
     #[test]
     fn the_rename_never_replaces_and_stale_temporaries_go() {
@@ -2134,28 +2271,53 @@ mod tests {
         assert!(!a.exists() && root.join("c").exists());
 
         let dest = root.join("dest");
-        let stale = dest.join(".IMG_0001.CR3.1-0.greycard-import");
-        let fresh = dest.join(".IMG_0002.CR3.1-1.greycard-import");
-        write(&stale, b"half");
-        write(&fresh, b"in flight");
+        // A process id no system hands out, so taken for gone.
+        let gone = 2_147_483_646u32;
+        let stale = dest.join(format!(".IMG_0001.CR3.{gone}-0.greycard-import"));
+        let fresh = dest.join(format!(".IMG_0002.CR3.{gone}-1.greycard-import"));
+        let running = dest.join(format!(
+            ".IMG_0004.CR3.{}-2.greycard-import",
+            std::process::id()
+        ));
         let two_days = std::time::Duration::from_secs(2 * 24 * 60 * 60);
-        std::fs::File::options()
-            .write(true)
-            .open(&stale)
-            .unwrap()
-            .set_modified(std::time::SystemTime::now() - two_days)
-            .unwrap();
+        for (f, old) in [(&stale, true), (&fresh, false), (&running, true)] {
+            write(f, b"half");
+            if old {
+                std::fs::File::options()
+                    .write(true)
+                    .open(f)
+                    .unwrap()
+                    .set_modified(std::time::SystemTime::now() - two_days)
+                    .unwrap();
+            }
+        }
+        assert_eq!(temporary_pid(&name_of(&stale)), Some(gone));
         let card = root.join("card/DCIM");
         write(&card.join("IMG_0003.CR3"), b"three");
         go(&options(&card, &dest));
-        assert!(!stale.exists());
-        assert!(fresh.exists());
+        assert!(!stale.exists(), "old and its process gone");
+        assert!(fresh.exists(), "written within the day");
+        #[cfg(unix)]
+        assert!(running.exists(), "its process is running");
+        // The card's time goes on the file once it has its name, not on
+        // the temporary a sweep would judge by it.
+        let when = std::fs::metadata(card.join("IMG_0003.CR3"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        assert_eq!(
+            std::fs::metadata(dest.join("IMG_0003.CR3"))
+                .unwrap()
+                .modified()
+                .unwrap(),
+            when
+        );
         // Two temporaries for one name are two names.
         assert_ne!(temporary(&b), temporary(&b));
     }
 
-    /// Review item 15: a file of the same size but another head is not
-    /// read whole.
+    /// A file of the same size but another head is not read further,
+    /// and the card file is not read whole.
     #[test]
     fn a_different_head_is_not_read_whole() {
         let root = dir("heads");
@@ -2185,5 +2347,96 @@ mod tests {
             same_device(&root.join("BACKUP"), &root.join("ZZZ")),
             Some(true)
         );
+    }
+
+    /// The card is found by its `DCIM`, looked for no higher than the
+    /// source's mount and never at the home folder: a phone-sync tool's
+    /// `~/DCIM` does not make everything under home a card, and a folder
+    /// of pictures on a data drive may go beside itself on that drive.
+    #[test]
+    fn a_dcim_in_home_or_none_at_all_is_not_a_card() {
+        let root = dir("home");
+        let home = root.join("fh");
+        std::fs::create_dir_all(home.join("DCIM")).unwrap();
+        let shoot = home.join("Downloads/shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        assert_eq!(dcim_root(&shoot, Some(&home)), None);
+        // Without the home folder in the way it would have been one.
+        assert_eq!(dcim_root(&shoot, None), Some(home.clone()));
+        let eos = root.join("EOS_DIGITAL");
+        std::fs::create_dir_all(eos.join("DCIM/100CANON")).unwrap();
+        assert_eq!(
+            dcim_root(&eos.join("DCIM/100CANON"), Some(&home)),
+            Some(eos.clone())
+        );
+
+        // A data drive's incoming folder into a folder beside it.
+        let data = root.join("data");
+        write(&data.join("incoming/IMG_0001.CR3"), b"raw");
+        let o = options(&data.join("incoming"), &data.join("2026"));
+        check(&o).unwrap();
+        assert_eq!(card_root(&data.join("incoming")), data.join("incoming"));
+        let r = go(&o);
+        assert_eq!(r.frames, 1);
+        // Never inside the source, nor holding it.
+        assert!(check(&options(&data.join("incoming"), &data.join("incoming/out"))).is_err());
+        assert!(check(&options(&data.join("incoming"), &data)).is_err());
+    }
+
+    /// A backup name holding other bytes moves the frame's backup on to
+    /// ` (2)`, and a re-run finds that copy rather than making ` (3)`;
+    /// the companion follows as `X (2).CR3.xmp`.
+    #[test]
+    fn a_backup_name_taken_is_numbered_once_and_found_again() {
+        let root = dir("backup-names");
+        let card = root.join("card/DCIM");
+        write(&card.join("IMG_0002.CR3"), b"the card's raw");
+        write(&card.join("IMG_0002.CR3.xmp"), b"<x/>");
+        let dest = root.join("dest");
+        let backup = root.join("backup");
+        write(&backup.join("IMG_0002.CR3"), b"another raw");
+        let mut o = options(&card, &dest);
+        o.backup = Some(backup.clone());
+        let first = go(&o);
+        assert_eq!(first.backed_up, 2, "{first:?}");
+        assert_eq!(
+            std::fs::read(backup.join("IMG_0002 (2).CR3")).unwrap(),
+            b"the card's raw"
+        );
+        assert_eq!(
+            std::fs::read(backup.join("IMG_0002 (2).CR3.xmp")).unwrap(),
+            b"<x/>"
+        );
+        for _ in 0..2 {
+            let again = go(&o);
+            assert_eq!((again.backed_up, again.already), (0, 1), "{again:?}");
+        }
+        let mut names: Vec<_> = all(&backup).iter().map(|p| name_of(p)).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            vec!["IMG_0002 (2).CR3", "IMG_0002 (2).CR3.xmp", "IMG_0002.CR3"]
+        );
+    }
+
+    /// A frame's name is cut to leave room for its companion's longer
+    /// tail, so a raw and its `.CR3.xmp` keep one stem however long the
+    /// pattern makes it.
+    #[test]
+    fn a_long_name_leaves_room_for_the_companion() {
+        let root = dir("long-pair");
+        let card = root.join("card/DCIM");
+        write(&card.join("IMG_0001.CR3"), b"raw");
+        write(&card.join("IMG_0001.CR3.xmp"), b"<x/>");
+        let dest = root.join("dest");
+        let mut o = options(&card, &dest);
+        o.name = format!("{}{{seq}}", "a".repeat(196));
+        let r = go(&o);
+        assert_eq!(r.files, 2, "{r:?}");
+        let names: Vec<_> = all(&dest).iter().map(|p| name_of(p)).collect();
+        let raw = names.iter().find(|n| n.ends_with(".CR3")).unwrap();
+        let xmp = names.iter().find(|n| n.ends_with(".CR3.xmp")).unwrap();
+        assert_eq!(format!("{raw}.xmp"), *xmp);
+        assert!(xmp.len() <= naming::LONGEST, "{}", xmp.len());
     }
 }
