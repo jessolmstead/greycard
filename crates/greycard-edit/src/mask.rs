@@ -107,6 +107,32 @@ impl Turned {
 /// drag that short is a click and a radius that short is that much.
 pub const MIN_RADIUS: f32 = 0.005;
 
+/// The point at least `MIN_RADIUS` from `anchor` toward `p` — `p`
+/// itself once that is far enough. `p` on (or all but on) `anchor`
+/// gives no direction to take from it, so it takes the direction from
+/// `anchor` to `was` instead — wherever the moving end was before this
+/// drag — and an arbitrary axis if that is degenerate too, rather than
+/// ever collapsing to `anchor` or dividing by zero.
+fn toward_at_least(anchor: (f32, f32), p: (f32, f32), was: (f32, f32)) -> (f32, f32) {
+    let (dx, dy) = (p.0 - anchor.0, p.1 - anchor.1);
+    let len = (dx * dx + dy * dy).sqrt();
+    if len >= MIN_RADIUS {
+        return p;
+    }
+    let (ux, uy) = if len > f32::EPSILON {
+        (dx / len, dy / len)
+    } else {
+        let (ox, oy) = (was.0 - anchor.0, was.1 - anchor.1);
+        let olen = (ox * ox + oy * oy).sqrt();
+        if olen > f32::EPSILON {
+            (ox / olen, oy / olen)
+        } else {
+            (1.0, 0.0)
+        }
+    };
+    (anchor.0 + ux * MIN_RADIUS, anchor.1 + uy * MIN_RADIUS)
+}
+
 /// A shape's value at a point, 0 to 1.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -548,32 +574,12 @@ impl Shape {
                     // An end line: the center is the pivot. The other
                     // end mirrors the dragged one through it.
                     let mid = ((from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0);
-                    let (dx, dy) = (p.0 - mid.0, p.1 - mid.1);
-                    let len = (dx * dx + dy * dy).sqrt();
-                    let (ux, uy) = if len > f32::EPSILON {
-                        (dx / len, dy / len)
+                    let was = if handle == 1 {
+                        (from[0], from[1])
                     } else {
-                        // No direction to take from the pointer at the
-                        // exact center: keep the dragged end's own
-                        // press-time direction rather than snap to an
-                        // arbitrary axis.
-                        let (ox, oy) = if handle == 1 {
-                            (from[0] - mid.0, from[1] - mid.1)
-                        } else {
-                            (to[0] - mid.0, to[1] - mid.1)
-                        };
-                        let olen = (ox * ox + oy * oy).sqrt();
-                        if olen > f32::EPSILON {
-                            (ox / olen, oy / olen)
-                        } else {
-                            (1.0, 0.0)
-                        }
+                        (to[0], to[1])
                     };
-                    let near = if len >= MIN_RADIUS {
-                        p
-                    } else {
-                        (mid.0 + ux * MIN_RADIUS, mid.1 + uy * MIN_RADIUS)
-                    };
+                    let near = toward_at_least(mid, p, was);
                     let far = (2.0 * mid.0 - near.0, 2.0 * mid.1 - near.1);
                     if handle == 1 {
                         Shape::Linear {
@@ -628,6 +634,31 @@ impl Shape {
                     feather,
                 }
             }
+        }
+    }
+
+    /// `dragged`, but an end line of a linear gradient holds its far
+    /// end fixed instead of pivoting about the center — Alt's reading
+    /// of the same drag, for pinning one edge on the horizon and
+    /// lengthening only the fade. Everything else reads the same as
+    /// `dragged`.
+    pub fn dragged_free(&self, handle: usize, p: (f32, f32)) -> Self {
+        match (self, handle) {
+            (Shape::Linear { from, to }, 1) => {
+                let near = toward_at_least((to[0], to[1]), p, (from[0], from[1]));
+                Shape::Linear {
+                    from: [near.0, near.1],
+                    to: *to,
+                }
+            }
+            (Shape::Linear { from, to }, 2) => {
+                let near = toward_at_least((from[0], from[1]), p, (to[0], to[1]));
+                Shape::Linear {
+                    from: *from,
+                    to: [near.0, near.1],
+                }
+            }
+            _ => self.dragged(handle, p),
         }
     }
 
@@ -960,6 +991,78 @@ mod tests {
             let got_mid = ((from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0);
             assert!((got_mid.0 - mid.0).abs() < 1e-5 && (got_mid.1 - mid.1).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn dragging_a_linear_gradients_end_free_holds_the_other_end() {
+        let line = Shape::Linear {
+            from: [0.2, 0.2],
+            to: [0.4, 0.2],
+        };
+        // Alt's reading of an end drag: only the dragged end moves,
+        // the other stays exactly where it was — for pinning one edge
+        // on the horizon and lengthening only the fade.
+        let Shape::Linear { from, to } = line.dragged_free(1, (0.9, 0.7)) else {
+            panic!()
+        };
+        assert_eq!(from, [0.9, 0.7]);
+        assert_eq!(to, [0.4, 0.2]);
+        let Shape::Linear { from, to } = line.dragged_free(2, (-0.3, -0.1)) else {
+            panic!()
+        };
+        assert_eq!(from, [0.2, 0.2]);
+        assert_eq!(to, [-0.3, -0.1]);
+
+        // The middle, and every other shape, read the same as `dragged`.
+        assert_eq!(
+            line.dragged_free(0, (0.5, 0.5)),
+            line.dragged(0, (0.5, 0.5))
+        );
+        let disc = Shape::Radial {
+            center: [0.5, 0.5],
+            radius: [0.2, 0.1],
+            angle: 0.0,
+            feather: 0.5,
+        };
+        assert_eq!(
+            disc.dragged_free(1, (0.5, 0.8)),
+            disc.dragged(1, (0.5, 0.8))
+        );
+    }
+
+    #[test]
+    fn dragging_a_linear_gradients_end_free_cannot_collapse_it() {
+        let line = Shape::Linear {
+            from: [0.2, 0.2],
+            to: [0.4, 0.2],
+        };
+        // Dragging "from" onto "to" exactly: no direction from the
+        // pointer, so it keeps "from"'s press-time side rather than
+        // landing on "to" and making a zero-length line.
+        let Shape::Linear { from, to } = line.dragged_free(1, (0.4, 0.2)) else {
+            panic!()
+        };
+        assert_eq!(to, [0.4, 0.2]);
+        let len = ((from[0] - to[0]).powi(2) + (from[1] - to[1]).powi(2)).sqrt();
+        assert!((len - MIN_RADIUS).abs() < 1e-6, "{len}");
+        assert!(from[0] < to[0], "{from:?}");
+
+        // A pointer just past "to", on "from"'s original side, still
+        // follows that side, only held out to MIN_RADIUS.
+        let tiny = MIN_RADIUS * 0.3;
+        let Shape::Linear { from, to } = line.dragged_free(1, (0.4 - tiny, 0.2)) else {
+            panic!()
+        };
+        assert!((from[0] - (0.4 - MIN_RADIUS)).abs() < 1e-5 && (from[1] - 0.2).abs() < 1e-6);
+        assert_eq!(to, [0.4, 0.2]);
+
+        // Symmetric for the "to" handle dragged onto "from".
+        let Shape::Linear { from, to } = line.dragged_free(2, (0.2, 0.2)) else {
+            panic!()
+        };
+        assert_eq!(from, [0.2, 0.2]);
+        let len = ((from[0] - to[0]).powi(2) + (from[1] - to[1]).powi(2)).sqrt();
+        assert!((len - MIN_RADIUS).abs() < 1e-6, "{len}");
     }
 
     #[test]

@@ -570,7 +570,11 @@ export component App inherits Window {
     in-out property <float> mask-ry: 0;
     in-out property <float> mask-feather-scale: 0.5;
     callback mask-grabbed(int);
-    callback mask-dragged(int, length, length);
+    // `alt`: Alt as the handle's own pointer event reported it on this
+    // move (`CropHandle`'s `alt`), not a window-wide latch — a mask
+    // handle's own drag reads it to choose pivot (plain) or free-end
+    // (Alt) rotation.
+    callback mask-dragged(int, length, length, bool);
     callback mask-dropped();
     in-out property <float> grain-amount: 0;
     in-out property <float> grain-size: 0.5;
@@ -1463,7 +1467,7 @@ export component App inherits Window {
                 mask-ry <=> root.mask-ry;
                 mask-feather-scale <=> root.mask-feather-scale;
                 mask-grabbed(a) => { root.mask-grabbed(a); }
-                mask-dragged(a, b, c) => { root.mask-dragged(a, b, c); }
+                mask-dragged(a, b, c, d) => { root.mask-dragged(a, b, c, d); }
                 mask-dropped => { root.mask-dropped(); }
                 crop-left: root.crop-left;
                 crop-top: root.crop-top;

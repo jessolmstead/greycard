@@ -397,6 +397,10 @@ pub(crate) fn placing_hint(kind: &str) -> &'static str {
         "Sky" => {
             "click sky the mask missed, right-click what is not sky; Esc or the button when done"
         }
+        "Linear" => {
+            "drag on the picture to place it; once placed, drag an end line to turn and \
+            stretch it about the center, Alt to move just that end"
+        }
         _ => "drag on the picture to place it",
     }
 }
@@ -1120,7 +1124,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_mask_dragged(move |_, dx, dy| {
+        app.on_mask_dragged(move |_, dx, dy, alt| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -1133,7 +1137,19 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let p = view_to_source(&st, &app, at.0 + dx, at.1 + dy);
-            let moved = shape.dragged(handle, p);
+            // Plain drags pivot a linear gradient's end about its
+            // center; Alt reads the same drag the old way, holding
+            // the far end fixed, to pin one edge and lengthen only
+            // the fade. Read from the press-time shape either way, so
+            // nothing drifts or accumulates from one move to the
+            // next — toggling Alt mid-drag keeps the dragged end
+            // under the pointer, though the far end does jump between
+            // its mirrored and its press-time spot.
+            let moved = if alt {
+                shape.dragged_free(handle, p)
+            } else {
+                shape.dragged(handle, p)
+            };
             let which = app.get_component().max(0) as usize;
             if let Some(c) = st
                 .target

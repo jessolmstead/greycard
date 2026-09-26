@@ -40,7 +40,10 @@ export component Viewport inherits Rectangle {
     in-out property <float> mask-ry;
     in-out property <float> mask-feather-scale;
     callback mask-grabbed(int);
-    callback mask-dragged(int, length, length);
+    // Alt as the handle's own pointer event reported it on this move
+    // (`CropHandle.alt`), so a linear gradient's end can choose pivot
+    // (plain) or free-end (Alt) rotation.
+    callback mask-dragged(int, length, length, bool);
     callback mask-dropped();
     in property <length> crop-left;
     in property <length> crop-top;
@@ -511,7 +514,7 @@ export component Viewport inherits Rectangle {
                 border-color: #00000080;
             }
             grabbed(k) => { root.mask-grabbed(k); }
-            dragged(k, dx, dy) => { root.mask-dragged(k, dx, dy); }
+            dragged(k, dx, dy) => { root.mask-dragged(k, dx, dy, self.alt); }
             dropped => { root.mask-dropped(); }
         }
     }
