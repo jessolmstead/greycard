@@ -10,7 +10,7 @@ use crate::panel::curve::{
     curve_points, draw_curve, panel_parametric, set_curve_points, set_panel_parametric,
 };
 use crate::panel::history::show_history;
-use crate::panel::mask::{component_names, component_on, show_component};
+use crate::panel::mask::{component_names, component_on, heading_name, show_component};
 use crate::panel::retouch::show_patches;
 use crate::*;
 
@@ -400,11 +400,11 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
             .map(|a| a.enabled)
             .collect::<Vec<_>>(),
     )));
-    if let Some(a) = target.map(|i| &edit.adjustments[i]) {
+    if let Some((i, a)) = target.map(|i| (i, &edit.adjustments[i])) {
         app.set_adjustment_enabled(a.enabled);
         app.set_mask_invert(a.mask.invert);
         app.set_adjustment_name(a.name.as_str().into());
-        app.set_target_name(a.name.as_str().into());
+        app.set_target_name(heading_name(&a.name, i).into());
         app.set_component_names(component_names(&a.mask));
         app.set_component_on(component_on(&a.mask));
         show_component(&a.mask, app);

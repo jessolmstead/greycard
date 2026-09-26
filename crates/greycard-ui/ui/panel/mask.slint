@@ -36,6 +36,7 @@ export component AdjustmentsSection inherits Section {
     in-out property <[bool]> adjustment-on;
     in-out property <bool> placing-into;
     in-out property <string> component-kind;
+    in property <string> component-heading;
     in-out property <float> brush-size;
     in-out property <float> brush-feather;
     in-out property <float> brush-flow;
@@ -262,7 +263,9 @@ export component AdjustmentsSection inherits Section {
                         property <bool> lit: root.component-on[i];
                         height: Theme.control-height;
                         border-radius: Theme.radius-sm;
-                        background: on ? Theme.raised : (shape-row.has-hover ? Theme.hover : transparent);
+                        // Chosen as a history step is, so it stands out
+                        // among shapes of one kind.
+                        background: on ? Theme.selection : (shape-row.has-hover ? Theme.hover : transparent);
                         animate background { duration: Theme.quick; }
                         shape-row := TouchArea {
                             mouse-cursor: MouseCursor.pointer;
@@ -328,7 +331,7 @@ export component AdjustmentsSection inherits Section {
                     padding: Theme.space-2;
                     spacing: Theme.space-2;
                     Text {
-                        text: root.component-kind.to-uppercase();
+                        text: root.component-heading.to-uppercase();
                         color: Theme.text-secondary;
                         font-size: Theme.font-xs;
                         font-weight: Theme.weight-semibold;
@@ -483,11 +486,27 @@ export component AdjustmentsSection inherits Section {
                     }
                 }
             }
-            // Another shape into the mask, joined as the switch says;
-            // on a chosen brush, sky or object, more of it.
-            Segmented {
-                options: ["Add", "Subtract", "Intersect"];
-                current <=> root.shape-mode;
+            // Another shape into the mask, joined as the Add/Subtract/
+            // Intersect row says; on a chosen brush, sky or object,
+            // more of it. The row is the next shape's, not the chosen
+            // one's, and dims while a chosen one is being added to.
+            Rectangle {
+                opacity: root.placing-into && root.placing == root.component-kind
+                    && (root.placing == "Brush" || root.placing == "Sky" || root.placing == "Object")
+                    ? 0.4 : 1.0;
+                VerticalLayout {
+                    padding-top: Theme.space-1;
+                    spacing: Theme.space-1;
+                    Text {
+                        text: "Next shape";
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                    }
+                    Segmented {
+                        options: ["Add", "Subtract", "Intersect"];
+                        current <=> root.shape-mode;
+                    }
+                }
             }
             HorizontalLayout {
                 spacing: Theme.space-2;

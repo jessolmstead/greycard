@@ -71,11 +71,36 @@ pub(crate) fn show_component(mask: &Mask, app: &App) {
             app.set_mask_feather(feather.unwrap_or(0.5));
             show_range(&c.shape, app);
             app.set_component_kind(c.shape.name().into());
+            app.set_component_heading(component_heading(mask, i).into());
         }
         None => {
             app.set_has_feather(false);
             app.set_component_kind("".into());
+            app.set_component_heading("".into());
         }
+    }
+}
+
+/// What the chosen shape's card is headed: its kind, and its place
+/// among the shapes of that kind, in row order, when there are more.
+pub(crate) fn component_heading(mask: &Mask, i: usize) -> String {
+    let Some(kind) = mask.components.get(i).map(|c| c.shape.name()) else {
+        return String::new();
+    };
+    let same = |c: &&Component| c.shape.name() == kind;
+    if mask.components.iter().filter(same).count() < 2 {
+        return kind.to_string();
+    }
+    let n = mask.components[..=i].iter().filter(same).count();
+    format!("{kind} {n}")
+}
+
+/// The chosen adjustment's name as the look sections' titles show it:
+/// trimmed, and by its place in the list when it has none.
+pub(crate) fn heading_name(name: &str, index: usize) -> String {
+    match name.trim() {
+        "" => format!("Adjustment {}", index + 1),
+        name => name.to_string(),
     }
 }
 
@@ -763,8 +788,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let st = state.borrow();
             let edit = read_edit(&app, &st.edit, st.target);
             show_names(&edit, &app);
-            if let Some(a) = st.target.and_then(|i| edit.adjustments.get(i)) {
-                app.set_target_name(a.name.as_str().into());
+            if let Some((i, a)) = st.target.and_then(|i| Some((i, edit.adjustments.get(i)?))) {
+                app.set_target_name(heading_name(&a.name, i).into());
             }
             drop(st);
             app.invoke_view_changed();
@@ -1498,8 +1523,39 @@ mod tests {
         app.set_adjustment_name("Warm the far hillside".into());
         app.invoke_renamed();
         assert_eq!(app.get_target_name(), "Warm the far hillside");
+        // Never a bare title: a name blanked in the field is not
+        // taken, and a blank one from a sidecar is its place.
+        app.set_adjustment_name("   ".into());
+        app.invoke_renamed();
+        assert!(!app.get_target_name().trim().is_empty());
+        assert_eq!(heading_name(" ", 1), "Adjustment 2");
+        assert_eq!(heading_name(" Sky 3 ", 1), "Sky 3");
         app.invoke_target_changed(0);
         assert_eq!(app.get_target_name(), "");
+    }
+
+    /// The chosen shape's card is numbered in row order only when its
+    /// kind repeats in the mask.
+    #[test]
+    fn the_shape_card_is_numbered_when_its_kind_repeats() {
+        let one = |shape| Component {
+            shape,
+            mode: Mode::Add,
+            invert: false,
+            enabled: true,
+        };
+        let mask = Mask {
+            components: vec![
+                one(Shape::of_kind("Radial")),
+                one(Shape::LUMINANCE),
+                one(Shape::of_kind("Radial")),
+            ],
+            invert: false,
+        };
+        assert_eq!(component_heading(&mask, 0), "Radial 1");
+        assert_eq!(component_heading(&mask, 1), "Luminance");
+        assert_eq!(component_heading(&mask, 2), "Radial 2");
+        assert_eq!(component_heading(&mask, 3), "");
     }
 
     /// The range masks from the panel: a button makes one whole, its

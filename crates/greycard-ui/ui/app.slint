@@ -525,6 +525,9 @@ export component App inherits Window {
     // radius in units of the picture's width, its feather and flow,
     // whether it lifts; and the view's pixels per unit, for the cursor.
     in-out property <string> component-kind: "";
+    // The chosen shape's card's header: its kind, numbered when the
+    // mask holds more than one of it.
+    in-out property <string> component-heading: "";
     in-out property <float> brush-size: 0.05;
     in-out property <float> brush-feather: 0.5;
     in-out property <float> brush-flow: 1.0;
@@ -1626,6 +1629,7 @@ export component App inherits Window {
                             adjustment-on <=> root.adjustment-on;
                             placing-into <=> root.placing-into;
                             component-kind <=> root.component-kind;
+                            component-heading: root.component-heading;
                             brush-size <=> root.brush-size;
                             brush-feather <=> root.brush-feather;
                             brush-flow <=> root.brush-flow;
