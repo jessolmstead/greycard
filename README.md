@@ -1,16 +1,9 @@
 # greycard
 
-Every raw editor answers two questions. What do the numbers mean:
-light in the scene, or brightness on a screen? And where does the
-truth about your photographs live: in your folders, or in the
-program's database?
+A raw photo editor that is scene-referred, fast, intuitive, ergonomic,
+accurate, and powerful.
 
-greycard answers: light, and your folders. It was built on those two
-answers from the first commit, and the rest follows from them. It is
-accurate. Its controls feel the way you expect. It is fast. And it
-has the tools a working photographer needs.
-
-## What that buys you
+## What that means
 
 **Accurate.** White balance is applied as gains in camera space, and
 the camera matrix is interpolated for the light you shot in. From
