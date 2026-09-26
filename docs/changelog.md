@@ -72,6 +72,9 @@ note a first tester reads.
   shape list, marks the chosen row, labels Add / Subtract / Intersect
   as the next shape's, and heads the look sections with the
   adjustment's name, "ADJUSTMENT 1 · LIGHT" (#10, §177, 2026-09-25).
+- The left pane scrolls instead of growing the window: a long list of
+  snapshots no longer takes the window out of fullscreen on Windows,
+  and a list's bins sit clear of its scrollbar (#2, §177, 2026-09-26).
 
 ## 0.1.2, 2026-09-25
 

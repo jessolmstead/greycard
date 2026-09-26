@@ -24,60 +24,73 @@ export component SnapshotsSection inherits Section {
         background: Theme.base;
         border-width: 1px;
         border-color: Theme.border;
-        VerticalLayout {
-            padding: 2px;
-            spacing: 2px;
-            for name[i] in root.snapshot-names: Rectangle {
-                height: Theme.control-height;
-                border-radius: Theme.radius-sm;
-                background: snapshot-row.has-hover ? Theme.hover : transparent;
-                animate background { duration: Theme.quick; }
-                snapshot-row := TouchArea {
-                    mouse-cursor: MouseCursor.pointer;
-                    enabled: root.selected >= 0 && root.snapshot-editing != i;
-                    clicked => { root.snapshot-restored(i); }
-                    double-clicked => { root.snapshot-editing = i; }
-                    changed has-hover => { root.snapshot-hovered(self.has-hover ? i : -1); }
-                }
-                HorizontalLayout {
-                    padding-left: Theme.space-2;
-                    padding-right: Theme.space-1;
-                    spacing: Theme.space-2;
-                    if root.snapshot-editing == i: LineEdit {
-                        text: name;
-                        font-size: Theme.font-xs;
-                        horizontal-stretch: 1;
-                        accepted(t) => {
-                            root.snapshot-editing = -1;
-                            root.snapshot-renamed(i, t);
-                        }
-                        key-pressed(e) => {
-                            if (e.text == Key.Escape) { root.snapshot-editing = -1; return accept; }
-                            return reject;
-                        }
-                        init => { self.focus(); self.select-all(); }
+        // As the presets' and the history's box: the list's height up
+        // to 200 px, so a long run of snapshots never pushes the pane
+        // past the window (and the window past the screen). The pane
+        // scrolls around this section rather than the other way, so
+        // the box never squeezes a row to make room.
+        preferred-height: min(snapshot-list.preferred-height, 200px);
+        max-height: self.preferred-height;
+        vertical-stretch: 1;
+        ScrollView {
+            snapshot-list := VerticalLayout {
+                padding: 2px;
+                spacing: 2px;
+                for name[i] in root.snapshot-names: Rectangle {
+                    height: Theme.control-height;
+                    border-radius: Theme.radius-sm;
+                    background: snapshot-row.has-hover ? Theme.hover : transparent;
+                    animate background { duration: Theme.quick; }
+                    snapshot-row := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        enabled: root.selected >= 0 && root.snapshot-editing != i;
+                        clicked => { root.snapshot-restored(i); }
+                        double-clicked => { root.snapshot-editing = i; }
+                        changed has-hover => { root.snapshot-hovered(self.has-hover ? i : -1); }
                     }
-                    if root.snapshot-editing != i: Text {
-                        text: name;
-                        color: snapshot-row.has-hover ? Theme.text : Theme.text-secondary;
-                        font-size: Theme.font-xs;
-                        vertical-alignment: center;
-                        horizontal-stretch: 1;
-                        overflow: elide;
-                    }
-                    Rectangle {
-                        width: Theme.control-height - 4px;
-                        Image {
-                            source: @image-url("../icons/trash-2.svg");
-                            colorize: snapshot-bin.has-hover ? Theme.text : Theme.text-muted;
-                            width: Theme.icon;
-                            height: Theme.icon;
-                            x: (parent.width - self.width) / 2;
-                            y: (parent.height - self.height) / 2;
+                    HorizontalLayout {
+                        padding-left: Theme.space-2;
+                        // Clears the fluent ScrollView's bar so an
+                        // overflowing list never lets the bin's hit
+                        // area sit under it.
+                        padding-right: Theme.space-1 + Theme.scrollbar-band;
+                        spacing: Theme.space-2;
+                        if root.snapshot-editing == i: LineEdit {
+                            text: name;
+                            font-size: Theme.font-xs;
+                            horizontal-stretch: 1;
+                            accepted(t) => {
+                                root.snapshot-editing = -1;
+                                root.snapshot-renamed(i, t);
+                            }
+                            key-pressed(e) => {
+                                if (e.text == Key.Escape) { root.snapshot-editing = -1; return accept; }
+                                return reject;
+                            }
+                            init => { self.focus(); self.select-all(); }
                         }
-                        snapshot-bin := TouchArea {
-                            mouse-cursor: MouseCursor.pointer;
-                            clicked => { root.snapshot-deleted(i); }
+                        if root.snapshot-editing != i: Text {
+                            text: name;
+                            color: snapshot-row.has-hover ? Theme.text : Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        Rectangle {
+                            width: Theme.control-height - 4px;
+                            Image {
+                                source: @image-url("../icons/trash-2.svg");
+                                colorize: snapshot-bin.has-hover ? Theme.text : Theme.text-muted;
+                                width: Theme.icon;
+                                height: Theme.icon;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            snapshot-bin := TouchArea {
+                                mouse-cursor: MouseCursor.pointer;
+                                clicked => { root.snapshot-deleted(i); }
+                            }
                         }
                     }
                 }
@@ -106,7 +119,6 @@ export component HistorySection inherits Section {
     in-out property <bool> collapsed-history;
 
     title: "HISTORY";
-    shrinks: true;
     icon: @image-url("../icons/undo-2.svg");
     collapsed <=> root.collapsed-history;
     if root.history-names.length > 0: Rectangle {
@@ -114,12 +126,12 @@ export component HistorySection inherits Section {
         background: Theme.base;
         border-width: 1px;
         border-color: Theme.border;
-        // Its list's height up to 260 px, and less when the pane is
-        // short of room: down to two rows, the rest a scroll away, so
-        // a long history never pushes the pane past the window.
+        // Its list's height up to 260 px, the rest a scroll away, so
+        // a long history never pushes the pane past the window. The
+        // pane scrolls around this section rather than the other way,
+        // so the box never squeezes a row to make room.
         preferred-height: min(history-list.preferred-height, 260px);
         max-height: self.preferred-height;
-        min-height: min(history-list.preferred-height, 2 * Theme.control-height);
         vertical-stretch: 1;
         ScrollView {
             history-list := VerticalLayout {

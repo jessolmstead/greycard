@@ -70,4 +70,10 @@ export global Theme {
     out property <length> control-height: 28px;
     out property <length> icon: 16px;
     out property <duration> quick: 80ms;
+    // The fluent style's ScrollView draws its bar's touch band this
+    // wide over a list's right edge, whether or not the thumb itself
+    // is showing. A list row with a trailing control (a bin, say)
+    // gives it this much clearance so the band never sits over that
+    // control's hit area.
+    out property <length> scrollbar-band: 14px;
 }

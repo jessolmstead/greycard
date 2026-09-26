@@ -796,9 +796,21 @@ mod tests {
 
     /// The bin and the Remove as a pointer clicks them: the bin arms
     /// the row and removes nothing, Escape and Cancel disarm it, and
-    /// only the Remove removes. Found by sweeping the left pane's
-    /// column of bins, top down, with the navigator folded away so
-    /// the presets sit near the top and nothing above them opens.
+    /// only the Remove removes. Found by sweeping the presets list's
+    /// own strip, top down and never past it: the pane scrolls its
+    /// sections at their full height now (no more squeezing one to
+    /// fit), so a sweep with no floor of its own could wander past
+    /// the list and into what is below the section, or even below the
+    /// pane — Settings, Report — a click that must never land here.
+    ///
+    /// Arming the row grows the section by the question and the
+    /// Cancel/Remove row, and that growth is `Section`'s 120ms
+    /// `animate full`; the mock clock this backend runs on does not
+    /// move on its own, so without a nudge the section's clip stays
+    /// at its unarmed size and the Remove is clipped away with
+    /// everything below it. `mock_elapsed_time` past 120ms is that
+    /// nudge, exactly as other pointer tests in this crate use it to
+    /// settle an animation before reading where things landed.
     #[test]
     fn the_bin_asks_and_the_remove_removes() {
         let app = crate::testing::window(1);
@@ -813,12 +825,15 @@ mod tests {
         refresh_presets(&mut state.borrow_mut(), &app);
         app.set_collapsed_navigator(true);
         let first = state.borrow().presets[0].clone();
+        assert_eq!(state.borrow().presets.len(), 3, "the three shipped presets");
 
-        // The first bin: the first armed point, top down, in the
-        // pane's right-hand strip where the bins are.
+        // The pane is 240px wide, its bins in the right-hand strip;
+        // the list is one of the first things in it with the
+        // navigator folded, so a short sweep finds the first row's
+        // bin well short of anything below the list.
         let mut bin = None;
-        'sweep: for y in (60..600).step_by(3) {
-            for x in (150..320).step_by(6) {
+        'sweep: for y in (60..280).step_by(3) {
+            for x in (150..240).step_by(6) {
                 crate::testing::click(&app, x as f32, y as f32);
                 // A section header in the way folds its section:
                 // unfolded again, so the layout holds still.
@@ -830,25 +845,54 @@ mod tests {
                 }
             }
         }
-        let (bx, by) = bin.expect("a bin to click");
+        let (bx, by) = bin.expect("a bin to click within the presets list");
         assert_eq!(app.get_preset_confirm_remove(), 0, "the first row's");
         assert!(first.path.exists(), "a bin alone removes nothing");
-        assert_eq!(state.borrow().presets.len(), 3);
 
         // Escape is its Cancel.
         crate::testing::press(&app, slint::platform::Key::Escape);
         assert_eq!(app.get_preset_confirm_remove(), -1);
         assert!(first.path.exists());
 
-        // Armed again, the Remove is below the list: the first point
-        // under the bin that removes it.
+        // Row to row down the same column, from the first bin, to
+        // where the list ends: measured, not guessed (three shipped
+        // presets, so a third row's bin is the list's last), so the
+        // sweep below can start just past it and never land on
+        // another row by the time it reaches the Remove. The list
+        // itself does not change size when a row arms or disarms, so
+        // this part needs no settling.
         crate::testing::click(&app, bx, by);
         assert_eq!(app.get_preset_confirm_remove(), 0);
+        let (mut row_step, mut third_row_y) = (None, None);
+        for y in (by as i32 + 1)..(by as i32 + 120) {
+            crate::testing::click(&app, bx, y as f32);
+            match app.get_preset_confirm_remove() {
+                1 if row_step.is_none() => row_step = Some(y - by as i32),
+                2 => {
+                    third_row_y = Some(y);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let row_step = row_step.expect("a second row's bin below the first") as f32;
+        let third_row_y = third_row_y.expect("a third row's bin below the second") as f32;
+        // One more row's worth past the third clears the box.
+        let list_bottom = third_row_y + row_step;
+
+        // Re-armed on the first row for the removal itself: past
+        // 120ms, the section has grown to fit the question and the
+        // Cancel/Remove row, so a sweep bounded to a few rows below
+        // the list, in the pane's own width, lands on the list, the
+        // question or the Cancel/Remove row — never the pane's
+        // footer, whatever the settled height turns out to be.
+        crate::testing::click(&app, bx, by);
+        assert_eq!(app.get_preset_confirm_remove(), 0);
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(150));
         let mut removed = false;
-        'remove: for y in (by as i32..by as i32 + 300).step_by(3) {
-            for x in (20..320).step_by(6) {
+        'remove: for y in (list_bottom as i32..list_bottom as i32 + 150).step_by(3) {
+            for x in (0..240).step_by(6) {
                 crate::testing::click(&app, x as f32, y as f32);
-                app.set_collapsed_presets(false);
                 if !first.path.exists() {
                     removed = true;
                     break 'remove;

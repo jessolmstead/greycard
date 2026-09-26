@@ -1346,71 +1346,83 @@ export component App inherits Window {
                 background: Theme.surface;
                 Rectangle { x: parent.width - 1px; width: 1px; height: 100%; background: Theme.border; }
                 VerticalLayout {
-                VerticalLayout {
-                    vertical-stretch: 1;
-                    alignment: start;
-                    padding: Theme.space-4;
-                    padding-top: Theme.space-2;
-                    spacing: Theme.space-2;
-                    PanelButton {
-                        text: "Open folder...";
-                        icon: @image-url("icons/folder-open.svg");
-                        clicked => { root.open-folder(); }
-                    }
-                    NavigatorSection {
-                        zoom-text: root.zoom-text;
-                        collapsed-navigator <=> root.collapsed-navigator;
-                        navigator: root.navigator;
-                        nav-partial: root.nav-partial;
-                        nav-left: root.nav-left;
-                        nav-top: root.nav-top;
-                        nav-width: root.nav-width;
-                        nav-height: root.nav-height;
-                        navigate(a, b) => { root.navigate(a, b); }
-                        focus-keys => { keys.focus(); }
-                    }
-                    // The presets: a click lays one over the edit, the
-                    // bin removes it, and the edit is saved or a
-                    // Lightroom preset brought in below the list. Not
-                    // in culling, as the snapshots and the history.
-                    if !root.culling: PresetsSection {
-                        selected <=> root.selected;
-                        collapsed-presets <=> root.collapsed-presets;
-                        preset-names <=> root.preset-names;
-                        confirm-remove <=> root.preset-confirm-remove;
-                        preset-applied(a) => { root.preset-applied(a); }
-                        preset-deleted(a) => { root.preset-deleted(a); }
-                        preset-import => { root.preset-import(); }
-                        preset-save-open => { root.preset-save-open(); }
-                        set-count: root.set-count;
-                        sync-open-asked => { root.sync-open-asked(); }
-                    }
-                    // The snapshots: whole states kept by name. A
-                    // click restores one as a step; a double-click
-                    // renames it; the bin removes it.
-                    // Not in culling, where the panel is not the
-                    // frame's and a step is the way out of the mode.
-                    if !root.culling: SnapshotsSection {
-                        selected <=> root.selected;
-                        snapshot-names <=> root.snapshot-names;
-                        snapshot-editing <=> root.snapshot-editing;
-                        snapshot-taken => { root.snapshot-taken(); }
-                        snapshot-restored(a) => { root.snapshot-restored(a); }
-                        snapshot-hovered(a) => { root.snapshot-hovered(a); }
-                        snapshot-renamed(a, b) => { root.snapshot-renamed(a, b); }
-                        snapshot-deleted(a) => { root.snapshot-deleted(a); }
-                        collapsed-snapshots <=> root.collapsed-snapshots;
-                    }
-                    // The history: every step, newest first, the
-                    // current one lit and the undone ones muted. A
-                    // click makes a step current; what lies past it
-                    // stays until the next change.
-                    if !root.culling: HistorySection {
-                        history-names <=> root.history-names;
-                        history-current <=> root.history-current;
-                        history-clicked(a) => { root.history-clicked(a); }
-                        history-hovered(a) => { root.history-hovered(a); }
-                        collapsed-history <=> root.collapsed-history;
+                // The sections scroll; Settings and Report stay put
+                // beneath them, as the develop panel does on the
+                // right. Presets, Snapshots and History each cap
+                // their own list, and the navigator is just one
+                // thumbnail, held to the pane's width — nothing here
+                // is unbounded on its own, but their sum, on a small
+                // or high-DPI screen, still could be. A ScrollView
+                // never passes its content's size up to its parent,
+                // so nothing here can raise the window's minimum
+                // height past the screen's (see the note above about
+                // Windows leaving fullscreen).
+                ScrollView {
+                    VerticalLayout {
+                        alignment: start;
+                        padding: Theme.space-4;
+                        padding-top: Theme.space-2;
+                        spacing: Theme.space-2;
+                        PanelButton {
+                            text: "Open folder...";
+                            icon: @image-url("icons/folder-open.svg");
+                            clicked => { root.open-folder(); }
+                        }
+                        NavigatorSection {
+                            zoom-text: root.zoom-text;
+                            collapsed-navigator <=> root.collapsed-navigator;
+                            navigator: root.navigator;
+                            nav-partial: root.nav-partial;
+                            nav-left: root.nav-left;
+                            nav-top: root.nav-top;
+                            nav-width: root.nav-width;
+                            nav-height: root.nav-height;
+                            navigate(a, b) => { root.navigate(a, b); }
+                            focus-keys => { keys.focus(); }
+                        }
+                        // The presets: a click lays one over the edit, the
+                        // bin removes it, and the edit is saved or a
+                        // Lightroom preset brought in below the list. Not
+                        // in culling, as the snapshots and the history.
+                        if !root.culling: PresetsSection {
+                            selected <=> root.selected;
+                            collapsed-presets <=> root.collapsed-presets;
+                            preset-names <=> root.preset-names;
+                            confirm-remove <=> root.preset-confirm-remove;
+                            preset-applied(a) => { root.preset-applied(a); }
+                            preset-deleted(a) => { root.preset-deleted(a); }
+                            preset-import => { root.preset-import(); }
+                            preset-save-open => { root.preset-save-open(); }
+                            set-count: root.set-count;
+                            sync-open-asked => { root.sync-open-asked(); }
+                        }
+                        // The snapshots: whole states kept by name. A
+                        // click restores one as a step; a double-click
+                        // renames it; the bin removes it.
+                        // Not in culling, where the panel is not the
+                        // frame's and a step is the way out of the mode.
+                        if !root.culling: SnapshotsSection {
+                            selected <=> root.selected;
+                            snapshot-names <=> root.snapshot-names;
+                            snapshot-editing <=> root.snapshot-editing;
+                            snapshot-taken => { root.snapshot-taken(); }
+                            snapshot-restored(a) => { root.snapshot-restored(a); }
+                            snapshot-hovered(a) => { root.snapshot-hovered(a); }
+                            snapshot-renamed(a, b) => { root.snapshot-renamed(a, b); }
+                            snapshot-deleted(a) => { root.snapshot-deleted(a); }
+                            collapsed-snapshots <=> root.collapsed-snapshots;
+                        }
+                        // The history: every step, newest first, the
+                        // current one lit and the undone ones muted. A
+                        // click makes a step current; what lies past it
+                        // stays until the next change.
+                        if !root.culling: HistorySection {
+                            history-names <=> root.history-names;
+                            history-current <=> root.history-current;
+                            history-clicked(a) => { root.history-clicked(a); }
+                            history-hovered(a) => { root.history-hovered(a); }
+                            collapsed-history <=> root.collapsed-history;
+                        }
                     }
                 }
                 VerticalLayout {

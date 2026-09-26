@@ -21317,3 +21317,29 @@ a text of its own that is the part cut when the panel is short, so the
 section's word stays whole. A blank name reads as the adjustment's
 place in the list, so the Masks tab never shows a bare "LIGHT" that
 could be taken for the global one.
+
+**The left pane and the window (#2).** The left pane's column (Open
+folder, Navigator, Presets, Snapshots, History) had no scroll of its
+own and Snapshots no cap, so the column's minimum height was the sum
+of its sections, and Slint hands a layout's minimum up to the window.
+On Windows a minimum past the screen takes the window out of
+fullscreen and grows it: 80 snapshots made a 1500×950 window
+1500×3310. Now Snapshots caps its list as Presets and History do, and
+the column sits in a ScrollView with Settings and Report fixed below
+it, the right panel's pattern; a ScrollView passes no natural size up,
+so the same 80 snapshots leave the window at 1500×950 with a minimum
+of 473. The lists had also been squeezing to a two-row floor when the
+pane ran short; under a scrolling pane that shrank them unevenly
+before any scrolling, so `Section.shrinks` is gone and each list sits
+at its capped height. The fluent ScrollBar's 14 px touch band lies
+over a list's right edge, where the bins are, so a click on a bin's
+edge paged the list; the rows now keep clear of it.
+
+That branch also moved the Remove button out from under the #4 test
+that clicks its way down the pane, and the sweep went on past the list
+and clicked Report a problem... on every step: the test harness wires
+the real callbacks, and each click opened the bug form in the browser,
+enough tabs to crash it. The browser, the file manager and the file
+chooser now do nothing under `cfg(test)`, and the test waits out the
+confirm row's 120 ms resize on the mock clock and stays inside the
+presets section's own rows.

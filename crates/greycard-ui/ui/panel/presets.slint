@@ -26,7 +26,6 @@ export component PresetsSection inherits Section {
     in-out property <int> confirm-remove: -1;
 
     title: "PRESETS";
-    shrinks: true;
     icon: @image-url("../icons/bookmark.svg");
     collapsed <=> root.collapsed-presets;
     // The list: a click lays the preset over the edit, as one step;
@@ -38,11 +37,12 @@ export component PresetsSection inherits Section {
         background: Theme.base;
         border-width: 1px;
         border-color: Theme.border;
-        // As the history's box: its list up to 200 px, down to two
-        // rows when the pane is short of room.
+        // As the history's box: its list up to 200 px. The pane
+        // scrolls around this section rather than the other way, so
+        // the box always sits at its full height (or the list's own,
+        // under that) and never squeezes a row.
         preferred-height: min(preset-list.preferred-height, 200px);
         max-height: self.preferred-height;
-        min-height: min(preset-list.preferred-height, 2 * Theme.control-height);
         vertical-stretch: 1;
         ScrollView {
             preset-list := VerticalLayout {
@@ -60,7 +60,10 @@ export component PresetsSection inherits Section {
                     }
                     HorizontalLayout {
                         padding-left: Theme.space-2;
-                        padding-right: Theme.space-1;
+                        // Clears the fluent ScrollView's bar so an
+                        // overflowing list never lets the bin's hit
+                        // area sit under it.
+                        padding-right: Theme.space-1 + Theme.scrollbar-band;
                         spacing: Theme.space-2;
                         Text {
                             text: name;
