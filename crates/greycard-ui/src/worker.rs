@@ -3032,6 +3032,100 @@ mod tests {
         }
     }
 
+    /// The learned denoiser's pair turns with the base: at either end
+    /// of the strength the base is one of the pair itself, and stays
+    /// shared with it once both are turned rather than turned twice
+    /// or copied; in between it is a blend of its own, turned. A pair
+    /// made at another turn than the base's is not the base's, and is
+    /// left for `learned_base` to make again.
+    #[test]
+    fn a_turned_base_takes_the_learned_pair_with_it() {
+        use greycard_core::develop::orient;
+        use greycard_core::raw::Orientation;
+        let frame = Arc::new(aberrated_frame(120, 80));
+        let edit = Edit::default();
+        let mut made = None;
+        develop_turned(&frame, &edit, 0, &mut made);
+        let base = made.expect("a base");
+        let plain = base.image.clone();
+        let model = Arc::new(WorkingImage {
+            data: plain.data.iter().map(|v| v * 0.5 + 0.1).collect(),
+            ..(*plain).clone()
+        });
+        let pair = |turn: u8| LearnedBase {
+            edit: edit.clone(),
+            turn,
+            model: Arc::new((*model).clone()),
+            plain: Arc::new((*plain).clone()),
+            white: WhiteBase::IDENTITY,
+            radius: None,
+            clip_level: 1.0,
+        };
+        let turned = |image: &WorkingImage| orient(image.clone(), Orientation::Rotate90);
+        for strength in [0.0f32, 0.5, 1.0] {
+            let mut learned = Some(pair(0));
+            let l = learned.as_ref().unwrap();
+            let image = blend(&l.model, &l.plain, strength);
+            let expected = turned(&image);
+            let mut b = Base {
+                edit: edit.clone(),
+                turn: 0,
+                image,
+                guide: Arc::new(crate::finish::Guide::NONE),
+                white: WhiteBase::IDENTITY,
+                radius: None,
+                clip_level: 1.0,
+                source: crate::finish::Source::Scene,
+                stamp: 1,
+                patched: None,
+                pre: None,
+                ca_on_gpu: false,
+            };
+            turn_base(&mut b, &mut learned, 1, 2, None);
+            let l = learned.as_ref().unwrap();
+            assert_eq!(l.turn, 1, "strength {strength}");
+            assert!(
+                l.model.data == turned(&model).data,
+                "strength {strength}: the model"
+            );
+            assert!(
+                l.plain.data == turned(&plain).data,
+                "strength {strength}: the plain"
+            );
+            assert_eq!((b.image.width, b.image.height), (80, 120));
+            assert!(
+                b.image.data == expected.data,
+                "strength {strength}: the base"
+            );
+            match strength {
+                1.0 => assert!(Arc::ptr_eq(&b.image, &l.model), "the model, shared"),
+                0.0 => assert!(Arc::ptr_eq(&b.image, &l.plain), "the plain, shared"),
+                _ => assert!(!Arc::ptr_eq(&b.image, &l.model) && !Arc::ptr_eq(&b.image, &l.plain)),
+            }
+        }
+        // A pair at another turn stays as it was.
+        let mut learned = Some(pair(3));
+        let mut b = Base {
+            edit: edit.clone(),
+            turn: 0,
+            image: plain.clone(),
+            guide: Arc::new(crate::finish::Guide::NONE),
+            white: WhiteBase::IDENTITY,
+            radius: None,
+            clip_level: 1.0,
+            source: crate::finish::Source::Scene,
+            stamp: 1,
+            patched: None,
+            pre: None,
+            ca_on_gpu: false,
+        };
+        turn_base(&mut b, &mut learned, 1, 2, None);
+        let l = learned.as_ref().unwrap();
+        assert_eq!(l.turn, 3);
+        assert!(l.plain.data == plain.data && l.model.data == model.data);
+        assert!(b.image.data == turned(&plain).data);
+    }
+
     /// A context on a device of our own with `limits`, for driving
     /// the GPU paths into their errors; none without an adapter.
     fn context_with(limits: greycard_gpu::wgpu::Limits) -> Option<greycard_gpu::Context> {
