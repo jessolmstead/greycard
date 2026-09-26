@@ -342,6 +342,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
         });
         // Off the event loop: a browser or a file manager can take
         // its time to answer, and xdg-open waits for it.
+        // A test that clicks its way across the pane must not open
+        // the browser, once per click.
+        if cfg!(test) {
+            return;
+        }
         let app_weak = app.as_weak();
         std::thread::spawn(move || {
             if let Err(e) = webbrowser::open(&url) {

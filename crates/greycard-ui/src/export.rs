@@ -731,6 +731,10 @@ pub fn choose_folder(
 /// blocking one.
 #[cfg(target_os = "linux")]
 fn ask(request: Ask, done: impl FnOnce(Result<Option<PathBuf>>) + Send + 'static) {
+    // No file chooser from a test: it answers as a cancel.
+    if cfg!(test) {
+        return done(Ok(None));
+    }
     std::thread::spawn(move || done(portal(request)));
 }
 
@@ -743,6 +747,9 @@ fn ask(request: Ask, done: impl FnOnce(Result<Option<PathBuf>>) + Send + 'static
 /// `invoke_from_event_loop` is a queued call like any other.
 #[cfg(not(target_os = "linux"))]
 fn ask(request: Ask, done: impl FnOnce(Result<Option<PathBuf>>) + Send + 'static) {
+    if cfg!(test) {
+        return done(Ok(None));
+    }
     // `done` is answered exactly once, by whichever of the two arms
     // gets to it: the dialog when there is an event loop to put it
     // on, this thread when there is not. It waits in a slot both can

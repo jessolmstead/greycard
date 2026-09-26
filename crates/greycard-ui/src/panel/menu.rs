@@ -95,6 +95,9 @@ pub(crate) fn reveal_command(path: &Path) -> std::process::Command {
 
 /// Show `path` in the file manager, without waiting on it.
 fn reveal(path: &Path) -> std::io::Result<()> {
+    if cfg!(test) {
+        return Ok(());
+    }
     let path = path.to_path_buf();
     let mut child = reveal_command(&path).spawn()?;
     // Reaped on a thread of its own, so it is not left a zombie and
