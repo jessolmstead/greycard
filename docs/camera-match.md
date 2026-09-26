@@ -91,9 +91,29 @@ Then the check that matters: the same frame, greycard's develop with
 the look at full strength against the camera's JPEG, side by side and
 as a ΔE map. The strength slider gives a half-match for free.
 
-## What has to be shot
+## Where the frames come from
 
-The sample folder does not hold a usable set:
+The archive, first. The product version fits from the user's own
+library, so fitting from the author's archive is the trial of the real
+thing, and years of frames per body already hold every style that was
+ever dialed in. The script's first step is an inventory: walk the
+archive, read body, style and the adaptive settings from each raw, and
+count the groups. A group of twenty or more frames with the adaptive
+settings off is a fit; the frames with them on are a second pool the
+held-out study measures rather than fits, which answers the spatial
+processing question for free. Canon's codes as exiv2 prints them:
+style 129 Standard, 133 Faithful, 135 Auto, 132 Neutral, 130 Portrait,
+131 Landscape, 134 Monochrome, 136 Fine Detail; ALO 3 off, 0 Standard,
+1 Low, 2 Strong; HTP 0 off.
+
+Faithful is the first style: the least styled of Canon's set, so the
+closest check on the accurate profile itself. The inventory (log,
+2026-09-26) puts it on the R6 II, 452 frames with ALO off.
+
+What an archive may lack is coverage, saturated subjects and deliberate
+over and under exposure, and the inventory cannot say. The fit's
+per-frame residual and the LUT's empty corners will, and a short shoot
+fills that if it is needed. The sample folder alone is not enough:
 
 | Body | Frames | Why it falls short |
 |---|---|---|
@@ -102,9 +122,10 @@ The sample folder does not hold a usable set:
 | R5 II DNG | 4 | the embedded preview is Adobe's, not the camera's |
 | GFX 100S II | 3 | all Reala Ace at DR100, consistent but three frames |
 
-The trial wants 20 to 40 frames on one body, one fixed style, with
-every adaptive setting off. The shot list is in `docs/test-frames.md`;
-the settings per maker:
+A group is 20 to 40 frames on one body, one fixed style, with every
+adaptive setting off, whether the archive holds it or a shoot fills it.
+The list of what fills a gap is in `docs/test-frames.md`; the settings
+per maker:
 
 - Canon: Picture Style Standard (not Auto), Auto Lighting Optimizer
   off, Highlight Tone Priority off. The tags are
@@ -209,6 +230,144 @@ If the frames with adaptive processing on fit badly, as §78 expects,
 the editor tells the user which settings to turn off before fitting,
 by the same tags the table above names.
 
+## Results: R6 II Faithful, 2026-09-26
+
+32 frames, 16 from a client session indoors and 16 from a day in
+Chicago, spread evenly through each folder. The script is
+`tools/camera-match/fit.py`; the work folder is `target/camera-match/`.
+
+**Registration is a non-issue.** The camera's JPEG lays over the
+lens-corrected export with a scale within 0.3 percent, a shift under
+two pixels at 2048 wide, and a luminance correlation of 0.95 to 0.998
+on every frame. Between 1,500 and 3,800 of each frame's 4,760 blocks
+survive the texture and clipping cuts; 96,000 pairs in all.
+
+**The camera's Faithful is 0.2 to 0.9 stops darker than the default
+develop**, 0.55 at the median, on every frame. One pass of the
+per-frame offset through the Exposure slider leaves +0.02 to +0.28,
+because the slider does not move the median one-for-one through the
+tone curve; the curve stage absorbs the rest.
+
+**The fit, ΔE in Oklab on the kept blocks** (0.02 is about a
+just-visible step):
+
+| stage | fitted, all frames | held out, one at a time |
+|---|---|---|
+| identity (no look) | 0.0231 | |
+| matrix | 0.0199 | 0.0201 |
+| matrix and curves | 0.0187 | 0.0193 |
+| with the 33³ LUT | 0.0136 | 0.0167 |
+
+The held-out gap is small: the look generalizes, and it is not
+memorizing frames. The matrix is a mild saturation lift with a
+green-into-blue term, which is what Faithful against a colorimetric
+develop should be.
+
+**What remains is lightness, and it is spatial.** After the look the
+chroma error is 0.002, an order of magnitude under visible; the
+lightness error is 0.014 and it runs with radius: the looked render
+is 0.022 darker than the camera at the frame's center and 0.010
+brighter at the corners. With the lens vignetting correction off the
+term flips, +0.022 at the center and -0.014 at the corners. The camera
+applies about half of lensfun's correction. That is a lens finding,
+not a look finding, and it is on the roadmap on its own. With the
+shared radial term and the per-frame brightness removed the floor is
+a ΔE of 0.010, nearly all lightness, which is where 8-bit block means
+and whatever the camera still does locally meet.
+
+**The editor agrees with the script.** The `.cube` in the looks store,
+picked through the sidecar and exported by greycard, lands within
+0.001 of the numpy fit on three frames. Side by side the looked render
+and the camera's JPEG are not tellable apart by eye; the ΔE map's red
+is edges, where the maker's sharpening is, and the center-of-frame
+band the vignetting explains.
+
+## Results: three more sets, and across bodies (2026-09-26)
+
+The same five commands on R5 II Standard (32 frames, the Japan
+folder, RF 70-200mm and Sigma 28mm), GFX 100S II Reala Ace (31
+frames, four folders, GF 110mm and Sigma 50mm) and R5 II Faithful
+(all 22 the archive holds, 16 from one session). Two changes to the
+script came out of them: a frame whose JPEG registers under a
+correlation of 0.9 is left out of the fit (one GFX frame was a
+featureless grey flat, two R5 II frames were near-duplicates of a
+moving subject), and the matrix is solved with a ridge toward
+identity, because 22 frames of one warm room leave blue unconstrained
+and plain least squares ran its diagonal to 0.4.
+
+| set | frames | no look | fitted with LUT | held out |
+|---|---|---|---|---|
+| R6 II Faithful | 32 | 0.0231 | 0.0136 | 0.0166 |
+| R5 II Standard | 30 | 0.0212 | 0.0139 | 0.0184 |
+| R5 II Faithful | 22 | 0.0200 | 0.0107 | 0.0123 |
+| GFX Reala Ace | 30 | 0.0233 | 0.0118 | 0.0193 |
+
+Chroma after the look is 0.0015 to 0.0020 on every set. The GFX is
+the one where the LUT does not beat the matrix held out, and the
+frames say why: the lavender field and the proposal session on the
+GF 110mm hold out at 0.009 to 0.020, the Misc and Iceland frames on
+the Sigma 50mm at 0.03 to 0.045. The Sigma has no profile in lensfun
+or rawler, so those frames carry the lens's full falloff against a
+camera JPEG that does not, and the radial term differs by lens inside
+one fit. A fit should be per body and style, with the radial term
+measured per lens and left out of the look.
+
+**Across bodies and styles.** Each look applied to each set's kept
+blocks, chroma error in Oklab:
+
+| look \ frames | R6 II Faithful | R5 II Faithful | R5 II Standard | GFX Reala Ace |
+|---|---|---|---|---|
+| R6 II Faithful | 0.0020 | 0.0040 | 0.0084 | 0.0055 |
+| R5 II Faithful | 0.0083 | 0.0017 | 0.0084 | 0.0062 |
+| R5 II Standard | 0.0080 | 0.0077 | 0.0020 | 0.0051 |
+| GFX Reala Ace | 0.0101 | 0.0068 | 0.0089 | 0.0015 |
+
+The fit reads the style: Faithful and Standard on the same body are
+four times apart. Faithful on the two Canons is nearly one rendering:
+the R6 II look on the R5 II frames is 0.0040, half way between the
+frames' own look and Standard's, and the two matrices have the same
+shape to a few percent (R6 II diagonal 1.15, 1.09, 0.95 with a
+red-from-blue term of -0.13; R5 II 1.13, 1.03, 0.90 and -0.06). The
+reverse, 0.0083, is the thin set's coverage and not the body: the
+22-frame look has nothing to say about colors the session never
+showed. So one look per maker and style can serve a body it was not
+fitted on, at about twice its native error, and a body with enough
+frames of its own does better. The product should fit per body and
+style where the frames exist and borrow the maker's look where they
+do not.
+
+**Answers.** Both questions come back yes for a fixed style with the
+adaptive settings off. The camera's shoulder was not the problem
+predicted, because Faithful clips where the develop does; the
+highlight check waits for a style with a softer shoulder; Standard on
+the R5 II clipped where the develop does too. The DPP render for
+style-versus-camera is no longer needed: the R5 II has both styles in
+the archive and the cross table answers it. What is left is a
+decision on the product form: the same fit run from inside the
+editor, one look per body and style, the radial term measured per
+lens and kept out, and a maker's look borrowed for a body without
+frames.
+
 ## Log
 
-- 2026-09-25: plan written. Nothing run yet; waits on the shoot.
+- 2026-09-25: plan written.
+- 2026-09-26: the archive replaces the shoot as the source; a shoot
+  only fills gaps the fit reports. Inventory of the archive, 8,702
+  CR3 and 513 RAF. Fixed style with ALO off: R6 II Faithful 473, R5 II
+  Standard 283, R6 III Faithful 85, R5 II Faithful 22; GFX 100S II
+  Reala Ace DR100 398, Provia DR100 26. ALO on, for the spatial check:
+  R5 II Faithful 535, R6 II Faithful 144. Out of the fit: about 6,600
+  R6 II frames on Picture Style Auto. Order: R6 II Faithful first, R5 II
+  Standard second for the cross-body check, the R6 II frames rendered
+  to Standard in DPP for the style-versus-camera check, then the GFX.
+  No shoot needed.
+- 2026-09-26: the R6 II Faithful fit run, results above. The look
+  `r6ii-faithful.cube` is in the author's looks store. The camera's
+  peripheral illumination correction measures at about half of
+  lensfun's; on the roadmap.
+- 2026-09-26, later: R5 II Standard, R5 II Faithful and GFX Reala
+  Ace fitted, the cross table built. The registration cutoff and the
+  ridge added to the script. Faithful is nearly one rendering across
+  the two Canons; the GFX's held-out gap is the unprofiled Sigma's
+  falloff. Four looks in the work folders; only the R6 II's is in the
+  looks store.

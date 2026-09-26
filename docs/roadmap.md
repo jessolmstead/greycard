@@ -152,9 +152,11 @@ ask for first.
 
 - [ ] Camera match: a look fitted from the maker's embedded JPEG
       against the accurate develop, a matrix, a curve and a small LUT
-      per camera and style (§78). The trial plan is
-      `docs/camera-match.md`; waits on a shoot of one body and one
-      fixed style with the adaptive settings off
+      per camera and style (§78). Tried on four sets from the
+      archive and shaped (§178, `docs/camera-match.md`): a
+      `greycard-match` crate with the fit and its oracle test, then
+      the Look section's action, the borrowing rule and the radial
+      report
 - [ ] Profile making from a chart shot, after dcamprof (§78)
 - [ ] The monitor's own profile on Windows and macOS: read it from
       WCS and from ColorSync, so "System" means the display rather
@@ -363,6 +365,12 @@ release when the wait clears.
 - [ ] The GPU Subject model on Mac and Windows adapters: its remaining
       Splits need nine storage buffers; an adapter allowing fewer
       falls back to the CPU. Check on the machines (§159)
+- [ ] The camera's own vignetting correction is about half of
+      lensfun's on the R6 II with the RF 50mm f/1.2: measured against
+      the embedded JPEG by the camera match trial
+      (`docs/camera-match.md`). Decide whether the profile, a
+      strength, or the maker's own table is the answer; ties to the
+      next line
 - [ ] The makers' embedded lens corrections, exact where a file carries
       them. Waits on rawler surfacing them (and the Panasonic lens name)
 - [ ] lensfun calibrates the Sigma 50mm f/1.4 DG HSM Art with a

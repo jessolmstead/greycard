@@ -21477,3 +21477,98 @@ and the filter still shows it; a culler who rated, moved on and
 pressed Ctrl+Z wants to see the frame come back. The stack keeps the
 last thousand steps and lives for the session.
 
+
+## 178. The camera match, tried and shaped (2026-09-26)
+
+§78 proposed fitting the maker's picture style as a look from the
+JPEG every raw carries. The trial ran today on four sets from the
+author's archive, and its numbers and its script are in
+`docs/camera-match.md` and `tools/camera-match/fit.py`. This section
+is what the trial decided about the product.
+
+**It works, and the residual is not the look's.** Held out one frame
+at a time, a matrix, per-channel curves and a 33³ LUT bring the
+develop within a ΔE of 0.012 to 0.019 in Oklab of the camera's JPEG
+on R6 II Faithful, R5 II Standard, R5 II Faithful and GFX Reala Ace,
+with chroma error under 0.002 on every set. What remains is
+lightness, and it runs with radius from the frame's center: the
+camera's own vignetting correction is about half of lensfun's on the
+RF 50mm f/1.2, the opposite sign on the RF 70-200mm, and the whole of
+the lens's falloff on a Sigma that has no profile at all. That is the
+lens block's business and it is on the roadmap there. Crossed, the
+looks read the style: Faithful and Standard on one body are four
+times apart, and Faithful on the two Canons is nearly one rendering,
+a look from one body serving the other at about twice its native
+error.
+
+**Where it lives.** An action in the Look section: "Fit this camera's
+look". It runs over the current folder, or the library where there
+is one, groups the frames by body and picture style from the maker's
+tags, drops the frames with an adaptive setting on (Canon's Auto
+Lighting Optimizer and Auto style, Fujifilm's DR200 and DR400,
+Nikon's Active D-Lighting, Sony's DRO) and tells the user how many it
+left out and why, and writes one table per group into the looks
+store, named by body and style. The looks are then looks like any
+other, with the strength slider, and a preset can carry one. Nothing
+is shipped: the tables are the user's, from the user's frames, which
+is what keeps the makers' names off anything we distribute.
+
+**What the engine needs: nothing new in the pipeline.** The pieces
+are all there. The camera's JPEG is decoded for the culling loupe
+(§123) and the orientation with it; the export path develops a frame
+at a chosen long edge; the look slot (§127) applies the result. The
+new code is the fit in a crate of its own, `greycard-match`, that
+depends on core and nothing of the UI: registration, block means with
+the texture and clipping cuts, the ridge matrix, the curves, and the
+LUT. Every step has its CPU reference in the Python already, which
+becomes the test oracle: the same 32 R6 II frames' block pairs,
+committed as a small fixture of numbers rather than pictures, since
+no raw or slice of one goes in the tree, fitted by both and required
+to agree.
+
+**The LUT is the one piece not to port as is.** The script fits the
+residual with thin-plate radial basis functions from scipy and pulls
+it toward zero away from the data. In Rust the same job is a
+regularized least squares on the lattice itself: each block pair
+votes for the eight nodes of its cell with trilinear weights, a
+second-difference term along each axis asks the table to be smooth,
+and a small term pulls every node toward the matrix-and-curve
+prediction, which is what "identity where there is no data" means
+here. It is a sparse symmetric positive system of 33³ × 3 unknowns
+and conjugate gradients solves it in under a second with no
+dependency. It is also the better model: the thin-plate fit made the
+GFX look overfit its thin frames where the lattice's smoothness term
+would have held it.
+
+**The radial term is measured and kept out.** During the fit, after
+the look, the lightness residual is regressed on radius per lens, and
+the fit reports it: "on the RF 50mm f/1.2 the camera corrects about
+half of what the profile does". The number goes nowhere near the
+table. It is the measurement the vignetting roadmap line wants, made
+for every lens in the library at no cost.
+
+**Borrowing.** A group under about twenty usable frames, or one whose
+matrix the ridge had to hold (its data leaving a channel free), does
+not get a look of its own. It gets the same maker's look for that
+style from the body that has the frames, named for what it is, since
+the cross table says that lands at about twice the native error and
+is far better than none. The ridge stays in either way: twenty-two
+frames of one warm room ran the blue diagonal of a plain least
+squares to 0.4.
+
+**The per-frame brightness is not the look's either.** The camera's
+JPEG sits at its own exposure per scene, 0.2 to 0.9 stops under
+greycard's default on the R6 II's Faithful, 0.3 to 1.4 under it on
+the GFX's Reala Ace. The fit solves that offset per frame and applies
+it through the Exposure slider before fitting the shared table, so
+the look carries the style and the brightness stays where the user
+can see it. Those offsets are also the measurement the v0.2.0 feel
+line "the default develop matches the camera JPEG's brightness" was
+waiting for, and they point the other way from §141's +0.8 set
+against Lightroom. That is a decision, not a finding, and it is
+open.
+
+**Order.** The crate with the fit and its oracle test; the action
+with its grouping and its report; the borrowing rule; then the
+radial report into the lens track. The chart-based profile of §78
+stays behind it and shares the block sampling.

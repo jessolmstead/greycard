@@ -10,18 +10,21 @@ Tick a set when it is in `~/Pictures/Test` under its own folder.
 
 ## Camera match
 
-One body, one fixed picture style, every adaptive setting off, 20 to
-40 frames. The fit learns the style from the maker's embedded JPEG, so
-anything the camera varies by scene turns into noise in the fit.
-Nothing in `~/Pictures/Test` qualifies today: the R6 II frames are all
-Picture Style Auto, the R5 II has three Faithful frames with ALO off,
-the DNGs carry Adobe's preview rather than the camera's, and the GFX
-has three frames.
+The archive is the source (`docs/camera-match.md`): one body, one
+fixed picture style, every adaptive setting off, 20 to 40 frames,
+picked by the inventory. The fit learns the style from the maker's
+embedded JPEG, so anything the camera varies by scene turns into noise
+in the fit. `~/Pictures/Test` alone is not enough: the R6 II frames are
+all Picture Style Auto, the R5 II has three Faithful frames with ALO
+off, the DNGs carry Adobe's preview rather than the camera's, and the
+GFX has three frames. What follows is shot only where the archive
+leaves a gap the fit reports.
 
-- [ ] Canon (the R5 II or R6 II): Picture Style Standard, Auto
-      Lighting Optimizer off, Highlight Tone Priority off. Check with
-      `exiv2 -g CanonPr.PictureStyle -g CanonLiOp -pt FILE`
-- [ ] Across the light: daylight, open shade, tungsten, mixed. Skin in
+- [x] The inventory run over the archive (2026-09-26, in the camera
+      match doc's log): R6 II Faithful 473 frames with ALO off, R5 II
+      Standard 283, and the GFX's Reala Ace 398. No shoot needed for
+      the trial
+- [ ] Gaps in the light: daylight, open shade, tungsten, mixed. Skin in
       several. Group by white balance setting if the light is mixed
 - [ ] A few frames deliberately a stop or two bright and dark, so the
       fit sees the whole tone range, and one with a clipped sky
@@ -29,9 +32,9 @@ has three frames.
       sign. Ordinary frames leave the LUT's corners empty
 - [ ] A ColorChecker in three or four of them, if there is one; useful
       here, required for the chart profile that follows
-- [ ] The same frames rendered to Faithful in Digital Photo
-      Professional, no reshoot: a second style says whether the fit
-      reads the style or only the camera
+- [x] A second style on the same body, to say whether the fit reads
+      the style or only the camera: the R5 II's Standard and Faithful
+      from the archive answered it (2026-09-26), so no DPP render
 - [ ] The same shoot on the GFX in one film simulation at DR100, if
       there is time; the other simulations from in-camera conversion.
       The second body says whether the script holds across makers
@@ -87,8 +90,9 @@ about the entrance pupil; exposure drift between frames.
 
 ## Order of need
 
-The camera match set comes first: v0.6.0 is ahead of v0.8.0 on the
-roadmap and the trial needs no engine code, only the frames. Of the
+The camera match inventory comes first: v0.6.0 is ahead of v0.8.0 on
+the roadmap, the trial needs no engine code, and the archive likely
+holds the frames already. Of the
 stacking sets the tripod HDR is the only one wanted before the first
 piece of engine code, since tripod HDR ships first. The rest follow the
 roadmap's order: focus stack, handheld HDR, panorama.
