@@ -423,4 +423,161 @@ mod tests {
         assert_eq!(date_of(951_782_400), "2000-02-29 00:00 UTC");
         assert_eq!(date_of(1_789_000_000), "2026-09-10 00:26 UTC");
     }
+
+    /// A develop landing with `sources` for the state developing now.
+    fn land(app: &App, state: &Rc<RefCell<State>>, sources: Vec<greycard_edit::retouch::Patch>) {
+        let generation = state.borrow().generation;
+        crate::panel::deliver::deliver(
+            app,
+            crate::worker::Outcome::Developed {
+                generation,
+                image: crate::worker::Developed::Halves(std::sync::Arc::new(
+                    crate::worker::Halves {
+                        width: 60,
+                        height: 40,
+                        pixels: Vec::new(),
+                    },
+                )),
+                guide: std::sync::Arc::new(crate::finish::Guide::NONE),
+                white: crate::worker::WhiteBase::IDENTITY,
+                seconds: 0.1,
+                detail: None,
+                sharpen: None,
+                dehaze: None,
+                sources,
+                learned: crate::worker::LearnedReport::Off,
+                fills: crate::worker::FillReport::default(),
+            },
+        );
+    }
+
+    /// Issue 7, with the slow develop's order: a clone spot placed,
+    /// the panel's save firing before the develop lands, then the
+    /// develop landing with the source the engine chose. One undo
+    /// takes the spot away, and stays undone when that state's own
+    /// develop lands; a redo brings the spot back with its source.
+    #[test]
+    fn one_undo_takes_a_clone_spot_away_when_its_source_lands_after_the_save() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        assert_eq!(state.borrow().current, Some(0));
+
+        app.invoke_retouch_toggled("Clone".into());
+        app.invoke_place_pressed(10.0, 10.0, false);
+        app.invoke_place_released();
+        let placed = {
+            let st = state.borrow();
+            assert_eq!(st.edit.retouch.patches.len(), 1);
+            assert!(st.edit.retouch.patches[0].source.is_none());
+            st.edit.retouch.patches[0].clone()
+        };
+        let spots = |state: &Rc<RefCell<State>>| {
+            state.borrow().sidecars[0]
+                .current
+                .retouch
+                .patches
+                .iter()
+                .map(|p| p.source)
+                .collect::<Vec<_>>()
+        };
+
+        // The save timer fires first: the spot is recorded sourceless.
+        {
+            let mut st = state.borrow_mut();
+            let edit = crate::panel::edit::read_edit(&app, &st.edit, st.target);
+            crate::panel::edit::save_edit(&mut st, edit);
+        }
+        let before = state.borrow().sidecars[0].states();
+        assert_eq!(spots(&state), vec![None]);
+
+        // The develop lands with the source: it completes that state.
+        let source = [0.05, -0.02];
+        let developed = greycard_edit::retouch::Patch {
+            source: Some(source),
+            ..placed
+        };
+        land(&app, &state, vec![developed]);
+        assert_eq!(state.borrow().sidecars[0].states(), before, "no new step");
+        assert_eq!(spots(&state), vec![Some(source)]);
+        assert_eq!(state.borrow().edit.retouch.patches[0].source, Some(source));
+
+        // One undo, and the spot is gone.
+        app.invoke_undo();
+        assert_eq!(spots(&state), vec![]);
+        assert!(state.borrow().edit.retouch.patches.is_empty());
+        // That state's develop lands, and nothing comes back.
+        land(&app, &state, Vec::new());
+        assert_eq!(spots(&state), vec![]);
+        assert_eq!(state.borrow().sidecars[0].redo.len(), 1, "the redo stays");
+
+        // A redo brings the spot back with its source, and its
+        // develop chooses nothing.
+        app.invoke_redo();
+        assert_eq!(spots(&state), vec![Some(source)]);
+        land(&app, &state, Vec::new());
+        assert_eq!(state.borrow().sidecars[0].states(), before);
+        app.invoke_undo();
+        assert_eq!(spots(&state), vec![]);
+    }
+
+    /// A spot deleted while its develop is in flight, and another
+    /// placed elsewhere that takes its id: the develop landing with
+    /// the first spot's source gives the second nothing. Likewise a
+    /// sourceless spot resized while its develop is in flight.
+    #[test]
+    fn a_source_lands_only_on_the_patch_it_was_chosen_for() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        app.invoke_retouch_toggled("Clone".into());
+        app.invoke_place_pressed(10.0, 10.0, false);
+        app.invoke_place_released();
+        let first = state.borrow().edit.retouch.patches[0].clone();
+        let developed = greycard_edit::retouch::Patch {
+            source: Some([0.05, -0.02]),
+            ..first.clone()
+        };
+
+        // The save records the first spot; then it is deleted, and
+        // another placed elsewhere, before the develop lands.
+        {
+            let mut st = state.borrow_mut();
+            let edit = crate::panel::edit::read_edit(&app, &st.edit, st.target);
+            crate::panel::edit::save_edit(&mut st, edit);
+        }
+        app.set_patch(0);
+        app.invoke_delete_patch();
+        assert!(state.borrow().edit.retouch.patches.is_empty());
+        app.invoke_place_pressed(10.0, 10.0, false);
+        app.invoke_place_released();
+        {
+            let mut st = state.borrow_mut();
+            // Wherever the test window puts it, somewhere else.
+            st.edit.retouch.patches[0].points = vec![[0.8, 0.2]];
+            let second = &st.edit.retouch.patches[0];
+            assert_eq!(second.id, first.id, "the id is reused");
+            assert_ne!(second.points, first.points);
+        }
+        let states = state.borrow().sidecars[0].states();
+        land(&app, &state, vec![developed.clone()]);
+        assert!(state.borrow().edit.retouch.patches[0].source.is_none());
+        // The sidecar's state with the first spot is completed, with
+        // that spot's own source, and nothing is recorded.
+        assert_eq!(state.borrow().sidecars[0].states(), states);
+        assert_eq!(
+            state.borrow().sidecars[0].current.retouch.patches,
+            vec![developed.clone()]
+        );
+
+        // Resized while in flight: the same id and place, but not the
+        // spot the develop chose for.
+        {
+            let mut st = state.borrow_mut();
+            st.edit.retouch.patches[0].points = first.points.clone();
+            st.edit.retouch.patches[0].radius = first.radius * 2.0;
+        }
+        land(&app, &state, vec![developed]);
+        assert!(state.borrow().edit.retouch.patches[0].source.is_none());
+    }
 }

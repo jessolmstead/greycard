@@ -4,7 +4,8 @@ use crate::panel::browser::{
     thumb_turns,
 };
 use crate::panel::cull::develop_landed;
-use crate::panel::edit::{current_turn, read_edit, schedule_save};
+use crate::panel::edit::{current_turn, read_edit, take_sources};
+use crate::panel::history::show_history;
 use crate::panel::startup::remember_last_file;
 use crate::panel::viewport::picking_hint;
 use crate::queue;
@@ -348,10 +349,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 ),
                 None => String::new(),
             };
-            // Sources the engine chose go into the edit, and so the sidecar.
-            if !sources.is_empty() {
-                st.edit.retouch = st.edit.retouch.with_sources(&sources);
-                schedule_save(&mut st, app.as_weak());
+            // Sources the engine chose go into the edit, and into the
+            // sidecar's states in place: they finish a step, they are
+            // not one.
+            if take_sources(&mut st, &sources) {
+                show_history(&st, app);
             }
             // The picture held from the last file gives way, fitted.
             if st.held.take().is_some() {

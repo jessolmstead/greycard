@@ -161,6 +161,36 @@ pub(crate) fn save_edit(st: &mut State, edit: Edit) {
     }
 }
 
+/// Put the repair sources the engine chose into `st.edit` and into
+/// the current file's sidecar, and write it if that changed anything;
+/// true when it did. A chosen source completes the state that placed
+/// its patch, in place, and is never a step: recorded as one, a slow
+/// develop that landed after the save made the source a state of its
+/// own, and undoing it re-developed the sourceless state, chose the
+/// same source, and recorded it again over the redo (issue 7).
+/// `sources` are the patches the develop chose for, whole, so a patch
+/// moved, resized or replaced under a reused id while it was in
+/// flight takes nothing.
+pub(crate) fn take_sources(st: &mut State, sources: &[greycard_edit::retouch::Patch]) -> bool {
+    if sources.is_empty() {
+        return false;
+    }
+    st.edit.retouch.take_sources(sources);
+    let Some(c) = st.current else {
+        return false;
+    };
+    if !st.sidecars[c].take_sources(sources) {
+        return false;
+    }
+    if st.write_sidecars {
+        match st.sidecars[c].save_in(&st.files[c], st.placement) {
+            Ok(_) => crate::library::sidecar_written(st, c),
+            Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),
+        }
+    }
+    true
+}
+
 /// The look the panel shows.
 pub(crate) fn read_look(app: &App) -> Look {
     let mut light = Light {

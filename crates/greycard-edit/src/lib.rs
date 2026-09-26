@@ -1610,6 +1610,51 @@ impl Sidecar {
         true
     }
 
+    /// Give every state here the repair sources the engine chose,
+    /// `done` being the patches it chose them for, where a state has
+    /// the same patch still waiting on one (see
+    /// [`retouch::Retouch::take_sources`]),
+    /// in place: a chosen source completes the step that placed the
+    /// patch and is not a step of its own, so nothing is recorded and
+    /// nothing undone is dropped. A state that comes out the same as
+    /// the one after it — a line a build that recorded the source as
+    /// a step left behind — merges into it, keeping the earlier
+    /// step's words. Any two equal neighbors merge, so a step that
+    /// changed nothing, such as restoring a snapshot equal to the
+    /// state before it, goes too; it had nothing to undo. True when
+    /// anything changed.
+    pub fn take_sources(&mut self, done: &[retouch::Patch]) -> bool {
+        let mut took = false;
+        for edit in self.edits_mut() {
+            took |= edit.retouch.take_sources(done);
+        }
+        if !took {
+            return false;
+        }
+        // Oldest first: the history, the current state, then the redo
+        // stack from its end.
+        self.history
+            .dedup_by(|later, earlier| later.edit == earlier.edit);
+        let current = &self.current;
+        if let Some(earlier) = self.history.pop_if(|s| s.edit == *current) {
+            self.current_label = earlier.label;
+        }
+        // The redo stack is newest first, so its earlier state is the
+        // later in the vector.
+        self.redo.dedup_by(|earlier, later| {
+            if later.edit == earlier.edit {
+                std::mem::swap(&mut later.label, &mut earlier.label);
+                true
+            } else {
+                false
+            }
+        });
+        while self.redo.last().is_some_and(|s| s.edit == self.current) {
+            self.redo.pop();
+        }
+        true
+    }
+
     /// Forward again; false when nothing was undone.
     pub fn redo(&mut self) -> bool {
         let Some(next) = self.redo.pop() else {
@@ -3670,5 +3715,144 @@ mod tests {
             json.find("\"history\"").unwrap(),
         );
         assert!(current < step && step < history, "{json}");
+    }
+
+    /// A clone spot as placed, waiting on its source, and as the
+    /// engine completed it.
+    fn a_placed_spot() -> (Edit, Edit) {
+        let mut placed = Edit::default();
+        placed.retouch.patches.push(retouch::Patch {
+            id: placed.retouch.next_id(),
+            method: retouch::Method::Clone,
+            points: vec![[0.4, 0.6]],
+            radius: 0.03,
+            ..Default::default()
+        });
+        let mut done = placed.clone();
+        done.retouch.patches[0].source = Some([0.05, -0.02]);
+        (placed, done)
+    }
+
+    /// Issue 7: when the develop is slow, the panel's save records
+    /// the spot before the engine has chosen its source. The source
+    /// completes that state in place; it is not a step, so one undo
+    /// takes the spot away and a redo brings it back, source and all.
+    #[test]
+    fn a_chosen_source_completes_the_state_rather_than_adding_one() {
+        let mut sidecar = Sidecar::default();
+        let (placed, done) = a_placed_spot();
+        // The save timer fires first.
+        assert!(sidecar.record(placed));
+        // Then the develop lands with the source.
+        assert!(sidecar.take_sources(&done.retouch.patches));
+        assert_eq!(sidecar.states(), 2);
+        assert_eq!(sidecar.current, done);
+        // The save the develop's arrival would have made finds
+        // nothing new.
+        assert!(!sidecar.record(done.clone()));
+        assert!(sidecar.undo());
+        assert_eq!(sidecar.current, Edit::default());
+        // The undone state re-develops; it has no spot, so nothing
+        // is chosen, and the redo stays.
+        assert!(!sidecar.take_sources(&sidecar.current.retouch.patches.clone()));
+        assert!(sidecar.redo());
+        assert_eq!(sidecar.current, done);
+        // The redone state re-develops too, and has its source.
+        assert!(!sidecar.take_sources(&done.retouch.patches));
+        assert_eq!(sidecar.states(), 2);
+        assert!(sidecar.undo());
+        assert_eq!(sidecar.current, Edit::default());
+    }
+
+    /// A develop that lands before the save: the state is recorded
+    /// with its source, and there is nothing to complete.
+    #[test]
+    fn a_source_chosen_before_the_save_is_recorded_with_the_spot() {
+        let mut sidecar = Sidecar::default();
+        let (_, done) = a_placed_spot();
+        assert!(sidecar.record(done.clone()));
+        assert!(!sidecar.take_sources(&done.retouch.patches));
+        assert_eq!(sidecar.states(), 2);
+        assert!(sidecar.undo());
+        assert_eq!(sidecar.current, Edit::default());
+    }
+
+    /// Every state still waiting on the same patch's source takes it,
+    /// the undone ones too, so walking the line never re-develops a
+    /// state that would want one.
+    #[test]
+    fn every_state_waiting_on_the_patch_takes_its_source() {
+        let mut sidecar = Sidecar::default();
+        let (placed, done) = a_placed_spot();
+        assert!(sidecar.record(placed.clone()));
+        let mut brighter = placed.clone();
+        brighter.light.exposure = 0.5;
+        assert!(sidecar.record(brighter));
+        assert!(sidecar.undo());
+        // The develop of the spot alone lands after the undo.
+        assert!(sidecar.take_sources(&done.retouch.patches));
+        assert_eq!(sidecar.current, done);
+        assert_eq!(sidecar.states(), 3);
+        assert!(sidecar.redo());
+        assert_eq!(sidecar.current.retouch, done.retouch);
+        assert_eq!(sidecar.current.light.exposure, 0.5);
+    }
+
+    /// A spot that took a removed spot's id, somewhere else, is not
+    /// handed the removed one's source.
+    #[test]
+    fn a_reused_patch_id_elsewhere_takes_no_source() {
+        let mut sidecar = Sidecar::default();
+        let (placed, done) = a_placed_spot();
+        let mut elsewhere = placed.clone();
+        elsewhere.retouch.patches[0].points = vec![[0.1, 0.1]];
+        assert!(sidecar.record(elsewhere.clone()));
+        assert!(!sidecar.take_sources(&done.retouch.patches));
+        assert_eq!(sidecar.current, elsewhere);
+    }
+
+    /// A line a build before the fix left, the spot recorded without
+    /// its source and then with it: the first re-develop of the
+    /// sourceless state completes it, it merges with the state after
+    /// it, and the next undo takes the spot away.
+    #[test]
+    fn a_line_with_the_source_as_its_own_step_is_healed() {
+        let mut sidecar = Sidecar::default();
+        let (placed, done) = a_placed_spot();
+        assert!(sidecar.record_as(placed.clone(), Some("Clone".into())));
+        assert!(sidecar.record(done.clone()));
+        assert_eq!(sidecar.states(), 3);
+        assert!(sidecar.undo());
+        assert!(sidecar.take_sources(&done.retouch.patches));
+        assert_eq!(sidecar.states(), 2);
+        assert_eq!(sidecar.current, done);
+        assert_eq!(sidecar.current_label.as_deref(), Some("Clone"));
+        assert!(sidecar.redo.is_empty());
+        assert!(sidecar.undo());
+        assert_eq!(sidecar.current, Edit::default());
+        assert!(sidecar.redo());
+        assert_eq!(sidecar.current, done);
+
+        // The same line walked from the far end: a redo onto the
+        // sourceless state develops it, and the undone copy after it
+        // merges in.
+        let mut sidecar = Sidecar::default();
+        assert!(sidecar.record_as(placed, Some("Clone".into())));
+        assert!(sidecar.record(done.clone()));
+        let mut later = done.clone();
+        later.light.exposure = 1.0;
+        assert!(sidecar.record(later.clone()));
+        assert!(sidecar.undo());
+        assert!(sidecar.undo());
+        assert!(sidecar.undo());
+        assert_eq!(sidecar.current, Edit::default());
+        assert!(sidecar.redo());
+        assert!(sidecar.take_sources(&done.retouch.patches));
+        assert_eq!(sidecar.states(), 3);
+        assert_eq!(sidecar.current, done);
+        assert_eq!(sidecar.current_label.as_deref(), Some("Clone"));
+        assert!(sidecar.redo());
+        assert_eq!(sidecar.current, later);
+        assert!(!sidecar.redo());
     }
 }

@@ -88,7 +88,7 @@ impl Halves {
 use greycard_core::RgbSpace;
 use greycard_core::raw::RawFrame;
 use greycard_edit::brush::Raster;
-use greycard_edit::mask::{Pos, Shape};
+use greycard_edit::mask::Shape;
 use greycard_edit::retouch::Retouch;
 use greycard_edit::{Edit, Noise};
 
@@ -286,8 +286,9 @@ pub enum Outcome {
         sharpen: Option<SharpenStats>,
         /// What the dehaze did, when it ran.
         dehaze: Option<DehazeStats>,
-        /// Sources the engine chose for patches that had none.
-        sources: Vec<(u64, Pos)>,
+        /// The patches that had no source and were given one here,
+        /// each whole, as developed, with the source the engine chose.
+        sources: Vec<greycard_edit::retouch::Patch>,
         /// What the learned denoiser did.
         learned: LearnedReport,
         /// What the fill model did.
@@ -1808,8 +1809,9 @@ fn develop_job(
     let b = base.as_mut().expect("a base was just made");
     // The retouch, its patches given sources where they had none,
     // applied on a copy of the base and kept for the next develop.
-    let sources = edit.retouch.choose_sources(&b.image);
-    let retouch = edit.retouch.with_sources(&sources);
+    let chosen = edit.retouch.choose_sources(&b.image);
+    let retouch = edit.retouch.with_sources(&chosen);
+    let sources = retouch.chosen_patches(&chosen);
     let mut fills = FillReport::default();
     // A kept picture with fills left unmade serves while the model
     // is still missing, and no longer once it has been fetched.

@@ -315,6 +315,45 @@ impl Retouch {
         }
         out
     }
+
+    /// The patches here the engine chose sources for, `chosen` being
+    /// what [`Self::choose_sources`] answered and `self` the retouch
+    /// with them put in: what a develop hands back, so the patches it
+    /// chose for are named in full and not by id alone.
+    pub fn chosen_patches(&self, chosen: &[(u64, Pos)]) -> Vec<Patch> {
+        self.patches
+            .iter()
+            .filter(|p| p.source.is_some() && chosen.iter().any(|(id, _)| *id == p.id))
+            .cloned()
+            .collect()
+    }
+
+    /// Give each patch here still waiting on a source the one `done`
+    /// has for it: the patch in `done` with the same id that is this
+    /// one in every other field, so a later patch that took a
+    /// removed one's id is not handed the old one's source. True
+    /// when any patch took one.
+    pub fn take_sources(&mut self, done: &[Patch]) -> bool {
+        let mut took = false;
+        for patch in &mut self.patches {
+            if patch.source.is_some() || !patch.method.sourced() {
+                continue;
+            }
+            let source = done.iter().filter(|q| q.id == patch.id).find_map(|q| {
+                let s = q.source?;
+                (*q == Patch {
+                    source: Some(s),
+                    ..patch.clone()
+                })
+                .then_some(s)
+            });
+            if let Some(s) = source {
+                patch.source = Some(s);
+                took = true;
+            }
+        }
+        took
+    }
 }
 
 #[cfg(test)]
@@ -387,6 +426,8 @@ mod tests {
         let chosen = r.choose_sources(&image);
         assert_eq!(chosen.len(), 1);
         let r = r.with_sources(&chosen);
+        assert_eq!(r.chosen_patches(&chosen), vec![r.patches[0].clone()]);
+        assert!(r.chosen_patches(&[]).is_empty());
         assert!(r.patches[0].source.is_some());
         r.apply(&mut image);
         assert_ne!(image.data, before.data);
