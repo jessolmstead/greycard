@@ -1659,6 +1659,7 @@ mod tests {
             &app,
             crate::worker::Outcome::Developed {
                 generation,
+                turn: 0,
                 image: crate::worker::Developed::Halves(std::sync::Arc::new(
                     crate::worker::Halves {
                         width: 60,
@@ -1814,6 +1815,7 @@ mod tests {
             &app,
             crate::worker::Outcome::Developed {
                 generation,
+                turn: 0,
                 image: crate::worker::Developed::Halves(std::sync::Arc::new(
                     crate::worker::Halves {
                         width: 100,

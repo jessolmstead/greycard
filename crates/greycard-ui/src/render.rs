@@ -90,8 +90,10 @@ struct Params {
     color: f32,
     saturation: f32,
     vibrance: f32,
-    /// Keeps `m0` 16-byte aligned.
-    pad0: f32,
+    /// Quarter turns clockwise the source texture stands behind the
+    /// source the view is in (`View::source_turn`). Also keeps `m0`
+    /// 16-byte aligned.
+    source_turn: f32,
     m0: [f32; 4],
     m1: [f32; 4],
     m2: [f32; 4],
@@ -541,6 +543,12 @@ pub struct View {
     /// A raw's scene or a picture already rendered: whether the
     /// baseline and the display curve apply (`finish::Source`).
     pub source: Source,
+    /// Quarter turns clockwise the frame has been turned since the
+    /// picture on the GPU was developed: the view is of the turned
+    /// source, and the shader reads the texture through the turn, so
+    /// a frame turned shows turned at once, masks and all, while its
+    /// develop is still on the way.
+    pub source_turn: u8,
 }
 
 /// The look table on the GPU, and what the shader needs beside it.
@@ -600,6 +608,7 @@ impl View {
             warn: Warn::default(),
             canvas: [0.0; 3],
             source: Source::Scene,
+            source_turn: 0,
         }
     }
 }
@@ -1248,8 +1257,17 @@ impl Renderer {
         encoded: bool,
         rect: Option<(u32, u32, u32, u32)>,
     ) {
+        // The source the view is in: the texture's, stood on end by
+        // an odd turn the texture has not caught up with.
         let image = source
-            .map(|s| [s.width() as f32, s.height() as f32])
+            .map(|s| {
+                let (w, h) = (s.width() as f32, s.height() as f32);
+                if v.source_turn % 2 == 1 {
+                    [h, w]
+                } else {
+                    [w, h]
+                }
+            })
             .unwrap_or([1.0, 1.0]);
         let (ox, oy, tw, th) = rect.unwrap_or((0, 0, target.width(), target.height()));
         let m = self.output;
@@ -1291,7 +1309,7 @@ impl Renderer {
             color: if v.color.enabled { 1.0 } else { 0.0 },
             saturation: v.color.saturation,
             vibrance: v.color.vibrance,
-            pad0: 0.0,
+            source_turn: f32::from(v.source_turn % 4),
             m0: [m[0][0], m[0][1], m[0][2], 0.0],
             m1: [m[1][0], m[1][1], m[1][2], 0.0],
             m2: [m[2][0], m[2][1], m[2][2], 0.0],
@@ -2526,6 +2544,80 @@ mod tests {
         // And the mixer does act, so the check is of something.
         view.mixer.enabled = false;
         assert!(shot(&view) != without);
+    }
+
+    /// A picture read through a turn it has not caught up with draws
+    /// what the picture developed at that turn draws: the texture
+    /// turned on the CPU (`orient`, as the develop turns it) and read
+    /// straight, against the unturned texture read through
+    /// `source_turn`, for each quarter. The mixer's local mean and
+    /// the cubic reader both read about a pixel, and a mask sits off
+    /// center in the turned picture's own positions, so a reader or a
+    /// mask left in the texture's positions shows.
+    #[test]
+    fn a_texture_read_through_a_turn_is_the_turned_texture() {
+        use greycard_core::develop::orient;
+        use greycard_core::raw::Orientation;
+        let Some((device, queue)) = device("the lagging turn's check") else {
+            return;
+        };
+        let image = field();
+        let mut renderer = Renderer::new(&device, &queue);
+        for (quarters, orientation) in [
+            (1u8, Orientation::Rotate90),
+            (2, Orientation::Rotate180),
+            (3, Orientation::Rotate270),
+        ] {
+            let turned = orient(image.clone(), orientation);
+            let (w, h) = (turned.width, turned.height);
+            let mut view = View::blank();
+            view.center = (w as f32 / 2.0, h as f32 / 2.0);
+            view.plane = (w as f32, h as f32);
+            view.frame_size = (w as f32, h as f32);
+            view.cubic = true;
+            view.mixer.enabled = true;
+            view.mixer.hue[1] = 20.0;
+            view.mixer.saturation[5] = 0.6;
+            let mut local = local_of(vec![(
+                Shape::Radial {
+                    center: [0.3, 0.2],
+                    radius: [0.15, 0.1],
+                    angle: 0.0,
+                    feather: 0.3,
+                },
+                Mode::Add,
+            )]);
+            local.baked.light.exposure = 1.0;
+            view.locals = vec![local];
+            let mut shot = |source: &WorkingImage, lag: u8| {
+                renderer.upload(&crate::worker::Halves::from_image(source, None));
+                let v = View {
+                    source_turn: lag,
+                    ..view.clone()
+                };
+                let target = renderer.render(w as u32, h as u32, &v);
+                renderer.read_back(&target).expect("read back")
+            };
+            let developed = shot(&turned, 0);
+            let lagging = shot(&image, quarters);
+            let worst = developed
+                .as_raw()
+                .iter()
+                .zip(lagging.as_raw())
+                .map(|(a, b)| a.abs_diff(*b))
+                .max()
+                .unwrap_or(0);
+            eprintln!("{quarters} quarters: at most {worst} levels apart");
+            assert!(
+                worst <= 1,
+                "{quarters} quarters: the lagging texture is {worst} levels off"
+            );
+            // And reading it straight is another picture, so the
+            // check is of the turn.
+            if quarters % 2 == 0 {
+                assert!(shot(&image, 0) != developed);
+            }
+        }
     }
 
     /// The Light section switched off keeps the base curve on the GPU

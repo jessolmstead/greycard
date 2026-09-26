@@ -272,6 +272,9 @@ pub enum Outcome {
     },
     Developed {
         generation: u64,
+        /// The frame's quarter turns it was developed at, which a
+        /// turn pressed since has moved on from until its own lands.
+        turn: u8,
         image: Developed,
         /// The tone equalizer's plane for this develop, for the
         /// viewport's own texture.
@@ -1926,6 +1929,7 @@ fn develop_job(
                     return (
                         Outcome::Developed {
                             generation,
+                            turn,
                             image: Developed::Texture(texture),
                             guide: b.guide.clone(),
                             white: b.white,
@@ -1990,6 +1994,7 @@ fn develop_job(
     (
         Outcome::Developed {
             generation,
+            turn,
             image: Developed::Halves(halves),
             guide: b.guide.clone(),
             white: b.white,

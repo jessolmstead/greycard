@@ -188,6 +188,29 @@ pub fn drawn_source(open: (u32, u32), on_screen: (u32, u32)) -> (u32, u32) {
     if open == (0, 0) { on_screen } else { open }
 }
 
+/// The quarter turns clockwise the open frame has been turned since
+/// the develop on the GPU was made, when that develop is of the open
+/// frame (`shown`: its frame and the turn it was developed at): the
+/// turn the viewport reads the texture through until the develop at
+/// the new turn lands. Nothing for another frame's develop, which is
+/// drawn under its own edit and knows nothing of this one's turns.
+///
+/// However many turns are pressed before a develop lands, this is
+/// the one difference between the turn on screen and the turn the
+/// texture was made at; the develops asked for on the way are
+/// dropped as stale, and the one that lands brings it back to none.
+pub fn lagging_turn(shown: Option<(usize, u8)>, open: Option<usize>, turn: u8) -> u8 {
+    match shown {
+        Some((frame, made_at)) if Some(frame) == open => (turn % 4 + 4 - made_at % 4) % 4,
+        _ => 0,
+    }
+}
+
+/// A picture's size after `quarters` quarter turns.
+pub fn turned_size((w, h): (u32, u32), quarters: u8) -> (u32, u32) {
+    if quarters % 2 == 1 { (h, w) } else { (w, h) }
+}
+
 /// Whether a file is worth standing in for: a raw, whose develop
 /// costs a demosaic and seconds beyond the decode of the JPEG the
 /// camera left in it.

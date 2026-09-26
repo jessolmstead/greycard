@@ -543,6 +543,14 @@ pub(crate) struct State {
     /// picture stands in. Not cleared by a select: the picture stays
     /// on screen until another replaces it.
     pub(crate) shown_size: (u32, u32),
+    /// The frame that picture is a develop of and the quarter turns
+    /// it was developed at. A turn pressed since is drawn at once by
+    /// turning that picture in the viewport (`lagging_turn`) rather
+    /// than waiting a second for the develop at the new turn.
+    pub(crate) shown_turn: Option<(usize, u8)>,
+    /// When the open frame was last turned, for the log's two lines:
+    /// the first frame drawn after it, and its develop landing.
+    pub(crate) turn_pressed: Option<(std::time::Instant, bool)>,
     /// The crop as it was when a handle was pressed.
     pub(crate) crop_drag: Option<Crop>,
     /// Which look the panel edits: an adjustment by index, or the
@@ -840,6 +848,8 @@ impl State {
             // last frame's shape, or by a square.
             source_size: (0, 0),
             shown_size: (0, 0),
+            shown_turn: None,
+            turn_pressed: None,
             crop_drag: None,
             target: None,
             placing: None,

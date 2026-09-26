@@ -4,9 +4,32 @@ use crate::panel::cull::{control_over_frame, leave_cull};
 use crate::panel::curve::{
     current_channel, curve_points, draw_curve, parametric_mode, set_curve_points,
 };
-use crate::panel::edit::{read_edit, schedule_save};
+use crate::panel::edit::{current_turn, read_edit, schedule_save};
 use crate::panel::startup::{FILE, SYSTEM, monitor_note, monitor_settings};
 use crate::*;
+
+/// The size of the source the viewport draws the open frame's edit
+/// on, and the quarter turns clockwise it reads the picture on the
+/// GPU through to get there.
+///
+/// The picture is the open frame's develop once it has landed, and
+/// until then the develop still on the GPU (`placeholder::drawn_source`).
+/// A frame turned since its develop landed is drawn from that develop
+/// turned, at once, rather than a second later when the develop at
+/// the new turn lands: its size stands on end with the turn, and the
+/// shader reads the texture through the turn it has yet to catch up
+/// with, so the crop, the masks and the picture under them agree
+/// from the frame the key was pressed on.
+pub(crate) fn drawn_picture(st: &State) -> ((u32, u32), u8) {
+    let lag = placeholder::lagging_turn(
+        st.shown_turn.filter(|_| st.held.is_none()),
+        st.current,
+        current_turn(st),
+    );
+    let size =
+        placeholder::drawn_source(st.source_size, placeholder::turned_size(st.shown_size, lag));
+    (size, lag)
+}
 
 /// What a dropper's press chose, to move with the drag after it.
 pub(crate) enum Picking {

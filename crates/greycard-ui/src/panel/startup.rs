@@ -11,8 +11,8 @@ use crate::panel::edit::{read_edit, read_folds, save_edit, show_folds, time_shar
 use crate::panel::mask::{ask_for, bake_locals};
 use crate::panel::retouch::patch_outlines;
 use crate::panel::viewport::{
-    ViewMap, display_key, effective_zoom, proof_settings, schedule_snapshot, source_to_view,
-    sync_display, write_screenshot, zoom_label,
+    ViewMap, display_key, drawn_picture, effective_zoom, proof_settings, schedule_snapshot,
+    source_to_view, sync_display, write_screenshot, zoom_label,
 };
 use crate::*;
 
@@ -769,7 +769,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // size, and reading it here would draw whatever
                     // is on screen into a one-pixel frame — the
                     // canvas over the whole viewport.
-                    let (dw, dh) = placeholder::drawn_source(st.source_size, st.shown_size);
+                    // A frame turned since is drawn turned from that
+                    // develop (`drawn_picture`).
+                    let ((dw, dh), lag) = drawn_picture(st);
                     let (sw, sh) = (dw as f32, dh as f32);
                     let frame = if app.get_crop_mode() {
                         edit.geometry.bounds(sw, sh)
@@ -1023,6 +1025,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         mask_alone: false,
                         canvas: render::canvas_rgb(app.get_canvas_choice()),
                         source: st.source,
+                        source_turn: lag,
                     };
                     if app.get_crop_mode() {
                         // The crop's rectangle in view pixels, for the overlay.
@@ -1063,6 +1066,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }
                     }
                     let texture = renderer.render(vw, vh, &view);
+                    if let Some((at, false)) = st.turn_pressed {
+                        tracing::info!(
+                            "turn: on screen {:.0} ms after the key, the develop there read \
+                             through {lag} quarter turns",
+                            at.elapsed().as_secs_f64() * 1e3
+                        );
+                        st.turn_pressed = Some((at, true));
+                    }
                     let (bins, in_flight) = renderer.analyze(&view, st.scope);
                     let fresh = bins.map(|(_, b)| b.to_vec());
                     if let Some((taken, bins)) = bins {

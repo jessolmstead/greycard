@@ -1713,8 +1713,14 @@ mod tests {
     /// A develop as the worker delivers one: a picture of `size` and
     /// nothing else of interest.
     fn developed(generation: u64, size: (u32, u32)) -> crate::worker::Outcome {
+        developed_at(generation, size, 0)
+    }
+
+    /// The same, developed at `turn` quarter turns of the frame.
+    fn developed_at(generation: u64, size: (u32, u32), turn: u8) -> crate::worker::Outcome {
         crate::worker::Outcome::Developed {
             generation,
+            turn,
             image: crate::worker::Developed::Halves(Arc::new(crate::worker::Halves {
                 width: size.0,
                 height: size.1,
@@ -1958,6 +1964,86 @@ mod tests {
         );
         assert!(app.get_placeholder());
         assert!(st.bins.is_none(), "the last frame's bins came back");
+    }
+
+    /// A frame turned with its develop on screen is drawn turned on
+    /// the frame the key was pressed on: the develop there is read
+    /// through the turn and the size the edit is measured by stands
+    /// on end, without waiting for the develop at the new turn. A
+    /// second turn before that lands stacks on the first, a develop
+    /// asked for at the turn between is dropped when it lands late,
+    /// and the one at the turn on screen settles it to no difference.
+    #[test]
+    fn a_turn_is_drawn_at_once_from_the_develop_on_screen() {
+        use crate::panel::viewport::drawn_picture;
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        app.invoke_select(1);
+        // What the render does with a develop that has landed.
+        let land = |outcome| {
+            crate::panel::deliver::deliver(&app, outcome);
+            let mut st = state.borrow_mut();
+            st.pending.take().expect("the develop was taken");
+            st.source_size = st.shown_size;
+        };
+        let generation = state.borrow().generation;
+        land(developed(generation, (6000, 4000)));
+        assert_eq!(drawn_picture(&state.borrow()), ((6000, 4000), 0));
+
+        app.invoke_frame_turned(1);
+        let first = state.borrow().generation;
+        {
+            let st = state.borrow();
+            assert_eq!(st.sidecars[1].turn, 1);
+            assert_eq!(
+                drawn_picture(&st),
+                ((4000, 6000), 1),
+                "the turn waited for its develop"
+            );
+            assert_eq!(st.source_size, (4000, 6000));
+            // The edit is measured on the source standing on end.
+            let frame = st.edit.geometry.frame(4000.0, 6000.0);
+            assert!(frame.size.1 > frame.size.0, "{:?}", frame.size);
+        }
+
+        app.invoke_frame_turned(1);
+        assert_eq!(drawn_picture(&state.borrow()), ((6000, 4000), 2));
+        // The first turn's develop, late: stale, and nothing moves.
+        land_if_taken(&app, &state, developed_at(first, (4000, 6000), 1));
+        assert_eq!(drawn_picture(&state.borrow()), ((6000, 4000), 2));
+
+        // The second's lands, and the picture on the GPU is turned.
+        let generation = state.borrow().generation;
+        land(developed_at(generation, (6000, 4000), 2));
+        assert_eq!(drawn_picture(&state.borrow()), ((6000, 4000), 0));
+
+        // Turned under the culling loupe, which draws the camera's
+        // picture: once culling is left, the develop on screen is
+        // drawn turned by the same rule, measured the way up it is.
+        app.invoke_cull_toggled();
+        app.invoke_frame_turned(1);
+        app.invoke_cull_leave();
+        {
+            let st = state.borrow();
+            assert_eq!(drawn_picture(&st), ((4000, 6000), 1));
+            assert_eq!(st.source_size, (4000, 6000));
+        }
+
+        // Another frame chosen: the develop on screen is the last
+        // frame's, under its own edit, and no turn of this one is
+        // read into it.
+        app.invoke_select(2);
+        app.invoke_frame_turned(1);
+        assert_eq!(drawn_picture(&state.borrow()), ((6000, 4000), 0));
+    }
+
+    /// A delivery that may be dropped as stale: taken, if it was not.
+    fn land_if_taken(app: &App, state: &Rc<RefCell<State>>, outcome: crate::worker::Outcome) {
+        crate::panel::deliver::deliver(app, outcome);
+        let mut st = state.borrow_mut();
+        if st.pending.take().is_some() {
+            st.source_size = st.shown_size;
+        }
     }
 
     /// The culling mode entered over a placeholder takes it, and

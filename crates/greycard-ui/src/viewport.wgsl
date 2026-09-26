@@ -54,8 +54,12 @@ struct Params {
     color: f32,
     saturation: f32,
     vibrance: f32,
-    // Keeps m0 16-byte aligned.
-    pad0: f32,
+    // Quarter turns clockwise the source texture stands behind the
+    // source the view is in: a frame turned whose develop at the new
+    // turn is still on the way. `image` is the view's source's size;
+    // the texture is read through `texel_at`. Also keeps m0 16-byte
+    // aligned.
+    source_turn: f32,
     m0: vec4<f32>,
     m1: vec4<f32>,
     m2: vec4<f32>,
@@ -278,12 +282,15 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if (at.x < 0.0 || at.y < 0.0 || at.x >= p.image.x || at.y >= p.image.y) {
         return vec4<f32>(0.03, 0.03, 0.03, 1.0);
     }
-    // The picture, and in its alpha the sharpen's blend mask.
+    // The picture, and in its alpha the sharpen's blend mask. The
+    // texture is read where it holds this source position; everything
+    // else, the masks among it, is in the source's own positions.
+    let tex_at = texel_at(at);
     var t4: vec4<f32>;
     if (p.cubic.x < 0.5) {
-        t4 = textureSampleLevel(src, samp, at / p.image, 0.0);
+        t4 = textureSampleLevel(src, samp, tex_at / vec2<f32>(textureDimensions(src)), 0.0);
     } else {
-        t4 = sample_cubic(at);
+        t4 = sample_cubic(tex_at);
     }
     // The second path: the camera's JPEG, display-referred sRGB
     // already, so none of the look, the tone, the curves or the
@@ -342,7 +349,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         let lab0 = to_oklab(vec3<f32>(dot(p.w0.xyz, t), dot(p.w1.xyz, t), dot(p.w2.xyz, t)) * gain);
         sample = lab0;
         if (p.range.x > 1.5) {
-            mean = local_ab(at);
+            mean = local_ab(tex_at);
             have_mean = true;
             sample = vec3<f32>(lab0.x, mean * exp2(p.range.z / 3.0));
         }
@@ -384,7 +391,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         let by_mean = look.mixer || look.bw;
         if (by_mean) {
             if (!have_mean) {
-                mean = local_ab(at);
+                mean = local_ab(tex_at);
             }
             ab = mean * exp2(look.exposure / 3.0);
         }
@@ -397,7 +404,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var g = 0.0;
     let has_guide = p.guide.z > 0.5;
     if (has_guide) {
-        g = look.contrast * (textureSampleLevel(guide, samp, at / p.guide.xy, 0.0).r + look.exposure);
+        g = look.contrast * (textureSampleLevel(guide, samp, tex_at / p.guide.xy, 0.0).r + look.exposure);
     }
     let shaped = shape(c, look, g, has_guide);
     // 1: a picture already rendered for a display, which takes the
@@ -770,11 +777,29 @@ const MEAN_RADIUS: i32 = 2;
 // Stops of light at a black and white weight of one, as `bw.rs` has it.
 const BW_RANGE: f32 = 1.0;
 
-// The mean Oklab a and b of the source about a position, a 5x5 box
+// The texture position holding a position of the source the view is
+// in, which is the texture turned `source_turn` quarters clockwise:
+// the inverse of `orient`'s Rotate90, Rotate180 and Rotate270 in
+// continuous coordinates, so a pixel center lands on a pixel center.
+fn texel_at(at: vec2<f32>) -> vec2<f32> {
+    let turn = u32(p.source_turn + 0.5) % 4u;
+    if (turn == 1u) {
+        return vec2<f32>(at.y, p.image.x - at.x);
+    }
+    if (turn == 2u) {
+        return p.image - at;
+    }
+    if (turn == 3u) {
+        return vec2<f32>(p.image.y - at.y, at.x);
+    }
+    return at;
+}
+
+// The mean Oklab a and b of the texture about a position, a 5x5 box
 // with the edges clamped, as `local_ab` in `finish.rs`: each tap
 // through the white balance and to Oklab, then the mean.
 fn local_ab(s: vec2<f32>) -> vec2<f32> {
-    let limit = vec2<i32>(p.image) - vec2<i32>(1, 1);
+    let limit = vec2<i32>(textureDimensions(src)) - vec2<i32>(1, 1);
     let center = vec2<i32>(floor(s));
     var acc = vec2<f32>(0.0);
     for (var j = -MEAN_RADIUS; j <= MEAN_RADIUS; j = j + 1) {
@@ -914,7 +939,7 @@ fn sample_cubic(s: vec2<f32>) -> vec4<f32> {
     let f = floor(s - 0.5);
     let wx = cubic_weights(s.x - 0.5 - f.x);
     let wy = cubic_weights(s.y - 0.5 - f.y);
-    let limit = vec2<i32>(p.image) - vec2<i32>(1, 1);
+    let limit = vec2<i32>(textureDimensions(src)) - vec2<i32>(1, 1);
     var out = vec4<f32>(0.0);
     for (var j = 0; j < 4; j = j + 1) {
         let sy = clamp(i32(f.y) + j - 1, 0, limit.y);
