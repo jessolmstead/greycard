@@ -21293,3 +21293,27 @@ samples by up to 1.0e-4 and the defringe 3% by up to 1.8e-3, a
 threshold landing the other way for a few pixels. A frame with either
 on still develops afresh at its new turn, so most raws still pay the
 full develop; they no longer wait for it to show.
+
+**The Masks tab (#10).** The adjustment's own controls (name, Show
+mask, Invert), the chosen shape's (its invert, feather and range
+windows) and the adjustment's look sat in one flat style. Now the
+shapes are always shown under a plain "Shapes" label, the fold over
+them gone (it was never saved), and the chosen shape's controls sit in
+a card under the list, headed with its kind and numbered in row order
+when the kind repeats, "RADIAL 2"; the chosen row takes the selection
+tint the history and the grid use. The shape's switch is "Invert
+shape", leaving one plain Invert. Add / Subtract / Intersect stays
+outside the card under a "Next shape" label: it is how the next added
+shape joins, nothing sets it from the chosen one, and inside the card
+it named the wrong mode for an intersected shape, which the review
+caught. It dims while a chosen brush, sky or object is being added to.
+The add buttons stay in view, since three of them are the chosen
+shape's own tools (Paint, Pick); moving those and the brush options
+into the card is a possible follow-up.
+
+The look sections carried the adjustment's name after their title,
+"LIGHT · Adjustment 1". It now comes first, "ADJUSTMENT 1 · LIGHT", as
+a text of its own that is the part cut when the panel is short, so the
+section's word stays whole. A blank name reads as the adjustment's
+place in the list, so the Masks tab never shows a bare "LIGHT" that
+could be taken for the global one.

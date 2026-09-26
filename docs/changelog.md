@@ -68,6 +68,10 @@ note a first tester reads.
   a second or two later, and without a lens profile or defringe the
   develop at the new turn takes a third of the time (#5, §177,
   2026-09-25).
+- The Masks tab sets the chosen shape's controls in a card under the
+  shape list, marks the chosen row, labels Add / Subtract / Intersect
+  as the next shape's, and heads the look sections with the
+  adjustment's name, "ADJUSTMENT 1 · LIGHT" (#10, §177, 2026-09-25).
 
 ## 0.1.2, 2026-09-25
 
