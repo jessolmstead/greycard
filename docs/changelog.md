@@ -51,6 +51,23 @@ note a first tester reads.
   set, no false sky on the five frames without one and 31 of 36 skies
   found; sky through a window, and sky behind dense blossom, are
   refused or missed (§175, 2026-09-25).
+- Undo on a clone or heal spot takes it away in one step: the source
+  the develop chooses completes the step that placed it instead of
+  recording a second one, and sidecars 0.1.1 wrote heal themselves
+  (#7, §177, 2026-09-25).
+- The Tone curve switch is gone: the base curve always applies to a
+  raw, and the Light section switched off leaves the picture as it
+  opens; masks' tone sliders act whatever the picture's Light says
+  (#9, §177, 2026-09-25).
+- Removing a preset asks first, and Settings restores any default
+  preset that is missing without touching the user's own (#4, §177,
+  2026-09-25).
+- A linear gradient's end line turns and stretches it about its
+  center; Alt moves just that end, as before (#6, §177, 2026-09-25).
+- A frame turned from the Crop tab turns on screen at once instead of
+  a second or two later, and without a lens profile or defringe the
+  develop at the new turn takes a third of the time (#5, §177,
+  2026-09-25).
 
 ## 0.1.2, 2026-09-25
 
