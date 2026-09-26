@@ -15,6 +15,10 @@ on and nothing more; the reasoning lives in `docs/notes.md`.
       inside rawler's decoder; the job catches it, the frame shows
       nothing. Found by the thumbnail cache's review (§163). Filed as
       dnglab/dnglab#849; a guard at the job meanwhile
+- [ ] Ctrl+Z while culling undoes the frame's last develop edit and
+      leaves culling; a rating, flag or label has no undo. Undo there
+      should step back the session's rating, flag and label changes
+      and nothing else
 
 ## v0.1.0: browse, develop, export
 
@@ -106,6 +110,13 @@ seconds.
 A shoot can be culled without developing a frame.
 
 - [ ] Lightbox to see a whole collection and look for consistency
+- [ ] Culling feedback: the frame's stars, flag and label on the loupe
+      and on each compare tile at a readable size, and a short notice
+      over the picture on each change ("Rejected", "3 stars") that the
+      next arrow does not wipe; today the only answer is the strip
+      tile's 9 px badge, and nothing at all with Tab on
+- [ ] Move on after a rating or flag, a switch in the CULLING section,
+      off by default
 
 ## v0.5.0: AI masks and fill
 
@@ -233,6 +244,9 @@ clears or a tester asks for it.
   - ProPhoto as a working space: no (§84). It stays an output space and
     an intermediate inside the operations defined in it
 - [ ] Resizeable / hideable panels
+  - Hiding first: F7 the left panel, F8 the right, F6 the strip, Tab
+    all of them as now; each remembered between sessions, and a small
+    arrow on each panel's edge to fold it and bring it back
 - [ ] A software GPU when there is none: the worker and greycard-gpu
       ask wgpu for a high-performance adapter and stop when there is
       no adapter at all (a headless box, a VM, a remote desktop), so
@@ -290,6 +304,15 @@ clears or a tester asks for it.
 - [ ] A tool for a broad out-of-focus color cast: §61's lavender bokeh
       discs, which the defringe cannot reach because the cast is wider
       than any local mean it takes (§74)
+- [ ] Nikon High Efficiency raws (the Z9, Z8 and Z6 III's default
+      setting; 64 of the 87 Z6 III frames on hand): the codec is JPEG
+      XS and a Rust decoder for rawler sits in dnglab/dnglab#835,
+      tested on a Z6 III only. Run it on our Z6 III set against the
+      lossless frames and report on the PR; review it against the
+      standard; the shipping call is separate, since the JPEG XS
+      patent pool charges per copy and exempts nothing (§176). A build
+      feature off by default, or the macOS system decoder, are the
+      ways to carry it without that
 
 ### Nice-to-have
 
@@ -352,8 +375,3 @@ release when the wait clears.
       two definitions for one Canon ID; each decode of such a file
       warns and asks for an upstream issue. Contribute the entries
       to rawler; until then those warnings are kept out of the log
-- [ ] Nikon High Efficiency raws (the Z9, Z8 and Z6 III's default
-      setting, intoPIX TicoRAW; 17 to 19 MB files where the lossless
-      ones run 26 to 32 MB) do not decode: 64 of the 87 Z6 III frames
-      on hand. A codec to contribute to rawler, not a table entry, and
-      it decides whether the editor opens most Nikon shooters' folders
