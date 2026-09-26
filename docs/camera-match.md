@@ -377,3 +377,18 @@ frames.
   Both fixed in the script; the trial's shifts were all under two
   pixels, so its numbers stand. The script recovers a 16-pixel shift
   within 1.3 px now.
+- 2026-09-26, night: the four Python tables in the looks store made
+  pink bands on R6 II frames through the R5 II Faithful look. The
+  thin-plate fit rings between sparse samples: that table mapped a
+  mid cyan to pure black, with steps of 0.74 between neighboring
+  nodes and a neutral axis that went backwards. All four were refitted
+  from the same block pairs through the crate's lattice solve
+  (`cargo run --release -p greycard-match --example refit`), which
+  holds the same fitted error (0.012 to 0.0135) with steps under 0.19
+  and white pinned; the bands are gone. The Python's LUT stage is
+  superseded; the script remains the reference for the stages before
+  it. One real difference the refit kept: the R5 II Faithful table
+  darkens blue-cyan where the R6 II's does not, because a quarter of
+  the R5 II set's blocks are that color and the R6 II set barely saw
+  it. That is data, not ringing, and it is the coverage argument for
+  the library scope again.
