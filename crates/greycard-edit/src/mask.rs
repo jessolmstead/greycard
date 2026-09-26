@@ -544,14 +544,49 @@ impl Shape {
             | Shape::Color { .. }
             | Shape::Unknown => self.clone(),
             Shape::Linear { from, to } => match handle {
-                1 => Shape::Linear {
-                    from: [p.0, p.1],
-                    to,
-                },
-                2 => Shape::Linear {
-                    from,
-                    to: [p.0, p.1],
-                },
+                1 | 2 => {
+                    // An end line: the center is the pivot. The other
+                    // end mirrors the dragged one through it.
+                    let mid = ((from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0);
+                    let (dx, dy) = (p.0 - mid.0, p.1 - mid.1);
+                    let len = (dx * dx + dy * dy).sqrt();
+                    let (ux, uy) = if len > f32::EPSILON {
+                        (dx / len, dy / len)
+                    } else {
+                        // No direction to take from the pointer at the
+                        // exact center: keep the dragged end's own
+                        // press-time direction rather than snap to an
+                        // arbitrary axis.
+                        let (ox, oy) = if handle == 1 {
+                            (from[0] - mid.0, from[1] - mid.1)
+                        } else {
+                            (to[0] - mid.0, to[1] - mid.1)
+                        };
+                        let olen = (ox * ox + oy * oy).sqrt();
+                        if olen > f32::EPSILON {
+                            (ox / olen, oy / olen)
+                        } else {
+                            (1.0, 0.0)
+                        }
+                    };
+                    let near = if len >= MIN_RADIUS {
+                        p
+                    } else {
+                        (mid.0 + ux * MIN_RADIUS, mid.1 + uy * MIN_RADIUS)
+                    };
+                    let far = (2.0 * mid.0 - near.0, 2.0 * mid.1 - near.1);
+                    if handle == 1 {
+                        Shape::Linear {
+                            from: [near.0, near.1],
+                            to: [far.0, far.1],
+                        }
+                    } else {
+                        Shape::Linear {
+                            from: [far.0, far.1],
+                            to: [near.0, near.1],
+                        }
+                    }
+                }
                 _ => {
                     let mid = ((from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0);
                     let (dx, dy) = (p.0 - mid.0, p.1 - mid.1);
@@ -795,7 +830,8 @@ mod tests {
         };
         let handles = line.handles();
         assert_eq!(handles[0], (0.3, 0.2));
-        // The middle moves the whole; an end moves itself.
+        // The middle moves the whole; an end pivots the line about
+        // the center.
         let Shape::Linear { from, to } = line.dragged(0, (0.5, 0.5)) else {
             panic!()
         };
@@ -805,10 +841,18 @@ mod tests {
         {
             assert!((got - want).abs() < 1e-6, "{from:?} {to:?}");
         }
+        // An end line rotates and widens about the fixed center: the
+        // opposite end mirrors the drag through the midpoint (0.3, 0.2)
+        // rather than staying put.
         let Shape::Linear { from, to } = line.dragged(2, (0.9, 0.2)) else {
             panic!()
         };
-        assert_eq!((from, to), ([0.2, 0.2], [0.9, 0.2]));
+        for (got, want) in [from[0], from[1], to[0], to[1]]
+            .iter()
+            .zip([-0.3, 0.2, 0.9, 0.2])
+        {
+            assert!((got - want).abs() < 1e-5, "{from:?} {to:?}");
+        }
 
         let disc = Shape::Radial {
             center: [0.5, 0.5],
@@ -850,6 +894,72 @@ mod tests {
             panic!()
         };
         assert_eq!(center, [0.1, 0.1]);
+    }
+
+    #[test]
+    fn dragging_a_linear_gradients_end_pivots_about_its_center() {
+        let line = Shape::Linear {
+            from: [0.2, 0.2],
+            to: [0.4, 0.2],
+        };
+        let mid = (0.3_f32, 0.2_f32);
+
+        // Dragging either end anywhere lands that end exactly on the
+        // pointer and keeps the center fixed: the gradient pivots
+        // about the center rather than swinging from the other,
+        // unmoved end.
+        for handle in [1, 2] {
+            for p in [(0.9, 0.6), (0.0, -0.5), (0.31, 0.19), (-1.0, 2.0)] {
+                let Shape::Linear { from, to } = line.dragged(handle, p) else {
+                    panic!()
+                };
+                let end = if handle == 1 { from } else { to };
+                assert!((end[0] - p.0).abs() < 1e-5 && (end[1] - p.1).abs() < 1e-5);
+                let got_mid = ((from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0);
+                assert!(
+                    (got_mid.0 - mid.0).abs() < 1e-5 && (got_mid.1 - mid.1).abs() < 1e-5,
+                    "handle {handle} to {p:?}: center moved to {got_mid:?}"
+                );
+            }
+        }
+
+        // A drag that crosses the center: "to" keeps tracking the
+        // pointer onto what was the "from" side, and "from" mirrors
+        // it onto what was the "to" side — the labels follow the
+        // handle, not a side of the line.
+        let Shape::Linear { from, to } = line.dragged(2, (-0.4, 0.2)) else {
+            panic!()
+        };
+        assert!((to[0] - -0.4).abs() < 1e-5 && (to[1] - 0.2).abs() < 1e-5);
+        assert!((from[0] - 1.0).abs() < 1e-5 && (from[1] - 0.2).abs() < 1e-5);
+
+        // A pointer just inside the minimum-radius disk, on the
+        // opposite side from where the dragged end started: it still
+        // follows the pointer's side, only held out to the minimum
+        // length instead of collapsing toward the center — no dead
+        // zone that snaps to the old side until the pointer clears it.
+        let tiny = MIN_RADIUS * 0.3;
+        let Shape::Linear { from, to } = line.dragged(1, (mid.0 + tiny, mid.1)) else {
+            panic!()
+        };
+        assert!((from[0] - (mid.0 + MIN_RADIUS)).abs() < 1e-5 && (from[1] - mid.1).abs() < 1e-6);
+        assert!((to[0] - (mid.0 - MIN_RADIUS)).abs() < 1e-5 && (to[1] - mid.1).abs() < 1e-6);
+
+        // Dropping the dragged end exactly on the center is
+        // degenerate: it must not collapse to a zero-length line or
+        // produce NaN, and it keeps the shape's press-time direction
+        // rather than an arbitrary one.
+        for handle in [1, 2] {
+            let Shape::Linear { from, to } = line.dragged(handle, mid) else {
+                panic!()
+            };
+            assert!(from[0].is_finite() && from[1].is_finite());
+            assert!(to[0].is_finite() && to[1].is_finite());
+            let len = ((to[0] - from[0]).powi(2) + (to[1] - from[1]).powi(2)).sqrt();
+            assert!(len > 0.0, "{from:?} {to:?}");
+            let got_mid = ((from[0] + to[0]) / 2.0, (from[1] + to[1]) / 2.0);
+            assert!((got_mid.0 - mid.0).abs() < 1e-5 && (got_mid.1 - mid.1).abs() < 1e-5);
+        }
     }
 
     #[test]
