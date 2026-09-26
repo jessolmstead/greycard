@@ -1,0 +1,16 @@
+[package]
+name = "greycard-match"
+version.workspace = true
+description = "The camera match for greycard: a picture style fitted as a look from the JPEG a raw carries, against the engine's own develop"
+license = "GPL-3.0-or-later"
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+greycard-core = { path = "../greycard-core" }
+
+[dev-dependencies]
+serde.workspace = true
+serde_json.workspace = true
