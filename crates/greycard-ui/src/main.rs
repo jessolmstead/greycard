@@ -154,7 +154,8 @@ struct Cli {
     #[arg(long)]
     grid: bool,
     /// Open with the panels, the strip and the status plate put away,
-    /// as Tab does, for a snapshot of the picture alone
+    /// as Tab does, for a snapshot of the picture alone; not kept for
+    /// the next run
     #[arg(long)]
     hide_panels: bool,
     /// The grid's cell, logical pixels (96 to 512); without it,

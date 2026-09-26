@@ -245,10 +245,11 @@ clears or a tester asks for it.
       Rec.2020 since §20; the viewport shows the chosen one since §42
   - ProPhoto as a working space: no (§84). It stays an output space and
     an intermediate inside the operations defined in it
-- [ ] Resizeable / hideable panels
-  - Hiding first: F7 the left panel, F8 the right, F6 the strip, Tab
-    all of them as now; each remembered between sessions, and a small
-    arrow on each panel's edge to fold it and bring it back
+- [ ] Resizable side panes: drag the left pane's and the develop
+      panel's inner edge, today's widths the minimum, about 500 px the
+      most, each kept in the settings; first see what a viewport
+      resize costs per pointer move, and hold the redraw to the drop
+      if it is a develop (hiding landed, §178; the strip stays fixed)
 - [ ] A software GPU when there is none: the worker and greycard-gpu
       ask wgpu for a high-performance adapter and stop when there is
       no adapter at all (a headless box, a VM, a remote desktop), so

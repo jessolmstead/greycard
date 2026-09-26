@@ -7,7 +7,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { PanelButton, Segmented } from "controls.slint";
+import { EdgeArrow, PanelButton, Segmented } from "controls.slint";
 import { Pt, Thumb, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
@@ -1113,11 +1113,22 @@ export component App inherits Window {
     }
     /// Whether a sheet is over everything. The sheets are declared
     /// after the grid and draw over it, so the keys belong to them.
-    /// Tab: everything but the picture put away, the left pane, the
-    /// panel, the strip and the status plate, and the viewport over
-    /// the whole window; Tab again brings them back. Not remembered:
-    /// the next run opens with them.
-    in-out property <bool> panels-hidden: false;
+    /// The left pane, the develop panel and the strip, each put away
+    /// on its own: F7, F8 and F6, or the arrow on its edge. Tab puts
+    /// all three away and, with all three away, brings all three
+    /// back. With all three away the status plate goes too, and the
+    /// viewport has the whole window. Kept in the settings.
+    in-out property <bool> left-hidden: false;
+    in-out property <bool> right-hidden: false;
+    in-out property <bool> strip-hidden: false;
+    // The three widths, read by the layout and by the arrows on the
+    // viewport's edges.
+    property <length> left-w: root.left-hidden ? 0px : 240px;
+    property <length> right-w: root.right-hidden ? 0px : 320px;
+    property <length> strip-h: root.strip-hidden ? 0px : 148px;
+    pure function all-hidden() -> bool {
+        return root.left-hidden && root.right-hidden && root.strip-hidden;
+    }
     /// Public so the Rust side asks the same question before it puts
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
@@ -1183,7 +1194,22 @@ export component App inherits Window {
             // which has the window already.
             if (e.text == Key.Tab && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
                 && !e.modifiers.shift && !root.sheet-open() && !root.grid-open) {
-                root.panels-hidden = !root.panels-hidden;
+                // Any one showing: all away. All away: all back.
+                let hide = !root.all-hidden();
+                root.left-hidden = hide;
+                root.right-hidden = hide;
+                root.strip-hidden = hide;
+                return accept;
+            }
+            // One at a time, as Lightroom has F7 and F8 for its side
+            // panels. F6 for the strip, where Lightroom has it. The
+            // same guards as Tab's.
+            if ((e.text == Key.F6 || e.text == Key.F7 || e.text == Key.F8)
+                && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
+                && !e.modifiers.shift && !root.sheet-open() && !root.grid-open) {
+                if (e.text == Key.F6) { root.strip-hidden = !root.strip-hidden; }
+                if (e.text == Key.F7) { root.left-hidden = !root.left-hidden; }
+                if (e.text == Key.F8) { root.right-hidden = !root.right-hidden; }
                 return accept;
             }
             if ((e.text == "g" || e.text == "G") && !e.modifiers.control && !root.sheet-open()) {
@@ -1338,11 +1364,11 @@ export component App inherits Window {
             // snapshots and the history, as an editor keeps them on
             // its left; at its foot, the way to report a problem,
             // found where it is looked for and nowhere near the work.
-            // Put away by Tab: out of the layout altogether. At zero
-            // width its wrapping texts would grow tall and raise the
-            // window's minimum height past the screen's.
-            if !root.panels-hidden: Rectangle {
-                width: 240px;
+            // Put away by F7 or Tab: out of the layout altogether. At
+            // zero width its wrapping texts would grow tall and raise
+            // the window's minimum height past the screen's.
+            if !root.left-hidden: Rectangle {
+                width: root.left-w;
                 background: Theme.surface;
                 Rectangle { x: parent.width - 1px; width: 1px; height: 100%; background: Theme.border; }
                 VerticalLayout {
@@ -1514,16 +1540,16 @@ export component App inherits Window {
                 // are how the window knows it closed, and a pointer
                 // passing over the picture must not take them early.
                 focus-keys => { if (!root.menu-shown()) { keys.focus(); } }
-                plate-hidden: root.panels-hidden;
+                plate-hidden: root.all-hidden();
                 ctrl-click-menu: root.ctrl-click-menu;
                 frame-menu(x, y) => { root.frame-menu-at(-1, x, y); }
                 menu-shown => { return root.menu-shown(); }
             }
 
             // Panel.
-            // Put away by Tab, as the left pane is.
-            if !root.panels-hidden: Rectangle {
-                width: 320px;
+            // Put away by F8 or Tab, as the left pane is.
+            if !root.right-hidden: Rectangle {
+                width: root.right-w;
                 background: Theme.surface;
                 Rectangle { x: 0; width: 1px; height: 100%; background: Theme.border; }
                 // The sections scroll; the view and export buttons stay
@@ -2017,8 +2043,8 @@ export component App inherits Window {
 
         // Filmstrip.
         strip := Filmstrip {
-            height: root.panels-hidden ? 0px : 148px;
-            visible: !root.panels-hidden;
+            height: root.strip-h;
+            visible: !root.strip-hidden;
             thumbs: root.thumbs;
             selected <=> root.selected;
             frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
@@ -2034,6 +2060,40 @@ export component App inherits Window {
             strip-report => { root.strip-report(); }
             focus-keys => { keys.focus(); }
         }
+    }
+
+    // The arrows on the viewport's edges, one for each thing that
+    // puts away: the left pane, the develop panel and the strip. Over
+    // the viewport, not beside it, so they take no width from the
+    // picture; under the grid and the sheets, which are declared
+    // after. With all three away they go quiet (see EdgeArrow).
+    property <length> view-mid: (root.height - root.strip-h) / 2;
+    EdgeArrow {
+        x: root.left-w;
+        y: root.view-mid - self.height / 2;
+        width: 16px;
+        height: 40px;
+        quiet: root.all-hidden();
+        icon: root.left-hidden ? @image-url("icons/chevron-right.svg") : @image-url("icons/chevron-left.svg");
+        clicked => { root.left-hidden = !root.left-hidden; keys.focus(); }
+    }
+    EdgeArrow {
+        x: root.width - root.right-w - self.width;
+        y: root.view-mid - self.height / 2;
+        width: 16px;
+        height: 40px;
+        quiet: root.all-hidden();
+        icon: root.right-hidden ? @image-url("icons/chevron-left.svg") : @image-url("icons/chevron-right.svg");
+        clicked => { root.right-hidden = !root.right-hidden; keys.focus(); }
+    }
+    EdgeArrow {
+        x: root.left-w + (root.width - root.left-w - root.right-w - self.width) / 2;
+        y: root.height - root.strip-h - self.height;
+        width: 40px;
+        height: 16px;
+        quiet: root.all-hidden();
+        icon: root.strip-hidden ? @image-url("icons/chevron-up.svg") : @image-url("icons/chevron-down.svg");
+        clicked => { root.strip-hidden = !root.strip-hidden; keys.focus(); }
     }
 
     // The grid, over the window: the folder as a contact sheet, in

@@ -240,7 +240,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         cli.grid_cell.unwrap_or(remembered.grid_cell),
     ));
     app.set_grid_open(cli.grid);
-    app.set_panels_hidden(cli.hide_panels);
+    // `--hide-panels` puts all three away for this run, whatever the
+    // last one left.
+    app.set_left_hidden(cli.hide_panels || remembered.hide_left);
+    app.set_right_hidden(cli.hide_panels || remembered.hide_right);
+    app.set_strip_hidden(cli.hide_panels || remembered.hide_strip);
     // The three names the flag's old three-way Show went by. The
     // chips say more than they can, but a flag on a command line
     // wants one word, and a script written against the old one still
@@ -1274,6 +1278,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.lenses_declined = kept.lenses_declined;
         settings.thumb_cache_mb = kept.thumb_cache_mb;
         settings.import = kept.import;
+        // A run opened with `--hide-panels` was a look at the picture
+        // alone: the panes stay as the run before it left them.
+        if cli.hide_panels {
+            settings.hide_left = kept.hide_left;
+            settings.hide_right = kept.hide_right;
+            settings.hide_strip = kept.hide_strip;
+        }
         settings.save();
     }
 
@@ -1542,6 +1553,9 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         canvas_color: render::canvas_name(app.get_canvas_choice()).to_string(),
         collapsed: read_folds(app),
         grid_cell: app.get_grid_cell(),
+        hide_left: app.get_left_hidden(),
+        hide_right: app.get_right_hidden(),
+        hide_strip: app.get_strip_hidden(),
         // Kept apart, all of them: the last file is written as soon
         // as a file develops, the sidecars' two as the Settings sheet
         // changes them, and the lens offer's answer as it is given.

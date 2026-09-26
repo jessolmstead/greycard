@@ -51,6 +51,12 @@ pub struct Settings {
     pub collapsed: Vec<String>,
     /// The grid's cell, logical pixels: the zoom it was left at.
     pub grid_cell: f32,
+    /// The left pane, the develop panel and the strip, each as put
+    /// away (F7, F8, F6, Tab for all three) or not when the window
+    /// closed.
+    pub hide_left: bool,
+    pub hide_right: bool,
+    pub hide_strip: bool,
     /// Whether the meta (the rating, the flag, the label, the
     /// keywords and the words) is also written to an `.xmp` beside
     /// the frame, for Lightroom, Bridge and darktable to read. Off
@@ -134,6 +140,9 @@ impl Default for Settings {
             canvas_color: crate::render::CANVAS_NAMES[0].into(),
             collapsed: Vec::new(),
             grid_cell: crate::grid::CELL,
+            hide_left: false,
+            hide_right: false,
+            hide_strip: false,
             xmp_sidecars: false,
             sidecars_in_folder: false,
             lenses_declined: false,
@@ -260,6 +269,9 @@ mod tests {
             canvas_color: "Mid grey".into(),
             collapsed: vec!["grain".into(), "demosaic".into()],
             grid_cell: 256.0,
+            hide_left: true,
+            hide_right: false,
+            hide_strip: true,
             xmp_sidecars: true,
             sidecars_in_folder: true,
             lenses_declined: true,

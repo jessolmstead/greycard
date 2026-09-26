@@ -1317,21 +1317,67 @@ mod tests {
         let app = crate::testing::window(3);
         let (_state, _worker) = crate::testing::retouch_state(&app);
         let tab = slint::platform::Key::Tab;
-        assert!(!app.get_panels_hidden());
+        let hidden = |app: &App| {
+            (
+                app.get_left_hidden(),
+                app.get_right_hidden(),
+                app.get_strip_hidden(),
+            )
+        };
+        assert_eq!(hidden(&app), (false, false, false));
         crate::testing::press(&app, tab);
-        assert!(app.get_panels_hidden(), "Tab hides them");
+        assert_eq!(hidden(&app), (true, true, true), "Tab hides them");
         crate::testing::press(&app, tab);
-        assert!(!app.get_panels_hidden(), "and Tab again shows them");
+        assert_eq!(
+            hidden(&app),
+            (false, false, false),
+            "and Tab again shows them"
+        );
+
+        // One put away on its own: Tab puts the rest away with it,
+        // and brings all three back.
+        crate::testing::press(&app, slint::platform::Key::F7);
+        assert_eq!(hidden(&app), (true, false, false), "F7 the left pane");
+        crate::testing::press(&app, tab);
+        assert_eq!(hidden(&app), (true, true, true));
+        crate::testing::press(&app, tab);
+        assert_eq!(hidden(&app), (false, false, false));
 
         // A sheet has the keys: Tab under it is not this one.
         app.set_export_open(true);
         crate::testing::press(&app, tab);
-        assert!(!app.get_panels_hidden(), "not under a sheet");
+        crate::testing::press(&app, slint::platform::Key::F8);
+        assert_eq!(hidden(&app), (false, false, false), "not under a sheet");
         app.set_export_open(false);
 
         // Nor over the grid, which has the window already.
         app.set_grid_open(true);
         crate::testing::press(&app, tab);
-        assert!(!app.get_panels_hidden(), "not over the grid");
+        crate::testing::press(&app, slint::platform::Key::F6);
+        assert_eq!(hidden(&app), (false, false, false), "not over the grid");
+    }
+
+    #[test]
+    fn each_panel_puts_away_on_its_own() {
+        let app = crate::testing::window(3);
+        let (_state, _worker) = crate::testing::retouch_state(&app);
+        use slint::platform::Key;
+        crate::testing::press(&app, Key::F8);
+        assert!(app.get_right_hidden(), "F8 the develop panel");
+        assert!(!app.get_left_hidden() && !app.get_strip_hidden());
+        crate::testing::press(&app, Key::F6);
+        assert!(app.get_strip_hidden(), "F6 the strip");
+        assert!(!app.get_left_hidden());
+        crate::testing::press(&app, Key::F8);
+        crate::testing::press(&app, Key::F6);
+        assert!(
+            !app.get_right_hidden() && !app.get_strip_hidden(),
+            "and back"
+        );
+
+        // What the settings keep is what the window shows.
+        crate::testing::press(&app, Key::F7);
+        let kept = crate::panel::startup::remember(&app);
+        assert!(kept.hide_left && !kept.hide_right && !kept.hide_strip);
     }
 }

@@ -75,6 +75,11 @@ note a first tester reads.
 - The left pane scrolls instead of growing the window: a long list of
   snapshots no longer takes the window out of fullscreen on Windows,
   and a list's bins sit clear of its scrollbar (#2, §177, 2026-09-26).
+- The left pane, the develop panel and the strip put away one at a
+  time: F7, F8 and F6, or the small arrow on each one's edge of the
+  viewport; Tab still puts all three away and brings them back, and
+  what was put away stays put away on the next launch (#3, §178,
+  2026-09-26).
 
 ## 0.1.2, 2026-09-25
 

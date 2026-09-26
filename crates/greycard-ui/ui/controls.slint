@@ -703,3 +703,29 @@ export component ThumbBadges inherits Rectangle {
         }
     }
 }
+
+// The arrow on a panel's edge that puts the panel away and brings it
+// back: a small plate over the viewport's edge, its chevron pointing
+// the way the edge will move. Quiet, it shows only under the pointer,
+// so a picture with everything put away is the picture alone and the
+// arrows are still there to be found.
+export component EdgeArrow inherits Rectangle {
+    in property <image> icon;
+    in property <bool> quiet: false;
+    callback clicked();
+    touch := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Rectangle {
+        opacity: root.quiet && !touch.has-hover ? 0 : 1;
+        border-radius: Theme.radius-sm;
+        background: touch.has-hover ? #000000c0 : #00000080;
+        Image {
+            width: 14px;
+            height: 14px;
+            source: root.icon;
+            colorize: touch.has-hover ? Theme.text : Theme.text-secondary;
+        }
+    }
+}
