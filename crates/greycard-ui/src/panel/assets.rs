@@ -151,8 +151,10 @@ Kept in {}.",
     app.set_fetch_open(true);
 }
 
-/// The presets' names on the panel.
+/// The presets' names on the panel. A removal waiting on its Remove
+/// is dropped: the row it named may be another preset's now.
 pub(crate) fn show_presets(st: &State, app: &App) {
+    app.set_preset_confirm_remove(-1);
     app.set_preset_names(ModelRc::new(VecModel::from(
         st.presets
             .iter()
@@ -169,6 +171,40 @@ pub(crate) fn refresh_presets(st: &mut State, app: &App) {
         .map(|s| s.list())
         .unwrap_or_default();
     show_presets(st, app);
+    show_presets_missing(st, app);
+}
+
+/// The settings' PRESETS row: which shipped presets the store is
+/// without, and so whether Restore is offered.
+pub(crate) fn show_presets_missing(st: &State, app: &App) {
+    let missing = st
+        .preset_store
+        .as_ref()
+        .map(|s| s.missing_shipped())
+        .unwrap_or_default();
+    app.set_presets_missing(missing.len() as i32);
+    app.set_presets_missing_words(
+        presets_missing_words(st.preset_store.is_some(), &missing).into(),
+    );
+}
+
+/// The settings' words for the shipped presets not in the store.
+pub(crate) fn presets_missing_words(store: bool, missing: &[String]) -> String {
+    if !store {
+        return "No configuration directory to keep presets in.".into();
+    }
+    match missing {
+        [] => "Every default preset is in the list.".into(),
+        [one] => format!("{one} is not in the list."),
+        [rest @ .., last] => format!("{} and {last} are not in the list.", rest.join(", ")),
+    }
+}
+
+/// Whether `name` is one of the presets this build ships.
+fn is_shipped(name: &str) -> bool {
+    preset::SHIPPED
+        .iter()
+        .any(|(_, text)| Preset::from_json(text).is_ok_and(|p| p.name.eq_ignore_ascii_case(name)))
 }
 
 /// Bring a preset file into the store, Lightroom's or this engine's,
@@ -574,13 +610,49 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             match st.preset_store.as_ref().map(|s| s.remove(&entry)) {
                 Some(Ok(())) => {
-                    app.set_status(format!("{} removed", entry.preset.name).into());
+                    let name = &entry.preset.name;
+                    app.set_status(
+                        if is_shipped(name) {
+                            format!("{name} removed; Settings can restore it")
+                        } else {
+                            format!("{name} removed")
+                        }
+                        .into(),
+                    );
                 }
                 Some(Err(e)) => {
                     tracing::warn!("preset {}: not removed: {e}", entry.preset.name);
                     app.set_status(format!("removing {}: {e}", entry.preset.name).into());
                 }
                 None => {}
+            }
+            refresh_presets(&mut st, &app);
+        });
+    }
+    // The settings' Restore: the shipped presets the store is without
+    // written back, and nothing of the user's touched.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_presets_restore(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            match st.preset_store.as_ref().map(|s| s.restore_shipped()) {
+                Some(Ok(names)) if names.is_empty() => {
+                    app.set_status("every default preset is in the list".into());
+                }
+                Some(Ok(names)) => {
+                    tracing::info!("presets restored: {}", names.join(", "));
+                    app.set_status(format!("restored {}", names.join(", ")).into());
+                }
+                Some(Err(e)) => {
+                    tracing::warn!("presets: not restored: {e}");
+                    app.set_status(format!("restoring the default presets: {e}").into());
+                }
+                None => {
+                    app.set_status("no configuration directory to restore into".into());
+                }
             }
             refresh_presets(&mut st, &app);
         });
@@ -699,6 +771,80 @@ mod tests {
         app.invoke_fetch_lenses();
         assert!(app.get_fetch_open());
         assert!(!app.get_fetch_text().contains(LENSES_WHY));
+    }
+
+    #[test]
+    fn the_missing_presets_are_named() {
+        let names = |n: &[&str]| n.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            presets_missing_words(true, &[]),
+            "Every default preset is in the list."
+        );
+        assert_eq!(
+            presets_missing_words(true, &names(&["Muted Slide"])),
+            "Muted Slide is not in the list."
+        );
+        assert_eq!(
+            presets_missing_words(true, &names(&["A", "B", "C"])),
+            "A, B and C are not in the list."
+        );
+        assert!(presets_missing_words(false, &[]).starts_with("No configuration"));
+    }
+
+    /// A bin asks and removes nothing; the Remove that names the
+    /// preset removes it. A shipped one removed is then missing in the
+    /// settings, and their Restore puts it back.
+    #[test]
+    fn a_preset_is_removed_only_when_confirmed_and_restored_on_asking() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let d = std::env::temp_dir().join(format!("greycard-ui-presets-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let store = preset::Store::at(d.clone());
+        store.seed();
+        state.borrow_mut().preset_store = Some(store);
+        refresh_presets(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_presets_missing(), 0);
+        let count = || state.borrow().presets.len();
+        assert_eq!(count(), 3);
+        let first = state.borrow().presets[0].clone();
+        assert_eq!(first.preset.name, "Muted Slide");
+
+        // The bin, which only arms the row: nothing is removed, and a
+        // list shown again (a preset saved, one imported) drops the
+        // question, whose row may be another preset's now.
+        assert_eq!(app.get_preset_confirm_remove(), -1);
+        app.set_preset_confirm_remove(0);
+        assert!(first.path.exists(), "a bin alone removes nothing");
+        refresh_presets(&mut state.borrow_mut(), &app);
+        assert_eq!(app.get_preset_confirm_remove(), -1);
+
+        // Asked again and confirmed, as the Remove does: gone, the
+        // question with it, and the status says where it can be had
+        // back.
+        app.set_preset_confirm_remove(0);
+        app.invoke_preset_deleted(0);
+        assert_eq!(app.get_preset_confirm_remove(), -1);
+        assert!(!first.path.exists());
+        assert_eq!(count(), 2);
+        assert!(
+            app.get_status().contains("Settings can restore it"),
+            "{}",
+            app.get_status()
+        );
+        assert_eq!(app.get_presets_missing(), 1);
+        assert_eq!(
+            app.get_presets_missing_words(),
+            "Muted Slide is not in the list."
+        );
+
+        // Restore: back, as shipped.
+        app.invoke_presets_restore();
+        assert!(first.path.exists());
+        assert_eq!(count(), 3);
+        assert_eq!(app.get_presets_missing(), 0);
+        assert_eq!(app.get_status(), "restored Muted Slide");
+        let _ = std::fs::remove_dir_all(&d);
     }
 
     #[test]

@@ -200,7 +200,8 @@ struct Cli {
     /// (over the frames selected), synced (the sync applied on its
     /// defaults at once, the sheet never drawn), preset-onto-set
     /// (the first stored preset clicked over the frames selected, no
-    /// sheet involved), paste (the first frame's settings copied and
+    /// sheet involved), preset-remove (the first stored preset's bin
+    /// clicked, its Remove waiting), paste (the first frame's settings copied and
     /// the paste sheet opened over the frames selected), pasted (that
     /// paste applied at once, the sheet never drawn), import (the
     /// import sheet, its source --import's when given, else a card

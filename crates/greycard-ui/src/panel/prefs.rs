@@ -333,6 +333,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_xmp_sidecars(st.xmp_sidecars);
             app.set_settings_note("".into());
             show_elsewhere(&st, &app);
+            crate::panel::assets::show_presets_missing(&st, &app);
             app.set_settings_open(true);
         });
     }

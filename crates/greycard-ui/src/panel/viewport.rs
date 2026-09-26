@@ -295,6 +295,9 @@ pub(crate) enum Shown {
     /// sheet involved: the current frame through the panel, the rest
     /// through `panel::sync::lay_over_targets`.
     PresetOntoSet,
+    /// The first stored preset's bin clicked: its removal asked,
+    /// waiting on the Remove that names it.
+    PresetRemove,
     /// The current frame copied and the paste sheet opened over the
     /// set `--also` made.
     Paste,
@@ -336,13 +339,14 @@ impl Shown {
             "sync" => Ok(Self::Sync),
             "synced" => Ok(Self::Synced),
             "preset-onto-set" => Ok(Self::PresetOntoSet),
+            "preset-remove" => Ok(Self::PresetRemove),
             "paste" => Ok(Self::Paste),
             "pasted" => Ok(Self::Pasted),
             "import" => Ok(Self::Import),
             "imported" => Ok(Self::Imported),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
-                 preset-onto-set, paste, pasted, import or imported, not {name}"
+                 preset-onto-set, preset-remove, paste, pasted, import or imported, not {name}"
             )),
         }
     }
@@ -369,6 +373,7 @@ impl Shown {
                 app.invoke_sync_applied();
             }
             Self::PresetOntoSet => app.invoke_preset_applied(0),
+            Self::PresetRemove => app.set_preset_confirm_remove(0),
             Self::Paste => {
                 app.invoke_copy_asked();
                 app.invoke_paste_asked();
@@ -1198,6 +1203,7 @@ mod tests {
         assert_eq!(Shown::sheet("sync"), Ok(Shown::Sync));
         assert_eq!(Shown::sheet("synced"), Ok(Shown::Synced));
         assert_eq!(Shown::sheet("preset-onto-set"), Ok(Shown::PresetOntoSet));
+        assert_eq!(Shown::sheet("preset-remove"), Ok(Shown::PresetRemove));
         assert_eq!(Shown::sheet("paste"), Ok(Shown::Paste));
         assert_eq!(Shown::sheet("pasted"), Ok(Shown::Pasted));
         assert!(Shown::sheet("guide").is_err());
@@ -1221,6 +1227,8 @@ mod tests {
         app.set_fetch_open(false);
         Shown::Settings.open(&app);
         assert!(app.get_settings_open());
+        Shown::PresetRemove.open(&app);
+        assert_eq!(app.get_preset_confirm_remove(), 0);
 
         // A tool brings the Crop tab with it.
         assert_eq!(app.get_panel_tab(), "Develop");

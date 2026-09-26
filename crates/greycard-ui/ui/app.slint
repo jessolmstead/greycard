@@ -478,6 +478,9 @@ export component App inherits Window {
     in-out property <[string]> preset-names: [];
     callback preset-applied(int);
     callback preset-deleted(int);
+    /// The row whose bin was clicked, waiting on the Remove that
+    /// names it; -1 for none. Nothing is removed until then.
+    in-out property <int> preset-confirm-remove: -1;
     callback preset-import();
     callback preset-save-open();
     in-out property <bool> preset-open: false;
@@ -1038,6 +1041,11 @@ export component App inherits Window {
     in-out property <string> thumb-cache-cap: "";
     callback thumb-cache-clear();
     callback thumb-cache-cap-changed();
+    /// The shipped presets the store is without, as a count and in
+    /// words, and the settings' Restore that puts them back.
+    in property <int> presets-missing: 0;
+    in property <string> presets-missing-words: "";
+    callback presets-restore();
     /// Move to the file `by` places along the strip; with Shift held,
     /// the set keeps what it had and takes that file as well.
     callback step(int, bool);
@@ -1360,6 +1368,7 @@ export component App inherits Window {
                         selected <=> root.selected;
                         collapsed-presets <=> root.collapsed-presets;
                         preset-names <=> root.preset-names;
+                        confirm-remove <=> root.preset-confirm-remove;
                         preset-applied(a) => { root.preset-applied(a); }
                         preset-deleted(a) => { root.preset-deleted(a); }
                         preset-import => { root.preset-import(); }
@@ -2189,6 +2198,9 @@ export component App inherits Window {
         thumb-cache-cap <=> root.thumb-cache-cap;
         thumb-cache-clear => { root.thumb-cache-clear(); }
         thumb-cache-cap-changed => { root.thumb-cache-cap-changed(); }
+        presets-missing: root.presets-missing;
+        presets-missing-words: root.presets-missing-words;
+        presets-restore => { root.presets-restore(); }
     }
 
     // The frame menu: one for the window, opened where the

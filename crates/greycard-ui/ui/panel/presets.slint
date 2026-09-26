@@ -1,6 +1,6 @@
 // The PRESETS section, in the left pane under the navigator: the
 // presets by name, a click to lay one over the edit, a bin to remove
-// one, and the ways to add one. It sat at the top of the develop
+// one (asked once more first), and the ways to add one. It sat at the top of the develop
 // panel's scroll until the left pane had room for it; where Lightroom
 // keeps its presets is where a hand looks for them.
 
@@ -19,15 +19,20 @@ export component PresetsSection inherits Section {
     /// How many frames the browser's selection holds.
     in property <int> set-count;
     callback sync-open-asked();
+    /// The row whose bin was clicked and not yet confirmed; -1 for
+    /// none. A click on a bin removes nothing by itself: the Import
+    /// and Save row turns into Cancel and a Remove that names the
+    /// preset, as the settings sheet's sidecar move asks first.
+    in-out property <int> confirm-remove: -1;
 
     title: "PRESETS";
     shrinks: true;
     icon: @image-url("../icons/bookmark.svg");
     collapsed <=> root.collapsed-presets;
     // The list: a click lays the preset over the edit, as one step;
-    // the bin at the row's end removes it from the store. A long list
-    // scrolls in its own box, as the history does, so the pane below
-    // it keeps its place.
+    // the bin at the row's end asks to remove it from the store. A
+    // long list scrolls in its own box, as the history does, so the
+    // pane below it keeps its place.
     if root.preset-names.length > 0: Rectangle {
         border-radius: Theme.radius-md;
         background: Theme.base;
@@ -46,7 +51,7 @@ export component PresetsSection inherits Section {
                 for name[i] in root.preset-names: Rectangle {
                     height: Theme.control-height - 6px;
                     border-radius: Theme.radius-sm;
-                    background: preset-row.has-hover ? Theme.hover : transparent;
+                    background: preset-row.has-hover || root.confirm-remove == i ? Theme.hover : transparent;
                     animate background { duration: Theme.quick; }
                     preset-row := TouchArea {
                         mouse-cursor: MouseCursor.pointer;
@@ -69,7 +74,7 @@ export component PresetsSection inherits Section {
                             width: Theme.control-height - 6px;
                             Image {
                                 source: @image-url("../icons/trash-2.svg");
-                                colorize: preset-bin.has-hover ? Theme.text : Theme.text-muted;
+                                colorize: preset-bin.has-hover || root.confirm-remove == i ? Theme.text : Theme.text-muted;
                                 width: Theme.icon;
                                 height: Theme.icon;
                                 x: (parent.width - self.width) / 2;
@@ -77,7 +82,7 @@ export component PresetsSection inherits Section {
                             }
                             preset-bin := TouchArea {
                                 mouse-cursor: MouseCursor.pointer;
-                                clicked => { root.preset-deleted(i); }
+                                clicked => { root.confirm-remove = i; }
                             }
                         }
                     }
@@ -91,7 +96,23 @@ export component PresetsSection inherits Section {
         color: Theme.text-muted;
         wrap: word-wrap;
     }
-    HorizontalLayout {
+    if root.confirm-remove >= 0: HorizontalLayout {
+        spacing: Theme.space-2;
+        PanelButton {
+            text: "Cancel";
+            clicked => { root.confirm-remove = -1; }
+        }
+        PanelButton {
+            text: "Remove " + root.preset-names[root.confirm-remove];
+            primary: true;
+            clicked => {
+                let i = root.confirm-remove;
+                root.confirm-remove = -1;
+                root.preset-deleted(i);
+            }
+        }
+    }
+    if root.confirm-remove < 0: HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
             text: "Import...";
