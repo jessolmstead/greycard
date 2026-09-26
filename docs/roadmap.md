@@ -13,7 +13,8 @@ on and nothing more; the reasoning lives in `docs/notes.md`.
 
 - [ ] A half-copied ARW (full length, zeros past the copy) decodes
       without an error, as a picture blank below the copied part; the
-      develop should refuse it with §179's half-copied message
+      develop should refuse it with §179's half-copied message. A CR3
+      will do the same once dnglab/dnglab#851 is in a rawler release
 
 ## v0.1.0: browse, develop, export
 

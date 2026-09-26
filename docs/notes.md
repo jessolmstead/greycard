@@ -21441,6 +21441,18 @@ zero tail and without, and run the library's scrubbed RW2 fixture, on
 which rawler divides by zero, through four entry points; no sample
 raw is in the repo.
 
+**Upstream.** The CR3 fix went to rawler as dnglab/dnglab#851: the
+CTMD record loop stops at a size under its 12-byte header or past the
+data left, as the block loop under it already does, with three unit
+tests. With it, three CR3s zeroed past their first MB read their
+metadata, preview and samples without error, so a half-copied CR3
+will no longer panic but open as a picture blank below the copied
+part, as the ARW does; that roadmap line names both. The NEF, RAF and
+RW2 panics are dnglab/dnglab#852, an issue and not a patch: the bit
+pump's `refill` panics by design when its data runs out, and whether
+it should return an error is rawler's call. The guard here stays
+whatever lands, since rawler has panics nobody has found yet.
+
 **Undo while culling.** Ctrl+Z in culling used to step the current
 frame's develop history and leave culling to show it, which is not
 what a hand on the rating keys means by undo, and the ratings, flags
