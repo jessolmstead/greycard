@@ -695,6 +695,7 @@ struct EditKey {
     locals: Vec<Local>,
     vignette: Vignette,
     grain: Grain,
+    source_turn: u8,
 }
 
 impl EditKey {
@@ -715,6 +716,7 @@ impl EditKey {
             locals: v.locals.clone(),
             vignette: v.vignette,
             grain: v.grain,
+            source_turn: v.source_turn,
         }
     }
 }
@@ -2562,19 +2564,51 @@ mod tests {
             return;
         };
         let image = field();
+        // A guide plane whose texels divide the picture, turned with
+        // it by the same map, so the texture's guide read through the
+        // turn can be told from the turned one's.
+        let scale = 8;
+        let guide_of =
+            |w: usize, h: usize, at: &dyn Fn(usize, usize) -> f32| crate::finish::Guide {
+                width: w / scale,
+                height: h / scale,
+                scale,
+                data: (0..h / scale)
+                    .flat_map(|y| (0..w / scale).map(move |x| (x, y)))
+                    .map(|(x, y)| at(x, y))
+                    .collect(),
+            };
+        let plain = |x: usize, y: usize| ((x * 7 + y * 3) % 11) as f32 * 0.3 - 1.5;
+        let (iw, ih) = (image.width, image.height);
+        let guide = guide_of(iw, ih, &plain);
         let mut renderer = Renderer::new(&device, &queue);
-        for (quarters, orientation) in [
+        for ((quarters, orientation), cubic) in [
             (1u8, Orientation::Rotate90),
             (2, Orientation::Rotate180),
             (3, Orientation::Rotate270),
-        ] {
+        ]
+        .into_iter()
+        .flat_map(|q| [(q, true), (q, false)])
+        {
             let turned = orient(image.clone(), orientation);
             let (w, h) = (turned.width, turned.height);
+            let (gw, gh) = (iw / scale, ih / scale);
+            let turned_guide = guide_of(w, h, &|x, y| {
+                let (tx, ty) = crate::placeholder::texel_of(
+                    (x as i64, y as i64),
+                    (w as u32 / scale as u32, h as u32 / scale as u32),
+                    quarters,
+                );
+                assert!((tx as usize) < gw && (ty as usize) < gh);
+                plain(tx as usize, ty as usize)
+            });
             let mut view = View::blank();
+            view.light.tone.shadows = 0.6;
+            view.light.tone.highlights = -0.5;
             view.center = (w as f32 / 2.0, h as f32 / 2.0);
             view.plane = (w as f32, h as f32);
             view.frame_size = (w as f32, h as f32);
-            view.cubic = true;
+            view.cubic = cubic;
             view.mixer.enabled = true;
             view.mixer.hue[1] = 20.0;
             view.mixer.saturation[5] = 0.6;
@@ -2589,8 +2623,9 @@ mod tests {
             )]);
             local.baked.light.exposure = 1.0;
             view.locals = vec![local];
-            let mut shot = |source: &WorkingImage, lag: u8| {
+            let mut shot = |source: &WorkingImage, guide: &crate::finish::Guide, lag: u8| {
                 renderer.upload(&crate::worker::Halves::from_image(source, None));
+                renderer.set_guide(guide);
                 let v = View {
                     source_turn: lag,
                     ..view.clone()
@@ -2598,8 +2633,8 @@ mod tests {
                 let target = renderer.render(w as u32, h as u32, &v);
                 renderer.read_back(&target).expect("read back")
             };
-            let developed = shot(&turned, 0);
-            let lagging = shot(&image, quarters);
+            let developed = shot(&turned, &turned_guide, 0);
+            let lagging = shot(&image, &guide, quarters);
             let worst = developed
                 .as_raw()
                 .iter()
@@ -2607,15 +2642,61 @@ mod tests {
                 .map(|(a, b)| a.abs_diff(*b))
                 .max()
                 .unwrap_or(0);
-            eprintln!("{quarters} quarters: at most {worst} levels apart");
+            eprintln!("{quarters} quarters, cubic {cubic}: at most {worst} levels apart");
             assert!(
                 worst <= 1,
-                "{quarters} quarters: the lagging texture is {worst} levels off"
+                "{quarters} quarters, cubic {cubic}: the lagging texture is {worst} levels off"
             );
             // And reading it straight is another picture, so the
             // check is of the turn.
             if quarters % 2 == 0 {
-                assert!(shot(&image, 0) != developed);
+                assert!(shot(&image, &guide, 0) != developed);
+                // And the guide is read through the turn too: the
+                // texture's own guide read straight is another picture.
+                assert!(shot(&image, &turned_guide, quarters) != developed);
+            }
+        }
+    }
+
+    /// A dropper's read during a turn's lag is the read of the develop
+    /// at the new turn: the unturned texture sampled at the texel
+    /// `texel_of` names is the turned texture sampled at the pixel.
+    #[test]
+    fn a_pick_through_a_turn_reads_the_pixel_the_turned_develop_has() {
+        use greycard_core::develop::orient;
+        use greycard_core::raw::Orientation;
+        let Some((device, queue)) = device("the lagging pick's check") else {
+            return;
+        };
+        let image = field();
+        let mut renderer = Renderer::new(&device, &queue);
+        for (lag, orientation) in [
+            (1u8, Orientation::Rotate90),
+            (2, Orientation::Rotate180),
+            (3, Orientation::Rotate270),
+        ] {
+            let turned = orient(image.clone(), orientation);
+            let size = (turned.width as u32, turned.height as u32);
+            let points = [
+                (0i64, 0i64),
+                (7, 3),
+                (40, 150),
+                (size.0 as i64 - 1, size.1 as i64 - 2),
+            ];
+            renderer.upload(&crate::worker::Halves::from_image(&turned, None));
+            let developed: Vec<_> = points
+                .iter()
+                .map(|&(x, y)| renderer.sample(x, y, 2).expect("sampled"))
+                .collect();
+            renderer.upload(&crate::worker::Halves::from_image(&image, None));
+            for (k, &(x, y)) in points.iter().enumerate() {
+                let (tx, ty) = crate::placeholder::texel_of((x, y), size, lag);
+                let lagging = renderer.sample(tx, ty, 2).expect("sampled");
+                assert!(
+                    lagging.is_some(),
+                    "{lag} quarters at {x},{y}: off the picture"
+                );
+                assert_eq!(lagging, developed[k], "{lag} quarters at {x},{y}");
             }
         }
     }

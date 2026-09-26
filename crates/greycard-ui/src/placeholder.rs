@@ -206,6 +206,21 @@ pub fn lagging_turn(shown: Option<(usize, u8)>, open: Option<usize>, turn: u8) -
     }
 }
 
+/// The texture pixel holding pixel `(x, y)` of a source of `size`
+/// that the texture stands `lag` quarter turns clockwise behind: the
+/// shader's `texel_at` for whole pixels, which is `develop::orient`'s
+/// own map for Rotate90, Rotate180 and Rotate270. What the droppers
+/// read the texture at while a turn's develop is on its way.
+pub fn texel_of((x, y): (i64, i64), size: (u32, u32), lag: u8) -> (i64, i64) {
+    let (w, h) = (i64::from(size.0), i64::from(size.1));
+    match lag % 4 {
+        1 => (y, w - 1 - x),
+        2 => (w - 1 - x, h - 1 - y),
+        3 => (h - 1 - y, x),
+        _ => (x, y),
+    }
+}
+
 /// A picture's size after `quarters` quarter turns.
 pub fn turned_size((w, h): (u32, u32), quarters: u8) -> (u32, u32) {
     if quarters % 2 == 1 { (h, w) } else { (w, h) }
@@ -322,6 +337,40 @@ mod tests {
         // Nothing has been developed at all: there is no picture, and
         // the viewport is the canvas because there is nothing to show.
         assert_eq!(drawn_source((0, 0), (0, 0)), (0, 0));
+    }
+
+    /// A pixel of the turned source is read from the texture where
+    /// `orient` took it from, for each quarter.
+    #[test]
+    fn a_texel_of_the_turned_source_is_where_orient_took_it_from() {
+        use greycard_core::develop::orient;
+        use greycard_core::image::WorkingImage;
+        use greycard_core::raw::Orientation;
+        let (w, h) = (5usize, 3usize);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: (0..w * h * 3).map(|v| v as f32).collect(),
+        };
+        for (lag, o) in [
+            (0u8, Orientation::Normal),
+            (1, Orientation::Rotate90),
+            (2, Orientation::Rotate180),
+            (3, Orientation::Rotate270),
+        ] {
+            let turned = orient(image.clone(), o);
+            let size = (turned.width as u32, turned.height as u32);
+            for y in 0..turned.height {
+                for x in 0..turned.width {
+                    let (tx, ty) = texel_of((x as i64, y as i64), size, lag);
+                    assert_eq!(
+                        turned.pixel(x, y),
+                        image.pixel(tx as usize, ty as usize),
+                        "{lag} quarters at {x},{y}"
+                    );
+                }
+            }
+        }
     }
 
     /// Why the rule is worth having: the size goes into the frame the

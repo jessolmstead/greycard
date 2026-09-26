@@ -326,17 +326,6 @@ pub(crate) fn turn_frames(
             developing = true;
         } else {
             greycard_edit::turn_into(&mut st.sidecars, &[f], quarters, aspect);
-            // The frame under the culling loupe whose develop is the
-            // one on the GPU: the size stands on end with it, so the
-            // viewport, which turns that develop by the difference
-            // once culling is left, measures the frame the way up it
-            // is drawn.
-            if quarters.rem_euclid(2) == 1
-                && Some(f) == st.current
-                && st.shown_turn.is_some_and(|(s, _)| s == f)
-            {
-                st.source_size = (st.source_size.1, st.source_size.0);
-            }
         }
         write_sidecar(st, f);
         let (turns, flip) = thumb_turns(st, app, f);
@@ -350,6 +339,9 @@ pub(crate) fn turn_frames(
     st.rasters.clear();
     st.learned.clear();
     st.asked.clear();
+    // The open frame, turned from the culling loupe or among a
+    // selection, is measured the way up the viewport will draw it.
+    crate::panel::viewport::settle_source_size(st);
     // The picture stands on end now, so whatever was fitted is
     // fitted afresh; the culling loupe reads the turn out of the
     // same matrix on its next frame, which is a redraw and not a
@@ -360,7 +352,7 @@ pub(crate) fn turn_frames(
         // the turn itself added no state.
         show_history(st, app);
         st.generation += 1;
-        st.turn_pressed = Some((std::time::Instant::now(), false));
+        st.turn_pressed = Some(std::time::Instant::now());
         app.set_status("developing...".into());
         app.set_busy(true);
         worker.send(Job::Develop {
@@ -1216,6 +1208,7 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
     // frame's shape.
     st.guiding.clear();
     st.source_size = (0, 0);
+    st.turn_pressed = None;
     app.set_guide_mode("".into());
     show_edit(st, &edit, app, st.target);
     st.edit = edit.clone();

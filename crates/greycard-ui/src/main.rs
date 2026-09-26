@@ -548,9 +548,9 @@ pub(crate) struct State {
     /// turning that picture in the viewport (`lagging_turn`) rather
     /// than waiting a second for the develop at the new turn.
     pub(crate) shown_turn: Option<(usize, u8)>,
-    /// When the open frame was last turned, for the log's two lines:
-    /// the first frame drawn after it, and its develop landing.
-    pub(crate) turn_pressed: Option<(std::time::Instant, bool)>,
+    /// When the open frame was last turned, for the log's line on the
+    /// first frame drawn after it.
+    pub(crate) turn_pressed: Option<std::time::Instant>,
     /// The crop as it was when a handle was pressed.
     pub(crate) crop_drag: Option<Crop>,
     /// Which look the panel edits: an adjustment by index, or the

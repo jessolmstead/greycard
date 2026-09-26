@@ -20,15 +20,35 @@ use crate::*;
 /// shader reads the texture through the turn it has yet to catch up
 /// with, so the crop, the masks and the picture under them agree
 /// from the frame the key was pressed on.
+///
+/// While the develop on the GPU is the open frame's own, its size
+/// turned by the lag is the size, whatever `source_size` was last
+/// told: a turn from the culling loupe over a selection, or one
+/// between a develop's delivery and its frame, would otherwise leave
+/// the two a quarter apart.
 pub(crate) fn drawn_picture(st: &State) -> ((u32, u32), u8) {
-    let lag = placeholder::lagging_turn(
-        st.shown_turn.filter(|_| st.held.is_none()),
-        st.current,
-        current_turn(st),
-    );
-    let size =
-        placeholder::drawn_source(st.source_size, placeholder::turned_size(st.shown_size, lag));
-    (size, lag)
+    match own_develop(st) {
+        Some(lag) => (placeholder::turned_size(st.shown_size, lag), lag),
+        None => (placeholder::drawn_source(st.source_size, st.shown_size), 0),
+    }
+}
+
+/// The turn the develop on the GPU lags the open frame by, when that
+/// develop is the open frame's own; none for another frame's.
+fn own_develop(st: &State) -> Option<u8> {
+    let shown = st.shown_turn.filter(|_| st.held.is_none())?;
+    (Some(shown.0) == st.current)
+        .then(|| placeholder::lagging_turn(Some(shown), st.current, current_turn(st)))
+}
+
+/// `source_size` brought to the size the open frame is drawn at, for
+/// everything that measures the edit by it (the crop, the masks, the
+/// droppers): after a turn, a select in culling, culling left, and a
+/// develop's frame.
+pub(crate) fn settle_source_size(st: &mut State) {
+    if let Some(lag) = own_develop(st) {
+        st.source_size = placeholder::turned_size(st.shown_size, lag);
+    }
 }
 
 /// What a dropper's press chose, to move with the drag after it.
@@ -176,6 +196,13 @@ pub(crate) fn sample_view_at(
     let (u, v) = view_to_source(st, app, x, y);
     let sw = st.source_size.0 as f32;
     let (px, py) = ((u * sw).round() as i64, (v * sw).round() as i64);
+    let (size, lag) = drawn_picture(st);
+    if px < 0 || py < 0 || px >= i64::from(size.0) || py >= i64::from(size.1) {
+        return None;
+    }
+    // The texture may still be the develop at the turn before; the
+    // pixel is read where it holds this one.
+    let (px, py) = placeholder::texel_of((px, py), size, lag);
     match st.renderer.as_ref()?.sample(px, py, reach) {
         Ok(sample) => sample,
         Err(e) => {

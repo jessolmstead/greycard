@@ -81,6 +81,7 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
     if st.cull.is_some() {
         return;
     }
+    st.turn_pressed = None;
     st.placing = None;
     app.set_placing("".into());
     st.retouching = None;
@@ -182,6 +183,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     st.generation += 1;
     st.zoom = 0.0;
     st.image_size = (0, 0);
+    crate::panel::viewport::settle_source_size(st);
     // The loupe's picture is already up: it stands in for the develop
     // now, by the same rule a selected frame's does, and the panel
     // keeps its shapes and its scopes off it until ours lands.
@@ -250,6 +252,7 @@ pub(crate) fn cull_select(st: &mut State, app: &App, file: usize) {
     // and a part-migrated Original crop would be measured first.
     migrate_frame(st, file);
     st.current = Some(file);
+    crate::panel::viewport::settle_source_size(st);
     app.set_selected(row as i32);
     app.set_file_name(file_name(&st.files[file]).into());
     app.set_shot_camera("".into());
@@ -1985,6 +1988,7 @@ mod tests {
             let mut st = state.borrow_mut();
             st.pending.take().expect("the develop was taken");
             st.source_size = st.shown_size;
+            crate::panel::viewport::settle_source_size(&mut st);
         };
         let generation = state.borrow().generation;
         land(developed(generation, (6000, 4000)));
@@ -2043,6 +2047,59 @@ mod tests {
         let mut st = state.borrow_mut();
         if st.pending.take().is_some() {
             st.source_size = st.shown_size;
+            crate::panel::viewport::settle_source_size(&mut st);
+        }
+    }
+
+    /// The size the open frame is measured by follows its turn
+    /// however the turn came: a selection turned from the culling
+    /// loupe while another frame was under it, and a turn pressed
+    /// between a develop's delivery and the frame that takes it up.
+    #[test]
+    fn the_measured_size_follows_a_turn_however_it_came() {
+        use crate::panel::viewport::drawn_picture;
+        let app = window(4);
+        let (state, worker) = state_for(&app, folder(4));
+        app.invoke_select(1);
+        let generation = state.borrow().generation;
+        land_if_taken(&app, &state, developed(generation, (6000, 4000)));
+        assert_eq!(state.borrow().source_size, (6000, 4000));
+
+        // Culling, on to frame 2, and both turned together; then
+        // back to frame 1 and out, with no camera picture of it.
+        app.invoke_cull_toggled();
+        app.invoke_select(2);
+        crate::panel::browser::turn_frames(&mut state.borrow_mut(), &app, &worker, &[1, 2], 1);
+        app.invoke_select(1);
+        {
+            let st = state.borrow();
+            assert_eq!(st.current, Some(1));
+            assert_eq!(
+                st.source_size,
+                (4000, 6000),
+                "back on frame 1 under the loupe"
+            );
+        }
+        app.invoke_cull_leave();
+        {
+            let st = state.borrow();
+            assert_eq!(drawn_picture(&st), ((4000, 6000), 1));
+            assert_eq!(st.source_size, (4000, 6000));
+        }
+
+        // Its develop delivered, and a turn before the frame that
+        // takes it up: that frame measures it on end again.
+        let generation = state.borrow().generation;
+        crate::panel::deliver::deliver(&app, developed_at(generation, (4000, 6000), 1));
+        app.invoke_frame_turned(1);
+        {
+            let mut st = state.borrow_mut();
+            // What the render does with it.
+            st.pending.take().expect("the develop was taken");
+            st.source_size = (4000, 6000);
+            crate::panel::viewport::settle_source_size(&mut st);
+            assert_eq!(st.source_size, (6000, 4000));
+            assert_eq!(drawn_picture(&st), ((6000, 4000), 1));
         }
     }
 

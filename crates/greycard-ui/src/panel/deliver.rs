@@ -478,12 +478,6 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // where the last frame's develop stood.
             st.shown_size = (image.width(), image.height());
             st.shown_turn = st.current.map(|c| (c, turn % 4));
-            if let Some((at, _)) = st.turn_pressed.take() {
-                tracing::info!(
-                    "turn: developed {:.0} ms after the key",
-                    at.elapsed().as_secs_f64() * 1e3
-                );
-            }
             st.pending = Some(Landed {
                 image,
                 guide,

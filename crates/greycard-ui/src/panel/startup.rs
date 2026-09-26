@@ -12,7 +12,7 @@ use crate::panel::mask::{ask_for, bake_locals};
 use crate::panel::retouch::patch_outlines;
 use crate::panel::viewport::{
     ViewMap, display_key, drawn_picture, effective_zoom, proof_settings, schedule_snapshot,
-    source_to_view, sync_display, write_screenshot, zoom_label,
+    settle_source_size, source_to_view, sync_display, write_screenshot, zoom_label,
 };
 use crate::*;
 
@@ -707,6 +707,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     if let Some(landed) = &pending {
                         let (w, h) = (landed.image.width(), landed.image.height());
                         st.source_size = (w, h);
+                        // A turn pressed since its delivery stands it
+                        // on end again.
+                        settle_source_size(st);
                         app.set_shot_size(size_text(w, h).into());
                         st.base_white = Some(landed.white);
                         st.white_cache = None;
@@ -1066,13 +1069,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         }
                     }
                     let texture = renderer.render(vw, vh, &view);
-                    if let Some((at, false)) = st.turn_pressed {
+                    if let Some(at) = st.turn_pressed.take() {
                         tracing::info!(
                             "turn: on screen {:.0} ms after the key, the develop there read \
                              through {lag} quarter turns",
                             at.elapsed().as_secs_f64() * 1e3
                         );
-                        st.turn_pressed = Some((at, true));
                     }
                     let (bins, in_flight) = renderer.analyze(&view, st.scope);
                     let fresh = bins.map(|(_, b)| b.to_vec());
