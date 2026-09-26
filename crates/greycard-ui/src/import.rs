@@ -631,13 +631,46 @@ pub fn sweep(folder: &Path) {
 /// RENAME_EXCL), a hard link then an unlink, which also cannot replace;
 /// and where it has no hard links either, the check and the rename, the
 /// moment and all. Says which it took, for the log.
+/// A path as MoveFileExW wants it, null-terminated: absolute, and
+/// with the `\\?\` prefix a path over 260 characters needs. The
+/// standard library puts the prefix on for its own calls and not for
+/// one made by hand, so without this a long import name got "cannot
+/// find the path" at the rename after the copy was made.
+#[cfg(windows)]
+fn verbatim(p: &Path) -> std::io::Result<Vec<u16>> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::path::{Component, Prefix};
+    // Absolute resolves `.` and `..` and turns every slash, which a
+    // verbatim path requires since nothing is parsed after the prefix.
+    let p = std::path::absolute(p)?;
+    let prefix = match p.components().next() {
+        Some(Component::Prefix(c)) => c.kind(),
+        _ => return Err(std::io::Error::other("no prefix on an absolute path")),
+    };
+    let mut wide: Vec<u16> = match prefix {
+        Prefix::Verbatim(_)
+        | Prefix::VerbatimUNC(..)
+        | Prefix::VerbatimDisk(_)
+        | Prefix::DeviceNS(_) => p.as_os_str().encode_wide().collect(),
+        Prefix::UNC(..) => {
+            // `\\server\share\...` is `\\?\UNC\server\share\...`.
+            let rest: Vec<u16> = p.as_os_str().encode_wide().skip(2).collect();
+            r"\\?\UNC\".encode_utf16().chain(rest).collect()
+        }
+        Prefix::Disk(_) => r"\\?\"
+            .encode_utf16()
+            .chain(p.as_os_str().encode_wide())
+            .collect(),
+    };
+    wide.push(0);
+    Ok(wide)
+}
+
 pub fn rename_noreplace(from: &Path, to: &Path) -> std::io::Result<&'static str> {
     #[cfg(windows)]
     {
-        use std::os::windows::ffi::OsStrExt;
         use windows_sys::Win32::Storage::FileSystem::MoveFileExW;
-        let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(Some(0)).collect() };
-        let (f, t) = (wide(from), wide(to));
+        let (f, t) = (verbatim(from)?, verbatim(to)?);
         // SAFETY: both are null-terminated UTF-16 paths that outlive
         // the call, which only reads them. No flags: no replacing and
         // no copying across volumes.
