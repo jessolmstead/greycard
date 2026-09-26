@@ -156,7 +156,9 @@ ask for first.
 
 - [ ] Camera match: a look fitted from the maker's embedded JPEG
       against the accurate develop, a matrix, a curve and a small LUT
-      per camera and style (§78)
+      per camera and style (§78). The trial plan is
+      `docs/camera-match.md`; waits on a shoot of one body and one
+      fixed style with the adaptive settings off
 - [ ] Profile making from a chart shot, after dcamprof (§78)
 - [ ] The monitor's own profile on Windows and macOS: read it from
       WCS and from ColorSync, so "System" means the display rather
