@@ -1665,6 +1665,22 @@ fn develop_job(
     let stamp = base.as_ref().map_or(1, |b| b.stamp + 1);
     let mut report = LearnedReport::Off;
     let mut ca_note = None;
+    // Only the frame's turn moved, and nothing in the base cares
+    // which way up the picture is: the base is turned where it
+    // stands, a permutation of its pixels, and is then kept below.
+    if let Some(b) = base.as_mut()
+        && b.turn != turn
+        && b.edit.same_base(edit)
+        && (gpu.is_some() || !b.ca_on_gpu)
+        && turns_exactly(edit, lenses)
+    {
+        let started = Instant::now();
+        turn_base(b, learned, turn, stamp, gpu.as_ref());
+        tracing::info!(
+            "base turned to {turn} quarter turns in {:.2} s",
+            started.elapsed().as_secs_f64()
+        );
+    }
     // A base is kept while its edit's base is the same, and, without
     // a GPU (the export), only if its CA correction was not the GPU's:
     // the export's picture is the reference's, so it makes the base
@@ -2093,6 +2109,80 @@ fn note_developed(
         "developed {width}x{height}: {}, total {total:.2} s",
         parts.join(", ")
     );
+}
+
+/// Whether a base made at one frame turn, turned by a permutation of
+/// its pixels, is the base made at another, to the bit.
+///
+/// Everything the engine does before its orientation step reads the
+/// mosaic, which a turn does not touch, and the step itself is a
+/// permutation (`develop::orient`), so the engine's picture at one
+/// turn is its picture at another permuted. What comes after it on
+/// the turned picture is the question. The lens correction is
+/// radial about the center, and the defringe's blur and its test
+/// against the frame's mean deviation are symmetric, so each is the
+/// same picture turned in exact arithmetic; in floats neither is,
+/// since a turn changes the order of the sums and which side of a
+/// half a coordinate rounds to. A frame with either on is developed
+/// afresh at its new turn, as it always was.
+fn turns_exactly(edit: &Edit, lenses: Option<&greycard_lens::Database>) -> bool {
+    edit.lens.is_identity(lenses.is_some()) && edit.lens.defringe().is_none()
+}
+
+/// The kept base, and the learned denoiser's pair beside it when it
+/// was made at the same turn, turned to the frame's `turn`: their
+/// pixels permuted, the guide plane read again off the turned
+/// picture, and everything kept after the base let go, since the
+/// retouch's patches and the picture before the sharpen were placed
+/// on the base the other way up. A new `stamp`, so the learned masks
+/// made on the old base are not taken for this one's.
+fn turn_base(
+    b: &mut Base,
+    learned: &mut Option<LearnedBase>,
+    turn: u8,
+    stamp: u64,
+    gpu: Option<&greycard_gpu::Context>,
+) {
+    let Some(o) = quarters((turn % 4 + 4 - b.turn % 4) % 4) else {
+        return;
+    };
+    let turned = |image: Arc<WorkingImage>| {
+        let image = Arc::try_unwrap(image).unwrap_or_else(|a| (*a).clone());
+        Arc::new(greycard_core::develop::orient(image, o))
+    };
+    // The blend at either end of its strength is one of the pair
+    // itself, shared rather than copied: turned once, and shared on.
+    let mut image = std::mem::replace(&mut b.image, Arc::new(WorkingImage::new(0, 0)));
+    if let Some(l) = learned.as_mut().filter(|l| l.turn == b.turn) {
+        let is_model = Arc::ptr_eq(&image, &l.model);
+        let is_plain = Arc::ptr_eq(&image, &l.plain);
+        if is_model || is_plain {
+            image = Arc::new(WorkingImage::new(0, 0));
+        }
+        let empty = || Arc::new(WorkingImage::new(0, 0));
+        l.model = turned(std::mem::replace(&mut l.model, empty()));
+        l.plain = turned(std::mem::replace(&mut l.plain, empty()));
+        l.turn = turn;
+        if is_model {
+            image = l.model.clone();
+        } else if is_plain {
+            image = l.plain.clone();
+        } else {
+            image = turned(image);
+        }
+    } else {
+        image = turned(image);
+    }
+    b.image = image;
+    b.guide = Arc::new(crate::finish::guide_plane(&b.image));
+    b.turn = turn;
+    b.stamp = stamp;
+    b.patched = None;
+    if b.pre.take().is_some()
+        && let Some(ctx) = gpu
+    {
+        ctx.release();
+    }
 }
 
 /// The engine's own develop of `edit`, before its sharpen, its CA
@@ -2857,6 +2947,89 @@ mod tests {
             gpu,
             &deliver,
         )
+    }
+
+    /// `develop_job` on `frame` under `edit` at the frame's `turn`,
+    /// on the CPU, from `base`: the picture.
+    fn develop_turned(
+        frame: &Arc<RawFrame>,
+        edit: &Edit,
+        turn: u8,
+        base: &mut Option<Base>,
+    ) -> Arc<WorkingImage> {
+        let deliver: Deliver = Arc::new(|_| {});
+        let (outcome, image) = develop_job(
+            &Input::Raw(frame.clone()),
+            edit,
+            turn,
+            1,
+            base,
+            &mut None,
+            &mut Ai::new(),
+            None,
+            None,
+            &mut None,
+            &deliver,
+        );
+        assert!(matches!(outcome, Outcome::Developed { .. }));
+        image.expect("a picture on the CPU")
+    }
+
+    /// A base turned where it stands is the base the engine makes at
+    /// the new turn, to the bit, and so is its guide plane: for a
+    /// frame whose tag is a plain turn and one whose tag mirrors, for
+    /// a quarter each way and a half. And a develop that finds a base
+    /// at another turn turns it rather than making it again, and
+    /// develops what a fresh one would.
+    #[test]
+    fn a_base_turned_in_place_is_the_base_developed_at_that_turn() {
+        use greycard_core::raw::Orientation;
+        let edit = Edit::default();
+        assert!(
+            turns_exactly(&edit, None),
+            "the check would not reach the turn"
+        );
+        for tag in [Orientation::Normal, Orientation::FlipHorizontal] {
+            let mut frame = aberrated_frame(120, 80);
+            frame.orientation = tag;
+            let frame = Arc::new(frame);
+            for (from, to) in [(0u8, 1u8), (1, 0), (0, 3), (1, 3), (2, 0)] {
+                let mut kept = None;
+                develop_turned(&frame, &edit, from, &mut kept);
+                let mut b = kept.take().expect("a base");
+                let stamp = b.stamp;
+                turn_base(&mut b, &mut None, to, stamp + 1, None);
+                let mut fresh = None;
+                develop_turned(&frame, &edit, to, &mut fresh);
+                let fresh = fresh.expect("a base");
+                let what = format!("{tag:?}, {from} to {to}");
+                assert_eq!(
+                    (b.image.width, b.image.height),
+                    (fresh.image.width, fresh.image.height),
+                    "{what}"
+                );
+                assert!(
+                    b.image.data == fresh.image.data,
+                    "{what}: the pixels differ"
+                );
+                assert_eq!(b.guide.data, fresh.guide.data, "{what}: the guide differs");
+                assert_eq!((b.turn, b.stamp), (to, stamp + 1));
+                assert!(b.patched.is_none() && b.pre.is_none());
+
+                // Through the develop: the base found at `from` is
+                // turned and kept, not made again, and the develop is
+                // the fresh one's.
+                let mut base = None;
+                develop_turned(&frame, &edit, from, &mut base);
+                let made = base.as_ref().map(|b| b.stamp);
+                let image = develop_turned(&frame, &edit, to, &mut base);
+                let b = base.as_ref().expect("a base");
+                assert_eq!(b.turn, to);
+                assert_eq!(Some(b.stamp), made.map(|s| s + 1));
+                let reference = develop_turned(&frame, &edit, to, &mut None);
+                assert!(image.data == reference.data, "{what}: the develop differs");
+            }
+        }
     }
 
     /// A context on a device of our own with `limits`, for driving
