@@ -150,13 +150,11 @@ A camera's own profile and look are a picker away, and a chart shot
 makes a new one. This and the library can swap order on what testers
 ask for first.
 
-- [ ] Camera match: a look fitted from the maker's embedded JPEG
-      against the accurate develop, a matrix, a curve and a small LUT
-      per camera and style (§78). Tried on four sets from the
-      archive and shaped (§178, `docs/camera-match.md`). The
-      `greycard-match` crate and the style reader landed 2026-09-26;
-      next the Look section's action with the index fields, the
-      sampling, the borrowing rule and the radial report
+- [ ] Camera match follow-ups (§181): a group's error held out over
+      every frame rather than four; the per-lens radial report fed
+      into the vignetting line below; `style:` in the filter text;
+      Nikon, Sony and Panasonic styles once files with the settings
+      varied make exiv2 a clean oracle for them (§180)
 - [ ] Profile making from a chart shot, after dcamprof (§78)
 - [ ] The monitor's own profile on Windows and macOS: read it from
       WCS and from ColorSync, so "System" means the display rather
@@ -356,7 +354,7 @@ release when the wait clears.
 - [ ] rawler's TIFF reader follows the next-IFD pointer with no cycle
       check when given no chain limit, so a file whose IFD0 points at
       itself grows memory until killed; its CR3 path parses the CMT
-      boxes that way (§178). Report upstream with the 26-byte
+      boxes that way (§180). Report upstream with the 26-byte
       reproducer in `decode/style.rs`'s test; a visited set and a
       default chain limit is the fix
 - [ ] rawler 0.8 on a CR3 with a zero-size box in `moov` loops

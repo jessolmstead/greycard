@@ -10,6 +10,17 @@ note a first tester reads.
 
 ## 0.1.3, unreleased
 
+- Fit this camera's look: a button in the Look section surveys the
+  library or the open folder by body and picture style, develops
+  about forty frames a group, lays the camera's own JPEG over each
+  and fits the maker's rendering as a look, written to the look
+  directory under the body's and the style's name; a group under
+  twenty frames borrows the style from another body or is skipped,
+  and an existing table is never replaced without the switch; the
+  picker says where a look was fitted when the open frame is another
+  body, and picture style is a filter facet. The maker's style and
+  adaptive settings join the library index by a migration in place
+  (§180, §181, `docs/camera-match.md`, 2026-09-26).
 - A right-click menu on a frame in the strip, the grid or the
   viewport: copy the settings of that frame, paste them onto the
   selection through the sync sheet's section list, rating, flag and
