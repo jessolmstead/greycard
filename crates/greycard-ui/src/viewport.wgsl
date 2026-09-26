@@ -1,6 +1,7 @@
 // The viewport: the engine's linear Rec.2020 image drawn at a zoom and
 // center, exposure applied, a display tone curve with a shoulder (or a
-// clip, when the curve is off) in the working space, then the matrix
+// clip, for a picture already rendered for a display) in the working
+// space, then the matrix
 // to linear sRGB and the sRGB encoding. The target is plain 8-bit:
 // Slint's renderer treats every texture as encoded bytes and writes
 // them to a non-sRGB surface unchanged, so an sRGB-format target would
@@ -30,8 +31,8 @@ struct Params {
     zoom: f32,
     // Stops.
     exposure: f32,
-    // 0 a clip; 1 the shape and the display curve; 2 the shape and a
-    // clip, for a picture that is not a raw (`finish::Source`).
+    // After the shape: 0 the display curve, for a raw; 1 a clip, for a
+    // picture already rendered for a display (`finish::Source`).
     curve: f32,
     // Slope at mid grey relative to the base curve's.
     contrast: f32,
@@ -389,26 +390,22 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         }
         c = mix_color(c, look, ab, by_mean);
     }
+    // The guide is the scene's, before any exposure, as `local_ab`
+    // is: the exposure here is a shift of it in stops and the contrast
+    // a scale. Nothing to read means the pixel's own luminance, as
+    // `shape` in `finish.rs` falls back to.
+    var g = 0.0;
+    let has_guide = p.guide.z > 0.5;
+    if (has_guide) {
+        g = look.contrast * (textureSampleLevel(guide, samp, at / p.guide.xy, 0.0).r + look.exposure);
+    }
+    let shaped = shape(c, look, g, has_guide);
+    // 1: a picture already rendered for a display, which takes the
+    // shape and a clip at white, not a second curve.
     if (p.curve > 0.5) {
-        // The guide is the scene's, before any exposure, as `local_ab`
-        // is: the exposure here is a shift of it in stops and the
-        // contrast a scale. Nothing to read means the pixel's own
-        // luminance, as `shape` in `finish.rs` falls back to.
-        var g = 0.0;
-        let has_guide = p.guide.z > 0.5;
-        if (has_guide) {
-            g = look.contrast * (textureSampleLevel(guide, samp, at / p.guide.xy, 0.0).r + look.exposure);
-        }
-        let shaped = shape(c, look, g, has_guide);
-        // 2: a picture already rendered for a display, which takes the
-        // shape and a clip at white, not a second curve.
-        if (p.curve > 1.5) {
-            c = clamp(shaped, vec3<f32>(0.0), vec3<f32>(1.0));
-        } else {
-            c = tone(shaped);
-        }
+        c = clamp(shaped, vec3<f32>(0.0), vec3<f32>(1.0));
     } else {
-        c = min(c, vec3<f32>(1.0));
+        c = tone(shaped);
     }
     // The point curves, on the encoded working-space value, before the
     // matrix, as `finish.rs` does; then the color curves.

@@ -13,7 +13,6 @@
       "enabled": true,
       "exposure": 0.0,
       "tone": {
-        "enabled": true,
         "contrast": 1.2,
         "highlights": -0.15,
         "shadows": 0.0,

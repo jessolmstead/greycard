@@ -6,7 +6,6 @@ import { Section, EditSlider, Toggle, Segmented } from "../controls.slint";
 
 export component LightSection inherits Section {
     in-out property <float> exposure;
-    in-out property <bool> tone-curve;
     in-out property <float> contrast;
     in-out property <float> highlights;
     in-out property <float> shadows;
@@ -35,7 +34,6 @@ export component LightSection inherits Section {
     }
     EditSlider {
         label: "Contrast";
-        enabled: root.tone-curve;
         logarithmic: true;
         minimum: 0.5;
         maximum: 2;
@@ -47,7 +45,6 @@ export component LightSection inherits Section {
     }
     EditSlider {
         label: "Highlights";
-        enabled: root.tone-curve;
         minimum: -2;
         maximum: 2;
         default: 0;
@@ -58,7 +55,6 @@ export component LightSection inherits Section {
     }
     EditSlider {
         label: "Shadows";
-        enabled: root.tone-curve;
         minimum: -2;
         maximum: 2;
         default: 0;
@@ -69,7 +65,6 @@ export component LightSection inherits Section {
     }
     EditSlider {
         label: "Whites";
-        enabled: root.tone-curve;
         minimum: -2;
         maximum: 2;
         default: 0;
@@ -80,7 +75,6 @@ export component LightSection inherits Section {
     }
     EditSlider {
         label: "Blacks";
-        enabled: root.tone-curve;
         minimum: -0.3;
         maximum: 0.3;
         default: 0;
@@ -88,11 +82,6 @@ export component LightSection inherits Section {
         value <=> root.blacks;
         text: (root.blacks >= 0 ? "+" : "") + round(root.blacks * 100) + "%";
         changed(v) => { root.view-changed(); }
-    }
-    Toggle {
-        label: "Tone curve";
-        checked <=> root.tone-curve;
-        toggled => { root.view-changed(); }
     }
 }
 

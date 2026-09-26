@@ -454,15 +454,11 @@ pub fn finish_pixel_with(
         let reference = reference.map(|ab| ab.map(|v| v * gain.cbrt()));
         c = mix_with(c, &mixer, &color, &bw, &tint, reference);
     }
-    if global.light.tone.enabled {
-        // The guide is the scene's, before any exposure: the exposure
-        // at this pixel is a shift of it in stops and the contrast a
-        // scale, which is what the power about mid grey is in stops.
-        let g = guide.map(|g| t.contrast * (g + exposure));
-        c = shape(c, &t, g).map(|x| global.source.curve(x));
-    } else {
-        c = c.map(|v| v.min(1.0));
-    }
+    // The guide is the scene's, before any exposure: the exposure at
+    // this pixel is a shift of it in stops and the contrast a scale,
+    // which is what the power about mid grey is in stops.
+    let g = guide.map(|g| t.contrast * (g + exposure));
+    c = shape(c, &t, g).map(|x| global.source.curve(x));
     c = [0, 1, 2].map(|k| {
         let x = encode(c[k].clamp(0.0, 1.0));
         let mut x2 = x;
@@ -546,11 +542,7 @@ pub fn pick(
     if mixer.enabled || color.enabled || bw.enabled || !tint.is_identity() {
         c = mix_with(c, &mixer, &color, &bw, &tint, None);
     }
-    if light.tone.enabled {
-        c = shape(c, &light.tone, None).map(|x| source.curve(x));
-    } else {
-        c = c.map(|v| v.min(1.0));
-    }
+    c = shape(c, &light.tone, None).map(|x| source.curve(x));
     let encoded = c.map(|v| encode(v.clamp(0.0, 1.0)));
     let luma = encode((LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]).clamp(0.0, 1.0));
     let shaded = [0, 1, 2].map(|k| decode(lookup(curves, k, encoded[k])));
@@ -1340,18 +1332,64 @@ mod tests {
         };
         let a = fp([MID_GREY; 3], &plus, &no_mix, &id, &m);
         assert!((a[1] - up[1]).abs() < 1e-5);
-        // Curve off: a clip at one, plain encoding below it.
-        let flat = Light {
-            enabled: true,
-            exposure: -BASELINE_EXPOSURE,
-            tone: Tone {
-                enabled: false,
-                ..Tone::default()
-            },
+    }
+
+    /// The Light section switched off is its sliders undone, not the
+    /// display curve taken away: a raw with nothing done to it looks
+    /// the same with the section on or off, and one with the sliders
+    /// set, off, looks like one with nothing done to it (issue #9).
+    #[test]
+    fn the_light_switch_off_keeps_the_base_curve() {
+        let m = crate::export::Space::Srgb.matrix();
+        let render = |edit: &Edit| {
+            let global = Baked::global(edit, Source::Scene);
+            [
+                [0.0; 3],
+                [0.01, 0.02, 0.005],
+                [MID_GREY; 3],
+                [0.6, 0.3, 0.9],
+                [2.0, 1.5, 1.0],
+                [8.0; 3],
+            ]
+            .map(|px| finish_pixel(px, &global, &[], &m))
         };
-        let c = fp([MID_GREY; 3], &flat, &no_mix, &id, &m);
-        assert!((c[1] - encode(MID_GREY)).abs() < 2e-3, "{c:?}");
-        assert!((fp([5.0; 3], &flat, &no_mix, &id, &m)[1] - 1.0).abs() < 1e-5);
+        let plain = Edit::default();
+        let mut off = Edit::default();
+        off.light.enabled = false;
+        assert_eq!(render(&off), render(&plain));
+        let mut set = Edit::default();
+        set.light.exposure = 1.5;
+        set.light.tone = Tone {
+            contrast: 1.4,
+            highlights: -1.0,
+            shadows: 0.8,
+            whites: 0.5,
+            blacks: -0.1,
+        };
+        assert_ne!(render(&set), render(&plain));
+        set.light.enabled = false;
+        assert_eq!(render(&set), render(&plain));
+        // And the curve is there: mid grey is lifted past its plain
+        // encoding, and far over white is white.
+        let out = render(&off);
+        assert!(out[2][1] > encode(MID_GREY * 2f32.powf(BASELINE_EXPOSURE)) + 0.02);
+        assert!((out[5][1] - 1.0).abs() < 1e-5);
+        // The dropper reads it the same way.
+        let px = [0.3, 0.2, 0.1];
+        let pick_of = |e: &Edit| {
+            pick(
+                px,
+                &e.light.effective(),
+                &e.mixer,
+                &e.color,
+                &e.bw,
+                &e.tint,
+                &e.curves.bake_with(&e.grading),
+                Source::Scene,
+            )
+            .encoded
+        };
+        assert_eq!(pick_of(&set), pick_of(&plain));
     }
 
     /// The slider at zero is the baseline: a picture with nothing done
@@ -2243,25 +2281,17 @@ mod tests {
         );
         assert!((red2.hue - red.hue).abs() < 1e-3, "{red:?} {red2:?}");
         assert!(red2.encoded[0] > red.encoded[0], "{red:?} {red2:?}");
-        // With the tone curve off, the encoded value is the input.s,
-        // the baseline taken back out.
-        let flat = Light {
-            exposure: -BASELINE_EXPOSURE,
-            tone: Tone {
-                enabled: false,
-                ..Default::default()
-            },
-            ..Light::default()
-        };
+        // A picture already rendered for a display takes no baseline
+        // and no curve, so the encoded value is the input's.
         let raw = pick(
             [0.1, 0.2, 0.3],
-            &flat,
+            &light,
             &mixer,
             &color,
             &BlackWhite::OFF,
             &Tint::OFF,
             &curves,
-            Source::Scene,
+            Source::Display,
         );
         for (k, v) in [0.1f32, 0.2, 0.3].iter().enumerate() {
             assert!((raw.encoded[k] - encode(*v)).abs() < 1e-5, "{raw:?}");

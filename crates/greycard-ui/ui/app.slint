@@ -369,7 +369,6 @@ export component App inherits Window {
 
     // The edit, mirrored from Rust's state struct.
     in-out property <float> exposure: 0;
-    in-out property <bool> tone-curve: true;
     in-out property <float> contrast: 1;
     in-out property <float> highlights: 0;
     in-out property <float> shadows: 0;
@@ -1651,7 +1650,6 @@ export component App inherits Window {
                         }
                         if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): LightSection {
                             exposure <=> root.exposure;
-                            tone-curve <=> root.tone-curve;
                             contrast <=> root.contrast;
                             highlights <=> root.highlights;
                             shadows <=> root.shadows;

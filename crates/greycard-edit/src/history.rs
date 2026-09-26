@@ -312,9 +312,6 @@ fn light(b: &Look, a: &Look) -> String {
     if x.exposure != y.exposure {
         moved.push(format!("Exposure {:+.2}", y.exposure));
     }
-    if tx.enabled != ty.enabled {
-        moved.push(switched("Tone curve", ty.enabled));
-    }
     for (name, was, is) in [
         ("Contrast", tx.contrast, ty.contrast),
         ("Highlights", tx.highlights, ty.highlights),

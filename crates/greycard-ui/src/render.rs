@@ -1273,12 +1273,11 @@ impl Renderer {
             clip: [v.warn.bits() as f32, 0.0, 0.0, 0.0],
             zoom: v.zoom,
             exposure: v.source.baseline() + v.light.exposure,
-            // 0 a clip, 1 the shape and the display curve, 2 the shape
-            // and a clip, for a picture that has had its curve.
-            curve: match (v.light.tone.enabled, v.source) {
-                (false, _) => 0.0,
-                (true, Source::Scene) => 1.0,
-                (true, Source::Display) => 2.0,
+            // The shape, then 0 the display curve, 1 a clip, for a
+            // picture that has had its curve.
+            curve: match v.source {
+                Source::Scene => 0.0,
+                Source::Display => 1.0,
             },
             contrast: v.light.tone.contrast,
             highlights: v.light.tone.highlights,
@@ -2527,6 +2526,117 @@ mod tests {
         // And the mixer does act, so the check is of something.
         view.mixer.enabled = false;
         assert!(shot(&view) != without);
+    }
+
+    /// The Light section switched off keeps the base curve on the GPU
+    /// as `finish_pixel` does (issue #9, where off took the curve away
+    /// and the picture got darker). The check is against the CPU: the
+    /// view for the section off with sliders set, through
+    /// `effective()`, draws what `finish_pixel` makes of the default
+    /// edit, curve and all. The same sliders on are drawn first, so a
+    /// view that ignored them could not pass for one that undid them.
+    #[test]
+    fn the_light_switch_off_keeps_the_base_curve_on_the_gpu() {
+        let Some((device, queue)) = device("the light switch's check") else {
+            return;
+        };
+        let image = field();
+        let (w, h) = (image.width, image.height);
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        let mut view = View::blank();
+        view.center = (w as f32 / 2.0, h as f32 / 2.0);
+        view.plane = (w as f32, h as f32);
+        view.frame_size = (w as f32, h as f32);
+        let mut shot = |view: &View| {
+            let target = renderer.render(w as u32, h as u32, view);
+            renderer.read_back(&target).expect("read back")
+        };
+        let mut set = Light {
+            exposure: 1.2,
+            ..Light::default()
+        };
+        set.tone.contrast = 1.4;
+        set.tone.whites = 0.5;
+        set.tone.blacks = -0.1;
+        view.light = set;
+        let lit = shot(&view);
+        set.enabled = false;
+        view.light = set.effective();
+        let off = shot(&view);
+        assert!(lit != off, "the sliders act, so the check is of something");
+        // And that picture is the CPU's, to a level or so: sRGB, the
+        // renderer's output until told otherwise, and the display
+        // table the identity.
+        let seen: Vec<f32> = image
+            .data
+            .iter()
+            .map(|v| half::f16::from_f32(*v).to_f32())
+            .collect();
+        let global = Baked::global(&greycard_edit::Edit::default(), Source::Scene);
+        let to_out = crate::export::Space::Srgb.matrix();
+        let mut worst = 0.0f32;
+        for y in 0..h {
+            for x in 0..w {
+                let i = (y * w + x) * 3;
+                let px = [seen[i], seen[i + 1], seen[i + 2]];
+                let cpu = crate::finish::finish_pixel(px, &global, &[], &to_out);
+                let gpu = off.get_pixel(x as u32, y as u32);
+                for k in 0..3 {
+                    worst = worst.max((cpu[k] - f32::from(gpu[k]) / 255.0).abs());
+                }
+            }
+        }
+        eprintln!("light off, GPU against CPU: max difference {worst:.4}");
+        assert!(worst < 2.5 / 255.0, "{worst}");
+    }
+
+    /// A picture already rendered for a display takes a clip where a
+    /// raw takes the curve, on the GPU as `finish_pixel` has it, so the
+    /// source's mapping to the shader's mode is checked both ways.
+    #[test]
+    fn a_rendered_picture_takes_a_clip_on_the_gpu_as_on_the_cpu() {
+        let Some((device, queue)) = device("the rendered picture's check") else {
+            return;
+        };
+        let image = field();
+        let (w, h) = (image.width, image.height);
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        let seen: Vec<f32> = image
+            .data
+            .iter()
+            .map(|v| half::f16::from_f32(*v).to_f32())
+            .collect();
+        let to_out = crate::export::Space::Srgb.matrix();
+        let mut worst_of = |source: Source| {
+            let mut view = View::blank();
+            view.center = (w as f32 / 2.0, h as f32 / 2.0);
+            view.plane = (w as f32, h as f32);
+            view.frame_size = (w as f32, h as f32);
+            view.source = source;
+            let target = renderer.render(w as u32, h as u32, &view);
+            let shown = renderer.read_back(&target).expect("read back");
+            let global = Baked::global(&greycard_edit::Edit::default(), source);
+            let mut worst = 0.0f32;
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * w + x) * 3;
+                    let px = [seen[i], seen[i + 1], seen[i + 2]];
+                    let cpu = crate::finish::finish_pixel(px, &global, &[], &to_out);
+                    let gpu = shown.get_pixel(x as u32, y as u32);
+                    for k in 0..3 {
+                        worst = worst.max((cpu[k] - f32::from(gpu[k]) / 255.0).abs());
+                    }
+                }
+            }
+            worst
+        };
+        let display = worst_of(Source::Display);
+        let scene = worst_of(Source::Scene);
+        eprintln!("GPU against CPU: rendered {display:.4}, raw {scene:.4}");
+        assert!(display < 2.5 / 255.0, "{display}");
+        assert!(scene < 2.5 / 255.0, "{scene}");
     }
 
     /// The same on a real frame, developed at the defaults, with the

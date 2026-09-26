@@ -436,7 +436,7 @@ pub fn render(
     // fallback is the right answer for it.
     let guide = guide
         .filter(|g| !g.data.is_empty())
-        .filter(|_| global.light.tone.enabled && reads_guide(edit))
+        .filter(|_| reads_guide(edit))
         .map(|g| (g, sw));
     let pixels = match settings.format {
         Format::Tiff => Pixels::Sixteen(finish::finish_with(

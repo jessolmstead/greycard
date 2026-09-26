@@ -290,8 +290,9 @@ impl Default for Edit {
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Light {
-    /// The section's switch: off, the exposure and the tone curve do
-    /// nothing, and stay set for when it is on again.
+    /// The section's switch: off, the exposure and the tone sliders do
+    /// nothing, and stay set for when it is on again. The base display
+    /// curve under them is not the section's and stays.
     pub enabled: bool,
     /// Exposure, in stops.
     pub exposure: f32,
@@ -310,7 +311,8 @@ impl Default for Light {
 
 impl Light {
     /// What acts: this light, or with the switch off, no exposure and
-    /// the tone curve off. Consumers apply this, so the switch is one
+    /// the sliders at neutral: the base curve alone, as for a raw with
+    /// nothing done to it. Consumers apply this, so the switch is one
     /// test in one place.
     pub fn effective(&self) -> Light {
         if self.enabled {
@@ -319,22 +321,23 @@ impl Light {
             Light {
                 enabled: false,
                 exposure: 0.0,
-                tone: Tone {
-                    enabled: false,
-                    ..self.tone
-                },
+                tone: Tone::default(),
             }
         }
     }
 }
 
-/// The display tone curve: a shoulder over the scene, or none, and
-/// the shifts about it. The shifts are by luminance and scale all
-/// three channels alike, so a color keeps its hue.
+/// The shifts about the display tone curve. The curve itself, a
+/// shoulder over the scene, is always there for a raw: it is part of
+/// rendering one, not an edit. The shifts are by luminance and scale
+/// all three channels alike, so a color keeps its hue.
+///
+/// Older sidecars and presets carry an `enabled` here, from when the
+/// curve had a switch; it is ignored, so one saved with it off opens
+/// with the curve on.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Tone {
-    pub enabled: bool,
     /// Slope at mid grey relative to the base curve's: 1 leaves it,
     /// above steepens, below flattens.
     pub contrast: f32,
@@ -365,7 +368,6 @@ pub struct Tone {
 impl Default for Tone {
     fn default() -> Self {
         Self {
-            enabled: true,
             contrast: 1.0,
             highlights: 0.0,
             shadows: 0.0,
@@ -2373,6 +2375,39 @@ mod tests {
     }
 
     #[test]
+    fn a_sidecar_with_the_old_tone_curve_switch_off_still_reads() {
+        // The curve had a switch once; a file saved with it off keeps
+        // its sliders and loses only the switch, which is gone.
+        let old = r#"{"version": 3, "light": {"exposure": 0.5,
+            "tone": {"enabled": false, "contrast": 1.2, "shadows": 0.3}}}"#;
+        let e = Edit::from_json(old).unwrap();
+        assert_eq!(e.light.exposure, 0.5);
+        assert_eq!(e.light.tone.contrast, 1.2);
+        assert_eq!(e.light.tone.shadows, 0.3);
+        let written: serde_json::Value = serde_json::from_str(&e.to_json()).unwrap();
+        let tone = written["light"]["tone"].as_object().unwrap();
+        assert!(!tone.contains_key("enabled"), "{tone:?}");
+        assert!(tone.contains_key("contrast"));
+
+        // The same through a sidecar on disk, current and history.
+        let dir = scratch("old-tone-switch");
+        let raw = dir.join("IMG_0001.CR3");
+        std::fs::write(
+            Sidecar::path_for(&raw),
+            format!(r#"{{"current": {old}, "history": [{old}]}}"#),
+        )
+        .unwrap();
+        let sidecar = Sidecar::load(&raw).unwrap().unwrap();
+        assert_eq!(sidecar.current, e);
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        // And through a preset.
+        let preset = format!(r#"{{"name": "Old", "sections": ["light"], "edit": {old}}}"#);
+        let p = preset::Preset::from_json(&preset).unwrap();
+        assert_eq!(p.edit.light.tone, e.light.tone);
+    }
+
+    #[test]
     fn the_detail_section_rests_off_the_engine_and_reads_from_an_old_sidecar() {
         // A sidecar from before the section has it at its default: on,
         // both sliders at rest, which asks the engine for nothing.
@@ -2455,9 +2490,9 @@ mod tests {
         edit.light.enabled = false;
         let acting = edit.light.effective();
         assert_eq!(acting.exposure, 0.0);
-        assert!(!acting.tone.enabled);
-        assert_eq!(acting.tone.contrast, 1.5, "the setting is kept");
-        assert_eq!(edit.light.exposure, 2.0, "and so is the edit's");
+        assert_eq!(acting.tone, Tone::default(), "the sliders at neutral");
+        assert_eq!(edit.light.exposure, 2.0, "and the edit's are kept");
+        assert_eq!(edit.light.tone.contrast, 1.5);
 
         edit.noise.learned = Learned::Fast;
         edit.noise.profiled = true;

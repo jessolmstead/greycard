@@ -198,7 +198,6 @@ pub(crate) fn read_look(app: &App) -> Look {
         exposure: app.get_exposure(),
         ..Light::default()
     };
-    light.tone.enabled = app.get_tone_curve();
     light.tone.contrast = app.get_contrast();
     light.tone.highlights = app.get_highlights();
     light.tone.shadows = app.get_shadows();
@@ -275,13 +274,7 @@ pub(crate) fn develop_soon(
 
 pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
     let mut edit = base.clone();
-    let mut look = read_look(app);
-    if target.is_some() {
-        // The tone curve's switch is the picture's, not a mask's.
-        look.light.tone.enabled = true;
-    }
-    edit.set_target_look(target, look);
-    edit.light.tone.enabled = app.get_tone_curve();
+    edit.set_target_look(target, read_look(app));
     if let Some(a) = target.and_then(|i| edit.adjustments.get_mut(i)) {
         a.enabled = app.get_adjustment_enabled();
         a.mask.invert = app.get_mask_invert();
@@ -387,7 +380,6 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     let look = edit.target_look(target);
     app.set_light_enabled(look.light.enabled);
     app.set_exposure(look.light.exposure);
-    app.set_tone_curve(edit.light.tone.enabled);
     app.set_contrast(look.light.tone.contrast);
     app.set_highlights(look.light.tone.highlights);
     app.set_shadows(look.light.tone.shadows);
