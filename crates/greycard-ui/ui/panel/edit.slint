@@ -16,7 +16,8 @@ export component LightSection inherits Section {
     in-out property <string> target-name;
     callback view-changed();
 
-    title: "LIGHT" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    title: "LIGHT";
+    owner: root.target-name;
     icon: @image-url("../icons/sun.svg");
     collapsed <=> root.collapsed-light;
     switchable: true;

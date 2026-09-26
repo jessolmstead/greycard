@@ -26,7 +26,8 @@ export component CurvesSection inherits Section {
     callback parametric-changed();
     callback view-changed();
 
-    title: "CURVES" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    title: "CURVES";
+    owner: root.target-name;
     icon: @image-url("../icons/spline.svg");
     collapsed <=> root.collapsed-curves;
     switchable: true;

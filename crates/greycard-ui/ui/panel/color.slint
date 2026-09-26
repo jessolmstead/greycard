@@ -90,7 +90,8 @@ export component ColorSection inherits Section {
         root.band-colors[0] 100%);
     callback view-changed();
 
-    title: "COLOR" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    title: "COLOR";
+    owner: root.target-name;
     icon: @image-url("../icons/palette.svg");
     collapsed <=> root.collapsed-color;
     switchable: true;
@@ -147,7 +148,8 @@ export component MixerSection inherits Section {
     property <bool> mixer-acts: root.mixer-enabled && !root.mixer-superseded;
     callback view-changed();
 
-    title: "COLOR MIXER" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    title: "COLOR MIXER";
+    owner: root.target-name;
     icon: @image-url("../icons/palette.svg");
     collapsed <=> root.collapsed-mixer;
     switchable: true;
@@ -344,7 +346,8 @@ export component GradingSection inherits Section {
     callback grade-reset();
     callback view-changed();
 
-    title: "COLOR GRADING" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    title: "COLOR GRADING";
+    owner: root.target-name;
     icon: @image-url("../icons/palette.svg");
     collapsed <=> root.collapsed-grading;
     switchable: true;
@@ -466,7 +469,8 @@ export component TintSection inherits Section {
     callback tint-changed();
     callback tint-reset();
 
-    title: "TINT" + (root.target-name == "" ? "" : "  \u{00b7}  " + root.target-name);
+    title: "TINT";
+    owner: root.target-name;
     icon: @image-url("../icons/palette.svg");
     collapsed <=> root.collapsed-tint;
     // The hue ring: a drag sets the hue by

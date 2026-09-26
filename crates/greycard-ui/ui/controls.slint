@@ -62,6 +62,9 @@ export component Switch inherits Rectangle {
 // settings stay as they are, dimmed, for when it is on again.
 export component Section inherits VerticalLayout {
     in property <string> title;
+    // Whose section this is, before the title: a mask's adjustment
+    // on the Masks tab. A long one is cut; the title after it stays.
+    in property <string> owner;
     in property <image> icon;
     // A word after the title, muted: a key, say.
     in property <string> hint;
@@ -109,16 +112,26 @@ export component Section inherits VerticalLayout {
                     height: Theme.icon;
                     y: (parent.height - self.height) / 2;
                 }
-                Text {
-                    text: root.title;
+                if root.owner != "": Text {
+                    text: root.owner.to-uppercase();
                     color: head.has-hover ? Theme.text : Theme.text-secondary;
                     font-size: Theme.font-xs;
                     font-weight: Theme.weight-semibold;
                     letter-spacing: 0.8px;
                     vertical-alignment: center;
-                    // A long title (an adjustment's name after the
-                    // section's) is cut, not the panel widened.
                     overflow: elide;
+                }
+                Text {
+                    text: (root.owner == "" ? "" : "\u{00b7}  ") + root.title;
+                    color: head.has-hover ? Theme.text : Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    font-weight: Theme.weight-semibold;
+                    letter-spacing: 0.8px;
+                    vertical-alignment: center;
+                    // A long title is cut, not the panel widened;
+                    // after an owner, the owner is cut instead.
+                    overflow: elide;
+                    min-width: root.owner == "" ? 0px : self.preferred-width;
                 }
                 if root.hint != "": Text {
                     text: root.hint;
