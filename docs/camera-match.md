@@ -369,5 +369,4 @@ frames.
   Ace fitted, the cross table built. The registration cutoff and the
   ridge added to the script. Faithful is nearly one rendering across
   the two Canons; the GFX's held-out gap is the unprofiled Sigma's
-  falloff. Four looks in the work folders; only the R6 II's is in the
-  looks store.
+  falloff. All four looks are in the author's looks store.
