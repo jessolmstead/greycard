@@ -171,17 +171,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(c) = st.current else {
                 return;
             };
-            // In culling the panel is not the frame's, so nothing is
-            // read from it: the sidecar's history moves on its own,
-            // and the leaving develops what it lands on.
+            // In culling the keys are the ratings', flags' and
+            // labels': undo steps back the session's changes to those
+            // and touches no develop, and culling stays up.
             if st.cull.is_some() {
-                let moved = if back {
-                    st.sidecars[c].undo()
-                } else {
-                    st.sidecars[c].redo()
-                };
-                if moved {
-                    leave_cull(&mut st, &app, &worker, None);
+                let next = crate::panel::browser::step_tags(&mut st, &app, back);
+                drop(st);
+                if let Some(row) = next {
+                    app.invoke_select(row as i32);
                 }
                 return;
             }

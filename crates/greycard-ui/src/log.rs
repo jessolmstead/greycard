@@ -188,6 +188,13 @@ fn on_panic(info: &std::panic::PanicHookInfo<'_>) {
         .location()
         .map(|l| format!(" at {}:{}", l.file(), l.line()))
         .unwrap_or_default();
+    // Inside rawler the panic is caught and the file fails to decode
+    // with it as the reason, which the caller logs: a damaged file,
+    // not a crash, and no backtrace wanted.
+    if greycard_core::decode::inside_decoder() {
+        tracing::debug!("the decoder panicked{at} on '{thread}': {message}; caught");
+        return;
+    }
     let backtrace = std::backtrace::Backtrace::force_capture();
     tracing::error!("thread '{thread}' panicked{at}: {message}\n{backtrace}");
 }

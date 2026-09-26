@@ -6,6 +6,7 @@ use crate::panel::edit::{
     current_turn, edit_to_develop, read_edit, save_edit, show_edit, write_sidecar,
 };
 use crate::panel::history::show_history;
+use crate::tags::{self, Tags};
 use crate::*;
 
 /// A folder's first round of thumbnails as it comes back from the
@@ -224,8 +225,38 @@ pub(crate) fn set_meta(
     change: meta::Change,
 ) -> Option<usize> {
     let was_shown: Vec<bool> = frames.iter().map(|&i| row_of(st, i).is_some()).collect();
+    let before: Vec<Tags> = frames
+        .iter()
+        .map(|&i| Tags::of(&st.sidecars[i].meta))
+        .collect();
     let (_, moved) = greycard_edit::meta_into(&mut st.sidecars, frames, change);
-    for &i in &moved {
+    let step = frames
+        .iter()
+        .zip(before)
+        .filter(|(i, _)| moved.contains(i))
+        .map(|(&i, before)| tags::Moved {
+            path: st.files[i].clone(),
+            before,
+            after: Tags::of(&st.sidecars[i].meta),
+        })
+        .collect();
+    st.tags.record(step);
+    tags_shown(st, app, frames, &was_shown, &moved)
+}
+
+/// What follows a change to frames' tags, from a key or an undo:
+/// each moved frame written and its badges put out, the rejects
+/// counted, and the browser's rows rebuilt if the filter now shows
+/// a different set; the row to move the selection to when the
+/// current frame left them.
+fn tags_shown(
+    st: &mut State,
+    app: &App,
+    frames: &[usize],
+    was_shown: &[bool],
+    moved: &[usize],
+) -> Option<usize> {
+    for &i in moved {
         write_sidecar(st, i);
         show_badges(st, app, i);
     }
@@ -235,7 +266,7 @@ pub(crate) fn set_meta(
     }
     let hides = frames
         .iter()
-        .zip(&was_shown)
+        .zip(was_shown)
         .any(|(&i, &was)| was != filter_shows(st, i));
     if !hides {
         show_filter(st, app);
@@ -1263,6 +1294,35 @@ fn step_to(
         }
         (false, true) => {}
     }
+}
+
+/// Culling's undo (`back`) or redo: the session's last rating, flag
+/// or label change taken back or made again, and nothing else. The
+/// row to select after, for the caller to open once the state is
+/// free: the changed frame's, so what changed is on screen, or the
+/// nearest when the filter no longer shows the current one. None
+/// when there was nothing to step, or nothing to move to.
+pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> {
+    let step = if back { st.tags.undo() } else { st.tags.redo() }?;
+    let landing = tags::landing(
+        &step,
+        |p| st.files.iter().position(|f| f == p),
+        |i| Tags::of(&st.sidecars[i].meta),
+    );
+    let frames: Vec<usize> = landing.iter().map(|&(i, _)| i).collect();
+    let was_shown: Vec<bool> = frames.iter().map(|&i| row_of(st, i).is_some()).collect();
+    for &(i, tags) in &landing {
+        tags.put(&mut st.sidecars[i].meta);
+    }
+    let next = tags_shown(st, app, &frames, &was_shown, &frames);
+    // Over to the frame that changed, if it is not the one on
+    // screen and the filter still shows it.
+    if !frames.iter().any(|&i| Some(i) == st.current)
+        && let Some(row) = frames.first().and_then(|&i| row_of(st, i))
+    {
+        return Some(row);
+    }
+    next
 }
 
 /// A culling key's change over the whole selection, as the key and

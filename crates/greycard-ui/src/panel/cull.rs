@@ -2503,6 +2503,66 @@ mod tests {
         assert_eq!(app.get_selected(), 1);
     }
 
+    /// Ctrl+Z in culling steps back the ratings, flags and labels the
+    /// session gave, newest first, going to each frame it changes;
+    /// Ctrl+Shift+Z makes them again. No develop moves, and culling
+    /// stays up.
+    #[test]
+    fn undo_in_culling_takes_back_the_tags_and_nothing_else() {
+        use greycard_edit::meta::Flag;
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        app.invoke_select(0);
+        {
+            let mut st = state.borrow_mut();
+            // A develop step on the frame, for undo to leave alone.
+            let mut e = st.sidecars[0].current.clone();
+            e.light.exposure = 1.0;
+            st.sidecars[0].record(e);
+            enter_cull(&mut st, &app, 1);
+        }
+        let develop = |st: &State| (st.sidecars[0].states(), st.sidecars[0].position());
+        let before = develop(&state.borrow());
+        let tags = |st: &State, i: usize| (st.sidecars[i].meta.rating, st.sidecars[i].meta.flag);
+
+        app.invoke_meta_key("3".into());
+        app.invoke_select(1);
+        app.invoke_meta_key("p".into());
+        assert_eq!(tags(&state.borrow(), 0), (3, Flag::None));
+        assert_eq!(tags(&state.borrow(), 1), (0, Flag::Pick));
+
+        // The pick first, on the frame on screen.
+        app.invoke_undo();
+        assert_eq!(tags(&state.borrow(), 1), (0, Flag::None));
+        assert_eq!(state.borrow().current, Some(1));
+        // Then the stars, and over to the frame that had them.
+        app.invoke_undo();
+        assert_eq!(tags(&state.borrow(), 0), (0, Flag::None));
+        assert_eq!(state.borrow().current, Some(0));
+        assert_eq!(
+            app.get_thumbs().row_data(0).unwrap().rating,
+            0,
+            "the badge too"
+        );
+        // Nothing left: nothing moves.
+        app.invoke_undo();
+        assert_eq!(state.borrow().current, Some(0));
+
+        app.invoke_redo();
+        assert_eq!(tags(&state.borrow(), 0), (3, Flag::None));
+        assert!(state.borrow().cull.is_some(), "still culling");
+        assert_eq!(
+            develop(&state.borrow()),
+            before,
+            "the develop was not touched"
+        );
+
+        // A new rating drops what was left to redo.
+        app.invoke_meta_key("5".into());
+        app.invoke_redo();
+        assert_eq!(tags(&state.borrow(), 1), (0, Flag::None));
+    }
+
     /// Ctrl+F and / both ask for the filter's text field, and neither
     /// is eaten by anything else in the window. The culling keys keep
     /// their own keys, and a sheet over the window keeps all of them.

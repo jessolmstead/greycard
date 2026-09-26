@@ -11,14 +11,9 @@ on and nothing more; the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A half-copied CR3 panics the worker with "capacity overflow"
-      inside rawler's decoder; the job catches it, the frame shows
-      nothing. Found by the thumbnail cache's review (§163). Filed as
-      dnglab/dnglab#849; a guard at the job meanwhile
-- [ ] Ctrl+Z while culling undoes the frame's last develop edit and
-      leaves culling; a rating, flag or label has no undo. Undo there
-      should step back the session's rating, flag and label changes
-      and nothing else
+- [ ] A half-copied ARW (full length, zeros past the copy) decodes
+      without an error, as a picture blank below the copied part; the
+      develop should refuse it with §179's half-copied message
 
 ## v0.1.0: browse, develop, export
 

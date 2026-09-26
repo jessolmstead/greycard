@@ -1896,7 +1896,7 @@ pub(crate) mod tests {
         assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
         assert_eq!(report.errors[0].0, canonical(&bad).unwrap());
         assert!(
-            report.errors[0].1.contains("panicked"),
+            report.errors[0].1.contains("gave up"),
             "{}",
             report.errors[0].1
         );

@@ -401,6 +401,15 @@ enum LibraryAction {
 fn main() -> Result<()> {
     let cli = Cli::parse();
     log::start(cli.verbose);
+    // A panic inside rawler is caught and comes back as the file's
+    // decode error, which is printed: its own print would say the
+    // same thing twice, the first time as if it were a crash.
+    let hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        if !greycard_core::decode::inside_decoder() {
+            hook(info);
+        }
+    }));
     match cli.command {
         Command::Library { db, action } => library(db, action),
         Command::Info { file } => {

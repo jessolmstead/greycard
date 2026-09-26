@@ -52,16 +52,89 @@ fn decoder_error(e: ::rawler::RawlerError) -> Error {
     Error::Unsupported(format!("{camera}{mode}: {what}"))
 }
 
+/// Every call into rawler goes through here. rawler panics on some
+/// damaged files where it should return an error — a CR3 whose tail
+/// is zeros, as a copy in progress leaves it, overflows a size in its
+/// CTMD reader (dnglab/dnglab#849), and a NEF, RAF or RW2 in the same
+/// state runs its bit pump off the end — and a panic on a caller's
+/// thread takes the editor with it when the caller is the UI. So the
+/// panic is caught here and becomes the file's decode error, the one
+/// every caller already handles. `tail` is the file's last bytes, or
+/// a way to read them, to say what went wrong when that is knowable.
+fn guarded<T>(tail: impl FnOnce() -> Option<Vec<u8>>, f: impl FnOnce() -> Result<T>) -> Result<T> {
+    let was = GUARDED.replace(true);
+    let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+    GUARDED.set(was);
+    caught.unwrap_or_else(|payload| {
+        let message = payload
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "no message".into());
+        Err(Error::Decode(
+            if tail().is_some_and(|t| ends_in_zeros(&t)) {
+                format!(
+                    "the file ends in zeros where a finished one has data: it looks \
+                 half-copied, or still being copied (the decoder gave up: {message})"
+                )
+            } else {
+                format!("the decoder gave up on this file: {message}")
+            },
+        ))
+    })
+}
+
+thread_local! {
+    static GUARDED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this thread is inside a call into rawler, where a panic
+/// is caught and becomes an error. For a panic hook: such a panic is
+/// a damaged file, not a crash, and the hook can say so.
+pub fn inside_decoder() -> bool {
+    GUARDED.get()
+}
+
+/// How much of a file's end is read to tell a copy in progress.
+const TAIL: usize = 64 * 1024;
+
+/// A whole [`TAIL`] of zeros at the end. No raw ends that way: its
+/// last bytes are compressed samples or a preview, and a run of 64 KiB
+/// of zeros in either is not something a camera writes. A copier that
+/// sets the length first (Windows' CopyFile, `rsync --preallocate`,
+/// some card importers) leaves exactly that until it is done.
+fn ends_in_zeros(tail: &[u8]) -> bool {
+    tail.len() >= TAIL && tail.iter().all(|&b| b == 0)
+}
+
+/// The last [`TAIL`] bytes of the file at `path`.
+fn tail_of(path: &Path) -> Option<Vec<u8>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(TAIL as u64)))
+        .ok()?;
+    let mut tail = Vec::with_capacity(TAIL);
+    file.read_to_end(&mut tail).ok()?;
+    Some(tail)
+}
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct RawlerDecoder;
 
 impl Decoder for RawlerDecoder {
     fn decode_bytes(&self, bytes: &[u8]) -> Result<RawFrame> {
-        Ok(decode_source(&RawSource::new_from_slice(bytes))?.0)
+        let tail = || Some(bytes[bytes.len().saturating_sub(TAIL)..].to_vec());
+        guarded(tail, || {
+            Ok(decode_source(&RawSource::new_from_slice(bytes))?.0)
+        })
     }
 
     fn decode_path(&self, path: &Path) -> Result<RawFrame> {
-        Ok(decode_source(&RawSource::new(path)?)?.0)
+        guarded(
+            || tail_of(path),
+            || Ok(decode_source(&RawSource::new(path)?)?.0),
+        )
     }
 }
 
@@ -69,7 +142,7 @@ impl RawlerDecoder {
     /// Decode a file and also return the metadata rawler reads from it, for
     /// passing on to an output that carries EXIF (see [`crate::dng`]).
     pub fn decode_path_with_metadata(&self, path: &Path) -> Result<(RawFrame, RawMetadata)> {
-        decode_source(&RawSource::new(path)?)
+        guarded(|| tail_of(path), || decode_source(&RawSource::new(path)?))
     }
 }
 
@@ -78,6 +151,10 @@ impl RawlerDecoder {
 /// the orientation the camera stored it with, and the orientation to
 /// show it in.
 pub fn preview_path(path: &Path) -> Result<Option<(image::RgbImage, Orientation)>> {
+    guarded(|| tail_of(path), || preview_unguarded(path))
+}
+
+fn preview_unguarded(path: &Path) -> Result<Option<(image::RgbImage, Orientation)>> {
     let source = RawSource::new(path)?;
     let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
@@ -343,6 +420,71 @@ fn as_shot(wb: [f32; 4]) -> Option<[f64; 3]> {
 mod tests {
     use super::*;
 
+    /// A panic inside the guard is the file's decode error, and says
+    /// a copy in progress when the tail is zeros; the thread knows it
+    /// is inside only while it is.
+    #[test]
+    fn a_panic_in_the_decoder_is_an_error_that_names_a_half_copy() {
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let zeros = || Some(vec![0u8; TAIL]);
+        let data = || Some(vec![7u8; TAIL]);
+        let seen = std::cell::Cell::new(false);
+        let copying = guarded::<()>(zeros, || {
+            seen.set(inside_decoder());
+            panic!("capacity overflow")
+        });
+        let other = guarded::<()>(data, || panic!("capacity overflow"));
+        std::panic::set_hook(hook);
+        assert!(seen.get(), "inside while it runs");
+        assert!(!inside_decoder(), "and not after");
+        let copying = copying.unwrap_err().to_string();
+        assert!(copying.contains("half-copied"), "{copying}");
+        assert!(copying.contains("capacity overflow"), "{copying}");
+        let other = other.unwrap_err().to_string();
+        assert!(!other.contains("half-copied"), "{other}");
+        assert!(other.contains("gave up"), "{other}");
+        // No panic, nothing changed.
+        assert_eq!(guarded(zeros, || Ok(3)).unwrap(), 3);
+    }
+
+    #[test]
+    fn only_a_whole_tail_of_zeros_is_a_copy_in_progress() {
+        assert!(ends_in_zeros(&vec![0; TAIL]));
+        assert!(
+            !ends_in_zeros(&vec![0; TAIL - 1]),
+            "a file too short to say"
+        );
+        let mut one = vec![0; TAIL];
+        one[TAIL / 2] = 1;
+        assert!(!ends_in_zeros(&one));
+    }
+
+    /// The real thing: rawler's RW2 decoder divides by zero on the
+    /// scrubbed fixture the library's tests keep (see its note there),
+    /// and every way in comes back an error instead of a panic.
+    #[test]
+    fn rawler_panicking_on_a_damaged_file_comes_back_an_error() {
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../greycard-library/tests/fixtures/rawler-rw2-divide-by-zero.RW2");
+        let hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(|_| {}));
+        let probe = probe_path(&fixture);
+        let stance = stance_path(&fixture);
+        let decode = RawlerDecoder.decode_path(&fixture);
+        let bytes = RawlerDecoder.decode_bytes(&std::fs::read(&fixture).unwrap());
+        std::panic::set_hook(hook);
+        for e in [
+            probe.map(|_| ()),
+            stance.map(|_| ()),
+            decode.map(|_| ()),
+            bytes.map(|_| ()),
+        ] {
+            let e = e.expect_err("the fixture does not decode").to_string();
+            assert!(e.contains("gave up"), "{e}");
+        }
+    }
+
     #[test]
     fn white_levels_take_the_shapes_rawler_produces() {
         assert_eq!(
@@ -506,6 +648,10 @@ impl Probe {
 /// develop's picture is that rectangle, so this is the shape a mask's
 /// coordinates are in (see `mask::Turned`).
 pub fn stance_path(path: &Path) -> Result<(Orientation, Option<(u32, u32)>)> {
+    guarded(|| tail_of(path), || stance_unguarded(path))
+}
+
+fn stance_unguarded(path: &Path) -> Result<(Orientation, Option<(u32, u32)>)> {
     let source = RawSource::new(path)?;
     let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
@@ -531,6 +677,10 @@ pub fn stance_path(path: &Path) -> Result<(Orientation, Option<(u32, u32)>)> {
 }
 
 pub fn probe_path(path: &Path) -> Result<Probe> {
+    guarded(|| tail_of(path), || probe_unguarded(path))
+}
+
+fn probe_unguarded(path: &Path) -> Result<Probe> {
     let source = RawSource::new(path)?;
     let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
     let metadata = decoder

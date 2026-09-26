@@ -13,7 +13,7 @@ use crate::raw::{Orientation, RawFrame};
 
 pub mod rawler_backend;
 
-pub use rawler_backend::{Probe, RawMetadata, RawlerDecoder};
+pub use rawler_backend::{Probe, RawMetadata, RawlerDecoder, inside_decoder};
 
 pub trait Decoder {
     /// Decode a whole file held in memory.

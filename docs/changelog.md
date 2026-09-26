@@ -80,6 +80,14 @@ note a first tester reads.
   viewport; Tab still puts all three away and brings them back, and
   what was put away stays put away on the next launch (#3, §178,
   2026-09-26).
+- A raw that rawler panics on, such as a CR3 still being copied, fails
+  to open with a reason instead of taking the frame, or on some paths
+  the editor, down with it; one whose end is zeros is called
+  half-copied (§179, 2026-09-26).
+- Ctrl+Z while culling takes back the session's ratings, flags and
+  labels, newest first, going to each frame it changes, and
+  Ctrl+Shift+Z makes them again; it no longer undoes a develop edit
+  or leaves culling (§179, 2026-09-26).
 
 ## 0.1.2, 2026-09-25
 

@@ -38,6 +38,7 @@ mod scope;
 mod selection;
 mod settings;
 mod sheet;
+mod tags;
 #[cfg(test)]
 pub(crate) mod testing;
 mod thumbpool;
@@ -424,6 +425,8 @@ pub(crate) struct State {
     pub(crate) move_rejects: bool,
     /// Culling mode (notes §80), while it is on.
     pub(crate) cull: Option<Cull>,
+    /// The session's rating, flag and label changes: culling's undo.
+    pub(crate) tags: tags::History,
     /// The camera's pictures the develop view keeps: what the mode
     /// left behind on its way out, and what a select decoded, with
     /// the textures made from them. They are drawn only while
@@ -791,6 +794,7 @@ impl State {
             move_rejects: false,
             snapshot_placeholder: false,
             cull: None,
+            tags: tags::History::default(),
             hold: None,
             placeholder: None,
             // Previews come back to the UI thread as the worker's do.
