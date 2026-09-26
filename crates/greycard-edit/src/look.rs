@@ -186,14 +186,82 @@ pub struct Entry {
 
 impl Entry {
     /// What the panel shows: the table's own name when it has one and
-    /// it is not simply the file's name again.
+    /// it is not simply the file's name again. A fitted look's title
+    /// that only says what its name already does, the body it was
+    /// fitted on being the one it is named for, is the name.
     pub fn label(&self) -> &str {
         match &self.title {
-            Some(title) if !title.is_empty() && title != &self.name => title,
+            Some(title) if !title.is_empty() && title != &self.name => match parse_fitted(title) {
+                Some((camera, frames))
+                    if self.name.starts_with(camera)
+                        && *title == fitted_title(&self.name, camera, frames) =>
+                {
+                    &self.name
+                }
+                _ => title,
+            },
             _ => &self.name,
         }
     }
 
+    /// The body a fitted look was fitted on, from its title.
+    pub fn fitted_on(&self) -> Option<&str> {
+        self.title.as_deref().and_then(fitted_on)
+    }
+
+    /// The picker's line for this look on a frame from `camera`
+    /// (make and model as the panel names them): "fitted on" the body
+    /// when the look was fitted on another, and nothing when it was
+    /// fitted on this one, names no body, or its row already says the
+    /// body (a borrowed look's label is its whole title). The look
+    /// applies either way; this only says so.
+    pub fn fitted_note(&self, camera: &str) -> Option<String> {
+        let on = self.fitted_on()?;
+        if on.eq_ignore_ascii_case(camera.trim()) || self.label() != self.name {
+            return None;
+        }
+        Some(format!("fitted on {on}"))
+    }
+}
+
+/// How a fitted look's title ends: the body it was fitted on.
+const FITTED_ON: &str = " (fitted on ";
+
+/// The title the camera match gives a look it wrote: its name, the
+/// body the table was fitted on, which is not the named body's own
+/// when the look was borrowed, and how many frames the fit used.
+pub fn fitted_title(name: &str, camera: &str, frames: Option<usize>) -> String {
+    match frames {
+        Some(n) => format!("{name}{FITTED_ON}{camera}, {n} frames)"),
+        None => format!("{name}{FITTED_ON}{camera})"),
+    }
+}
+
+/// The body a title from [`fitted_title`] names, and the frames it
+/// says the fit used.
+pub fn parse_fitted(title: &str) -> Option<(&str, Option<usize>)> {
+    let at = title.rfind(FITTED_ON)?;
+    let inner = title[at + FITTED_ON.len()..].strip_suffix(')')?;
+    let (camera, frames) = match inner.rsplit_once(", ") {
+        Some((camera, count)) => match count
+            .strip_suffix(" frames")
+            .or_else(|| count.strip_suffix(" frame"))
+            .and_then(|n| n.parse::<usize>().ok())
+        {
+            Some(n) => (camera, Some(n)),
+            None => (inner, None),
+        },
+        None => (inner, None),
+    };
+    (!camera.is_empty()).then_some((camera, frames))
+}
+
+/// The body a title from [`fitted_title`] names.
+pub fn fitted_on(title: &str) -> Option<&str> {
+    parse_fitted(title).map(|(camera, _)| camera)
+}
+
+impl Entry {
     /// The line under the list when this one is chosen: what it is and
     /// what it was made for, since neither is on the row.
     pub fn described(&self) -> String {
@@ -409,6 +477,62 @@ mod tests {
         assert!(warning.contains("not in the look directory"), "{warning}");
         // An empty directory is not an error, only an empty list.
         assert_eq!(rows(&[], "none").len(), 1);
+    }
+
+    /// A fitted look names the body it came from in its title, shows
+    /// its own name when that says it already, and the picker says
+    /// "fitted on" only for a frame from another body.
+    #[test]
+    fn a_fitted_look_says_its_body_on_another_bodys_frame() {
+        let own = entry(
+            "Canon EOS R6m2 Faithful",
+            Some(&fitted_title(
+                "Canon EOS R6m2 Faithful",
+                "Canon EOS R6m2",
+                Some(40),
+            )),
+        );
+        assert_eq!(own.label(), "Canon EOS R6m2 Faithful");
+        assert_eq!(own.fitted_on(), Some("Canon EOS R6m2"));
+        assert_eq!(
+            parse_fitted(own.title.as_deref().unwrap()),
+            Some(("Canon EOS R6m2", Some(40)))
+        );
+        assert_eq!(own.fitted_note("Canon EOS R6m2"), None);
+        assert_eq!(
+            own.fitted_note("Canon EOS R5m2").as_deref(),
+            Some("fitted on Canon EOS R6m2")
+        );
+        // A borrowed look's row is its whole title, which names the
+        // body already: no note under it saying so again.
+        let borrowed = entry(
+            "Canon EOS R5m2 Faithful",
+            Some(&fitted_title(
+                "Canon EOS R5m2 Faithful",
+                "Canon EOS R6m2",
+                Some(40),
+            )),
+        );
+        assert_eq!(
+            borrowed.label(),
+            "Canon EOS R5m2 Faithful (fitted on Canon EOS R6m2, 40 frames)"
+        );
+        assert_eq!(borrowed.fitted_note("Canon EOS R5m2"), None);
+        // A title from before the frame count still reads.
+        assert_eq!(
+            parse_fitted("X Faithful (fitted on Canon EOS R6m2)"),
+            Some(("Canon EOS R6m2", None))
+        );
+        // A body with a comma in its name is not taken for a count.
+        assert_eq!(
+            parse_fitted("X (fitted on Odd, Cam)"),
+            Some(("Odd, Cam", None))
+        );
+        // A look with no body in its title says nothing anywhere.
+        let plain = entry("slide-warm", Some("Slide Warm"));
+        assert_eq!(plain.fitted_note("Canon EOS R6m2"), None);
+        assert_eq!(entry("faded", None).fitted_note("X"), None);
+        assert_eq!(fitted_on("Something (fitted on )"), None);
     }
 
     /// A `.cube`'s text: a table that takes everything to one color,

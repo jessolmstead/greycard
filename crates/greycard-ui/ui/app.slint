@@ -25,6 +25,7 @@ import { SnapshotsSection, HistorySection } from "panel/history.slint";
 import { PanelHead } from "panel/scopes.slint";
 import { ModelSheet } from "panel/model-sheet.slint";
 import { RejectsSheet } from "panel/rejects-sheet.slint";
+import { MatchSheet } from "panel/match-sheet.slint";
 import { PresetSheet } from "panel/preset-sheet.slint";
 import { SyncSheet } from "panel/sync-sheet.slint";
 import { ExportSheet } from "panel/deliver.slint";
@@ -795,7 +796,27 @@ export component App inherits Window {
     in property <[string]> look-labels;
     in property <string> look-note;
     in property <string> look-warning;
+    in property <string> look-fitted;
     callback look-picked();
+    // The camera match's sheet, from the Look section: the scope, the
+    // groups found in it, the run's progress and its results.
+    in-out property <bool> match-open: false;
+    in-out property <string> match-scope: "This folder";
+    in property <[string]> match-scopes: ["This folder"];
+    in property <string> match-scope-note;
+    in property <[string]> match-groups;
+    in property <string> match-summary;
+    in property <bool> match-can-fit;
+    in-out property <bool> match-replace: false;
+    callback match-replace-toggled();
+    in property <bool> match-running;
+    in property <string> match-progress;
+    in property <[string]> match-results;
+    callback match-asked();
+    callback match-scope-picked(string);
+    callback match-fit();
+    callback match-cancel();
+    callback match-close();
     // As the profile directory's: asked for when the section is
     // opened, so a table dropped in while the editor is running is
     // listed without reopening the file.
@@ -1133,7 +1154,7 @@ export component App inherits Window {
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
-            || root.settings-open || root.sync-open || root.import-open;
+            || root.settings-open || root.sync-open || root.import-open || root.match-open;
     }
 
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
@@ -1152,6 +1173,7 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.fetch-open) { root.fetch-answered(false); return accept; }
             if (e.text == Key.Escape && root.preset-open) { root.preset-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
+            if (e.text == Key.Escape && root.match-open && !root.match-running) { root.match-close(); return accept; }
             if (e.text == Key.Escape && root.sync-open) { root.sync-open = false; return accept; }
             if (e.text == Key.Escape && (root.placing != "" || root.picking != "")) { root.stop-placing(); return accept; }
             // A preset's removal asked and not answered: Esc is its
@@ -1832,7 +1854,9 @@ export component App inherits Window {
                             look-labels: root.look-labels;
                             look-note: root.look-note;
                             look-warning: root.look-warning;
+                            look-fitted: root.look-fitted;
                             look-picked => { root.look-picked(); }
+                            match-asked => { root.match-asked(); }
                             view-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop": NoiseSection {
@@ -2178,6 +2202,26 @@ export component App inherits Window {
     if root.rejects-open: RejectsSheet {
         rejects-text: root.rejects-text;
         rejects-answered(a) => { root.rejects-answered(a); }
+    }
+
+    // The camera match sheet: open until closed; while a fit runs it
+    // stays, its Close a Stop.
+    if root.match-open: MatchSheet {
+        match-scope <=> root.match-scope;
+        match-scopes: root.match-scopes;
+        match-scope-note: root.match-scope-note;
+        match-groups: root.match-groups;
+        match-summary: root.match-summary;
+        match-can-fit: root.match-can-fit;
+        match-replace <=> root.match-replace;
+        match-replace-toggled => { root.match-replace-toggled(); }
+        match-running: root.match-running;
+        match-progress: root.match-progress;
+        match-results: root.match-results;
+        match-scope-picked(s) => { root.match-scope-picked(s); }
+        match-fit => { root.match-fit(); }
+        match-cancel => { root.match-cancel(); }
+        match-close => { root.match-close(); }
     }
 
     // The preset sheet: a name and what the preset carries, until

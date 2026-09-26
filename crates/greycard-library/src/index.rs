@@ -51,8 +51,8 @@ use greycard_edit::meta::Meta;
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 use crate::{
-    Error, Exif, Library, Result, canonical, canonical_file, filter, hash, mtime_of, now_secs,
-    path_bytes, path_from_bytes, path_text,
+    Error, Exif, Library, Result, StyleTags, canonical, canonical_file, filter, hash, mtime_of,
+    now_secs, path_bytes, path_from_bytes, path_text,
 };
 
 /// Files a transaction holds before it is committed.
@@ -89,6 +89,10 @@ pub struct Report {
     pub meta_refreshed: usize,
     /// Files whose row was right already.
     pub unchanged: usize,
+    /// Files unchanged whose maker's tags were read for the first
+    /// time: rows from a library made before the tags were indexed.
+    /// Counted among `unchanged` as well.
+    pub styled: usize,
     /// Files back at a path the index had marked missing.
     pub returned: usize,
     /// Rows whose file, or whose whole folder, is gone.
@@ -122,6 +126,7 @@ impl Report {
         self.changed_files.extend(other.changed_files);
         self.meta_refreshed += other.meta_refreshed;
         self.unchanged += other.unchanged;
+        self.styled += other.styled;
         self.returned += other.returned;
         self.missing += other.missing;
         self.unavailable.extend(other.unavailable);
@@ -171,6 +176,8 @@ struct Row {
     sidecar: Option<Vec<u8>>,
     sidecar_hash: Option<String>,
     missing: bool,
+    /// Whether the maker's tags have been read into the row.
+    style_read: bool,
 }
 
 /// Whether a path is one the index holds: a raw or a picture, as
@@ -527,12 +534,13 @@ fn row_from(r: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<Row> {
         sidecar: r.get(from + 3)?,
         sidecar_hash: r.get(from + 4)?,
         missing: r.get::<_, Option<i64>>(from + 5)?.is_some(),
+        style_read: r.get::<_, i64>(from + 6)? != 0,
     })
 }
 
 fn rows_in_folder(conn: &Connection, folder: &[u8]) -> Result<HashMap<Vec<u8>, Row>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT path, id, size, mtime, sidecar, sidecar_hash, missing_since \
+        "SELECT path, id, size, mtime, sidecar, sidecar_hash, missing_since, style_read \
          FROM files WHERE folder = ?",
     )?;
     let rows = stmt.query_map(params![folder], |r| {
@@ -545,7 +553,7 @@ fn row_at(conn: &Connection, path: &[u8]) -> Result<Option<Row>> {
     use rusqlite::OptionalExtension;
     Ok(conn
         .prepare_cached(
-            "SELECT id, size, mtime, sidecar, sidecar_hash, missing_since \
+            "SELECT id, size, mtime, sidecar, sidecar_hash, missing_since, style_read \
              FROM files WHERE path = ?",
         )?
         .query_row(params![path], |r| row_from(r, 0))
@@ -603,8 +611,9 @@ fn begin(conn: &mut Connection) -> Result<Transaction<'_>> {
 /// What the first phase found out about a file, for the second to
 /// write.
 enum Plan {
-    /// The row's size and mtime match the file's.
-    Same(Row),
+    /// The row's size and mtime match the file's; with the maker's
+    /// tags when the row had not had them read.
+    Same(Row, Option<StyleTags>),
     /// The file changed on disk: hashed and probed again.
     Changed { row: Row, hash: String, exif: Exif },
     /// No row at this path when the folder's rows were read: hashed,
@@ -668,7 +677,8 @@ fn index_paths(
                 + report.moved
                 + report.changed
                 + report.meta_refreshed
-                + report.returned,
+                + report.returned
+                + report.styled,
         });
         let key = path_bytes(path);
         let stat = match std::fs::metadata(path) {
@@ -687,7 +697,10 @@ fn index_paths(
             }
         };
         let plan = match existing.remove(&key) {
-            Some(row) if row.size == size && row.mtime == mtime => Plan::Same(row),
+            Some(row) if row.size == size && row.mtime == mtime => {
+                let style = (!row.style_read).then(|| read_style(path));
+                Plan::Same(row, style)
+            }
             Some(row) => {
                 let Some(hash) = hashed(&mut report) else {
                     continue;
@@ -786,8 +799,12 @@ fn write_batch(
         // the row is held to.
         let sidecar = sidecar_of(path);
         match plan {
-            Plan::Same(row) => {
+            Plan::Same(row, style) => {
                 let row = current(&tx, &key, row)?;
+                if let Some(style) = style.filter(|_| !row.style_read) {
+                    write_style(&tx, row.id, &style)?;
+                    report.styled += 1;
+                }
                 settle_same(&tx, row, sidecar.as_ref(), report)?;
             }
             Plan::Changed { row, hash, exif } => {
@@ -843,8 +860,9 @@ fn write_batch(
                     let exif = exif.unwrap_or_else(|| probe(path, report));
                     tx.prepare_cached(
                         "INSERT INTO files (path, folder, folder_text, name, size, mtime, hash, \
-                         make, model, camera, lens, iso, focal, aperture, shutter, taken) \
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                         make, model, camera, lens, iso, focal, aperture, shutter, taken, \
+                         maker, style, style_fixed, peripheral, style_read) \
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
                     )?
                     .execute(params![
                         key,
@@ -863,6 +881,10 @@ fn write_batch(
                         exif.aperture,
                         exif.shutter,
                         exif.taken,
+                        exif.style.maker,
+                        exif.style.style,
+                        exif.style.fixed,
+                        exif.style.peripheral,
                     ])?;
                     let id = tx.last_insert_rowid();
                     write_meta(&tx, id, sidecar.as_ref())?;
@@ -909,7 +931,8 @@ fn update_file(
     tx.prepare_cached(
         "UPDATE files SET size = ?, mtime = ?, hash = ?, make = ?, model = ?, \
          camera = ?, lens = ?, iso = ?, focal = ?, aperture = ?, shutter = ?, \
-         taken = ?, missing_since = NULL WHERE id = ?",
+         taken = ?, maker = ?, style = ?, style_fixed = ?, peripheral = ?, style_read = 1, \
+         missing_since = NULL WHERE id = ?",
     )?
     .execute(params![
         size as i64,
@@ -924,6 +947,26 @@ fn update_file(
         exif.aperture,
         exif.shutter,
         exif.taken,
+        exif.style.maker,
+        exif.style.style,
+        exif.style.fixed,
+        exif.style.peripheral,
+        id
+    ])?;
+    Ok(())
+}
+
+/// The maker's tags into a row that had not had them read.
+fn write_style(tx: &Transaction<'_>, id: i64, style: &StyleTags) -> Result<()> {
+    tx.prepare_cached(
+        "UPDATE files SET maker = ?, style = ?, style_fixed = ?, peripheral = ?, \
+         style_read = 1 WHERE id = ?",
+    )?
+    .execute(params![
+        style.maker,
+        style.style,
+        style.fixed,
+        style.peripheral,
         id
     ])?;
     Ok(())
@@ -1022,7 +1065,12 @@ fn probe(path: &Path, report: &mut Report) -> Exif {
         }
     });
     let failed = match probed {
-        Ok(Ok(p)) => return Exif::from_probe(&p),
+        Ok(Ok(p)) => {
+            return Exif {
+                style: read_style(path),
+                ..Exif::from_probe(&p)
+            };
+        }
         Ok(Err(e)) => e.to_string(),
         Err(panic) => {
             let what = panic
@@ -1036,6 +1084,25 @@ fn probe(path: &Path, report: &mut Report) -> Exif {
     log::warn!("{}: {failed}", path.display());
     report.errors.push((path.to_path_buf(), failed));
     Exif::default()
+}
+
+/// A raw's maker tags, as the index keeps them; nothing for a picture,
+/// which has no camera JPEG to be fitted against, and nothing for a
+/// file the reader cannot read, with a line in the log. Not an error
+/// in the report: a file whose tags will not read still indexes, and
+/// is not read again until it changes.
+fn read_style(path: &Path) -> StyleTags {
+    if !greycard_core::decode::is_raw_path(path) {
+        return StyleTags::default();
+    }
+    match greycard_core::decode::CameraStyle::read(path) {
+        Ok(Some(style)) => StyleTags::from_style(&style),
+        Ok(None) => StyleTags::default(),
+        Err(e) => {
+            log::warn!("{}: the maker's tags: {e}", path.display());
+            StyleTags::default()
+        }
+    }
 }
 
 /// The sidecar's meta section and nothing else of it: the edit and
@@ -2457,6 +2524,18 @@ pub(crate) mod tests {
         assert!(with_iso >= raws.len());
         let report = lib.index_folder(&samples, &mut quiet()).unwrap();
         assert_eq!(report.unchanged, files.len(), "{report:?}");
+        // The maker's tags beside the EXIF: every Canon and Fujifilm
+        // raw names its maker, and a frame called fixed has a style.
+        for raw in &raws {
+            let e = lib.by_path(raw).unwrap().unwrap();
+            let make = e.exif.make.to_ascii_lowercase();
+            if make.starts_with("canon") || make.starts_with("fujifilm") {
+                assert!(e.exif.style.maker.is_some(), "{}: no maker", raw.display());
+            }
+            if e.exif.style.fixed {
+                assert!(e.exif.style.style.is_some(), "{}", raw.display());
+            }
+        }
     }
 
     /// The numbers for the notes: a thousand frames, half with a
@@ -2811,6 +2890,217 @@ pub(crate) mod tests {
         let report = lib.index_tree(&dir, &mut quiet()).unwrap();
         assert_eq!(report.changed, 1, "{report:?}");
         assert_eq!(report.changed_files, [dir.join("b.tif")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Sets a row's maker tags by hand, as the reader would have for
+    /// a raw: the test frames are TIFFs, which carry none.
+    fn tag(lib: &mut Library, path: &Path, style: &str, fixed: bool) {
+        lib.conn_mut()
+            .execute(
+                "UPDATE files SET maker = 'Canon', style = ?, style_fixed = ? WHERE path = ?",
+                params![style, fixed, path_bytes(path)],
+            )
+            .unwrap();
+    }
+
+    /// Frames of two bodies in two folders, some in each style, with
+    /// their dates a day apart in the order they are written.
+    fn styled_library(dir: &Path) -> (Library, Vec<PathBuf>) {
+        let mut lib = Library::open_in_memory().unwrap();
+        let mut paths = Vec::new();
+        for (sub, n) in [("a", 5usize), ("b", 3)] {
+            let folder = dir.join(sub);
+            std::fs::create_dir_all(&folder).unwrap();
+            for i in 0..n {
+                let taken = format!("2026:0{}:1{i} 10:00:00", if sub == "a" { 3 } else { 4 });
+                let frame = crate::fixture::Frame {
+                    taken: &taken,
+                    ..if i % 2 == 0 { R6 } else { R5 }
+                };
+                let path = folder.join(format!("{sub}{i}.tif"));
+                write_frame(&path, &frame, i as u16);
+                paths.push(path);
+            }
+            lib.index_folder(&folder, &mut quiet()).unwrap();
+        }
+        (lib, paths)
+    }
+
+    #[test]
+    fn the_groups_are_body_and_style_with_their_fixed_counts() {
+        let dir = scratch("style-groups");
+        let (mut lib, paths) = styled_library(&dir);
+        // R6 frames are a0, a2, a4, b0, b2; R5 frames a1, a3, b1.
+        for (i, p) in paths.iter().enumerate() {
+            let style = if i == 3 {
+                "Canon Standard"
+            } else {
+                "Canon Faithful"
+            };
+            // a2 has the optimizer on; everything else is fixed.
+            tag(&mut lib, p, style, i != 2);
+        }
+        let groups = lib.style_groups(None).unwrap();
+        let seen: Vec<(&str, &str, usize, usize)> = groups
+            .iter()
+            .map(|g| (g.camera.as_str(), g.style.as_str(), g.fixed, g.unfixed))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("Canon EOS R5", "Canon Faithful", 2, 0),
+                ("Canon EOS R5", "Canon Standard", 1, 0),
+                ("Canon EOS R6m2", "Canon Faithful", 4, 1),
+            ]
+        );
+        assert_eq!(groups[2].maker, "Canon");
+        // Under one folder, only its frames count.
+        let under = lib.style_groups(Some(&[dir.join("b")])).unwrap();
+        let seen: Vec<(&str, usize)> = under
+            .iter()
+            .map(|g| (g.camera.as_str(), g.fixed + g.unfixed))
+            .collect();
+        assert_eq!(seen, [("Canon EOS R5", 1), ("Canon EOS R6m2", 2)]);
+        // The frames of one group, by date, with whether each is fixed.
+        let frames = lib.style_frames(&groups[2], None).unwrap();
+        let names: Vec<(String, bool)> = frames
+            .iter()
+            .map(|f| {
+                (
+                    f.path.file_name().unwrap().to_string_lossy().into_owned(),
+                    f.fixed,
+                )
+            })
+            .collect();
+        assert_eq!(
+            names,
+            [
+                ("a0.tif".to_string(), true),
+                ("a2.tif".to_string(), false),
+                ("a4.tif".to_string(), true),
+                ("b0.tif".to_string(), true),
+                ("b2.tif".to_string(), true),
+            ]
+        );
+        assert_eq!(frames[0].taken.as_deref(), Some("2026-03-10 10:00:00"));
+        assert_eq!(frames[0].lens.as_deref(), Some(R6.lens));
+        let frames = lib
+            .style_frames(&groups[2], Some(&[dir.join("a")]))
+            .unwrap();
+        assert_eq!(frames.len(), 3);
+        // The style is a facet too, and a chip lists what it counted.
+        let chips = lib
+            .facet_counts(crate::Facet::Style, None, &Filter::default())
+            .unwrap();
+        let seen: Vec<(&str, usize)> = chips.iter().map(|c| (c.value.as_str(), c.count)).collect();
+        assert_eq!(seen, [("Canon Faithful", 7), ("Canon Standard", 1)]);
+        let faithful = Filter {
+            terms: vec![crate::filter::Term::Facet {
+                facet: crate::Facet::Style,
+                values: vec!["Canon Faithful".into()],
+            }],
+        };
+        assert_eq!(lib.count(&faithful).unwrap(), 7);
+        // A frame gone from its folder is in no group.
+        std::fs::remove_file(&paths[0]).unwrap();
+        lib.index_folder(&dir.join("a"), &mut quiet()).unwrap();
+        let groups = lib.style_groups(None).unwrap();
+        assert_eq!((groups[2].fixed, groups[2].unfixed), (3, 1));
+        // Only raws count as unread or as having no style: a row named
+        // like a raw with its tags not read, and one read with none.
+        assert_eq!(lib.styles_unread(None).unwrap(), 0);
+        assert_eq!(lib.styles_missing(None).unwrap(), 0);
+        lib.conn_mut()
+            .execute(
+                "UPDATE files SET name = 'x.CR3', style_read = 0 WHERE path = ?",
+                params![path_bytes(&paths[6])],
+            )
+            .unwrap();
+        lib.conn_mut()
+            .execute(
+                "UPDATE files SET name = 'y.raf', style = NULL, style_read = 1 WHERE path = ?",
+                params![path_bytes(&paths[7])],
+            )
+            .unwrap();
+        assert_eq!(lib.styles_unread(None).unwrap(), 1);
+        assert_eq!(lib.styles_missing(None).unwrap(), 1);
+        assert_eq!(lib.styles_missing(Some(&[dir.join("a")])).unwrap(), 0);
+        // The tags come back on the row's entry too.
+        assert_eq!(
+            lib.by_path(&paths[1])
+                .unwrap()
+                .unwrap()
+                .exif
+                .style
+                .maker
+                .as_deref(),
+            Some("Canon")
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A library from before the maker's tags keeps its rows and gets
+    /// the new columns, every row marked unread; the next pass reads
+    /// the tags of each and nothing else.
+    #[test]
+    fn a_schema_2_library_is_brought_up_and_its_rows_refilled() {
+        let dir = scratch("migrate-2");
+        let db = dir.join("library.sqlite");
+        let shoot_dir = dir.join("shoot");
+        std::fs::create_dir_all(&shoot_dir).unwrap();
+        let (r5, _, _) = shoot(&shoot_dir);
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+            // Back to schema 2 as it was: the columns and the index
+            // this schema added gone, the version at 2.
+            lib.conn_mut()
+                .execute_batch(
+                    "DROP INDEX files_style;
+                     ALTER TABLE files DROP COLUMN maker;
+                     ALTER TABLE files DROP COLUMN style;
+                     ALTER TABLE files DROP COLUMN style_fixed;
+                     ALTER TABLE files DROP COLUMN peripheral;
+                     ALTER TABLE files DROP COLUMN style_read;
+                     PRAGMA user_version = 2;",
+                )
+                .unwrap();
+        }
+        // A reader cannot bring it up, and says so.
+        assert!(matches!(
+            Library::open_read_only(&db),
+            Err(Error::NeedsRebuild(_))
+        ));
+        let mut lib = Library::open(&db).unwrap();
+        let version: i32 = lib
+            .conn_mut()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, crate::SCHEMA_VERSION);
+        // The rows are the same rows, meta and all.
+        assert_eq!(lib.len().unwrap(), 3);
+        let e = lib.by_path(&r5).unwrap().unwrap();
+        assert_eq!(e.meta.rating, 4);
+        assert_eq!(e.exif.style, StyleTags::default());
+        // Every row is marked unread, but the test frames are TIFFs,
+        // and only raws are counted as waiting for their tags.
+        let unread: i64 = lib
+            .conn_mut()
+            .query_row("SELECT count(*) FROM files WHERE style_read = 0", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(unread, 3);
+        assert_eq!(lib.styles_unread(None).unwrap(), 0);
+        // The next pass reads the tags and nothing else.
+        let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+        assert_eq!((report.styled, report.unchanged), (3, 3), "{report:?}");
+        assert_eq!(report.added + report.changed + report.meta_refreshed, 0);
+        assert_eq!(lib.styles_unread(None).unwrap(), 0);
+        let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+        assert_eq!(report.styled, 0, "{report:?}");
+        drop(lib);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

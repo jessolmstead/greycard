@@ -82,8 +82,28 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 /// The schema this build writes. A library at an older version is
 /// dropped and rebuilt on open: it is a cache, and a migration would
-/// be more code than the rebuild costs. A newer one is refused.
-pub const SCHEMA_VERSION: i32 = 2;
+/// be more code than the rebuild costs. The exception is a step that
+/// only adds columns a pass can fill without rehashing anything:
+/// [`MIGRATIONS`] holds those, and a library they reach is brought up
+/// in place, its rows marked for the next pass to fill. A newer one
+/// is refused.
+pub const SCHEMA_VERSION: i32 = 3;
+
+/// The steps a library is brought up by in place rather than rebuilt:
+/// from the version on the left to the next, the statements on the
+/// right. Schema 3 added the maker's rendering tags, which the camera
+/// match groups frames by; a schema 2 row gets them from the next
+/// pass over its folder, which reads the tags of every row whose
+/// `style_read` is zero and nothing else of the file.
+const MIGRATIONS: &[(i32, &str)] = &[(
+    2,
+    "ALTER TABLE files ADD COLUMN maker TEXT;
+     ALTER TABLE files ADD COLUMN style TEXT;
+     ALTER TABLE files ADD COLUMN style_fixed INTEGER NOT NULL DEFAULT 0;
+     ALTER TABLE files ADD COLUMN peripheral INTEGER;
+     ALTER TABLE files ADD COLUMN style_read INTEGER NOT NULL DEFAULT 0;
+     CREATE INDEX IF NOT EXISTS files_style ON files(model, style);",
+)];
 
 /// `PRAGMA application_id`: "GRCY", so a SQLite file that is not a
 /// library is never rebuilt over.
@@ -118,11 +138,17 @@ CREATE TABLE IF NOT EXISTS files (
     flag          TEXT NOT NULL DEFAULT 'none',
     label         TEXT NOT NULL DEFAULT 'none',
     keywords      TEXT NOT NULL DEFAULT '[]',
-    missing_since INTEGER
+    missing_since INTEGER,
+    maker         TEXT,
+    style         TEXT,
+    style_fixed   INTEGER NOT NULL DEFAULT 0,
+    peripheral    INTEGER,
+    style_read    INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS files_folder ON files(folder);
 CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
 CREATE INDEX IF NOT EXISTS files_taken ON files(taken);
+CREATE INDEX IF NOT EXISTS files_style ON files(model, style);
 CREATE TABLE IF NOT EXISTS keywords (
     file INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
     word TEXT NOT NULL,
@@ -136,7 +162,8 @@ CREATE INDEX IF NOT EXISTS keywords_word ON keywords(word);
 const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash, \
     files.make, files.model, files.camera, files.lens, files.iso, files.focal, \
     files.aperture, files.shutter, files.taken, files.sidecar, files.sidecar_mtime, \
-    files.rating, files.flag, files.label, files.keywords, files.missing_since";
+    files.rating, files.flag, files.label, files.keywords, files.missing_since, \
+    files.maker, files.style, files.style_fixed, files.peripheral";
 
 /// The index, open.
 pub struct Library {
@@ -166,6 +193,39 @@ pub struct Exif {
     /// `YYYY-MM-DD HH:MM:SS`, as far as the file said; lexically
     /// ordered, which is what the date filter compares.
     pub taken: Option<String>,
+    /// The maker's rendering tags, read beside the EXIF from the
+    /// maker note; empty for a picture and for a raw the reader does
+    /// not know.
+    pub style: StyleTags,
+}
+
+/// What a raw says of the rendering its camera JPEG was made with,
+/// as the index keeps it: `greycard_core::decode::CameraStyle` cut
+/// down to what a query asks about.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StyleTags {
+    /// The maker as the reader names it: "Canon", "Fujifilm".
+    pub maker: Option<String>,
+    /// The group key, the maker and a fixed style: "Canon Faithful",
+    /// "Fujifilm Reala Ace". None with no style, or a style that
+    /// adapts to the scene itself.
+    pub style: Option<String>,
+    /// A fixed style with every adaptive setting off: a frame the
+    /// camera match can fit on.
+    pub fixed: bool,
+    /// The camera's own vignetting correction, where the file says.
+    pub peripheral: Option<bool>,
+}
+
+impl StyleTags {
+    pub fn from_style(style: &greycard_core::decode::CameraStyle) -> StyleTags {
+        StyleTags {
+            maker: Some(style.maker.name().to_string()),
+            style: style.group_key(),
+            fixed: style.is_fixed(),
+            peripheral: style.peripheral_correction,
+        }
+    }
 }
 
 impl Exif {
@@ -181,6 +241,7 @@ impl Exif {
             aperture: probe.fnumber,
             shutter: probe.exposure_time,
             taken: probe.taken.as_deref().and_then(normalize_taken),
+            style: StyleTags::default(),
         }
     }
 
@@ -278,6 +339,35 @@ pub struct FacetCount {
     /// which keeps a case it was written in.
     pub label: String,
     pub count: usize,
+}
+
+/// A body and fixed style the index holds frames of: what the camera
+/// match fits a look for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StyleGroup {
+    pub make: String,
+    pub model: String,
+    /// Make and model as the panel shows them.
+    pub camera: String,
+    /// The maker as the style reader names it.
+    pub maker: String,
+    /// The group key: the maker and the style, "Canon Faithful".
+    pub style: String,
+    /// Frames with every adaptive setting off.
+    pub fixed: usize,
+    /// Frames with one on, or one the reader could not name.
+    pub unfixed: usize,
+}
+
+/// One frame of a [`StyleGroup`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StyleFrame {
+    pub path: PathBuf,
+    /// As [`Exif::taken`] has it.
+    pub taken: Option<String>,
+    pub lens: Option<String>,
+    pub fixed: bool,
+    pub peripheral: Option<bool>,
 }
 
 /// A file's path as the index keys it — its folder canonical, its
@@ -521,6 +611,17 @@ impl Library {
                         ours: SCHEMA_VERSION,
                     });
                 }
+                Judgement::ToMake if now.migrates() => {
+                    for (from, sql) in MIGRATIONS.iter().filter(|(v, _)| *v >= now.version) {
+                        log::info!(
+                            "{}: schema version {from} brought up to {}",
+                            path.display(),
+                            from + 1
+                        );
+                        tx.execute_batch(sql)?;
+                    }
+                    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                }
                 Judgement::ToMake => {
                     if !now.fresh() {
                         log::warn!(
@@ -715,7 +816,7 @@ impl Library {
             _ => ("files", key, "count(*)"),
         };
         let order = match facet {
-            Facet::Camera | Facet::Lens | Facet::Keyword => "2 DESC, 1",
+            Facet::Camera | Facet::Lens | Facet::Style | Facet::Keyword => "2 DESC, 1",
             Facet::Iso | Facet::Focal | Facet::Date => "1",
         };
         let sql = format!(
@@ -817,6 +918,102 @@ impl Library {
     pub fn count_under(&self, root: &Path) -> Result<usize> {
         let (clause, params) = under_roots(std::slice::from_ref(&root.to_path_buf()));
         let sql = format!("SELECT count(*) FROM files WHERE missing_since IS NULL AND ({clause})");
+        let n: i64 = self
+            .conn
+            .prepare_cached(&sql)?
+            .query_row(rusqlite::params_from_iter(params), |r| r.get(0))?;
+        Ok(n as usize)
+    }
+
+    /// The camera match's groups: each body and fixed style the index
+    /// holds frames of, under `roots` or in the whole library, with
+    /// how many of its frames had every adaptive setting off and how
+    /// many had one on. By camera, then style. A file last found
+    /// missing is not counted.
+    pub fn style_groups(&self, roots: Option<&[PathBuf]>) -> Result<Vec<StyleGroup>> {
+        let Some((clause, params)) = within_roots(roots) else {
+            return Ok(Vec::new());
+        };
+        let sql = format!(
+            "SELECT coalesce(make, ''), coalesce(model, ''), coalesce(camera, ''), \
+             coalesce(maker, ''), style, sum(style_fixed), count(*) FROM files \
+             WHERE style IS NOT NULL AND missing_since IS NULL{clause} \
+             GROUP BY make, model, style ORDER BY 3, 5"
+        );
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
+            let fixed = r.get::<_, i64>(5)? as usize;
+            Ok(StyleGroup {
+                make: r.get(0)?,
+                model: r.get(1)?,
+                camera: r.get(2)?,
+                maker: r.get(3)?,
+                style: r.get(4)?,
+                fixed,
+                unfixed: r.get::<_, i64>(6)? as usize - fixed,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The frames of one group of [`Library::style_groups`], by date
+    /// taken then path; a frame with no date sorts first.
+    pub fn style_frames(
+        &self,
+        group: &StyleGroup,
+        roots: Option<&[PathBuf]>,
+    ) -> Result<Vec<StyleFrame>> {
+        use rusqlite::types::Value;
+        let Some((clause, mut params)) = within_roots(roots) else {
+            return Ok(Vec::new());
+        };
+        let sql = format!(
+            "SELECT path, taken, lens, style_fixed, peripheral FROM files \
+             WHERE coalesce(make, '') = ? AND coalesce(model, '') = ? AND style = ? \
+             AND missing_since IS NULL{clause} ORDER BY taken, path"
+        );
+        let mut all = vec![
+            Value::Text(group.make.clone()),
+            Value::Text(group.model.clone()),
+            Value::Text(group.style.clone()),
+        ];
+        all.append(&mut params);
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(all), |r| {
+            Ok(StyleFrame {
+                path: path_from_bytes(&r.get::<_, Vec<u8>>(0)?),
+                taken: r.get(1)?,
+                lens: r.get(2)?,
+                fixed: r.get::<_, i64>(3)? != 0,
+                peripheral: r.get::<_, Option<i64>>(4)?.map(|v| v != 0),
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// How many raws, under `roots` or in the whole library, have not
+    /// had their maker's tags read yet: rows from before the tags were
+    /// indexed, which the next pass over their folders fills.
+    pub fn styles_unread(&self, roots: Option<&[PathBuf]>) -> Result<usize> {
+        self.count_raws("style_read = 0", roots)
+    }
+
+    /// How many raws, under `roots` or in the whole library, had their
+    /// maker's tags read and carry no fixed style: an adaptive one such
+    /// as Auto, or a maker whose styles are not read.
+    pub fn styles_missing(&self, roots: Option<&[PathBuf]>) -> Result<usize> {
+        self.count_raws("style_read = 1 AND style IS NULL", roots)
+    }
+
+    /// The raws present under `roots` (or anywhere) that pass `test`.
+    fn count_raws(&self, test: &str, roots: Option<&[PathBuf]>) -> Result<usize> {
+        let Some((clause, params)) = within_roots(roots) else {
+            return Ok(0);
+        };
+        let sql = format!(
+            "SELECT count(*) FROM files WHERE {test} AND {} AND missing_since IS NULL{clause}",
+            raw_name_clause()
+        );
         let n: i64 = self
             .conn
             .prepare_cached(&sql)?
@@ -952,6 +1149,15 @@ impl State {
         })
     }
 
+    /// An older library of ours that [`MIGRATIONS`] brings up to this
+    /// schema in place: there is a step from its version and from
+    /// every one after it.
+    fn migrates(&self) -> bool {
+        self.app_id == APPLICATION_ID
+            && self.version < SCHEMA_VERSION
+            && (self.version..SCHEMA_VERSION).all(|v| MIGRATIONS.iter().any(|(from, _)| *from == v))
+    }
+
     fn fresh(&self) -> bool {
         self.app_id == 0 && self.version == 0 && !self.has_tables
     }
@@ -1002,6 +1208,31 @@ fn under_roots(roots: &[PathBuf]) -> (String, Vec<rusqlite::types::Value>) {
     (clauses.join(" OR "), params)
 }
 
+/// "The file's name has a raw's extension", as
+/// `greycard_core::decode::is_raw_path` has it, over the name column.
+/// `LIKE` folds ASCII case, which is all an extension has.
+fn raw_name_clause() -> String {
+    let each: Vec<String> = greycard_core::decode::RAW_EXTENSIONS
+        .iter()
+        .map(|e| format!("files.name LIKE '%.{e}'"))
+        .collect();
+    format!("({})", each.join(" OR "))
+}
+
+/// " AND under these roots" for a query that may be over the whole
+/// library (`None`), and its parameters; `None` back for no roots at
+/// all, which nothing is under.
+fn within_roots(roots: Option<&[PathBuf]>) -> Option<(String, Vec<rusqlite::types::Value>)> {
+    match roots {
+        None => Some((String::new(), Vec::new())),
+        Some([]) => None,
+        Some(roots) => {
+            let (clause, params) = under_roots(roots);
+            Some((format!(" AND ({clause})"), params))
+        }
+    }
+}
+
 /// Row ids as the JSON array `json_each` takes.
 fn ids_json(ids: &[i64]) -> String {
     let mut s = String::with_capacity(ids.len() * 6 + 2);
@@ -1050,6 +1281,12 @@ fn entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
             aperture: row.get(11)?,
             shutter: row.get(12)?,
             taken: row.get(13)?,
+            style: StyleTags {
+                maker: row.get(21)?,
+                style: row.get(22)?,
+                fixed: row.get::<_, i64>(23)? != 0,
+                peripheral: row.get::<_, Option<i64>>(24)?.map(|v| v != 0),
+            },
         },
         meta,
         sidecar: row

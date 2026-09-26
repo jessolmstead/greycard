@@ -1309,6 +1309,30 @@ fn write_export(
     settings: &crate::export::Settings,
     path: &std::path::Path,
 ) -> Result<(), String> {
+    let mut rendered = finish_export(image, edit, base, ai, settings);
+    let origin = crate::export::Origin {
+        source_name: source_path
+            .and_then(|s| s.file_name())
+            .map(|n| n.to_string_lossy().into_owned()),
+        edit: Some(edit.to_json()),
+    };
+    // The mark, on the export alone; one that cannot be drawn fails
+    // the export rather than let an unmarked picture out.
+    crate::export::mark(&mut rendered, settings)
+        .and_then(|()| crate::export::write(&rendered, settings, path, metadata, &origin))
+        .map_err(|e| format!("{e:#}"))
+}
+
+/// `image`, the develop `base` was made for, finished under `edit` and
+/// `settings` as an export is: the learned masks made now if they are
+/// not yet, the edit's geometry, then the finish. No mark and no file.
+fn finish_export(
+    image: Arc<WorkingImage>,
+    edit: &Edit,
+    base: Option<&Base>,
+    ai: &mut Ai,
+    settings: &crate::export::Settings,
+) -> crate::export::Rendered {
     let source = (image.width as u32, image.height as u32);
     // The learned masks, made now if they are not yet.
     let mut rasters = std::collections::HashMap::new();
@@ -1339,7 +1363,7 @@ fn write_export(
         &framed
     };
     let clip_level = base.map(|b| b.clip_level).unwrap_or(f32::INFINITY);
-    let mut rendered = crate::export::render(
+    crate::export::render(
         image,
         edit,
         source,
@@ -1348,18 +1372,73 @@ fn write_export(
         clip_level,
         base.map(|b| &*b.guide),
         base.map(|b| b.source).unwrap_or_default(),
-    );
-    let origin = crate::export::Origin {
-        source_name: source_path
-            .and_then(|s| s.file_name())
-            .map(|n| n.to_string_lossy().into_owned()),
-        edit: Some(edit.to_json()),
-    };
-    // The mark, on the export alone; one that cannot be drawn fails
-    // the export rather than let an unmarked picture out.
-    crate::export::mark(&mut rendered, settings)
-        .and_then(|()| crate::export::write(&rendered, settings, path, metadata, &origin))
-        .map_err(|e| format!("{e:#}"))
+    )
+}
+
+/// A frame developed once on the CPU, as an export of a frame that is
+/// not open develops it, and finished as often as asked: the camera
+/// match's develop, which finishes each frame at two exposures.
+/// Everything the frame's own develop does after the base (the lens,
+/// the retouch, the detail, the sharpen) is in `image`; the finish
+/// under `edit` is [`FrameDevelop::finish`].
+pub(crate) struct FrameDevelop {
+    image: Arc<WorkingImage>,
+    base: Option<Base>,
+    ai: Ai,
+}
+
+impl FrameDevelop {
+    /// Open the raw at `path` and develop it under `edit`, with the
+    /// lens database for the lens corrections. The export's own
+    /// develop, with no GPU and no learned denoiser's cache.
+    pub(crate) fn develop(
+        path: &std::path::Path,
+        edit: &Edit,
+        lenses: Option<&greycard_lens::Database>,
+    ) -> Result<FrameDevelop, String> {
+        let (input, _) = timed_open(path).map_err(|e| format!("{e:#}"))?;
+        if !matches!(input, Input::Raw(_)) {
+            return Err("not a raw".into());
+        }
+        let mut ai = Ai::new();
+        let mut base = None;
+        let deliver: Deliver = Arc::new(|_| {});
+        match develop_job(
+            &input, edit, 0, 0, &mut base, &mut None, &mut ai, None, lenses, &mut None, &deliver,
+        ) {
+            (_, Some(image)) => Ok(FrameDevelop { image, base, ai }),
+            (Outcome::Failed { message, .. }, None) => Err(message),
+            _ => Err("the develop made no picture".into()),
+        }
+    }
+
+    /// A picture standing in for a develop, with no base: for a test
+    /// of the finish.
+    #[cfg(test)]
+    pub(crate) fn of_image(image: WorkingImage) -> FrameDevelop {
+        FrameDevelop {
+            image: Arc::new(image),
+            base: None,
+            ai: Ai::new(),
+        }
+    }
+
+    /// The developed picture finished under `edit` (whose develop is
+    /// the one this was made under) and `settings`, as an export
+    /// finishes it.
+    pub(crate) fn finish(
+        &mut self,
+        edit: &Edit,
+        settings: &crate::export::Settings,
+    ) -> crate::export::Rendered {
+        finish_export(
+            self.image.clone(),
+            edit,
+            self.base.as_ref(),
+            &mut self.ai,
+            settings,
+        )
+    }
 }
 
 /// Who a job's panic is reported to: the outcome the UI is waiting

@@ -369,6 +369,11 @@ pub(crate) enum Shown {
     Lenses,
     /// The settings sheet.
     Settings,
+    /// The camera match's sheet, as the Look section's button opens it.
+    Match,
+    /// The camera match's sheet with its Fit pressed once the scope is
+    /// read, for a snapshot of the run's report.
+    Matched,
     /// The crop tool, on the Crop tab.
     Crop,
     /// The level tool, on the Crop tab.
@@ -394,9 +399,12 @@ impl Shown {
             "pasted" => Ok(Self::Pasted),
             "import" => Ok(Self::Import),
             "imported" => Ok(Self::Imported),
+            "match" => Ok(Self::Match),
+            "matched" => Ok(Self::Matched),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
-                 preset-onto-set, preset-remove, paste, pasted, import or imported, not {name}"
+                 preset-onto-set, preset-remove, paste, pasted, import, imported, match \
+                 or matched, not {name}"
             )),
         }
     }
@@ -466,6 +474,11 @@ impl Shown {
                 }
             }
             Self::Settings => app.invoke_settings_asked(),
+            Self::Match => app.invoke_match_asked(),
+            Self::Matched => {
+                app.invoke_match_asked();
+                crate::panel::camera_match::fit_when_read(app, 100);
+            }
             Self::Crop => {
                 app.set_panel_tab("Crop".into());
                 app.set_crop_mode(true);

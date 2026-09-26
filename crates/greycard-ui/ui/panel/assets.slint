@@ -88,8 +88,12 @@ export component LookSection inherits Section {
     in property <[string]> look-labels;
     in property <string> look-note;
     in property <string> look-warning;
+    /// "fitted on" a body, when the chosen look was fitted on another
+    /// body than the open frame's.
+    in property <string> look-fitted;
     callback look-picked();
     callback view-changed();
+    callback match-asked();
 
     title: "LOOK";
     icon: @image-url("../icons/film.svg");
@@ -150,6 +154,12 @@ export component LookSection inherits Section {
         font-size: Theme.font-xs;
         wrap: word-wrap;
     }
+    if root.look-fitted != "": Text {
+        text: root.look-fitted;
+        color: Theme.text-secondary;
+        font-size: Theme.font-xs;
+        wrap: word-wrap;
+    }
     if root.look-note != "": Text {
         text: root.look-note;
         color: Theme.text-muted;
@@ -159,6 +169,12 @@ export component LookSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;
+        // The camera match: a look fitted per body
+        // and picture style from the raws' JPEGs.
+        PanelButton {
+            text: "Fit this camera's look…";
+            clicked => { root.match-asked(); }
+        }
         // Back to no look at a full strength,
         // which is what the section opens at.
         PanelButton {

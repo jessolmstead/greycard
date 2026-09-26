@@ -347,6 +347,25 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
     };
     app.set_look_note(note.into());
     app.set_look_warning(greycard_edit::look::warning(&st.looks, chosen_name).into());
+    app.set_look_fitted(fitted_note(st, chosen_name).into());
+}
+
+/// "fitted on" a body when the chosen look was fitted by the camera
+/// match on another body than the open frame's; nothing when it was
+/// fitted on this one, names no body, or no frame is open. The look
+/// applies either way: a look is a preference, not a measurement, and
+/// is never swapped for this body's own.
+fn fitted_note(st: &State, chosen: &str) -> String {
+    let (make, model) = (st.camera.0.as_str(), st.camera.1.as_str());
+    if make.is_empty() && model.is_empty() {
+        return String::new();
+    }
+    let camera = greycard_core::raw::camera_name(make, model);
+    st.looks
+        .iter()
+        .find(|e| e.name == chosen)
+        .and_then(|e| e.fitted_note(&camera))
+        .unwrap_or_default()
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {

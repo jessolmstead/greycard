@@ -20,6 +20,8 @@ greycard-lens = { path = "../greycard-lens" }
 greycard-gpu = { path = "../greycard-gpu" }
 # The thumbnail cache, keyed by the index's content hash.
 greycard-library = { path = "../greycard-library" }
+# The camera match: the fit the Look section runs over a group.
+greycard-match = { path = "../greycard-match" }
 slint = { version = "1.18", features = ["unstable-wgpu-30", "renderer-femtovg-wgpu"] }
 bytemuck = { version = "1", features = ["derive"] }
 half = { version = "2", features = ["bytemuck"] }

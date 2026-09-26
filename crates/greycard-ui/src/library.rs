@@ -489,6 +489,7 @@ fn window_pass(lib: &mut Library, pass: Pass, told: &dyn Fn(Told), waits: &Waits
                 report.changed_files.extend(r.changed_files);
                 report.meta_refreshed += r.meta_refreshed;
                 report.unchanged += r.unchanged;
+                report.styled += r.styled;
                 report.returned += r.returned;
                 report.missing += r.missing;
                 report.unavailable.extend(r.unavailable);
@@ -952,13 +953,14 @@ pub(crate) fn told(app: &App, told: Told) {
                 Some(e) => tracing::debug!("index: {what} {}: {e}", path.display()),
                 None => tracing::info!(
                     "indexed {what} {} in {seconds:.3} s: {} added, {} moved, {} changed, \
-                     {} meta refreshed, {} unchanged, {} missing",
+                     {} meta refreshed, {} unchanged ({} styles read), {} missing",
                     path.display(),
                     report.added,
                     report.moved,
                     report.changed,
                     report.meta_refreshed,
                     report.unchanged,
+                    report.styled,
                     report.missing,
                 ),
             }
@@ -1011,12 +1013,13 @@ pub(crate) fn told(app: &App, told: Told) {
             }
             tracing::info!(
                 "indexed the folder in {seconds:.2} s: {} added, {} moved, {} changed, \
-                 {} meta refreshed, {} unchanged, {} missing{}",
+                 {} meta refreshed, {} unchanged ({} styles read), {} missing{}",
                 report.added,
                 report.moved,
                 report.changed,
                 report.meta_refreshed,
                 report.unchanged,
+                report.styled,
                 report.missing,
                 if report.errors.is_empty() {
                     String::new()

@@ -1,0 +1,148 @@
+// The camera match sheet: the Look section's "Fit this camera's
+// look". The scope, the bodies and styles found in it with what the
+// fit will do with each, then a progress line while it runs and a
+// line a group as each lands.
+
+import { Theme } from "../theme.slint";
+import { PanelButton, Segmented, Toggle } from "../controls.slint";
+import { ScrollView } from "std-widgets.slint";
+
+export component MatchSheet inherits Rectangle {
+    /// "Library" or "This folder".
+    in-out property <string> match-scope;
+    /// The scopes on offer: the library only when one is indexed.
+    in property <[string]> match-scopes;
+    /// Why the library is not on offer, when it is not.
+    in property <string> match-scope-note;
+    /// One line a group: the body and style, its frames, and whether
+    /// it will fit, borrow or be skipped and why.
+    in property <[string]> match-groups;
+    /// What the survey found beside the groups: frames not read yet,
+    /// frames with no fixed style; or that it is still reading.
+    in property <string> match-summary;
+    in property <bool> match-can-fit;
+    /// Replace a table the run would otherwise leave alone: a user's
+    /// own, a body's own fit under a borrow, a fit from more frames.
+    in-out property <bool> match-replace;
+    callback match-replace-toggled();
+    in property <bool> match-running;
+    in property <string> match-progress;
+    /// One line a group as its result lands.
+    in property <[string]> match-results;
+    callback match-scope-picked(string);
+    callback match-fit();
+    callback match-cancel();
+    callback match-close();
+
+    background: #000000a0;
+    TouchArea { clicked => { if (!root.match-running) { root.match-close(); } } }
+    Rectangle {
+        width: 600px;
+        height: min(match-sheet.preferred-height, root.height - 48px);
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        match-sheet := VerticalLayout {
+            padding: Theme.space-5;
+            spacing: Theme.space-3;
+            Text {
+                text: "Fit this camera's look";
+                font-size: Theme.font-lg;
+                font-weight: Theme.weight-medium;
+                color: Theme.text;
+            }
+            Text {
+                text: "Each body and picture style gets a look fitted from the JPEG its raws carry, written to the look directory under the body's and the style's name. About 40 frames a group are developed; a group under 20 usable frames borrows the same style from another body, or is skipped.";
+                font-size: Theme.font-xs;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            Segmented {
+                options: root.match-scopes;
+                current <=> root.match-scope;
+                enabled: !root.match-running;
+                selected(s) => { root.match-scope-picked(s); }
+            }
+            if root.match-scope-note != "": Text {
+                text: root.match-scope-note;
+                font-size: Theme.font-xs;
+                color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+            Rectangle {
+                border-radius: Theme.radius-md;
+                background: Theme.base;
+                border-width: 1px;
+                border-color: Theme.border;
+                // The list scrolls inside its box, as the snapshots do,
+                // so a library of many bodies keeps the buttons on
+                // screen.
+                preferred-height: min(group-list.preferred-height, 200px);
+                max-height: self.preferred-height;
+                ScrollView {
+                    group-list := VerticalLayout {
+                        padding: Theme.space-2;
+                        padding-right: Theme.space-2 + Theme.scrollbar-band;
+                        spacing: Theme.space-1;
+                        for line in root.match-groups: Text {
+                            text: line;
+                            font-size: Theme.font-xs;
+                            color: Theme.text;
+                            wrap: word-wrap;
+                        }
+                        if root.match-groups.length == 0: Text {
+                            text: "No body with a fixed picture style here.";
+                            font-size: Theme.font-xs;
+                            color: Theme.text-muted;
+                        }
+                    }
+                }
+            }
+            Toggle {
+                label: "Replace existing looks";
+                checked <=> root.match-replace;
+                enabled: !root.match-running;
+                toggled => { root.match-replace-toggled(); }
+            }
+            if root.match-summary != "": Text {
+                text: root.match-summary;
+                font-size: Theme.font-xs;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            if root.match-running || root.match-progress != "": Text {
+                text: root.match-progress;
+                font-size: Theme.font-sm;
+                color: Theme.text;
+                wrap: word-wrap;
+            }
+            for line in root.match-results: Text {
+                text: line;
+                font-size: Theme.font-xs;
+                color: Theme.text-secondary;
+                wrap: word-wrap;
+            }
+            Rectangle { height: Theme.space-2; }
+            HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: root.match-running ? "Stop" : "Close";
+                    clicked => {
+                        if (root.match-running) { root.match-cancel(); } else { root.match-close(); }
+                    }
+                }
+                PanelButton {
+                    text: "Fit";
+                    icon: @image-url("../icons/film.svg");
+                    primary: true;
+                    enabled: root.match-can-fit && !root.match-running;
+                    clicked => { root.match-fit(); }
+                }
+            }
+        }
+    }
+}

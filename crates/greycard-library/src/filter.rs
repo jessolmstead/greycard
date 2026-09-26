@@ -108,6 +108,9 @@ pub enum Term {
 pub enum Facet {
     Camera,
     Lens,
+    /// The maker's picture style, where it is fixed: the camera
+    /// match's group key, "Canon Faithful".
+    Style,
     Iso,
     Focal,
     Date,
@@ -115,9 +118,10 @@ pub enum Facet {
 }
 
 impl Facet {
-    pub const ALL: [Facet; 6] = [
+    pub const ALL: [Facet; 7] = [
         Facet::Camera,
         Facet::Lens,
+        Facet::Style,
         Facet::Iso,
         Facet::Focal,
         Facet::Date,
@@ -129,6 +133,7 @@ impl Facet {
         match self {
             Facet::Camera => "camera",
             Facet::Lens => "lens",
+            Facet::Style => "style",
             Facet::Iso => "iso",
             Facet::Focal => "focal",
             Facet::Date => "date",
@@ -142,6 +147,7 @@ impl Facet {
         Some(match name.to_ascii_lowercase().as_str() {
             "camera" => Facet::Camera,
             "lens" => Facet::Lens,
+            "style" => Facet::Style,
             "iso" => Facet::Iso,
             "focal" | "mm" => Facet::Focal,
             "date" | "taken" => Facet::Date,
@@ -156,6 +162,7 @@ impl Facet {
         match self {
             Facet::Camera => "files.camera",
             Facet::Lens => "files.lens",
+            Facet::Style => "files.style",
             Facet::Iso => "files.iso",
             Facet::Focal => "round(files.focal, 1)",
             Facet::Date => "substr(files.taken, 1, 10)",

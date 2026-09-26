@@ -13,6 +13,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod ai;
+mod camera_match;
 mod clipboard;
 mod cull;
 mod display;
@@ -207,8 +208,10 @@ struct Cli {
     /// the paste sheet opened over the frames selected), pasted (that
     /// paste applied at once, the sheet never drawn), import (the
     /// import sheet, its source --import's when given, else a card
-    /// looked for) or imported (the same, its import started once the
-    /// source is read)
+    /// looked for), imported (the same, its import started once the
+    /// source is read), match (the camera match's sheet, as the Look
+    /// section's button opens it) or matched (the same, its Fit
+    /// pressed once the scope is read)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of
@@ -488,6 +491,9 @@ pub(crate) struct State {
     pub(crate) facets_last: RefCell<Vec<(filter::Facet, Vec<greycard_library::FacetCount>)>>,
     /// The library's roots, their counts and their watcher.
     pub(crate) library: roots::Library,
+    /// The camera match's sheet: its scope, what the survey found and
+    /// a run under way.
+    pub(crate) camera_match: panel::camera_match::Sheet,
     /// What the browser lists: a folder, or the files under the
     /// roots.
     pub(crate) view: roots::View,
@@ -827,6 +833,7 @@ impl State {
             index_pass_ready: false,
             facets_last: RefCell::new(Vec::new()),
             library: roots::Library::default(),
+            camera_match: Default::default(),
             view: roots::View::Folder,
             view_generation: 0,
             compare_tiles: Rc::new(VecModel::default()),
@@ -958,6 +965,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::sync::install(app, &state, &worker);
     panel::menu::install(app, &state, &worker);
     panel::import::install(app, &state, &worker);
+    panel::camera_match::install(app, &state);
     roots::install(app, &state, &worker);
     report::install(app, &state);
 

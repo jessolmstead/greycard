@@ -231,6 +231,7 @@ pub fn facet_caption(facet: Facet) -> &'static str {
     match facet {
         Facet::Camera => "Camera",
         Facet::Lens => "Lens",
+        Facet::Style => "Style",
         Facet::Iso => "ISO",
         Facet::Focal => "Focal",
         Facet::Date => "Day",
@@ -270,7 +271,7 @@ pub struct Filter {
     /// any-of within a facet, as the flags and labels are, and an
     /// empty facet asks nothing. The values are the index's own
     /// ([`greycard_library::FacetCount::value`]).
-    pub facets: [Vec<String>; 6],
+    pub facets: [Vec<String>; Facet::ALL.len()],
 }
 
 impl Filter {
@@ -469,6 +470,7 @@ impl Filter {
             parts.push(match facet {
                 Facet::Camera => format!("camera {said}"),
                 Facet::Lens => format!("lens {said}"),
+                Facet::Style => format!("style {said}"),
                 Facet::Iso => format!("ISO {said}"),
                 Facet::Focal => format!("{said} mm"),
                 Facet::Date => format!("taken {said}"),

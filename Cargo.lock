@@ -2147,6 +2147,7 @@ dependencies = [
  "greycard-gpu",
  "greycard-lens",
  "greycard-library",
+ "greycard-match",
  "half",
  "i-slint-backend-testing",
  "image",

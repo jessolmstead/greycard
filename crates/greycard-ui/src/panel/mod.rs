@@ -1,5 +1,6 @@
 pub(crate) mod assets;
 pub(crate) mod browser;
+pub(crate) mod camera_match;
 pub(crate) mod color;
 pub(crate) mod crop;
 pub(crate) mod cull;
