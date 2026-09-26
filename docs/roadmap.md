@@ -116,9 +116,7 @@ Decided (§34): ONNX Runtime through `ort`, CPU floor with CUDA, DirectML
 or CoreML when found; models downloaded on first use with their
 licenses, never bundled; a `greycard-ai` crate that core never sees.
 
-- [ ] AI masks, after Sky (§175): the Sky shape's model hosted at
-      jessolmstead/greycard-sky (the export script reproduces the
-      bytes); a learned sky matte for dense canopies and twigs
+- [ ] AI masks, after Sky (§175): a learned sky matte for dense canopies and twigs
       against glare, where the color-line matte fails (needs clean
       data we assemble); a 4096-wide raster for Sky so a 100 MP
       frame's twigs are not averaged fourfold; more hard negatives

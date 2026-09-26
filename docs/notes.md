@@ -20714,8 +20714,9 @@ stage is a pure function with a CPU reference and unit tests.
    carries the TU/e copyright. `modified` says the file is an ONNX export
    of the published weights at revision 10f5326 and that the weights are
    untouched. The file is 96,025,182 bytes, sha256 `805ed0fb…372d`, and
-   its URL is `huggingface.co/jessolmstead/greycard-sky`, which is not
-   yet hosted. `tools/ai/eomt_export.py` reproduces those bytes exactly
+   its URL is `huggingface.co/jessolmstead/greycard-sky`, published
+   there the next morning with the MIT notice and a card, the served
+   file's size and hash checked against the registry's. `tools/ai/eomt_export.py` reproduces those bytes exactly
    with the versions now in `tools/ai/requirements.txt` (torch 2.14.0,
    transformers 5.17.0, onnx 1.23.0, protobuf 7.36.2). One detail matters
    for the hash: the wrapper's attribute is named `m`, because that name
@@ -21070,8 +21071,6 @@ want alone, and a test holds it.
     with the brushes and the shader.
 - *Windows.* Sky seen through a window is refused (73–85% sure). That
   is arguably right.
-- *Hosting.* The model's URL is to be hosted. `--fetch all` names it as
-  a failure until it is.
 - *The bimodal WebGPU prior* above: not chased.
 - *The gate's margin* on the unsure side is 97.5% (DSCF0029, a real sky
   among blossoms) against the 98% bar. More hard negatives are wanted:
