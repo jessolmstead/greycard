@@ -12,8 +12,10 @@ use crate::error::Result;
 use crate::raw::{Orientation, RawFrame};
 
 pub mod rawler_backend;
+pub mod style;
 
 pub use rawler_backend::{Probe, RawMetadata, RawlerDecoder, inside_decoder};
+pub use style::{Adaptive, CameraStyle, Maker};
 
 pub trait Decoder {
     /// Decode a whole file held in memory.

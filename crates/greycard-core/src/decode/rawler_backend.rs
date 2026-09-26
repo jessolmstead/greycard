@@ -61,7 +61,10 @@ fn decoder_error(e: ::rawler::RawlerError) -> Error {
 /// panic is caught here and becomes the file's decode error, the one
 /// every caller already handles. `tail` is the file's last bytes, or
 /// a way to read them, to say what went wrong when that is knowable.
-fn guarded<T>(tail: impl FnOnce() -> Option<Vec<u8>>, f: impl FnOnce() -> Result<T>) -> Result<T> {
+pub(crate) fn guarded<T>(
+    tail: impl FnOnce() -> Option<Vec<u8>>,
+    f: impl FnOnce() -> Result<T>,
+) -> Result<T> {
     let was = GUARDED.replace(true);
     let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
     GUARDED.set(was);
@@ -108,7 +111,7 @@ fn ends_in_zeros(tail: &[u8]) -> bool {
 }
 
 /// The last [`TAIL`] bytes of the file at `path`.
-fn tail_of(path: &Path) -> Option<Vec<u8>> {
+pub(crate) fn tail_of(path: &Path) -> Option<Vec<u8>> {
     use std::io::{Read, Seek, SeekFrom};
     let mut file = std::fs::File::open(path).ok()?;
     let len = file.metadata().ok()?.len();
