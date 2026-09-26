@@ -179,6 +179,11 @@ comes across with its ratings and collections.
   hand), and an error row in the index for a file whose hash fails so
   it stops showing under every chip (§168). The all-roots view and
   the filter remembered between sessions are there since §174
+- [ ] A name for a library root, set from the UI (right-click the
+      root, or a field where roots are added), shown wherever the
+      root's folder name is: "Archive" for a root whose folder is
+      called Photos. The index keeps the name beside the path; the
+      path stays what it is
 - [ ] Archive roots, for a NAS or a mounted cloud folder: Back up
   copies a shoot's new and changed files and sidecars to the archive,
   hash-verified and never deleting there; Remove rejects finds the
