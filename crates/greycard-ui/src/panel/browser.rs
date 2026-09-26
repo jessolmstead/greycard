@@ -1188,7 +1188,6 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
         if m.is_some() {
             app.set_show_mask(true);
             app.set_component(0);
-            crate::panel::mask::reveal_range(&edit, m, app);
         }
         // Likewise a patch, which the panel's list then shows
         // chosen and the viewport outlines.

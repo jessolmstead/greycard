@@ -518,7 +518,6 @@ export component App inherits Window {
     in-out property <bool> component-invert: false;
     in-out property <string> shape-mode: "Add";
     in-out property <[bool]> adjustment-on: [];
-    in-out property <bool> shapes-open: false;
     // The shape being placed goes into the chosen mask rather than
     // making a new adjustment.
     in-out property <bool> placing-into: false;
@@ -1625,7 +1624,6 @@ export component App inherits Window {
                             component-invert <=> root.component-invert;
                             shape-mode <=> root.shape-mode;
                             adjustment-on <=> root.adjustment-on;
-                            shapes-open <=> root.shapes-open;
                             placing-into <=> root.placing-into;
                             component-kind <=> root.component-kind;
                             brush-size <=> root.brush-size;

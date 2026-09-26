@@ -34,7 +34,6 @@ export component AdjustmentsSection inherits Section {
     in-out property <bool> component-invert;
     in-out property <string> shape-mode;
     in-out property <[bool]> adjustment-on;
-    in-out property <bool> shapes-open;
     in-out property <bool> placing-into;
     in-out property <string> component-kind;
     in-out property <float> brush-size;
@@ -217,8 +216,8 @@ export component AdjustmentsSection inherits Section {
             current <=> root.brush-op;
         }
     }
-    // The chosen adjustment: its name, its switches,
-    // and its shapes behind a fold.
+    // The chosen adjustment: its name and switches, then its shapes
+    // set in under them, the chosen shape's own controls in a card.
     if root.target > 0: VerticalLayout {
         spacing: Theme.space-2;
         LineEdit {
@@ -239,34 +238,16 @@ export component AdjustmentsSection inherits Section {
                 toggled => { root.view-changed(); }
             }
         }
-        Rectangle {
-            height: Theme.control-height;
-            border-radius: Theme.radius-sm;
-            background: fold.has-hover ? Theme.hover : transparent;
-            fold := TouchArea {
-                mouse-cursor: MouseCursor.pointer;
-                clicked => { root.shapes-open = !root.shapes-open; }
-            }
-            HorizontalLayout {
-                padding-left: Theme.space-2;
-                spacing: Theme.space-2;
-                Text {
-                    text: root.shapes-open ? "\u{25be}" : "\u{25b8}";
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-xs;
-                    vertical-alignment: center;
-                }
-                Text {
-                    text: "Shapes (" + root.component-names.length + ")";
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-xs;
-                    font-weight: Theme.weight-medium;
-                    vertical-alignment: center;
-                    horizontal-stretch: 1;
-                }
-            }
+        Text {
+            text: "Shapes";
+            color: Theme.text-secondary;
+            font-size: Theme.font-xs;
+            font-weight: Theme.weight-medium;
+            vertical-alignment: center;
+            height: Theme.control-height - Theme.space-2;
         }
-        if root.shapes-open: VerticalLayout {
+        VerticalLayout {
+            padding-left: Theme.space-2;
             spacing: Theme.space-2;
             Rectangle {
                 border-radius: Theme.radius-md;
@@ -336,6 +317,174 @@ export component AdjustmentsSection inherits Section {
                     }
                 }
             }
+            // The chosen shape's own controls, carded under the list
+            // so they read apart from the adjustment's.
+            if root.component-kind != "": Rectangle {
+                border-radius: Theme.radius-md;
+                background: Theme.base;
+                border-width: 1px;
+                border-color: Theme.border;
+                VerticalLayout {
+                    padding: Theme.space-2;
+                    spacing: Theme.space-2;
+                    Text {
+                        text: root.component-kind.to-uppercase();
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-semibold;
+                        letter-spacing: 0.8px;
+                        overflow: elide;
+                    }
+                    Toggle {
+                        label: "Invert shape";
+                        checked <=> root.component-invert;
+                        toggled => { root.view-changed(); }
+                    }
+                    if root.has-feather: EditSlider {
+                        label: "Feather";
+                        minimum: 0;
+                        maximum: 1;
+                        default: 0.5;
+                        step: 0.01;
+                        value <=> root.mask-feather;
+                        text: round(root.mask-feather * 100) + "%";
+                        changed(v) => { root.view-changed(); }
+                    }
+                    // A luminance window: the lightness it takes in full, from
+                    // Low to High, and how far past each it fades to nothing.
+                    if root.component-kind == "Luminance": VerticalLayout {
+                        spacing: Theme.space-2;
+                        EditSlider {
+                            label: "Low";
+                            minimum: 0;
+                            maximum: 1;
+                            default: 0.7;
+                            step: 0.01;
+                            value <=> root.lum-low;
+                            text: round(root.lum-low * 100);
+                            // Low pushes High ahead of it.
+                            changed(v) => {
+                                if (root.lum-high < v) { root.lum-high = v; }
+                                root.view-changed();
+                            }
+                        }
+                        EditSlider {
+                            label: "Low fade";
+                            minimum: 0;
+                            maximum: 0.5;
+                            default: 0.1;
+                            step: 0.01;
+                            value <=> root.lum-low-feather;
+                            text: round(root.lum-low-feather * 100);
+                            changed(v) => { root.view-changed(); }
+                        }
+                        EditSlider {
+                            label: "High";
+                            minimum: 0;
+                            maximum: 1;
+                            default: 1;
+                            step: 0.01;
+                            value <=> root.lum-high;
+                            text: round(root.lum-high * 100);
+                            changed(v) => {
+                                if (root.lum-low > v) { root.lum-low = v; }
+                                root.view-changed();
+                            }
+                        }
+                        EditSlider {
+                            label: "High fade";
+                            minimum: 0;
+                            maximum: 0.5;
+                            default: 0;
+                            step: 0.01;
+                            value <=> root.lum-high-feather;
+                            text: round(root.lum-high-feather * 100);
+                            changed(v) => { root.view-changed(); }
+                        }
+                    }
+                    // A color window: the hue it centers on, how wide it is in
+                    // full and how far round it fades; the least chroma it
+                    // takes in full, and how far under that it fades.
+                    if root.component-kind == "Color": VerticalLayout {
+                        spacing: Theme.space-2;
+                        HorizontalLayout {
+                            spacing: Theme.space-2;
+                            PanelButton {
+                                text: "Pick";
+                                icon: @image-url("../icons/pipette.svg");
+                                primary: root.picking == "Range";
+                                clicked => { root.pick-started("Range"); }
+                            }
+                        }
+                        EditSlider {
+                            label: "Hue";
+                            label-width: 84px;
+                            tinted: true;
+                            tint: root.hue-circle;
+                            minimum: 0;
+                            maximum: 360;
+                            default: 55;
+                            step: 0.5;
+                            value <=> root.range-hue;
+                            text: round(root.range-hue) + "\u{00b0}";
+                            changed(v) => { root.view-changed(); }
+                        }
+                        EditSlider {
+                            label: "Width";
+                            label-width: 84px;
+                            minimum: 0;
+                            maximum: 180;
+                            default: 60;
+                            step: 0.5;
+                            value <=> root.range-width;
+                            text: round(root.range-width) + "\u{00b0}";
+                            changed(v) => { root.view-changed(); }
+                        }
+                        EditSlider {
+                            label: "Hue fade";
+                            label-width: 84px;
+                            minimum: 0;
+                            maximum: 90;
+                            default: 25;
+                            step: 0.5;
+                            value <=> root.range-hue-feather;
+                            text: round(root.range-hue-feather) + "\u{00b0}";
+                            changed(v) => { root.view-changed(); }
+                        }
+                        EditSlider {
+                            label: "Chroma";
+                            label-width: 84px;
+                            minimum: 0;
+                            maximum: 0.2;
+                            default: 0.02;
+                            step: 0.001;
+                            value <=> root.range-chroma;
+                            text: round(root.range-chroma * 1000) / 10;
+                            // The fade runs down to no chroma at most.
+                            changed(v) => {
+                                if (root.range-chroma-feather > v) { root.range-chroma-feather = v; }
+                                root.view-changed();
+                            }
+                        }
+                        EditSlider {
+                            label: "Chroma fade";
+                            label-width: 84px;
+                            minimum: 0;
+                            maximum: 0.1;
+                            default: 0.01;
+                            step: 0.001;
+                            value <=> root.range-chroma-feather;
+                            text: round(root.range-chroma-feather * 1000) / 10;
+                            changed(v) => {
+                                if (v > root.range-chroma) { root.range-chroma-feather = root.range-chroma; }
+                                root.view-changed();
+                            }
+                        }
+                    }
+                }
+            }
+            // Another shape into the mask, joined as the switch says;
+            // on a chosen brush, sky or object, more of it.
             Segmented {
                 options: ["Add", "Subtract", "Intersect"];
                 current <=> root.shape-mode;
@@ -393,152 +542,6 @@ export component AdjustmentsSection inherits Section {
                     text: "Color";
                     icon: @image-url("../icons/palette.svg");
                     clicked => { root.add-shape("Color", root.shape-mode); }
-                }
-            }
-            Toggle {
-                label: "Invert shape";
-                checked <=> root.component-invert;
-                toggled => { root.view-changed(); }
-            }
-            if root.has-feather: EditSlider {
-                label: "Feather";
-                minimum: 0;
-                maximum: 1;
-                default: 0.5;
-                step: 0.01;
-                value <=> root.mask-feather;
-                text: round(root.mask-feather * 100) + "%";
-                changed(v) => { root.view-changed(); }
-            }
-            // A luminance window: the lightness it takes in full, from
-            // Low to High, and how far past each it fades to nothing.
-            if root.component-kind == "Luminance": VerticalLayout {
-                spacing: Theme.space-2;
-                EditSlider {
-                    label: "Low";
-                    minimum: 0;
-                    maximum: 1;
-                    default: 0.7;
-                    step: 0.01;
-                    value <=> root.lum-low;
-                    text: round(root.lum-low * 100);
-                    // Low pushes High ahead of it.
-                    changed(v) => {
-                        if (root.lum-high < v) { root.lum-high = v; }
-                        root.view-changed();
-                    }
-                }
-                EditSlider {
-                    label: "Low fade";
-                    minimum: 0;
-                    maximum: 0.5;
-                    default: 0.1;
-                    step: 0.01;
-                    value <=> root.lum-low-feather;
-                    text: round(root.lum-low-feather * 100);
-                    changed(v) => { root.view-changed(); }
-                }
-                EditSlider {
-                    label: "High";
-                    minimum: 0;
-                    maximum: 1;
-                    default: 1;
-                    step: 0.01;
-                    value <=> root.lum-high;
-                    text: round(root.lum-high * 100);
-                    changed(v) => {
-                        if (root.lum-low > v) { root.lum-low = v; }
-                        root.view-changed();
-                    }
-                }
-                EditSlider {
-                    label: "High fade";
-                    minimum: 0;
-                    maximum: 0.5;
-                    default: 0;
-                    step: 0.01;
-                    value <=> root.lum-high-feather;
-                    text: round(root.lum-high-feather * 100);
-                    changed(v) => { root.view-changed(); }
-                }
-            }
-            // A color window: the hue it centers on, how wide it is in
-            // full and how far round it fades; the least chroma it
-            // takes in full, and how far under that it fades.
-            if root.component-kind == "Color": VerticalLayout {
-                spacing: Theme.space-2;
-                HorizontalLayout {
-                    spacing: Theme.space-2;
-                    PanelButton {
-                        text: "Pick";
-                        icon: @image-url("../icons/pipette.svg");
-                        primary: root.picking == "Range";
-                        clicked => { root.pick-started("Range"); }
-                    }
-                }
-                EditSlider {
-                    label: "Hue";
-                    label-width: 84px;
-                    tinted: true;
-                    tint: root.hue-circle;
-                    minimum: 0;
-                    maximum: 360;
-                    default: 55;
-                    step: 0.5;
-                    value <=> root.range-hue;
-                    text: round(root.range-hue) + "\u{00b0}";
-                    changed(v) => { root.view-changed(); }
-                }
-                EditSlider {
-                    label: "Width";
-                    label-width: 84px;
-                    minimum: 0;
-                    maximum: 180;
-                    default: 60;
-                    step: 0.5;
-                    value <=> root.range-width;
-                    text: round(root.range-width) + "\u{00b0}";
-                    changed(v) => { root.view-changed(); }
-                }
-                EditSlider {
-                    label: "Hue fade";
-                    label-width: 84px;
-                    minimum: 0;
-                    maximum: 90;
-                    default: 25;
-                    step: 0.5;
-                    value <=> root.range-hue-feather;
-                    text: round(root.range-hue-feather) + "\u{00b0}";
-                    changed(v) => { root.view-changed(); }
-                }
-                EditSlider {
-                    label: "Chroma";
-                    label-width: 84px;
-                    minimum: 0;
-                    maximum: 0.2;
-                    default: 0.02;
-                    step: 0.001;
-                    value <=> root.range-chroma;
-                    text: round(root.range-chroma * 1000) / 10;
-                    // The fade runs down to no chroma at most.
-                    changed(v) => {
-                        if (root.range-chroma-feather > v) { root.range-chroma-feather = v; }
-                        root.view-changed();
-                    }
-                }
-                EditSlider {
-                    label: "Chroma fade";
-                    label-width: 84px;
-                    minimum: 0;
-                    maximum: 0.1;
-                    default: 0.01;
-                    step: 0.001;
-                    value <=> root.range-chroma-feather;
-                    text: round(root.range-chroma-feather * 1000) / 10;
-                    changed(v) => {
-                        if (v > root.range-chroma) { root.range-chroma-feather = root.range-chroma; }
-                        root.view-changed();
-                    }
                 }
             }
         }

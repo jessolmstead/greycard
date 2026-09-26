@@ -138,21 +138,6 @@ pub(crate) fn read_range(shape: &mut Shape, app: &App) {
     }
 }
 
-/// An adjustment chosen whose chosen shape is a range: its sliders
-/// are the whole of it, and they are behind the shapes' fold, so the
-/// fold opens. Only on choosing, so a fold closed by hand stays shut
-/// while the adjustment is edited.
-pub(crate) fn reveal_range(edit: &Edit, target: Option<usize>, app: &App) {
-    let chosen = app.get_component().max(0) as usize;
-    if target
-        .and_then(|i| edit.adjustments.get(i))
-        .and_then(|a| a.mask.components.get(chosen))
-        .is_some_and(|c| c.shape.is_range())
-    {
-        app.set_shapes_open(true);
-    }
-}
-
 /// Whether a shape is made whole by its button, with no drag on the
 /// picture: a model's subject, or a range of the picture's own.
 fn made_at_once(kind: &str) -> bool {
@@ -459,7 +444,6 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             st.target = target.filter(|&t| t < st.edit.adjustments.len());
             app.set_component(0);
             show_edit(&st, &st.edit, &app, st.target);
-            reveal_range(&st.edit, st.target, &app);
             app.window().request_redraw();
         });
     }
@@ -542,10 +526,6 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 st.placing = None;
                 app.set_placing("".into());
                 app.set_component(0);
-                if kind != "Subject" && kind != "Sky" {
-                    // Its sliders are the shape: show them.
-                    app.set_shapes_open(true);
-                }
                 show_edit(&st, &st.edit, &app, st.target);
                 drop(st);
                 app.invoke_view_changed();
@@ -608,7 +588,6 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 let which = a.mask.components.len() - 1;
                 st.placing = None;
                 app.set_placing("".into());
-                app.set_shapes_open(true);
                 app.set_component(which as i32);
                 show_edit(&st, &st.edit, &app, st.target);
                 drop(st);
@@ -660,7 +639,6 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             });
             tool_in_hand(&mut st, &app);
             app.set_placing_into(true);
-            app.set_shapes_open(true);
             app.set_placing(kind.clone());
             app.set_status(hint.into());
         });
@@ -1502,6 +1480,28 @@ mod tests {
         assert_eq!(sky_pick(false, true), Ok(placing_hint("Sky")));
     }
 
+    /// The look sections on the Masks tab are headed with the chosen
+    /// adjustment's name, as it is renamed; Global's are not.
+    #[test]
+    fn the_look_sections_are_headed_with_the_chosen_adjustment() {
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_add_adjustment("Luminance".into());
+        app.invoke_add_adjustment("Color".into());
+        let second = app.get_target_name();
+        assert!(!second.is_empty());
+        app.invoke_target_changed(1);
+        let first = app.get_target_name();
+        assert_eq!(first, app.get_adjustment_name());
+        assert_ne!(first, second);
+        app.set_adjustment_name("Warm the far hillside".into());
+        app.invoke_renamed();
+        assert_eq!(app.get_target_name(), "Warm the far hillside");
+        app.invoke_target_changed(0);
+        assert_eq!(app.get_target_name(), "");
+    }
+
     /// The range masks from the panel: a button makes one whole, its
     /// sliders are its window both ways, a color one puts the dropper
     /// in hand, and Skin puts the window at the skin hue.
@@ -1520,7 +1520,6 @@ mod tests {
             );
         }
         assert_eq!(app.get_component_kind(), "Luminance");
-        assert!(app.get_shapes_open());
         assert!(app.get_picking().is_empty(), "no dropper for a luminance");
         assert_eq!(app.get_lum_low(), 0.7);
         // The sliders are the shape.
