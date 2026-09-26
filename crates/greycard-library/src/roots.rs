@@ -804,6 +804,21 @@ mod tests {
             }
             panic!("never saw it: {all:?}");
         };
+        // A change that reaches a folder: its own pass, or a tree pass
+        // over it or a folder above it. Windows says a folder changed
+        // when an entry is made in it, and FSEvents can name the root
+        // itself; each is a tree to the classifier, and the batch folds
+        // the file's folder into it.
+        let reaches = |all: &[Change], dir: &Path| {
+            all.iter().any(|c| match c {
+                Change::Folder(p) => p == dir,
+                Change::Tree(t) => dir.starts_with(t),
+            })
+        };
+        let tree_over = |all: &[Change], dir: &Path| {
+            all.iter()
+                .any(|c| matches!(c, Change::Tree(t) if dir.starts_with(t)))
+        };
         // The hidden folder first: if it said anything it would come
         // in the same batch as the raw below.
         std::fs::create_dir_all(root.join("shoot").join(".greycard")).unwrap();
@@ -813,7 +828,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(root.join("shoot").join("a.CR3"), b"not a raw").unwrap();
-        let all = wait(&|c| c.contains(&Change::Folder(root.join("shoot"))));
+        let all = wait(&|c| reaches(c, &root.join("shoot")));
         // Nothing under the hidden folder. A platform may say the
         // folders the writes touched as well, which is a tree pass
         // over them and harmless.
@@ -823,7 +838,7 @@ mod tests {
             "{all:?}"
         );
         std::fs::create_dir_all(root.join("new")).unwrap();
-        wait(&|c| c.contains(&Change::Tree(root.join("new"))));
+        wait(&|c| tree_over(c, &root.join("new")));
         drop(watcher);
         std::fs::remove_dir_all(&dir).unwrap();
     }
