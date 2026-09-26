@@ -200,13 +200,6 @@ pub(crate) fn presets_missing_words(store: bool, missing: &[String]) -> String {
     }
 }
 
-/// Whether `name` is one of the presets this build ships.
-fn is_shipped(name: &str) -> bool {
-    preset::SHIPPED
-        .iter()
-        .any(|(_, text)| Preset::from_json(text).is_ok_and(|p| p.name.eq_ignore_ascii_case(name)))
-}
-
 /// Bring a preset file into the store, Lightroom's or this engine's,
 /// and say what came across.
 pub(crate) fn import_preset(st: &mut State, app: &App, path: &Path) {
@@ -509,6 +502,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            // Another row clicked is the question left unanswered.
+            app.set_preset_confirm_remove(-1);
             let mut st = state.borrow_mut();
             let Some(preset) = st.presets.get(i as usize).map(|e| e.preset.clone()) else {
                 return;
@@ -611,9 +606,17 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             match st.preset_store.as_ref().map(|s| s.remove(&entry)) {
                 Some(Ok(())) => {
                     let name = &entry.preset.name;
+                    // Promised only when the Restore would bring one
+                    // of that name back: the shipped one, which need
+                    // not be what the user had under the name.
+                    let restorable = st.preset_store.as_ref().is_some_and(|s| {
+                        s.missing_shipped()
+                            .iter()
+                            .any(|m| m.eq_ignore_ascii_case(name))
+                    });
                     app.set_status(
-                        if is_shipped(name) {
-                            format!("{name} removed; Settings can restore it")
+                        if restorable {
+                            format!("{name} removed; Settings can restore the default one")
                         } else {
                             format!("{name} removed")
                         }
@@ -791,6 +794,77 @@ mod tests {
         assert!(presets_missing_words(false, &[]).starts_with("No configuration"));
     }
 
+    /// The bin and the Remove as a pointer clicks them: the bin arms
+    /// the row and removes nothing, Escape and Cancel disarm it, and
+    /// only the Remove removes. Found by sweeping the left pane's
+    /// column of bins, top down, with the navigator folded away so
+    /// the presets sit near the top and nothing above them opens.
+    #[test]
+    fn the_bin_asks_and_the_remove_removes() {
+        let app = crate::testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let d = std::env::temp_dir().join(format!("greycard-ui-bin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let store = preset::Store::at(d.clone());
+        store.seed();
+        state.borrow_mut().preset_store = Some(store);
+        refresh_presets(&mut state.borrow_mut(), &app);
+        app.set_collapsed_navigator(true);
+        let first = state.borrow().presets[0].clone();
+
+        // The first bin: the first armed point, top down, in the
+        // pane's right-hand strip where the bins are.
+        let mut bin = None;
+        'sweep: for y in (60..600).step_by(3) {
+            for x in (150..320).step_by(6) {
+                crate::testing::click(&app, x as f32, y as f32);
+                // A section header in the way folds its section:
+                // unfolded again, so the layout holds still.
+                app.set_collapsed_presets(false);
+                app.set_collapsed_navigator(true);
+                if app.get_preset_confirm_remove() >= 0 {
+                    bin = Some((x as f32, y as f32));
+                    break 'sweep;
+                }
+            }
+        }
+        let (bx, by) = bin.expect("a bin to click");
+        assert_eq!(app.get_preset_confirm_remove(), 0, "the first row's");
+        assert!(first.path.exists(), "a bin alone removes nothing");
+        assert_eq!(state.borrow().presets.len(), 3);
+
+        // Escape is its Cancel.
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert_eq!(app.get_preset_confirm_remove(), -1);
+        assert!(first.path.exists());
+
+        // Armed again, the Remove is below the list: the first point
+        // under the bin that removes it.
+        crate::testing::click(&app, bx, by);
+        assert_eq!(app.get_preset_confirm_remove(), 0);
+        let mut removed = false;
+        'remove: for y in (by as i32..by as i32 + 300).step_by(3) {
+            for x in (20..320).step_by(6) {
+                crate::testing::click(&app, x as f32, y as f32);
+                app.set_collapsed_presets(false);
+                if !first.path.exists() {
+                    removed = true;
+                    break 'remove;
+                }
+                if app.get_preset_confirm_remove() < 0 {
+                    // Cancel, or a row: arm it again and go on.
+                    crate::testing::click(&app, bx, by);
+                }
+            }
+        }
+        assert!(removed, "the Remove removes");
+        assert_eq!(state.borrow().presets.len(), 2);
+        assert_eq!(app.get_preset_confirm_remove(), -1);
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
     /// A bin asks and removes nothing; the Remove that names the
     /// preset removes it. A shipped one removed is then missing in the
     /// settings, and their Restore puts it back.
@@ -818,6 +892,11 @@ mod tests {
         assert!(first.path.exists(), "a bin alone removes nothing");
         refresh_presets(&mut state.borrow_mut(), &app);
         assert_eq!(app.get_preset_confirm_remove(), -1);
+        // So does a preset laid over the edit instead.
+        app.set_preset_confirm_remove(0);
+        app.invoke_preset_applied(1);
+        assert_eq!(app.get_preset_confirm_remove(), -1);
+        assert!(first.path.exists());
 
         // Asked again and confirmed, as the Remove does: gone, the
         // question with it, and the status says where it can be had
@@ -827,10 +906,9 @@ mod tests {
         assert_eq!(app.get_preset_confirm_remove(), -1);
         assert!(!first.path.exists());
         assert_eq!(count(), 2);
-        assert!(
-            app.get_status().contains("Settings can restore it"),
-            "{}",
-            app.get_status()
+        assert_eq!(
+            app.get_status(),
+            "Muted Slide removed; Settings can restore the default one"
         );
         assert_eq!(app.get_presets_missing(), 1);
         assert_eq!(
@@ -844,6 +922,30 @@ mod tests {
         assert_eq!(count(), 3);
         assert_eq!(app.get_presets_missing(), 0);
         assert_eq!(app.get_status(), "restored Muted Slide");
+
+        // A preset of the user's own promises nothing when it goes;
+        // nor does a shipped name while another preset still has it.
+        let mine = Preset::from_edit("Mine", &Edit::default(), &[Section::Light]);
+        let dup = Preset::from_edit("warm negative", &Edit::default(), &[Section::Light]);
+        {
+            let st = state.borrow();
+            let store = st.preset_store.as_ref().unwrap();
+            store.save(&mine).unwrap();
+            dup.save_to(&d.join("warm-negative-copy.gcp")).unwrap();
+        }
+        refresh_presets(&mut state.borrow_mut(), &app);
+        let at = |name: &str| {
+            state
+                .borrow()
+                .presets
+                .iter()
+                .position(|e| e.preset.name == name)
+                .unwrap() as i32
+        };
+        app.invoke_preset_deleted(at("Mine"));
+        assert_eq!(app.get_status(), "Mine removed");
+        app.invoke_preset_deleted(at("warm negative"));
+        assert_eq!(app.get_status(), "warm negative removed");
         let _ = std::fs::remove_dir_all(&d);
     }
 

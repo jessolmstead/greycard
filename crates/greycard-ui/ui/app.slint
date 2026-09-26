@@ -1137,6 +1137,9 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
             if (e.text == Key.Escape && root.sync-open) { root.sync-open = false; return accept; }
             if (e.text == Key.Escape && (root.placing != "" || root.picking != "")) { root.stop-placing(); return accept; }
+            // A preset's removal asked and not answered: Esc is its
+            // Cancel.
+            if (e.text == Key.Escape && root.preset-confirm-remove >= 0) { root.preset-confirm-remove = -1; return accept; }
             // A repair chosen for editing, not one just drawn: Esc
             // lets go of it, so the sliders go back to the brush.
             if (e.text == Key.Escape && root.patch != -1) { root.patch-changed(-1); return accept; }

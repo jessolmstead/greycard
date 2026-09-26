@@ -373,7 +373,19 @@ impl Shown {
                 app.invoke_sync_applied();
             }
             Self::PresetOntoSet => app.invoke_preset_applied(0),
-            Self::PresetRemove => app.set_preset_confirm_remove(0),
+            // The row with the longest name, the hardest to fit;
+            // nothing with no presets to ask about.
+            Self::PresetRemove => {
+                let longest = app
+                    .get_preset_names()
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(i, n)| (n.chars().count(), std::cmp::Reverse(*i)))
+                    .map(|(i, _)| i as i32);
+                if let Some(row) = longest {
+                    app.set_preset_confirm_remove(row);
+                }
+            }
             Self::Paste => {
                 app.invoke_copy_asked();
                 app.invoke_paste_asked();
@@ -1227,8 +1239,17 @@ mod tests {
         app.set_fetch_open(false);
         Shown::Settings.open(&app);
         assert!(app.get_settings_open());
+        // No presets, nothing asked; else the longest name.
         Shown::PresetRemove.open(&app);
-        assert_eq!(app.get_preset_confirm_remove(), 0);
+        assert_eq!(app.get_preset_confirm_remove(), -1);
+        app.set_preset_names(slint::ModelRc::new(slint::VecModel::from(vec![
+            slint::SharedString::from("Muted Slide"),
+            "Red-Filter Mono".into(),
+            "Warm Negative".into(),
+        ])));
+        Shown::PresetRemove.open(&app);
+        assert_eq!(app.get_preset_confirm_remove(), 1);
+        app.set_preset_confirm_remove(-1);
 
         // A tool brings the Crop tab with it.
         assert_eq!(app.get_panel_tab(), "Develop");

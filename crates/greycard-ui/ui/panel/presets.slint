@@ -20,9 +20,9 @@ export component PresetsSection inherits Section {
     in property <int> set-count;
     callback sync-open-asked();
     /// The row whose bin was clicked and not yet confirmed; -1 for
-    /// none. A click on a bin removes nothing by itself: the Import
-    /// and Save row turns into Cancel and a Remove that names the
-    /// preset, as the settings sheet's sidecar move asks first.
+    /// none. A click on a bin removes nothing by itself: a line names
+    /// the preset and the Import and Save row turns into Cancel and
+    /// Remove, as the settings sheet's sidecar move asks first.
     in-out property <int> confirm-remove: -1;
 
     title: "PRESETS";
@@ -96,14 +96,22 @@ export component PresetsSection inherits Section {
         color: Theme.text-muted;
         wrap: word-wrap;
     }
-    if root.confirm-remove >= 0: HorizontalLayout {
+    // The question names the preset on a line of its own, which wraps,
+    // as the pane is too narrow for a long name on a button.
+    if root.confirm-remove >= 0 && root.confirm-remove < root.preset-names.length: Text {
+        text: "Remove " + root.preset-names[root.confirm-remove] + " from the list?";
+        font-size: Theme.font-xs;
+        color: Theme.text-secondary;
+        wrap: word-wrap;
+    }
+    if root.confirm-remove >= 0 && root.confirm-remove < root.preset-names.length: HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
             text: "Cancel";
             clicked => { root.confirm-remove = -1; }
         }
         PanelButton {
-            text: "Remove " + root.preset-names[root.confirm-remove];
+            text: "Remove";
             primary: true;
             clicked => {
                 let i = root.confirm-remove;
@@ -112,7 +120,7 @@ export component PresetsSection inherits Section {
             }
         }
     }
-    if root.confirm-remove < 0: HorizontalLayout {
+    if root.confirm-remove < 0 || root.confirm-remove >= root.preset-names.length: HorizontalLayout {
         spacing: Theme.space-2;
         PanelButton {
             text: "Import...";

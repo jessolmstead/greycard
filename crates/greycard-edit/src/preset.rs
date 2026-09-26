@@ -530,9 +530,11 @@ impl Store {
         }
     }
 
-    /// The names of the shipped presets the store is without: no file
-    /// under the shipped stem and no preset of the shipped name, case
-    /// aside. In [`SHIPPED`]'s order.
+    /// The names of the shipped presets the store is without: none of
+    /// its presets goes by the shipped name, case aside. What a file
+    /// under the shipped stem holds does not count: one the user has
+    /// filled with a preset of another name, or one that will not
+    /// read, leaves the shipped preset missing. In [`SHIPPED`]'s order.
     pub fn missing_shipped(&self) -> Vec<String> {
         let names: Vec<String> = self
             .list()
@@ -541,11 +543,9 @@ impl Store {
             .collect();
         SHIPPED
             .iter()
-            .filter_map(|(stem, text)| {
+            .filter_map(|(_, text)| {
                 let name = Preset::from_json(text).ok()?.name;
-                let there = self.dir.join(format!("{stem}.{EXTENSION}")).exists()
-                    || names.contains(&name.to_lowercase());
-                (!there).then_some(name)
+                (!names.contains(&name.to_lowercase())).then_some(name)
             })
             .collect()
     }
@@ -554,11 +554,12 @@ impl Store {
     /// ([`Store::missing_shipped`]), and say which, by name.
     ///
     /// The way back from [`Store::seed`]'s "one binned stays binned":
-    /// asked for, the binned ones return. A file under a shipped stem,
-    /// or a preset of a shipped name, is the user's and is left as it
-    /// is, so this overwrites nothing and a second run does nothing.
-    /// Every shipped stem is on the `seeded` record after, as a seed
-    /// would leave it, so a later seed writes none of them again.
+    /// asked for, the binned ones return. Nothing is overwritten: a
+    /// shipped stem whose file is there already, whatever it holds,
+    /// sends the preset to the first free `stem-2`, `stem-3`. So a
+    /// second run does nothing. Every shipped stem is on the `seeded`
+    /// record after, as a seed would leave it, so a later seed writes
+    /// none of them again.
     pub fn restore_shipped(&self) -> Result<Vec<String>> {
         std::fs::create_dir_all(&self.dir)?;
         let missing = self.missing_shipped();
@@ -568,7 +569,12 @@ impl Store {
         for (stem, text) in SHIPPED {
             let preset = Preset::from_json(text)?;
             if missing.contains(&preset.name) {
-                std::fs::write(self.dir.join(format!("{stem}.{EXTENSION}")), text)?;
+                let path = std::iter::once(format!("{stem}.{EXTENSION}"))
+                    .chain((2..).map(|n| format!("{stem}-{n}.{EXTENSION}")))
+                    .map(|file| self.dir.join(file))
+                    .find(|p| !p.exists())
+                    .expect("a free name");
+                std::fs::write(path, text)?;
                 restored.push(preset.name);
             }
             if !seeded.iter().any(|s| s == stem) {
@@ -793,9 +799,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
     }
 
-    /// What the user has under a shipped stem or a shipped name is
-    /// theirs: a restore writes over neither, and counts neither as
-    /// missing.
+    /// A restore writes over nothing of the user's. A preset of a
+    /// shipped name counts as the shipped one; a file under a shipped
+    /// stem that holds another name, or will not read, does not, and
+    /// the shipped preset goes beside it under a free stem.
     #[test]
     fn a_restore_overwrites_nothing_of_the_users() {
         let d = dir("restore-theirs");
@@ -807,23 +814,42 @@ mod tests {
             r#"{"name": "My Negative", "sections": ["light"], "edit": {"light": {"exposure": 1.0}}}"#,
         )
         .unwrap();
+        std::fs::write(d.join("red-filter-mono.gcp"), "not a preset").unwrap();
         let mut edit = Edit::default();
         edit.light.exposure = -0.5;
         let mine = store
             .save(&Preset::from_edit("muted slide", &edit, &[Section::Light]))
             .unwrap();
 
-        assert_eq!(store.missing_shipped(), ["Red-Filter Mono"]);
-        assert_eq!(store.restore_shipped().unwrap(), ["Red-Filter Mono"]);
+        assert_eq!(
+            store.missing_shipped(),
+            ["Red-Filter Mono", "Warm Negative"]
+        );
+        assert_eq!(
+            store.restore_shipped().unwrap(),
+            ["Red-Filter Mono", "Warm Negative"]
+        );
+        assert!(store.missing_shipped().is_empty());
         let theirs = Preset::load(&d.join("warm-negative.gcp")).unwrap();
         assert_eq!(theirs.name, "My Negative", "the stem's file stands");
+        assert_eq!(
+            std::fs::read_to_string(d.join("red-filter-mono.gcp")).unwrap(),
+            "not a preset",
+            "an unreadable one stands too"
+        );
+        let beside = Preset::load(&d.join("warm-negative-2.gcp")).unwrap();
+        assert_eq!(beside.name, "Warm Negative");
+        let beside = Preset::load(&d.join("red-filter-mono-2.gcp")).unwrap();
+        assert_eq!(beside.name, "Red-Filter Mono");
         let kept = Preset::load(&mine).unwrap();
         assert_eq!(kept.edit.light.exposure, -0.5, "the name's file stands");
-        assert_eq!(store.list().len(), 3);
+        assert_eq!(store.list().len(), 4);
 
-        // Every stem is on the record now, so a seed adds nothing.
+        // Nothing more to do, and every stem is on the record now, so
+        // a seed adds nothing either.
+        assert!(store.restore_shipped().unwrap().is_empty());
         store.seed();
-        assert_eq!(store.list().len(), 3);
+        assert_eq!(store.list().len(), 4);
         let _ = std::fs::remove_dir_all(&d);
     }
 
