@@ -218,33 +218,40 @@ def register(render, jpeg):
         j_small, _ = gray_small(jpeg, width * jpeg.shape[1] / render.shape[1])
         scales = np.linspace(0.94, 1.06, 25) if best is None else \
             best[0] + np.linspace(-0.006, 0.006, 13)
+        # The refinement searches around the first pass's shift, in
+        # this level's pixels; an earlier version searched around zero
+        # and lost any shift over three pixels.
+        cy, cx = (0, 0) if best is None else (round(best[1] / f), round(best[2] / f))
         shifts = range(-6, 7) if best is None else range(-3, 4)
         cand = None
         for s in scales:
             warped = warp_to(j_small, r_small.shape, s, 0, 0)
             for dy in shifts:
                 for dx in shifts:
-                    w = np.roll(warped, (dy, dx), (0, 1))
+                    w = np.roll(warped, (cy + dy, cx + dx), (0, 1))
                     c = ncc(w[8:-8, 8:-8], r_small[8:-8, 8:-8])
                     if cand is None or c > cand[3]:
-                        cand = (s, dy * f, dx * f, c)
+                        cand = (s, (cy + dy) * f, (cx + dx) * f, c)
         best = cand
     return best
 
 
-def warp_to(src, shape, scale, dy, dx):
+def warp_to(src, shape, scale, dy, dx, outside=None):
     """Resample src (any size) onto a grid of `shape`, so that src's
     center maps to the grid's center, src scaled by `scale` × the
-    fit-to-shape factor, then shifted by (dy, dx)."""
+    fit-to-shape factor, then shifted by (dy, dx). Outside the source
+    the edge is repeated, or `outside` is used when given."""
     sh, sw = src.shape[:2]
     th, tw = shape[:2]
     fit = min(th / sh, tw / sw) * scale
     ys = (np.arange(th) - th / 2 - dy) / fit + sh / 2
     xs = (np.arange(tw) - tw / 2 - dx) / fit + sw / 2
     coords = np.meshgrid(ys, xs, indexing="ij")
+    kw = dict(order=1, mode="nearest") if outside is None else \
+        dict(order=1, mode="constant", cval=outside)
     if src.ndim == 2:
-        return ndimage.map_coordinates(src, coords, order=1, mode="nearest")
-    return np.stack([ndimage.map_coordinates(src[..., c], coords, order=1, mode="nearest")
+        return ndimage.map_coordinates(src, coords, **kw)
+    return np.stack([ndimage.map_coordinates(src[..., c], coords, **kw)
                      for c in range(src.shape[2])], -1)
 
 
@@ -271,8 +278,10 @@ def cmd_pairs(work):
         jm, js = blocks(warped)
         ry, jy = luminance(srgb_decode(rm)), luminance(srgb_decode(jm))
         smooth = (luminance(rs) < 0.035) & (luminance(js) < 0.035)
-        # Inside the JPEG's own frame after the warp.
-        inside = warp_to(np.ones(jpeg.shape[:2], np.float32), render.shape, scale, dy, dx)
+        # Inside the JPEG's own frame after the warp. Sampled with zero
+        # outside the source, or the mask is one everywhere.
+        inside = warp_to(np.ones(jpeg.shape[:2], np.float32), render.shape, scale, dy, dx,
+                         outside=0.0)
         im, _ = blocks(inside[..., None])
         inside = im[..., 0] > 0.999
         unclipped = (rm.max(-1) < 0.97) & (jm.max(-1) < 0.97) & \

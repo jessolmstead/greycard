@@ -8,3 +8,4 @@
 /.claude/
 /private/
 /tools/icon/target
+__pycache__/

@@ -370,3 +370,10 @@ frames.
   ridge added to the script. Faithful is nearly one rendering across
   the two Canons; the GFX's held-out gap is the unprofiled Sigma's
   falloff. All four looks are in the author's looks store.
+- 2026-09-26, evening: the crate's reviewer found the script's
+  registration refining around zero instead of the first pass's
+  shift, so any shift over three pixels was lost while still passing
+  the cutoff, and its inside mask never dropping a border block.
+  Both fixed in the script; the trial's shifts were all under two
+  pixels, so its numbers stand. The script recovers a 16-pixel shift
+  within 1.3 px now.

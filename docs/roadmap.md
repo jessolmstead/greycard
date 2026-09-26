@@ -153,10 +153,10 @@ ask for first.
 - [ ] Camera match: a look fitted from the maker's embedded JPEG
       against the accurate develop, a matrix, a curve and a small LUT
       per camera and style (§78). Tried on four sets from the
-      archive and shaped (§178, `docs/camera-match.md`): a
-      `greycard-match` crate with the fit and its oracle test, then
-      the Look section's action, the borrowing rule and the radial
-      report
+      archive and shaped (§178, `docs/camera-match.md`). The
+      `greycard-match` crate and the style reader landed 2026-09-26;
+      next the Look section's action with the index fields, the
+      sampling, the borrowing rule and the radial report
 - [ ] Profile making from a chart shot, after dcamprof (§78)
 - [ ] The monitor's own profile on Windows and macOS: read it from
       WCS and from ColorSync, so "System" means the display rather
@@ -353,6 +353,12 @@ release when the wait clears.
       on the release after 1.18.0 (§99)
 - [ ] Drop the rawler `[patch.crates-io]`. Waits on a rawler release
       carrying dnglab/dnglab#840 (§13j)
+- [ ] rawler's TIFF reader follows the next-IFD pointer with no cycle
+      check when given no chain limit, so a file whose IFD0 points at
+      itself grows memory until killed; its CR3 path parses the CMT
+      boxes that way (§178). Report upstream with the 26-byte
+      reproducer in `decode/style.rs`'s test; a visited set and a
+      default chain limit is the fix
 - [ ] rawler 0.8 on a CR3 with a zero-size box in `moov` loops
       until it runs out of memory, and its RW2 decoder divides by
       zero on a zero height (§160). Filed as dnglab/dnglab#848 and
