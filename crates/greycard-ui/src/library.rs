@@ -541,6 +541,14 @@ pub(crate) fn folders_of(files: &[PathBuf]) -> Vec<PathBuf> {
 /// read at once: a folder indexed last week has its facets before
 /// this pass has looked at a file.
 pub(crate) fn index_open_folder(st: &mut State) {
+    // A folder opened by hand is made canonical again as it opens: a
+    // link to it may point elsewhere now. The all-roots view's folders
+    // are the index's own, canonical already.
+    if st.view == crate::roots::View::Folder {
+        for dir in folders_of(&st.files) {
+            st.library.canonical.remove(&dir);
+        }
+    }
     refresh_ids(st);
     let Some(indexer) = &st.index else {
         return;
@@ -609,7 +617,17 @@ pub(crate) fn refresh_ids(st: &mut State) {
         st.index_ids = vec![None; st.files.len()];
         return;
     };
-    match lib.ids_of(&st.files) {
+    // Each folder's canonical form as the window has kept it: a read
+    // off the window's thread hands them over with the list, so the
+    // disk is asked here only for a folder no read has seen yet.
+    let known = &mut st.library.canonical;
+    let asked = lib.ids_of_with(&st.files, &mut |dir| {
+        known
+            .entry(dir.to_path_buf())
+            .or_insert_with(|| greycard_library::key_folder(dir))
+            .clone()
+    });
+    match asked {
         Ok(ids) => st.index_ids = ids,
         Err(e) => {
             tracing::debug!("index: {e}; keeping the last answer");
@@ -964,9 +982,13 @@ pub(crate) fn told(app: &App, told: Told) {
                     report.missing,
                 ),
             }
+            // What the window knew of the folders under the pass is
+            // looked at again by the next read.
+            crate::roots::folders_passed(&mut state.borrow_mut(), &path);
             // A merge reads the rows and the facets again with the
             // list; only without one are they read here.
-            if !crate::roots::background_done(&state, app, &path, &report, launch) {
+            if !crate::roots::background_done(&state, app, &path, &report, launch, error.is_some())
+            {
                 reread(&state, app, false);
             }
         }
@@ -977,7 +999,7 @@ pub(crate) fn told(app: &App, told: Told) {
                 added: 1,
                 ..Report::default()
             };
-            if !crate::roots::background_done(&state, app, &path, &some, false) {
+            if !crate::roots::background_done(&state, app, &path, &some, false, false) {
                 reread(&state, app, false);
             }
         }

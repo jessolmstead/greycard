@@ -377,6 +377,12 @@ pub fn key_path(path: &Path) -> PathBuf {
     canonical_file(path)
 }
 
+/// A folder's path as the index keys it (canonical, or as near as the
+/// disk still has it): what [`Library::ids_of_with`] is handed.
+pub fn key_folder(dir: &Path) -> PathBuf {
+    nearest_canonical(dir)
+}
+
 /// A file's mtime as the index stores it.
 pub(crate) fn mtime_of(metadata: &std::fs::Metadata) -> i64 {
     metadata
@@ -742,6 +748,18 @@ impl Library {
     /// yet. One query a folder, each folder made canonical once, so
     /// the filter bar can map its frames to rows on every refresh.
     pub fn ids_of(&self, paths: &[PathBuf]) -> Result<Vec<Option<i64>>> {
+        self.ids_of_with(paths, &mut |dir| nearest_canonical(dir))
+    }
+
+    /// [`Library::ids_of`], each folder made canonical by `canonical`
+    /// rather than by asking the disk: a caller that already knows a
+    /// folder's canonical form (the index's own paths are) keeps its
+    /// thread off the disk.
+    pub fn ids_of_with(
+        &self,
+        paths: &[PathBuf],
+        canonical: &mut dyn FnMut(&Path) -> PathBuf,
+    ) -> Result<Vec<Option<i64>>> {
         let mut folders: HashMap<PathBuf, (PathBuf, HashMap<Vec<u8>, i64>)> = HashMap::new();
         let mut out = Vec::with_capacity(paths.len());
         let mut stmt = self.conn.prepare_cached(
@@ -758,7 +776,7 @@ impl Library {
                 } else {
                     parent
                 };
-                let canonical = nearest_canonical(dir);
+                let canonical = canonical(dir);
                 let rows = stmt
                     .query_map(params![path_bytes(&canonical)], |r| {
                         Ok((r.get::<_, Vec<u8>>(0)?, r.get::<_, i64>(1)?))
@@ -898,10 +916,20 @@ impl Library {
     /// a folder, and a file is under it when its folder is the root
     /// or starts with it and a separator.
     pub fn paths_under(&self, roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
+        self.paths_under_as(roots, true)
+    }
+
+    /// [`Library::paths_under`] for roots already canonical, as
+    /// [`Roots`] keeps them: nothing is asked of the disk.
+    pub fn paths_under_canonical(&self, roots: &[PathBuf]) -> Result<Vec<PathBuf>> {
+        self.paths_under_as(roots, false)
+    }
+
+    fn paths_under_as(&self, roots: &[PathBuf], canonicalize: bool) -> Result<Vec<PathBuf>> {
         if roots.is_empty() {
             return Ok(Vec::new());
         }
-        let (clause, params) = under_roots(roots);
+        let (clause, params) = under_roots_as(roots, canonicalize);
         let sql = format!(
             "SELECT path FROM files WHERE missing_since IS NULL AND ({clause}) \
              ORDER BY folder, name"
@@ -916,7 +944,18 @@ impl Library {
     /// How many files the index holds under one root, the missing
     /// left out: the count beside the root's name.
     pub fn count_under(&self, root: &Path) -> Result<usize> {
-        let (clause, params) = under_roots(std::slice::from_ref(&root.to_path_buf()));
+        self.count_under_as(root, true)
+    }
+
+    /// [`Library::count_under`] for a root already canonical, as
+    /// [`Roots`] keeps it: nothing is asked of the disk.
+    pub fn count_under_canonical(&self, root: &Path) -> Result<usize> {
+        self.count_under_as(root, false)
+    }
+
+    fn count_under_as(&self, root: &Path, canonicalize: bool) -> Result<usize> {
+        let (clause, params) =
+            under_roots_as(std::slice::from_ref(&root.to_path_buf()), canonicalize);
         let sql = format!("SELECT count(*) FROM files WHERE missing_since IS NULL AND ({clause})");
         let n: i64 = self
             .conn
@@ -1190,11 +1229,21 @@ impl State {
 /// separator's last byte is `/` or `\`'s low byte or the zero after
 /// it in UTF-16, never 0xFF, so it always has a next.
 fn under_roots(roots: &[PathBuf]) -> (String, Vec<rusqlite::types::Value>) {
+    under_roots_as(roots, true)
+}
+
+/// [`under_roots`], with the roots made canonical first or taken as
+/// they are.
+fn under_roots_as(roots: &[PathBuf], canonicalize: bool) -> (String, Vec<rusqlite::types::Value>) {
     use rusqlite::types::Value;
     let mut clauses = Vec::with_capacity(roots.len());
     let mut params = Vec::with_capacity(roots.len() * 3);
     for root in roots {
-        let bytes = path_bytes(&nearest_canonical(root));
+        let bytes = if canonicalize {
+            path_bytes(&nearest_canonical(root))
+        } else {
+            path_bytes(root)
+        };
         let prefix = index::under_prefix(&bytes);
         let mut past = prefix.clone();
         if let Some(last) = past.last_mut() {

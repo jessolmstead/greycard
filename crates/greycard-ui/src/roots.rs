@@ -22,10 +22,13 @@
 //!
 //! A list already open is kept up with the disk rather than opened
 //! again: a pass that finds a file added, gone or moved has the list
-//! read again and merged into what the window holds, each frame
-//! keeping its sidecar, its picture and its place in the selection by
-//! its path, and every frame still without a picture asked for one
-//! again. The frame on screen is followed to where the index says it
+//! read again off the window's thread (the roots and folders looked
+//! at, the new files' sidecars read, the frame on screen looked for;
+//! one read out at a time, the passes said meanwhile folded into one
+//! more), and merged on the window's thread into what it holds, which
+//! asks the disk nothing. Each frame keeps its sidecar, its picture
+//! and its place in the selection by its path, and every frame still
+//! without a picture is asked for one again. The frame on screen is followed to where the index says it
 //! went, and never to a copy of it.
 //!
 //! A root can have a name of the user's, given from its chip's menu
@@ -34,12 +37,14 @@
 //! root is its path everywhere, and naming it moves nothing.
 
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
 use greycard_library::Roots;
 use greycard_library::roots::Added;
 
-use crate::panel::browser::{load_sidecars, load_sidecars_parallel, open_loaded, rebuild_browser};
+use crate::panel::browser::{load_sidecars_parallel, open_loaded, rebuild_browser};
 use crate::panel::cull::drop_placeholder;
 use crate::*;
 
@@ -78,10 +83,40 @@ pub(crate) struct Library {
     /// A view's sidecars are being read on the pool: the list in the
     /// browser is about to be replaced, and is not merged into.
     pub(crate) loading: bool,
-    /// A merge's new sidecars are being read on the pool; a refresh
-    /// asked for meanwhile is done when they are in (`stale`).
+    pub(crate) loading_since: Option<Instant>,
+    /// The list is being read again off the window's thread; a
+    /// refresh asked for meanwhile is done once when it lands
+    /// (`stale`).
     pub(crate) merging: bool,
+    pub(crate) merge_since: Option<Instant>,
+    /// The read out's number: one given up on is dropped when it lands.
+    pub(crate) merge_token: u64,
     pub(crate) stale: bool,
+    /// The roots found offline when last looked at, off the window's
+    /// thread (or on launch): what their chips say.
+    pub(crate) offline: HashSet<PathBuf>,
+    /// The folders under the roots a read has found can be read. A
+    /// folder not here, one that could not be read among them, is
+    /// looked at by the next read off the window's thread; a pass that
+    /// finishes over a folder has it looked at again
+    /// (`folders_passed`), and an open looks at every folder again.
+    pub(crate) readable: HashSet<PathBuf>,
+    /// Moved on at every finished pass, which is kept in `passes` under
+    /// it, so a read that was out meanwhile does not keep what it saw
+    /// of the folders the pass went over.
+    pub(crate) readable_epoch: u64,
+    pub(crate) passes: Vec<(u64, PathBuf)>,
+    /// The epoch of the oldest pass forgotten: a read older than it
+    /// keeps nothing.
+    pub(crate) passes_from: u64,
+    /// Folders as the browser lists them, and as the index spells them
+    /// (canonical): given by the reads off the window's thread, so the
+    /// window's own reads of the index ask the disk for none.
+    pub(crate) canonical: HashMap<PathBuf, PathBuf>,
+    /// The folders the last read to look at them could not read: a pass
+    /// over one has the list read again, even one that found nothing
+    /// changed (the folder readable again, its files as they were).
+    pub(crate) unreadable: HashSet<PathBuf>,
 }
 
 /// Whether a root is there to be read: a drive unplugged takes its
@@ -105,6 +140,7 @@ pub(crate) fn start(st: &mut State) {
     let roots = st.library.roots.list().to_vec();
     let (mut order, offline): (Vec<PathBuf>, Vec<PathBuf>) =
         roots.into_iter().partition(|r| online(r));
+    st.library.offline = offline.iter().cloned().collect();
     for root in &offline {
         tracing::info!(
             "library: {} is offline; left as the index has it",
@@ -145,14 +181,14 @@ pub(crate) fn watch(st: &mut State) {
     let Some(indexer) = &st.index else {
         return;
     };
-    let roots: Vec<PathBuf> = st
+    let (roots, offline): (Vec<PathBuf>, Vec<PathBuf>) = st
         .library
         .roots
         .list()
         .iter()
-        .filter(|r| online(r))
         .cloned()
-        .collect();
+        .partition(|r| online(r));
+    st.library.offline = offline.into_iter().collect();
     if roots.is_empty() {
         return;
     }
@@ -193,7 +229,7 @@ pub(crate) fn recount(st: &mut State) {
         .roots
         .list()
         .iter()
-        .map(|r| lib.count_under(r).unwrap_or(0))
+        .map(|r| lib.count_under_canonical(r).unwrap_or(0))
         .collect();
     st.library.counts = counts;
 }
@@ -213,7 +249,7 @@ pub(crate) fn show(st: &State, app: &App) {
             path: r.to_string_lossy().into_owned().into(),
             count: st.library.counts.get(i).copied().unwrap_or(0) as i32,
             on: on.as_ref() == Some(&Some(r.clone())),
-            offline: !online(r),
+            offline: st.library.offline.contains(r),
         })
         .collect();
     app.set_library_roots(ModelRc::new(VecModel::from(chips)));
@@ -259,7 +295,12 @@ fn open_folder_to_add(st: &State) -> Option<PathBuf> {
         return None;
     }
     let dir = st.files.first()?.parent()?;
-    let dir = dunce::canonicalize(dir).ok()?;
+    // The folder's canonical form as the window has kept it since the
+    // folder was opened; asked of the disk only when it has not.
+    let dir = match st.library.canonical.get(dir) {
+        Some(key) => key.clone(),
+        None => dunce::canonicalize(dir).ok()?,
+    };
     st.library.roots.root_of(&dir).is_none().then_some(dir)
 }
 
@@ -429,44 +470,648 @@ fn open_sheet(st: &State, app: &App, dir: &Path) {
     app.set_root_sheet_open(true);
 }
 
-/// The roots a view lists, the offline ones left out.
+/// The roots a view lists, as the roots file has them. Which of them
+/// are there is looked at off the window's thread, by [`Look::run`].
 fn roots_of(st: &State, view: &View) -> Vec<PathBuf> {
-    let all = match view {
+    match view {
         View::Folder => Vec::new(),
         View::Roots(None) => st.library.roots.list().to_vec(),
         View::Roots(Some(r)) => vec![r.clone()],
-    };
-    all.into_iter().filter(|r| online(r)).collect()
+    }
 }
 
-/// The view's list from the index: the files under its roots, less
-/// those in a folder that cannot be read now (a drive's folder gone
-/// unreadable, a locked one), which the index keeps as they were and
-/// the view does not offer as frames.
-fn view_files(
-    lib: &greycard_library::Library,
-    roots: &[PathBuf],
-) -> greycard_library::Result<Vec<PathBuf>> {
-    let files = lib.paths_under(roots)?;
-    let mut readable: HashMap<PathBuf, bool> = HashMap::new();
-    Ok(files
-        .into_iter()
-        .filter(|f| {
-            let Some(dir) = f.parent() else {
-                return false;
+/// Every root, and the view's own if it is not among them: each is
+/// looked at off the window's thread, for its chip.
+fn every_root(st: &State, view: &View) -> Vec<PathBuf> {
+    let mut all = st.library.roots.list().to_vec();
+    for r in roots_of(st, view) {
+        if !all.contains(&r) {
+            all.push(r);
+        }
+    }
+    all
+}
+
+/// How long a root has to answer whether it is there before a read
+/// takes it for offline: a hard-mounted network share gone away does
+/// not answer at all.
+const ROOT_WAIT: Duration = Duration::from_secs(3);
+
+/// How long a read may be out before the next refresh gives up on it
+/// and sends another; what it brings after that is dropped.
+const READ_GIVES_UP: Duration = Duration::from_secs(60);
+
+/// How many finished passes the window remembers, for a read that
+/// lands after them to know which folders they covered.
+const PASSES_KEPT: usize = 64;
+
+/// What a read off the window's thread is for.
+enum Purpose {
+    /// A view opened: its list replaces the browser's once read.
+    Open {
+        view: View,
+        asked: Instant,
+        last: String,
+    },
+    /// The browser's list read again, and merged into what it holds.
+    Merge,
+}
+
+/// Where the list comes from.
+enum Source {
+    /// A folder's files, listed off the window's thread; the folder is
+    /// made canonical there by every read, so a link retargeted
+    /// meanwhile is seen.
+    Folder(PathBuf),
+    /// The index's rows under the view's roots, as it lists them; those
+    /// under a root offline or in a folder that cannot be read are left
+    /// out off the window's thread.
+    Roots {
+        roots: Vec<PathBuf>,
+        files: Vec<PathBuf>,
+    },
+}
+
+/// A list to read off the window's thread: everything the read needs,
+/// taken from the window's state when it was asked for, so the read
+/// touches nothing of it and the window touches no disk.
+pub(crate) struct Look {
+    purpose: Purpose,
+    /// The browser's list when this was asked for: a later one is not
+    /// merged into.
+    generation: u64,
+    /// Which merge read this is: one given up on is dropped when it
+    /// lands.
+    token: u64,
+    /// `Library::readable_epoch` as it was: what the read saw of a
+    /// folder is not kept if a pass has since gone over it.
+    epoch: u64,
+    source: Source,
+    /// The roots to look at for whether each is there: every root for
+    /// a view of the roots, none for a folder's.
+    roots: Vec<PathBuf>,
+    /// The folders the window knows can be read.
+    known: HashSet<PathBuf>,
+    /// The paths in the window's list: a file not among them is new,
+    /// and its sidecar is read.
+    have: HashSet<PathBuf>,
+    write: bool,
+    /// The frame on screen and its row, to see whether it is still
+    /// there, and where the index says it went if not.
+    on_screen: Option<(PathBuf, Option<i64>)>,
+    /// The index's database, opened read-only for the list's rows and
+    /// to follow a frame that is not where the window has it.
+    index: Option<PathBuf>,
+}
+
+/// What the frame on screen was found to be, off the window's thread.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct OnScreen {
+    /// The frame's path when it was looked at.
+    path: Option<PathBuf>,
+    /// Its file is there.
+    there: bool,
+    /// It is not, and the index says its row is at this path, a file
+    /// that is there.
+    moved_to: Option<PathBuf>,
+}
+
+impl OnScreen {
+    /// The frame at `path` looked at: one stat, and the index asked
+    /// where its row went only when the file is not there.
+    pub(crate) fn look(
+        path: PathBuf,
+        id: Option<i64>,
+        index: Option<&greycard_library::Library>,
+    ) -> Self {
+        if path.exists() {
+            return OnScreen {
+                path: Some(path),
+                there: true,
+                moved_to: None,
             };
-            *readable
-                .entry(dir.to_path_buf())
-                .or_insert_with(|| std::fs::read_dir(dir).is_ok())
-        })
-        .collect())
+        }
+        let moved_to = id
+            .zip(index)
+            .and_then(|(id, lib)| lib.found_at(&[id]).ok()?.remove(&id))
+            .filter(|p| p.is_file());
+        OnScreen {
+            path: Some(path),
+            there: false,
+            moved_to,
+        }
+    }
+
+    /// Whether `path` is the frame looked at, and its file was gone.
+    fn gone(&self, path: &Path) -> bool {
+        !self.there && self.path.as_deref() == Some(path)
+    }
+}
+
+/// What a read brings the merge besides the list: the new files'
+/// sidecars, the frame on screen as found, and the list's rows in the
+/// index, so the merge asks neither the disk nor the index's folders.
+#[derive(Default)]
+pub(crate) struct Brought {
+    pub(crate) read: HashMap<PathBuf, (Sidecar, bool)>,
+    pub(crate) seen: OnScreen,
+    /// Each listed file's row, by path; none when the read had no index
+    /// to ask, and the merge then asks it.
+    pub(crate) ids: Option<HashMap<PathBuf, Option<i64>>>,
+}
+
+/// A read done: the list as the disk has it now, and the sidecars of
+/// the files new to it.
+pub(crate) struct Found {
+    purpose: Purpose,
+    generation: u64,
+    token: u64,
+    epoch: u64,
+    /// None when the folder could not be listed.
+    files: Option<Vec<PathBuf>>,
+    /// The files new to the list, in the list's order, and their
+    /// sidecars.
+    fresh: Vec<PathBuf>,
+    sidecars: Vec<Sidecar>,
+    seed: Vec<bool>,
+    ids: Option<HashMap<PathBuf, Option<i64>>>,
+    /// The roots found offline; none when no root was looked at.
+    offline: Option<HashSet<PathBuf>>,
+    /// The folders looked at that could be read. One that could not is
+    /// not kept, and is looked at again by the next read: on a network
+    /// share a failure can be a moment's.
+    readable: Vec<PathBuf>,
+    /// The folders looked at that could not be read: a pass over one
+    /// has the list read again, even when it finds nothing changed.
+    unreadable: Vec<PathBuf>,
+    /// Folders as listed, and as the index spells them.
+    canonical: Vec<(PathBuf, PathBuf)>,
+    on_screen: OnScreen,
+    seconds: f64,
+}
+
+/// One root's look, out on a thread of its own: its answer when it has
+/// come.
+type Answer = Arc<(Mutex<Option<bool>>, Condvar)>;
+
+/// The roots' looks out, one a root at most. A root that has not
+/// answered its last look is offline to every read until it does,
+/// without another thread or another wait: a hard-mounted share gone
+/// away does not answer at all, and a thread asking it is stuck for as
+/// long as it is gone.
+pub(crate) struct Checks {
+    out: Mutex<HashMap<PathBuf, Answer>>,
+    look: fn(&Path) -> bool,
+    /// Threads started, for the log and the tests.
+    started: AtomicUsize,
+}
+
+impl Checks {
+    pub(crate) fn new(look: fn(&Path) -> bool) -> Checks {
+        Checks {
+            out: Mutex::new(HashMap::new()),
+            look,
+            started: AtomicUsize::new(0),
+        }
+    }
+
+    /// Which of `roots` are offline: each root with no look out gets
+    /// one, and has up to `wait` to answer; one whose last look has
+    /// not answered yet is offline now, without waiting.
+    pub(crate) fn offline(&self, roots: &[PathBuf], wait: Duration) -> HashSet<PathBuf> {
+        let mut offline = HashSet::new();
+        let mut asked: Vec<(PathBuf, Answer)> = Vec::new();
+        {
+            let mut out = self.out.lock().unwrap_or_else(|e| e.into_inner());
+            for root in roots {
+                if let Some(answer) = out.get(root) {
+                    let answered = *answer.0.lock().unwrap_or_else(|e| e.into_inner());
+                    if answered.is_none() {
+                        offline.insert(root.clone());
+                        continue;
+                    }
+                }
+                let answer: Answer = Arc::new((Mutex::new(None), Condvar::new()));
+                let (for_thread, root_for_thread, look) = (answer.clone(), root.clone(), self.look);
+                let spawned = std::thread::Builder::new()
+                    .name("greycard root check".into())
+                    .spawn(move || {
+                        let there = look(&root_for_thread);
+                        let (slot, told) = &*for_thread;
+                        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(there);
+                        told.notify_all();
+                    });
+                if spawned.is_err() {
+                    // No thread to be had: offline for this read.
+                    offline.insert(root.clone());
+                    continue;
+                }
+                self.started.fetch_add(1, Ordering::Relaxed);
+                out.insert(root.clone(), answer.clone());
+                asked.push((root.clone(), answer));
+            }
+        }
+        let until = Instant::now() + wait;
+        for (root, answer) in asked {
+            let (slot, told) = &*answer;
+            let mut there = slot.lock().unwrap_or_else(|e| e.into_inner());
+            while there.is_none() {
+                let left = until.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    break;
+                }
+                there = told
+                    .wait_timeout(there, left)
+                    .unwrap_or_else(|e| e.into_inner())
+                    .0;
+            }
+            match *there {
+                Some(true) => {}
+                Some(false) => {
+                    offline.insert(root);
+                }
+                None => {
+                    tracing::warn!(
+                        "library: {} did not answer in {} s; offline until it does",
+                        root.display(),
+                        wait.as_secs()
+                    );
+                    offline.insert(root);
+                }
+            }
+        }
+        offline
+    }
+}
+
+/// The editor's looks at the roots.
+static CHECKS: LazyLock<Checks> = LazyLock::new(|| Checks::new(online));
+
+/// Which roots are offline, by [`Checks::offline`].
+fn offline_of(roots: &[PathBuf], wait: Duration) -> HashSet<PathBuf> {
+    CHECKS.offline(roots, wait)
+}
+
+impl Look {
+    /// The read, on a thread that is not the window's: the roots and
+    /// the folders not known yet looked at, the folder listed, the
+    /// list's rows asked of the index, the new files' sidecars read on
+    /// the pool, and the frame on screen looked for.
+    pub(crate) fn run(self) -> Found {
+        let started = Instant::now();
+        let offline = (!self.roots.is_empty()).then(|| offline_of(&self.roots, ROOT_WAIT));
+        let mut readable = Vec::new();
+        let mut unreadable = Vec::new();
+        let mut canonical = Vec::new();
+        let mut looked = 0;
+        let files = match self.source {
+            Source::Folder(dir) => {
+                let key = greycard_library::key_folder(&dir);
+                canonical.push((dir.clone(), key));
+                files::list_files(&dir).ok()
+            }
+            Source::Roots { roots, files } => {
+                let away: Vec<&PathBuf> = roots
+                    .iter()
+                    .filter(|r| offline.as_ref().is_some_and(|o| o.contains(*r)))
+                    .collect();
+                let mut seen: HashMap<PathBuf, bool> = HashMap::new();
+                let kept: Vec<PathBuf> = files
+                    .into_iter()
+                    .filter(|f| !away.iter().any(|r| f.starts_with(r)))
+                    .filter(|f| {
+                        let Some(dir) = f.parent() else {
+                            return false;
+                        };
+                        if self.known.contains(dir) {
+                            return true;
+                        }
+                        if let Some(&can) = seen.get(dir) {
+                            return can;
+                        }
+                        looked += 1;
+                        let can = std::fs::read_dir(dir).is_ok();
+                        seen.insert(dir.to_path_buf(), can);
+                        if can {
+                            readable.push(dir.to_path_buf());
+                        } else {
+                            unreadable.push(dir.to_path_buf());
+                        }
+                        can
+                    })
+                    .collect();
+                // The index's own paths: their folders are canonical.
+                let mut folders: HashSet<&Path> = HashSet::new();
+                for f in &kept {
+                    if let Some(dir) = f.parent()
+                        && folders.insert(dir)
+                    {
+                        canonical.push((dir.to_path_buf(), dir.to_path_buf()));
+                    }
+                }
+                Some(kept)
+            }
+        };
+        let lib = self
+            .index
+            .as_deref()
+            .and_then(|p| greycard_library::Library::open_read_only(p).ok());
+        let ids = match (&lib, &files) {
+            (Some(lib), Some(files)) => {
+                let known: HashMap<&Path, &Path> = canonical
+                    .iter()
+                    .map(|(d, c)| (d.as_path(), c.as_path()))
+                    .collect();
+                lib.ids_of_with(files, &mut |dir| {
+                    known
+                        .get(dir)
+                        .map(|c| c.to_path_buf())
+                        .unwrap_or_else(|| greycard_library::key_folder(dir))
+                })
+                .ok()
+                .map(|ids| files.iter().cloned().zip(ids).collect())
+            }
+            _ => None,
+        };
+        let fresh: Vec<PathBuf> = files
+            .iter()
+            .flatten()
+            .filter(|f| !self.have.contains(*f))
+            .cloned()
+            .collect();
+        let (sidecars, seed) = load_sidecars_parallel(&fresh, self.write);
+        // The frame on screen under a root this read found offline is not
+        // looked at: a stat under a share that does not answer does not
+        // come back. It is taken as there, and stays listed.
+        let on_screen = self
+            .on_screen
+            .filter(|(path, _)| {
+                !offline
+                    .as_ref()
+                    .is_some_and(|o| o.iter().any(|r| path.starts_with(r)))
+            })
+            .map(|(path, id)| OnScreen::look(path, id, lib.as_ref()))
+            .unwrap_or_default();
+        let seconds = started.elapsed().as_secs_f64();
+        tracing::debug!(
+            "library: the list read off the window's thread in {:.1} ms: {} files, {} new, \
+             {} folder(s) and {} root(s) looked at",
+            seconds * 1e3,
+            files.as_ref().map_or(0, Vec::len),
+            fresh.len(),
+            looked,
+            self.roots.len()
+        );
+        Found {
+            purpose: self.purpose,
+            generation: self.generation,
+            token: self.token,
+            epoch: self.epoch,
+            files,
+            fresh,
+            sidecars,
+            seed,
+            ids,
+            offline,
+            readable,
+            unreadable,
+            canonical,
+            on_screen,
+            seconds,
+        }
+    }
+}
+
+/// Send a read off the window's thread; what it finds is landed on the
+/// window's thread when it is done. False when it could not be sent.
+#[cfg(not(test))]
+fn send_off(app: &App, look: Look) -> bool {
+    let app_weak = app.as_weak();
+    let spawned = std::thread::Builder::new()
+        .name("greycard roots read".into())
+        .spawn(move || {
+            let found = look.run();
+            let _ = slint::invoke_from_event_loop(move || {
+                let (Some(app), Some(state), Some(worker)) = (
+                    app_weak.upgrade(),
+                    crate::STATE.with(|s| s.borrow().clone()),
+                    crate::WORKER.with(|w| w.borrow().clone()),
+                ) else {
+                    return;
+                };
+                land(&state, &app, &worker, found);
+            });
+        });
+    match spawned {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!("library: {e}");
+            false
+        }
+    }
+}
+
+/// In a test a read is queued, and the test runs and lands it
+/// (`tests::land_all`): there is no event loop to land it on.
+#[cfg(test)]
+fn send_off(_app: &App, look: Look) -> bool {
+    tests::SENT.with(|s| s.borrow_mut().push(look));
+    true
+}
+
+/// A read done, on the window's thread: what it saw of the roots and
+/// the folders kept, and the list opened or merged. Nothing here asks
+/// the disk.
+fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found) {
+    let Found {
+        purpose,
+        generation,
+        token,
+        epoch,
+        files,
+        fresh,
+        sidecars,
+        seed,
+        ids,
+        offline,
+        readable,
+        unreadable,
+        canonical,
+        on_screen,
+        seconds,
+    } = found;
+    {
+        let st = state.borrow();
+        // A read given up on brings nothing: another is out for it.
+        let given_up = match purpose {
+            Purpose::Merge => token != st.library.merge_token,
+            Purpose::Open { .. } => st.view_generation != generation,
+        };
+        if given_up {
+            tracing::debug!("library: a read given up on, or overtaken, came in; dropped");
+            return;
+        }
+    }
+    // What the read saw is kept only from a read of the list the window
+    // holds now; a merge read overtaken by a view opened since still
+    // clears `merging` below.
+    if state.borrow().view_generation == generation {
+        let mut st = state.borrow_mut();
+        st.library.canonical.extend(canonical);
+        for dir in &readable {
+            st.library.unreadable.remove(dir);
+        }
+        st.library.unreadable.extend(unreadable);
+        // What the read saw of a folder is kept unless a pass has gone
+        // over the folder since the read was asked for, or the window
+        // no longer remembers the passes back that far.
+        if epoch >= st.library.passes_from {
+            let lib = &mut st.library;
+            for dir in readable {
+                let passed = lib
+                    .passes
+                    .iter()
+                    .any(|(e, p)| *e > epoch && dir.starts_with(p));
+                if !passed {
+                    lib.readable.insert(dir);
+                }
+            }
+        }
+        if let Some(offline) = offline
+            && st.library.offline != offline
+        {
+            st.library.offline = offline;
+            show(&st, app);
+        }
+    }
+    match purpose {
+        Purpose::Open { view, asked, last } => {
+            // A later list owns `loading`, and clears it itself.
+            if state.borrow().view_generation != generation {
+                return;
+            }
+            let files = files.unwrap_or_default();
+            tracing::info!(
+                "library: {} frames in the view, their sidecars read in {:.2} s on the pool",
+                files.len(),
+                seconds
+            );
+            if files.is_empty() {
+                take_empty(state, app, worker, view, asked);
+                return;
+            }
+            let select = (!last.is_empty())
+                .then(|| greycard_library::key_path(Path::new(&last)))
+                .and_then(|last| files.iter().position(|f| *f == last))
+                .unwrap_or(0);
+            {
+                let mut st = state.borrow_mut();
+                st.view = view;
+                st.library.loading = false;
+                st.library.loading_since = None;
+            }
+            open_loaded(state, app, worker, files, sidecars, seed, select);
+            let mut st = state.borrow_mut();
+            st.library.awaiting = false;
+            st.library.painted = Some((asked, "the view asked for"));
+            tracing::info!(
+                "library: the view in the browser {:.0} ms after it was asked for",
+                asked.elapsed().as_secs_f64() * 1e3
+            );
+            show(&st, app);
+        }
+        Purpose::Merge => {
+            let mut again = {
+                let mut st = state.borrow_mut();
+                st.library.merging = false;
+                st.library.merge_since = None;
+                std::mem::take(&mut st.library.stale)
+            };
+            let ours = state.borrow().view_generation == generation;
+            if let (true, Some(files)) = (ours, files) {
+                let read: HashMap<PathBuf, (Sidecar, bool)> = fresh
+                    .into_iter()
+                    .zip(sidecars.into_iter().zip(seed))
+                    .collect();
+                // A file new to the list since the read was asked for
+                // has no sidecar here: read again, rather than merged
+                // with a blank one a save would write over its own.
+                let whole = {
+                    let st = state.borrow();
+                    let have: HashSet<&PathBuf> = st.files.iter().collect();
+                    files
+                        .iter()
+                        .all(|f| have.contains(f) || read.contains_key(f))
+                };
+                if whole {
+                    let brought = Brought {
+                        read,
+                        seen: on_screen,
+                        ids,
+                    };
+                    let next = merge(&mut state.borrow_mut(), app, worker, files, brought);
+                    if let Some(row) = next {
+                        app.invoke_select(row as i32);
+                    }
+                } else {
+                    again = true;
+                }
+            }
+            if again {
+                refresh_view(state, app, worker);
+                return;
+            }
+            // The launch pass done and nothing came of it: said, and a
+            // capture waiting on the view ends.
+            let empty = {
+                let st = state.borrow();
+                matches!(st.view, View::Roots(_))
+                    && st.files.is_empty()
+                    && st.library.launch_left == 0
+                    && !st.library.loading
+            };
+            if empty {
+                empty_view(&mut state.borrow_mut(), app);
+            }
+        }
+    }
+}
+
+/// An empty view taken: nothing indexed yet, most likely, or nothing
+/// there that can be read. It fills in as the launch pass reaches the
+/// roots. A capture of it waits for that pass when there is one to
+/// wait for, and ends when there is none.
+fn take_empty(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+    view: View,
+    asked: Instant,
+) {
+    let passing = {
+        let mut st = state.borrow_mut();
+        st.view = view;
+        st.library.launch_left > 0
+    };
+    open_loaded(state, app, worker, Vec::new(), Vec::new(), Vec::new(), 0);
+    let mut st = state.borrow_mut();
+    st.library.loading = false;
+    st.library.loading_since = None;
+    st.library.painted = Some((asked, "the view asked for"));
+    show(&st, app);
+    if passing {
+        app.set_status("Nothing indexed under the roots yet; the pass is running".into());
+    } else {
+        empty_view(&mut st, app);
+    }
 }
 
 /// Show every file under the roots, or under one: the list from the
-/// index, its sidecars read on the rayon pool, and the browser's list
-/// replaced once they are in. The window goes on with what it has
-/// meanwhile.
-pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, view: View) {
+/// index; the roots and folders looked at and the sidecars read off
+/// the window's thread; and the browser's list replaced once they are
+/// in. The window goes on with what it has meanwhile. An open is asked
+/// for by hand, so every folder is looked at again.
+pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Worker>, view: View) {
     let mut st = state.borrow_mut();
     let Some(lib) = &st.index_reader else {
         // Asked before the indexer has opened the library: done when
@@ -477,7 +1122,7 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worke
     };
     let asked = Instant::now();
     let roots = roots_of(&st, &view);
-    let files = match view_files(lib, &roots) {
+    let files = match lib.paths_under_canonical(&roots) {
         Ok(f) => f,
         Err(e) => {
             tracing::warn!("library: {e}");
@@ -494,226 +1139,176 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worke
         asked.elapsed().as_secs_f64() * 1e3
     );
     st.view_generation += 1;
-    let generation = st.view_generation;
-    if files.is_empty() {
-        // Nothing indexed yet, most likely: the view is taken, empty,
-        // and fills in as the launch pass reaches the roots. A capture
-        // of it waits for that pass, when there is one to wait for,
-        // and ends when there is none.
-        st.view = view;
-        let passing = st.library.launch_left > 0;
-        drop(st);
-        open_loaded(state, app, worker, Vec::new(), Vec::new(), Vec::new(), 0);
-        let mut st = state.borrow_mut();
-        st.library.loading = false;
-        st.library.painted = Some((asked, "the view asked for"));
-        show(&st, app);
-        if passing {
-            app.set_status("Nothing indexed under the roots yet; the pass is running".into());
-        } else {
-            empty_view(&mut st, app);
-        }
-        return;
-    }
-
-    let write = st.write_sidecars;
     // The frame on screen stays on screen when it is in the new list;
     // else the last one open, as a folder's open does.
-    let last = st
-        .current
-        .and_then(|c| st.files.get(c))
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|| settings::Settings::load().last_file);
-    st.library.loading = true;
+    let last = if files.is_empty() {
+        String::new()
+    } else {
+        st.current
+            .and_then(|c| st.files.get(c))
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| settings::Settings::load().last_file)
+    };
+    st.library.readable.clear();
+    st.library.readable_epoch += 1;
     app.set_status(format!("reading {} frames...", files.len()).into());
+    let look = Look {
+        generation: st.view_generation,
+        token: 0,
+        epoch: st.library.readable_epoch,
+        roots: every_root(&st, &view),
+        source: Source::Roots { roots, files },
+        known: HashSet::new(),
+        have: HashSet::new(),
+        write: st.write_sidecars,
+        on_screen: None,
+        index: None,
+        purpose: Purpose::Open { view, asked, last },
+    };
+    st.library.loading = true;
+    st.library.loading_since = Some(Instant::now());
     drop(st);
-    let app_weak = app.as_weak();
-    let spawned = std::thread::Builder::new()
-        .name("greycard roots".into())
-        .spawn(move || {
-            let read = Instant::now();
-            let (sidecars, seed) = load_sidecars_parallel(&files, write);
-            let seconds = read.elapsed().as_secs_f64();
-            let _ = slint::invoke_from_event_loop(move || {
-                let Some(app) = app_weak.upgrade() else {
-                    return;
-                };
-                let (Some(state), Some(worker)) = (
-                    crate::STATE.with(|s| s.borrow().clone()),
-                    crate::WORKER.with(|w| w.borrow().clone()),
-                ) else {
-                    return;
-                };
-                // A later list owns `loading`, and clears it itself.
-                if state.borrow().view_generation != generation {
-                    return;
-                }
-                tracing::info!(
-                    "library: {} sidecars read in {:.2} s on the pool",
-                    files.len(),
-                    seconds
-                );
-                let select = (!last.is_empty())
-                    .then(|| greycard_library::key_path(Path::new(&last)))
-                    .and_then(|last| files.iter().position(|f| *f == last))
-                    .unwrap_or(0);
-                {
-                    let mut st = state.borrow_mut();
-                    st.view = view;
-                    st.library.loading = false;
-                }
-                open_loaded(&state, &app, &worker, files, sidecars, seed, select);
-                let mut st = state.borrow_mut();
-                st.library.awaiting = false;
-                st.library.painted = Some((asked, "the view asked for"));
-                tracing::info!(
-                    "library: the view in the browser {:.0} ms after it was asked for",
-                    asked.elapsed().as_secs_f64() * 1e3
-                );
-                show(&st, &app);
-            });
-        });
-    if let Err(e) = spawned {
-        tracing::warn!("library: {e}");
+    if !send_off(app, look) {
         let mut st = state.borrow_mut();
         st.library.awaiting = false;
         st.library.loading = false;
+        st.library.loading_since = None;
     }
 }
 
-/// How many files new to the list a merge reads on the window's
-/// thread; past it their sidecars are read on the pool first, the
-/// window going on meanwhile, and merged when they are in.
-const MERGE_AT_MOST: usize = 200;
+/// The read for the browser's list as it is, from the folder or from
+/// the index. None when there is nothing to read it from.
+fn ask(st: &State) -> Option<Look> {
+    let (source, roots) = match &st.view {
+        View::Folder => {
+            let dir = st
+                .files
+                .iter()
+                .enumerate()
+                .find(|(i, _)| Some(*i) != st.current)
+                .map(|(_, f)| f)
+                .or(st.files.first())
+                .and_then(|f| f.parent())
+                .map(Path::to_path_buf)?;
+            // A list the desktop handed over, files from here and
+            // there, is not a folder's to read again. The frame on
+            // screen may be elsewhere, followed there by a move.
+            let elsewhere = st
+                .files
+                .iter()
+                .enumerate()
+                .any(|(i, f)| Some(i) != st.current && f.parent() != Some(dir.as_path()));
+            if elsewhere {
+                return None;
+            }
+            // A folder's view looks at no root: a root gone away (a
+            // share that does not answer) is none of its business.
+            (Source::Folder(dir), Vec::new())
+        }
+        View::Roots(_) => {
+            let lib = st.index_reader.as_ref()?;
+            let roots = roots_of(st, &st.view);
+            match lib.paths_under_canonical(&roots) {
+                Ok(files) => (Source::Roots { roots, files }, every_root(st, &st.view)),
+                Err(e) => {
+                    tracing::debug!("library: {e}; the list kept");
+                    return None;
+                }
+            }
+        }
+    };
+    let known = match source {
+        Source::Roots { .. } => st.library.readable.clone(),
+        Source::Folder(_) => HashSet::new(),
+    };
+    Some(Look {
+        purpose: Purpose::Merge,
+        generation: st.view_generation,
+        token: st.library.merge_token,
+        epoch: st.library.readable_epoch,
+        source,
+        roots,
+        known,
+        have: st.files.iter().cloned().collect(),
+        write: st.write_sidecars,
+        on_screen: st.current.and_then(|c| {
+            Some((
+                st.files.get(c)?.clone(),
+                st.index_ids.get(c).copied().flatten(),
+            ))
+        }),
+        index: st.index_path.clone(),
+    })
+}
 
 /// The browser's list read again, from the folder or from the index,
-/// and merged into the window's. False when there was nothing to read
-/// it from (and so nothing was merged).
-pub(crate) fn refresh_view(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> bool {
-    let view = state.borrow().view.clone();
-    {
+/// and merged into the window's. The read is off the window's thread,
+/// and the new files' sidecars with it. One is out at a time: a
+/// refresh asked for meanwhile, however many, is done once when it
+/// lands (`stale`). A read out longer than [`READ_GIVES_UP`] (a share
+/// that stopped answering mid-read) is given up on, and another sent.
+/// True when a merge is coming; false when there was nothing to read
+/// the list from.
+pub(crate) fn refresh_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Worker>) -> bool {
+    let look = {
         let mut st = state.borrow_mut();
+        let late = |since: Option<Instant>| since.is_some_and(|t| t.elapsed() > READ_GIVES_UP);
         if st.library.loading {
-            return false;
+            if !late(st.library.loading_since) {
+                return false;
+            }
+            tracing::warn!("library: the view's read has not come in; given up");
+            st.library.loading = false;
+            st.library.loading_since = None;
+            st.library.awaiting = false;
+            st.view_generation += 1;
+            app.set_status("the library's frames did not come in; the list is as it was".into());
         }
         if st.library.merging {
-            st.library.stale = true;
+            if !late(st.library.merge_since) {
+                st.library.stale = true;
+                return true;
+            }
+            tracing::warn!("library: a read of the list has not come in; another sent");
+        }
+        st.library.merge_token += 1;
+        let Some(look) = ask(&st) else {
+            st.library.merging = false;
+            st.library.merge_since = None;
             return false;
-        }
-    }
-    let files = {
-        let st = state.borrow();
-        match &view {
-            View::Folder => {
-                let Some(dir) = st
-                    .files
-                    .iter()
-                    .enumerate()
-                    .find(|(i, _)| Some(*i) != st.current)
-                    .map(|(_, f)| f)
-                    .or(st.files.first())
-                    .and_then(|f| f.parent())
-                    .map(Path::to_path_buf)
-                else {
-                    return false;
-                };
-                // A list the desktop handed over, files from here and
-                // there, is not a folder's to read again. The frame on
-                // screen may be elsewhere, followed there by a move.
-                let elsewhere = st
-                    .files
-                    .iter()
-                    .enumerate()
-                    .any(|(i, f)| Some(i) != st.current && f.parent() != Some(dir.as_path()));
-                if elsewhere {
-                    return false;
-                }
-                match files::list_files(&dir) {
-                    Ok(f) => f,
-                    Err(_) => return false,
-                }
-            }
-            View::Roots(_) => {
-                let Some(lib) = &st.index_reader else {
-                    return false;
-                };
-                match view_files(lib, &roots_of(&st, &view)) {
-                    Ok(f) => f,
-                    Err(e) => {
-                        tracing::debug!("library: {e}; the list kept");
-                        return false;
-                    }
-                }
-            }
-        }
-    };
-    // A root walked for the first time can bring thousands at once:
-    // their sidecars are read on the pool, and merged when they are
-    // in, the selection and the frame on screen kept as in any merge.
-    let fresh: Vec<PathBuf> = {
-        let st = state.borrow();
-        let have: HashSet<&PathBuf> = st.files.iter().collect();
-        files
-            .iter()
-            .filter(|f| !have.contains(f))
-            .cloned()
-            .collect()
-    };
-    if fresh.len() > MERGE_AT_MOST {
-        let (write, generation) = {
-            let mut st = state.borrow_mut();
-            st.library.merging = true;
-            (st.write_sidecars, st.view_generation)
         };
-        tracing::info!(
-            "library: {} files new to the list; their sidecars read on the pool",
-            fresh.len()
-        );
-        let app_weak = app.as_weak();
-        let spawned = std::thread::Builder::new()
-            .name("greycard merge".into())
-            .spawn(move || {
-                let (sidecars, seed) = load_sidecars_parallel(&fresh, write);
-                let read: HashMap<PathBuf, (Sidecar, bool)> = fresh
-                    .into_iter()
-                    .zip(sidecars.into_iter().zip(seed))
-                    .collect();
-                let _ = slint::invoke_from_event_loop(move || {
-                    let (Some(app), Some(state), Some(worker)) = (
-                        app_weak.upgrade(),
-                        crate::STATE.with(|s| s.borrow().clone()),
-                        crate::WORKER.with(|w| w.borrow().clone()),
-                    ) else {
-                        return;
-                    };
-                    let again = {
-                        let mut st = state.borrow_mut();
-                        st.library.merging = false;
-                        std::mem::take(&mut st.library.stale)
-                    };
-                    // A list put in the browser since is not this one.
-                    if state.borrow().view_generation == generation {
-                        let next = merge(&mut state.borrow_mut(), &app, &worker, files, read);
-                        if let Some(row) = next {
-                            app.invoke_select(row as i32);
-                        }
-                    }
-                    if again {
-                        refresh_view(&state, &app, &worker);
-                    }
-                });
-            });
-        if let Err(e) = spawned {
-            tracing::warn!("library: {e}");
-            state.borrow_mut().library.merging = false;
-        }
-        return true;
-    }
-    let next = merge(&mut state.borrow_mut(), app, worker, files, HashMap::new());
-    if let Some(row) = next {
-        app.invoke_select(row as i32);
+        st.library.merging = true;
+        st.library.merge_since = Some(Instant::now());
+        st.library.stale = false;
+        look
+    };
+    if !send_off(app, look) {
+        let mut st = state.borrow_mut();
+        st.library.merging = false;
+        st.library.merge_since = None;
+        return false;
     }
     true
+}
+
+/// A pass has finished under `path`: what the window knew of the
+/// folders under it is forgotten, to be looked at again by the next
+/// read off the window's thread, and a read out now does not put back
+/// what it saw of them.
+pub(crate) fn folders_passed(st: &mut State, path: &Path) {
+    let lib = &mut st.library;
+    lib.readable.retain(|dir| !dir.starts_with(path));
+    lib.readable_epoch += 1;
+    // A read out now may have seen the folders before the pass did: one
+    // more is sent when it lands.
+    if lib.merging {
+        lib.stale = true;
+    }
+    lib.passes.push((lib.readable_epoch, path.to_path_buf()));
+    if lib.passes.len() > PASSES_KEPT {
+        let (dropped, _) = lib.passes.remove(0);
+        lib.passes_from = dropped;
+    }
 }
 
 /// The frame on screen, followed: when its file is not where the
@@ -722,27 +1317,19 @@ pub(crate) fn refresh_view(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Wo
 /// path, so its next save lands beside the frame and not beside a
 /// file that is gone. Never to a path the window already lists, which
 /// would put one file in the list twice and the frame's edit over the
-/// other's sidecar. True when it moved.
-pub(crate) fn follow_current(st: &mut State) -> bool {
+/// other's sidecar. By what `seen` found of the frame off the window's
+/// thread. True when it moved.
+pub(crate) fn follow_current(st: &mut State, seen: &OnScreen) -> bool {
     let Some(c) = st.current else {
         return false;
     };
     let Some(path) = st.files.get(c) else {
         return false;
     };
-    if path.exists() {
+    if !seen.gone(path) {
         return false;
     }
-    let (Some(lib), Some(Some(id))) = (&st.index_reader, st.index_ids.get(c)) else {
-        return false;
-    };
-    let Ok(found) = lib.found_at(&[*id]) else {
-        return false;
-    };
-    let Some(to) = found
-        .get(id)
-        .filter(|p| p.is_file() && !st.files.contains(p))
-    else {
+    let Some(to) = seen.moved_to.as_ref().filter(|p| !st.files.contains(p)) else {
         return false;
     };
     tracing::info!("{} moved to {}; followed", path.display(), to.display());
@@ -781,33 +1368,41 @@ pub(crate) fn on_screen(st: &State) -> Option<(usize, usize)> {
 /// Put `next` in the browser in place of the list it has, keeping
 /// what each file that stays already has: its sidecar as edited, its
 /// picture, its row in the index and its place in the selection. A
-/// file new to the list has its sidecar from `read` or, when it is not
-/// there, read now. Every frame without a picture is asked for one
-/// again, in place of whatever was queued. A path twice in `next` is
-/// kept once. The frame on screen stays on screen, followed to its new
-/// path if it moved; if it is gone, nothing is kept for it and the
-/// nearest row is what the caller opens, which this returns.
+/// file new to the list has its sidecar from what the read `brought`
+/// off the window's thread, and every file its row from there too; the
+/// merge itself asks the disk nothing. Every frame without a picture
+/// is asked for one again, in place of whatever was queued. A path
+/// twice in `next` is kept once. The frame on screen stays on screen,
+/// followed to its new path if the read found it moved; if it is gone,
+/// nothing is kept for it and the nearest row is what the caller
+/// opens, which this returns.
 pub(crate) fn merge(
     st: &mut State,
     app: &App,
     worker: &Worker,
     next: Vec<PathBuf>,
-    mut read: HashMap<PathBuf, (Sidecar, bool)>,
+    brought: Brought,
 ) -> Option<usize> {
-    follow_current(st);
+    let Brought {
+        mut read,
+        seen,
+        ids,
+    } = brought;
+    let seen = &seen;
+    let followed = follow_current(st, seen);
     // The frame on screen gone and not followed anywhere is not in the
     // list, whatever the index still says of it: the last file of a
     // folder deleted leaves its row standing (§160's empty folder).
     let gone = st
         .current
         .and_then(|c| st.files.get(c))
-        .filter(|p| !p.exists())
+        .filter(|p| !followed && seen.gone(p))
         .cloned();
-    let mut seen = HashSet::new();
+    let mut listed = HashSet::new();
     let mut next: Vec<PathBuf> = next
         .into_iter()
         .filter(|p| Some(p) != gone.as_ref())
-        .filter(|p| seen.insert(p.clone()))
+        .filter(|p| listed.insert(p.clone()))
         .collect();
     // A frame on screen that moved out of what this list covers (a
     // folder view, and the frame moved to another folder) stays in
@@ -815,8 +1410,8 @@ pub(crate) fn merge(
     // edited, and it is where the index says it is.
     if let Some(c) = st.current
         && let Some(path) = st.files.get(c)
-        && path.is_file()
-        && !seen.contains(path)
+        && gone.as_ref() != Some(path)
+        && !listed.contains(path)
     {
         let at = next.partition_point(|p| p.file_name() < path.file_name());
         next.insert(at, path.clone());
@@ -828,14 +1423,6 @@ pub(crate) fn merge(
     let old: HashMap<&PathBuf, usize> = st.files.iter().enumerate().map(|(i, p)| (p, i)).collect();
     let from: Vec<Option<usize>> = next.iter().map(|p| old.get(p).copied()).collect();
     drop(old);
-    let unread: Vec<PathBuf> = next
-        .iter()
-        .zip(&from)
-        .filter(|(p, f)| f.is_none() && !read.contains_key(*p))
-        .map(|(p, _)| p.clone())
-        .collect();
-    let (s, b) = load_sidecars(&unread, st.write_sidecars);
-    read.extend(unread.into_iter().zip(s.into_iter().zip(b)));
     let fresh = from.iter().filter(|f| f.is_none()).count();
     let count = next.len();
     let mut sidecars = Vec::with_capacity(count);
@@ -856,7 +1443,11 @@ pub(crate) fn merge(
                 thumb_made.push(st.thumb_made[i]);
                 thumb_asked.push(st.thumb_asked[i]);
                 thumb_failed.push(st.thumb_failed.get(i).copied().unwrap_or(false));
-                index_ids.push(st.index_ids.get(i).copied().flatten());
+                let old = st.index_ids.get(i).copied().flatten();
+                index_ids.push(match ids.as_ref().and_then(|m| m.get(path)) {
+                    Some(id) => *id,
+                    None => old,
+                });
             }
             None => {
                 let (sidecar, seed) = read.remove(path).unwrap_or_default();
@@ -867,7 +1458,7 @@ pub(crate) fn merge(
                 thumb_made.push(0);
                 thumb_asked.push(worker::THUMB_WIDTH);
                 thumb_failed.push(false);
-                index_ids.push(None);
+                index_ids.push(ids.as_ref().and_then(|m| m.get(path).copied().flatten()));
             }
         }
     }
@@ -914,7 +1505,9 @@ pub(crate) fn merge(
     st.index_passed = vec![true; count];
     st.index_pass_ready = false;
     st.current = current;
-    crate::library::refresh_ids(st);
+    if ids.is_none() {
+        crate::library::refresh_ids(st);
+    }
     let hidden = rebuild_browser(st, app);
     if renumbered {
         worker.replace_thumbnails(owed_thumbnails(st), on_screen(st));
@@ -952,6 +1545,7 @@ pub(crate) fn background_done(
     path: &Path,
     report: &greycard_library::Report,
     launch: bool,
+    failed: bool,
 ) -> bool {
     let changed = report.added
         + report.moved
@@ -990,29 +1584,44 @@ pub(crate) fn background_done(
         }
         done
     };
-    // The frame on screen gone from under the window, whatever the
-    // pass says: the last file of a folder deleted leaves the folder
-    // empty, which the index takes for a drive not mounted (§160) and
-    // marks nothing, so no count moves.
-    let current_gone = {
+    // Whether the list is to be read again, by what the window holds
+    // and what the pass said, the disk not asked: the read does that
+    // off the window's thread. A pass under the frame on screen reads
+    // it again whatever the pass says, since the frame may be gone: the
+    // last file of a folder deleted leaves the folder empty, which the
+    // index takes for a drive not mounted (§160) and marks nothing, so
+    // no count moves. So does a pass that could not read a folder,
+    // whose files leave the list.
+    let touches = {
         let st = state.borrow();
-        st.current
+        let under_current = st
+            .current
             .and_then(|c| st.files.get(c))
-            .is_some_and(|p| !p.exists())
-    };
-    let touches = current_gone || {
-        let st = state.borrow();
-        changed
-            && match &st.view {
-                View::Roots(None) => true,
-                View::Roots(Some(r)) => path.starts_with(r) || r.starts_with(path),
-                View::Folder => st
-                    .files
-                    .first()
-                    .and_then(|f| f.parent())
-                    .and_then(|d| dunce::canonicalize(d).ok())
-                    .is_some_and(|d| d.starts_with(path)),
-            }
+            .is_some_and(|p| p.starts_with(path));
+        // A pass that failed outright (a watcher's pass over the folder
+        // that was just locked fails at that folder, and says nothing
+        // in its report), or one over a folder the last read could not
+        // read, may have changed which folders can be read.
+        let over_unreadable = st
+            .library
+            .unreadable
+            .iter()
+            .any(|d| d.starts_with(path) || path.starts_with(d));
+        let worth =
+            changed || under_current || failed || over_unreadable || !report.unreadable.is_empty();
+        match st.view.clone() {
+            View::Roots(None) => worth,
+            View::Roots(Some(r)) => worth && (path.starts_with(&r) || r.starts_with(path)),
+            // The folder's own list is what the read brings, the frame
+            // on screen with it. A folder whose canonical form the
+            // window does not know yet is read: the read brings that.
+            View::Folder => st.files.first().and_then(|f| f.parent()).is_some_and(|d| {
+                st.library
+                    .canonical
+                    .get(d)
+                    .is_none_or(|key| key.starts_with(path))
+            }),
+        }
     };
     let merged = touches
         && crate::WORKER
@@ -1052,10 +1661,22 @@ pub(crate) fn changed_rows(st: &State, report: &greycard_library::Report) -> Vec
         .filter(|(_, f)| {
             changed.contains(f)
                 || (f.file_name().is_some_and(|n| names.contains(n))
-                    && changed.contains(&greycard_library::key_path(f)))
+                    && changed.contains(&keyed(st, f)))
         })
         .map(|(i, _)| i)
         .collect()
+}
+
+/// A file's path as the index keys it, by its folder's canonical form
+/// as the window has kept it, else asked of the disk.
+fn keyed(st: &State, f: &Path) -> PathBuf {
+    match (
+        f.parent().and_then(|d| st.library.canonical.get(d)),
+        f.file_name(),
+    ) {
+        (Some(dir), Some(name)) => dir.join(name),
+        _ => greycard_library::key_path(f),
+    }
 }
 
 /// The view is empty for good: nothing under the roots, and no pass
@@ -1064,7 +1685,13 @@ pub(crate) fn changed_rows(st: &State, report: &greycard_library::Report) -> Vec
 pub(crate) fn empty_view(st: &mut State, app: &App) {
     let why = if st.library.roots.is_empty() {
         "the library has no folders: nothing to show"
-    } else if st.library.roots.list().iter().all(|r| !online(r)) {
+    } else if st
+        .library
+        .roots
+        .list()
+        .iter()
+        .all(|r| st.library.offline.contains(r))
+    {
         "every folder in the library is offline: nothing to show"
     } else {
         "nothing under the library's folders"
@@ -1191,6 +1818,79 @@ mod tests {
     use greycard_library::fixture::{A7, R5, R6, write_frame};
     use std::time::Duration;
 
+    thread_local! {
+        /// The reads sent off the window's thread, waiting for the
+        /// test to run and land them.
+        pub(super) static SENT: RefCell<Vec<Look>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// The reads sent, how many.
+    fn sent() -> usize {
+        SENT.with(|s| s.borrow().len())
+    }
+
+    /// Every read sent run and landed, and those their landing sent;
+    /// how many.
+    fn land_all(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
+        let mut landed = 0;
+        loop {
+            let looks: Vec<Look> = SENT.with(|s| s.borrow_mut().drain(..).collect());
+            if looks.is_empty() {
+                return landed;
+            }
+            for look in looks {
+                land(state, app, worker, look.run());
+                landed += 1;
+            }
+        }
+    }
+
+    /// The sidecars a read would bring for the files of `next` the
+    /// window does not list yet.
+    fn read_new(st: &State, next: &[PathBuf]) -> HashMap<PathBuf, (Sidecar, bool)> {
+        let fresh: Vec<PathBuf> = next
+            .iter()
+            .filter(|p| !st.files.contains(p))
+            .cloned()
+            .collect();
+        let (s, b) = load_sidecars_parallel(&fresh, st.write_sidecars);
+        fresh.into_iter().zip(s.into_iter().zip(b)).collect()
+    }
+
+    /// The frame on screen as a read would find it, with the index at
+    /// `db` to follow it by.
+    fn seen_now(st: &State, db: Option<&Path>) -> OnScreen {
+        st.current
+            .and_then(|c| {
+                let path = st.files.get(c)?.clone();
+                let id = st.index_ids.get(c).copied().flatten();
+                let lib = db.and_then(|db| greycard_library::Library::open_read_only(db).ok());
+                Some(OnScreen::look(path, id, lib.as_ref()))
+            })
+            .unwrap_or_default()
+    }
+
+    /// `merge` as a landed read would call it: the new files' sidecars
+    /// and the frame on screen read first.
+    fn merge_read(
+        state: &Rc<RefCell<State>>,
+        app: &App,
+        worker: &Worker,
+        next: Vec<PathBuf>,
+        db: Option<&Path>,
+    ) -> Option<usize> {
+        let (read, seen) = {
+            let st = state.borrow();
+            (read_new(&st, &next), seen_now(&st, db))
+        };
+        let brought = Brought {
+            read,
+            seen,
+            ids: None,
+        };
+        merge(&mut state.borrow_mut(), app, worker, next, brought)
+    }
+
     /// A folder of this test's own, canonical, as the index keys
     /// folders (macOS's temporary directory is behind a link).
     fn scratch(what: &str) -> PathBuf {
@@ -1248,13 +1948,7 @@ mod tests {
             files[1].clone(),
             files[2].clone(),
         ];
-        let row = merge(
-            &mut state.borrow_mut(),
-            &app,
-            &worker,
-            next.clone(),
-            HashMap::new(),
-        );
+        let row = merge_read(&state, &app, &worker, next.clone(), None);
         {
             let st = state.borrow();
             assert_eq!(st.files, next);
@@ -1270,17 +1964,11 @@ mod tests {
         }
         // c goes from the list: out of the selection too.
         let next = vec![files[0].clone(), aa.clone(), files[1].clone()];
-        assert_eq!(
-            merge(&mut state.borrow_mut(), &app, &worker, next, HashMap::new()),
-            None
-        );
+        assert_eq!(merge_read(&state, &app, &worker, next, None), None);
         assert_eq!(state.borrow().picked, vec![2]);
         // The same list again is nothing to do.
         let same = state.borrow().files.clone();
-        assert_eq!(
-            merge(&mut state.borrow_mut(), &app, &worker, same, HashMap::new()),
-            None
-        );
+        assert_eq!(merge_read(&state, &app, &worker, same, None), None);
         drop(state);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -1301,7 +1989,7 @@ mod tests {
         }
         std::fs::remove_file(&files[2]).unwrap();
         let next = files[..2].to_vec();
-        let row = merge(&mut state.borrow_mut(), &app, &worker, next, HashMap::new());
+        let row = merge_read(&state, &app, &worker, next, None);
         assert_eq!(row, Some(1), "c's row, clamped to the last");
         assert_eq!(state.borrow().current, None);
         assert!(!files[2].with_extension("tif.gcd").exists());
@@ -1339,16 +2027,7 @@ mod tests {
         std::fs::rename(&files[1], &renamed).unwrap();
         writer.index_folder(&shoot, &mut |_| {}).unwrap();
         let listed = crate::files::list_files(&shoot).unwrap();
-        assert_eq!(
-            merge(
-                &mut state.borrow_mut(),
-                &app,
-                &worker,
-                listed,
-                HashMap::new()
-            ),
-            None
-        );
+        assert_eq!(merge_read(&state, &app, &worker, listed, Some(&db)), None);
         {
             let st = state.borrow();
             let c = st.current.expect("still on screen");
@@ -1361,16 +2040,7 @@ mod tests {
         writer.index_tree(&dir, &mut |_| {}).unwrap();
         let listed = crate::files::list_files(&shoot).unwrap();
         assert_eq!(listed.len(), 2);
-        assert_eq!(
-            merge(
-                &mut state.borrow_mut(),
-                &app,
-                &worker,
-                listed,
-                HashMap::new()
-            ),
-            None
-        );
+        assert_eq!(merge_read(&state, &app, &worker, listed, Some(&db)), None);
         {
             let st = state.borrow();
             let c = st.current.expect("still on screen");
@@ -1917,13 +2587,7 @@ mod tests {
             files[2].clone(),
             files[3].clone(),
         ];
-        merge(
-            &mut state.borrow_mut(),
-            &app,
-            &worker,
-            next.clone(),
-            HashMap::new(),
-        );
+        merge_read(&state, &app, &worker, next.clone(), None);
         let owed: Vec<usize> = vec![0, 1, 3, 4];
         let mut came: Vec<usize> = Vec::new();
         let until = std::time::Instant::now() + Duration::from_secs(30);
@@ -1981,13 +2645,7 @@ mod tests {
         // The all-roots view's list: the copy is under the root too.
         let listed = writer.paths_under(std::slice::from_ref(&dir)).unwrap();
         assert_eq!(listed.len(), 3);
-        let row = merge(
-            &mut state.borrow_mut(),
-            &app,
-            &worker,
-            listed.clone(),
-            HashMap::new(),
-        );
+        let row = merge_read(&state, &app, &worker, listed.clone(), Some(&db));
         {
             let st = state.borrow();
             assert_eq!(st.current, None, "the frame is gone, not followed");
@@ -2048,7 +2706,8 @@ mod tests {
     /// offline: its chip says so, the view leaves it out, and the
     /// launch pass does not touch it, so its rows stay as they were
     /// rather than all go missing. A folder under a root that cannot
-    /// be read is left out of the view the same way.
+    /// be read is left out of the view the same way. Both are looked at
+    /// off the window's thread.
     #[test]
     fn an_offline_root_is_shown_as_such_and_left_out() {
         let dir = scratch("offline");
@@ -2062,46 +2721,524 @@ mod tests {
         let mut writer = greycard_library::Library::open(&db).unwrap();
         writer.index_tree(&dir, &mut |_| {}).unwrap();
         let app = window(0);
-        let (state, _worker) = state_for(&app, Vec::new());
-        let mut st = state.borrow_mut();
-        st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
-        st.library.roots.add(&a).unwrap();
-        st.library.roots.add(&b).unwrap();
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.library.roots.add(&a).unwrap();
+            st.library.roots.add(&b).unwrap();
+            recount(&mut st);
+        }
         // b unplugged: the folder gone from the disk.
         let away = dir.join("b-away");
         std::fs::rename(&b, &away).unwrap();
-        recount(&mut st);
-        show(&st, &app);
-        let chips = app.get_library_roots();
-        assert!(!chips.row_data(0).unwrap().offline);
-        assert!(chips.row_data(1).unwrap().offline);
-        let roots = roots_of(&st, &View::Roots(None));
-        assert_eq!(roots, std::slice::from_ref(&a));
+        open_view(&state, &app, &worker, View::Roots(None));
+        assert_eq!(land_all(&state, &app, &worker), 1);
+        {
+            let st = state.borrow();
+            let chips = app.get_library_roots();
+            assert!(!chips.row_data(0).unwrap().offline);
+            assert!(chips.row_data(1).unwrap().offline);
+            assert_eq!(st.files, [a.join("x.tif"), a.join("day").join("y.tif")]);
+            assert_eq!(st.library.counts, vec![2, 1], "b's row kept as it was");
+        }
         // The launch pass over an offline root is not asked for; had
         // it been, the tree pass would mark its row missing.
         assert_eq!(
-            st.library.roots.list().iter().filter(|r| online(r)).count(),
+            state
+                .borrow()
+                .library
+                .roots
+                .list()
+                .iter()
+                .filter(|r| online(r))
+                .count(),
             1
         );
-        assert_eq!(st.library.counts, vec![2, 1], "b's row kept as it was");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             let day = a.join("day");
             std::fs::set_permissions(&day, std::fs::Permissions::from_mode(0o000)).unwrap();
-            let listed = view_files(st.index_reader.as_ref().unwrap(), &roots).unwrap();
             let locked = std::fs::read_dir(&day).is_err();
+            // Opened again by hand: every folder looked at again.
+            open_view(&state, &app, &worker, View::Roots(None));
+            land_all(&state, &app, &worker);
             std::fs::set_permissions(&day, std::fs::Permissions::from_mode(0o755)).unwrap();
             if locked {
                 assert_eq!(
-                    listed,
+                    state.borrow().files,
                     [a.join("x.tif")],
                     "the locked folder's frame left out"
                 );
             }
         }
-        st.index_reader = None;
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder under a root that cannot be read (locked after the
+    /// index walked it) leaves the list at the next read, which looks
+    /// at it off the window's thread, and comes back at the read after
+    /// it can be read again, with no pass over it and no open by hand:
+    /// on a network share a failure can be a moment's. The pass that
+    /// could not read it says so as a folder, and has the list read.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_that_cannot_be_read_leaves_the_list_and_comes_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("unreadable");
+        let root = dir.join("root");
+        let (day, other) = (root.join("day"), root.join("other"));
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        frames(&root, &["x.tif"]);
+        frames(&day, &["y.tif", "z.tif"]);
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&root, &mut |_| {}).unwrap();
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.index_path = Some(db.clone());
+            st.library.roots.add(&root).unwrap();
+        }
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
+        assert_eq!(state.borrow().files.len(), 3);
+        assert!(state.borrow().library.readable.contains(&day));
+
+        std::fs::set_permissions(&day, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&day).is_ok() {
+            // Run as a user no permission stops: nothing to see.
+            std::fs::set_permissions(&day, std::fs::Permissions::from_mode(0o755)).unwrap();
+            state.borrow_mut().index_reader = None;
+            return;
+        }
+        let report = writer.index_tree(&root, &mut |_| {}).unwrap();
+        assert_eq!(report.unreadable, std::slice::from_ref(&day), "{report:?}");
+        folders_passed(&mut state.borrow_mut(), &root);
+        assert!(background_done(&state, &app, &root, &report, false, false));
+        assert_eq!(sent(), 1);
+        land_all(&state, &app, &worker);
+        std::fs::set_permissions(&day, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(state.borrow().files, [root.join("x.tif")]);
+        assert!(
+            !state.borrow().library.readable.contains(&day),
+            "not kept as readable, and not kept as unreadable either"
+        );
+
+        // A file into another folder, and its pass: the read for it
+        // looks at the locked folder again, finds it readable, and
+        // brings its frames back.
+        frames(&other, &["o.tif"]);
+        let report = writer.index_folder(&other, &mut |_| {}).unwrap();
+        folders_passed(&mut state.borrow_mut(), &other);
+        assert!(background_done(&state, &app, &other, &report, false, false));
+        land_all(&state, &app, &worker);
+        assert_eq!(state.borrow().files.len(), 4);
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A pass over a folder lands while a read that looked at the
+    /// folder is out: what the read saw of it is not kept, since the
+    /// pass is newer, and the next read looks at it again.
+    #[test]
+    fn a_read_out_during_a_pass_keeps_nothing_of_the_pass_s_folders() {
+        let dir = scratch("epoch");
+        let root = dir.join("root");
+        let (d, e) = (root.join("d"), root.join("e"));
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::create_dir_all(&e).unwrap();
+        frames(&d, &["d1.tif"]);
+        frames(&e, &["e1.tif"]);
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&root, &mut |_| {}).unwrap();
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.library.roots.add(&root).unwrap();
+        }
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
+        folders_passed(&mut state.borrow_mut(), &d);
+        frames(&e, &["e2.tif"]);
+        let report = writer.index_folder(&e, &mut |_| {}).unwrap();
+        folders_passed(&mut state.borrow_mut(), &e);
+        assert!(background_done(&state, &app, &e, &report, false, false));
+        let found = SENT.with(|s| s.borrow_mut().pop()).unwrap().run();
+        // A pass over d lands before the read does.
+        folders_passed(&mut state.borrow_mut(), &d);
+        land(&state, &app, &worker, found);
+        let st = state.borrow();
+        assert!(!st.library.readable.contains(&d), "d's look is older");
+        assert!(st.library.readable.contains(&e), "e's is not");
+        assert_eq!(st.files.len(), 3);
         drop(st);
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A read that never comes back (a share that stopped answering in
+    /// the middle of it) does not hold the list for good: the next
+    /// refresh past [`READ_GIVES_UP`] sends another, and the one given
+    /// up on is dropped if it ever lands.
+    #[test]
+    fn a_read_that_never_lands_is_given_up_on() {
+        let dir = scratch("given-up");
+        let files = frames(&dir, &["a.tif", "b.tif"]);
+        let app = window(0);
+        let (state, worker) = state_for(&app, files[..1].to_vec());
+        assert!(refresh_view(&state, &app, &worker));
+        let lost = SENT.with(|s| s.borrow_mut().pop()).unwrap();
+        assert!(refresh_view(&state, &app, &worker));
+        assert_eq!(sent(), 0, "one out at a time");
+        state.borrow_mut().library.merge_since =
+            Some(Instant::now() - READ_GIVES_UP - Duration::from_secs(1));
+        assert!(refresh_view(&state, &app, &worker));
+        assert_eq!(sent(), 1, "another sent");
+        land(&state, &app, &worker, lost.run());
+        assert!(state.borrow().library.merging, "the lost one dropped");
+        assert_eq!(state.borrow().files.len(), 1);
+        land_all(&state, &app, &worker);
+        assert_eq!(state.borrow().files, files);
+        assert!(!state.borrow().library.merging);
+        // A folder's view looks at no root.
+        let look = ask(&state.borrow()).unwrap();
+        assert!(look.roots.is_empty());
+        drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Let `blocks` go: the test that holds it is done with it.
+    static LET_GO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+    /// A root's look that does not come back until `LET_GO`, as a stat
+    /// under a hard-mounted share gone away does not.
+    fn blocks(_: &Path) -> bool {
+        while !LET_GO.load(Ordering::SeqCst) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        true
+    }
+
+    /// A root that does not answer is offline for the read after the
+    /// wait, and costs one thread: the reads after it take it for
+    /// offline at once, without another thread or another wait, until
+    /// it answers. Then it is looked at afresh.
+    #[test]
+    fn a_root_that_does_not_answer_costs_one_look_and_no_more_waits() {
+        let checks = Checks::new(blocks);
+        let hung = PathBuf::from("/hung/share");
+        let wait = Duration::from_millis(200);
+        let started = Instant::now();
+        let off = checks.offline(std::slice::from_ref(&hung), wait);
+        assert!(started.elapsed() >= wait, "the first read waits for it");
+        assert_eq!(off, HashSet::from([hung.clone()]));
+        for _ in 0..5 {
+            let started = Instant::now();
+            let off = checks.offline(std::slice::from_ref(&hung), wait);
+            assert!(started.elapsed() < wait / 2, "later reads do not wait");
+            assert_eq!(off, HashSet::from([hung.clone()]));
+        }
+        assert_eq!(checks.started.load(Ordering::Relaxed), 1, "one thread");
+        LET_GO.store(true, Ordering::SeqCst);
+        let until = Instant::now() + Duration::from_secs(5);
+        while checks
+            .offline(std::slice::from_ref(&hung), wait)
+            .contains(&hung)
+        {
+            assert!(
+                Instant::now() < until,
+                "it answered, and is looked at again"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // The real look, on a root that is not there and one that is.
+        let dir = scratch("roots-answer");
+        let gone = dir.join("gone");
+        let real = Checks::new(online);
+        assert_eq!(
+            real.offline(&[dir.clone(), gone.clone()], ROOT_WAIT),
+            HashSet::from([gone])
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The frame on screen under a root the read found offline is not
+    /// looked at (a stat there would not come back): it stays on screen
+    /// and in the list, while the rest of the root's frames leave.
+    #[test]
+    fn the_frame_on_screen_under_a_root_gone_offline_stays() {
+        let dir = scratch("offline-current");
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        frames(&a, &["x.tif"]);
+        frames(&b, &["y.tif", "z.tif"]);
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&dir, &mut |_| {}).unwrap();
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.index_path = Some(db.clone());
+            st.library.roots.add(&a).unwrap();
+            st.library.roots.add(&b).unwrap();
+        }
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
+        let y = b.join("y.tif");
+        {
+            let mut st = state.borrow_mut();
+            st.current = st.files.iter().position(|f| *f == y);
+        }
+        std::fs::rename(&b, dir.join("b-away")).unwrap();
+        assert!(refresh_view(&state, &app, &worker));
+        land_all(&state, &app, &worker);
+        let st = state.borrow();
+        assert!(st.library.offline.contains(&b));
+        assert_eq!(st.current.map(|c| st.files[c].clone()), Some(y.clone()));
+        assert_eq!(st.files, [a.join("x.tif"), y], "z leaves, the frame stays");
+        drop(st);
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A view's read given up on: the status says so rather than
+    /// "reading N frames..." for good, a capture waiting on it lets go,
+    /// and when the read does land it changes nothing, the roots found
+    /// offline among it.
+    #[test]
+    fn a_view_s_read_given_up_on_lets_go_and_lands_as_nothing() {
+        let dir = scratch("open-given-up");
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let files = frames(&a, &["x.tif"]);
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&dir, &mut |_| {}).unwrap();
+        let app = window(0);
+        let (state, worker) = state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.library.roots.add(&a).unwrap();
+            st.library.roots.add(&b).unwrap();
+            st.library.awaiting = true;
+        }
+        std::fs::remove_dir(&b).unwrap();
+        open_view(&state, &app, &worker, View::Roots(None));
+        assert!(app.get_status().contains("reading"), "{}", app.get_status());
+        let lost = SENT.with(|s| s.borrow_mut().pop()).unwrap();
+        state.borrow_mut().library.loading_since =
+            Some(Instant::now() - READ_GIVES_UP - Duration::from_secs(1));
+        refresh_view(&state, &app, &worker);
+        {
+            let st = state.borrow();
+            assert!(!st.library.loading);
+            assert!(!st.library.awaiting, "a capture lets go");
+        }
+        assert!(
+            !app.get_status().contains("reading"),
+            "{}",
+            app.get_status()
+        );
+        land_all(&state, &app, &worker);
+        land(&state, &app, &worker, lost.run());
+        let st = state.borrow();
+        assert!(st.library.offline.is_empty(), "the late read keeps nothing");
+        assert_eq!(st.view, View::Folder, "nor opens its view");
+        assert_eq!(st.files, files);
+        drop(st);
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The review's round trip: a folder under a root locked, and the
+    /// watcher's pass over that folder fails outright (an error, and a
+    /// report that says nothing); then unlocked, and the pass over it
+    /// finds nothing changed. Each has the list read, with no other
+    /// report needed: the frames leave, and come back.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_locked_and_unlocked_leaves_and_comes_back_by_its_own_passes() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut s = Shoot::new("rv-chmod");
+        std::fs::set_permissions(&s.d, std::fs::Permissions::from_mode(0o000)).unwrap();
+        if std::fs::read_dir(&s.d).is_ok() {
+            std::fs::set_permissions(&s.d, std::fs::Permissions::from_mode(0o755)).unwrap();
+            s.done();
+            return;
+        }
+        let passed = s.writer.index_folder(&s.d, &mut |_| {});
+        assert!(passed.is_err(), "the pass over the locked folder fails");
+        folders_passed(&mut s.state.borrow_mut(), &s.d);
+        let nothing = greycard_library::Report::default();
+        assert!(background_done(
+            &s.state, &s.app, &s.d, &nothing, false, true
+        ));
+        land_all(&s.state, &s.app, &s.worker);
+        assert_eq!(s.in_d(), 0, "its frames leave");
+
+        std::fs::set_permissions(&s.d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let report = s.writer.index_folder(&s.d, &mut |_| {}).unwrap();
+        assert_eq!(report.added + report.changed + report.missing, 0);
+        folders_passed(&mut s.state.borrow_mut(), &s.d);
+        assert!(background_done(
+            &s.state, &s.app, &s.d, &report, false, false
+        ));
+        land_all(&s.state, &s.app, &s.worker);
+        assert_eq!(s.in_d(), 2, "and come back");
+        s.done();
+    }
+
+    /// A folder's view through a link, the link pointed elsewhere
+    /// meanwhile: the next read makes the folder canonical again, so
+    /// the rows, the passes and "Add this folder" go by where it points
+    /// now.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_through_a_link_retargeted_is_followed_by_the_next_read() {
+        let dir = scratch("link");
+        let (a, b, link) = (dir.join("a"), dir.join("b"), dir.join("link"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        frames(&a, &["x.tif"]);
+        frames(&b, &["x.tif", "y.tif"]);
+        std::os::unix::fs::symlink(&a, &link).unwrap();
+        let app = window(0);
+        let (state, worker) = state_for(&app, vec![link.join("x.tif")]);
+        assert!(refresh_view(&state, &app, &worker));
+        land_all(&state, &app, &worker);
+        assert_eq!(state.borrow().library.canonical.get(&link), Some(&a));
+        std::fs::remove_file(&link).unwrap();
+        std::os::unix::fs::symlink(&b, &link).unwrap();
+        assert!(refresh_view(&state, &app, &worker));
+        land_all(&state, &app, &worker);
+        let st = state.borrow();
+        assert_eq!(st.library.canonical.get(&link), Some(&b));
+        assert_eq!(st.files.len(), 2);
+        drop(st);
+        drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The merge asks the disk nothing: a list whose folders are all
+    /// gone merges as given, and a read landed after its folder went
+    /// merges what the read saw.
+    #[test]
+    fn a_merge_over_folders_all_gone_completes() {
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        let nowhere = crate::testing::folder(4);
+        let read: HashMap<PathBuf, (Sidecar, bool)> = nowhere
+            .iter()
+            .map(|p| (p.clone(), (Sidecar::default(), false)))
+            .collect();
+        merge(
+            &mut state.borrow_mut(),
+            &app,
+            &worker,
+            nowhere.clone(),
+            Brought {
+                read,
+                ..Brought::default()
+            },
+        );
+        assert_eq!(state.borrow().files, nowhere);
+
+        // A read of a folder, then the folder deleted before it lands.
+        let dir = scratch("all-gone");
+        let files = frames(&dir, &["a.tif", "b.tif"]);
+        let (state, worker) = state_for(&app, files[..1].to_vec());
+        assert!(refresh_view(&state, &app, &worker));
+        let look = SENT.with(|s| s.borrow_mut().pop()).unwrap();
+        let found = look.run();
+        std::fs::remove_dir_all(&dir).unwrap();
+        land(&state, &app, &worker, found);
+        assert_eq!(state.borrow().files, files);
+        assert!(!state.borrow().library.merging);
+    }
+
+    /// A burst of passes reported while a read is out: one read is out
+    /// at a time, the burst asks for one more after it, and that one is
+    /// merged once.
+    #[test]
+    fn a_burst_of_reports_is_one_read_and_one_merge() {
+        let dir = scratch("burst");
+        let root = dir.join("root");
+        let days: Vec<PathBuf> = (0..6).map(|i| root.join(format!("day{i}"))).collect();
+        for d in &days {
+            std::fs::create_dir_all(d).unwrap();
+            frames(d, &["a.tif"]);
+        }
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&root, &mut |_| {}).unwrap();
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.library.roots.add(&root).unwrap();
+        }
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
+        assert_eq!(state.borrow().files.len(), 6);
+
+        // A file copied into the first folder and its pass said: a read
+        // goes out. Then one into each of the others, each pass said
+        // while that read is out.
+        frames(&days[0], &["b.tif"]);
+        let report = writer.index_folder(&days[0], &mut |_| {}).unwrap();
+        assert!(background_done(
+            &state, &app, &days[0], &report, false, false
+        ));
+        assert_eq!(sent(), 1, "the first report sends a read");
+        for d in &days[1..] {
+            frames(d, &["b.tif"]);
+            let report = writer.index_folder(d, &mut |_| {}).unwrap();
+            assert!(background_done(&state, &app, d, &report, false, false));
+        }
+        assert_eq!(sent(), 1, "the rest wait for it");
+        assert!(state.borrow().library.stale);
+
+        // The read out lands and what it saw is merged; the burst's one
+        // read after it goes out, and is merged once.
+        state.borrow_mut().library.painted = None;
+        let look = SENT.with(|s| s.borrow_mut().pop()).unwrap();
+        land(&state, &app, &worker, look.run());
+        assert!(state.borrow().library.painted.is_some(), "merged");
+        assert_eq!(state.borrow().files.len(), 7);
+        assert_eq!(sent(), 1, "one more read for the burst");
+        state.borrow_mut().library.painted = None;
+        assert_eq!(land_all(&state, &app, &worker), 1, "and none after it");
+        let st = state.borrow();
+        assert!(st.library.painted.is_some(), "merged");
+        assert_eq!(st.files.len(), 12);
+        assert!(!st.library.merging && !st.library.stale);
+        drop(st);
+        state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -2130,6 +3267,7 @@ mod tests {
         }
         std::fs::remove_dir(&gone).unwrap();
         open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
         {
             let st = state.borrow();
             assert!(st.failed, "the capture ends");
@@ -2148,9 +3286,10 @@ mod tests {
             st.library.launch_left = 1;
         }
         open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
         assert!(!state.borrow().failed, "the pass is still to come");
         let report = greycard_library::Report::default();
-        background_done(&state, &app, &empty, &report, true);
+        background_done(&state, &app, &empty, &report, true, false);
         assert!(state.borrow().failed, "nothing came of the pass");
         assert!(app.get_status().contains("nothing"), "{}", app.get_status());
         state.borrow_mut().index_reader = None;
@@ -2195,7 +3334,7 @@ mod tests {
         writer.index_tree(&dir, &mut |_| {}).unwrap();
         let listed = writer.paths_under(std::slice::from_ref(&dir)).unwrap();
         let app = window(3);
-        let (state, _worker) = state_for(&app, listed.clone());
+        let (state, worker) = state_for(&app, listed.clone());
         {
             let mut st = state.borrow_mut();
             st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
@@ -2209,7 +3348,8 @@ mod tests {
         let report = writer.index_folder(&b, &mut |_| {}).unwrap();
         assert_eq!(report.missing, 0, "the index keeps the row: {report:?}");
         assert!(!report.unavailable.is_empty());
-        background_done(&state, &app, &b, &report, false);
+        background_done(&state, &app, &b, &report, false, false);
+        assert_eq!(land_all(&state, &app, &worker), 1);
         {
             let st = state.borrow();
             assert_ne!(st.current.and_then(|c| st.files.get(c)), Some(&lone));
@@ -2220,5 +3360,191 @@ mod tests {
         drop(state);
         drop(writer);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A root with two folders, `d` (two frames) and `e` (one), indexed,
+    /// and the all-roots view of it landed: what the review's repros
+    /// start from.
+    struct Shoot {
+        dir: PathBuf,
+        d: PathBuf,
+        e: PathBuf,
+        writer: greycard_library::Library,
+        app: App,
+        state: Rc<RefCell<State>>,
+        worker: Rc<Worker>,
+    }
+
+    impl Shoot {
+        fn new(what: &str) -> Shoot {
+            let dir = scratch(what);
+            let root = dir.join("root");
+            let (d, e) = (root.join("d"), root.join("e"));
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::create_dir_all(&e).unwrap();
+            frames(&d, &["d1.tif", "d2.tif"]);
+            frames(&e, &["e1.tif"]);
+            let db = dir.join("index").join("library.sqlite");
+            let mut writer = greycard_library::Library::open(&db).unwrap();
+            writer.index_tree(&root, &mut |_| {}).unwrap();
+            let app = window(0);
+            let (state, worker) = state_for(&app, Vec::new());
+            {
+                let mut st = state.borrow_mut();
+                st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+                st.index_path = Some(db.clone());
+                st.library.roots.add(&root).unwrap();
+            }
+            open_view(&state, &app, &worker, View::Roots(None));
+            land_all(&state, &app, &worker);
+            assert_eq!(state.borrow().files.len(), 3);
+            Shoot {
+                dir,
+                d,
+                e,
+                writer,
+                app,
+                state,
+                worker,
+            }
+        }
+
+        /// A frame copied into `e` and its pass said: a read goes out,
+        /// and is handed back unrun.
+        fn copy_into_e(&mut self, name: &str) -> Look {
+            frames(&self.e, &[name]);
+            let report = self.writer.index_folder(&self.e, &mut |_| {}).unwrap();
+            folders_passed(&mut self.state.borrow_mut(), &self.e);
+            assert!(background_done(
+                &self.state,
+                &self.app,
+                &self.e,
+                &report,
+                false,
+                false
+            ));
+            SENT.with(|s| s.borrow_mut().pop()).unwrap()
+        }
+
+        fn in_d(&self) -> usize {
+            let st = self.state.borrow();
+            st.files.iter().filter(|f| f.starts_with(&self.d)).count()
+        }
+
+        fn done(self) {
+            self.state.borrow_mut().index_reader = None;
+            drop(self.state);
+            drop(self.writer);
+            std::fs::remove_dir_all(&self.dir).unwrap();
+        }
+    }
+
+    /// The review's repro: a read out while `d` is briefly unreadable,
+    /// then a pass over `d` (readable again, nothing changed) landing
+    /// before the read. `d`'s frames come back with the read the pass
+    /// has sent after it, not only at some later pass.
+    #[cfg(unix)]
+    #[test]
+    fn a_pass_during_a_read_that_saw_a_blip_brings_the_folder_back() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut s = Shoot::new("rv-epoch");
+        folders_passed(&mut s.state.borrow_mut(), &s.d);
+        let look = s.copy_into_e("e2.tif");
+        std::fs::set_permissions(&s.d, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let found = look.run();
+        std::fs::set_permissions(&s.d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let report = s.writer.index_folder(&s.d, &mut |_| {}).unwrap();
+        assert!(report.errors.is_empty());
+        folders_passed(&mut s.state.borrow_mut(), &s.d);
+        background_done(&s.state, &s.app, &s.d, &report, false, false);
+        land(&s.state, &s.app, &s.worker, found);
+        land_all(&s.state, &s.app, &s.worker);
+        assert_eq!(s.in_d(), 2, "d is readable");
+        let look = s.copy_into_e("e3.tif");
+        land(&s.state, &s.app, &s.worker, look.run());
+        land_all(&s.state, &s.app, &s.worker);
+        assert_eq!(s.in_d(), 2);
+        s.done();
+    }
+
+    /// The review's repro: a read that finds `d` unreadable for a moment,
+    /// with no pass over `d` at all. The next read looks at it again,
+    /// and its frames are back.
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_unreadable_for_a_moment_is_back_at_the_next_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut s = Shoot::new("rv-blip");
+        folders_passed(&mut s.state.borrow_mut(), &s.d);
+        let look = s.copy_into_e("e2.tif");
+        std::fs::set_permissions(&s.d, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let found = look.run();
+        std::fs::set_permissions(&s.d, std::fs::Permissions::from_mode(0o755)).unwrap();
+        land(&s.state, &s.app, &s.worker, found);
+        land_all(&s.state, &s.app, &s.worker);
+        for k in 3..5 {
+            let look = s.copy_into_e(&format!("e{k}.tif"));
+            land(&s.state, &s.app, &s.worker, look.run());
+            land_all(&s.state, &s.app, &s.worker);
+        }
+        assert_eq!(s.in_d(), 2, "d is readable again, and its frames are back");
+        s.done();
+    }
+
+    /// The review's check: a rating made in memory while a read is out
+    /// survives the read's landing, and the frame on screen stays.
+    #[test]
+    fn an_edit_made_while_a_read_is_out_survives_its_landing() {
+        let mut s = Shoot::new("rv-edit");
+        s.state.borrow_mut().write_sidecars = true;
+        let d1 = s.d.join("d1.tif");
+        let mut on_disk = Sidecar::default();
+        on_disk.meta.rating = 1;
+        on_disk.save(&d1).unwrap();
+        let found = s.copy_into_e("e2.tif").run();
+        {
+            let mut st = s.state.borrow_mut();
+            let i = st.files.iter().position(|f| *f == d1).unwrap();
+            st.current = Some(i);
+            st.sidecars[i].meta.rating = 5;
+        }
+        land(&s.state, &s.app, &s.worker, found);
+        land_all(&s.state, &s.app, &s.worker);
+        {
+            let st = s.state.borrow();
+            let i = st.files.iter().position(|f| *f == d1).unwrap();
+            assert_eq!(st.files.len(), 4);
+            assert_eq!(st.sidecars[i].meta.rating, 5, "the edit in memory");
+            assert_eq!(st.current.map(|c| st.files[c].clone()), Some(d1));
+        }
+        s.done();
+    }
+
+    /// The review's check: the frame on screen deleted while a read that
+    /// saw it there is out. The landing keeps it; the pass over its
+    /// folder that the deletion brings lets it go.
+    #[test]
+    fn the_frame_on_screen_deleted_while_a_read_is_out_goes_at_the_next() {
+        let mut s = Shoot::new("rv-del");
+        let d1 = s.d.join("d1.tif");
+        {
+            let mut st = s.state.borrow_mut();
+            let i = st.files.iter().position(|f| *f == d1).unwrap();
+            st.current = Some(i);
+        }
+        let found = s.copy_into_e("e2.tif").run();
+        std::fs::remove_file(&d1).unwrap();
+        land(&s.state, &s.app, &s.worker, found);
+        assert!(s.state.borrow().files.contains(&d1), "as the read saw it");
+        let report = s.writer.index_folder(&s.d, &mut |_| {}).unwrap();
+        folders_passed(&mut s.state.borrow_mut(), &s.d);
+        background_done(&s.state, &s.app, &s.d, &report, false, false);
+        land_all(&s.state, &s.app, &s.worker);
+        {
+            let st = s.state.borrow();
+            assert!(!st.files.contains(&d1));
+            assert_ne!(st.current.map(|c| st.files[c].clone()), Some(d1));
+        }
+        s.done();
     }
 }

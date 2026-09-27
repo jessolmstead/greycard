@@ -102,8 +102,12 @@ pub struct Report {
     /// likely as a shoot deleted, so left as they were.
     pub unavailable: Vec<PathBuf>,
     /// Files that could not be read, and why; each has a row anyway
-    /// when it could be hashed.
+    /// when it could be hashed. A folder a tree pass could not read is
+    /// here too, and in `unreadable`.
     pub errors: Vec<(PathBuf, String)>,
+    /// Folders under the pass's own that it could not read (no
+    /// permission, a mount gone bad), left as they were.
+    pub unreadable: Vec<PathBuf>,
     /// Folders a tree pass did not go into: symbolic links, which
     /// could lead back up the tree.
     pub skipped: Vec<PathBuf>,
@@ -131,6 +135,7 @@ impl Report {
         self.missing += other.missing;
         self.unavailable.extend(other.unavailable);
         self.errors.extend(other.errors);
+        self.unreadable.extend(other.unreadable);
         self.skipped.extend(other.skipped);
         self.stopped |= other.stopped;
     }
@@ -406,6 +411,7 @@ impl Library {
                 Err(Error::Io(e)) if dir != root => {
                     log::warn!("{}: {e}; left as it was", dir.display());
                     walk.report.errors.push((dir.clone(), e.to_string()));
+                    walk.report.unreadable.push(dir.clone());
                     walk.visited.insert(path_bytes(&dir));
                     walk.shielded.push(under_prefix(&path_bytes(&dir)));
                     continue;
@@ -441,6 +447,7 @@ impl Library {
                 Ok(l) => l,
                 Err(e) if dir != root => {
                     walk.report.errors.push((dir.clone(), e.to_string()));
+                    walk.report.unreadable.push(dir.clone());
                     walk.shielded.push(under_prefix(&path_bytes(&dir)));
                     continue;
                 }
@@ -2749,6 +2756,11 @@ pub(crate) mod tests {
         assert_eq!(report.missing, 0, "the locked folder's row stands");
         assert_eq!(report.errors.len(), 1, "{report:?}");
         assert_eq!(report.errors[0].0, locked);
+        assert_eq!(
+            report.unreadable,
+            std::slice::from_ref(&locked),
+            "said as a folder"
+        );
         assert_eq!(lib.len().unwrap(), 3);
         std::fs::remove_dir_all(&dir).unwrap();
     }
