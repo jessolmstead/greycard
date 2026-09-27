@@ -18,6 +18,10 @@ note a first tester reads.
   watcher on the other roots is set up off the window's thread, so
   adding, removing or starting with a root never holds the window
   (§188)
+- The scopes can be weighed by the chosen mask: a Selection toggle
+  beside them, off at launch, so a skin mask shows the skin's cloud on
+  the vectorscope and a face its level on the waveform; the clipping
+  lamps follow it too while it is on (§189)
 
 ## 0.2.0, 2026-09-27
 

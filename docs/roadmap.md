@@ -27,11 +27,6 @@ A NAS root neither freezes the window nor goes stale, frames can be
 deleted from the disk behind a confirmation, and the scopes can be
 read for the mask alone.
 
-- [ ] Scopes weighted by the active mask: a "selection" toggle on the
-      scopes panel, each pixel's bin weighted by the mask's coverage,
-      in the shader and the CPU reference alike, so a skin mask on the
-      vectorscope shows the skin cloud against the line and a face on
-      the waveform shows its level
 - [ ] Delete from disk: the selection, or the rejects folder's contents,
       removed for real with their sidecars, behind a confirmation that
       names the count and the folder and offers the system trash where
