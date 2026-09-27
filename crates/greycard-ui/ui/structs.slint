@@ -41,7 +41,8 @@ export struct MaskPick {
 }
 
 /// One frame of the culling loupe's compare view: its box on the
-/// view, logical pixels, its name, and whether it is the selection.
+/// view, logical pixels, its name, whether it is the selection, and
+/// its stars, flag and label as `Thumb` has them, for its badge.
 export struct CompareTile {
     x: float,
     y: float,
@@ -49,6 +50,9 @@ export struct CompareTile {
     h: float,
     name: string,
     on: bool,
+    rating: int,
+    flag: int,
+    label: int,
 }
 
 /// One chip of the browser's filter: what it asks, how many frames

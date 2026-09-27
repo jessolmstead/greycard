@@ -1,6 +1,6 @@
 use crate::panel::browser::{
     file_name, filter_frames, grid_filled_rows, migrate_frame, rebuild_browser, reject_count,
-    row_of,
+    row_of, show_frame_tags,
 };
 use crate::panel::crop::read_geometry;
 use crate::panel::curve::draw_curve;
@@ -170,6 +170,10 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     cull.compare = 1;
     cull.textures.retain(|f, _| *f == c);
     st.hold = Some(cull);
+    // The word for the last key goes with the mode, or coming back
+    // within its second would show it over another frame.
+    st.notice_timer.stop();
+    app.set_notice_on(false);
     let edit = with.unwrap_or_else(|| st.sidecars[c].current.clone());
     st.target = None;
     show_edit(st, &edit, app, None);
@@ -259,6 +263,7 @@ pub(crate) fn cull_select(st: &mut State, app: &App, file: usize) {
     app.set_shot_exposure("".into());
     app.set_shot_size("".into());
     show_history(st, app);
+    show_frame_tags(st, app);
     let count = st.shown.len();
     if let Some(cull) = st.cull.as_mut() {
         cull.forward = was.is_none_or(|w| file >= w);
@@ -707,6 +712,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     for (k, &row) in rows.iter().enumerate() {
         let file = st.shown[row];
         let rect = rects[k];
+        let meta = &st.sidecars[file].meta;
         overlay.push(CompareTile {
             x: rect.0 as f32 / scale_factor,
             y: rect.1 as f32 / scale_factor,
@@ -714,6 +720,9 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
             h: rect.3 as f32 / scale_factor,
             name: file_name(&st.files[file]).into(),
             on: file == c,
+            rating: meta.rating.min(meta::STARS) as i32,
+            flag: meta.flag.code(),
+            label: meta.label.code(),
         });
         let Some(preview) = cull.cache.best(file) else {
             // A frame whose decode failed is as ready as it will be.
@@ -882,6 +891,19 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
                     }
                 });
             }
+            // `--cull-key`: the key, from the event loop; the flag
+            // is cleared there, as `--turn`'s is, so the capture
+            // waits for the frame after it.
+            if let Some(key) = st.cull_key_at_start.clone() {
+                let app_weak = app.as_weak();
+                let state = state.clone();
+                slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+                    if let Some(app) = app_weak.upgrade() {
+                        state.borrow_mut().cull_key_at_start = None;
+                        app.invoke_meta_key(key.into());
+                    }
+                });
+            }
             // `--cull-develop`: the Enter, from the event loop.
             if std::mem::take(&mut st.cull_develop) {
                 let app_weak = app.as_weak();
@@ -912,6 +934,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     let ready = ready
         && !leave_next
         && !st.awaiting_turn
+        && st.cull_key_at_start.is_none()
         && !st.awaiting_index
         && !st.library.awaiting
         && st.asked.is_empty()
@@ -1457,6 +1480,21 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             st.image_size = (0, 0);
             cull_refresh(&mut st);
             app.window().request_redraw();
+        });
+    }
+    // The section's switch: kept in the settings as it is flipped,
+    // as the Settings sheet's are, so a session that never closes
+    // cleanly keeps it too.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_cull_move_on_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            st.cull_move_on = app.get_cull_move_on();
+            let on = st.cull_move_on;
+            crate::panel::prefs::keep(&st, |s| s.cull_move_on = on);
         });
     }
     // The filter's chips: the rating and how it reads, the flags,
@@ -2561,6 +2599,159 @@ mod tests {
         app.invoke_meta_key("5".into());
         app.invoke_redo();
         assert_eq!(tags(&state.borrow(), 1), (0, Flag::None));
+    }
+
+    /// The CULLING section's switch: off, a key leaves the selection
+    /// where it is; on, a rating, a flag or a label moves it on to
+    /// the next frame by the arrow's path and stops at the end, and
+    /// each key's tags land on the frame it was pressed over. Undo
+    /// still puts that frame back and goes to it, and the word over
+    /// the picture and the loupe's badge say what the frame carries.
+    #[test]
+    fn move_on_advances_after_a_key_stops_at_the_end_and_undo_goes_back() {
+        use greycard_edit::meta::{Flag, Label};
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        app.invoke_select(0);
+        enter_cull(&mut state.borrow_mut(), &app, 1);
+        assert!(!app.get_cull_move_on(), "off by default");
+        assert!(!state.borrow().cull_move_on);
+
+        // Off: the key and the arrow are two presses.
+        app.invoke_meta_key("2".into());
+        assert_eq!(state.borrow().current, Some(0));
+        assert_eq!(app.get_notice(), "2 stars");
+        assert!(app.get_notice_on());
+        assert_eq!(app.get_frame_rating(), 2, "the loupe's badge");
+
+        app.set_cull_move_on(true);
+        app.invoke_cull_move_on_changed();
+        assert!(state.borrow().cull_move_on);
+
+        app.invoke_meta_key("3".into());
+        assert_eq!(state.borrow().current, Some(1));
+        assert_eq!(app.get_selected(), 1);
+        assert_eq!(app.get_frame_rating(), 0, "the next frame's badge");
+        assert_eq!(app.get_notice(), "3 stars");
+        assert!(app.get_notice_on(), "moving on does not take the word down");
+        app.invoke_meta_key("p".into());
+        assert_eq!(state.borrow().current, Some(2));
+        app.invoke_meta_key("6".into());
+        assert_eq!(state.borrow().current, Some(3));
+        assert_eq!(app.get_notice(), "Red");
+        // At the end: nothing past it, and the key still lands.
+        app.invoke_meta_key("x".into());
+        assert_eq!(state.borrow().current, Some(3));
+        assert_eq!(app.get_selected(), 3);
+        assert_eq!(app.get_notice(), "Rejected");
+
+        // Each on the frame it was pressed over, and on no other.
+        let tags = |st: &State, i: usize| {
+            let m = &st.sidecars[i].meta;
+            (m.rating, m.flag, m.label)
+        };
+        {
+            let st = state.borrow();
+            assert_eq!(tags(&st, 0), (3, Flag::None, Label::None));
+            assert_eq!(tags(&st, 1), (0, Flag::Pick, Label::None));
+            assert_eq!(tags(&st, 2), (0, Flag::None, Label::Red));
+            assert_eq!(tags(&st, 3), (0, Flag::Reject, Label::None));
+        }
+        assert_eq!(app.get_frame_flag(), Flag::Reject.code());
+
+        // Undo: the reject off frame 3, which is on screen; then the
+        // label off frame 2, and over to it.
+        app.invoke_undo();
+        assert_eq!(tags(&state.borrow(), 3), (0, Flag::None, Label::None));
+        assert_eq!(state.borrow().current, Some(3));
+        assert_eq!(app.get_frame_flag(), 0);
+        assert_eq!(app.get_notice(), "Undo: Unflagged", "the step's word");
+        app.invoke_undo();
+        assert_eq!(tags(&state.borrow(), 2), (0, Flag::None, Label::None));
+        assert_eq!(state.borrow().current, Some(2));
+        assert_eq!(app.get_frame_label(), 0);
+        assert_eq!(app.get_notice(), "Undo: No label");
+        // Redo makes it again and stays: a redo is not a key.
+        app.invoke_redo();
+        assert_eq!(tags(&state.borrow(), 2), (0, Flag::None, Label::Red));
+        assert_eq!(state.borrow().current, Some(2));
+        assert_eq!(app.get_frame_label(), Label::Red.code());
+        assert_eq!(app.get_notice(), "Redo: Red");
+        // A key after the undo rates this frame and moves on again;
+        // the label key on the red frame clears it, and says so.
+        app.invoke_meta_key("4".into());
+        assert_eq!(tags(&state.borrow(), 2), (4, Flag::None, Label::Red));
+        assert_eq!(state.borrow().current, Some(3));
+        app.invoke_select(2);
+        app.invoke_meta_key("6".into());
+        assert_eq!(tags(&state.borrow(), 2), (4, Flag::None, Label::None));
+        assert_eq!(app.get_notice(), "No label");
+    }
+
+    /// A culling key held down is one press. The window's repeats of
+    /// it are dropped before they reach the browser, so with move-on
+    /// on a held 3 rates one frame and steps once, not a run of them.
+    #[test]
+    fn a_held_culling_key_is_one_press_and_one_step() {
+        let app = window(6);
+        let (state, _worker) = state_for(&app, folder(6));
+        app.invoke_select(0);
+        enter_cull(&mut state.borrow_mut(), &app, 1);
+        app.set_cull_move_on(true);
+        app.invoke_cull_move_on_changed();
+        let text: slint::SharedString = "3".into();
+        app.window()
+            .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+        for _ in 0..3 {
+            app.window()
+                .dispatch_event(WindowEvent::KeyPressRepeated { text: text.clone() });
+        }
+        app.window()
+            .dispatch_event(WindowEvent::KeyReleased { text });
+        let st = state.borrow();
+        assert_eq!(st.current, Some(1), "one step");
+        let ratings: Vec<u8> = st.sidecars.iter().map(|s| s.meta.rating).collect();
+        assert_eq!(ratings, vec![3, 0, 0, 0, 0, 0], "one frame rated");
+        assert_eq!(app.get_notice(), "3 stars");
+    }
+
+    /// Move-on stays out of two cases: a set of several frames, whose
+    /// arrow would collapse it, and a frame the key took out of the
+    /// filtered list, whose nearest is already the next.
+    #[test]
+    fn move_on_leaves_a_set_alone_and_does_not_skip_past_the_filters_nearest() {
+        let app = window(5);
+        let (state, _worker) = state_for(&app, folder(5));
+        app.invoke_select(1);
+        enter_cull(&mut state.borrow_mut(), &app, 1);
+        app.set_cull_move_on(true);
+        app.invoke_cull_move_on_changed();
+
+        // Frames 1 and 2 as a set: rated together, and left there.
+        app.invoke_frame_clicked(2, false, true);
+        assert_eq!(
+            crate::panel::browser::chosen_frames(&state.borrow()),
+            vec![1, 2]
+        );
+        app.invoke_meta_key("4".into());
+        assert_eq!(state.borrow().current, Some(1));
+        assert_eq!(state.borrow().sidecars[1].meta.rating, 4);
+        assert_eq!(state.borrow().sidecars[2].meta.rating, 4);
+        assert_eq!(state.borrow().sidecars[3].meta.rating, 0);
+
+        // Under "No rejects", a reject leaves the list: the nearest
+        // frame shown takes the selection, once, not the one after.
+        {
+            let mut st = state.borrow_mut();
+            st.filter = filter::Filter::from_name("No rejects").expect("it parses");
+            rebuild_browser(&mut st, &app);
+        }
+        app.invoke_select(0);
+        assert_eq!(state.borrow().current, Some(0));
+        app.invoke_meta_key("x".into());
+        assert_eq!(state.borrow().shown, vec![1, 2, 3, 4]);
+        assert_eq!(state.borrow().current, Some(1));
+        assert_eq!(app.get_selected(), 0);
     }
 
     /// Ctrl+F and / both ask for the filter's text field, and neither

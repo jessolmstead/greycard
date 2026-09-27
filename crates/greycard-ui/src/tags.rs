@@ -15,7 +15,7 @@
 
 use std::path::{Path, PathBuf};
 
-use greycard_edit::meta::{Flag, Label, Meta};
+use greycard_edit::meta::{Change, Flag, Label, Meta};
 
 /// The three fields the culling keys write.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +38,52 @@ impl Tags {
         meta.rating = self.rating;
         meta.flag = self.flag;
         meta.label = self.label;
+    }
+}
+
+/// The word over the picture for a key's change, once settled
+/// against the frames it went on: what the frame carries now, not
+/// the key that was pressed, so a label key that cleared the label
+/// says so. The flag's past tense is the one a culler says aloud.
+pub(crate) fn notice(change: Change) -> String {
+    match change {
+        Change::Rating(0) => "No stars".into(),
+        Change::Rating(1) => "1 star".into(),
+        Change::Rating(n) => format!("{n} stars"),
+        Change::Flag(Flag::Pick) => "Pick".into(),
+        Change::Flag(Flag::Reject) => "Rejected".into(),
+        Change::Flag(Flag::None) => "Unflagged".into(),
+        Change::Label(Label::None) => "No label".into(),
+        Change::Label(label) => label.name().into(),
+    }
+}
+
+/// The one field that differs between `from` and `to`, as the change
+/// that would take a frame from the one to the other: what an undo
+/// or a redo did to it, in the key's own terms, for the word over
+/// the picture. None when nothing differs; a step moves one field,
+/// so a difference in more than one names the first found.
+pub(crate) fn between(from: Tags, to: Tags) -> Option<Change> {
+    if from.rating != to.rating {
+        Some(Change::Rating(to.rating))
+    } else if from.flag != to.flag {
+        Some(Change::Flag(to.flag))
+    } else if from.label != to.label {
+        Some(Change::Label(to.label))
+    } else {
+        None
+    }
+}
+
+/// The word for an undo (`back`) or a redo that put `landed` frames
+/// back: "Undo: No stars" for one frame, what it carries now after
+/// the key's own word, and a bare "Undone" for a step over several.
+pub(crate) fn step_notice(back: bool, landed: &[Option<Change>]) -> String {
+    let what = if back { "Undo" } else { "Redo" };
+    match landed {
+        [Some(change)] => format!("{what}: {}", notice(*change)),
+        _ if back => "Undone".into(),
+        _ => "Redone".into(),
     }
 }
 
@@ -188,6 +234,38 @@ mod tests {
         // "rated-since" has five stars now, from somewhere else.
         let now = |i: usize| if i == 0 { three } else { five };
         assert_eq!(landing(&step, find, now), vec![(0, none)]);
+    }
+
+    #[test]
+    fn the_notice_says_what_the_frame_carries_now() {
+        assert_eq!(notice(Change::Rating(0)), "No stars");
+        assert_eq!(notice(Change::Rating(1)), "1 star");
+        assert_eq!(notice(Change::Rating(3)), "3 stars");
+        assert_eq!(notice(Change::Flag(Flag::Pick)), "Pick");
+        assert_eq!(notice(Change::Flag(Flag::Reject)), "Rejected");
+        assert_eq!(notice(Change::Flag(Flag::None)), "Unflagged");
+        assert_eq!(notice(Change::Label(Label::Red)), "Red");
+        assert_eq!(notice(Change::Label(Label::Blue)), "Blue");
+        assert_eq!(notice(Change::Label(Label::None)), "No label");
+    }
+
+    #[test]
+    fn the_word_for_a_step_names_what_one_frame_carries_now() {
+        let (none, three, pick) = (
+            tags(0, Flag::None),
+            tags(3, Flag::None),
+            tags(3, Flag::Pick),
+        );
+        assert_eq!(between(three, none), Some(Change::Rating(0)));
+        assert_eq!(between(three, pick), Some(Change::Flag(Flag::Pick)));
+        assert_eq!(between(pick, pick), None);
+        assert_eq!(step_notice(true, &[between(three, none)]), "Undo: No stars");
+        assert_eq!(step_notice(false, &[between(none, three)]), "Redo: 3 stars");
+        assert_eq!(
+            step_notice(true, &[Some(Change::Rating(0)), Some(Change::Rating(0))]),
+            "Undone"
+        );
+        assert_eq!(step_notice(false, &[None, None]), "Redone");
     }
 
     #[test]

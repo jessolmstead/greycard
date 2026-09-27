@@ -3,7 +3,7 @@
 
 import { Theme } from "../theme.slint";
 import { FilterChip, FacetRow } from "../structs.slint";
-import { Section, PanelButton, Segmented } from "../controls.slint";
+import { Section, PanelButton, Segmented, Toggle } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 
 export component CullSection inherits Section {
@@ -12,6 +12,8 @@ export component CullSection inherits Section {
     callback cull-leave();
     in-out property <string> compare-text;
     callback compare-changed(int);
+    in-out property <bool> move-on;
+    callback move-on-changed();
     in-out property <[FilterChip]> filter-stars;
     in-out property <[FilterChip]> filter-flags;
     in-out property <[FilterChip]> filter-labels;
@@ -108,6 +110,14 @@ export component CullSection inherits Section {
             current <=> root.compare-text;
             selected(c) => { root.compare-changed(c == "2" ? 2 : c == "4" ? 4 : 1); }
         }
+    }
+    // One press instead of two: the key and then the arrow. Off
+    // until asked for, and the keys go back to the picture after
+    // the press, as the filter's chips give them back.
+    Toggle {
+        label: "Move on after a rating, flag or label";
+        checked <=> root.move-on;
+        toggled => { root.move-on-changed(); root.focus-keys(); }
     }
     PanelButton {
         text: root.reject-count == 0 ? "No rejects to move"

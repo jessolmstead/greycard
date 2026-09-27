@@ -72,6 +72,10 @@ pub struct Settings {
     /// changes. The XMPs stay beside the frame whatever this says,
     /// since beside is where Lightroom and darktable look.
     pub sidecars_in_folder: bool,
+    /// Whether a rating, flag or label key in culling moves the
+    /// selection on to the next frame. Off by default: the key and
+    /// the arrow are two presses until a culler asks for one.
+    pub cull_move_on: bool,
     /// Whether the lens profiles' download, offered unprompted the
     /// first time a picture opens with no database on the machine,
     /// was answered Not now. It is asked once: from then on the LENS
@@ -145,6 +149,7 @@ impl Default for Settings {
             hide_strip: false,
             xmp_sidecars: false,
             sidecars_in_folder: false,
+            cull_move_on: false,
             lenses_declined: false,
             last_file: String::new(),
             thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
@@ -274,6 +279,7 @@ mod tests {
             hide_strip: true,
             xmp_sidecars: true,
             sidecars_in_folder: true,
+            cull_move_on: true,
             lenses_declined: true,
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             thumb_cache_mb: 1024,

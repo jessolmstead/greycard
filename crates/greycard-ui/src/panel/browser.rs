@@ -184,6 +184,23 @@ pub(crate) fn show_badges(st: &State, app: &App, i: usize) {
         t.label = meta.label.code();
         model.set_row_data(row, t);
     }
+    if Some(i) == st.current {
+        show_frame_tags(st, app);
+    }
+}
+
+/// Put the frame on screen's meta on the window, for the culling
+/// loupe's badge: the same three numbers its strip row carries, read
+/// off the same sidecar. Called when the selection lands on a frame
+/// and whenever that frame's badges are put out, so the two cannot
+/// say different things.
+pub(crate) fn show_frame_tags(st: &State, app: &App) {
+    let Some(meta) = st.current.and_then(|c| st.sidecars.get(c)).map(|s| &s.meta) else {
+        return;
+    };
+    app.set_frame_rating(meta.rating.min(meta::STARS) as i32);
+    app.set_frame_flag(meta.flag.code());
+    app.set_frame_label(meta.label.code());
 }
 
 /// Put a culling key's change into every frame in `frames`, write
@@ -218,18 +235,22 @@ pub(crate) fn show_badges(st: &State, app: &App, i: usize) {
 /// than of the kind of key, since every one of the three fields the
 /// keys write is a field the filter can be reading. The chips' counts
 /// move with any of them, so they are put out again either way.
+///
+/// Returned with the row is the change as it was settled against the
+/// frames (a label key that cleared the label comes back as `None`),
+/// which is what the word over the picture says.
 pub(crate) fn set_meta(
     st: &mut State,
     app: &App,
     frames: &[usize],
     change: meta::Change,
-) -> Option<usize> {
+) -> (meta::Change, Option<usize>) {
     let was_shown: Vec<bool> = frames.iter().map(|&i| row_of(st, i).is_some()).collect();
     let before: Vec<Tags> = frames
         .iter()
         .map(|&i| Tags::of(&st.sidecars[i].meta))
         .collect();
-    let (_, moved) = greycard_edit::meta_into(&mut st.sidecars, frames, change);
+    let (settled, moved) = greycard_edit::meta_into(&mut st.sidecars, frames, change);
     let step = frames
         .iter()
         .zip(before)
@@ -241,7 +262,7 @@ pub(crate) fn set_meta(
         })
         .collect();
     st.tags.record(step);
-    tags_shown(st, app, frames, &was_shown, &moved)
+    (settled, tags_shown(st, app, frames, &was_shown, &moved))
 }
 
 /// What follows a change to frames' tags, from a key or an undo:
@@ -1297,7 +1318,8 @@ fn step_to(
 }
 
 /// Culling's undo (`back`) or redo: the session's last rating, flag
-/// or label change taken back or made again, and nothing else. The
+/// or label change taken back or made again, and nothing else, with
+/// the word over the picture saying what it left ("Undo: No stars"). The
 /// row to select after, for the caller to open once the state is
 /// free: the changed frame's, so what changed is on screen, or the
 /// nearest when the filter no longer shows the current one. None
@@ -1311,10 +1333,21 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
     );
     let frames: Vec<usize> = landing.iter().map(|&(i, _)| i).collect();
     let was_shown: Vec<bool> = frames.iter().map(|&i| row_of(st, i).is_some()).collect();
+    // What the step does to each frame, in the key's terms, for
+    // the word; read before the frames are put back.
+    let landed: Vec<Option<meta::Change>> = landing
+        .iter()
+        .map(|&(i, tags)| tags::between(Tags::of(&st.sidecars[i].meta), tags))
+        .collect();
     for &(i, tags) in &landing {
         tags.put(&mut st.sidecars[i].meta);
     }
     let next = tags_shown(st, app, &frames, &was_shown, &frames);
+    // The step's word, as a key's: silent only when it found no
+    // frame to put back.
+    if !landed.is_empty() {
+        say_notice(st, app, tags::step_notice(back, &landed));
+    }
     // Over to the frame that changed, if it is not the one on
     // screen and the filter still shows it.
     if !frames.iter().any(|&i| Some(i) == st.current)
@@ -1329,6 +1362,16 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
 /// the frame menu both ask for it; false when nothing is selected.
 /// A frame that leaves the filtered list moves the selection on to
 /// the nearest, once the state is free.
+///
+/// In culling the key's answer goes up over the picture as a word
+/// (`say_notice`), and with the CULLING section's switch on the
+/// selection moves on to the next frame, by the arrow's own path
+/// (`step`) so it stops at the end as the arrow does. Not when the
+/// frame left the filtered list, whose nearest is already the next;
+/// and not over a set of several, where an arrow would collapse the
+/// set that was just rated. The move is asked for after the change
+/// is recorded, so undo's step names the frame that was rated and
+/// not the one moved on to.
 pub(crate) fn meta_on_selection(
     state: &Rc<RefCell<State>>,
     app: &App,
@@ -1340,13 +1383,41 @@ pub(crate) fn meta_on_selection(
     if frames.is_empty() {
         return false;
     }
-    let next = set_meta(&mut st, app, &frames, change);
+    let (settled, next) = set_meta(&mut st, app, &frames, change);
+    let culling = st.cull.is_some();
+    let move_on = culling && st.cull_move_on && frames.len() == 1;
+    if culling {
+        say_notice(&mut st, app, tags::notice(settled));
+    }
     drop(st);
     // The frame left the filtered list: on to the nearest.
     if let Some(row) = next {
         app.invoke_select(row as i32);
+    } else if move_on {
+        app.invoke_step(1, false);
     }
     true
+}
+
+/// How long the word for a key stays up before it fades: long enough
+/// to read after the arrow that follows the key, short enough that
+/// the next key's word is not waiting behind it.
+const NOTICE_UP: std::time::Duration = std::time::Duration::from_millis(1200);
+
+/// Put `text` up over the picture and start the timer that takes it
+/// down. Only the timer takes it down: an arrow, a develop or the
+/// next key leave it (the next key restarts the timer with its own
+/// word), so what a key did can be read after moving on.
+pub(crate) fn say_notice(st: &mut State, app: &App, text: String) {
+    app.set_notice(text.into());
+    app.set_notice_on(true);
+    let app_weak = app.as_weak();
+    st.notice_timer
+        .start(slint::TimerMode::SingleShot, NOTICE_UP, move || {
+            if let Some(app) = app_weak.upgrade() {
+                app.set_notice_on(false);
+            }
+        });
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {

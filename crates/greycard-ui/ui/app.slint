@@ -314,6 +314,24 @@ export component App inherits Window {
     /// The compared frames on the view: each one's box, its name, and
     /// whether it is the selection.
     in property <[CompareTile]> compare-tiles: [];
+    /// The frame on screen's stars, flag and label, as `Thumb` codes
+    /// them, for the culling loupe's badge; a compare tile carries
+    /// its own.
+    in property <int> frame-rating: 0;
+    in property <int> frame-flag: 0;
+    in property <int> frame-label: 0;
+    /// The word over the picture for the culling key just pressed
+    /// ("3 stars", "Rejected"): the text, and whether it is up. Rust
+    /// puts it up and takes it down on a timer of its own; nothing
+    /// else takes it down, so an arrow pressed after the key leaves
+    /// it to be read.
+    in property <string> notice: "";
+    in property <bool> notice-on: false;
+    /// Move on to the next frame after a rating, a flag or a label,
+    /// in culling: the CULLING section's switch, kept in the
+    /// settings.
+    in-out property <bool> cull-move-on: false;
+    callback cull-move-on-changed();
     /// The browser's filter on the meta: the rating chips and the
     /// reading they are in, the flag chips, the label chips and a
     /// word looked for in the file name and the keywords. It applies
@@ -1340,7 +1358,10 @@ export component App inherits Window {
             // belong to the browser, and the strip is the browser in
             // the loupe, so they work in both views. Nothing here is
             // modified, so a Ctrl or an Alt shortcut is not eaten.
-            if (!e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
+            // A held key is one press: a repeat has nothing to add
+            // to a rating, flickers a label, and with move-on would
+            // rate a run of frames.
+            if (!e.repeat && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
                 && !root.sheet-open() && root.meta-key(e.text)) {
                 return accept;
             }
@@ -1504,6 +1525,13 @@ export component App inherits Window {
                 toggle-zoom(a, b) => { root.toggle-zoom(a, b); }
                 placeholder: root.placeholder;
                 compare-tiles: root.compare-tiles;
+                culling: root.culling;
+                frame-rating: root.frame-rating;
+                frame-flag: root.frame-flag;
+                frame-label: root.frame-label;
+                meta-stars: root.meta-stars;
+                notice: root.notice;
+                notice-on: root.notice-on;
                 crop-mode <=> root.crop-mode;
                 level-mode <=> root.level-mode;
                 guide-mode <=> root.guide-mode;
@@ -1635,6 +1663,8 @@ export component App inherits Window {
                             cull-leave => { root.cull-leave(); }
                             compare-text <=> root.compare-text;
                             compare-changed(a) => { root.compare-changed(a); }
+                            move-on <=> root.cull-move-on;
+                            move-on-changed => { root.cull-move-on-changed(); }
                             filter-stars <=> root.filter-stars;
                             filter-flags <=> root.filter-flags;
                             filter-labels <=> root.filter-labels;

@@ -327,6 +327,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         seed_blend,
         write_sidecars: !cli.no_sidecars,
         xmp_sidecars: cli.xmp_sidecars || remembered.xmp_sidecars,
+        cull_move_on: remembered.cull_move_on,
         placement,
         zoom: cli.zoom.max(0.0),
         scope: opening_scope(&cli, &remembered),
@@ -361,11 +362,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         cull_develop: cli.cull_develop,
         turn_at_start: cli.turn.filter(|q| q.rem_euclid(4) != 0),
         awaiting_turn: cli.turn.is_some_and(|q| q.rem_euclid(4) != 0),
+        cull_key_at_start: cli.cull_key.clone(),
         ask_rejects: cli.ask_rejects || cli.move_rejects,
         also_at_start: cli.also.clone(),
         move_rejects: cli.move_rejects,
         cull_at_start: (cli.cull
             || cli.cull_compare.is_some()
+            || cli.cull_key.is_some()
             || cli.time_cull.is_some()
             || cli.cull_develop
             || cli.ask_rejects
@@ -395,6 +398,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // over the file's.
     app.set_sidecar_placement(crate::panel::prefs::placement_name(state.borrow().placement).into());
     app.set_xmp_sidecars(state.borrow().xmp_sidecars);
+    app.set_cull_move_on(state.borrow().cull_move_on);
     // The browser's list under the filter asked for, the files it
     // hides left out of the strip and the grid; and the chips, which
     // count the folder whether or not anything is filtered.
@@ -1275,6 +1279,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.last_file = kept.last_file;
         settings.xmp_sidecars = kept.xmp_sidecars;
         settings.sidecars_in_folder = kept.sidecars_in_folder;
+        settings.cull_move_on = kept.cull_move_on;
         settings.lenses_declined = kept.lenses_declined;
         settings.thumb_cache_mb = kept.thumb_cache_mb;
         settings.import = kept.import;
@@ -1558,10 +1563,12 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         hide_strip: app.get_strip_hidden(),
         // Kept apart, all of them: the last file is written as soon
         // as a file develops, the sidecars' two as the Settings sheet
-        // changes them, and the lens offer's answer as it is given.
-        // The caller fills them in from disk.
+        // changes them, culling's switch as it is flipped, and the
+        // lens offer's answer as it is given. The caller fills them
+        // in from disk.
         xmp_sidecars: false,
         sidecars_in_folder: false,
+        cull_move_on: false,
         lenses_declined: false,
         last_file: String::new(),
         // Not the panel's either: the settings file is where it is set.

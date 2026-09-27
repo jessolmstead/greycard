@@ -317,6 +317,11 @@ struct Cli {
     /// --cull, the develop otherwise — for a snapshot of it
     #[arg(long, value_name = "N", hide = true)]
     turn: Option<i32>,
+    /// In culling mode, press this culling key (a star, P, X, U or a
+    /// label key) once the first picture shows, for a snapshot of
+    /// the frame's badge and the word for the key (implies --cull)
+    #[arg(long, value_name = "KEY", hide = true)]
+    cull_key: Option<String>,
     /// Put these browser rows (from 0, comma-separated) in the
     /// selection beside the frame opened, as Ctrl+clicks would, for
     /// a snapshot of a set, `--sheet sync`, or `--export DIR` over
@@ -422,12 +427,22 @@ pub(crate) struct State {
     /// screen yet. A capture waits for it, or it would catch the
     /// develop that fired the key rather than the turned frame.
     pub(crate) awaiting_turn: bool,
+    /// `--cull-key`: the culling key to press once the first picture
+    /// shows, for a capture, which waits until it has been.
+    pub(crate) cull_key_at_start: Option<String>,
     /// `--ask-rejects`: open the move-rejects sheet once it does;
     /// `--move-rejects`: and answer it with yes.
     pub(crate) ask_rejects: bool,
     pub(crate) move_rejects: bool,
     /// Culling mode (notes §80), while it is on.
     pub(crate) cull: Option<Cull>,
+    /// Whether a culling key moves the selection on to the next
+    /// frame: the CULLING section's switch, `settings.cull_move_on`.
+    pub(crate) cull_move_on: bool,
+    /// Takes the word over the picture for the last culling key down
+    /// again; nothing else does, so an arrow pressed after the key
+    /// leaves the word up for its second.
+    pub(crate) notice_timer: slint::Timer,
     /// The session's rating, flag and label changes: culling's undo.
     pub(crate) tags: tags::History,
     /// The camera's pictures the develop view keeps: what the mode
@@ -796,10 +811,13 @@ impl State {
             cull_develop: false,
             turn_at_start: None,
             awaiting_turn: false,
+            cull_key_at_start: None,
             ask_rejects: false,
             move_rejects: false,
             snapshot_placeholder: false,
             cull: None,
+            cull_move_on: false,
+            notice_timer: slint::Timer::default(),
             tags: tags::History::default(),
             hold: None,
             placeholder: None,

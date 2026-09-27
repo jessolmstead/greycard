@@ -99,9 +99,10 @@ pub(crate) fn show_elsewhere(st: &State, app: &App) {
 
 /// Change one field of the settings file, unless this is a batch run
 /// or a test, which leave the user's settings alone. The close of the
-/// window keeps these two from the file rather than the panel, so the
-/// file is the place they live.
-fn keep(st: &State, change: impl FnOnce(&mut settings::Settings)) {
+/// window keeps these fields (the sidecars' two and culling's move-on
+/// switch) from the file rather than the panel, so the file is the
+/// place they live.
+pub(crate) fn keep(st: &State, change: impl FnOnce(&mut settings::Settings)) {
     if st.batch || cfg!(test) {
         return;
     }

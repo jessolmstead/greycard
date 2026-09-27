@@ -4,7 +4,7 @@
 
 import { Theme } from "../theme.slint";
 import { Pt, MaskBox, MaskPick, CompareTile } from "../structs.slint";
-import { CropHandle } from "../controls.slint";
+import { CropHandle, ThumbBadges } from "../controls.slint";
 
 export component Viewport inherits Rectangle {
     callback zoom(float, length, length);
@@ -15,6 +15,15 @@ export component Viewport inherits Rectangle {
     property <image> dropper: @image-url("../icons/pipette.svg");
     in property <bool> placeholder;
     in property <[CompareTile]> compare-tiles;
+    /// Culling: the frame on screen's badge in the corner, or one on
+    /// each compared tile, and a word for the last key pressed.
+    in property <bool> culling;
+    in property <int> frame-rating;
+    in property <int> frame-flag;
+    in property <int> frame-label;
+    in property <int> meta-stars: 5;
+    in property <string> notice;
+    in property <bool> notice-on;
     in-out property <bool> crop-mode;
     in-out property <bool> level-mode;
     in-out property <string> guide-mode;
@@ -246,8 +255,23 @@ export component Viewport inherits Rectangle {
             vertical-alignment: center;
         }
     }
+    // Culling's answer to a key, where the culler is looking: the
+    // frame's stars, flag and label in the top right corner of the
+    // picture, the strip tile's badge at a size that reads from a
+    // chair back, and with the strip put away by Tab. The compared
+    // frames carry their own below; one frame alone carries this.
+    if root.culling && root.compare-tiles.length == 0: ThumbBadges {
+        x: parent.width - self.width - Theme.space-3;
+        y: Theme.space-3;
+        glyph: 16px;
+        rating: root.frame-rating;
+        flag: root.frame-flag;
+        label: root.frame-label;
+        stars: root.meta-stars;
+    }
     // The compare view's frames: a rule round the one the
-    // selection is on, and each one's name at its top.
+    // selection is on, each one's name at its top, and its
+    // badge in its own top right corner.
     for t in root.compare-tiles: Rectangle {
         x: t.x * 1px;
         y: t.y * 1px;
@@ -268,6 +292,38 @@ export component Viewport inherits Rectangle {
                 font-size: Theme.font-xs;
                 vertical-alignment: center;
             }
+        }
+        ThumbBadges {
+            x: parent.width - self.width - Theme.space-2;
+            y: Theme.space-2;
+            glyph: 14px;
+            rating: t.rating;
+            flag: t.flag;
+            label: t.label;
+            stars: root.meta-stars;
+        }
+    }
+    // The word for the key just pressed, low in the middle of the
+    // picture, where the eye is and where it covers the least. It
+    // fades on its own timer and is not cleared by anything else,
+    // so a culler who rates and arrows on still reads what the key
+    // did; the text stays through the fade so the plate does not
+    // shrink as it goes.
+    if root.culling: Rectangle {
+        x: (parent.width - self.width) / 2;
+        y: parent.height - self.height - 56px;
+        width: notice-word.width + 2 * Theme.space-4;
+        height: 40px;
+        border-radius: Theme.radius-md;
+        background: #000000b0;
+        opacity: root.notice-on ? 1 : 0;
+        animate opacity { duration: 250ms; easing: ease-out; }
+        notice-word := Text {
+            text: root.notice;
+            color: Theme.text;
+            font-size: 20px;
+            font-weight: 600;
+            vertical-alignment: center;
         }
     }
     // The dropper under the pointer, in place of a cursor:
