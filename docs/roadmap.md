@@ -25,9 +25,13 @@ None open.
 
 A NAS root neither freezes the window nor goes stale, frames can be
 deleted from the disk behind a confirmation, and the scopes can be
-read for the mask alone.
+read for the mask alone, and a value can be typed.
 
-Nothing left to land.
+- [ ] A value typed into a slider: click the value text to edit it,
+      Enter commits through the slider's own change, Escape cancels, an
+      entry outside the range clamps, a log slider takes the multiplier
+      as shown; and In and Out fields beside the point curve for the
+      selected point, which stays selected after the release
 
 ## Tracks
 
@@ -322,6 +326,13 @@ clears or a tester asks for it.
       Rec.2020 since §20; the viewport shows the chosen one since §42
   - ProPhoto as a working space: no (§84). It stays an output space and
     an intermediate inside the operations defined in it
+- [ ] The develop sections in an order of the user's: a list of
+      section names in settings, the panel a repeater over it with each
+      slot instantiating the section its name says, the Masks tab
+      following the same order, White balance pinned at the top and
+      Monitor, Proof and Demosaic at the bottom, and up and down
+      buttons for it in the Settings sheet. Goes with the develop
+      panel's move out of app.slint, since that is the same rewiring
 - [ ] Resizable side panes: drag the left pane's and the develop
       panel's inner edge, today's widths the minimum, about 500 px the
       most, each kept in the settings; first see what a viewport
