@@ -1,7 +1,8 @@
 // The library's roots in the grid's header: the ways to add one, the
 // all-roots view, and a chip a root with its file count and a cross to
 // take it out. A root is a folder; taking one out forgets it and
-// touches nothing on disk.
+// touches nothing on disk. A right-click on a root's chip offers its
+// path, a new name for it, and taking it out.
 
 import { Theme } from "../theme.slint";
 import { RootChip } from "../structs.slint";
@@ -17,8 +18,21 @@ component RootPill inherits Rectangle {
     in property <bool> shows-count: true;
     /// Not there now: dimmed, and said in place of the count.
     in property <bool> offline: false;
+    /// The root's folder, for a screen reader: the name may be one
+    /// the user gave it.
+    in property <string> path;
+    /// Whether a right-click (or a Mac's Control+click) asks for the
+    /// root's menu; the chips that are not roots have none.
+    in property <bool> has-menu: false;
+    in property <bool> ctrl-click-menu;
     callback clicked();
     callback removed();
+    /// A right-click, where, in the window's pixels.
+    callback menu(length, length);
+    /// Whether a menu is up: the press that closes it reaches the
+    /// chip under it too, and is not a press there, least of all on
+    /// the cross.
+    pure callback menu-shown() -> bool;
     height: Theme.control-height - 4px;
     border-radius: (Theme.control-height - 4px) / 2;
     border-width: 1px;
@@ -26,18 +40,44 @@ component RootPill inherits Rectangle {
     background: root.on ? Theme.selection : (ta.has-hover ? Theme.hover : Theme.base);
     opacity: root.offline ? 0.55 : 1;
     horizontal-stretch: 0;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-description: root.path;
     animate background { duration: Theme.quick; }
     ta := TouchArea {
+        property <bool> skip;
         mouse-cursor: MouseCursor.pointer;
-        clicked => { root.clicked(); }
+        pointer-event(e) => {
+            if (e.kind != PointerEventKind.down) { return; }
+            // As the grid's cells: a left press that closes the menu
+            // is nothing more, and a right-click on another root while
+            // it is up opens that root's.
+            let closing = root.menu-shown();
+            let ctrl-menu = root.ctrl-click-menu && e.button == PointerEventButton.left
+                && e.modifiers.meta;
+            let asks = root.has-menu && (e.button == PointerEventButton.right || ctrl-menu);
+            self.skip = closing || asks;
+            if (asks) {
+                root.menu(self.absolute-position.x + self.mouse-x,
+                    self.absolute-position.y + self.mouse-y);
+            }
+        }
+        clicked => {
+            if (self.skip) { return; }
+            root.clicked();
+        }
     }
     HorizontalLayout {
         padding-left: Theme.space-2;
         padding-right: root.removable ? Theme.space-1 : Theme.space-2;
         spacing: Theme.space-1;
         alignment: center;
+        // A long name is cut short: the whole of it, and the path,
+        // are in the root's menu and its sheet.
         Text {
             text: root.text;
+            max-width: 240px;
+            overflow: elide;
             color: root.on ? Theme.text : Theme.text-secondary;
             font-size: Theme.font-xs;
             font-weight: root.on ? Theme.weight-medium : Theme.weight-regular;
@@ -60,8 +100,18 @@ component RootPill inherits Rectangle {
                 colorize: xa.has-hover ? Theme.text : Theme.text-muted;
             }
             xa := TouchArea {
+                property <bool> skip;
                 mouse-cursor: MouseCursor.pointer;
-                clicked => { root.removed(); }
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down) {
+                        self.skip = root.menu-shown() || e.button != PointerEventButton.left
+                            || (root.ctrl-click-menu && e.modifiers.meta);
+                    }
+                }
+                clicked => {
+                    if (self.skip) { return; }
+                    root.removed();
+                }
             }
         }
     }
@@ -80,13 +130,55 @@ export component RootsRow inherits Rectangle {
     /// press.
     in property <bool> can-add-open;
     in property <string> note;
+    in property <bool> ctrl-click-menu;
     /// A root chosen, by its path; empty for all of them.
     callback picked(string);
     callback removed(string);
     callback add();
     callback add-open();
+    /// A new name asked for a root, by its path.
+    callback rename(string);
+    /// Before a root's menu opens: the keys take the focus, so the
+    /// window can tell the menu is up by their losing it.
+    callback menu-opening();
+    pure callback menu-shown() -> bool;
+    /// The root the menu is about.
+    property <string> menu-path;
     height: Theme.control-height - 4px;
     clip: true;
+
+    function open-menu(path: string, x: length, y: length) {
+        root.menu-opening();
+        root.menu-path = path;
+        menu.show({ x: x - self.absolute-position.x, y: y - self.absolute-position.y });
+    }
+
+    // One menu for the row, placed where the right-click was, as the
+    // frame menu is one for the window. Zero-sized and never enabled
+    // itself, so it takes no click of its own.
+    menu := ContextMenuArea {
+        x: 0;
+        y: 0;
+        width: 0px;
+        height: 0px;
+        enabled: false;
+        Menu {
+            // The path, grayed: what tells two roots named alike apart.
+            MenuItem {
+                title: root.menu-path;
+                enabled: false;
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: "Rename...";
+                activated => { root.rename(root.menu-path); }
+            }
+            MenuItem {
+                title: "Remove from library";
+                activated => { root.removed(root.menu-path); }
+            }
+        }
+    }
     flick := Flickable {
         content-width: max(self.width, row.preferred-width);
         content-height: self.height;
@@ -114,11 +206,13 @@ export component RootsRow inherits Rectangle {
                 RootPill {
                     text: "+ Add a folder...";
                     shows-count: false;
+                    menu-shown => { return root.menu-shown(); }
                     clicked => { root.add(); }
                 }
                 if root.can-add-open: RootPill {
                     text: "+ Add this folder";
                     shows-count: false;
+                    menu-shown => { return root.menu-shown(); }
                     clicked => { root.add-open(); }
                 }
                 Rectangle { width: Theme.space-2; }
@@ -126,6 +220,7 @@ export component RootsRow inherits Rectangle {
                     text: "All roots";
                     count: root.all-count;
                     on: root.all-on;
+                    menu-shown => { return root.menu-shown(); }
                     clicked => { root.picked(""); }
                 }
                 for r in root.roots: RootPill {
@@ -134,8 +229,13 @@ export component RootsRow inherits Rectangle {
                     on: r.on;
                     offline: r.offline;
                     removable: true;
+                    has-menu: true;
+                    path: r.path;
+                    ctrl-click-menu: root.ctrl-click-menu;
+                    menu-shown => { return root.menu-shown(); }
                     clicked => { root.picked(r.path); }
                     removed => { root.removed(r.path); }
+                    menu(x, y) => { root.open-menu(r.path, x, y); }
                 }
                 if root.note != "": Text {
                     text: root.note;

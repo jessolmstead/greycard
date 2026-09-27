@@ -374,6 +374,9 @@ pub(crate) enum Shown {
     /// The camera match's sheet with its Fit pressed once the scope is
     /// read, for a snapshot of the run's report.
     Matched,
+    /// The root sheet over the library's first root, as its chip's
+    /// Rename... opens it.
+    RootName,
     /// The crop tool, on the Crop tab.
     Crop,
     /// The level tool, on the Crop tab.
@@ -401,10 +404,11 @@ impl Shown {
             "imported" => Ok(Self::Imported),
             "match" => Ok(Self::Match),
             "matched" => Ok(Self::Matched),
+            "root-name" => Ok(Self::RootName),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
-                 preset-onto-set, preset-remove, paste, pasted, import, imported, match \
-                 or matched, not {name}"
+                 preset-onto-set, preset-remove, paste, pasted, import, imported, match, \
+                 matched or root-name, not {name}"
             )),
         }
     }
@@ -478,6 +482,11 @@ impl Shown {
             Self::Matched => {
                 app.invoke_match_asked();
                 crate::panel::camera_match::fit_when_read(app, 100);
+            }
+            Self::RootName => {
+                if let Some(first) = app.get_library_roots().row_data(0) {
+                    app.invoke_library_root_rename(first.path);
+                }
             }
             Self::Crop => {
                 app.set_panel_tab("Crop".into());

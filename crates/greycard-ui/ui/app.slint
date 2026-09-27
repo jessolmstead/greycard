@@ -35,6 +35,7 @@ import { GridSheet } from "panel/grid.slint";
 import { Filmstrip } from "panel/strip.slint";
 import { Viewport } from "panel/viewport.slint";
 import { FrameMenu } from "panel/frame-menu.slint";
+import { RootSheet } from "panel/root-sheet.slint";
 
 export component App inherits Window {
     title: "greycard";
@@ -368,6 +369,16 @@ export component App inherits Window {
     callback library-root-removed(string);
     callback library-root-add();
     callback library-root-add-open();
+    /// A root's menu asked to rename it, by its path.
+    callback library-root-rename(string);
+    /// The root sheet: a root's name, from its chip's menu. The path
+    /// is the root's, and the folder's own name is what an empty name
+    /// falls back to.
+    in-out property <bool> root-sheet-open: false;
+    in-out property <string> root-sheet-path;
+    in-out property <string> root-sheet-folder;
+    in-out property <string> root-sheet-name;
+    callback root-sheet-done();
     in-out property <bool> collapsed-culling: false;
     callback filter-star-picked(int);
     callback filter-flag-toggled(int);
@@ -1172,7 +1183,8 @@ export component App inherits Window {
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
-            || root.settings-open || root.sync-open || root.import-open || root.match-open;
+            || root.settings-open || root.sync-open || root.import-open || root.match-open
+            || root.root-sheet-open;
     }
 
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
@@ -1190,6 +1202,7 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.import-open) { root.import-open = false; return accept; }
             if (e.text == Key.Escape && root.fetch-open) { root.fetch-answered(false); return accept; }
             if (e.text == Key.Escape && root.preset-open) { root.preset-open = false; return accept; }
+            if (e.text == Key.Escape && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
             if (e.text == Key.Escape && root.match-open && !root.match-running) { root.match-close(); return accept; }
             if (e.text == Key.Escape && root.sync-open) { root.sync-open = false; return accept; }
@@ -2222,6 +2235,7 @@ export component App inherits Window {
         library-root-removed(p) => { root.library-root-removed(p); }
         library-root-add => { root.library-root-add(); }
         library-root-add-open => { root.library-root-add-open(); }
+        library-root-rename(p) => { root.library-root-rename(p); }
     }
 
     // The model sheet: a download offered, with its license, until
@@ -2270,6 +2284,15 @@ export component App inherits Window {
         preset-section-on <=> root.preset-section-on;
         preset-section-toggled(a, b) => { root.preset-section-toggled(a, b); }
         preset-saved => { root.preset-saved(); }
+    }
+
+    // The root sheet: a root's name, from its chip's menu.
+    if root.root-sheet-open: RootSheet {
+        open <=> root.root-sheet-open;
+        path: root.root-sheet-path;
+        folder: root.root-sheet-folder;
+        name <=> root.root-sheet-name;
+        done => { root.root-sheet-done(); }
     }
 
     // The sync sheet: the preset sheet's twin, over everything, until

@@ -29,8 +29,15 @@
 //! many inotify watches, a network mount), is said and left: the
 //! launch pass still brings the index up to date, only not while the
 //! editor runs.
+//!
+//! A root can carry a name of the user's ("Archive" for a folder
+//! called Photos), shown wherever the folder's own name would be.
+//! The name is only a label: the root is its path everywhere, and
+//! naming one never moves or changes it. The names sit in the file
+//! beside the list, under a key of their own, so the list reads as
+//! it did to a build that knows nothing of names.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -47,6 +54,9 @@ const VERSION: u64 = 1;
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Roots {
     list: Vec<PathBuf>,
+    /// The names the user gave, by root; a root with none goes by its
+    /// folder's name.
+    names: HashMap<PathBuf, String>,
 }
 
 /// What a roots file said.
@@ -148,6 +158,16 @@ impl Roots {
                 roots.list.push(path);
             }
         }
+        // The names, when there are any: a name for a path that is not
+        // a root, or one that is not text, is dropped rather than the
+        // whole file taken for something else.
+        if let Some(names) = value.get("names").and_then(|n| n.as_object()) {
+            for (path, name) in names {
+                if let Some(name) = name.as_str() {
+                    roots.set_name(Path::new(path), name);
+                }
+            }
+        }
         Parsed::Roots(roots)
     }
 
@@ -161,11 +181,27 @@ impl Roots {
             .iter()
             .map(|p| serde_json::Value::String(p.to_string_lossy().into_owned()))
             .collect();
-        let text = serde_json::to_string_pretty(&serde_json::json!({
+        let mut file = serde_json::json!({
             "version": VERSION,
             "roots": list,
-        }))
-        .map_err(std::io::Error::other)?;
+        });
+        // Written only when a root has a name, so a library with none
+        // keeps the file it had. serde_json keeps an object's keys
+        // sorted: the names come out by path, and after the list.
+        if !self.names.is_empty() {
+            let names: serde_json::Map<String, serde_json::Value> = self
+                .names
+                .iter()
+                .map(|(p, name)| {
+                    (
+                        p.to_string_lossy().into_owned(),
+                        serde_json::Value::String(name.clone()),
+                    )
+                })
+                .collect();
+            file["names"] = serde_json::Value::Object(names);
+        }
+        let text = serde_json::to_string_pretty(&file).map_err(std::io::Error::other)?;
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
             std::fs::create_dir_all(dir)?;
         }
@@ -197,6 +233,41 @@ impl Roots {
 
     pub fn is_empty(&self) -> bool {
         self.list.is_empty()
+    }
+
+    /// The name the user gave this root, if any.
+    pub fn name(&self, root: &Path) -> Option<&str> {
+        self.names.get(root).map(String::as_str)
+    }
+
+    /// What a root is called: the name the user gave it, else its
+    /// folder's name, else (a disk's root, which has none) the whole
+    /// path.
+    pub fn label(&self, root: &Path) -> String {
+        match self.name(root) {
+            Some(name) => name.to_owned(),
+            None => root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| root.to_string_lossy().into_owned()),
+        }
+    }
+
+    /// Give a root a name, or with an empty one (spaces around it are
+    /// not kept) take its name away, so it goes by its folder's again.
+    /// The path is untouched. False when `root` is not a root, as the
+    /// list spells it.
+    pub fn set_name(&mut self, root: &Path, name: &str) -> bool {
+        if !self.list.iter().any(|r| r == root) {
+            return false;
+        }
+        let name = name.trim();
+        if name.is_empty() {
+            self.names.remove(root);
+        } else {
+            self.names.insert(root.to_path_buf(), name.to_owned());
+        }
+        true
     }
 
     /// A list of these folders as they are, for a run that names its
@@ -232,6 +303,7 @@ impl Roots {
             .cloned()
             .collect();
         self.list.retain(|r| !r.starts_with(&dir));
+        self.names.retain(|r, _| !r.starts_with(&dir));
         self.list.push(dir.clone());
         Ok(if under.is_empty() {
             Added::New(dir)
@@ -248,6 +320,7 @@ impl Roots {
         let canonical = canonical(dir).unwrap_or_else(|_| dir.to_path_buf());
         let before = self.list.len();
         self.list.retain(|r| r != dir && *r != canonical);
+        self.names.retain(|r, _| r != dir && *r != canonical);
         self.list.len() != before
     }
 
@@ -677,6 +750,75 @@ mod tests {
             std::fs::read(path.with_extension("json.unreadable")).unwrap(),
             b"{ not json"
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A root's name is kept beside its path and survives the file;
+    /// the path is what it was. A file with no names is the file the
+    /// previous build wrote, and one with names still reads to that
+    /// build as the same list.
+    #[test]
+    fn a_root_keeps_its_name_beside_its_path() {
+        let dir = scratch("roots-name");
+        let (photos, b) = (dir.join("Photos"), dir.join("b"));
+        std::fs::create_dir_all(&photos).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let path = dir.join(FILE_NAME);
+        let mut roots = Roots::default();
+        roots.add(&photos).unwrap();
+        roots.add(&b).unwrap();
+        assert_eq!(roots.label(&photos), "Photos");
+        assert!(roots.set_name(&photos, "  Archive "));
+        assert_eq!(roots.name(&photos), Some("Archive"));
+        assert_eq!(roots.label(&photos), "Archive");
+        assert_eq!(roots.label(&b), "b");
+        assert!(!roots.set_name(&dir.join("nowhere"), "x"), "not a root");
+        assert_eq!(roots.list(), [photos.clone(), b.clone()]);
+        roots.save(&path).unwrap();
+        let back = Roots::load(&path).unwrap();
+        assert_eq!(back, roots);
+        assert_eq!(back.label(&photos), "Archive");
+        // The list itself is the one the previous build reads.
+        let value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(value["version"], 1);
+        assert_eq!(
+            value["roots"],
+            serde_json::json!([photos.to_str().unwrap(), b.to_str().unwrap()])
+        );
+        assert_eq!(value["names"][photos.to_str().unwrap()], "Archive");
+
+        // Cleared, it goes by the folder again, and the file has no
+        // names left in it.
+        assert!(roots.set_name(&photos, ""));
+        assert_eq!(roots.label(&photos), "Photos");
+        roots.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains("names"), "{text}");
+
+        // The previous build's file, with no names, reads as roots
+        // with none; a name for a path that is not a root, or one that
+        // is not text, is dropped and the rest kept.
+        let old = serde_json::json!({
+            "version": 1,
+            "roots": [photos.to_str().unwrap()],
+            "names": { b.to_str().unwrap(): "Gone", photos.to_str().unwrap(): 7 },
+        });
+        std::fs::write(&path, old.to_string()).unwrap();
+        let read = Roots::load(&path).unwrap();
+        assert_eq!(read.list(), std::slice::from_ref(&photos));
+        assert_eq!(read.name(&photos), None);
+        assert_eq!(read.name(&b), None);
+
+        // Removing a root, or adding one above it, takes its name with
+        // it: a root added again later starts with none.
+        roots.set_name(&photos, "Archive");
+        roots.remove(&photos);
+        roots.add(&photos).unwrap();
+        assert_eq!(roots.name(&photos), None);
+        roots.set_name(&b, "Other");
+        roots.add(&dir).unwrap();
+        assert_eq!(roots.name(&b), None);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

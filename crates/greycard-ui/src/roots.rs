@@ -27,6 +27,11 @@
 //! its path, and every frame still without a picture asked for one
 //! again. The frame on screen is followed to where the index says it
 //! went, and never to a copy of it.
+//!
+//! A root can have a name of the user's, given from its chip's menu
+//! (right-click, Rename...), and shown wherever the
+//! folder's own name would be. It is a label and nothing more: the
+//! root is its path everywhere, and naming it moves nothing.
 
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -204,7 +209,7 @@ pub(crate) fn show(st: &State, app: &App) {
         .iter()
         .enumerate()
         .map(|(i, r)| RootChip {
-            name: root_name(r).into(),
+            name: root_name(&st.library.roots, r).into(),
             path: r.to_string_lossy().into_owned().into(),
             count: st.library.counts.get(i).copied().unwrap_or(0) as i32,
             on: on.as_ref() == Some(&Some(r.clone())),
@@ -225,12 +230,26 @@ pub(crate) fn show(st: &State, app: &App) {
     );
 }
 
-/// A root as its chip names it: the folder's own name, or the whole
-/// path for a disk's root, which has none.
-pub(crate) fn root_name(root: &Path) -> String {
-    root.file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| root.to_string_lossy().into_owned())
+/// A root as its chip names it: the name the user gave it, else the
+/// folder's own name, or the whole path for a disk's root, which has
+/// none.
+pub(crate) fn root_name(roots: &Roots, root: &Path) -> String {
+    roots.label(root)
+}
+
+/// A root as the status line says it: its path, after its name when
+/// it has one, so a root named alike to another is still told apart.
+fn said(roots: &Roots, root: &Path) -> String {
+    match roots.name(root) {
+        Some(name) => format!("{name} ({})", root.display()),
+        None => root.display().to_string(),
+    }
+}
+
+/// The folder's own name, as the root sheet offers it for an empty
+/// name.
+fn folder_name(dir: &Path) -> String {
+    root_name(&Roots::default(), dir)
 }
 
 /// The open folder, when the browser shows one and it is not under a
@@ -264,7 +283,8 @@ fn edit_roots<T>(
 }
 
 /// Add a folder to the roots: kept, watched, passed over, and the
-/// view brought up if it lists the roots.
+/// view brought up if it lists the roots. It goes by its folder's
+/// name until it is given one from its chip's menu.
 pub(crate) fn add(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     let mut st = state.borrow_mut();
     let added = match edit_roots(&mut st, |r| r.add(dir)) {
@@ -277,14 +297,20 @@ pub(crate) fn add(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, di
     };
     let new = match added {
         Ok(Added::New(root)) => {
-            app.set_status(format!("{} is in the library now", root.display()).into());
+            app.set_status(
+                format!(
+                    "{} is in the library now; right-click its chip to name it",
+                    said(&st.library.roots, &root)
+                )
+                .into(),
+            );
             root
         }
         Ok(Added::Absorbed(root, under)) => {
             app.set_status(
                 format!(
                     "{} is in the library now, in place of {} folder{} under it",
-                    root.display(),
+                    said(&st.library.roots, &root),
                     under.len(),
                     if under.len() == 1 { "" } else { "s" }
                 )
@@ -293,7 +319,13 @@ pub(crate) fn add(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, di
             root
         }
         Ok(Added::Covered(root)) => {
-            app.set_status(format!("already in the library, under {}", root.display()).into());
+            app.set_status(
+                format!(
+                    "already in the library, under {}",
+                    said(&st.library.roots, &root)
+                )
+                .into(),
+            );
             return;
         }
         Err(e) => {
@@ -321,6 +353,7 @@ pub(crate) fn add(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, di
 /// longer lists them.
 pub(crate) fn remove(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
     let mut st = state.borrow_mut();
+    let was = said(&st.library.roots, dir);
     match edit_roots(&mut st, |r| r.remove(dir)) {
         Ok(true) => {}
         Ok(false) => return,
@@ -334,13 +367,7 @@ pub(crate) fn remove(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>,
         "library: removed {}; nothing on disk touched",
         dir.display()
     );
-    app.set_status(
-        format!(
-            "{} is out of the library; its files are where they were",
-            dir.display()
-        )
-        .into(),
-    );
+    app.set_status(format!("{was} is out of the library; its files are where they were").into());
     watch(&mut st);
     recount(&mut st);
     let view = st.view.clone();
@@ -357,6 +384,49 @@ pub(crate) fn remove(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>,
     if refresh {
         refresh_view(state, app, worker);
     }
+}
+
+/// Give a root a name, or with an empty one take its name away. The
+/// root is still its path, and nothing on disk is touched; only its
+/// chip and what the status line calls it change.
+pub(crate) fn rename(state: &Rc<RefCell<State>>, app: &App, dir: &Path, name: &str) {
+    let mut st = state.borrow_mut();
+    let before = st.library.roots.name(dir).map(str::to_owned);
+    match edit_roots(&mut st, |r| r.set_name(dir, name)) {
+        Ok(true) => {}
+        Ok(false) => {
+            app.set_status(format!("{} is not in the library", dir.display()).into());
+            return;
+        }
+        Err(e) => {
+            tracing::warn!("library: roots not saved: {e}");
+            app.set_status(format!("not renamed: {e}").into());
+            return;
+        }
+    }
+    let after = st.library.roots.name(dir).map(str::to_owned);
+    if after != before {
+        tracing::info!("library: {} named {:?}", dir.display(), after);
+    }
+    app.set_status(
+        match &after {
+            Some(name) => format!(
+                "{} is called {name} in the library; the folder is as it was",
+                dir.display()
+            ),
+            None => format!("{} goes by its folder's name", dir.display()),
+        }
+        .into(),
+    );
+    show(&st, app);
+}
+
+/// The root sheet opened over a root, with the name it has.
+fn open_sheet(st: &State, app: &App, dir: &Path) {
+    app.set_root_sheet_path(dir.to_string_lossy().into_owned().into());
+    app.set_root_sheet_folder(folder_name(dir).into());
+    app.set_root_sheet_name(st.library.roots.name(dir).unwrap_or("").into());
+    app.set_root_sheet_open(true);
 }
 
 /// The roots a view lists, the offline ones left out.
@@ -1009,8 +1079,32 @@ pub(crate) fn empty_view(st: &mut State, app: &App) {
 }
 
 /// The header's callbacks: a root chosen, all of them, one added by
-/// the chooser or as the folder open, one taken out.
+/// the chooser or as the folder open, one taken out, one named.
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_library_root_rename(move |path| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            open_sheet(&state.borrow(), &app, Path::new(path.as_str()));
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_root_sheet_done(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            if !app.get_root_sheet_open() {
+                return;
+            }
+            app.set_root_sheet_open(false);
+            let dir = PathBuf::from(app.get_root_sheet_path().as_str());
+            let name = app.get_root_sheet_name();
+            rename(&state, &app, &dir, &name);
+        });
+    }
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_library_root_picked(move |path| {
@@ -1332,6 +1426,14 @@ mod tests {
         assert!(app.get_library_all_on());
         assert!(!app.get_library_can_add_open());
         assert_eq!(app.get_library_note(), "");
+        // A name given is the chip's, and the path is still the root.
+        st.library.roots.set_name(&a, "Archive");
+        assert_eq!(root_name(&st.library.roots, &a), "Archive");
+        assert_eq!(root_name(&st.library.roots, &b), "b");
+        show(&st, &app);
+        let chip = app.get_library_roots().row_data(0).unwrap();
+        assert_eq!(chip.name.as_str(), "Archive");
+        assert_eq!(chip.path.as_str(), a.to_str().unwrap());
         st.index_reader = None;
         drop(st);
         drop(state);
@@ -1416,6 +1518,244 @@ mod tests {
             "the last root is reached: {:?}",
             seen.borrow()
         );
+    }
+
+    fn right_click(app: &App, x: f32, y: f32) {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let position = slint::LogicalPosition::new(x, y);
+        for event in [
+            WindowEvent::PointerMoved { position },
+            WindowEvent::PointerPressed {
+                position,
+                button: PointerEventButton::Right,
+            },
+            WindowEvent::PointerReleased {
+                position,
+                button: PointerEventButton::Right,
+            },
+        ] {
+            app.window().dispatch_event(event);
+        }
+    }
+
+    /// The first point along the roots row where a right-click opens a
+    /// root's menu, from `from` on, stepping 3 px; the right button
+    /// alone, which nothing in the row but a root's chip answers.
+    fn menu_opens_at(app: &App, from: f32, y: f32) -> Option<f32> {
+        (from as i32..600).step_by(3).map(|x| x as f32).find(|&x| {
+            right_click(app, x, y);
+            app.get_menu_up()
+        })
+    }
+
+    /// A root is named from its chip's menu, and the name is only a
+    /// label: the root is its path throughout. A plain add is one
+    /// action, with no sheet. A right-click on the chip opens the menu
+    /// and picks nothing, and the press that closes the menu is not a
+    /// press on the chip. The chip is found with the right button
+    /// alone; the two left clicks are on the chip, just above where
+    /// its menu opened.
+    #[test]
+    fn a_root_is_named_from_its_menu() {
+        let dir = scratch("rename");
+        let (photos, b) = (dir.join("Photos"), dir.join("b"));
+        std::fs::create_dir_all(&photos).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        frames(&photos, &["x.tif"]);
+        let open = frames(&b, &["o.tif"]);
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1200.0, 700.0));
+        app.set_grid_open(true);
+        let (state, _worker) = state_for(&app, open);
+        state.borrow_mut().library.roots.add(&photos).unwrap();
+        show(&state.borrow(), &app);
+        slint::platform::update_timers_and_animations();
+
+        // The roots row is the header's second, under the controls.
+        let y = 56.0;
+        let x =
+            menu_opens_at(&app, 0.0, y).expect("a right-click on the root's chip opens its menu");
+        assert_eq!(state.borrow().view, View::Folder, "nothing picked");
+        assert!(state.borrow().library.wanted.is_none());
+        // The press that closes it, on the chip just above where the
+        // menu opened, is let go by.
+        let (x, y) = (x + 8.0, y - 6.0);
+        crate::testing::click(&app, x, y);
+        assert!(!app.get_menu_up());
+        assert!(state.borrow().library.wanted.is_none(), "not a pick");
+        assert_eq!(
+            state.borrow().library.roots.list(),
+            std::slice::from_ref(&photos)
+        );
+        // The next is a press on the chip, which picks its root.
+        crate::testing::click(&app, x, y);
+        assert_eq!(
+            state.borrow_mut().library.wanted.take(),
+            Some(View::Roots(Some(photos.clone())))
+        );
+
+        // Rename..., from the menu.
+        app.invoke_library_root_rename(photos.to_string_lossy().into_owned().into());
+        assert!(app.get_root_sheet_open());
+        assert_eq!(app.get_root_sheet_folder(), "Photos");
+        assert_eq!(app.get_root_sheet_name(), "");
+        app.set_root_sheet_name("Archive".into());
+        app.invoke_root_sheet_done();
+        assert!(!app.get_root_sheet_open());
+        let chips = app.get_library_roots();
+        let chip = chips.row_data(0).unwrap();
+        assert_eq!(
+            (chip.name.as_str(), chip.path.as_str()),
+            ("Archive", photos.to_str().unwrap())
+        );
+        assert!(photos.is_dir(), "the folder is where it was");
+
+        // Opened again, the sheet has the name to change; Escape,
+        // with the field holding the focus, leaves it as it was.
+        app.invoke_library_root_rename(photos.to_string_lossy().into_owned().into());
+        assert_eq!(app.get_root_sheet_name(), "Archive");
+        slint::platform::update_timers_and_animations();
+        crate::testing::press(&app, "Q");
+        assert_eq!(
+            app.get_root_sheet_name(),
+            "Q",
+            "the name chosen, typed over"
+        );
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_root_sheet_open(), "Escape closed it");
+        assert_eq!(state.borrow().library.roots.name(&photos), Some("Archive"));
+        // A click beside the sheet closes it too.
+        app.invoke_library_root_rename(photos.to_string_lossy().into_owned().into());
+        crate::testing::click(&app, 20.0, 680.0);
+        assert!(!app.get_root_sheet_open());
+
+        // The folder open, added at a press with no sheet, by its
+        // folder's name.
+        assert!(app.get_library_can_add_open());
+        app.invoke_library_root_add_open();
+        assert!(!app.get_root_sheet_open());
+        {
+            let st = state.borrow();
+            assert_eq!(st.library.roots.list(), [photos.clone(), b.clone()]);
+            assert_eq!(st.library.roots.name(&b), None);
+        }
+        assert!(
+            app.get_status().contains("right-click"),
+            "{}",
+            app.get_status()
+        );
+        let names: Vec<String> = app
+            .get_library_roots()
+            .iter()
+            .map(|c| c.name.to_string())
+            .collect();
+        assert_eq!(names, ["Archive", "b"]);
+
+        // Cleared, the name goes back to the folder's.
+        app.invoke_library_root_rename(photos.to_string_lossy().into_owned().into());
+        app.set_root_sheet_name("  ".into());
+        app.invoke_root_sheet_done();
+        assert_eq!(
+            app.get_library_roots().row_data(0).unwrap().name.as_str(),
+            "Photos"
+        );
+        drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// With a root's menu up, a right-click on another root opens that
+    /// root's, and the left press that closes it does nothing on
+    /// whatever pill it lands on: not the chooser, not the folder
+    /// open added, not the all-roots view. The row's callbacks are
+    /// the test's own, so no press reaches anything outside it.
+    #[test]
+    fn the_press_that_closes_a_roots_menu_is_nothing_more() {
+        let app = window(0);
+        app.window()
+            .set_size(slint::LogicalSize::new(1200.0, 700.0));
+        app.set_grid_open(true);
+        let chip = |name: &str| RootChip {
+            name: name.into(),
+            path: format!("/x/{name}").into(),
+            count: 3,
+            on: false,
+            offline: false,
+        };
+        app.set_library_roots(ModelRc::new(VecModel::from(vec![chip("one"), chip("two")])));
+        app.set_library_all_count(6);
+        app.set_library_can_add_open(true);
+        let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+        let s = seen.clone();
+        app.on_library_root_picked(move |p| s.borrow_mut().push(format!("picked {p}")));
+        let s = seen.clone();
+        app.on_library_root_removed(move |p| s.borrow_mut().push(format!("removed {p}")));
+        let s = seen.clone();
+        app.on_library_root_add(move || s.borrow_mut().push("add".into()));
+        let s = seen.clone();
+        app.on_library_root_add_open(move || s.borrow_mut().push("add open".into()));
+        slint::platform::update_timers_and_animations();
+        let y = 56.0;
+
+        // The two chips, and the gap between them, by the right
+        // button alone.
+        let one = menu_opens_at(&app, 0.0, y).expect("the first root's chip");
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_menu_up());
+        let gap = (one as i32..600)
+            .step_by(3)
+            .map(|x| x as f32)
+            .find(|&x| {
+                right_click(&app, x, y);
+                let up = app.get_menu_up();
+                if up {
+                    crate::testing::press(&app, slint::platform::Key::Escape);
+                }
+                !up
+            })
+            .expect("the first chip ends");
+        let two = menu_opens_at(&app, gap, y).expect("the second root's chip");
+        crate::testing::press(&app, slint::platform::Key::Escape);
+
+        // A right-click on the second with the first's menu up opens
+        // the second's.
+        right_click(&app, one, y);
+        assert!(app.get_menu_up());
+        right_click(&app, two, y);
+        assert!(app.get_menu_up(), "the second root's menu is up");
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_menu_up());
+
+        // Every point of the row before the first root, closing its
+        // menu, does nothing there.
+        for x in (0..one as i32).step_by(3) {
+            right_click(&app, one, y);
+            assert!(app.get_menu_up());
+            crate::testing::click(&app, x as f32, y);
+            assert!(!app.get_menu_up(), "closed at {x}");
+        }
+        assert!(seen.borrow().is_empty(), "{:?}", seen.borrow());
+        // And with no menu up, the same row answers.
+        for x in (0..one as i32).step_by(3) {
+            crate::testing::click(&app, x as f32, y);
+        }
+        let said = seen.borrow();
+        for want in ["add", "add open", "picked "] {
+            assert!(said.iter().any(|s| s == want), "{want}: {said:?}");
+        }
+    }
+
+    /// The preset sheet's name field holds the focus as the root
+    /// sheet's does, and Escape closes it all the same.
+    #[test]
+    fn escape_closes_the_preset_sheet_from_its_field() {
+        let app = window(0);
+        app.set_preset_open(true);
+        slint::platform::update_timers_and_animations();
+        crate::testing::press(&app, "Q");
+        assert_eq!(app.get_preset_name(), "Q", "the field has the keys");
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_preset_open());
     }
 
     /// The indexer's background: the launch pass over a root, and a

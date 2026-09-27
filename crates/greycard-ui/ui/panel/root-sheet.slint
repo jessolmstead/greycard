@@ -1,24 +1,26 @@
-// The preset sheet: a name and what the preset carries, until saved
-// or left.
+// The root sheet: a name for one of the library's roots, from its
+// chip's menu. The name is only what the editor calls the root; the
+// folder is not renamed or moved, and an empty name goes back to the
+// folder's own. The path is shown in full, so two roots named alike
+// can be told apart.
 
 import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { PanelButton } from "../controls.slint";
-import { SectionToggles } from "section-toggles.slint";
 
-export component PresetSheet inherits Rectangle {
-    in-out property <bool> preset-open;
-    in-out property <string> preset-name;
-    in-out property <[string]> preset-section-names;
-    in-out property <[bool]> preset-section-on;
-    callback preset-section-toggled(int, bool);
-    callback preset-saved();
+export component RootSheet inherits Rectangle {
+    in-out property <bool> open;
+    in property <string> path;
+    /// The folder's own name: what the root goes by with no name.
+    in property <string> folder;
+    in-out property <string> name;
+    callback done();
 
     background: #000000a0;
-    TouchArea { clicked => { root.preset-open = false; } }
+    TouchArea { clicked => { root.open = false; } }
     Rectangle {
-        width: 560px;
-        height: preset-sheet.preferred-height;
+        width: 480px;
+        height: sheet.preferred-height;
         background: Theme.surface;
         border-radius: Theme.radius-lg;
         border-width: 1px;
@@ -32,50 +34,51 @@ export component PresetSheet inherits Rectangle {
         FocusScope {
             key-pressed(e) => {
                 if (e.text == Key.Escape) {
-                    root.preset-open = false;
+                    root.open = false;
                     return accept;
                 }
                 return reject;
             }
-            preset-sheet := VerticalLayout {
+            sheet := VerticalLayout {
                 padding: Theme.space-5;
                 spacing: Theme.space-3;
                 Text {
-                    text: "Save preset";
+                    text: "Name this library folder";
                     font-size: Theme.font-lg;
                     font-weight: Theme.weight-medium;
                     color: Theme.text;
                 }
-                preset-name-edit := LineEdit {
-                    text <=> root.preset-name;
-                    placeholder-text: "Name";
-                    accepted(t) => { root.preset-saved(); }
-                    init => { self.focus(); }
-                }
                 Text {
-                    text: "What it carries; on, what the edit changed from the default.";
+                    text: root.path;
                     font-size: Theme.font-xs;
                     color: Theme.text-secondary;
                     wrap: word-wrap;
                 }
-                SectionToggles {
-                    names: root.preset-section-names;
-                    on: root.preset-section-on;
-                    toggled(i, on) => { root.preset-section-toggled(i, on); }
+                LineEdit {
+                    text <=> root.name;
+                    placeholder-text: root.folder;
+                    accepted(t) => { root.done(); }
+                    // The name there, chosen: typed over, or kept with Enter.
+                    init => { self.focus(); self.select-all(); }
+                }
+                Text {
+                    text: "A name for the library to show in place of \"" + root.folder
+                        + "\". Leave it empty to use the folder's name. The folder itself is not renamed or moved.";
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
                 }
                 Rectangle { height: Theme.space-2; }
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
                         text: "Cancel";
-                        clicked => { root.preset-open = false; }
+                        clicked => { root.open = false; }
                     }
                     PanelButton {
                         text: "Save";
-                        icon: @image-url("../icons/save.svg");
                         primary: true;
-                        enabled: root.preset-name != "";
-                        clicked => { root.preset-saved(); }
+                        clicked => { root.done(); }
                     }
                 }
             }

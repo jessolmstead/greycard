@@ -91,6 +91,7 @@ export component GridSheet inherits Rectangle {
     callback library-root-removed(string);
     callback library-root-add();
     callback library-root-add-open();
+    callback library-root-rename(string);
 
     background: Theme.sheet;
     // Nothing may fall through to the viewport behind, the wheel
@@ -195,6 +196,10 @@ export component GridSheet inherits Rectangle {
                     removed(p) => { root.focus-keys(); root.library-root-removed(p); }
                     add => { root.focus-keys(); root.library-root-add(); }
                     add-open => { root.focus-keys(); root.library-root-add-open(); }
+                    rename(p) => { root.library-root-rename(p); }
+                    ctrl-click-menu: root.ctrl-click-menu;
+                    menu-opening => { root.focus-keys(); }
+                    menu-shown => { return root.menu-shown(); }
                 }
                 FilterBar {
                     takes-focus: true;

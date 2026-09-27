@@ -210,8 +210,9 @@ struct Cli {
     /// import sheet, its source --import's when given, else a card
     /// looked for), imported (the same, its import started once the
     /// source is read), match (the camera match's sheet, as the Look
-    /// section's button opens it) or matched (the same, its Fit
-    /// pressed once the scope is read)
+    /// section's button opens it), matched (the same, its Fit
+    /// pressed once the scope is read) or root-name (the library's
+    /// first root's name, as its chip's Rename... opens it)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of
