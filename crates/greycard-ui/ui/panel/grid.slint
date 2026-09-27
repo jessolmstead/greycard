@@ -6,6 +6,7 @@ import { Thumb, FilterChip, FacetRow, RootChip } from "../structs.slint";
 import { PanelButton, ThumbBadges } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 import { RootsRow } from "roots.slint";
+import { LoadingCard } from "loading.slint";
 
 export component GridSheet inherits Rectangle {
     in property <[Thumb]> thumbs;
@@ -92,6 +93,12 @@ export component GridSheet inherits Rectangle {
     callback library-root-add();
     callback library-root-add-open();
     callback library-root-rename(string);
+    /// A view's sidecars being read, past the moment a fast one takes:
+    /// its bar over the sheet, which holds the list before it until
+    /// the new one lands.
+    in property <bool> loading-shown;
+    in property <float> loading-fraction;
+    in property <string> loading-line;
 
     background: Theme.sheet;
     // Nothing may fall through to the viewport behind, the wheel
@@ -382,6 +389,12 @@ export component GridSheet inherits Rectangle {
                         double-clicked => { if (!self.menu) { root.grid-open = false; } }
                     }
                 }
+            }
+            if root.loading-shown: LoadingCard {
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
+                fraction: root.loading-fraction;
+                line: root.loading-line;
             }
         }
     }

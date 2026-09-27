@@ -915,15 +915,23 @@ pub(crate) fn load_sidecars(files: &[PathBuf], write_sidecars: bool) -> (Vec<Sid
 
 /// [`load_sidecars`] on every core, for a list too long to read on
 /// the window's thread: the all-roots view's, which is the whole
-/// library. The order is the list's.
+/// library. The order is the list's. `read`, when given, is bumped
+/// for each sidecar read, for the window's bar.
 pub(crate) fn load_sidecars_parallel(
     files: &[PathBuf],
     write_sidecars: bool,
+    read: Option<&std::sync::atomic::AtomicUsize>,
 ) -> (Vec<Sidecar>, Vec<bool>) {
     use rayon::prelude::*;
     files
         .par_iter()
-        .map(|f| load_sidecar(f, write_sidecars))
+        .map(|f| {
+            let one = load_sidecar(f, write_sidecars);
+            if let Some(read) = read {
+                read.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            one
+        })
         .unzip()
 }
 
@@ -1083,7 +1091,7 @@ fn open_files(
         // A view of the roots still being read is dropped by the
         // generation, and nothing is loading any more.
         st.view_generation += 1;
-        st.library.loading = false;
+        crate::roots::loading_done(&mut st.library, app);
         st.view = crate::roots::View::Folder;
         load_sidecars(&files, st.write_sidecars)
     };
@@ -2704,7 +2712,7 @@ mod tests {
             let (one, _) = load_sidecars(&files, true);
             let serial = t.elapsed().as_secs_f64();
             let t = std::time::Instant::now();
-            let (pool, _) = load_sidecars_parallel(&files, true);
+            let (pool, _) = load_sidecars_parallel(&files, true, None);
             let parallel = t.elapsed().as_secs_f64();
             assert_eq!(one.len(), pool.len());
             eprintln!(

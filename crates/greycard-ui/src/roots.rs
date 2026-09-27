@@ -108,6 +108,15 @@ pub(crate) struct Library {
     /// browser is about to be replaced, and is not merged into.
     pub(crate) loading: bool,
     pub(crate) loading_since: Option<Instant>,
+    /// How far the view's read has got, bumped on the pool; read by
+    /// `loading_timer` to fill the bar.
+    pub(crate) progress: Option<Arc<Progress>>,
+    pub(crate) loading_timer: slint::Timer,
+    /// The count as the timer last saw it, and when it last moved: a
+    /// read past [`READ_GIVES_UP`] whose count has stood still for
+    /// [`LOADING_STALLED`] is given up on by the timer.
+    pub(crate) progress_seen: usize,
+    pub(crate) progress_moved: Option<Instant>,
     /// The list is being read again off the window's thread; a
     /// refresh asked for meanwhile is done once when it lands
     /// (`stale`).
@@ -910,6 +919,31 @@ const ROOT_WAIT: Duration = Duration::from_secs(3);
 /// and sends another; what it brings after that is dropped.
 const READ_GIVES_UP: Duration = Duration::from_secs(60);
 
+/// How long a view's read runs before its bar is shown: a root on a
+/// local disk is in before this, and never flashes one.
+pub(crate) const LOADING_SHOWN_AFTER: Duration = Duration::from_millis(200);
+
+/// How often the window looks at a view's read's count while it runs.
+const LOADING_TICK: Duration = Duration::from_millis(100);
+
+/// How long a view's read's count may stand still, once the read is
+/// past [`READ_GIVES_UP`], before the timer gives up on it. Longer than
+/// a tick: a share slow enough to take more than a tenth of a second a
+/// sidecar would look stopped between two ticks while still moving.
+const LOADING_STALLED: Duration = Duration::from_secs(10);
+
+/// A view's read, how far along: the sidecars to read and those read,
+/// shared by the read's thread and the pool with the window.
+#[derive(Debug, Default)]
+pub(crate) struct Progress {
+    /// Set by the window from the index's list, then by the read to
+    /// the files it kept (a root offline, a folder that cannot be read,
+    /// left out).
+    pub(crate) total: AtomicUsize,
+    /// Bumped on the pool for each sidecar read.
+    pub(crate) read: AtomicUsize,
+}
+
 /// How many finished passes the window remembers, for a read that
 /// lands after them to know which folders they covered.
 const PASSES_KEPT: usize = 64;
@@ -971,6 +1005,8 @@ pub(crate) struct Look {
     /// The index's database, opened read-only for the list's rows and
     /// to follow a frame that is not where the window has it.
     index: Option<PathBuf>,
+    /// A view's read: its count, for the window's bar.
+    progress: Option<Arc<Progress>>,
 }
 
 /// What the frame on screen was found to be, off the window's thread.
@@ -1248,7 +1284,14 @@ impl Look {
             .filter(|f| !self.have.contains(*f))
             .cloned()
             .collect();
-        let (sidecars, seed) = load_sidecars_parallel(&fresh, self.write);
+        if let Some(p) = &self.progress {
+            p.total.store(fresh.len(), Ordering::Relaxed);
+        }
+        let (sidecars, seed) = load_sidecars_parallel(
+            &fresh,
+            self.write,
+            self.progress.as_deref().map(|p| &p.read),
+        );
         // The frame on screen under a root this read found offline is not
         // looked at: a stat under a share that does not answer does not
         // come back. It is taken as there, and stays listed.
@@ -1416,8 +1459,7 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
             {
                 let mut st = state.borrow_mut();
                 st.view = view;
-                st.library.loading = false;
-                st.library.loading_since = None;
+                loading_done(&mut st.library, app);
             }
             open_loaded(state, app, worker, files, sidecars, seed, select);
             let mut st = state.borrow_mut();
@@ -1505,8 +1547,7 @@ fn take_empty(
     };
     open_loaded(state, app, worker, Vec::new(), Vec::new(), Vec::new(), 0);
     let mut st = state.borrow_mut();
-    st.library.loading = false;
-    st.library.loading_since = None;
+    loading_done(&mut st.library, app);
     st.library.painted = Some((asked, "the view asked for"));
     show(&st, app);
     if passing {
@@ -1538,7 +1579,7 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
             tracing::warn!("library: {e}");
             app.set_status(format!("the library index could not be read: {e}").into());
             st.library.awaiting = false;
-            st.library.loading = false;
+            loading_done(&mut st.library, app);
             return;
         }
     };
@@ -1562,6 +1603,10 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
     st.library.readable.clear();
     st.library.readable_epoch += 1;
     app.set_status(format!("reading {} frames...", files.len()).into());
+    let progress = Arc::new(Progress {
+        total: AtomicUsize::new(files.len()),
+        read: AtomicUsize::new(0),
+    });
     let look = Look {
         generation: st.view_generation,
         token: 0,
@@ -1573,17 +1618,121 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         write: st.write_sidecars,
         on_screen: None,
         index: None,
+        progress: Some(progress.clone()),
         purpose: Purpose::Open { view, asked, last },
     };
-    st.library.loading = true;
-    st.library.loading_since = Some(Instant::now());
     drop(st);
+    loading_started(state, app, progress);
     if !send_off(app, look) {
         let mut st = state.borrow_mut();
         st.library.awaiting = false;
-        st.library.loading = false;
-        st.library.loading_since = None;
+        loading_done(&mut st.library, app);
     }
+}
+
+/// A view's read sent: `loading` set, and the window's timer started
+/// on its count. The bar shows once the read has run past
+/// [`LOADING_SHOWN_AFTER`], and goes when it lands or is given up on.
+fn loading_started(state: &Rc<RefCell<State>>, app: &App, progress: Arc<Progress>) {
+    let mut st = state.borrow_mut();
+    let lib = &mut st.library;
+    let now = Instant::now();
+    lib.loading = true;
+    lib.loading_since = Some(now);
+    lib.progress = Some(progress);
+    lib.progress_seen = 0;
+    lib.progress_moved = Some(now);
+    app.set_loading_shown(false);
+    let (state_weak, app_weak) = (Rc::downgrade(state), app.as_weak());
+    lib.loading_timer
+        .start(slint::TimerMode::Repeated, LOADING_TICK, move || {
+            if let (Some(state), Some(app)) = (state_weak.upgrade(), app_weak.upgrade()) {
+                loading_tick(&mut state.borrow_mut(), &app, Instant::now());
+            }
+        });
+}
+
+/// The timer's tick while a view's read is out, at `now`: the bar
+/// filled to the sidecars read, once the read has been out long enough
+/// to show it. A read past [`READ_GIVES_UP`] whose count has not moved
+/// in [`LOADING_STALLED`] is given up on here as `refresh_view` would,
+/// since with no report coming nothing else would.
+pub(crate) fn loading_tick(st: &mut State, app: &App, now: Instant) {
+    let lib = &mut st.library;
+    let (true, Some(since), Some(progress)) = (lib.loading, lib.loading_since, &lib.progress)
+    else {
+        loading_done(lib, app);
+        return;
+    };
+    let total = progress.total.load(Ordering::Relaxed);
+    let read = progress.read.load(Ordering::Relaxed).min(total);
+    if read != lib.progress_seen {
+        lib.progress_seen = read;
+        lib.progress_moved = Some(now);
+    }
+    let out = now.saturating_duration_since(since);
+    let still = now.saturating_duration_since(lib.progress_moved.unwrap_or(since));
+    if out > READ_GIVES_UP && still > LOADING_STALLED {
+        give_up_view(st, app);
+        return;
+    }
+    if out < LOADING_SHOWN_AFTER {
+        return;
+    }
+    let fraction = if total == 0 {
+        0.0
+    } else {
+        read as f32 / total as f32
+    };
+    app.set_loading_fraction(fraction);
+    app.set_loading_line(loading_words(read, total).into());
+    if !app.get_loading_shown() {
+        tracing::info!(
+            "library: the view's bar shown {:.0} ms after it was asked for, {read} of {total} read",
+            out.as_secs_f64() * 1e3
+        );
+        app.set_loading_shown(true);
+    }
+}
+
+/// The view's read done, dropped or given up on: nothing loading, the
+/// timer stopped and the bar gone.
+pub(crate) fn loading_done(lib: &mut Library, app: &App) {
+    lib.loading = false;
+    lib.loading_since = None;
+    lib.progress = None;
+    lib.progress_moved = None;
+    lib.loading_timer.stop();
+    app.set_loading_shown(false);
+}
+
+/// A view's read given up on: the bar gone, a capture waiting on it let
+/// go, and the read dropped by its generation if it ever lands.
+fn give_up_view(st: &mut State, app: &App) {
+    tracing::warn!("library: the view's read has not come in; given up");
+    loading_done(&mut st.library, app);
+    st.library.awaiting = false;
+    st.view_generation += 1;
+    app.set_status("the library's frames did not come in; the list is as it was".into());
+}
+
+/// The bar's words: "Reading 11,711 sidecars… 3,400".
+fn loading_words(read: usize, total: usize) -> String {
+    let word = if total == 1 { "sidecar" } else { "sidecars" };
+    format!("Reading {} {word}… {}", grouped(total), grouped(read))
+}
+
+/// A count with its thousands set apart by commas.
+fn grouped(n: usize) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// The read for the browser's list as it is, from the folder or from
@@ -1648,6 +1797,7 @@ fn ask(st: &State) -> Option<Look> {
             ))
         }),
         index: st.index_path.clone(),
+        progress: None,
     })
 }
 
@@ -1667,12 +1817,7 @@ pub(crate) fn refresh_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<W
             if !late(st.library.loading_since) {
                 return false;
             }
-            tracing::warn!("library: the view's read has not come in; given up");
-            st.library.loading = false;
-            st.library.loading_since = None;
-            st.library.awaiting = false;
-            st.view_generation += 1;
-            app.set_status("the library's frames did not come in; the list is as it was".into());
+            give_up_view(&mut st, app);
         }
         if st.library.merging {
             if !late(st.library.merge_since) {
@@ -2269,7 +2414,7 @@ mod tests {
             .filter(|p| !st.files.contains(p))
             .cloned()
             .collect();
-        let (s, b) = load_sidecars_parallel(&fresh, st.write_sidecars);
+        let (s, b) = load_sidecars_parallel(&fresh, st.write_sidecars, None);
         fresh.into_iter().zip(s.into_iter().zip(b)).collect()
     }
 
@@ -3431,6 +3576,230 @@ mod tests {
         assert_eq!(st.current.map(|c| st.files[c].clone()), Some(y.clone()));
         assert_eq!(st.files, [a.join("x.tif"), y], "z leaves, the frame stays");
         drop(st);
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A root of three frames in the index, and a window on it with
+    /// the library open: what the loading bar's tests start from.
+    fn three_under_a_root(
+        what: &str,
+    ) -> (
+        PathBuf,
+        greycard_library::Library,
+        App,
+        Rc<RefCell<State>>,
+        Rc<Worker>,
+    ) {
+        let dir = scratch(what);
+        let a = dir.join("a");
+        std::fs::create_dir_all(&a).unwrap();
+        frames(&a, &["x.tif", "y.tif", "z.tif"]);
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&dir, &mut |_| {}).unwrap();
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.library.roots.add(&a).unwrap();
+        }
+        (dir, writer, app, state, worker)
+    }
+
+    /// The count a view's read keeps, as the pool would bump it.
+    fn read_so_far(state: &Rc<RefCell<State>>, n: usize) {
+        let st = state.borrow();
+        let p = st.library.progress.as_ref().expect("a view's read is out");
+        p.read.store(n, Ordering::Relaxed);
+    }
+
+    /// The window's timer run on, as the event loop would.
+    fn tick_on(by: Duration) {
+        i_slint_backend_testing::mock_elapsed_time(by);
+        slint::platform::update_timers_and_animations();
+    }
+
+    #[test]
+    fn the_bar_s_words_group_the_thousands() {
+        assert_eq!(loading_words(3400, 11711), "Reading 11,711 sidecars… 3,400");
+        assert_eq!(loading_words(0, 1), "Reading 1 sidecar… 0");
+        assert_eq!(grouped(0), "0");
+        assert_eq!(grouped(999), "999");
+        assert_eq!(grouped(1000), "1,000");
+        assert_eq!(grouped(1234567), "1,234,567");
+    }
+
+    /// A view whose sidecars take a while: no bar for the first
+    /// moment, then one filled to the count read, by the window's own
+    /// timer, and gone when the view lands.
+    #[test]
+    fn a_slow_view_shows_its_bar_after_the_wait_and_drops_it_on_landing() {
+        let (dir, writer, app, state, worker) = three_under_a_root("loading-slow");
+        open_view(&state, &app, &worker, View::Roots(None));
+        let look = SENT.with(|s| s.borrow_mut().pop()).unwrap();
+        assert!(state.borrow().library.loading);
+        assert!(state.borrow().library.loading_timer.running());
+        read_so_far(&state, 1);
+        let since = state.borrow().library.loading_since.unwrap();
+        loading_tick(
+            &mut state.borrow_mut(),
+            &app,
+            since + LOADING_SHOWN_AFTER / 2,
+        );
+        assert!(!app.get_loading_shown(), "not within the first moment");
+        loading_tick(
+            &mut state.borrow_mut(),
+            &app,
+            since + LOADING_SHOWN_AFTER * 2,
+        );
+        assert!(app.get_loading_shown(), "past it");
+        assert!((app.get_loading_fraction() - 1.0 / 3.0).abs() < 1e-6);
+        // The window's own timer from here, the read put far enough
+        // back that the machine's clock cannot matter.
+        state.borrow_mut().library.loading_since =
+            Some(Instant::now() - LOADING_SHOWN_AFTER - Duration::from_millis(10));
+        tick_on(LOADING_TICK + Duration::from_millis(1));
+        assert!(app.get_loading_shown());
+        assert!((app.get_loading_fraction() - 1.0 / 3.0).abs() < 1e-6);
+        assert_eq!(app.get_loading_line(), "Reading 3 sidecars… 1");
+        read_so_far(&state, 2);
+        tick_on(LOADING_TICK + Duration::from_millis(1));
+        assert!((app.get_loading_fraction() - 2.0 / 3.0).abs() < 1e-6);
+        assert_eq!(app.get_loading_line(), "Reading 3 sidecars… 2");
+        // The read itself counts: what it brings is all three.
+        land(&state, &app, &worker, look.run());
+        {
+            let st = state.borrow();
+            assert_eq!(st.files.len(), 3);
+            assert!(!st.library.loading);
+            assert!(st.library.progress.is_none());
+            assert!(!st.library.loading_timer.running(), "the timer stopped");
+        }
+        assert!(!app.get_loading_shown(), "gone on landing");
+        tick_on(LOADING_TICK + Duration::from_millis(1));
+        assert!(!app.get_loading_shown());
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A view that lands within the first moment never shows a bar.
+    #[test]
+    fn a_fast_view_never_shows_its_bar() {
+        let (dir, writer, app, state, worker) = three_under_a_root("loading-fast");
+        open_view(&state, &app, &worker, View::Roots(None));
+        let since = state.borrow().library.loading_since.unwrap();
+        for ms in [0, 100, 199] {
+            loading_tick(
+                &mut state.borrow_mut(),
+                &app,
+                since + Duration::from_millis(ms),
+            );
+            assert!(!app.get_loading_shown(), "{ms} ms");
+        }
+        assert_eq!(land_all(&state, &app, &worker), 1);
+        assert!(!app.get_loading_shown());
+        assert!(!state.borrow().library.loading_timer.running());
+        loading_tick(
+            &mut state.borrow_mut(),
+            &app,
+            since + LOADING_SHOWN_AFTER * 2,
+        );
+        assert!(!app.get_loading_shown(), "nothing loading, nothing shown");
+        assert_eq!(state.borrow().files.len(), 3);
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A read that hangs with no report coming is given up on by the
+    /// timer once it is past READ_GIVES_UP and its count has stood
+    /// still; one still moving past it keeps its bar.
+    #[test]
+    fn the_timer_gives_up_on_a_stopped_read_and_not_a_moving_one() {
+        let (dir, writer, app, state, worker) = three_under_a_root("loading-stalled");
+        open_view(&state, &app, &worker, View::Roots(None));
+        let lost = SENT.with(|s| s.borrow_mut().pop()).unwrap();
+        let since = state.borrow().library.loading_since.unwrap();
+        let tick = |at: Duration| loading_tick(&mut state.borrow_mut(), &app, since + at);
+        // Moving: a sidecar every 20 s, well past the give-up.
+        tick(Duration::from_secs(1));
+        read_so_far(&state, 1);
+        tick(READ_GIVES_UP - Duration::from_secs(5));
+        read_so_far(&state, 2);
+        tick(READ_GIVES_UP + Duration::from_secs(5));
+        tick(READ_GIVES_UP + LOADING_STALLED);
+        assert!(state.borrow().library.loading, "still moving: kept");
+        assert!(app.get_loading_shown());
+        assert_eq!(app.get_loading_line(), "Reading 3 sidecars… 2");
+        // Stopped: the count at 2 for longer than LOADING_STALLED.
+        tick(READ_GIVES_UP + Duration::from_secs(5) + LOADING_STALLED + Duration::from_secs(1));
+        {
+            let st = state.borrow();
+            assert!(!st.library.loading, "given up");
+            assert!(!st.library.loading_timer.running());
+        }
+        assert!(!app.get_loading_shown());
+        assert!(
+            app.get_status().contains("did not come in"),
+            "{}",
+            app.get_status()
+        );
+        land(&state, &app, &worker, lost.run());
+        assert_eq!(
+            state.borrow().view,
+            View::Folder,
+            "the late read opens nothing"
+        );
+        assert!(!app.get_loading_shown());
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A view's read given up on takes its bar with it, and the status
+    /// line says why; a folder opened over a view's read does too.
+    #[test]
+    fn a_view_given_up_on_or_overtaken_drops_its_bar() {
+        let (dir, writer, app, state, worker) = three_under_a_root("loading-given-up");
+        open_view(&state, &app, &worker, View::Roots(None));
+        let lost = SENT.with(|s| s.borrow_mut().pop()).unwrap();
+        state.borrow_mut().library.loading_since =
+            Some(Instant::now() - READ_GIVES_UP - Duration::from_secs(1));
+        tick_on(LOADING_TICK + Duration::from_millis(1));
+        assert!(app.get_loading_shown(), "still reading, and said so");
+        assert_eq!(app.get_loading_line(), "Reading 3 sidecars… 0");
+        refresh_view(&state, &app, &worker);
+        assert!(!app.get_loading_shown());
+        assert!(!state.borrow().library.loading_timer.running());
+        assert!(
+            app.get_status().contains("did not come in"),
+            "{}",
+            app.get_status()
+        );
+        land(&state, &app, &worker, lost.run());
+        land_all(&state, &app, &worker);
+        assert!(!app.get_loading_shown(), "the late read brings no bar back");
+
+        // A folder opened while a view's read is out.
+        open_view(&state, &app, &worker, View::Roots(None));
+        state.borrow_mut().library.loading_since =
+            Some(Instant::now() - LOADING_SHOWN_AFTER - Duration::from_millis(10));
+        tick_on(LOADING_TICK + Duration::from_millis(1));
+        assert!(app.get_loading_shown());
+        let one = dir.join("a").join("x.tif");
+        crate::panel::browser::open_paths(&state, &app, &worker, &[one]);
+        assert!(!app.get_loading_shown());
+        assert!(!state.borrow().library.loading_timer.running());
+        land_all(&state, &app, &worker);
+        assert!(!app.get_loading_shown());
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);

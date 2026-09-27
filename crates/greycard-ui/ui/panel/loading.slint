@@ -1,0 +1,46 @@
+// A view's load, said while it is under way: a thin bar filled to the
+// share of the sidecars read, and the words under it. Shown over the
+// grid's sheet or the loupe's viewport, never as a sheet of its own:
+// it takes no clicks and no keys, which go on to whatever is under it.
+
+import { Theme } from "../theme.slint";
+
+export component LoadingCard inherits Rectangle {
+    /// How much of the load is done, 0 to 1.
+    in property <float> fraction;
+    /// What is being read, and how far along, in words.
+    in property <string> line;
+
+    width: 280px;
+    height: 2 * Theme.space-3 + 3px + Theme.space-2 + words.preferred-height;
+    border-radius: Theme.radius-md;
+    // The status plate's ground: the frames under it stay visible,
+    // the words readable over any of them.
+    background: #000000b3;
+    track := Rectangle {
+        x: Theme.space-3;
+        y: Theme.space-3;
+        width: parent.width - 2 * Theme.space-3;
+        height: 3px;
+        border-radius: 1.5px;
+        background: Theme.border-strong;
+        clip: true;
+        Rectangle {
+            x: 0;
+            width: parent.width * clamp(root.fraction, 0, 1);
+            height: 100%;
+            border-radius: 1.5px;
+            background: Theme.accent;
+        }
+    }
+    words := Text {
+        x: Theme.space-3;
+        y: track.y + track.height + Theme.space-2;
+        width: parent.width - 2 * Theme.space-3;
+        text: root.line;
+        color: Theme.text-secondary;
+        font-size: Theme.font-xs;
+        horizontal-alignment: center;
+        overflow: elide;
+    }
+}

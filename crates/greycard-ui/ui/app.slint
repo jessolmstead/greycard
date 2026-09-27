@@ -33,6 +33,7 @@ import { ExportSheet } from "panel/deliver.slint";
 import { ImportSheet } from "panel/import-sheet.slint";
 import { SettingsSheet } from "panel/settings-sheet.slint";
 import { GridSheet } from "panel/grid.slint";
+import { LoadingCard } from "panel/loading.slint";
 import { Filmstrip } from "panel/strip.slint";
 import { Viewport } from "panel/viewport.slint";
 import { FrameMenu } from "panel/frame-menu.slint";
@@ -873,6 +874,12 @@ export component App inherits Window {
     callback develop-changed();
 
     in property <string> status;
+    /// A view's sidecars being read on the pool, once the wait is
+    /// longer than a fast root's: shown over the grid's sheet, or in
+    /// the loupe over the viewport's bottom, above the strip.
+    in property <bool> loading-shown;
+    in property <float> loading-fraction;
+    in property <string> loading-line;
     /// What the camera's picture standing in for a develop is, in its
     /// own words. It takes the status line's place for as long as
     /// `placeholder` is set, so that the word over the picture and
@@ -2241,6 +2248,24 @@ export component App inherits Window {
         clicked => { root.strip-hidden = !root.strip-hidden; keys.focus(); }
     }
 
+    // A view's load in the loupe: over the viewport's bottom, above
+    // the strip it will fill and clear of the status plate, whose own
+    // bar is a develop's. Under the grid and the sheets; it takes no
+    // clicks.
+    if root.loading-shown && !root.grid-open: LoadingCard {
+        x: root.left-w + (root.width - root.left-w - root.right-w - self.width) / 2;
+        // Above the plate's row (24px on a space-3 margin), so a long
+        // status line on a narrow window runs under neither. In culling
+        // also above the notice (40px, 56px up; viewport.slint), which
+        // says what the key just pressed did and must not be covered;
+        // held there for the whole of culling so the card does not jump
+        // as the notice comes and goes.
+        y: root.height - root.strip-h - self.height
+            - (root.culling ? 56px + 40px + Theme.space-2 : 24px + Theme.space-3 + Theme.space-4);
+        fraction: root.loading-fraction;
+        line: root.loading-line;
+    }
+
     // The grid, over the window: the folder as a contact sheet, in
     // place of the viewport, the strip and both panels. It is drawn
     // over them rather than swapped in for them so the viewport's
@@ -2307,6 +2332,9 @@ export component App inherits Window {
         library-root-add => { root.library-root-add(); }
         library-root-add-open => { root.library-root-add-open(); }
         library-root-rename(p) => { root.library-root-rename(p); }
+        loading-shown: root.loading-shown;
+        loading-fraction: root.loading-fraction;
+        loading-line: root.loading-line;
     }
 
     // The model sheet: a download offered, with its license, until
