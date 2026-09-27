@@ -201,7 +201,10 @@ cargo clippy --all-targets
 cargo fmt
 ```
 
-`hooks/pre-push` runs them for you on every push. Turn it on once:
+`hooks/pre-push` runs the first two for you on a push that touches
+code, and lets a push of docs alone through at once. The tests it
+leaves to you and to the CI, which runs them on three platforms.
+Turn it on once:
 
 ```sh
 git config core.hooksPath hooks
