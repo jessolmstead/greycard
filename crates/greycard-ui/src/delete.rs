@@ -765,6 +765,9 @@ mod tests {
         let elsewhere = dir.join("elsewhere");
         std::fs::create_dir_all(&shoot_dir).unwrap();
         std::fs::create_dir_all(&elsewhere).unwrap();
+        // The symlink swap below is unix only; the files are the
+        // shoot's either way.
+        #[cfg_attr(not(unix), allow(unused_variables))]
         let files = shoot(&shoot_dir);
         let away = elsewhere.join("A.CR3");
         std::fs::write(&away, b"raw").unwrap();
