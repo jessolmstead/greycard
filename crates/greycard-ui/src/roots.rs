@@ -3426,6 +3426,9 @@ mod tests {
             SENT.with(|s| s.borrow_mut().pop()).unwrap()
         }
 
+        // Only the tests that lock a folder count d's frames, and
+        // those run on unix alone.
+        #[cfg(unix)]
         fn in_d(&self) -> usize {
             let st = self.state.borrow();
             st.files.iter().filter(|f| f.starts_with(&self.d)).count()
