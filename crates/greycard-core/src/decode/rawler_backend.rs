@@ -76,10 +76,7 @@ pub(crate) fn guarded<T>(
             .unwrap_or_else(|| "no message".into());
         Err(Error::Decode(
             if tail().is_some_and(|t| ends_in_zeros(&t)) {
-                format!(
-                    "the file ends in zeros where a finished one has data: it looks \
-                 half-copied, or still being copied (the decoder gave up: {message})"
-                )
+                format!("{HALF_COPIED} (the decoder gave up: {message})")
             } else {
                 format!("the decoder gave up on this file: {message}")
             },
@@ -102,12 +99,35 @@ pub fn inside_decoder() -> bool {
 const TAIL: usize = 64 * 1024;
 
 /// A whole [`TAIL`] of zeros at the end. No raw ends that way: its
-/// last bytes are compressed samples or a preview, and a run of 64 KiB
-/// of zeros in either is not something a camera writes. A copier that
-/// sets the length first (Windows' CopyFile, `rsync --preallocate`,
-/// some card importers) leaves exactly that until it is done.
+/// last bytes are compressed samples, a preview or a maker's records.
+/// A CR3 comes closest, with a 77 KiB run of zeros in its CTMD that
+/// stops some 24 KiB before the end, which is why this is the whole
+/// tail and not a run in it, and not a share of zeros (a CR3's last
+/// 64 KiB are 70 to 85% zeros). A copier that sets the length first
+/// (Windows' CopyFile, `rsync --preallocate`, some card importers)
+/// leaves exactly that until it is done. Zeros only: a preallocated
+/// file reads back as zeros whatever wrote it, and nothing leaves a
+/// tail of any other one byte.
 fn ends_in_zeros(tail: &[u8]) -> bool {
     tail.len() >= TAIL && tail.iter().all(|&b| b == 0)
+}
+
+/// What a file that [`ends_in_zeros`] is told with, whether the decoder
+/// gave up on it or read it to the end.
+const HALF_COPIED: &str = "the file ends in zeros where a finished one has data: \
+     it looks half-copied, or still being copied";
+
+/// Refuse a file whose last [`TAIL`] bytes are zeros before its samples
+/// are decoded. rawler reads such a file without complaint when its
+/// format lets it: an ARW, and a CR3 once dnglab/dnglab#851 is released,
+/// decode the zeros past the copied part as samples, and the picture
+/// comes out blank below it. The bytes are already in memory (rawler
+/// maps the whole file, or was handed it), so this costs no read.
+fn refuse_a_half_copy(bytes: &[u8]) -> Result<()> {
+    if ends_in_zeros(&bytes[bytes.len().saturating_sub(TAIL)..]) {
+        return Err(Error::Decode(HALF_COPIED.into()));
+    }
+    Ok(())
 }
 
 /// The last [`TAIL`] bytes of the file at `path`.
@@ -180,6 +200,7 @@ fn preview_unguarded(path: &Path) -> Result<Option<(image::RgbImage, Orientation
 /// Samples and metadata from one source; the frame takes what it keeps
 /// of the metadata (the shot).
 fn decode_source(source: &RawSource) -> Result<(RawFrame, RawMetadata)> {
+    refuse_a_half_copy(source.buf())?;
     let decoder = ::rawler::get_decoder(source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
     let image = decoder
@@ -485,6 +506,80 @@ mod tests {
         ] {
             let e = e.expect_err("the fixture does not decode").to_string();
             assert!(e.contains("gave up"), "{e}");
+        }
+    }
+
+    /// A linear DNG of our own writing: a raw rawler reads, which no
+    /// sample raw in the repo may stand in for.
+    fn a_dng() -> Vec<u8> {
+        let frame = crate::develop::tests::flat_frame();
+        let (width, height) = (16, 12);
+        let data = (0..width * height * 3)
+            .map(|i| 0.05 + (i % 97) as f32 / 100.0)
+            .collect();
+        let image = crate::image::CameraImage::from_data(width, height, data).unwrap();
+        let mut buf = std::io::Cursor::new(Vec::new());
+        crate::dng::write_linear_dng(
+            &mut buf,
+            &frame,
+            &image,
+            [2.0, 1.0, 4.0],
+            &Default::default(),
+        )
+        .unwrap();
+        buf.into_inner()
+    }
+
+    /// A file rawler reads to the end without complaint, as it does a
+    /// half-copied ARW, is refused when its tail is zeros, with the
+    /// same words as a panic on one; one byte short of a whole tail of
+    /// zeros, or none at all, and it decodes as before. The DNG writes
+    /// its directory last, so the zeros go after it: rawler finds
+    /// everything it needs ahead of them, which is the ARW's case.
+    #[test]
+    fn a_decode_that_reads_zeros_to_the_end_is_refused_as_a_half_copy() {
+        let dng = a_dng();
+        let padded = |zeros: usize| [dng.clone(), vec![0; zeros]].concat();
+        let copying = padded(TAIL);
+        let dir = std::env::temp_dir().join(format!("greycard-half-copy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("copying.dng");
+        std::fs::write(&path, &copying).unwrap();
+
+        // rawler on its own takes it for a finished file.
+        let source = RawSource::new_from_slice(&copying);
+        let decoder = ::rawler::get_decoder(&source).unwrap();
+        assert!(
+            decoder
+                .raw_image(&source, &RawDecodeParams::default(), false)
+                .is_ok()
+        );
+
+        let refusals = [
+            RawlerDecoder.decode_bytes(&copying).map(|_| ()),
+            RawlerDecoder.decode_path(&path).map(|_| ()),
+            RawlerDecoder.decode_path_with_metadata(&path).map(|_| ()),
+        ];
+        // What sits at the head of the file still reads; a browser
+        // shows the frame while it copies.
+        let probe = probe_path(&path);
+        let stance = stance_path(&path);
+        std::fs::remove_dir_all(&dir).unwrap();
+        for e in refusals {
+            match e {
+                Err(Error::Decode(text)) => assert_eq!(text, HALF_COPIED),
+                other => panic!("{other:?}"),
+            }
+        }
+        assert_eq!(probe.unwrap().make, "Test");
+        assert!(stance.is_ok());
+
+        // The DNG ends in a few zeros of its own; one data byte in the
+        // last 64 KiB is enough.
+        let own = dng.len() - 1 - dng.iter().rposition(|&b| b != 0).unwrap();
+        for finished in [dng.clone(), padded(TAIL - 1 - own)] {
+            let frame = RawlerDecoder.decode_bytes(&finished).unwrap();
+            assert_eq!((frame.width, frame.height), (16, 12));
         }
     }
 
