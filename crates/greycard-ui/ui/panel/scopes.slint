@@ -14,6 +14,12 @@ export component PanelHead inherits VerticalLayout {
     in property <[string]> scopes;
     in-out property <string> scope;
     callback scope-changed(string);
+    // The scopes weighed by the chosen adjustment's mask: off by
+    // default, for the session only, and greyed while there is no
+    // mask to weigh by.
+    in-out property <bool> scope-selection;
+    in property <bool> scope-mask-active;
+    callback scope-selection-changed();
     in property <bool> clip-shadows-lit;
     in property <color> clip-shadows-mark;
     in property <bool> clip-highlights-lit;
@@ -132,10 +138,46 @@ export component PanelHead inherits VerticalLayout {
                 }
             }
         }
-        Segmented {
-            options: root.scopes;
-            current <=> root.scope;
-            selected(name) => { root.scope-changed(name); }
+        HorizontalLayout {
+            spacing: Theme.space-1;
+            Segmented {
+                horizontal-stretch: 1;
+                options: root.scopes;
+                current <=> root.scope;
+                selected(name) => { root.scope-changed(name); }
+            }
+            // Selection: every bin weighed by the mask, so a skin mask
+            // shows the skin cloud on the vectorscope and a face its
+            // level on the waveform.
+            Rectangle {
+                property <bool> on: root.scope-selection && root.scope-mask-active;
+                horizontal-stretch: 0;
+                width: selection-label.preferred-width + 2 * Theme.space-2;
+                height: Theme.control-height;
+                border-radius: Theme.radius-md;
+                border-width: 1px;
+                border-color: Theme.border;
+                background: self.on ? Theme.raised
+                    : (selection-touch.has-hover && root.scope-mask-active ? Theme.hover : Theme.base);
+                opacity: root.scope-mask-active ? 1 : 0.45;
+                animate background { duration: Theme.quick; }
+                selection-label := Text {
+                    text: "Selection";
+                    color: parent.on ? Theme.text : Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    font-weight: parent.on ? Theme.weight-medium : Theme.weight-regular;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+                selection-touch := TouchArea {
+                    enabled: root.scope-mask-active;
+                    mouse-cursor: root.scope-mask-active ? MouseCursor.pointer : MouseCursor.default;
+                    clicked => {
+                        root.scope-selection = !root.scope-selection;
+                        root.scope-selection-changed();
+                    }
+                }
+            }
         }
     }
 }

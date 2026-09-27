@@ -136,7 +136,10 @@ struct Params {
     // once here: 0 nothing, 1 the lightness, 2 the color too (the
     // mean about the pixel); in y draw the shown mask's weight alone,
     // as grey, for measuring it against `Local::weight_sampled`; in z
-    // the sample's exposure, the global one without the baseline.
+    // the sample's exposure, the global one without the baseline; in
+    // w which local's mask the scopes weigh by (its index plus one;
+    // nothing at zero), whose coverage then goes out in the alpha for
+    // `scope.wgsl` to read. Only the scopes' analysis draw sets it.
     range: vec4<f32>,
 };
 
@@ -272,7 +275,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // that through the turn, as `to_source` in the edit crate.
     let q = (pos.xy - p.tile.xy - p.view * 0.5) / p.zoom + p.center;
     if (q.x < 0.0 || q.y < 0.0 || q.x >= p.frame_size.x || q.y >= p.frame_size.y) {
-        return vec4<f32>(p.canvas.rgb, 1.0);
+        return vec4<f32>(p.canvas.rgb, select(1.0, 0.0, p.range.w > 0.5));
     }
     // The perspective first, its divisor held above the horizon as
     // `to_source` holds it, then the turn.
@@ -280,7 +283,8 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let r = r0 / max(1.0 + dot(p.persp.xy, r0), 1e-4);
     let at = p.image * 0.5 + vec2<f32>(dot(p.turn0, r), dot(p.turn1, r));
     if (at.x < 0.0 || at.y < 0.0 || at.x >= p.image.x || at.y >= p.image.y) {
-        return vec4<f32>(0.03, 0.03, 0.03, 1.0);
+        // Nothing of the source is here, so nothing of a mask either.
+        return vec4<f32>(0.03, 0.03, 0.03, select(1.0, 0.0, p.range.w > 0.5));
     }
     // The picture, and in its alpha the sharpen's blend mask. The
     // texture is read where it holds this source position; everything
@@ -474,7 +478,14 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             d = vec3<f32>(0.2, 0.4, 1.0);
         }
     }
-    return vec4<f32>(d, 1.0);
+    // The scopes weighed by a mask: its coverage in the alpha, which
+    // the analysis texture holds in eight bits and `scope.wgsl` reads.
+    var alpha = 1.0;
+    if (p.range.w > 0.5) {
+        let k = u32(p.range.w) - 1u;
+        alpha = select(0.0, weights[min(k, 15u)], k < count);
+    }
+    return vec4<f32>(d, alpha);
 }
 
 // The grain, as `grain.rs` has it: the hash, a cell's crystals from

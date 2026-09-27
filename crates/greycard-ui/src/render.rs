@@ -532,6 +532,10 @@ pub struct View {
     /// Draw the shown mask's weight alone, as grey, rather than the
     /// picture under it: what the GPU check reads back.
     pub mask_alone: bool,
+    /// Write this local's mask coverage into the alpha, for the
+    /// scopes to weigh by (`scope.wgsl`). Only the analysis draw of
+    /// [`Renderer::analyze`] sets it; the alpha is 1 otherwise.
+    pub weigh_by: Option<usize>,
     pub vignette: Vignette,
     pub grain: Grain,
     /// The clipping warnings to paint over the picture.
@@ -603,6 +607,7 @@ impl View {
             show_mask: None,
             show_sharpen: false,
             mask_alone: false,
+            weigh_by: None,
             vignette: Vignette::default(),
             grain: Grain::default(),
             warn: Warn::default(),
@@ -670,10 +675,10 @@ struct Scopes {
     picture_staging: Option<gpu::Buffer>,
     picture_in_flight: Option<std::sync::mpsc::Receiver<Result<(), gpu::BufferAsyncError>>>,
     picture: Option<slint::Image>,
-    /// The edit and scope the bins in flight or latest were taken
-    /// under; a new analysis only when one of those, or the image,
-    /// changes.
-    analyzed: Option<(EditKey, Scope)>,
+    /// The edit, scope and weighing mask the bins in flight or latest
+    /// were taken under; a new analysis only when one of those, or the
+    /// image, changes.
+    analyzed: Option<(EditKey, Scope, Option<usize>)>,
     image_changed: bool,
 }
 
@@ -795,7 +800,7 @@ impl Scopes {
         });
         let mode = device.create_buffer(&gpu::BufferDescriptor {
             label: Some("scope mode"),
-            size: 16,
+            size: 32,
             usage: gpu::BufferUsages::UNIFORM | gpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -1372,7 +1377,7 @@ impl Renderer {
                 range_reads(&v.locals),
                 if v.mask_alone { 1.0 } else { 0.0 },
                 v.light.exposure,
-                0.0,
+                v.weigh_by.map(|k| k as f32 + 1.0).unwrap_or(0.0),
             ],
         };
         // Each draw has its own uniform buffer, since two draws share a
@@ -1528,7 +1533,20 @@ impl Renderer {
     ///
     /// The histogram is always in the first [`scope::HIST`] bins,
     /// whatever `scope` asks for, because the curve editor draws it.
-    pub fn analyze(&mut self, v: &View, scope: Scope) -> (Option<(Scope, &[u32])>, bool) {
+    ///
+    /// With `weigh_by`, a local of `v` by index, every bin is weighted
+    /// by that local's mask: the analysis draw writes its coverage
+    /// into the alpha, the compute pass adds it in place of one, and
+    /// the read back is brought to the whole picture's mass
+    /// ([`scope::normalize`]), so a small selection does not go dim.
+    /// Without it the bins are what they have always been.
+    pub fn analyze(
+        &mut self,
+        v: &View,
+        scope: Scope,
+        weigh_by: Option<usize>,
+    ) -> (Option<(Scope, &[u32])>, bool) {
+        let weigh_by = weigh_by.filter(|&k| k < v.locals.len().min(MAX_LOCALS));
         // Collect a finished read back.
         let _ = self.device.poll(gpu::PollType::Poll);
         if let Some(rx) = &self.scopes.in_flight
@@ -1536,11 +1554,15 @@ impl Renderer {
         {
             self.scopes.in_flight = None;
             if result.is_ok()
-                && let Some((_, taken)) = self.scopes.analyzed
+                && let Some((_, taken, weighed)) = self.scopes.analyzed
+                && let Some(t) = &self.scopes.analysis
                 && let Ok(data) = self.scopes.staging.slice(..).get_mapped_range()
             {
-                let bins = bytemuck::cast_slice::<u8, u32>(&data)[..taken.bin_count()].to_vec();
+                let mut bins = bytemuck::cast_slice::<u8, u32>(&data)[..taken.bin_count()].to_vec();
                 drop(data);
+                if weighed.is_some() {
+                    scope::normalize(&mut bins, (t.width() * t.height()) as usize);
+                }
                 self.scopes.latest = Some((taken, bins));
             }
             self.scopes.staging.unmap();
@@ -1559,12 +1581,19 @@ impl Renderer {
                     buf.make_mut_bytes()
                         .copy_from_slice(&data[..(w * h * 4) as usize]);
                     drop(data);
+                    // A weighed analysis holds the mask in its alpha;
+                    // the navigator shows the picture whole.
+                    if matches!(self.scopes.analyzed, Some((_, _, Some(_)))) {
+                        for p in buf.make_mut_slice() {
+                            p.a = 0xff;
+                        }
+                    }
                     self.scopes.picture = Some(slint::Image::from_rgba8(buf));
                 }
                 staging.unmap();
             }
         }
-        let key = (EditKey::of(v), scope);
+        let key = (EditKey::of(v), scope, weigh_by);
         let stale = self.scopes.image_changed || self.scopes.analyzed.as_ref() != Some(&key);
         if stale
             && self.scopes.in_flight.is_none()
@@ -1592,6 +1621,8 @@ impl Renderer {
                 center: (iw as f32 / 2.0, ih as f32 / 2.0),
                 show_mask: None,
                 show_sharpen: false,
+                mask_alone: false,
+                weigh_by,
                 warn: Warn::default(),
                 vignette: v.vignette,
                 grain: v.grain,
@@ -1606,6 +1637,10 @@ impl Renderer {
                     scope::COLUMNS as u32,
                     scope::WHEEL as u32,
                     scope::LEVELS as u32,
+                    u32::from(weigh_by.is_some()),
+                    0,
+                    0,
+                    0,
                 ]),
             );
             let mut encoder = self
@@ -2446,6 +2481,162 @@ mod tests {
             width: w,
             height: h,
             data,
+        }
+    }
+
+    /// The scopes' bins as the compute pass makes them, for `scope`
+    /// weighed by `weigh_by`: `analyze` until its read back lands.
+    fn gpu_bins(
+        renderer: &mut Renderer,
+        view: &View,
+        scope: Scope,
+        weigh_by: Option<usize>,
+    ) -> Vec<u32> {
+        for _ in 0..100 {
+            let (bins, in_flight) = renderer.analyze(view, scope, weigh_by);
+            if !in_flight
+                && let Some((taken, bins)) = bins
+                && taken == scope
+            {
+                return bins.to_vec();
+            }
+            let _ = renderer.device.poll(gpu::PollType::wait_indefinitely());
+        }
+        panic!("the scope's read back never landed");
+    }
+
+    /// The scopes weighed by a mask, on the GPU, against the CPU's
+    /// reference (`scope::weighted_bins`) over the same analysis
+    /// picture and coverage: the picture drawn through the view as
+    /// `analyze` draws it and read back, its alpha checked against the
+    /// mask's own weight, then binned both ways. Unweighted, the bins
+    /// are the unweighted reference's and the picture is the same with
+    /// the weighing on or off.
+    #[test]
+    fn the_weighted_scopes_are_the_cpus() {
+        let Some((device, queue)) = device("the weighted scopes' GPU check") else {
+            return;
+        };
+        let image = field();
+        let (w, h) = (image.width, image.height);
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        let mut view = View::blank();
+        view.center = (w as f32 / 2.0, h as f32 / 2.0);
+        view.plane = (w as f32, h as f32);
+        view.frame_size = (w as f32, h as f32);
+        // A gradient across the top, the skin, and a window above
+        // anything the field holds, which takes in nothing.
+        let mut locals = vec![
+            local_of(vec![(
+                Shape::Linear {
+                    from: [0.2, 0.0],
+                    to: [0.8, 0.0],
+                },
+                Mode::Add,
+            )]),
+            local_of(vec![(Shape::skin(), Mode::Add)]),
+            local_of(vec![(
+                Shape::Luminance {
+                    low: 1.5,
+                    high: 2.0,
+                    low_feather: 0.0,
+                    high_feather: 0.0,
+                },
+                Mode::Add,
+            )]),
+        ];
+        locals[0].baked.light.exposure = 0.5;
+        view.locals = locals;
+        let _ = renderer.render(w as u32, h as u32, &view);
+        // The analysis picture as `analyze` draws it.
+        let aw = ANALYSIS_WIDTH;
+        let ah = (aw * h as u32 / w as u32).max(1);
+        let whole = |weigh_by: Option<usize>, show: Option<usize>| View {
+            zoom: aw as f32 / w as f32,
+            center: (w as f32 / 2.0, h as f32 / 2.0),
+            weigh_by,
+            show_mask: show,
+            mask_alone: show.is_some(),
+            ..view.clone()
+        };
+        let mut shot = |v: &View| {
+            let t = renderer.render(aw, ah, v);
+            renderer.read_back(&t).expect("read back")
+        };
+        let plain = shot(&whole(None, None));
+        let (aw, ah) = (aw as usize, ah as usize);
+        let rgb = |img: &image::RgbaImage| -> Vec<[f32; 3]> {
+            img.pixels()
+                .map(|p| [0, 1, 2].map(|c| f32::from(p[c]) / 255.0))
+                .collect()
+        };
+        assert!(plain.pixels().all(|p| p[3] == 0xff), "alpha is 1 unweighed");
+        let pixels = rgb(&plain);
+        let mut shots = Vec::new();
+        for k in 0..view.locals.len() {
+            let weighed = shot(&whole(Some(k), None));
+            // The weighing changes the alpha and nothing else.
+            assert_eq!(rgb(&weighed), pixels, "mask {k}: the picture moved");
+            // And the alpha is the mask's weight, as the mask on show
+            // draws it.
+            let alone = shot(&whole(None, Some(k)));
+            let worst = weighed
+                .pixels()
+                .zip(alone.pixels())
+                .map(|(a, b)| a[3].abs_diff(b[0]))
+                .max()
+                .unwrap_or(0);
+            assert!(worst <= 1, "mask {k}: alpha {worst} levels from the mask");
+            let coverage: Vec<f32> = weighed.pixels().map(|p| f32::from(p[3]) / 255.0).collect();
+            shots.push(coverage);
+        }
+        // The first two take in part of the picture and the third none.
+        let cover = |c: &[f32]| c.iter().sum::<f32>() / c.len() as f32;
+        assert!(
+            (0.1..0.9).contains(&cover(&shots[0])),
+            "{}",
+            cover(&shots[0])
+        );
+        assert!(
+            (0.005..0.9).contains(&cover(&shots[1])),
+            "{}",
+            cover(&shots[1])
+        );
+        assert_eq!(cover(&shots[2]), 0.0);
+        // The binning is exact arithmetic on the same bytes, and the
+        // histogram and waveforms agree to the count; a vectorscope
+        // cell edge, where the shader's floating point rounds a last
+        // bit apart from the CPU's, moves the odd one, weighed or not
+        // (2 counts on Vulkan here, before the weighing too).
+        let compare = |what: &str, gpu: &[u32], cpu: &[u32]| {
+            let off: u64 = gpu
+                .iter()
+                .zip(cpu)
+                .map(|(a, b)| u64::from(a.abs_diff(*b)))
+                .sum();
+            let mass: u64 = cpu.iter().map(|&n| u64::from(n)).sum();
+            eprintln!("{what}: {off} of {mass} apart");
+            assert!(off <= 8, "{what}: {off} of {mass} apart");
+        };
+        for scope in Scope::ALL {
+            let gpu = gpu_bins(&mut renderer, &view, scope, None);
+            let cpu = scope::bins(scope, &pixels, aw, ah);
+            compare(&format!("{scope:?} unweighed"), &gpu, &cpu);
+            if scope != Scope::Vector {
+                assert_eq!(gpu, cpu, "{scope:?} unweighed");
+            }
+            for (k, coverage) in shots.iter().enumerate() {
+                let gpu = gpu_bins(&mut renderer, &view, scope, Some(k));
+                let cpu = scope::weighted_bins(scope, &pixels, coverage, aw, ah);
+                compare(&format!("{scope:?} weighed by mask {k}"), &gpu, &cpu);
+                if scope != Scope::Vector {
+                    assert_eq!(gpu, cpu, "{scope:?} weighed by mask {k}");
+                }
+                if k == 2 {
+                    assert!(gpu.iter().all(|&n| n == 0), "{scope:?}: nothing selected");
+                }
+            }
         }
     }
 

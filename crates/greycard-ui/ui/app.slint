@@ -889,6 +889,11 @@ export component App inherits Window {
     in property <[string]> scopes;
     in-out property <string> scope: "RGB";
     callback scope-changed(string);
+    // The scopes weighed by the chosen adjustment's mask, and whether
+    // there is one to weigh by. The toggle lives for the session.
+    in-out property <bool> scope-selection: false;
+    in property <bool> scope-mask-active;
+    callback scope-selection-changed();
     // The clipping marks at the histogram's corners: lit in the
     // color of the channels that clip, and whether each end's
     // warning is painted over the picture. J toggles both.
@@ -1663,6 +1668,9 @@ export component App inherits Window {
                     scopes: root.scopes;
                     scope <=> root.scope;
                     scope-changed(a) => { root.scope-changed(a); }
+                    scope-selection <=> root.scope-selection;
+                    scope-mask-active: root.scope-mask-active;
+                    scope-selection-changed => { root.scope-selection-changed(); }
                     clip-shadows-lit: root.clip-shadows-lit;
                     clip-shadows-mark: root.clip-shadows-mark;
                     clip-highlights-lit: root.clip-highlights-lit;

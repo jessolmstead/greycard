@@ -233,6 +233,11 @@ struct Cli {
     /// Without it, whichever was on last time
     #[arg(long)]
     scope: Option<String>,
+    /// Weigh the scopes by the chosen adjustment's mask from the
+    /// start (the panel's Selection toggle), for a screenshot with
+    /// --show-mask
+    #[arg(long)]
+    scope_selection: bool,
     /// Paint the clipping warnings over the picture, the shadows and
     /// the highlights both, for a screenshot
     #[arg(long)]

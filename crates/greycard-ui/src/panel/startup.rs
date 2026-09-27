@@ -145,6 +145,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     show_presets_picker(&app, &remembered.export_presets, preset.as_deref());
     show_folds(&app, &remembered.collapsed);
     app.set_scope(opening_scope(&cli, &remembered).name().into());
+    app.set_scope_selection(cli.scope_selection);
     app.set_show_sharpen_mask(cli.sharpen_mask);
     app.set_warn_shadows(cli.clipping || remembered.warn_shadows);
     app.set_warn_highlights(cli.clipping || remembered.warn_highlights);
@@ -1040,6 +1041,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         show_mask: app.get_show_mask().then_some(st.target).flatten(),
                         show_sharpen: app.get_show_sharpen_mask() && app.get_sharpen(),
                         mask_alone: false,
+                        weigh_by: None,
                         canvas: render::canvas_rgb(app.get_canvas_choice()),
                         source: st.source,
                         source_turn: lag,
@@ -1090,7 +1092,15 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             at.elapsed().as_secs_f64() * 1e3
                         );
                     }
-                    let (bins, in_flight) = renderer.analyze(&view, st.scope);
+                    // The scopes weighed by the chosen adjustment's
+                    // mask, when the panel's selection toggle asks and
+                    // there is a mask to weigh by.
+                    let selection = st
+                        .target
+                        .filter(|&k| view.locals.get(k).is_some_and(|l| !l.mask.is_empty()));
+                    app.set_scope_mask_active(selection.is_some());
+                    let weigh_by = selection.filter(|_| app.get_scope_selection());
+                    let (bins, in_flight) = renderer.analyze(&view, st.scope, weigh_by);
                     let fresh = bins.map(|(_, b)| b.to_vec());
                     if let Some((taken, bins)) = bins {
                         app.set_scope_picture(scope::draw(taken, bins));

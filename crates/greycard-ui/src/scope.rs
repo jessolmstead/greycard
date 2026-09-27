@@ -137,23 +137,106 @@ fn color_of(cb: f32, cr: f32) -> [f32; 3] {
 /// the same on the GPU over the analysis texture.
 #[allow(dead_code)]
 pub fn bins(scope: Scope, pixels: &[[f32; 3]], width: usize, height: usize) -> Vec<u32> {
+    accumulate(scope, pixels, width, height, |_| 1)
+}
+
+/// The steps a pixel's coverage is held in: the analysis texture's
+/// alpha, eight bits, where the viewport shader writes the weighing
+/// mask's coverage.
+pub const COVERAGE_STEPS: u32 = 255;
+
+/// A coverage in [0, 1] as the analysis texture holds it, and as
+/// `scope.wgsl` reads it back: a whole number of [`COVERAGE_STEPS`].
+#[allow(dead_code)]
+pub fn coverage_step(w: f32) -> u32 {
+    (w.clamp(0.0, 1.0) * COVERAGE_STEPS as f32 + 0.5) as u32
+}
+
+/// The reference binning weighted by a mask: each pixel adds its
+/// coverage, in [`COVERAGE_STEPS`], to every bin it lands in rather
+/// than one, and the bins are then brought back to pixels by
+/// [`normalize`]. `coverage` is a value a pixel, in [0, 1]. This is
+/// `scope.wgsl` with its `weighted` switch on, followed by what
+/// `Renderer::analyze` does with the read back.
+#[allow(dead_code)]
+pub fn weighted_bins(
+    scope: Scope,
+    pixels: &[[f32; 3]],
+    coverage: &[f32],
+    width: usize,
+    height: usize,
+) -> Vec<u32> {
+    let mut out = accumulate(scope, pixels, width, height, |i| coverage_step(coverage[i]));
+    normalize(&mut out, width * height);
+    out
+}
+
+/// Weighted bins, which hold coverage steps, as pixels again, scaled
+/// so the selection has the mass of the whole picture: a bin holding
+/// `n` of a coverage sum `sum` becomes `n * pixels / sum`, rounded.
+/// The histogram's end bins, which the clipping marks read
+/// ([`Clipping::of`]), are never rounded to nothing where anything
+/// landed, so a single pixel at the edge of a mask still lights a
+/// mark; every other bin rounds, so the faint edge of a soft mask
+/// does not lift the cells it touches into view. The coverage sum is
+/// the histogram's red channel, into which every pixel adds its
+/// coverage once.
+///
+/// So a small mask's scope is as bright as the whole frame's (the
+/// drawing scales to its densest cells, and the mass is the same),
+/// a mask of one everywhere gives the unweighted bins exactly, and a
+/// mask of nothing gives no bins at all.
+pub fn normalize(bins: &mut [u32], pixels: usize) {
+    let sum: u64 = bins[..LEVELS.min(bins.len())]
+        .iter()
+        .map(|&n| u64::from(n))
+        .sum();
+    if sum == 0 {
+        bins.fill(0);
+        return;
+    }
+    let pixels = pixels as u64;
+    let clip = |i: usize| i < HIST && matches!(i % LEVELS, 0 | 255);
+    for (i, n) in bins.iter_mut().enumerate() {
+        if *n != 0 {
+            let scaled = (2 * u64::from(*n) * pixels + sum) / (2 * sum);
+            let floor = if clip(i) { 1 } else { 0 };
+            *n = scaled.clamp(floor, u64::from(u32::MAX)) as u32;
+        }
+    }
+}
+
+/// Bin every pixel, adding `weight(i)` for the pixel at index `i`.
+#[allow(dead_code)]
+fn accumulate(
+    scope: Scope,
+    pixels: &[[f32; 3]],
+    width: usize,
+    height: usize,
+    weight: impl Fn(usize) -> u32,
+) -> Vec<u32> {
     let mut out = vec![0u32; scope.bin_count()];
     for y in 0..height {
         for x in 0..width {
-            let c = pixels[y * width + x];
+            let i = y * width + x;
+            let q = weight(i);
+            if q == 0 {
+                continue;
+            }
+            let c = pixels[i];
             for (ch, v) in c.iter().enumerate() {
-                out[ch * LEVELS + level(*v)] += 1;
+                out[ch * LEVELS + level(*v)] += q;
             }
             match scope.kind() {
                 1 => {
                     let column = (x * COLUMNS / width).min(COLUMNS - 1);
                     for (ch, v) in c.iter().enumerate() {
-                        out[HIST + (ch * COLUMNS + column) * LEVELS + level(*v)] += 1;
+                        out[HIST + (ch * COLUMNS + column) * LEVELS + level(*v)] += q;
                     }
                 }
                 2 => {
                     if let Some(cell) = wheel_cell(c) {
-                        out[HIST + cell] += 1;
+                        out[HIST + cell] += q;
                     }
                 }
                 _ => {}
@@ -580,6 +663,135 @@ mod tests {
         assert!(p.r > p.g + 0x40 && p.r > p.b + 0x40, "red reads red: {p:?}");
         assert!(y < center - 80, "red is near the top: {y}");
         assert!(x < center && x > center - 40, "a little to the left: {x}");
+    }
+
+    /// A picture with something in every scope: hue across, value
+    /// down.
+    fn colors(w: usize, h: usize) -> Vec<[f32; 3]> {
+        (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32 / w as f32, (i / w) as f32 / h as f32);
+                let t = x * std::f32::consts::TAU;
+                [
+                    y * (0.5 + 0.5 * t.cos()),
+                    y * (0.5 + 0.5 * (t + 2.1).cos()),
+                    y * (0.5 + 0.5 * (t + 4.2).cos()),
+                ]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_mask_of_one_everywhere_is_the_unweighted_scope() {
+        let (w, h) = (97, 61);
+        let image = colors(w, h);
+        let ones = vec![1.0; w * h];
+        for scope in Scope::ALL {
+            assert_eq!(
+                weighted_bins(scope, &image, &ones, w, h),
+                bins(scope, &image, w, h),
+                "{scope:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_mask_of_nothing_is_an_empty_scope() {
+        let (w, h) = (64, 40);
+        let image = colors(w, h);
+        let none = vec![0.0; w * h];
+        for scope in Scope::ALL {
+            let b = weighted_bins(scope, &image, &none, w, h);
+            assert_eq!(b.len(), scope.bin_count());
+            assert!(b.iter().all(|&n| n == 0), "{scope:?}");
+            assert_eq!(Clipping::of(&b), Clipping::default());
+            // It draws, with no trace: the histogram is all ground.
+            let (px, _, _) = pixels(&draw(scope, &b));
+            if scope == Scope::Rgb {
+                assert!(
+                    px.iter()
+                        .all(|p| p.r == GROUND && p.g == GROUND && p.b == GROUND)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_small_selection_has_the_whole_pictures_mass() {
+        // The left eighth of a ramp, selected: its bins are the left
+        // eighth's alone, scaled up to the whole picture's count, so
+        // the scope is drawn as bright as the whole frame's.
+        let (w, h) = (256, 16);
+        let image = ramp(w, h);
+        let coverage: Vec<f32> = (0..w * h)
+            .map(|i| if i % w < w / 8 { 1.0 } else { 0.0 })
+            .collect();
+        for scope in Scope::ALL {
+            let b = weighted_bins(scope, &image, &coverage, w, h);
+            let hist: u32 = b[..HIST].iter().sum();
+            assert_eq!(hist as usize, 3 * w * h, "{scope:?}");
+            // Nothing from the right of the selection.
+            assert!(b[level(0.5)..LEVELS].iter().all(|&n| n == 0));
+            assert_eq!(b[0], 8 * h as u32, "the darkest column, eight times over");
+        }
+        // A fifth of a coverage counts a fifth: a picture half at 0.2
+        // and half at 0.8, the dark half weighed 51 of the texture's
+        // 255 steps and the bright one all of them, holds five times
+        // the bright.
+        let mut image = flat(w, h, [0.2; 3]);
+        image[w * h / 2..].fill([0.8; 3]);
+        let coverage: Vec<f32> = (0..w * h)
+            .map(|i| if i < w * h / 2 { 51.0 / 255.0 } else { 1.0 })
+            .collect();
+        let b = weighted_bins(Scope::Rgb, &image, &coverage, w, h);
+        let (dark, bright) = (b[level(0.2)], b[level(0.8)]);
+        assert_eq!(dark + bright, (w * h) as u32);
+        assert!(bright.abs_diff(5 * dark) <= 5, "{dark} {bright}");
+    }
+
+    #[test]
+    fn a_faint_edge_does_not_lift_a_scope_cell() {
+        // A grey field wholly selected, and one saturated mid-level
+        // pixel at the lowest coverage step: it rounds to nothing in
+        // the waveform and on the wheel, as the rounding says, rather
+        // than being lifted to a count that draws.
+        let (w, h) = (128, 128);
+        let mut image = flat(w, h, [0.5; 3]);
+        let odd = [0.7, 0.3, 0.4];
+        image[w * h / 2 + w / 2] = odd;
+        let mut coverage = vec![1.0; w * h];
+        coverage[w * h / 2 + w / 2] = 1.0 / 255.0;
+        let wave = weighted_bins(Scope::Waveform, &image, &coverage, w, h);
+        let column = (w / 2) * COLUMNS / w;
+        let at = HIST + column * LEVELS + level(odd[0]);
+        assert_eq!(wave[at], 0, "the red level of the faint pixel");
+        let wheel = weighted_bins(Scope::Vector, &image, &coverage, w, h);
+        let cell = wheel_cell(odd).unwrap();
+        assert_ne!(Some(cell), wheel_cell([0.5; 3]));
+        assert_eq!(wheel[HIST + cell], 0, "the faint pixel's chroma");
+        // And the mass is the whole picture's less the faint pixel's
+        // three rounded-away levels, not lifted by it.
+        let mass: u32 = wave[HIST..].iter().sum();
+        assert_eq!(mass as usize, 3 * w * h - 3);
+    }
+
+    #[test]
+    fn a_pixel_at_the_edge_of_a_mask_still_lands() {
+        // One clipped pixel at the lowest coverage the texture holds,
+        // beside a fully selected field: it is a count still, and the
+        // clipping mark lights for it.
+        let (w, h) = (128, 128);
+        let mut image = flat(w, h, [0.5; 3]);
+        image[0] = [1.0, 0.5, 0.5];
+        let mut coverage = vec![1.0; w * h];
+        coverage[0] = 1.0 / 255.0;
+        let b = weighted_bins(Scope::Rgb, &image, &coverage, w, h);
+        assert_eq!(b[LEVELS - 1], 1);
+        assert!(Clipping::of(&b).highlights[0]);
+        // And below the texture's first step it is not in the mask.
+        coverage[0] = 0.4 / 255.0;
+        let b = weighted_bins(Scope::Rgb, &image, &coverage, w, h);
+        assert_eq!(b[LEVELS - 1], 0);
     }
 
     #[test]

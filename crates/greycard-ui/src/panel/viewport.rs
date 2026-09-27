@@ -749,9 +749,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
         });
     }
-    // The clipping warnings and the proof are the panel's; a change
-    // is a frame.
+    // The clipping warnings, the proof and the scopes' selection
+    // toggle are the panel's; a change is a frame.
     {
+        let app_weak = app.as_weak();
+        app.on_scope_selection_changed(move || {
+            if let Some(app) = app_weak.upgrade() {
+                app.window().request_redraw();
+            }
+        });
         let app_weak = app.as_weak();
         app.on_warn_changed(move || {
             if let Some(app) = app_weak.upgrade() {
