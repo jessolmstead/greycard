@@ -286,10 +286,26 @@ impl Roots {
     /// Add a folder, canonical. A folder already covered by a root
     /// changes nothing; a folder above roots takes their place.
     pub fn add(&mut self, dir: &Path) -> Result<Added, RootError> {
+        let dir = Roots::checked(dir)?;
+        self.add_checked(dir)
+    }
+
+    /// A folder as [`Roots::add`] takes it: canonical, and a folder.
+    /// This asks the disk, and a folder on a share that has stopped
+    /// answering holds it for as long as the share is gone, so a
+    /// window asks it on a thread of its own and hands the answer to
+    /// [`Roots::add_checked`].
+    pub fn checked(dir: &Path) -> Result<PathBuf, RootError> {
         let dir = canonical(dir).map_err(|e| RootError::Io(dir.to_path_buf(), e))?;
         if !dir.is_dir() {
             return Err(RootError::NotAFolder(dir));
         }
+        Ok(dir)
+    }
+
+    /// Add a folder [`Roots::checked`] has made canonical, asking the
+    /// disk nothing.
+    pub fn add_checked(&mut self, dir: PathBuf) -> Result<Added, RootError> {
         if dir.to_str().is_none() {
             return Err(RootError::NotUnicode(dir));
         }
@@ -315,9 +331,16 @@ impl Roots {
     /// Forget a root. The folder and its files are not touched, nor
     /// are their rows in the index, which is a cache and costs
     /// nothing to keep; the all-roots view simply stops listing them.
-    /// True when it was a root.
+    /// True when it was a root. A root named as the list has it is
+    /// taken out without asking the disk, so a root on a share that
+    /// has stopped answering can still be taken out; any other path is
+    /// made canonical first.
     pub fn remove(&mut self, dir: &Path) -> bool {
-        let canonical = canonical(dir).unwrap_or_else(|_| dir.to_path_buf());
+        let canonical = if self.list.iter().any(|r| r == dir) {
+            dir.to_path_buf()
+        } else {
+            canonical(dir).unwrap_or_else(|_| dir.to_path_buf())
+        };
         let before = self.list.len();
         self.list.retain(|r| r != dir && *r != canonical);
         self.names.retain(|r, _| r != dir && *r != canonical);

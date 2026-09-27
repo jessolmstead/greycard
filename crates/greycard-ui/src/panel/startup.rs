@@ -469,6 +469,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // beside the library.
     {
         let mut st = state.borrow_mut();
+        st.library.poll_every = (remembered.network_poll_minutes > 0).then(|| {
+            std::time::Duration::from_secs(remembered.network_poll_minutes.saturating_mul(60))
+        });
         if cli.roots.is_empty() {
             if let Some(path) = &library_path {
                 let file = greycard_library::Roots::path_beside(path);
@@ -513,7 +516,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     crate::library::index_open_folder(&mut st);
                     // After the open folder's own pass is asked for,
                     // so that one goes first.
-                    crate::roots::start(&mut st);
+                    crate::roots::start(&mut st, &app);
                 }
                 Err(e) => {
                     tracing::warn!("no library index: the indexer did not start: {e}");
@@ -1265,6 +1268,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         // The watcher first, which holds a way to the indexer's
         // thread.
         st.library.watcher = None;
+        st.library.poll = None;
         if let Some(indexer) = st.index.take() {
             indexer.stop(worker::LEAVING);
         }
@@ -1285,6 +1289,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.cull_move_on = kept.cull_move_on;
         settings.lenses_declined = kept.lenses_declined;
         settings.thumb_cache_mb = kept.thumb_cache_mb;
+        settings.network_poll_minutes = kept.network_poll_minutes;
         settings.import = kept.import;
         settings.update = kept.update;
         // A run opened with `--hide-panels` was a look at the picture
@@ -1577,6 +1582,7 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         last_file: String::new(),
         // Not the panel's either: the settings file is where it is set.
         thumb_cache_mb: 0,
+        network_poll_minutes: 0,
         // Written as an import starts.
         import: settings::ImportChoices::default(),
         // The state's, filled in by the caller.

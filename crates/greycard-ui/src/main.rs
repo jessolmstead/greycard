@@ -27,6 +27,7 @@ mod grid;
 mod import;
 mod library;
 mod log;
+mod mounts;
 mod naming;
 mod outline;
 mod panel;

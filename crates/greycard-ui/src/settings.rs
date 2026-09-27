@@ -90,6 +90,12 @@ pub struct Settings {
     /// may hold, in megabytes; past it the least recently used
     /// pictures go. Zero turns the cache off.
     pub thumb_cache_mb: u64,
+    /// How often, in minutes, a library root on a network mount (NFS,
+    /// SMB, sshfs), which is not watched, is passed over for what
+    /// changed on it. Zero for never: the pass at launch and the list's
+    /// reads as the index reports are then all it gets. A local root is
+    /// watched and never passed over on a timer.
+    pub network_poll_minutes: u64,
     /// The import sheet as it was last started: written when an
     /// import begins, not gathered when the window closes.
     pub import: ImportChoices,
@@ -157,6 +163,7 @@ impl Default for Settings {
             lenses_declined: false,
             last_file: String::new(),
             thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
+            network_poll_minutes: 10,
             import: ImportChoices::default(),
             filter: crate::filter::Saved::default(),
             update: crate::update::Kept::default(),
@@ -288,6 +295,7 @@ mod tests {
             lenses_declined: true,
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             thumb_cache_mb: 1024,
+            network_poll_minutes: 30,
             import: ImportChoices {
                 destination: "/home/x/Pictures".into(),
                 subfolder: "{yyyy}/{date}".into(),

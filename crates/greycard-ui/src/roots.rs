@@ -13,6 +13,14 @@
 //! unplugged) is offline: no pass, no watch, its chip says so, and
 //! the view leaves its files out rather than show them as gone.
 //!
+//! Which roots are there, which are on a network mount, and the
+//! watcher on the rest are all found off the window's thread
+//! ([`Plan::build`]), and the watcher is put in place when it is
+//! ready, unless the roots have changed since it was asked for. A root
+//! on a network mount is not watched, since inotify does not see what
+//! the server does; a pass goes over it every so often instead
+//! ([`Poll`]).
+//!
 //! The all-roots view is the index's list of the files under the
 //! roots, by folder then name, with the filter bar over it as over a
 //! folder. It can be the whole library, so its sidecars are read on
@@ -69,6 +77,22 @@ pub(crate) struct Library {
     pub(crate) file: Option<PathBuf>,
     pub(crate) counts: Vec<usize>,
     pub(crate) watcher: Option<greycard_library::Watcher>,
+    /// The number of the watcher asked for last: one built for roots
+    /// that have changed since is dropped when it lands.
+    pub(crate) watch_token: u64,
+    /// The launch's look at the roots is out, and the launch pass not
+    /// asked for yet.
+    pub(crate) starting: bool,
+    /// The roots on a network mount, with the mount's type: not
+    /// watched, and passed over by `poll` instead.
+    pub(crate) remote: Vec<(PathBuf, String)>,
+    /// The roots said in the log to be on a network mount, so that it
+    /// is said once a root.
+    pub(crate) said_remote: HashSet<PathBuf>,
+    /// The timer that passes over the roots on a network mount, and
+    /// how often; none for never.
+    pub(crate) poll: Option<Poll>,
+    pub(crate) poll_every: Option<Duration>,
     /// A view asked for before the window could read the index.
     pub(crate) wanted: Option<View>,
     /// A capture waits for the view the command line asked for.
@@ -129,94 +153,417 @@ pub(crate) fn online(root: &Path) -> bool {
 /// folder's root first, and the watcher on them. A root that is not
 /// there is left out of both; a watcher that cannot start is said and
 /// left, the launch pass the fallback. A batch run (an export, a
-/// capture) starts neither, unless it is a capture of the view.
-pub(crate) fn start(st: &mut State) {
+/// capture) starts neither, unless it is a capture of the view, which
+/// gets the pass and no watcher.
+///
+/// All of it is found off the window's thread ([`Plan::build`]) and
+/// asked for when it lands: which roots answer, the open folder's
+/// canonical form, and the watcher. A capture of the view does it in
+/// place, since it waits for the pass anyway.
+pub(crate) fn start(st: &mut State, app: &App) {
     let Some(indexer) = &st.index else {
         return;
     };
     if st.batch && st.library.wanted.is_none() {
         return;
     }
-    let roots = st.library.roots.list().to_vec();
-    let (mut order, offline): (Vec<PathBuf>, Vec<PathBuf>) =
-        roots.into_iter().partition(|r| online(r));
-    st.library.offline = offline.iter().cloned().collect();
-    for root in &offline {
-        tracing::info!(
-            "library: {} is offline; left as the index has it",
-            root.display()
-        );
-    }
-    if order.is_empty() {
+    if st.library.roots.is_empty() {
         return;
     }
-    let open = st
-        .files
-        .first()
-        .and_then(|f| f.parent())
-        .and_then(|d| dunce::canonicalize(d).ok());
-    if let Some(first) = open
-        .as_deref()
-        .and_then(|d| st.library.roots.root_of(d))
-        .map(Path::to_path_buf)
-        .filter(|r| order.contains(r))
-    {
-        order.retain(|r| *r != first);
-        order.insert(0, first);
-    }
-    tracing::info!(
-        "library: {} root(s), a pass over each on the indexer's thread",
-        order.len()
-    );
-    st.library.launch_left = order.len();
-    indexer.roots(order);
-    if !st.batch {
-        watch(st);
+    st.library.watch_token += 1;
+    let plan = Plan {
+        token: st.library.watch_token,
+        roots: st.library.roots.clone(),
+        launch: Some(
+            st.files
+                .first()
+                .and_then(|f| f.parent())
+                .map(Path::to_path_buf),
+        ),
+        asker: (!st.batch).then(|| indexer.asker()),
+    };
+    if st.batch {
+        build_in_place(st, plan);
+    } else {
+        // Not when no thread could be had: nothing will land to end it.
+        st.library.starting = send_build(app, plan);
     }
 }
 
-/// The watcher on the roots as they are now, the old one dropped.
-pub(crate) fn watch(st: &mut State) {
-    st.library.watcher = None;
+/// The watcher on the roots as they are now, asked for off the
+/// window's thread. The one there is kept until the new one is ready,
+/// so the roots it watches are not left unwatched meanwhile, a root
+/// just taken out among them: a pass over that one costs a folder's
+/// walk at most, and its rows are left out of the view either way.
+pub(crate) fn watch(st: &mut State, app: &App) {
+    st.library.watch_token += 1;
     let Some(indexer) = &st.index else {
         return;
     };
-    let (roots, offline): (Vec<PathBuf>, Vec<PathBuf>) = st
-        .library
-        .roots
-        .list()
-        .iter()
-        .cloned()
-        .partition(|r| online(r));
-    st.library.offline = offline.into_iter().collect();
-    if roots.is_empty() {
-        return;
+    let plan = Plan {
+        token: st.library.watch_token,
+        roots: st.library.roots.clone(),
+        launch: None,
+        asker: Some(indexer.asker()),
+    };
+    send_build(app, plan);
+}
+
+/// What a watcher's build is asked, taken from the window's state when
+/// it is asked for.
+pub(crate) struct Plan {
+    token: u64,
+    roots: Roots,
+    /// At launch: the open folder, as the browser has it, whose root is
+    /// passed over first. None for a build that asks for no pass.
+    launch: Option<Option<PathBuf>>,
+    /// The watcher's way to the indexer; none for no watcher.
+    asker: Option<crate::library::Asker>,
+}
+
+/// The launch's look at the roots, handed over as soon as it is done
+/// so the launch pass does not wait for the watcher.
+pub(crate) struct Launch {
+    /// The build's number: what it saw of the roots is kept only when
+    /// no build has been asked for since.
+    token: u64,
+    /// The roots that answered, in the order to pass over them.
+    order: Vec<PathBuf>,
+    /// The roots that did not.
+    offline: HashSet<PathBuf>,
+}
+
+/// A watcher's build done, off the window's thread.
+pub(crate) struct Built {
+    token: u64,
+    /// The roots that did not answer.
+    offline: HashSet<PathBuf>,
+    /// The roots that answered and are on a network mount, with its
+    /// type: not watched.
+    remote: Vec<(PathBuf, String)>,
+    watcher: Option<greycard_library::Watcher>,
+}
+
+impl Plan {
+    /// The roots looked at (each on a thread of its own, one that does
+    /// not answer in 3 s taken for offline), the launch's order handed
+    /// to `launched` at a launch, the ones on a network mount set
+    /// aside, and the rest watched. Asks the disk, so never on the
+    /// window's thread but for a capture.
+    pub(crate) fn build(self, launched: impl FnOnce(Launch)) -> Built {
+        let Plan {
+            token,
+            roots,
+            launch,
+            asker,
+        } = self;
+        let list = roots.list().to_vec();
+        let offline = offline_of(&list, ROOT_WAIT);
+        let online: Vec<PathBuf> = list
+            .iter()
+            .filter(|r| !offline.contains(*r))
+            .cloned()
+            .collect();
+        if let Some(open) = launch {
+            for root in list.iter().filter(|r| offline.contains(*r)) {
+                tracing::info!(
+                    "library: {} is offline; left as the index has it",
+                    root.display()
+                );
+            }
+            let mut order = online.clone();
+            if let Some(first) = open
+                .and_then(|d| dunce::canonicalize(d).ok())
+                .and_then(|d| roots.root_of(&d).map(Path::to_path_buf))
+                .filter(|r| order.contains(r))
+            {
+                order.retain(|r| *r != first);
+                order.insert(0, first);
+            }
+            launched(Launch {
+                token,
+                order,
+                offline: offline.clone(),
+            });
+        }
+        let (mut remote, mut local) = (Vec::new(), Vec::new());
+        for root in online {
+            match remote_fs(&root) {
+                Some(fs) => {
+                    if WATCH_REMOTE {
+                        local.push(root.clone());
+                    }
+                    remote.push((root, fs));
+                }
+                None => local.push(root),
+            }
+        }
+        let watcher = match asker {
+            Some(asker) if !local.is_empty() => {
+                let started = Instant::now();
+                let (watcher, failed) = greycard_library::Watcher::start(
+                    &local,
+                    greycard_library::roots::QUIET,
+                    greycard_library::roots::LONGEST,
+                    move |changes| {
+                        tracing::debug!("watch: {changes:?}");
+                        asker.changes(changes);
+                    },
+                );
+                for (path, why) in &failed {
+                    tracing::warn!(
+                        "library: not watching {} ({why}); it is brought up to date when the editor starts",
+                        path.display()
+                    );
+                }
+                if let Some(w) = &watcher {
+                    tracing::info!(
+                        "library: watching {} root(s), set up in {:.0} ms",
+                        w.watched.len(),
+                        started.elapsed().as_secs_f64() * 1e3
+                    );
+                }
+                watcher
+            }
+            _ => None,
+        };
+        Built {
+            token,
+            offline,
+            remote,
+            watcher,
+        }
     }
-    let asker = indexer.asker();
-    let started = Instant::now();
-    let (watcher, failed) = greycard_library::Watcher::start(
-        &roots,
-        greycard_library::roots::QUIET,
-        greycard_library::roots::LONGEST,
-        move |changes| {
-            tracing::debug!("watch: {changes:?}");
-            asker.changes(changes);
-        },
-    );
-    for (path, why) in &failed {
-        tracing::warn!(
-            "library: not watching {} ({why}); it is brought up to date when the editor starts",
-            path.display()
-        );
+}
+
+/// Whether a root on a network mount is watched all the same. On
+/// Windows it is: ReadDirectoryChangesW over SMB is one call a root,
+/// not one a folder, and the server sends its own changes back
+/// (CHANGE_NOTIFY). inotify and FSEvents see only this machine's.
+const WATCH_REMOTE: bool = cfg!(windows);
+
+/// The network filesystem a root is on, if it is on one.
+#[cfg(not(test))]
+fn remote_fs(root: &Path) -> Option<String> {
+    crate::mounts::remote(root)
+}
+
+/// In a test, a root is on the mount the test says, so a temporary
+/// directory on NFS cannot change what a test sees.
+#[cfg(test)]
+fn remote_fs(root: &Path) -> Option<String> {
+    tests::REMOTE
+        .with(|r| r.borrow().get(root).cloned())
+        .unwrap_or_else(|| panic!("the test says nothing of what {} is on", root.display()))
+}
+
+/// A build done in place, on the window's thread: for a capture, and
+/// for the tests.
+fn build_in_place(st: &mut State, plan: Plan) -> bool {
+    let mut launch = None;
+    let built = plan.build(|l| launch = Some(l));
+    if let Some(launch) = launch {
+        take_launch(st, launch);
     }
-    if let Some(w) = &watcher {
+    take_built(st, built)
+}
+
+/// The launch's look landed, on the window's thread: the roots that
+/// did not answer said offline, and the launch pass asked for over the
+/// roots still in the list.
+fn take_launch(st: &mut State, launch: Launch) {
+    let Launch {
+        token,
+        mut order,
+        offline,
+    } = launch;
+    st.library.starting = false;
+    // Only from the build asked for last: a newer one's look at the
+    // roots is not put back by an older one's.
+    if token == st.library.watch_token {
+        st.library.offline = offline;
+    }
+    // A root taken out meanwhile is not passed over; one added
+    // meanwhile asked for its own pass.
+    order.retain(|r| st.library.roots.list().contains(r));
+    if !order.is_empty()
+        && let Some(indexer) = &st.index
+    {
         tracing::info!(
-            "library: watching {} root(s), set up in {:.0} ms",
-            w.watched.len(),
-            started.elapsed().as_secs_f64() * 1e3
+            "library: {} root(s), a pass over each on the indexer's thread",
+            order.len()
         );
+        st.library.launch_left = order.len();
+        indexer.roots(order);
     }
+}
+
+/// A watcher's build landed, on the window's thread: the watcher, the
+/// offline roots and the network ones taken, when no build has been
+/// asked for since. False when it was dropped for that.
+pub(crate) fn take_built(st: &mut State, built: Built) -> bool {
+    let Built {
+        token,
+        offline,
+        remote,
+        watcher,
+    } = built;
+    if token != st.library.watch_token {
+        tracing::debug!("library: a watcher built for roots that have changed since, dropped");
+        return false;
+    }
+    st.library.offline = offline;
+    for (root, fs) in &remote {
+        if !st.library.said_remote.insert(root.clone()) {
+            continue;
+        }
+        if WATCH_REMOTE {
+            tracing::info!(
+                "library: {} is on a network drive ({fs}); watched, since Windows forwards the server's changes",
+                root.display()
+            );
+        } else {
+            tracing::info!(
+                "library: not watching {}: it is on {fs}, a network filesystem, where a watch sees only this machine's changes; it is passed over at launch{}",
+                root.display(),
+                match st.library.poll_every {
+                    Some(every) => format!(" and every {} min", every.as_secs().div_ceil(60)),
+                    None => String::new(),
+                }
+            );
+        }
+    }
+    st.library.remote = remote;
     st.library.watcher = watcher;
+    restart_poll(st);
+    true
+}
+
+/// The timer over the roots on a network mount, as `library.remote`
+/// has them now: none when there are none, when it is off, on a batch
+/// run, and on Windows, where they are watched.
+fn restart_poll(st: &mut State) {
+    let far: Vec<PathBuf> = st.library.remote.iter().map(|(r, _)| r.clone()).collect();
+    st.library.poll = match (st.library.poll_every, &st.index) {
+        (Some(every), Some(indexer)) if !far.is_empty() && !st.batch && !WATCH_REMOTE => {
+            let asker = indexer.asker();
+            Poll::start(far, every, move |roots| asker.poll(roots))
+        }
+        _ => None,
+    };
+}
+
+/// Build a watcher off the window's thread, and take it on the
+/// window's thread when it is done. The thread is left to itself: the
+/// editor does not wait for it on the way out. False when no thread
+/// could be had.
+#[cfg(not(test))]
+fn send_build(app: &App, plan: Plan) -> bool {
+    let app_weak = app.as_weak();
+    let spawned = std::thread::Builder::new()
+        .name("greycard roots watch".into())
+        .spawn(move || {
+            // Each landing, then the roots' row shown again.
+            let on_window = |f: Box<dyn FnOnce(&mut State) + Send>| {
+                let app_weak = app_weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    let (Some(app), Some(state)) = (
+                        app_weak.upgrade(),
+                        crate::STATE.with(|s| s.borrow().clone()),
+                    ) else {
+                        return;
+                    };
+                    let mut st = state.borrow_mut();
+                    f(&mut st);
+                    show(&st, &app);
+                });
+            };
+            let built = plan.build(|launch| on_window(Box::new(move |st| take_launch(st, launch))));
+            on_window(Box::new(move |st| {
+                take_built(st, built);
+            }));
+        });
+    match spawned {
+        Ok(_) => true,
+        Err(e) => {
+            tracing::warn!("library: no thread to watch the roots on: {e}");
+            false
+        }
+    }
+}
+
+/// In a test a build is queued, and the test runs and takes it: there
+/// is no event loop to land it on.
+#[cfg(test)]
+fn send_build(_app: &App, plan: Plan) -> bool {
+    tests::BUILDS.with(|b| b.borrow_mut().push(plan));
+    true
+}
+
+/// A pass over the roots no watcher can see (those on a network mount),
+/// every so often, on a thread of its own, for as long as it is held.
+/// A root that does not answer is left for the next time, and the
+/// indexer skips a tick for a root whose pass is still waiting or under
+/// way ([`crate::library::Asker::poll`]).
+pub(crate) struct Poll {
+    _stop: std::sync::mpsc::Sender<()>,
+}
+
+impl Poll {
+    pub(crate) fn start(
+        roots: Vec<PathBuf>,
+        every: Duration,
+        pass: impl Fn(Vec<PathBuf>) + Send + 'static,
+    ) -> Option<Poll> {
+        let (stop, stopped) = std::sync::mpsc::channel::<()>();
+        let wait = move || {
+            matches!(
+                stopped.recv_timeout(every),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            )
+        };
+        let spawned = std::thread::Builder::new()
+            .name("greycard roots poll".into())
+            .spawn(move || {
+                poll(&roots, wait, |r| offline_of(r, ROOT_WAIT), &pass);
+            });
+        match spawned {
+            Ok(_) => Some(Poll { _stop: stop }),
+            Err(e) => {
+                tracing::warn!("library: no thread to pass over the network roots on: {e}");
+                None
+            }
+        }
+    }
+}
+
+/// The timer's body: at each `wait` that says it is time, a tree pass
+/// over each of `roots` that answers; until `wait` says to stop. How
+/// many times it asked.
+fn poll(
+    roots: &[PathBuf],
+    mut wait: impl FnMut() -> bool,
+    offline: impl Fn(&[PathBuf]) -> HashSet<PathBuf>,
+    pass: &dyn Fn(Vec<PathBuf>),
+) -> usize {
+    let mut asked = 0;
+    while wait() {
+        let away = offline(roots);
+        let changes: Vec<PathBuf> = roots
+            .iter()
+            .filter(|r| !away.contains(*r))
+            .cloned()
+            .collect();
+        tracing::debug!(
+            "library: {} network root(s) passed over by the timer",
+            changes.len()
+        );
+        if !changes.is_empty() {
+            pass(changes);
+            asked += 1;
+        }
+    }
+    asked
 }
 
 /// Each root's count, as the index holds it now.
@@ -326,9 +673,65 @@ fn edit_roots<T>(
 /// Add a folder to the roots: kept, watched, passed over, and the
 /// view brought up if it lists the roots. It goes by its folder's
 /// name until it is given one from its chip's menu.
+///
+/// The folder is made canonical and looked at off the window's thread
+/// (a folder on a share can take a round trip, or never answer), and
+/// added when that is done.
 pub(crate) fn add(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+    app.set_status(format!("adding {}...", dir.display()).into());
+    send_check(state, app, worker, dir.to_path_buf());
+}
+
+/// Look at a folder to add off the window's thread, and add it on the
+/// window's thread when that is done.
+#[cfg(not(test))]
+fn send_check(_state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Worker>, dir: PathBuf) {
+    let app_weak = app.as_weak();
+    let spawned = std::thread::Builder::new()
+        .name("greycard roots add".into())
+        .spawn(move || {
+            let checked = Roots::checked(&dir);
+            let _ = slint::invoke_from_event_loop(move || {
+                let (Some(app), Some(state), Some(worker)) = (
+                    app_weak.upgrade(),
+                    crate::STATE.with(|s| s.borrow().clone()),
+                    crate::WORKER.with(|w| w.borrow().clone()),
+                ) else {
+                    return;
+                };
+                add_checked(&state, &app, &worker, checked);
+            });
+        });
+    if let Err(e) = spawned {
+        tracing::warn!("library: {e}");
+        app.set_status(format!("not added: {e}").into());
+    }
+}
+
+/// In a test the folder is looked at in place: there is no event loop
+/// to land it on.
+#[cfg(test)]
+fn send_check(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: PathBuf) {
+    add_checked(state, app, worker, Roots::checked(&dir));
+}
+
+/// A folder to add, looked at: kept, watched, passed over.
+fn add_checked(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+    checked: std::result::Result<PathBuf, greycard_library::roots::RootError>,
+) {
+    let dir = match checked {
+        Ok(dir) => dir,
+        Err(e) => {
+            tracing::warn!("library: {e}");
+            app.set_status(format!("not added: {e}").into());
+            return;
+        }
+    };
     let mut st = state.borrow_mut();
-    let added = match edit_roots(&mut st, |r| r.add(dir)) {
+    let added = match edit_roots(&mut st, |r| r.add_checked(dir)) {
         Ok(a) => a,
         Err(e) => {
             tracing::warn!("library: roots not saved: {e}");
@@ -379,7 +782,7 @@ pub(crate) fn add(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, di
     if let Some(indexer) = &st.index {
         indexer.roots(vec![new]);
     }
-    watch(&mut st);
+    watch(&mut st, app);
     recount(&mut st);
     show(&st, app);
     let refresh = matches!(st.view, View::Roots(None));
@@ -409,7 +812,13 @@ pub(crate) fn remove(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>,
         dir.display()
     );
     app.set_status(format!("{was} is out of the library; its files are where they were").into());
-    watch(&mut st);
+    // The watcher there is kept until the one on the rest is ready, so
+    // the other roots are not left unwatched while it is built (on a
+    // large tree, many seconds). The timer is started again at once
+    // without the root, which asks the disk nothing.
+    st.library.remote.retain(|(r, _)| r != dir);
+    restart_poll(&mut st);
+    watch(&mut st, app);
     recount(&mut st);
     let view = st.view.clone();
     let refresh = match &view {
@@ -1068,6 +1477,7 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
                 matches!(st.view, View::Roots(_))
                     && st.files.is_empty()
                     && st.library.launch_left == 0
+                    && !st.library.starting
                     && !st.library.loading
             };
             if empty {
@@ -1091,7 +1501,7 @@ fn take_empty(
     let passing = {
         let mut st = state.borrow_mut();
         st.view = view;
-        st.library.launch_left > 0
+        st.library.launch_left > 0 || st.library.starting
     };
     open_loaded(state, app, worker, Vec::new(), Vec::new(), Vec::new(), 0);
     let mut st = state.borrow_mut();
@@ -1822,6 +2232,12 @@ mod tests {
         /// The reads sent off the window's thread, waiting for the
         /// test to run and land them.
         pub(super) static SENT: RefCell<Vec<Look>> = const { RefCell::new(Vec::new()) };
+        /// The watchers asked for, waiting for the test to build and
+        /// take them.
+        pub(super) static BUILDS: RefCell<Vec<Plan>> = const { RefCell::new(Vec::new()) };
+        /// What the test says each root is on: a network mount's type, or
+        /// none for a local disk. A root it says nothing of is a panic.
+        pub(super) static REMOTE: RefCell<HashMap<PathBuf, Option<String>>> = RefCell::new(HashMap::new());
     }
 
     /// The reads sent, how many.
@@ -3549,5 +3965,297 @@ mod tests {
             assert_ne!(st.current.map(|c| st.files[c].clone()), Some(d1));
         }
         s.done();
+    }
+
+    /// The watchers asked for, taken out of the queue.
+    fn builds() -> Vec<Plan> {
+        BUILDS.with(|b| b.borrow_mut().drain(..).collect())
+    }
+
+    /// Say what a root is on: a network mount's type, or none for a
+    /// local disk, whatever the temporary directory is really on.
+    fn on(root: &Path, fs: Option<&str>) {
+        REMOTE.with(|r| {
+            r.borrow_mut()
+                .insert(root.to_path_buf(), fs.map(str::to_owned))
+        });
+    }
+
+    /// A window with an indexer of its own over a library in `dir`, and
+    /// `roots` as its roots, kept in memory alone, each on a local disk.
+    fn watched_window(dir: &Path, roots: &[PathBuf]) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+        for root in roots {
+            on(root, None);
+        }
+        let app = window(3);
+        let (state, worker) = state_for(&app, Vec::new());
+        let db = dir.join("data").join("library.sqlite");
+        let indexer = crate::library::Indexer::start(db, |_| {}).expect("the indexer starts");
+        {
+            let mut st = state.borrow_mut();
+            st.index = Some(indexer);
+            st.library.roots = Roots::from_list(roots.to_vec());
+        }
+        (app, state, worker)
+    }
+
+    fn leave(state: &Rc<RefCell<State>>, dir: &Path) {
+        let mut st = state.borrow_mut();
+        st.library.watcher = None;
+        st.library.poll = None;
+        if let Some(indexer) = st.index.take() {
+            indexer.stop(Duration::from_secs(20));
+        }
+        drop(st);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn watched(st: &State) -> Vec<PathBuf> {
+        st.library
+            .watcher
+            .as_ref()
+            .map(|w| w.watched.clone())
+            .unwrap_or_default()
+    }
+
+    /// The watcher is built off the window's thread, and a build for a
+    /// set of roots that has changed since it was asked for is dropped
+    /// when it lands, not put over the newer one.
+    #[test]
+    fn a_watcher_built_for_roots_since_changed_is_dropped() {
+        let dir = scratch("stale-watch");
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let (app, state, _worker) = watched_window(&dir, std::slice::from_ref(&a));
+        on(&b, None);
+        watch(&mut state.borrow_mut(), &app);
+        // Nothing is watched until the build lands.
+        assert!(state.borrow().library.watcher.is_none());
+        state.borrow_mut().library.roots = Roots::from_list(vec![a.clone(), b.clone()]);
+        watch(&mut state.borrow_mut(), &app);
+        let plans = builds();
+        assert_eq!(plans.len(), 2);
+        let mut plans = plans.into_iter();
+        let (first, second) = (plans.next().unwrap(), plans.next().unwrap());
+        // The newer lands first, then the older, late.
+        assert!(build_in_place(&mut state.borrow_mut(), second));
+        assert_eq!(watched(&state.borrow()), vec![a.clone(), b.clone()]);
+        assert!(!build_in_place(&mut state.borrow_mut(), first));
+        assert_eq!(
+            watched(&state.borrow()),
+            vec![a, b],
+            "the older build is not put over the newer"
+        );
+        leave(&state, &dir);
+    }
+
+    /// A root taken out while the watcher is being built: the build
+    /// asked for before is not put in place when it lands. The watcher
+    /// there is kept until the new one lands, so the roots that stay
+    /// are watched all along, and the new one watches only them.
+    #[test]
+    fn a_root_taken_out_during_a_build_is_not_watched_after() {
+        let dir = scratch("remove-watch");
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let (app, state, worker) = watched_window(&dir, &[a.clone(), b.clone()]);
+        watch(&mut state.borrow_mut(), &app);
+        let before = builds();
+        assert!(build_in_place(
+            &mut state.borrow_mut(),
+            before.into_iter().next().unwrap()
+        ));
+        assert_eq!(watched(&state.borrow()), vec![a.clone(), b.clone()]);
+        // A new build out (the roots changed), then `b` taken out
+        // before it lands.
+        watch(&mut state.borrow_mut(), &app);
+        remove(&state, &app, &worker, &b);
+        assert_eq!(
+            watched(&state.borrow()),
+            vec![a.clone(), b.clone()],
+            "the old watcher stays until the new one is ready"
+        );
+        let plans = builds();
+        assert_eq!(plans.len(), 2);
+        let mut plans = plans.into_iter();
+        let (stale, now) = (plans.next().unwrap(), plans.next().unwrap());
+        assert!(!build_in_place(&mut state.borrow_mut(), stale));
+        assert_eq!(watched(&state.borrow()), vec![a.clone(), b.clone()]);
+        assert!(build_in_place(&mut state.borrow_mut(), now));
+        assert_eq!(watched(&state.borrow()), vec![a]);
+        leave(&state, &dir);
+    }
+
+    /// The launch's look at the roots, landing after a newer build's,
+    /// still asks for the launch pass over the roots still there, but
+    /// does not put its offline roots over the newer build's.
+    #[test]
+    fn a_late_launch_look_does_not_undo_a_newer_one() {
+        let dir = scratch("late-launch");
+        let (a, gone) = (dir.join("a"), dir.join("gone"));
+        std::fs::create_dir_all(&a).unwrap();
+        let (app, state, _worker) = watched_window(&dir, &[a.clone(), gone.clone()]);
+        start(&mut state.borrow_mut(), &app);
+        assert!(state.borrow().library.starting);
+        state.borrow_mut().library.roots = Roots::from_list(vec![a.clone()]);
+        watch(&mut state.borrow_mut(), &app);
+        let mut plans = builds().into_iter();
+        let (launch, newer) = (plans.next().unwrap(), plans.next().unwrap());
+        assert!(build_in_place(&mut state.borrow_mut(), newer));
+        assert!(state.borrow().library.offline.is_empty());
+        assert!(!build_in_place(&mut state.borrow_mut(), launch));
+        let st = state.borrow();
+        assert!(!st.library.starting);
+        assert!(st.library.offline.is_empty(), "{:?}", st.library.offline);
+        assert_eq!(st.library.launch_left, 1, "the pass over a, not gone");
+        drop(st);
+        leave(&state, &dir);
+    }
+
+    /// A root added: made canonical and looked at before it is kept
+    /// (in place in a test), then its pass asked for and its watcher
+    /// built off the window's thread.
+    #[test]
+    fn a_root_added_is_watched_when_its_build_lands() {
+        let dir = scratch("add-watch");
+        let a = dir.join("a");
+        std::fs::create_dir_all(a.join("day")).unwrap();
+        let (app, state, worker) = watched_window(&dir, &[]);
+        on(&a, None);
+        // Through a path that is not canonical.
+        add(&state, &app, &worker, &a.join("day").join(".."));
+        assert_eq!(
+            state.borrow().library.roots.list(),
+            std::slice::from_ref(&a)
+        );
+        assert!(state.borrow().library.watcher.is_none());
+        let plans = builds();
+        assert_eq!(plans.len(), 1);
+        assert!(build_in_place(
+            &mut state.borrow_mut(),
+            plans.into_iter().next().unwrap()
+        ));
+        assert_eq!(watched(&state.borrow()), vec![a]);
+        // A folder that is not there is refused, and nothing is built.
+        add(&state, &app, &worker, &dir.join("nowhere"));
+        assert!(app.get_status().starts_with("not added"));
+        assert!(builds().is_empty());
+        leave(&state, &dir);
+    }
+
+    /// A root on a network mount is not watched: it is said once, and
+    /// passed over on the timer when there is one. The others are
+    /// watched as ever. On Windows it is watched, and not polled.
+    #[test]
+    fn a_root_on_a_network_mount_is_not_watched_but_polled() {
+        let dir = scratch("remote-watch");
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let (app, state, worker) = watched_window(&dir, &[a.clone(), b.clone()]);
+        on(&b, Some("nfs4"));
+        state.borrow_mut().library.poll_every = Some(Duration::from_secs(600));
+        watch(&mut state.borrow_mut(), &app);
+        let plan = builds().into_iter().next().unwrap();
+        assert!(build_in_place(&mut state.borrow_mut(), plan));
+        {
+            let st = state.borrow();
+            if WATCH_REMOTE {
+                assert_eq!(watched(&st), vec![a.clone(), b.clone()]);
+                assert!(st.library.poll.is_none());
+            } else {
+                assert_eq!(watched(&st), vec![a.clone()]);
+                assert!(st.library.poll.is_some());
+            }
+            assert_eq!(st.library.remote, vec![(b.clone(), "nfs4".to_string())]);
+            assert!(st.library.said_remote.contains(&b));
+        }
+        // The network root taken out: its timer goes at once, before
+        // the new watcher lands. Put back for the rest.
+        remove(&state, &app, &worker, &b);
+        assert!(state.borrow().library.poll.is_none());
+        assert!(state.borrow().library.remote.is_empty());
+        builds();
+        state.borrow_mut().library.roots = Roots::from_list(vec![a.clone(), b.clone()]);
+        // With the timer off, none; and with no root on a network
+        // mount, none either.
+        state.borrow_mut().library.poll_every = None;
+        watch(&mut state.borrow_mut(), &app);
+        let plan = builds().into_iter().next().unwrap();
+        assert!(build_in_place(&mut state.borrow_mut(), plan));
+        assert!(state.borrow().library.poll.is_none());
+        on(&b, None);
+        state.borrow_mut().library.poll_every = Some(Duration::from_secs(600));
+        watch(&mut state.borrow_mut(), &app);
+        let plan = builds().into_iter().next().unwrap();
+        assert!(build_in_place(&mut state.borrow_mut(), plan));
+        {
+            let st = state.borrow();
+            assert_eq!(watched(&st), vec![a, b]);
+            assert!(st.library.remote.is_empty());
+            assert!(st.library.poll.is_none(), "a local root is never polled");
+        }
+        leave(&state, &dir);
+    }
+
+    /// The timer's body, its clock a counter: a tree pass over each
+    /// network root that answers at each tick, and none over one that
+    /// does not; it stops when told.
+    #[test]
+    fn the_timer_passes_over_the_network_roots_that_answer() {
+        let (a, b) = (PathBuf::from("/mnt/nas/a"), PathBuf::from("/mnt/nas/b"));
+        let mut ticks = 0;
+        let wait = || {
+            ticks += 1;
+            ticks <= 3
+        };
+        let away: HashSet<PathBuf> = [b.clone()].into();
+        let asked = RefCell::new(Vec::new());
+        let n = poll(
+            &[a.clone(), b.clone()],
+            wait,
+            |_| away.clone(),
+            &|changes| asked.borrow_mut().push(changes),
+        );
+        assert_eq!(n, 3);
+        let asked = asked.into_inner();
+        assert_eq!(asked.len(), 3);
+        for batch in asked {
+            assert_eq!(batch, vec![a.clone()]);
+        }
+        // All of them away: nothing asked.
+        let mut once = true;
+        let n = poll(
+            std::slice::from_ref(&b),
+            || std::mem::replace(&mut once, false),
+            |_| away.clone(),
+            &|_| panic!("nothing to pass over"),
+        );
+        assert_eq!(n, 0);
+    }
+
+    /// The timer on its own thread: it asks, and it stops when dropped.
+    #[test]
+    fn the_timer_asks_and_stops_when_dropped() {
+        let dir = scratch("poll");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let poll = Poll::start(vec![dir.clone()], Duration::from_millis(20), move |c| {
+            let _ = tx.send(c);
+        })
+        .expect("a thread");
+        let first = rx.recv_timeout(Duration::from_secs(10)).expect("a pass");
+        assert_eq!(first, vec![dir.clone()]);
+        drop(poll);
+        // The thread goes, and its end of the channel with it.
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            match rx.recv_timeout(Duration::from_millis(100)) {
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                _ => assert!(Instant::now() < deadline, "the timer still runs"),
+            }
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

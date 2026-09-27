@@ -75,24 +75,29 @@ enum Ask {
     /// What the watcher saw change under the roots, in the
     /// background too, but ahead of the launch pass.
     Changes(Vec<Change>),
+    /// The timer's tick over the roots on a network mount: a tree pass
+    /// over each, behind everything else ([`queue_poll`]).
+    Poll(Vec<PathBuf>),
     /// The editor is leaving: wakes a thread waiting on the next
     /// ask, which the watcher's end of the channel would otherwise
     /// keep waiting.
     Leave,
 }
 
-/// A pass in the background: the launch pass over a root, or a
-/// change the watcher saw.
+/// A pass in the background: the launch pass over a root, a change the
+/// watcher saw, or the timer's tree pass over a root on a network
+/// mount.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Background {
     Root(PathBuf),
     Change(Change),
+    Poll(PathBuf),
 }
 
 impl Background {
     fn path(&self) -> &Path {
         match self {
-            Background::Root(p) => p,
+            Background::Root(p) | Background::Poll(p) => p,
             Background::Change(c) => c.path(),
         }
     }
@@ -161,6 +166,12 @@ pub(crate) struct Asker(mpsc::Sender<Ask>);
 impl Asker {
     pub(crate) fn changes(&self, changes: Vec<Change>) {
         let _ = self.0.send(Ask::Changes(changes));
+    }
+
+    /// A tree pass over each of `roots`, for the timer: see
+    /// [`queue_poll`].
+    pub(crate) fn poll(&self, roots: Vec<PathBuf>) {
+        let _ = self.0.send(Ask::Poll(roots));
     }
 }
 
@@ -275,7 +286,8 @@ struct Pass {
 
 /// Put a pass in the background's queue, once: a folder the watcher
 /// names twice before it is reached is one pass. The watcher's go
-/// ahead of the launch pass's roots, which are long and can wait.
+/// ahead of the launch pass's roots and the timer's ticks, which are
+/// long and can wait.
 fn queue(background: &mut VecDeque<Background>, job: Background) {
     if background.contains(&job) {
         return;
@@ -284,12 +296,35 @@ fn queue(background: &mut VecDeque<Background>, job: Background) {
         Background::Change(_) => {
             let at = background
                 .iter()
-                .position(|b| matches!(b, Background::Root(_)))
+                .position(|b| matches!(b, Background::Root(_) | Background::Poll(_)))
                 .unwrap_or(background.len());
             background.insert(at, job);
         }
-        Background::Root(_) => background.push_back(job),
+        Background::Root(_) | Background::Poll(_) => background.push_back(job),
     }
+}
+
+/// The timer's tick over a root on a network mount: a tree pass over
+/// it, at the back, behind the launch pass's roots, so a tick never
+/// holds up a local root's launch pass. Nothing when a pass over the
+/// whole root is already waiting: the launch pass's, one stopped
+/// partway (a stopped pass goes back into the queue, and the queue is
+/// only read between passes, so one under way is in it), or the last
+/// tick's. So a slow walk of a large share is never doubled, and a
+/// launch walk is never finished by a tick and then walked again. True
+/// when it was queued.
+fn queue_poll(background: &mut VecDeque<Background>, root: PathBuf) -> bool {
+    let whole = |b: &Background| match b {
+        Background::Root(r) | Background::Poll(r) | Background::Change(Change::Tree(r)) => {
+            *r == root
+        }
+        Background::Change(Change::Folder(_)) => false,
+    };
+    if background.iter().any(whole) {
+        return false;
+    }
+    background.push_back(Background::Poll(root));
+    true
 }
 
 fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits: &Waits) {
@@ -351,6 +386,16 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
                         queue(&mut background, Background::Change(change));
                     }
                 }
+                Ask::Poll(roots) => {
+                    for root in roots {
+                        if !queue_poll(&mut background, root.clone()) {
+                            tracing::debug!(
+                                "index: {} is still to be passed over; the timer's tick skipped",
+                                root.display()
+                            );
+                        }
+                    }
+                }
                 Ask::Leave => return,
             }
         }
@@ -403,7 +448,9 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
             }
         };
         let tree = match &job {
-            Background::Root(dir) | Background::Change(Change::Tree(dir)) => Some(dir.clone()),
+            Background::Root(dir)
+            | Background::Poll(dir)
+            | Background::Change(Change::Tree(dir)) => Some(dir.clone()),
             Background::Change(Change::Folder(_)) => None,
         };
         let passed = match (&job, &tree) {
@@ -1635,5 +1682,45 @@ mod tests {
             "Harbor".into()
         });
         assert_eq!(chips[0].text, "Harbor");
+    }
+
+    /// The timer's tick goes behind the launch pass, and is skipped for
+    /// a root whose whole pass is still waiting or stopped partway:
+    /// the launch's, or the last tick's.
+    #[test]
+    fn a_tick_waits_behind_the_launch_and_is_never_doubled() {
+        let (share, local) = (PathBuf::from("/mnt/nas"), PathBuf::from("/home/p"));
+        let mut q: VecDeque<Background> = VecDeque::new();
+        queue(&mut q, Background::Root(share.clone()));
+        queue(&mut q, Background::Root(local.clone()));
+        // During the share's launch walk (in the queue, stopped or not
+        // yet taken up): skipped.
+        assert!(!queue_poll(&mut q, share.clone()));
+        assert_eq!(q.len(), 2);
+        // The launch walk done: a tick is queued, behind the local
+        // root's launch pass.
+        q.pop_front();
+        assert!(queue_poll(&mut q, share.clone()));
+        assert_eq!(
+            Vec::from(q.clone()),
+            vec![
+                Background::Root(local.clone()),
+                Background::Poll(share.clone())
+            ]
+        );
+        // The next tick while that one is outstanding: skipped.
+        assert!(!queue_poll(&mut q, share.clone()));
+        assert_eq!(q.len(), 2);
+        // A folder pass under the share is not a pass over the whole.
+        q.clear();
+        queue(
+            &mut q,
+            Background::Change(Change::Folder(share.join("day"))),
+        );
+        assert!(queue_poll(&mut q, share.clone()));
+        assert_eq!(q.len(), 2);
+        // A watcher's change still goes ahead of the tick.
+        queue(&mut q, Background::Change(Change::Folder(local.join("x"))));
+        assert_eq!(q.back(), Some(&Background::Poll(share)));
     }
 }
