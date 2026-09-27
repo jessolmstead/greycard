@@ -548,6 +548,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_patch_handles(ModelRc::from(state.borrow().patch_handles.clone()));
     app.set_guide_kept(ModelRc::from(state.borrow().guide_kept.clone()));
     install_callbacks(&app, state.clone(), worker.clone());
+    // The pane's entry from what the last check found, and this
+    // launch's check if a day has gone.
+    crate::update::start(&app, state.borrow().batch, &remembered.update);
 
     // The viewport is rendered inside Slint's frame, on its device.
     {
@@ -1283,6 +1286,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.lenses_declined = kept.lenses_declined;
         settings.thumb_cache_mb = kept.thumb_cache_mb;
         settings.import = kept.import;
+        settings.update = kept.update;
         // A run opened with `--hide-panels` was a look at the picture
         // alone: the panes stay as the run before it left them.
         if cli.hide_panels {
@@ -1577,6 +1581,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         import: settings::ImportChoices::default(),
         // The state's, filled in by the caller.
         filter: filter::Saved::default(),
+        // Written as the check answers and as the switch flips.
+        update: crate::update::Kept::default(),
     }
 }
 

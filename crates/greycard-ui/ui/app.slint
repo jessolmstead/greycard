@@ -1111,6 +1111,19 @@ export component App inherits Window {
     /// Open the bug report form in the browser, filled in, and the
     /// log's folder beside it.
     callback report-asked();
+    /// The update check: the Settings sheet's switch, its Check now
+    /// and the line that answers it; and a newer release found, by
+    /// its version as shown ("0.1.4", empty for none) and its page,
+    /// which the left pane's entry opens or is told not to offer.
+    in-out property <bool> update-check: true;
+    callback update-check-changed();
+    callback update-check-now();
+    in property <string> update-note: "";
+    in property <bool> update-checking: false;
+    in property <string> update-version: "";
+    in property <string> update-url: "";
+    callback update-open();
+    callback update-dismissed();
     /// Whether a viewport tool is in hand: a shape being placed, a
     /// dropper, a perspective guide, the level. Escape puts each down.
     pure function tool-in-hand() -> bool {
@@ -1511,6 +1524,25 @@ export component App inherits Window {
                     padding: Theme.space-4;
                     padding-top: Theme.space-2;
                     spacing: Theme.space-2;
+                    // A newer release, when the check found one: the
+                    // page in the browser, or Not now for this one.
+                    if root.update-version != "": HorizontalLayout {
+                        spacing: Theme.space-2;
+                        PanelButton {
+                            text: root.update-version + " is available";
+                            icon: @image-url("icons/sparkles.svg");
+                            horizontal-stretch: 1;
+                            clicked => { root.update-open(); }
+                        }
+                        PanelButton {
+                            icon: @image-url("icons/x.svg");
+                            accessible-role: button;
+                            accessible-label: "Not now: do not offer " + root.update-version + " again";
+                            width: Theme.control-height;
+                            horizontal-stretch: 0;
+                            clicked => { root.update-dismissed(); }
+                        }
+                    }
                     PanelButton {
                         text: "Settings...";
                         icon: @image-url("icons/settings.svg");
@@ -2386,6 +2418,11 @@ export component App inherits Window {
         presets-missing: root.presets-missing;
         presets-missing-words: root.presets-missing-words;
         presets-restore => { root.presets-restore(); }
+        update-check <=> root.update-check;
+        update-note: root.update-note;
+        update-checking: root.update-checking;
+        update-check-changed => { root.update-check-changed(); }
+        update-check-now => { root.update-check-now(); }
     }
 
     // The frame menu: one for the window, opened where the

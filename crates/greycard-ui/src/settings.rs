@@ -98,6 +98,10 @@ pub struct Settings {
     /// command line names one. Clear empties it, and an empty one is
     /// what is kept then.
     pub filter: crate::filter::Saved,
+    /// The check for a newer release: its switch, when it last reached
+    /// GitHub and what it found, and a release the pane was told not
+    /// to offer. Written as each changes, not gathered at the close.
+    pub update: crate::update::Kept,
 }
 
 /// What the import sheet keeps for next time. The source is not
@@ -155,6 +159,7 @@ impl Default for Settings {
             thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
             import: ImportChoices::default(),
             filter: crate::filter::Saved::default(),
+            update: crate::update::Kept::default(),
         }
     }
 }
@@ -300,6 +305,13 @@ mod tests {
                     .into_iter()
                     .collect(),
             },
+            update: crate::update::Kept {
+                check: false,
+                checked_at: 1_790_000_000,
+                tag: "v0.1.4".into(),
+                url: "https://github.com/jessolmstead/greycard/releases/tag/v0.1.4".into(),
+                dismissed: "v0.1.3".into(),
+            },
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);
@@ -317,6 +329,9 @@ mod tests {
         assert_eq!(read.export.mark, Settings::default().export.mark);
         assert!(read.export_presets.is_empty());
         assert_eq!(read.scope, Settings::default().scope);
+        // A file from before the update check has it on.
+        assert!(read.update.check);
+        assert_eq!(read.update.checked_at, 0);
     }
 
     #[test]

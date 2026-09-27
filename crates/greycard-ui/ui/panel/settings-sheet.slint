@@ -2,11 +2,11 @@
 // a picture, over everything until closed. Where the sidecars go and
 // whether an XMP goes beside them; and, with frames open, the move
 // that puts their sidecars where the setting says now, since flipping
-// it moves nothing by itself.
+// it moves nothing by itself. And the check for a newer release.
 
 import { Theme } from "../theme.slint";
 import { Toggle, PanelButton, Segmented } from "../controls.slint";
-import { LineEdit } from "std-widgets.slint";
+import { LineEdit, ScrollView } from "std-widgets.slint";
 
 export component SettingsSheet inherits Rectangle {
     in-out property <bool> settings-open;
@@ -40,6 +40,14 @@ export component SettingsSheet inherits Rectangle {
     in property <int> presets-missing;
     in property <string> presets-missing-words;
     callback presets-restore();
+    /// Whether a launch asks GitHub for the latest release; Check now,
+    /// and what it found, in words.
+    in-out property <bool> update-check;
+    in property <string> update-note;
+    /// A Check now on its way: the button waits for its answer.
+    in property <bool> update-checking;
+    callback update-check-changed();
+    callback update-check-now();
     /// The move asked for and not yet confirmed.
     property <bool> confirming: false;
     property <string> elsewhere-words: root.sidecars-elsewhere == 1
@@ -53,185 +61,232 @@ export component SettingsSheet inherits Rectangle {
     TouchArea { clicked => { root.settings-open = false; } }
     Rectangle {
         width: 440px;
-        height: sheet.preferred-height;
+        // As tall as it needs, up to the window less a margin; past
+        // that the sections scroll and Done stays in reach below them.
+        height: min(body.preferred-height + done-row.preferred-height, root.height - 2 * Theme.space-5);
         background: Theme.surface;
         border-radius: Theme.radius-lg;
         border-width: 1px;
         border-color: Theme.border;
         drop-shadow-blur: 32px;
         drop-shadow-color: #00000099;
+        clip: true;
         TouchArea { }
-        sheet := VerticalLayout {
-            padding: Theme.space-5;
-            spacing: Theme.space-3;
-            Text {
-                text: "Settings";
-                font-size: Theme.font-lg;
-                font-weight: Theme.weight-medium;
-                color: Theme.text;
-            }
-            Text {
-                text: "For this installation, not for a picture.";
-                font-size: Theme.font-sm;
-                color: Theme.text-secondary;
-            }
-            Rectangle { height: Theme.space-1; }
-            Text {
-                text: "SIDECARS";
-                font-size: Theme.font-xs;
-                font-weight: Theme.weight-medium;
-                color: Theme.text-secondary;
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Edits go"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                Segmented {
-                    options: ["Beside the raw", "Hidden folder"];
-                    current <=> root.sidecar-placement;
-                    selected => {
-                        root.confirming = false;
-                        root.placement-changed();
+        VerticalLayout {
+            ScrollView {
+                min-height: 80px;
+                vertical-stretch: 1;
+                body := VerticalLayout {
+                    padding: Theme.space-5;
+                    padding-right: Theme.space-5 + Theme.scrollbar-band;
+                    padding-bottom: Theme.space-2;
+                    spacing: Theme.space-3;
+                    Text {
+                        text: "Settings";
+                        font-size: Theme.font-lg;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text;
                     }
-                }
-            }
-            Text {
-                text: root.sidecar-placement == "Hidden folder"
-                    ? "In a hidden .greycard folder inside the shoot's folder, which travels with it."
-                    : "As IMG_0001.CR3.gcd beside IMG_0001.CR3.";
-                font-size: Theme.font-xs;
-                color: Theme.text-secondary;
-                wrap: word-wrap;
-            }
-            Text {
-                text: "A sidecar is read in either place. Changing this moves nothing: each frame's sidecar goes to the chosen place when that frame is next saved.";
-                font-size: Theme.font-xs;
-                color: Theme.text-muted;
-                wrap: word-wrap;
-            }
-            if root.open-frames > 0: VerticalLayout {
-                spacing: Theme.space-2;
-                Text {
-                    text: !root.sidecars-written
-                        ? "Sidecars are not written this run (--no-sidecars), so none are moved."
-                        : root.sidecars-elsewhere == 0
-                        ? "Every sidecar of " + root.frames-words + " is in the chosen place."
-                        : root.elsewhere-words + " of " + root.frames-words + " "
-                            + (root.sidecars-elsewhere == 1 ? "is" : "are") + " in the other place.";
-                    font-size: Theme.font-xs;
-                    color: Theme.text-secondary;
-                    wrap: word-wrap;
-                }
-                if !root.confirming: PanelButton {
-                    text: root.open-frames == 1 ? "Move the open frame's sidecar" : "Move the open frames' sidecars";
-                    icon: @image-url("../icons/folder-open.svg");
-                    enabled: root.sidecars-written && root.sidecars-elsewhere > 0;
-                    clicked => { root.confirming = true; }
-                }
-                if root.confirming: HorizontalLayout {
-                    spacing: Theme.space-2;
-                    PanelButton {
-                        text: "Cancel";
-                        clicked => { root.confirming = false; }
+                    Text {
+                        text: "For this installation, not for a picture.";
+                        font-size: Theme.font-sm;
+                        color: Theme.text-secondary;
                     }
-                    PanelButton {
-                        text: "Move " + root.elsewhere-words;
-                        primary: true;
-                        clicked => {
-                            root.confirming = false;
-                            root.sidecars-move();
+                    Rectangle { height: Theme.space-1; }
+                    Text {
+                        text: "SIDECARS";
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-secondary;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Edits go"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Segmented {
+                            options: ["Beside the raw", "Hidden folder"];
+                            current <=> root.sidecar-placement;
+                            selected => {
+                                root.confirming = false;
+                                root.placement-changed();
+                            }
+                        }
+                    }
+                    Text {
+                        text: root.sidecar-placement == "Hidden folder"
+                            ? "In a hidden .greycard folder inside the shoot's folder, which travels with it."
+                            : "As IMG_0001.CR3.gcd beside IMG_0001.CR3.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
+                    }
+                    Text {
+                        text: "A sidecar is read in either place. Changing this moves nothing: each frame's sidecar goes to the chosen place when that frame is next saved.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    if root.open-frames > 0: VerticalLayout {
+                        spacing: Theme.space-2;
+                        Text {
+                            text: !root.sidecars-written
+                                ? "Sidecars are not written this run (--no-sidecars), so none are moved."
+                                : root.sidecars-elsewhere == 0
+                                ? "Every sidecar of " + root.frames-words + " is in the chosen place."
+                                : root.elsewhere-words + " of " + root.frames-words + " "
+                                    + (root.sidecars-elsewhere == 1 ? "is" : "are") + " in the other place.";
+                            font-size: Theme.font-xs;
+                            color: Theme.text-secondary;
+                            wrap: word-wrap;
+                        }
+                        if !root.confirming: PanelButton {
+                            text: root.open-frames == 1 ? "Move the open frame's sidecar" : "Move the open frames' sidecars";
+                            icon: @image-url("../icons/folder-open.svg");
+                            enabled: root.sidecars-written && root.sidecars-elsewhere > 0;
+                            clicked => { root.confirming = true; }
+                        }
+                        if root.confirming: HorizontalLayout {
+                            spacing: Theme.space-2;
+                            PanelButton {
+                                text: "Cancel";
+                                clicked => { root.confirming = false; }
+                            }
+                            PanelButton {
+                                text: "Move " + root.elsewhere-words;
+                                primary: true;
+                                clicked => {
+                                    root.confirming = false;
+                                    root.sidecars-move();
+                                }
+                            }
+                        }
+                    }
+                    if root.settings-note != "": Text {
+                        text: root.settings-note;
+                        font-size: Theme.font-xs;
+                        color: Theme.text-secondary;
+                        wrap: word-wrap;
+                    }
+                    Toggle {
+                        label: "Also write an XMP for Lightroom and darktable";
+                        checked <=> root.xmp-sidecars;
+                        toggled => { root.xmp-changed(); }
+                    }
+                    Text {
+                        text: "The rating, the label and the keywords, in an .xmp beside the raw. An XMP that is there is read either way.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: Theme.space-1; }
+                    Text {
+                        text: "THUMBNAILS";
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-secondary;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text {
+                            text: root.thumb-cache-words;
+                            font-size: Theme.font-sm;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                        }
+                        if root.thumb-cache-entries > 0: PanelButton {
+                            text: "Clear";
+                            width: 96px;
+                            clicked => { root.thumb-cache-clear(); }
+                        }
+                    }
+                    if root.thumb-cache-on: HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Keep up to"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        LineEdit {
+                            width: 96px;
+                            text <=> root.thumb-cache-cap;
+                            placeholder-text: "300";
+                            input-type: number;
+                            accepted => { root.thumb-cache-cap-changed(); }
+                        }
+                        Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                    Text {
+                        text: "Kept by content, so a folder moved or renamed opens without making them again. A lower cap drops the thumbnails used longest ago at once.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: Theme.space-1; }
+                    Text {
+                        text: "PRESETS";
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-secondary;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text {
+                            text: root.presets-missing-words;
+                            font-size: Theme.font-sm;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                        }
+                        if root.presets-missing > 0: PanelButton {
+                            text: "Restore";
+                            width: 96px;
+                            clicked => { root.presets-restore(); }
+                        }
+                    }
+                    Text {
+                        text: "The film presets that come with the editor. Restore puts back the ones removed and leaves every preset of your own as it is.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: Theme.space-1; }
+                    Text {
+                        text: "UPDATES";
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-secondary;
+                    }
+                    Toggle {
+                        label: "Check for a new version at launch";
+                        checked <=> root.update-check;
+                        toggled => { root.update-check-changed(); }
+                    }
+                    Text {
+                        text: "Once a day at most: one HTTPS request to GitHub for the latest release. It names the app and its version and nothing more; GitHub sees the request come from your network, as it would for any page. A new version is offered in the left pane; nothing is downloaded.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text {
+                            text: root.update-note;
+                            font-size: Theme.font-sm;
+                            color: Theme.text;
+                            vertical-alignment: center;
+                            wrap: word-wrap;
+                            horizontal-stretch: 1;
+                        }
+                        PanelButton {
+                            text: "Check now";
+                            width: 96px;
+                            enabled: !root.update-checking;
+                            clicked => { root.update-check-now(); }
                         }
                     }
                 }
             }
-            if root.settings-note != "": Text {
-                text: root.settings-note;
-                font-size: Theme.font-xs;
-                color: Theme.text-secondary;
-                wrap: word-wrap;
-            }
-            Toggle {
-                label: "Also write an XMP for Lightroom and darktable";
-                checked <=> root.xmp-sidecars;
-                toggled => { root.xmp-changed(); }
-            }
-            Text {
-                text: "The rating, the label and the keywords, in an .xmp beside the raw. An XMP that is there is read either way.";
-                font-size: Theme.font-xs;
-                color: Theme.text-muted;
-                wrap: word-wrap;
-            }
-            Rectangle { height: Theme.space-1; }
-            Text {
-                text: "THUMBNAILS";
-                font-size: Theme.font-xs;
-                font-weight: Theme.weight-medium;
-                color: Theme.text-secondary;
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text {
-                    text: root.thumb-cache-words;
-                    font-size: Theme.font-sm;
-                    color: Theme.text;
-                    vertical-alignment: center;
-                    wrap: word-wrap;
-                    horizontal-stretch: 1;
-                }
-                if root.thumb-cache-entries > 0: PanelButton {
-                    text: "Clear";
-                    width: 96px;
-                    clicked => { root.thumb-cache-clear(); }
-                }
-            }
-            if root.thumb-cache-on: HorizontalLayout {
-                spacing: Theme.space-2;
-                Text { text: "Keep up to"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                LineEdit {
-                    width: 96px;
-                    text <=> root.thumb-cache-cap;
-                    placeholder-text: "300";
-                    input-type: number;
-                    accepted => { root.thumb-cache-cap-changed(); }
-                }
-                Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
-            }
-            Text {
-                text: "Kept by content, so a folder moved or renamed opens without making them again. A lower cap drops the thumbnails used longest ago at once.";
-                font-size: Theme.font-xs;
-                color: Theme.text-muted;
-                wrap: word-wrap;
-            }
-            Rectangle { height: Theme.space-1; }
-            Text {
-                text: "PRESETS";
-                font-size: Theme.font-xs;
-                font-weight: Theme.weight-medium;
-                color: Theme.text-secondary;
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                Text {
-                    text: root.presets-missing-words;
-                    font-size: Theme.font-sm;
-                    color: Theme.text;
-                    vertical-alignment: center;
-                    wrap: word-wrap;
-                    horizontal-stretch: 1;
-                }
-                if root.presets-missing > 0: PanelButton {
-                    text: "Restore";
-                    width: 96px;
-                    clicked => { root.presets-restore(); }
-                }
-            }
-            Text {
-                text: "The film presets that come with the editor. Restore puts back the ones removed and leaves every preset of your own as it is.";
-                font-size: Theme.font-xs;
-                color: Theme.text-muted;
-                wrap: word-wrap;
-            }
-            Rectangle { height: Theme.space-2; }
-            HorizontalLayout {
+            done-row := HorizontalLayout {
+                padding: Theme.space-5;
+                padding-top: Theme.space-2;
                 alignment: end;
                 PanelButton {
                     text: "Done";

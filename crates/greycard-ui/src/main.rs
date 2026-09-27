@@ -43,6 +43,7 @@ mod tags;
 #[cfg(test)]
 pub(crate) mod testing;
 mod thumbpool;
+mod update;
 mod watermark;
 mod wheel;
 mod worker;
@@ -987,6 +988,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::camera_match::install(app, &state);
     roots::install(app, &state, &worker);
     report::install(app, &state);
+    update::install(app, &state);
 
     // Deliveries from the worker need the state and the worker too.
     STATE.with(|s| *s.borrow_mut() = Some(state));

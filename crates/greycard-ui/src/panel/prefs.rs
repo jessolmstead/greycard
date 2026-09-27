@@ -333,6 +333,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_sidecar_placement(placement_name(st.placement).into());
             app.set_xmp_sidecars(st.xmp_sidecars);
             app.set_settings_note("".into());
+            // A Check now still on its way keeps its "Checking...".
+            if !app.get_update_checking() {
+                app.set_update_note("".into());
+            }
             show_elsewhere(&st, &app);
             crate::panel::assets::show_presets_missing(&st, &app);
             app.set_settings_open(true);

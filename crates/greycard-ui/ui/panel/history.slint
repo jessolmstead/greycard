@@ -132,6 +132,9 @@ export component HistorySection inherits Section {
         // so the box never squeezes a row to make room.
         preferred-height: min(history-list.preferred-height, 260px);
         max-height: self.preferred-height;
+        // Three rows at least, whatever sits below the pane's
+        // sections: the pane scrolls before this box shrinks past them.
+        min-height: min(history-list.preferred-height, 3 * (Theme.control-height - 4px) + 4px);
         vertical-stretch: 1;
         ScrollView {
             history-list := VerticalLayout {
