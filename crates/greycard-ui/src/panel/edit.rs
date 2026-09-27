@@ -42,7 +42,7 @@ pub(crate) fn edit_to_develop(app: &App, edit: &Edit) -> Edit {
 /// will not parse costs the interop and nothing else: the `.gcd` is
 /// written either way.
 pub(crate) fn write_sidecar(st: &mut State, c: usize) {
-    if !st.write_sidecars {
+    if !st.write_sidecars || crate::panel::delete::held(st, c) {
         return;
     }
     if st.xmp_sidecars {
@@ -153,7 +153,7 @@ pub(crate) fn save_edit(st: &mut State, edit: Edit) {
     let Some(c) = st.current else {
         return;
     };
-    if st.sidecars[c].record(edit) && st.write_sidecars {
+    if st.sidecars[c].record(edit) && st.write_sidecars && !crate::panel::delete::held(st, c) {
         match st.sidecars[c].save_in(&st.files[c], st.placement) {
             Ok(_) => crate::library::sidecar_written(st, c),
             Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),
@@ -182,7 +182,7 @@ pub(crate) fn take_sources(st: &mut State, sources: &[greycard_edit::retouch::Pa
     if !st.sidecars[c].take_sources(sources) {
         return false;
     }
-    if st.write_sidecars {
+    if st.write_sidecars && !crate::panel::delete::held(st, c) {
         match st.sidecars[c].save_in(&st.files[c], st.placement) {
             Ok(_) => crate::library::sidecar_written(st, c),
             Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),

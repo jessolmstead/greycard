@@ -59,6 +59,12 @@ dunce = "1"
 # A file's modification day in local time, for a name when the EXIF
 # has no date. rawler already brings it, clock and all.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Delete from disk: the system trash (the freedesktop trash on Linux,
+# the Finder's on macOS, the Recycle Bin on Windows). MIT. The default
+# features are the ones it needs: chrono for the deletion date the
+# freedesktop spec asks for, already in the tree, and the COM apartment
+# on Windows, over the windows crate the tree already has.
+trash = "5.2"
 
 [build-dependencies]
 slint-build = "1.18"

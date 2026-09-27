@@ -377,6 +377,9 @@ pub(crate) enum Shown {
     /// The root sheet over the library's first root, as its chip's
     /// Rename... opens it.
     RootName,
+    /// The delete sheet over the selection, as the Delete key opens
+    /// it. Never answered: a capture never deletes.
+    Delete,
     /// The crop tool, on the Crop tab.
     Crop,
     /// The level tool, on the Crop tab.
@@ -405,10 +408,11 @@ impl Shown {
             "match" => Ok(Self::Match),
             "matched" => Ok(Self::Matched),
             "root-name" => Ok(Self::RootName),
+            "delete" => Ok(Self::Delete),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, paste, pasted, import, imported, match, \
-                 matched or root-name, not {name}"
+                 matched, root-name or delete, not {name}"
             )),
         }
     }
@@ -483,6 +487,7 @@ impl Shown {
                 app.invoke_match_asked();
                 crate::panel::camera_match::fit_when_read(app, 100);
             }
+            Self::Delete => app.invoke_delete_asked("selection".into()),
             Self::RootName => {
                 if let Some(first) = app.get_library_roots().row_data(0) {
                     app.invoke_library_root_rename(first.path);

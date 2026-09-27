@@ -69,6 +69,8 @@ enum Ask {
     Folders { dirs: Vec<PathBuf>, generation: u64 },
     /// Bring this file's row up to date after its sidecar was saved.
     File(PathBuf),
+    /// Forget these files' rows: the window deleted the files.
+    Forget(Vec<PathBuf>),
     /// The launch pass: each root's tree, one after another, in the
     /// background of everything else.
     Roots(Vec<PathBuf>),
@@ -128,6 +130,8 @@ pub(crate) enum Told {
     },
     /// Rows after saves are up to date.
     FilesIndexed,
+    /// The rows of files the window deleted are gone, this many.
+    Forgotten(usize),
     /// A pass in the background is done: a root's tree for the
     /// launch pass (`launch`), or a folder or a tree the watcher saw
     /// change. `error` as for `Indexed`.
@@ -222,6 +226,20 @@ impl Indexer {
     pub(crate) fn file(&self, path: PathBuf) {
         self.files_waiting.fetch_add(1, Ordering::SeqCst);
         if self.asks.send(Ask::File(path)).is_err() {
+            self.files_waiting.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Forget the rows of files the window has deleted. A pass under
+    /// way gives way to it as it does to a save, and it is done after
+    /// any save asked before it, so a sidecar written just before the
+    /// delete does not bring a row back.
+    pub(crate) fn forget(&self, paths: Vec<PathBuf>) {
+        if paths.is_empty() {
+            return;
+        }
+        self.files_waiting.fetch_add(1, Ordering::SeqCst);
+        if self.asks.send(Ask::Forget(paths)).is_err() {
             self.files_waiting.fetch_sub(1, Ordering::SeqCst);
         }
     }
@@ -360,6 +378,7 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
         // of the folders only the newest, since a folder the window
         // has already left is nobody's question.
         let mut files: Vec<PathBuf> = Vec::new();
+        let mut forget: Vec<PathBuf> = Vec::new();
         for ask in first.into_iter().chain(waiting.try_iter()) {
             match ask {
                 Ask::File(p) => {
@@ -367,6 +386,10 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
                     if !files.contains(&p) {
                         files.push(p);
                     }
+                }
+                Ask::Forget(paths) => {
+                    files_waiting.fetch_sub(1, Ordering::SeqCst);
+                    forget.extend(paths);
                 }
                 Ask::Folders { dirs, generation } => {
                     waits.folders.store(false, Ordering::SeqCst);
@@ -406,6 +429,14 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
                 }
             }
             told(Told::FilesIndexed);
+        }
+        // After the saves: a save of a frame deleted since is a row
+        // written for a file that is gone, and this takes it away.
+        if !forget.is_empty() {
+            match lib.forget(&forget) {
+                Ok(n) => told(Told::Forgotten(n)),
+                Err(e) => tracing::warn!("index: rows of deleted files not forgotten: {e}"),
+            }
         }
         if let Some(pass) = pending.take() {
             pending = window_pass(&mut lib, pass, told, waits);
@@ -1139,6 +1170,10 @@ pub(crate) fn told(app: &App, told: Told) {
             app.window().request_redraw();
         }
         Told::FilesIndexed => reread(&state, app, false),
+        Told::Forgotten(n) => {
+            tracing::debug!("index: {n} rows of deleted files forgotten");
+            reread(&state, app, false);
+        }
     }
 }
 

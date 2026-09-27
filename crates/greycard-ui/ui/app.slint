@@ -25,6 +25,7 @@ import { SnapshotsSection, HistorySection } from "panel/history.slint";
 import { PanelHead } from "panel/scopes.slint";
 import { ModelSheet } from "panel/model-sheet.slint";
 import { RejectsSheet } from "panel/rejects-sheet.slint";
+import { DeleteSheet } from "panel/delete-sheet.slint";
 import { MatchSheet } from "panel/match-sheet.slint";
 import { PresetSheet } from "panel/preset-sheet.slint";
 import { SyncSheet } from "panel/sync-sheet.slint";
@@ -396,6 +397,17 @@ export component App inherits Window {
     in property <string> rejects-text: "";
     callback rejects-asked();
     callback rejects-answered(bool);
+    /// The delete sheet: what it will delete, from where, and what it
+    /// offers, until answered. Asked for "selection" or "rejects";
+    /// answered 0 no, 1 the trash, 2 permanently.
+    in-out property <bool> delete-open: false;
+    in property <string> delete-title: "";
+    in property <string> delete-text: "";
+    in property <string> delete-note: "";
+    in property <bool> delete-trash: true;
+    in property <bool> delete-permanent: false;
+    callback delete-asked(string);
+    callback delete-answered(int);
 
     // The edit, mirrored from Rust's state struct.
     in-out property <float> exposure: 0;
@@ -1201,6 +1213,7 @@ export component App inherits Window {
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
+            || root.delete-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
             || root.root-sheet-open;
     }
@@ -1222,6 +1235,7 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.preset-open) { root.preset-open = false; return accept; }
             if (e.text == Key.Escape && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
+            if (e.text == Key.Escape && root.delete-open) { root.delete-answered(0); return accept; }
             if (e.text == Key.Escape && root.match-open && !root.match-running) { root.match-close(); return accept; }
             if (e.text == Key.Escape && root.sync-open) { root.sync-open = false; return accept; }
             if (e.text == Key.Escape && (root.placing != "" || root.picking != "")) { root.stop-placing(); return accept; }
@@ -1258,6 +1272,18 @@ export component App inherits Window {
                 if (e.text == Key.DownArrow) { root.grid-step(0, 1, root.grid-cols, e.modifiers.shift); return accept; }
                 if (e.text == "+" || e.text == "=") { root.grid-zoom(1); return accept; }
                 if (e.text == "-" || e.text == "_") { root.grid-zoom(-1); return accept; }
+            }
+            // Delete opens the delete sheet over the selection, in the
+            // grid and in culling: only the sheet, whose confirmation
+            // is the delete. A text field with the focus has the key
+            // first. On a Mac the key marked delete sends Backspace,
+            // so Backspace there too; elsewhere Backspace is nobody's.
+            if ((e.text == Key.Delete || (e.text == Key.Backspace && Platform.os == OperatingSystemType.macos))
+                && (root.grid-open || root.culling) && !e.repeat
+                && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta && !e.modifiers.shift
+                && !root.sheet-open()) {
+                root.delete-asked("selection");
+                return accept;
             }
             // Tab as Lightroom has it. Nothing else here binds it, and
             // a LineEdit with the focus has it first, so typing in the
@@ -1746,6 +1772,7 @@ export component App inherits Window {
                             filter-cleared => { root.filter-cleared(); }
                             reject-count: root.reject-count;
                             rejects-asked => { root.rejects-asked(); }
+                            delete-asked(w) => { root.delete-asked(w); }
                             focus-keys => { keys.focus(); }
                         }
                         if root.panel-tab == "Masks": AdjustmentsSection {
@@ -2293,6 +2320,20 @@ export component App inherits Window {
     if root.rejects-open: RejectsSheet {
         rejects-text: root.rejects-text;
         rejects-answered(a) => { root.rejects-answered(a); }
+    }
+
+    // The delete sheet: how many, from where, and to the trash or for
+    // good, until answered. The keys go back to the window after.
+    if root.delete-open: DeleteSheet {
+        delete-title: root.delete-title;
+        delete-text: root.delete-text;
+        delete-note: root.delete-note;
+        delete-trash: root.delete-trash;
+        delete-permanent: root.delete-permanent;
+        delete-answered(a) => {
+            root.delete-answered(a);
+            keys.focus();
+        }
     }
 
     // The camera match sheet: open until closed; while a fit runs it

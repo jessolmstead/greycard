@@ -5,6 +5,7 @@ pub(crate) mod color;
 pub(crate) mod crop;
 pub(crate) mod cull;
 pub(crate) mod curve;
+pub(crate) mod delete;
 pub(crate) mod deliver;
 pub(crate) mod edit;
 pub(crate) mod history;

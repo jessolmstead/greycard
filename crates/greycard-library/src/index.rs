@@ -1872,6 +1872,32 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A delete the editor made: the rows go at once, keywords and
+    /// all, by the path as it was handed over, and the neighbors stay.
+    #[test]
+    fn a_deleted_file_is_forgotten_at_once() {
+        let dir = scratch("forget");
+        let (r5, r6, a7) = shoot(&dir);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(lib.len().unwrap(), 3);
+        assert_eq!(names(&lib, "keyword:Harbor"), ["r5.tif"]);
+        std::fs::remove_file(&r5).unwrap();
+        // Gone from disk already, and a path never indexed: one row.
+        assert_eq!(lib.forget(&[r5.clone(), dir.join("never.tif")]).unwrap(), 1);
+        assert!(lib.by_path(&r5).unwrap().is_none());
+        assert!(lib.by_path(&r6).unwrap().is_some());
+        assert!(lib.by_path(&a7).unwrap().is_some());
+        assert!(names(&lib, "missing:yes").is_empty());
+        assert!(names(&lib, "keyword:Harbor").is_empty());
+        // A second forget finds nothing, and a pass over the folder
+        // marks nothing missing.
+        assert_eq!(lib.forget(std::slice::from_ref(&r5)).unwrap(), 0);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.missing, 0, "{report:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A folder deleted with its files: a pass over the tree above
     /// it marks them missing, and so does a pass over the folder
     /// itself, which is not an error while its parent is there.

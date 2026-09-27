@@ -16,6 +16,7 @@ mod ai;
 mod camera_match;
 mod clipboard;
 mod cull;
+mod delete;
 mod display;
 mod export;
 mod files;
@@ -213,8 +214,9 @@ struct Cli {
     /// looked for), imported (the same, its import started once the
     /// source is read), match (the camera match's sheet, as the Look
     /// section's button opens it), matched (the same, its Fit
-    /// pressed once the scope is read) or root-name (the library's
-    /// first root's name, as its chip's Rename... opens it)
+    /// pressed once the scope is read), root-name (the library's
+    /// first root's name, as its chip's Rename... opens it) or delete
+    /// (the delete sheet over the selection; never answered)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of
@@ -442,6 +444,23 @@ pub(crate) struct State {
     /// `--move-rejects`: and answer it with yes.
     pub(crate) ask_rejects: bool,
     pub(crate) move_rejects: bool,
+    /// The delete sheet's question while it is up: what it would
+    /// delete and from where. Read again at the confirm.
+    pub(crate) delete_asked: Option<panel::delete::Asked>,
+    /// The folders whose files the system trash has refused this
+    /// session: the sheet offers the permanent delete beside the
+    /// trash for these, as a choice.
+    pub(crate) trash_refused: std::collections::HashSet<PathBuf>,
+    /// Whether anything may be deleted from disk: only in a session
+    /// someone is at. A snapshot, a screenshot, an export or a timing
+    /// run never deletes, whatever it is asked, and a test's state
+    /// does not until the test says so.
+    pub(crate) deletes_allowed: bool,
+    /// A delete is out on its thread, with the frames it has planned:
+    /// another is refused until it lands, and so is Move rejects, and
+    /// no sidecar of those frames is written meanwhile
+    /// (`panel::delete::held`).
+    pub(crate) deleting: Option<std::collections::HashSet<PathBuf>>,
     /// Culling mode (notes §80), while it is on.
     pub(crate) cull: Option<Cull>,
     /// Whether a culling key moves the selection on to the next
@@ -822,6 +841,10 @@ impl State {
             cull_key_at_start: None,
             ask_rejects: false,
             move_rejects: false,
+            delete_asked: None,
+            trash_refused: std::collections::HashSet::new(),
+            deletes_allowed: false,
+            deleting: None,
             snapshot_placeholder: false,
             cull: None,
             cull_move_on: false,
@@ -976,6 +999,7 @@ fn on_exists_named(name: &str) -> Result<export::OnExists, String> {
 
 pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc<Worker>) {
     panel::cull::install(app, &state, &worker);
+    panel::delete::install(app, &state, &worker);
     panel::mask::install(app, &state, &worker);
     panel::browser::install(app, &state, &worker);
     panel::color::install(app, &state, &worker);

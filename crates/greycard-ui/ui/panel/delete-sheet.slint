@@ -1,0 +1,130 @@
+// The delete sheet: how many frames and sidecars, from where, and
+// what will happen to them, until answered. The trash is the default
+// wherever there is one, and Enter's; the permanent delete is red, is
+// never the default, cannot take the focus, and so is never Enter's:
+// only a click reaches it.
+
+import { Theme } from "../theme.slint";
+import { PanelButton } from "../controls.slint";
+
+// A button that only a click presses: no focus to take, so no key
+// reaches it. Red, for the one thing on this sheet that cannot be
+// undone.
+component DangerButton inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+    height: Theme.control-height;
+    border-radius: Theme.radius-md;
+    border-width: 1px;
+    border-color: Theme.label-red;
+    background: ta.pressed ? Theme.pressed : ta.has-hover ? Theme.hover : Theme.raised;
+    animate background { duration: Theme.quick; }
+    HorizontalLayout {
+        alignment: center;
+        spacing: Theme.space-2;
+        padding-left: Theme.space-3;
+        padding-right: Theme.space-3;
+        Image {
+            source: @image-url("../icons/trash-2.svg");
+            colorize: Theme.label-red;
+            width: Theme.icon;
+            height: Theme.icon;
+            y: (parent.height - self.height) / 2;
+        }
+        Text {
+            text: root.text;
+            color: Theme.label-red;
+            font-size: Theme.font-sm;
+            font-weight: Theme.weight-medium;
+            vertical-alignment: center;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
+export component DeleteSheet inherits Rectangle {
+    in property <string> delete-title;
+    in property <string> delete-text;
+    in property <string> delete-note;
+    /// Offer the trash: the default, and Enter's.
+    in property <bool> delete-trash;
+    /// Offer the permanent delete: a click's only.
+    in property <bool> delete-permanent;
+    /// 0 no, 1 the trash, 2 permanently.
+    callback delete-answered(int);
+
+    background: #000000a0;
+    TouchArea { clicked => { root.delete-answered(0); } }
+    Rectangle {
+        width: 460px;
+        height: sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        // The sheet takes the keys while it is up: Escape is its no,
+        // Enter its default, which is the trash and never the
+        // permanent delete. Nothing else is anybody's until it goes.
+        keys := FocusScope {
+            init => { self.focus(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.delete-answered(0);
+                    return accept;
+                }
+                if (e.text == Key.Return && !e.repeat) {
+                    if (root.delete-trash) { root.delete-answered(1); }
+                    return accept;
+                }
+                return accept;
+            }
+            sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                Text {
+                    text: root.delete-title;
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.delete-text;
+                    font-size: Theme.font-sm;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.delete-note;
+                    font-size: Theme.font-sm;
+                    color: root.delete-trash ? Theme.text-secondary : Theme.label-red;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: Theme.space-2; }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.delete-answered(0); }
+                    }
+                    if root.delete-permanent: DangerButton {
+                        text: "Delete permanently";
+                        clicked => { root.delete-answered(2); }
+                    }
+                    if root.delete-trash: PanelButton {
+                        text: "Move to the trash";
+                        icon: @image-url("../icons/trash-2.svg");
+                        primary: true;
+                        clicked => { root.delete-answered(1); }
+                    }
+                }
+            }
+        }
+    }
+}

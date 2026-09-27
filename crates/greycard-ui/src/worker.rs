@@ -2518,6 +2518,15 @@ fn thumb_tag(stat: (u64, u64)) -> Tag {
     }
 }
 
+/// What a file's thumbnails are kept under, its content hash and the
+/// stamp of [`thumb_tag`], for taking them out of the cache when the
+/// file is deleted: read before it goes, since neither can be after.
+pub(crate) fn thumb_key(path: &std::path::Path) -> Option<(String, u64)> {
+    let stat = file_stat(path)?;
+    let hash = greycard_library::hash_file(path).ok()?;
+    Some((hash, thumb_tag(stat).stamp))
+}
+
 /// A file's thumbnail from the cache when it holds one for the file's
 /// content, else made by [`thumbnail`] and kept. The lookup costs a
 /// stat and the content hash, a read of the file's first 64 KB, and

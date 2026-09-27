@@ -1141,6 +1141,10 @@ pub(crate) fn to_move_out(st: &State, i: usize) -> bool {
 
 /// The move-rejects sheet: how many frames and where they would go.
 pub(crate) fn ask_rejects(st: &State, app: &App) {
+    if st.deleting.is_some() {
+        app.set_status("a delete is still under way".into());
+        return;
+    }
     let n = reject_count(st);
     if n == 0 {
         app.set_status("no frames are flagged reject".into());
@@ -1166,6 +1170,10 @@ pub(crate) fn ask_rejects(st: &State, app: &App) {
 /// The frame the selection was on, if it went, gives way to the
 /// nearest one left.
 pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
+    if st.deleting.is_some() {
+        app.set_status("a delete is still under way".into());
+        return;
+    }
     // Those already out, in a rejects folder, stay where they are and
     // are not counted.
     let rejected: Vec<usize> = (0..st.files.len())
@@ -1210,12 +1218,28 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
         ));
     }
     tracing::info!("{status}");
-    if moved.files.is_empty() {
+    drop_files(st, app, worker, &moved.files, status);
+}
+
+/// Take the files at `gone` (indices into the list) out of the
+/// browser's list, as moving them out or deleting them does, and say
+/// `status`. Everything numbered by the list is numbered again; the
+/// culling pictures, keyed by the old numbers, are put down and made
+/// again. The frame the selection was on, if it went, gives way to
+/// the nearest one left.
+pub(crate) fn drop_files(
+    st: &mut State,
+    app: &App,
+    worker: &Worker,
+    gone: &[usize],
+    status: String,
+) {
+    if gone.is_empty() {
         app.set_status(status.into());
         return;
     }
     let current_path = st.current.map(|c| st.files[c].clone());
-    let keep = |i: &usize| !moved.files.contains(i);
+    let keep = |i: &usize| !gone.contains(i);
     let files: Vec<PathBuf> = st
         .files
         .iter()
@@ -1233,7 +1257,8 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
     st.thumb_failed = kept.iter().map(|&i| st.thumb_failed[i]).collect();
     st.thumb_asked = kept.iter().map(|&i| st.thumb_asked[i]).collect();
     // The index's answers by the new numbering, and a pass over the
-    // folder, which marks the moved frames' rows missing.
+    // folder, which marks the rows of frames moved out missing (a
+    // delete has had its rows forgotten already).
     st.index_passed = kept
         .iter()
         .map(|&i| st.index_passed.get(i).copied().unwrap_or(true))
@@ -1275,7 +1300,7 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
             }
         }
         (None, Some(row)) => {
-            // The frame on show went with the rejects; the nearest
+            // The frame on show went; the nearest
             // left takes its place, as a click on it would.
             let app_weak = app.as_weak();
             slint::Timer::single_shot(std::time::Duration::ZERO, move || {

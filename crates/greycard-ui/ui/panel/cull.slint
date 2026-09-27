@@ -35,6 +35,7 @@ export component CullSection inherits Section {
     callback filter-cleared();
     in property <int> reject-count;
     callback rejects-asked();
+    callback delete-asked(string);
     callback focus-keys();
 
     title: "CULLING";
@@ -125,6 +126,18 @@ export component CullSection inherits Section {
         icon: @image-url("../icons/folder-open.svg");
         enabled: root.reject-count > 0;
         clicked => { root.rejects-asked(); }
+    }
+    // Deleting, beside moving: each opens a sheet that names the
+    // count and the folder, and nothing goes until it is answered.
+    PanelButton {
+        text: "Delete selection...";
+        icon: @image-url("../icons/trash-2.svg");
+        clicked => { root.delete-asked("selection"); }
+    }
+    PanelButton {
+        text: "Delete rejects folder...";
+        icon: @image-url("../icons/trash-2.svg");
+        clicked => { root.delete-asked("rejects"); }
     }
     PanelButton {
         text: "Develop";

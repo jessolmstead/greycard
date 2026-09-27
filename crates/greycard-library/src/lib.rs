@@ -1123,6 +1123,26 @@ impl Library {
             .execute("DELETE FROM files WHERE missing_since IS NOT NULL", [])?)
     }
 
+    /// Forget the rows of these files, whatever state they are in; how
+    /// many went. For a delete the editor made itself: the files are
+    /// gone on purpose, so their rows are not kept missing for a move
+    /// to find, as a pass over the folder would keep them. The paths
+    /// are keyed as the index keys them, the folder canonical, so a
+    /// path whose file is already gone still finds its row while its
+    /// folder is there. The keywords go with the rows.
+    pub fn forget(&mut self, paths: &[PathBuf]) -> Result<usize> {
+        let tx = self.conn.transaction()?;
+        let mut gone = 0;
+        {
+            let mut stmt = tx.prepare_cached("DELETE FROM files WHERE path = ?")?;
+            for p in paths {
+                gone += stmt.execute(params![path_bytes(&canonical_file(p))])?;
+            }
+        }
+        tx.commit()?;
+        Ok(gone)
+    }
+
     /// The database's size on disk, for the numbers.
     pub fn size_on_disk(&self) -> Result<u64> {
         if self.path.as_os_str() == ":memory:" {

@@ -202,6 +202,28 @@ instant.
 - **Enter** or **Esc** leaves culling.
 - **Move rejects…** moves rejected frames and their sidecars into a
   `rejects` folder beside the shoot. Nothing is deleted.
+- **Delete selection…** deletes the selected frames (the open frame
+  when only one is selected) from disk. **Delete** opens the same
+  sheet in the grid and while culling.
+- **Delete rejects folder…** deletes the frames in the `rejects`
+  folder beside the shoot, and the folder once it is empty.
+
+Both deletes ask first. The sheet says how many frames and sidecars,
+and from which folder. A frame's `.gcd` and its XMP go with it, and
+nothing else in the folder is touched. An XMP a raw shares with its
+JPEG (`IMG.xmp` beside `IMG.CR3` and `IMG.JPG`) is kept.
+
+**Move to the trash** is the default, and Enter presses it; the frames
+can be restored from the system trash. The delete runs in the
+background, and the status line says when it is done. A frame on
+another drive may be copied into your home trash, which takes a
+while for a large set.
+
+If the trash refuses a frame, the delete stops there. The frames
+before it are in the trash; that frame and the ones after it stay
+where they were, and the status line says which files went. The next
+time, the sheet also offers **Delete permanently**, which cannot be
+undone. Enter never presses that one.
 
 ## Keys
 
@@ -220,6 +242,7 @@ instant.
 | P, X, U | Pick, reject, unflag |
 | 6 to 9 | Red, yellow, green or blue label (press again to clear) |
 | [ ] | Turn the frame a quarter left or right |
+| Delete | In the grid or culling: delete the selected frames, after a confirmation |
 | J | Shadow and highlight clipping warnings |
 | S | Soft proof |
 | Ctrl+F or / | Filter the folder by rating, flag, label or words |
@@ -233,7 +256,9 @@ instant.
 
 On a Mac, the Ctrl keys here are ⌘ (so ⌘C and ⌘V copy and paste
 settings, ⌘Z undoes), and ⌘+click adds a frame to the selection. The
-Control key with a click is a right-click.
+Control key with a click is a right-click. The key marked delete
+(⌫) opens the delete sheet, as Delete does elsewhere; ⌘⌫ does
+nothing.
 
 ## Downloads on first use
 

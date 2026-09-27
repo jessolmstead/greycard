@@ -356,6 +356,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         presets: preset_store.as_ref().map(|s| s.list()).unwrap_or_default(),
         preset_store,
         batch: cli.snapshot.is_some() || cli.screenshot.is_some() || cli.export.is_some(),
+        // Only a session someone is at deletes: never a capture, an
+        // export or a timing run, which have nobody to have confirmed.
+        deletes_allowed: cli.snapshot.is_none()
+            && cli.screenshot.is_none()
+            && cli.export.is_none()
+            && cli.time_sharpen.is_none()
+            && cli.time_cull.is_none()
+            && cli.time_select.is_none(),
         time_sharpen: cli.time_sharpen.map(|n| (n, None, Vec::new())),
         time_cull: cli.time_cull.map(|n| (n, Vec::new())),
         time_select: cli.time_select.map(|n| (n, Vec::new(), Vec::new())),

@@ -287,6 +287,37 @@ impl Thumbs {
         gone
     }
 
+    /// Remove the entries of a file deleted from disk: every size and
+    /// recipe kept for `hash` under `stamp`. An entry of another stamp
+    /// is left, since it is another copy's (the same head and length,
+    /// another time), and the eviction takes it in its turn. Answers
+    /// how many went.
+    pub fn remove(&mut self, hash: &str, stamp: u64) -> usize {
+        let fan = self.root.join(hash.get(..2).unwrap_or("__"));
+        let (head, tail) = (format!("{hash}-"), format!("-{stamp}.thumb"));
+        let Ok(entries) = std::fs::read_dir(&fan) else {
+            return 0;
+        };
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if !name.starts_with(&head) || !name.ends_with(&tail) {
+                continue;
+            }
+            let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            if std::fs::remove_file(entry.path()).is_ok() {
+                self.forget(len);
+                removed += 1;
+            }
+        }
+        // Fails, as it is meant to, while anything is left in it.
+        let _ = std::fs::remove_dir(&fan);
+        removed
+    }
+
     /// One entry of `len` bytes gone from the count.
     fn forget(&mut self, len: u64) {
         if let Some(u) = self.used.as_mut() {
@@ -603,6 +634,33 @@ mod tests {
             let import = cache.get(&key, 170, later).expect("the import's");
             assert_ne!(card.rgb, import.rgb);
         }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A deleted file's entries go, every size and recipe of its
+    /// stamp; another stamp's (another copy's) and another hash's stay,
+    /// and the count follows.
+    #[test]
+    fn a_deleted_file_takes_its_entries_and_no_one_elses() {
+        let dir = scratch("remove");
+        let mut cache = Thumbs::at(dir.join("thumbs"), DEFAULT_CAP);
+        let (key, other) = ("ab".repeat(32), "ac".repeat(32));
+        let at = |recipe, stamp| Tag { recipe, stamp };
+        let thumb = picture(96, 64, 5);
+        cache.put(&key, 96, at(1, 7), &thumb).unwrap();
+        cache.put(&key, 170, at(1, 7), &thumb).unwrap();
+        cache.put(&key, 96, at(2, 7), &thumb).unwrap();
+        cache.put(&key, 96, at(1, 8), &thumb).unwrap();
+        cache.put(&other, 96, at(1, 7), &thumb).unwrap();
+        assert_eq!(cache.known_usage().unwrap().entries, 5);
+        assert_eq!(cache.remove(&key, 7), 3);
+        assert_eq!(cache.known_usage().unwrap().entries, 2);
+        assert_eq!(cache.usage(), cache.known_usage().unwrap());
+        assert!(cache.get(&key, 96, at(1, 7)).is_none());
+        assert!(cache.get(&key, 96, at(1, 8)).is_some());
+        assert!(cache.get(&other, 96, at(1, 7)).is_some());
+        assert_eq!(cache.remove(&key, 7), 0);
+        assert_eq!(cache.remove(&"ff".repeat(32), 7), 0);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
