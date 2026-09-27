@@ -27,6 +27,10 @@ note a first tester reads.
   their picture until scrolled near; the 20,000-frame case filled in
   1.6 s with the window drawing throughout, against 3 s of a blank
   window (§191)
+- A view of the roots that takes a while to read shows a bar with a
+  count of the sidecars read, in the grid and the loupe alike, after
+  the first 200 ms; a read that stops moving is given up on rather
+  than left hanging (§192)
 
 ## 0.2.1, 2026-09-27
 
