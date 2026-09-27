@@ -42,6 +42,8 @@ note a first tester reads.
   large root: the count of sidecars out of place, and the move that
   settles them, run off the window's thread, the sheet saying
   "Counting..." and "Moving..." meanwhile
+- The Crop, Masks and Retouch tabs no longer open blank after the
+  Develop tab was scrolled down: each tab starts at its top
 
 ## 0.2.0, 2026-09-27
 

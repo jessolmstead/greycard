@@ -461,6 +461,10 @@ export component App inherits Window {
     in-out property <int> target: 0;
     // Which tab the panel shows: Develop, Crop, Masks or Retouch.
     in-out property <string> panel-tab: "Develop";
+    // Each tab starts at its top, however it was reached: the scroll is
+    // one for all four, and Develop scrolled to its foot left a shorter
+    // tab showing only the empty space below its sections.
+    changed panel-tab => { root.panel-scroll = 0px; }
     callback tab-changed(string);
     in-out property <bool> adjustment-enabled: true;
     in-out property <bool> mask-invert: false;
