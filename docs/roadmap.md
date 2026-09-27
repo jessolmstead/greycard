@@ -27,13 +27,7 @@ A NAS root neither freezes the window nor goes stale, frames can be
 deleted from the disk behind a confirmation, and the scopes can be
 read for the mask alone.
 
-- [ ] The thumbnail pool's deliveries on the UI thread: a folder of
-      20,000 whose pictures are all in the cache does not render its
-      window until every hit has been delivered, 5.7 to 6.3 s, where
-      the all-roots view brought the window up in a quarter second
-      before the pool (§172, found by §174's review). Batch the
-      deliveries, or deliver the visible range first and the rest in
-      idle time
+Nothing left to land.
 
 ## Tracks
 
@@ -120,6 +114,10 @@ seconds.
       2.3), and it is the next second (§164). The whole 45 MP develop
       with the hybrid denoise is 12.7 s at six threads, the number a
       tester can watch
+- [ ] A virtualized grid and strip: only the rows on screen given a
+      cell, where today every row of a 20,000-frame folder has one and
+      a frame costs 45 to 400 ms, the longest wait left while a warm
+      folder's pictures come in (§191)
 - [ ] An AVX2-and-FMA path for the wavelet chain's taps behind a
       feature check: about as much again on a desktop, nothing on the
       Mac; the first x86 assumption, declined twice (§128, §164)

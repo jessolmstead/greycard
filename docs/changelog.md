@@ -29,6 +29,12 @@ note a first tester reads.
   where there is no trash or the trash refused them; the index rows
   and cached thumbnails go too, and the delete runs off the window's
   thread (§190)
+- A folder of thousands whose thumbnails are all in the cache shows
+  its window at once and stays responsive while they come: the pool
+  delivers in batches, the rows on screen first, and rows far off keep
+  their picture until scrolled near; the 20,000-frame case filled in
+  1.6 s with the window drawing throughout, against 3 s of a blank
+  window (§191)
 
 ## 0.2.0, 2026-09-27
 
