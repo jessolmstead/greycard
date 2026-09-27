@@ -70,7 +70,10 @@ Kept in {}.",
         "greycard does not ship the profiles; they are fetched for you under their own license.";
     app.set_fetch_note(
         if unprompted {
-            format!("{note} Not now asks no more; the LENS section keeps the button.")
+            format!(
+                "{note} Choose Not now and you will not be asked again; the download stays \
+                 available in the LENS section."
+            )
         } else {
             note.to_string()
         }
