@@ -102,11 +102,16 @@ fn open(dir: PathBuf) -> Option<(PathBuf, File)> {
 /// nothing we act on either. ONNX Runtime's optimizer warns per
 /// session build that it cannot constant-fold a node the WebGPU
 /// provider has no CPU kernel for, which is how the graph runs.
-const QUIET: [&str; 4] = [
+/// calloop, winit's Wayland event loop, warns "Received an event for
+/// non-existence source" when a wake-up arrives for a source winit
+/// has just re-registered (its token's version moved on); nothing is
+/// lost, and it is winit's to fix.
+const QUIET: [&str; 5] = [
     "arboard",
     "rawler::lens",
     "rawler::decoders",
     "ort::logging",
+    "calloop",
 ];
 
 /// Our crates at `ours`, the libraries at warn, the known chatter at
