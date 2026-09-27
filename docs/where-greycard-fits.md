@@ -255,8 +255,9 @@ the keyboard, and a folder filter on all of them with a count on
 every chip, and read from and written to XMP sidecars so stars,
 labels and keywords travel to Lightroom and darktable (picks and
 rejects do not, since XMP has no field for them); culling from the camera's JPEG, with compare and a
-rejects folder, and a quarter turn for a frame the camera got the
-wrong way up, in every view; the shot's settings under the file name, with its
+rejects folder, a delete to the system trash behind a confirmation,
+and a quarter turn for a frame the camera got the wrong way up, in
+every view; the shot's settings under the file name, with its
 size;
 frame registration and a focus stack merged to a linear DNG from
 the command line; the camera's own picture in the viewport the

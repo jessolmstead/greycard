@@ -22,6 +22,13 @@ note a first tester reads.
   beside them, off at launch, so a skin mask shows the skin's cloud on
   the vectorscope and a face its level on the waveform; the clipping
   lamps follow it too while it is on (§189)
+- Delete from disk: Delete selection… and Delete rejects folder… in
+  the CULLING section, and the Delete key (Backspace on a Mac) in the
+  grid and culling, open a sheet that names the frames, sidecars and
+  folder, then move them to the system trash, or delete them for good
+  where there is no trash or the trash refused them; the index rows
+  and cached thumbnails go too, and the delete runs off the window's
+  thread (§190)
 
 ## 0.2.0, 2026-09-27
 

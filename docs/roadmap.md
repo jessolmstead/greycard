@@ -27,12 +27,6 @@ A NAS root neither freezes the window nor goes stale, frames can be
 deleted from the disk behind a confirmation, and the scopes can be
 read for the mask alone.
 
-- [ ] Delete from disk: the selection, or the rejects folder's contents,
-      removed for real with their sidecars, behind a confirmation that
-      names the count and the folder and offers the system trash where
-      there is one, permanent removal where there is not; the index rows
-      go with the files; the Delete key opens the sheet. Today Move
-      rejects is the only way out and nothing is ever deleted
 - [ ] The thumbnail pool's deliveries on the UI thread: a folder of
       20,000 whose pictures are all in the cache does not render its
       window until every hit has been delivered, 5.7 to 6.3 s, where
