@@ -1,7 +1,7 @@
 use crate::panel::assets::{offer_lenses_once, offer_model, show_lens, show_looks, show_profiles};
 use crate::panel::browser::{
-    chosen_frames, count_thumb, file_name, release_thumbnails, show_no_thumb, show_thumb,
-    thumb_turns,
+    chosen_frames, count_thumb, end_thumb_turn, file_name, release_thumbnails, show_no_thumb,
+    show_thumb, thumb_turns,
 };
 use crate::panel::cull::develop_landed;
 use crate::panel::edit::{current_turn, read_edit, take_sources};
@@ -12,6 +12,7 @@ use crate::queue;
 use crate::settings;
 use crate::sheet::{self, ExportPreset, Sheet};
 use crate::*;
+use std::time::{Duration, Instant};
 
 /// A develop the worker sent, waiting for the frame that puts it on
 /// the GPU.
@@ -170,11 +171,9 @@ fn keep_presets(st: &State, app: &App) {
     settings.save_to(path);
 }
 
-/// A result from the worker, on the UI thread.
-pub(crate) fn deliver(app: &App, outcome: Outcome) {
-    let Some(state) = STATE.with(|s| s.borrow().clone()) else {
-        return;
-    };
+/// One picture from the thumbnails' pool, or word that none could be
+/// made, put on its file's row.
+pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
     match outcome {
         Outcome::Thumbnail {
             index,
@@ -186,7 +185,6 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             cached,
             seconds,
         } => {
-            let mut st = state.borrow_mut();
             // A thumbnail of a list since replaced by another folder's
             // would land on a stranger's slot: only its own file's.
             if st.files.get(index) != Some(&path) {
@@ -198,7 +196,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 if cached { "from the cache" } else { "made" },
                 seconds * 1000.0
             );
-            count_thumb(&mut st, index, Some(cached), seconds);
+            count_thumb(st, index, Some(cached), seconds);
             st.thumb_base[index] = Some((width, height, rgb));
             st.thumb_made[index] = size;
             st.thumb_failed[index] = false;
@@ -221,16 +219,92 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             }
             // Shown as its edit turns it: the open file's as the panel
             // has it, another's as its sidecar does.
-            let (turns, flip) = thumb_turns(&st, app, index);
-            show_thumb(&mut st, app, index, turns, flip);
+            let (turns, flip) = thumb_turns(st, app, index);
+            show_thumb(st, app, index, turns, flip);
         }
-        Outcome::NoThumbnail { index, path } => {
-            let mut st = state.borrow_mut();
-            if st.files.get(index) == Some(&path) {
-                count_thumb(&mut st, index, None, 0.0);
-                show_no_thumb(&mut st, app, index);
+        Outcome::NoThumbnail { index, path } if st.files.get(index) == Some(&path) => {
+            count_thumb(st, index, None, 0.0);
+            show_no_thumb(st, app, index);
+        }
+        _ => {}
+    }
+}
+
+/// The least time a turn of the window's event loop takes pictures
+/// in for, before it lets the window draw and hear its input: the
+/// first turn's, which serves the files on screen.
+pub(crate) const THUMB_TURN: Duration = Duration::from_millis(8);
+
+/// The most: how long input can wait on the pictures, on top of the
+/// frame it was already waiting on.
+pub(crate) const THUMB_TURN_MOST: Duration = Duration::from_millis(100);
+
+/// How many pictures are taken from the outbox at a time, between
+/// looks at the clock.
+const THUMBS_AT_ONCE: usize = 32;
+
+/// How long a turn takes pictures in for, when the window spent
+/// `between` on the frame and the input since the last: as long
+/// again, within [`THUMB_TURN`] and [`THUMB_TURN_MOST`], so half the
+/// window's time goes to the pictures however dear a frame is. A
+/// frame over the browser's twenty thousand cells costs 45 to 200 ms,
+/// and a fixed 8 ms, with a frame after each, took a warm folder of
+/// that size 12 to 28 s to fill.
+pub(crate) fn thumb_turn(between: Option<Duration>) -> Duration {
+    between.map_or(THUMB_TURN, |b| b.clamp(THUMB_TURN, THUMB_TURN_MOST))
+}
+
+/// The pictures waiting in the pool's outbox, taken in for `budget`,
+/// the files on screen first. What is left is taken on a timer rather
+/// than a call on the event loop: the loop takes in every call queued
+/// before it draws, and a timer's turn comes after the frame and the
+/// input.
+pub(crate) fn take_thumbnails(
+    app: &App,
+    state: &Rc<RefCell<State>>,
+    batch: crate::thumbpool::Batch,
+    budget: Duration,
+) {
+    let started = Instant::now();
+    let left = {
+        let mut st = state.borrow_mut();
+        let left = loop {
+            let (outcomes, left) = batch.take(THUMBS_AT_ONCE);
+            for outcome in outcomes {
+                take_thumbnail(&mut st, app, outcome);
             }
+            if !left || started.elapsed() >= budget {
+                break left;
+            }
+        };
+        end_thumb_turn(&mut st, started);
+        left
+    };
+    if left {
+        let (app_weak, ended) = (app.as_weak(), Instant::now());
+        slint::Timer::single_shot(Duration::ZERO, move || {
+            let (Some(app), Some(state)) = (app_weak.upgrade(), STATE.with(|s| s.borrow().clone()))
+            else {
+                return;
+            };
+            take_thumbnails(&app, &state, batch, thumb_turn(Some(ended.elapsed())));
+        });
+    }
+}
+
+/// A result from the worker, on the UI thread.
+pub(crate) fn deliver(app: &App, outcome: Outcome) {
+    let Some(state) = STATE.with(|s| s.borrow().clone()) else {
+        return;
+    };
+    match outcome {
+        outcome @ (Outcome::Thumbnail { .. } | Outcome::NoThumbnail { .. }) => {
+            let started = Instant::now();
+            let mut st = state.borrow_mut();
+            take_thumbnail(&mut st, app, outcome);
+            end_thumb_turn(&mut st, started);
         }
+        Outcome::Thumbnails(batch) => take_thumbnails(app, &state, batch, thumb_turn(None)),
         Outcome::Opened {
             generation,
             as_shot,

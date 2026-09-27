@@ -15,6 +15,15 @@
 //! thread still looks pictures up in the cache: a hit is a tenth of a
 //! millisecond and takes nothing from the develop, so a warm folder's
 //! strip fills at once whatever is running.
+//!
+//! What the threads finish goes to the window one call each, or
+//! through an [`Outbox`] ([`Pool::batched`], the editor's). A warm
+//! folder of twenty thousand is twenty thousand hits in a few
+//! seconds; at one call on the window's event loop each, and winit
+//! taking in every call already queued before it draws, the window
+//! stood blank until the last was in. Batched, the pool calls once
+//! for as many as pile up before the window takes them, and the
+//! window takes them a slice at a time, the files it shows first.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -53,6 +62,134 @@ pub(crate) fn default_threads() -> usize {
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
         .unwrap_or_else(|| threads_for(std::thread::available_parallelism().map_or(2, |n| n.get())))
+}
+
+/// What the threads have finished and the window has not yet taken
+/// in: the files the window shows apart from the rest, so it takes
+/// them first.
+#[derive(Default)]
+pub(crate) struct Outbox {
+    inner: Mutex<Waiting>,
+}
+
+#[derive(Default)]
+struct Waiting {
+    /// Finished, for files in `shown`, in the order finished.
+    shown_done: VecDeque<Outcome>,
+    /// Finished, for the rest, in the order finished.
+    rest_done: VecDeque<Outcome>,
+    /// The files on screen, as the window last said (`Pool::want`).
+    shown: Option<(usize, usize)>,
+    /// Whether the window has been told there is something here and
+    /// has not found it empty since: while it has, the threads add to
+    /// what is waiting and say nothing more.
+    told: bool,
+}
+
+/// The file an outcome of the pool's is for.
+fn file_of(outcome: &Outcome) -> Option<usize> {
+    match outcome {
+        Outcome::Thumbnail { index, .. } | Outcome::NoThumbnail { index, .. } => Some(*index),
+        _ => None,
+    }
+}
+
+impl Waiting {
+    fn on_screen(&self, outcome: &Outcome) -> bool {
+        file_of(outcome).is_some_and(|i| {
+            self.shown
+                .is_some_and(|(first, last)| (first..=last).contains(&i))
+        })
+    }
+
+    fn is_empty(&self) -> bool {
+        self.shown_done.is_empty() && self.rest_done.is_empty()
+    }
+}
+
+impl Outbox {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Waiting> {
+        self.inner.lock().expect("thumbnail outbox")
+    }
+
+    /// Put one in, and say whether the window needs telling: only
+    /// when it has not been told since it last found the outbox
+    /// empty.
+    fn put(&self, outcome: Outcome) -> bool {
+        let mut w = self.lock();
+        if w.on_screen(&outcome) {
+            w.shown_done.push_back(outcome);
+        } else {
+            w.rest_done.push_back(outcome);
+        }
+        !std::mem::replace(&mut w.told, true)
+    }
+
+    /// The window shows `first..=last` now: what is waiting for those
+    /// files goes ahead of the rest.
+    fn show(&self, first: usize, last: usize) {
+        let mut w = self.lock();
+        if w.shown == Some((first, last)) {
+            return;
+        }
+        w.shown = Some((first, last));
+        let waiting: Vec<Outcome> = {
+            let w = &mut *w;
+            w.shown_done
+                .drain(..)
+                .chain(w.rest_done.drain(..))
+                .collect()
+        };
+        for outcome in waiting {
+            if w.on_screen(&outcome) {
+                w.shown_done.push_back(outcome);
+            } else {
+                w.rest_done.push_back(outcome);
+            }
+        }
+    }
+
+    /// Another list: what is waiting was the old one's.
+    fn clear(&self) {
+        let mut w = self.lock();
+        w.shown_done.clear();
+        w.rest_done.clear();
+    }
+}
+
+/// The window's handle on the outbox, which
+/// [`Outcome::Thumbnails`] carries.
+#[derive(Clone)]
+pub struct Batch(Arc<Outbox>);
+
+impl Batch {
+    /// A batch of these, as the threads would leave it, with the
+    /// window told.
+    #[cfg(test)]
+    pub(crate) fn of(outcomes: Vec<Outcome>) -> Self {
+        let outbox = Outbox::default();
+        for outcome in outcomes {
+            outbox.put(outcome);
+        }
+        Self(Arc::new(outbox))
+    }
+
+    /// Up to `n` of what is waiting: the files on screen first, then
+    /// the rest, each in the order they were finished; and whether any
+    /// are left. When none are, the next one finished tells the window
+    /// again.
+    pub(crate) fn take(&self, n: usize) -> (Vec<Outcome>, bool) {
+        let mut w = self.0.lock();
+        let from_shown = n.min(w.shown_done.len());
+        let mut taken: Vec<Outcome> = w.shown_done.drain(..from_shown).collect();
+        let from_rest = (n - taken.len()).min(w.rest_done.len());
+        taken.extend(w.rest_done.drain(..from_rest));
+        let left = !w.is_empty();
+        if !left {
+            w.told = false;
+        }
+        (taken, left)
+    }
 }
 
 #[derive(Default)]
@@ -101,6 +238,9 @@ pub(crate) struct Pool {
     lookup: Option<Lookup>,
     make: Make,
     deliver: Deliver,
+    /// Where the threads put what they finish, when the window takes
+    /// it in batches.
+    outbox: Option<Arc<Outbox>>,
 }
 
 impl Pool {
@@ -135,7 +275,16 @@ impl Pool {
             lookup,
             make,
             deliver,
+            outbox: None,
         }
+    }
+
+    /// Deliver through an outbox: one [`Outcome::Thumbnails`] for as
+    /// many as are finished before the window takes them, rather than
+    /// a call each. Before the first push, which starts the threads.
+    pub(crate) fn batched(mut self) -> Self {
+        self.outbox = Some(Arc::new(Outbox::default()));
+        self
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Pending> {
@@ -154,15 +303,26 @@ impl Pool {
         if !q.started {
             q.started = true;
             for n in 0..self.threads {
-                let (shared, lookup, make, deliver) = (
+                let (shared, lookup, make, deliver, outbox) = (
                     self.shared.clone(),
                     self.lookup.clone(),
                     self.make.clone(),
                     self.deliver.clone(),
+                    self.outbox.clone(),
                 );
+                // Straight to the window, or into the outbox with the
+                // window told only when it is not already.
+                let send = move |outcome: Outcome| match &outbox {
+                    Some(outbox) => {
+                        if outbox.put(outcome) {
+                            deliver(Outcome::Thumbnails(Batch(outbox.clone())));
+                        }
+                    }
+                    None => deliver(outcome),
+                };
                 let spawned = std::thread::Builder::new()
                     .name(format!("greycard thumbnails {n}"))
-                    .spawn(move || serve(&shared, lookup.as_deref(), &*make, &*deliver));
+                    .spawn(move || serve(&shared, lookup.as_deref(), &*make, &send));
                 if let Err(e) = spawned {
                     tracing::warn!("thumbnail thread {n} not started: {e}");
                 }
@@ -192,6 +352,11 @@ impl Pool {
     /// Make `first..=last` before the rest, the rest outward from
     /// that range; applies to whatever has not been begun.
     pub(crate) fn want(&self, first: usize, last: usize) {
+        // What is finished and waiting for the window is taken in
+        // with that range first as well.
+        if let Some(outbox) = &self.outbox {
+            outbox.show(first, last);
+        }
         let mut q = self.lock();
         if q.jobs.len() < 2 || q.wanted == Some((first, last)) {
             return;
@@ -213,6 +378,12 @@ impl Pool {
         q.missed.clear();
         q.wanted = None;
         q.epoch += 1;
+        drop(q);
+        // Finished for the old list and not yet taken in: the window
+        // would only throw each away on its path.
+        if let Some(outbox) = &self.outbox {
+            outbox.clear();
+        }
     }
 
     /// How many pictures may be in hand at once from now on, up to
@@ -697,5 +868,163 @@ mod tests {
         pool.push(1, file(1));
         receive(&rx, 1);
         assert_eq!(*sizes.lock().unwrap(), vec![360, 128]);
+    }
+
+    /// What a batched pool tells the window: each batch it is handed.
+    fn batches() -> (Deliver, mpsc::Receiver<Batch>) {
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        let deliver: Deliver = Arc::new(move |o| {
+            if let Outcome::Thumbnails(batch) = o {
+                let _ = tx.lock().unwrap().send(batch);
+            }
+        });
+        (deliver, rx)
+    }
+
+    fn instant() -> Make {
+        Arc::new(|_, _| Ok((picture(), true)))
+    }
+
+    /// How many are waiting in a batch's outbox.
+    fn waiting(batch: &Batch) -> usize {
+        let w = batch.0.lock();
+        w.shown_done.len() + w.rest_done.len()
+    }
+
+    /// Wait until `n` are waiting, as a window busy drawing would find
+    /// them.
+    fn until_waiting(batch: &Batch, n: usize) {
+        let until = Instant::now() + WAIT;
+        while waiting(batch) < n {
+            assert!(Instant::now() < until, "{} of {n} came", waiting(batch));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    fn files_of(outcomes: &[Outcome]) -> Vec<usize> {
+        outcomes.iter().filter_map(file_of).collect()
+    }
+
+    /// Two thousand pictures that take no time, on eight threads: one
+    /// call on the window's event loop each kept a warm folder of
+    /// twenty thousand from drawing for 3 s. The window is told once
+    /// and takes them all from the one batch, and is told again only
+    /// after it has found the outbox empty.
+    #[test]
+    fn many_instant_hits_come_in_one_batch() {
+        let (deliver, rx) = batches();
+        let pool = Pool::new(8, instant(), deliver).batched();
+        pool.push_all((0..2000).map(|i| (i, file(i))).collect());
+        let batch = rx.recv_timeout(WAIT).expect("the window is told");
+        until_waiting(&batch, 2000);
+        assert!(rx.try_recv().is_err(), "told once for all of them");
+        let (first, left) = batch.take(64);
+        assert_eq!((first.len(), left), (64, true));
+        let (rest, left) = batch.take(usize::MAX);
+        assert_eq!((rest.len(), left), (1936, false));
+        let mut all = files_of(&first);
+        all.extend(files_of(&rest));
+        all.sort_unstable();
+        assert_eq!(all, (0..2000).collect::<Vec<_>>(), "each once");
+        assert!(rx.try_recv().is_err());
+        // Found empty, the window is told of the next ones.
+        pool.push_all((2000..3000).map(|i| (i, file(i))).collect());
+        let again = rx.recv_timeout(WAIT).expect("told again");
+        until_waiting(&again, 1000);
+        assert!(rx.try_recv().is_err(), "once for the second lot too");
+        assert_eq!(again.take(usize::MAX).0.len(), 1000);
+    }
+
+    /// A window that takes what is waiting in slices while the threads
+    /// go on finishing, as the editor's does: nothing lost or taken
+    /// twice, and far fewer batches than pictures.
+    #[test]
+    fn a_window_taking_slices_meanwhile_gets_each_once() {
+        let (deliver, rx) = batches();
+        let pool = Pool::new(8, instant(), deliver).batched();
+        let n = 5000;
+        pool.push_all((0..n).map(|i| (i, file(i))).collect());
+        let (mut seen, mut told) = (Vec::new(), 0);
+        while seen.len() < n {
+            let batch = rx.recv_timeout(WAIT).expect("told");
+            told += 1;
+            loop {
+                let (outcomes, left) = batch.take(32);
+                seen.extend(files_of(&outcomes));
+                if !left {
+                    break;
+                }
+            }
+            // A frame's worth of drawing between turns.
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        seen.sort_unstable();
+        assert_eq!(seen, (0..n).collect::<Vec<_>>());
+        assert!(told < n / 10, "{told} batches for {n} pictures");
+    }
+
+    /// What waits for the files on screen is taken first, in the order
+    /// it was finished, then the rest in theirs: when the window said
+    /// what it shows before they were made, and when it scrolls while
+    /// they wait.
+    #[test]
+    fn the_files_on_screen_are_taken_first() {
+        let (deliver, rx) = batches();
+        let pool = Pool::new(1, instant(), deliver).batched();
+        pool.set_limit(0);
+        pool.push_all((0..100).map(|i| (i, file(i))).collect());
+        pool.want(20, 24);
+        pool.set_limit(1);
+        let batch = rx.recv_timeout(WAIT).expect("told");
+        until_waiting(&batch, 100);
+        assert_eq!(files_of(&batch.take(5).0), vec![20, 21, 22, 23, 24]);
+        // Scrolled while the rest wait: those, then the earliest
+        // finished of the rest, which were made outward from 20..=24.
+        pool.want(60, 69);
+        assert_eq!(
+            files_of(&batch.take(12).0),
+            vec![60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 19, 25]
+        );
+        let (rest, left) = batch.take(usize::MAX);
+        assert!(!left);
+        assert_eq!(rest.len(), 83);
+    }
+
+    /// Another folder: what waits for the window from the old one is
+    /// dropped.
+    #[test]
+    fn a_folder_change_empties_the_outbox() {
+        let (deliver, rx) = batches();
+        let pool = Pool::new(2, instant(), deliver).batched();
+        pool.push_all((0..50).map(|i| (i, file(i))).collect());
+        let batch = rx.recv_timeout(WAIT).expect("told");
+        until_waiting(&batch, 50);
+        pool.forget();
+        let (taken, left) = batch.take(usize::MAX);
+        assert!(taken.is_empty() && !left);
+    }
+
+    /// A folder change leaves the window told, with nothing waiting.
+    /// Its take finds the outbox empty, and that alone is what lets
+    /// the new folder's pictures tell it again: a flag left set would
+    /// leave them unseen for good.
+    #[test]
+    fn after_a_folder_change_the_window_is_told_again() {
+        let (deliver, rx) = batches();
+        let pool = Pool::new(2, instant(), deliver).batched();
+        pool.push_all((0..50).map(|i| (i, file(i))).collect());
+        let batch = rx.recv_timeout(WAIT).expect("told");
+        until_waiting(&batch, 50);
+        pool.forget();
+        assert!(rx.try_recv().is_err());
+        assert_eq!(batch.take(32).0.len(), 0);
+        pool.push_all((0..10).map(|i| (i, file(100 + i))).collect());
+        let again = rx
+            .recv_timeout(WAIT)
+            .expect("the new folder tells it again");
+        until_waiting(&again, 10);
+        let (taken, left) = again.take(usize::MAX);
+        assert_eq!((taken.len(), left), (10, false));
     }
 }

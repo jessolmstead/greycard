@@ -326,6 +326,10 @@ pub enum Outcome {
         index: usize,
         path: PathBuf,
     },
+    /// Thumbnails and `NoThumbnail`s waiting in the pool's outbox, for
+    /// a worker made with [`Worker::batched`]: one of these for as
+    /// many as the threads finish before the window takes them in.
+    Thumbnails(crate::thumbpool::Batch),
     Failed {
         generation: u64,
         message: String,
@@ -457,9 +461,23 @@ pub struct Worker {
 }
 
 impl Worker {
+    /// A worker whose thumbnails come to `deliver` one call each: the
+    /// tests', which read them off a channel.
+    #[cfg(test)]
     pub fn new(deliver: impl Fn(Outcome) + Send + Sync + 'static) -> Self {
+        Self::build(Arc::new(deliver), false)
+    }
+
+    /// A worker whose thumbnails come to `deliver` in batches, as
+    /// [`Outcome::Thumbnails`]: the window's, where a call is a turn
+    /// of the event loop and a warm folder of thousands would take
+    /// every one before drawing.
+    pub fn batched(deliver: impl Fn(Outcome) + Send + Sync + 'static) -> Self {
+        Self::build(Arc::new(deliver), true)
+    }
+
+    fn build(deliver: Deliver, batched: bool) -> Self {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
-        let deliver: Deliver = Arc::new(deliver);
         let thumbs: ThumbCache = Arc::new(Mutex::new(None));
         let make: crate::thumbpool::Make = {
             let thumbs = thumbs.clone();
@@ -469,12 +487,13 @@ impl Worker {
             let thumbs = thumbs.clone();
             Arc::new(move |path, size| looked_up_thumbnail(&thumbs, path, size))
         };
-        let pool = Arc::new(crate::thumbpool::Pool::with_lookup(
+        let pool = crate::thumbpool::Pool::with_lookup(
             crate::thumbpool::default_threads(),
             lookup,
             make,
             deliver.clone(),
-        ));
+        );
+        let pool = Arc::new(if batched { pool.batched() } else { pool });
         let (q, d, p) = (queue.clone(), deliver.clone(), pool.clone());
         let thread = std::thread::Builder::new()
             .name("greycard worker".into())

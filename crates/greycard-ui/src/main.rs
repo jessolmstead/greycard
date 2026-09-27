@@ -663,6 +663,8 @@ pub(crate) struct State {
     pub(crate) thumb_run: Option<panel::browser::ThumbRun>,
     /// The frames the grid last said it shows, first and last.
     pub(crate) grid_shown: Option<(i32, i32)>,
+    /// The rows the filmstrip last said it shows, first and last.
+    pub(crate) strip_shown: Option<(i32, i32)>,
     /// How each frame stands in its own file — its orientation tag
     /// and the size a develop comes out at — read once and kept. No
     /// pixel is decoded for it, and nothing asks until a turn is
@@ -935,6 +937,7 @@ impl State {
             thumb_want: worker::THUMB_WIDTH,
             thumb_run: None,
             grid_shown: None,
+            strip_shown: None,
             stances: HashMap::new(),
             learned: HashMap::new(),
             asked: HashMap::new(),

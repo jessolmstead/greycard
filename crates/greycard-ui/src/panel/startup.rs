@@ -435,10 +435,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         });
     }
 
-    // Results come back to the UI thread through the event loop.
+    // Results come back to the UI thread through the event loop, the
+    // thumbnails in batches: one call a picture, and a warm folder of
+    // twenty thousand kept the window from drawing until the last.
     let worker = {
         let app_weak = app.as_weak();
-        Worker::new(move |outcome| {
+        Worker::batched(move |outcome| {
             let app_weak = app_weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(app) = app_weak.upgrade() {
@@ -694,6 +696,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     let started = std::time::Instant::now();
                     let mut st = state.borrow_mut();
                     let st = &mut *st;
+                    // A frame drawn while a folder's pictures come,
+                    // for the run's line in the log.
+                    if let Some(run) = st.thumb_run.as_mut() {
+                        run.frame();
+                    }
                     // The first frame to show the all-roots view, or a
                     // list merged, and how long since it was asked for.
                     if let Some((at, what)) = st.library.painted.take() {

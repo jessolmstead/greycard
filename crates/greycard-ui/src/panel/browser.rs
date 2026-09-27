@@ -24,6 +24,21 @@ pub(crate) struct ThumbRun {
     /// The worker's own time over them, without the develop that
     /// goes first.
     work: f64,
+    /// The window's own: how many turns of its event loop took
+    /// pictures in, the time they held it, and the longest.
+    turns: usize,
+    window: f64,
+    longest_turn: f64,
+    /// The frames drawn while the pictures came: how many, when the
+    /// first was from the folder's open, and the longest wait between
+    /// two, which is how long the window stood unresponsive.
+    frames: usize,
+    first_frame: Option<f64>,
+    last_frame: Option<std::time::Instant>,
+    longest_gap: f64,
+    /// The totals, once the last has arrived, for the log at the end
+    /// of the turn that took it in.
+    done: Option<RunTotals>,
 }
 
 /// What a finished run says, for the log.
@@ -37,6 +52,17 @@ pub(crate) struct RunTotals {
     pub(crate) work: f64,
 }
 
+/// What a run cost the window's thread, for the log.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct RunWindow {
+    pub(crate) turns: usize,
+    pub(crate) window: f64,
+    pub(crate) longest_turn: f64,
+    pub(crate) frames: usize,
+    pub(crate) first_frame: Option<f64>,
+    pub(crate) longest_gap: f64,
+}
+
 impl ThumbRun {
     pub(crate) fn new(files: usize) -> Self {
         Self {
@@ -47,6 +73,54 @@ impl ThumbRun {
             made: 0,
             failed: 0,
             work: 0.0,
+            turns: 0,
+            window: 0.0,
+            longest_turn: 0.0,
+            frames: 0,
+            first_frame: None,
+            last_frame: None,
+            longest_gap: 0.0,
+            done: None,
+        }
+    }
+
+    /// A turn of the window's event loop took pictures in, and held
+    /// it `seconds`.
+    pub(crate) fn turn(&mut self, seconds: f64) {
+        self.turns += 1;
+        self.window += seconds;
+        self.longest_turn = self.longest_turn.max(seconds);
+    }
+
+    /// The window drew a frame.
+    pub(crate) fn frame(&mut self) {
+        let now = std::time::Instant::now();
+        self.frames += 1;
+        match self.last_frame {
+            Some(last) => {
+                self.longest_gap = self.longest_gap.max(now.duration_since(last).as_secs_f64());
+            }
+            None => self.first_frame = Some(now.duration_since(self.started).as_secs_f64()),
+        }
+        self.last_frame = Some(now);
+    }
+
+    /// What the run has cost the window so far. The gap still open,
+    /// from the last frame to now, counts: a window that has drawn
+    /// nothing since the pictures started is waiting all that while.
+    pub(crate) fn window(&self) -> RunWindow {
+        let open = self
+            .last_frame
+            .unwrap_or(self.started)
+            .elapsed()
+            .as_secs_f64();
+        RunWindow {
+            turns: self.turns,
+            window: self.window,
+            longest_turn: self.longest_turn,
+            frames: self.frames,
+            first_frame: self.first_frame,
+            longest_gap: self.longest_gap.max(open),
         }
     }
 
@@ -95,28 +169,52 @@ impl ThumbRun {
     }
 }
 
-/// Count a thumbnail into the folder's run, and say so in the log
-/// when it was the last.
+/// Count a thumbnail into the folder's run. The log hears of the
+/// last at the end of the turn that took it in ([`end_thumb_turn`]).
 pub(crate) fn count_thumb(st: &mut State, index: usize, cached: Option<bool>, seconds: f64) {
     let Some(run) = st.thumb_run.as_mut() else {
         return;
     };
     if let Some(t) = run.arrived(index, cached, seconds) {
-        // The work is summed over the pool's threads, so it can be
-        // more than the wall time.
-        let threads = WORKER.with(|w| w.borrow().as_ref().map_or(1, |w| w.thumb_threads()));
-        tracing::info!(
-            "thumbnails: {} files in {:.2} s from the folder's open, {:.2} s of decoding across \
-             {threads} threads; {} from the cache, {} made, {} failed",
-            t.files,
-            t.seconds,
-            t.work,
-            t.cached,
-            t.made,
-            t.failed
-        );
-        st.thumb_run = None;
+        run.done = Some(t);
     }
+}
+
+/// A turn of the window's that took pictures in, begun at `started`,
+/// is over: counted into the run, and when the run's last has come,
+/// the run said in the log and closed.
+pub(crate) fn end_thumb_turn(st: &mut State, started: std::time::Instant) {
+    let Some(run) = st.thumb_run.as_mut() else {
+        return;
+    };
+    run.turn(started.elapsed().as_secs_f64());
+    let Some(t) = run.done else {
+        return;
+    };
+    let w = run.window();
+    // The work is summed over the pool's threads, so it can be
+    // more than the wall time.
+    let threads = WORKER.with(|w| w.borrow().as_ref().map_or(1, |w| w.thumb_threads()));
+    tracing::info!(
+        "thumbnails: {} files in {:.2} s from the folder's open, {:.2} s of decoding across \
+         {threads} threads; {} from the cache, {} made, {} failed; taken in by the window in \
+         {} turns, {:.2} s, the longest {:.0} ms; {} frames drawn meanwhile, the first {}, the \
+         longest wait between two {:.0} ms",
+        t.files,
+        t.seconds,
+        t.work,
+        t.cached,
+        t.made,
+        t.failed,
+        w.turns,
+        w.window,
+        w.longest_turn * 1e3,
+        w.frames,
+        w.first_frame
+            .map_or("none".to_string(), |s| format!("at {s:.2} s")),
+        w.longest_gap * 1e3,
+    );
+    st.thumb_run = None;
 }
 
 /// A browser row for a file: its name, the badges its meta asks for,
@@ -423,11 +521,22 @@ pub(crate) fn show_thumb(st: &mut State, app: &App, i: usize, turns: u8, flip: b
         return;
     };
     // A frame the filter hides has no row; its picture waits for the
-    // list to show it again.
-    st.thumb_shown[i] = Some((turns, flip));
+    // list to show it again, and is then put on its row as any other
+    // is, when that row is near the screen. Marking it shown here
+    // would have a filter cleared over thousands put them all on in
+    // the one call.
     let Some(row) = row_of(st, i) else {
         return;
     };
+    // A row with no picture yet, far from the screen, waits to be
+    // scrolled near (`fill_near_screen`): a picture put on a row costs
+    // the window a frame's work over the browser's every cell, and a
+    // warm folder of twenty thousand put them all on at once. A row
+    // that has one is never left with it standing the wrong way up.
+    if st.thumb_shown[i].is_none() && !row_near_screen(st, row) {
+        return;
+    }
+    st.thumb_shown[i] = Some((turns, flip));
     let (pw, ph, turned) = greycard_edit::geometry::turn_pixels(*w, *h, rgb, turns, flip);
     let mut buf = slint::SharedPixelBuffer::<slint::Rgb8Pixel>::new(pw, ph);
     buf.make_mut_bytes().copy_from_slice(&turned);
@@ -436,6 +545,62 @@ pub(crate) fn show_thumb(st: &mut State, app: &App, i: usize, turns: u8, flip: b
         t.image = slint::Image::from_rgb8(buf);
         t.failed = false;
         model.set_row_data(row, t);
+    }
+}
+
+/// How far either side of the current frame's row its neighbors'
+/// pictures go on the rows as they come: the strip, which follows the
+/// current frame, and the window before the grid or the strip has
+/// said what it shows.
+pub(crate) const ROWS_AROUND: usize = 256;
+
+/// The rows whose pictures go on as soon as they are in hand:
+/// [`ROWS_AROUND`] either side of the current frame's, or of the first
+/// row with none current; and what the grid and the strip last said
+/// they show, each with as much again either side, so a scroll finds
+/// its next screenful ready.
+fn near_screen(st: &State) -> [Option<(usize, usize)>; 3] {
+    let Some(last_row) = st.shown.len().checked_sub(1) else {
+        return [None; 3];
+    };
+    let widened = |(first, last): (i32, i32)| {
+        let (first, last) = (usize::try_from(first).ok()?, usize::try_from(last).ok()?);
+        let reach = last.checked_sub(first)? + 1;
+        Some((first.saturating_sub(reach), (last + reach).min(last_row)))
+    };
+    let at = st.current.and_then(|c| row_of(st, c)).unwrap_or(0);
+    [
+        Some((
+            at.saturating_sub(ROWS_AROUND),
+            (at + ROWS_AROUND).min(last_row),
+        )),
+        st.grid_shown.and_then(widened),
+        st.strip_shown.and_then(widened),
+    ]
+}
+
+/// Whether `row`'s picture goes on the row now, being near what is on
+/// screen.
+pub(crate) fn row_near_screen(st: &State, row: usize) -> bool {
+    near_screen(st)
+        .into_iter()
+        .flatten()
+        .any(|(first, last)| (first..=last).contains(&row))
+}
+
+/// Put the pictures in hand on the rows now near the screen that have
+/// none: after a scroll of the grid or the strip, or a new list.
+pub(crate) fn fill_near_screen(st: &mut State, app: &App) {
+    for (first, last) in near_screen(st).into_iter().flatten() {
+        for row in first..=last {
+            let Some(&f) = st.shown.get(row) else {
+                break;
+            };
+            if st.thumb_base[f].is_some() && st.thumb_shown[f].is_none() {
+                let (turns, flip) = thumb_turns(st, app, f);
+                show_thumb(st, app, f, turns, flip);
+            }
+        }
     }
 }
 
@@ -975,6 +1140,7 @@ pub(crate) fn open_loaded(
     st.thumb_asked = vec![worker::THUMB_WIDTH; files.len()];
     st.thumb_want = worker::THUMB_WIDTH;
     st.grid_shown = None;
+    st.strip_shown = None;
     st.thumb_run = Some(ThumbRun::new(files.len()));
     // The old folder's thumbnails still waiting are dropped: their
     // numbering is its list's.
@@ -1210,6 +1376,7 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
     // In culling nothing is developed: the frame's JPEG shows.
     if st.cull.is_some() {
         cull_select(st, app, i);
+        fill_near_screen(st, app);
         show_set(st, app);
         return;
     }
@@ -1289,6 +1456,8 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
     // develop: after the job, so the decode that matters
     // most is under way first.
     start_placeholder(st, app, i);
+    // Its neighbors' pictures, which a jump may have left without.
+    fill_near_screen(st, app);
     show_set(st, app);
 }
 
@@ -1543,19 +1712,26 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     // seconds rather than after the whole folder. Reported on every
     // move of the strip; the worker drops a repeat.
     {
-        let (state, worker) = (state.clone(), worker.clone());
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_strip_range(move |first, last| {
             if first < 0 || last < first {
                 return;
             }
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
             // Rows to files: the range between the two, which under a
             // filter is a superset of what is shown, and fine for an
             // order.
-            let st = state.borrow();
+            let mut st = state.borrow_mut();
             let (Some(&f), Some(&l)) = (st.shown.get(first as usize), st.shown.get(last as usize))
             else {
                 return;
             };
+            if st.strip_shown != Some((first, last)) {
+                st.strip_shown = Some((first, last));
+                fill_near_screen(&mut st, &app);
+            }
             worker.want_thumbnails(f, l);
         });
     }
@@ -1616,7 +1792,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some((first, last)) = grid::visible(scroll, height, cell, columns, count) else {
                 return;
             };
-            st.grid_shown = Some((first, last));
+            if st.grid_shown != Some((first, last)) {
+                st.grid_shown = Some((first, last));
+                fill_near_screen(&mut st, &app);
+            }
             let (first, last) = (
                 first.max(0) as usize,
                 (last.max(0) as usize).min(st.shown.len().saturating_sub(1)),
@@ -1921,6 +2100,131 @@ mod tests {
         state.borrow_mut().thumb_made[1] = 360;
         state.borrow_mut().thumb_made[2] = 360;
         assert!(grid_filled(&state.borrow(), &app));
+    }
+
+    /// A picture for a row far from the screen is kept, not put on the
+    /// row, until the grid or the strip is scrolled near it; one near
+    /// goes on at once, and a row that has a picture gets the new one
+    /// wherever it is. A batch from the pool is taken in one call.
+    #[test]
+    fn pictures_far_from_the_screen_wait_to_be_scrolled_near() {
+        use crate::panel::deliver::deliver;
+        use crate::worker::Outcome;
+        let app = window(1000);
+        let files = crate::testing::folder(1000);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        let pictured = |row: usize| app.get_thumbs().row_data(row).unwrap().image.size().width;
+        app.set_grid_open(true);
+        state.borrow_mut().grid_shown = Some((0, 9));
+        deliver(
+            &app,
+            Outcome::Thumbnails(crate::thumbpool::Batch::of(
+                [5, 300, 900].map(|i| picture_for(&files, i)).into(),
+            )),
+        );
+        {
+            let st = state.borrow();
+            assert!([5, 300, 900].iter().all(|&i| st.thumb_base[i].is_some()));
+        }
+        assert_eq!(pictured(5), 2, "near the screen: on its row");
+        assert_eq!(pictured(300), 0, "far: kept for later");
+        assert_eq!(pictured(900), 0);
+        // The grid scrolled to 900's screenful.
+        state.borrow_mut().grid_shown = Some((895, 904));
+        fill_near_screen(&mut state.borrow_mut(), &app);
+        assert_eq!(pictured(900), 2);
+        assert_eq!(pictured(300), 0);
+        // The strip, through its own report.
+        app.invoke_strip_range(295, 305);
+        assert_eq!(pictured(300), 2);
+        // Back to the top: 900's larger picture still goes on its row,
+        // which is never left with an older one.
+        state.borrow_mut().grid_shown = Some((0, 9));
+        state.borrow_mut().strip_shown = Some((0, 9));
+        deliver(
+            &app,
+            Outcome::Thumbnail {
+                index: 900,
+                path: files[900].clone(),
+                size: 360,
+                width: 4,
+                height: 2,
+                rgb: vec![0; 24],
+                cached: true,
+                seconds: 0.0,
+            },
+        );
+        assert_eq!(pictured(900), 4);
+    }
+
+    /// A picture that came while the filter hid its frame is not put
+    /// on a row when the filter is cleared, unless the row is near the
+    /// screen: a cleared filter over thousands would otherwise put
+    /// them all on in one call.
+    #[test]
+    fn pictures_that_came_while_hidden_park_when_the_filter_clears() {
+        use crate::panel::deliver::deliver;
+        let app = window(0);
+        let files = crate::testing::folder(1000);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            for i in 500..1000 {
+                st.sidecars[i].meta.flag = meta::Flag::Reject;
+            }
+            st.filter = filter::Filter::from_name("No rejects").expect("it parses");
+            rebuild_browser(&mut st, &app);
+            assert_eq!(st.shown.len(), 500);
+            st.grid_shown = Some((0, 9));
+        }
+        app.set_grid_open(true);
+        deliver(&app, picture_for(&files, 5));
+        deliver(&app, picture_for(&files, 900));
+        let pictured = |row: usize| app.get_thumbs().row_data(row).unwrap().image.size().width;
+        {
+            let mut st = state.borrow_mut();
+            assert!(st.thumb_base[900].is_some() && st.thumb_shown[900].is_none());
+            st.filter = filter::Filter::from_name("All").expect("it parses");
+            rebuild_browser(&mut st, &app);
+        }
+        assert_eq!(pictured(5), 2, "near the screen: carried to its row");
+        assert_eq!(pictured(900), 0, "far: parked");
+        state.borrow_mut().grid_shown = Some((895, 904));
+        fill_near_screen(&mut state.borrow_mut(), &app);
+        assert_eq!(pictured(900), 2);
+    }
+
+    /// A batch larger than a turn takes: the first turn takes one slice
+    /// and leaves the rest to a timer, whose turn takes them.
+    #[test]
+    fn a_batch_left_over_a_turn_is_taken_on_the_next() {
+        use crate::panel::deliver::take_thumbnails;
+        let app = window(100);
+        let files = crate::testing::folder(100);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        let batch = crate::thumbpool::Batch::of((0..100).map(|i| picture_for(&files, i)).collect());
+        take_thumbnails(&app, &state, batch, std::time::Duration::ZERO);
+        let taken = |st: &State| st.thumb_base.iter().filter(|b| b.is_some()).count();
+        assert_eq!(taken(&state.borrow()), 32, "one slice in a turn of nothing");
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(taken(&state.borrow()), 100, "the rest on the timer's turn");
+        assert!((0..100).all(|r| app.get_thumbs().row_data(r).unwrap().image.size().width == 2));
+    }
+
+    /// The window's share of a turn: as long as it spent drawing and
+    /// listening since the last, within its bounds.
+    #[test]
+    fn a_turn_takes_pictures_in_for_as_long_as_the_frame_took() {
+        use crate::panel::deliver::{THUMB_TURN, THUMB_TURN_MOST, thumb_turn};
+        use std::time::Duration;
+        assert_eq!(thumb_turn(None), THUMB_TURN);
+        assert_eq!(thumb_turn(Some(Duration::from_millis(1))), THUMB_TURN);
+        assert_eq!(
+            thumb_turn(Some(Duration::from_millis(60))),
+            Duration::from_millis(60)
+        );
+        assert_eq!(thumb_turn(Some(Duration::from_secs(2))), THUMB_TURN_MOST);
     }
 
     /// A snapshot of a grid whose pictures have not all come stops
