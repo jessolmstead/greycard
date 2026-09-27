@@ -130,6 +130,8 @@ export component SettingsSheet inherits Rectangle {
                         Text {
                             text: !root.sidecars-written
                                 ? "Sidecars are not written this run (--no-sidecars), so none are moved."
+                                : root.sidecars-elsewhere < 0
+                                ? "Counting the sidecars of " + root.frames-words + "..."
                                 : root.sidecars-elsewhere == 0
                                 ? "Every sidecar of " + root.frames-words + " is in the chosen place."
                                 : root.elsewhere-words + " of " + root.frames-words + " "

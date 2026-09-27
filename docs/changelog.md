@@ -38,6 +38,10 @@ note a first tester reads.
 - The frame on screen moved with the rejects or deleted hands on to
   the nearest frame left, in culling as in the loupe; before, culling
   kept the old picture up with no row chosen
+- Opening the Settings sheet no longer freezes the window over a
+  large root: the count of sidecars out of place, and the move that
+  settles them, run off the window's thread, the sheet saying
+  "Counting..." and "Moving..." meanwhile
 
 ## 0.2.0, 2026-09-27
 

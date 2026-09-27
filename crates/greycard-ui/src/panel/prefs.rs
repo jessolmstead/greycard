@@ -91,11 +91,48 @@ pub(crate) fn moved_words(moved: &Moved, placement: greycard_edit::Placement) ->
 /// The sheet's count, over the open frames as they are on disk now:
 /// the list the move runs over, a folder's or the one file opened on
 /// its own. And whether a move may run at all.
+/// The count of sidecars out of place, asked for and shown. It is a
+/// stat a frame over the open list, which for a root on a share is
+/// thousands of round trips (11,711 froze the window on opening the
+/// sheet), so it runs on a thread of its own; the sheet says
+/// "Counting..." (a count below zero) until it lands, and a count for
+/// an older list or place is dropped when a newer one has been asked
+/// for. A test counts in place.
 pub(crate) fn show_elsewhere(st: &State, app: &App) {
     app.set_open_frames(st.files.len() as i32);
-    app.set_sidecars_elsewhere(sidecars_elsewhere(&st.files, st.placement) as i32);
     app.set_sidecars_written(st.write_sidecars);
+    let ask = ELSEWHERE_ASKED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    let (files, placement) = (st.files.clone(), st.placement);
+    if cfg!(test) {
+        app.set_sidecars_elsewhere(sidecars_elsewhere(&files, placement) as i32);
+        return;
+    }
+    app.set_sidecars_elsewhere(-1);
+    let app_weak = app.as_weak();
+    let spawned = std::thread::Builder::new()
+        .name("sidecars count".into())
+        .spawn(move || {
+            let n = sidecars_elsewhere(&files, placement) as i32;
+            let _ = slint::invoke_from_event_loop(move || {
+                if ELSEWHERE_ASKED.load(std::sync::atomic::Ordering::SeqCst) != ask {
+                    return;
+                }
+                if let Some(app) = app_weak.upgrade() {
+                    app.set_sidecars_elsewhere(n);
+                }
+            });
+        });
+    if let Err(e) = spawned {
+        tracing::warn!("sidecars count: {e}");
+        app.set_sidecars_elsewhere(0);
+    }
 }
+
+/// The number of the last count asked for, so a count that lands after
+/// a newer one was asked for is dropped.
+static ELSEWHERE_ASKED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+/// A move of the sidecars is out; a second is refused until it lands.
+static MOVING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Change one field of the settings file, unless this is a batch run
 /// or a test, which leave the user's settings alone. The close of the
@@ -383,16 +420,53 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if !st.write_sidecars {
                 return;
             }
-            let moved = move_sidecars(&st.files, st.placement);
-            tracing::info!(
-                "moved {} sidecars to {:?}, removed {} older copies, {} failed",
-                moved.moved,
-                st.placement,
-                moved.dropped,
-                moved.failed.len()
-            );
-            app.set_settings_note(moved_words(&moved, st.placement).into());
-            show_elsewhere(&st, &app);
+            // The renames are one round trip a frame, so on a thread
+            // of their own, the sheet saying so meanwhile; a test
+            // moves in place.
+            if MOVING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                return;
+            }
+            let (files, placement) = (st.files.clone(), st.placement);
+            drop(st);
+            let land = move |app: &App, state: &Rc<RefCell<State>>, moved: Moved| {
+                MOVING.store(false, std::sync::atomic::Ordering::SeqCst);
+                tracing::info!(
+                    "moved {} sidecars to {:?}, removed {} older copies, {} failed",
+                    moved.moved,
+                    placement,
+                    moved.dropped,
+                    moved.failed.len()
+                );
+                app.set_settings_note(moved_words(&moved, placement).into());
+                show_elsewhere(&state.borrow(), app);
+            };
+            if cfg!(test) {
+                land(&app, &state, move_sidecars(&files, placement));
+                return;
+            }
+            app.set_settings_note("Moving the sidecars...".into());
+            let app_weak = app.as_weak();
+            let spawned = std::thread::Builder::new()
+                .name("sidecars move".into())
+                .spawn(move || {
+                    let moved = move_sidecars(&files, placement);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        // The state is the window thread's own; a
+                        // closure holding an Rc could not cross here.
+                        let (Some(app), Some(state)) = (
+                            app_weak.upgrade(),
+                            crate::STATE.with(|s| s.borrow().clone()),
+                        ) else {
+                            return;
+                        };
+                        land(&app, &state, moved);
+                    });
+                });
+            if let Err(e) = spawned {
+                tracing::warn!("sidecars move: {e}");
+                MOVING.store(false, std::sync::atomic::Ordering::SeqCst);
+                app.set_settings_note("The sidecars could not be moved; the log has why.".into());
+            }
         });
     }
 }
