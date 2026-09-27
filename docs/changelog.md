@@ -8,6 +8,17 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
+## Unreleased
+
+- A library root on a network share (NFS, SMB, sshfs and the like) is
+  no longer watched on Linux and macOS, where setting the watch up
+  froze the editor while every folder was registered and saw only this
+  machine's changes; it is passed over every 10 minutes instead
+  (`network_poll_minutes` in settings.json, 0 for never), and the
+  watcher on the other roots is set up off the window's thread, so
+  adding, removing or starting with a root never holds the window
+  (§188)
+
 ## 0.2.0, 2026-09-27
 
 The second release. The library arrived: folders added as roots and

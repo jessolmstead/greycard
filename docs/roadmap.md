@@ -21,13 +21,30 @@ None open.
 
 None open.
 
-## Next: 0.2.0
+## Next: 0.3.0
 
-The library root on a NAS no longer freezes the window, culling says
-what each key did, and the editor tells you when a newer release is
-out.
+A NAS root neither freezes the window nor goes stale, frames can be
+deleted from the disk behind a confirmation, and the scopes can be
+read for the mask alone.
 
-Nothing left to land.
+- [ ] Scopes weighted by the active mask: a "selection" toggle on the
+      scopes panel, each pixel's bin weighted by the mask's coverage,
+      in the shader and the CPU reference alike, so a skin mask on the
+      vectorscope shows the skin cloud against the line and a face on
+      the waveform shows its level
+- [ ] Delete from disk: the selection, or the rejects folder's contents,
+      removed for real with their sidecars, behind a confirmation that
+      names the count and the folder and offers the system trash where
+      there is one, permanent removal where there is not; the index rows
+      go with the files; the Delete key opens the sheet. Today Move
+      rejects is the only way out and nothing is ever deleted
+- [ ] The thumbnail pool's deliveries on the UI thread: a folder of
+      20,000 whose pictures are all in the cache does not render its
+      window until every hit has been delivered, 5.7 to 6.3 s, where
+      the all-roots view brought the window up in a quarter second
+      before the pool (§172, found by §174's review). Batch the
+      deliveries, or deliver the visible range first and the rest in
+      idle time
 
 ## Tracks
 
@@ -174,11 +191,6 @@ ask for first.
       and the viewport falls back to sRGB unless an ICC file is
       picked by hand, which a wide-gamut monitor makes wrong
       (display.rs:565, §137)
-- [ ] Scopes weighted by the active mask: a "selection" toggle on the
-      scopes panel, each pixel's bin weighted by the mask's coverage,
-      in the shader and the CPU reference alike, so a skin mask on the
-      vectorscope shows the skin cloud against the line and a face on
-      the waveform shows its level
 
 ### The library
 
@@ -232,20 +244,22 @@ comes across with its ratings and collections.
   as a pass when a root returns. No lock file, no checked-out flag,
   no daemon. Waits on one frame in two places
 - [ ] The rest of the network reads off the window's thread, after
-  §187: the indexer's own passes wait on a hung root and every root's
-  reports stop until it answers, so give its passes the roots' 3 s
-  look and skip a root that has not answered; `start` and `watch`
-  still look at each root on the window's thread at launch and when a
-  root is added or taken out; a folder's own open still reads its
-  sidecars on the window's thread; and a root that comes back after a
-  hang is listed again only at the next report, there being no timer
+  §187 and §188: the indexer's own passes wait on a root that answers
+  the 3 s look and then hangs mid-walk, and every root's reports stop
+  until it answers, so give its passes the look too and skip a root
+  that has not answered; a folder's own open still reads its sidecars
+  on the window's thread; `Roots::remove` on a path not in the list,
+  and "Add this folder" on a folder no read has seen, still make it
+  canonical there; a network mount below a local root (`~/Pictures`
+  with a share at `~/Pictures/NAS`) is still watched recursively, so
+  classify each mount under a root, not only the root's; and a field
+  for `network_poll_minutes` in the Settings sheet
 - [ ] The network assumed slow and sometimes hung: a timeout on every
   read of a root over a network mount so a sleeping NAS does not hold
-  the pool; a polling fallback for the watcher, since inotify does not
-  fire over NFS or SMB; the indexer's reads several at once on such a
-  root, latency being the limit; check what the content hash reads
-  of a file, since a whole-file hash over 200 GB is a first pass
-  measured in hours
+  the pool; the indexer's reads several at once on such a root,
+  latency being the limit; check what the content hash reads of a
+  file, since a whole-file hash over 200 GB is a first pass measured
+  in hours. The polling fallback for the watcher landed in §188
 - [ ] Lightbox over a collection, or the picks until collections
   exist: the grid with everything that gets in the way of judging
   consistency taken out. Tiles at a chosen size up to a handful
@@ -355,13 +369,6 @@ clears or a tester asks for it.
       hue (§158)
 - [ ] A dropper for the luminance window's edges and a swatch of the
       color window beside its sliders (§158)
-- [ ] The thumbnail pool's deliveries on the UI thread: a folder of
-      20,000 whose pictures are all in the cache does not render its
-      window until every hit has been delivered, 5.7 to 6.3 s, where
-      the all-roots view brought the window up in a quarter second
-      before the pool (§172, found by §174's review). Batch the
-      deliveries, or deliver the visible range first and the rest in
-      idle time
 - [ ] The vibrance protection's skin window (§60, 55 degrees plus or
       minus 15) against the 10 to 59 degrees a pale face measured
       (§158): widen it or not; a change to existing edits
