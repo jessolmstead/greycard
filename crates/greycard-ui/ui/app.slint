@@ -1630,6 +1630,30 @@ export component App inherits Window {
                     undo => { root.undo(); }
                     redo => { root.redo(); }
                 }
+                // The panel in the order a photo is developed; the
+                // masks and the retouch on tabs of their own. The bar
+                // stays put above the sections, so it is always within
+                // reach however far a tab has scrolled.
+                VerticalLayout {
+                    padding-left: Theme.space-4;
+                    padding-right: Theme.space-4;
+                    padding-top: Theme.space-2;
+                    Segmented {
+                        options: ["Develop", "Crop", "Masks", "Retouch"];
+                        current <=> root.panel-tab;
+                        selected(t) => {
+                            // Away from Crop the frame is shown whole again.
+                            if (t != "Crop" && root.crop-mode) {
+                                root.crop-mode = false;
+                                root.level-mode = false;
+                                root.guide-mode = "";
+                                root.guide-dropped();
+                                root.crop-toggled();
+                            }
+                            root.tab-changed(t);
+                        }
+                    }
+                }
                 ScrollView {
                     content-y <=> root.panel-scroll;
                     VerticalLayout {
@@ -1637,23 +1661,6 @@ export component App inherits Window {
                         padding: Theme.space-4;
                         padding-top: Theme.space-2;
                         spacing: Theme.space-2;
-                        // The panel in the order a photo is developed;
-                        // the masks and the retouch on tabs of their own.
-                        Segmented {
-                            options: ["Develop", "Crop", "Masks", "Retouch"];
-                            current <=> root.panel-tab;
-                            selected(t) => {
-                                // Away from Crop the frame is shown whole again.
-                                if (t != "Crop" && root.crop-mode) {
-                                    root.crop-mode = false;
-                                    root.level-mode = false;
-                                    root.guide-mode = "";
-                                    root.guide-dropped();
-                                    root.crop-toggled();
-                                }
-                                root.tab-changed(t);
-                            }
-                        }
                         // Culling: what the mode is, the browser's
                         // filter, the compare view, and the two ways
                         // out of it, one of them for the rejects.
