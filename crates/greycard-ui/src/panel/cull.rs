@@ -1240,6 +1240,14 @@ pub(crate) fn drop_files(
     }
     let current_path = st.current.map(|c| st.files[c].clone());
     let keep = |i: &usize| !gone.contains(i);
+    // Where the frame on screen would stand in the new list if it is
+    // among those going: the frame after it that stays, else the last.
+    // `rebuild_browser` cannot say, since it looks for the current
+    // frame and there is none then.
+    let stand_in = st.current.filter(|c| gone.contains(c)).and_then(|c| {
+        let kept = (0..st.files.len()).filter(keep).count();
+        (kept > 0).then(|| (0..c).filter(keep).count().min(kept - 1))
+    });
     let files: Vec<PathBuf> = st
         .files
         .iter()
@@ -1291,7 +1299,8 @@ pub(crate) fn drop_files(
     // The set was numbered by the old list; the frame on screen is
     // what is left of it.
     st.picked.clear();
-    let next = rebuild_browser(st, app);
+    let next = rebuild_browser(st, app)
+        .or_else(|| stand_in.and_then(|f| crate::cull::nearest_row(&st.shown, f)));
     app.set_status(status.into());
     match (st.current, next) {
         (Some(c), _) => {
@@ -1300,8 +1309,10 @@ pub(crate) fn drop_files(
             }
         }
         (None, Some(row)) => {
-            // The frame on show went; the nearest
-            // left takes its place, as a click on it would.
+            // The frame on show went; the nearest left takes its
+            // place, as a click on it would. In culling that shows
+            // its JPEG; the first cut left the old picture up with
+            // nothing chosen, since `next` was never set here.
             let app_weak = app.as_weak();
             slint::Timer::single_shot(std::time::Duration::ZERO, move || {
                 if let Some(app) = app_weak.upgrade() {
@@ -2360,6 +2371,42 @@ mod tests {
 
         drop_placeholder(&mut state.borrow_mut(), &app);
         assert!(press_handle(), "the handle did not come back");
+    }
+
+    /// The frame on screen taken out of the list (moved with the
+    /// rejects, or deleted): the nearest frame left is chosen and
+    /// opens, in culling as in the loupe. The first cut left the old
+    /// picture up with no row chosen, since the row to select was
+    /// asked of `rebuild_browser`, which has no current frame then.
+    #[test]
+    fn the_frame_on_screen_dropped_from_the_list_hands_on_to_the_next() {
+        let app = window(5);
+        let (state, worker) = state_for(&app, folder(5));
+        app.invoke_select(2);
+        app.invoke_cull_toggled();
+        assert!(state.borrow().cull.is_some());
+        assert_eq!(state.borrow().current, Some(2));
+        drop_files(&mut state.borrow_mut(), &app, &worker, &[2], "gone".into());
+        assert_eq!(state.borrow().files.len(), 4);
+        // The select is a timer away, as a click's would be.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(
+            state.borrow().current,
+            Some(2),
+            "the frame after took its place"
+        );
+        assert_eq!(app.get_selected(), 2);
+        assert_eq!(app.get_file_name(), "IMG_0003.CR3");
+        assert!(state.borrow().cull.is_some(), "culling was left");
+
+        // The last frame: the one before takes over.
+        app.invoke_select(3);
+        drop_files(&mut state.borrow_mut(), &app, &worker, &[3], "gone".into());
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(state.borrow().current, Some(2));
+        assert_eq!(app.get_file_name(), "IMG_0003.CR3");
     }
 
     #[test]

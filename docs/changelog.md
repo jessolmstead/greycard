@@ -35,6 +35,9 @@ note a first tester reads.
   their picture until scrolled near; the 20,000-frame case filled in
   1.6 s with the window drawing throughout, against 3 s of a blank
   window (§191)
+- The frame on screen moved with the rejects or deleted hands on to
+  the nearest frame left, in culling as in the loupe; before, culling
+  kept the old picture up with no row chosen
 
 ## 0.2.0, 2026-09-27
 
