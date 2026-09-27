@@ -1,36 +1,53 @@
 # Roadmap
 
-The list to glance at and add to. A release is one sentence a tester
-can verify, then the short list that makes it true. Everything else
-waits in the backlog by theme, and an item's "waits on" line decides
-which release it can join. Bugs sit at the top and belong to the next
-release. Ticked items move to `docs/changelog.md` under their
-version, so this file only holds what is not done. One line an item,
-the notes section in brackets, and for a blocked item what it waits
-on and nothing more; the reasoning lives in `docs/notes.md`.
+The list to glance at and add to. Next is the tag about to be cut: one
+sentence a tester can verify and the short list that makes it true,
+chosen from the tracks. A tag with fixes only moves the patch number;
+one with new features moves the minor. A track is a theme with a
+sentence of its own as the test of when it is done, and a track's
+sentence coming true is one reason for a minor bump. Everything
+else waits in the pool by theme, and an item's "waits on" line decides
+when it can join. Bugs sit at the top and belong to Next. Ticked items
+move to `docs/changelog.md` under their version, so this file only
+holds what is not done. One line an item, the notes section in
+brackets, and for a blocked item what it waits on and nothing more;
+the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A half-copied ARW (full length, zeros past the copy) decodes
-      without an error, as a picture blank below the copied part; the
-      develop should refuse it with §179's half-copied message. A CR3
-      will do the same once dnglab/dnglab#851 is in a rawler release
+None open.
 
-## v0.1.0: browse, develop, export
+## Tweaks
 
-A user on Linux, macOS or Windows can install it,
-open a shoot, get to any frame, edit it, export it, and report what
-went wrong.
+None open.
 
-- [ ] The first tag, which is the release workflow's first run, on all
-      three runners; the Windows package, the Mac's UTI spellings and
-      sidecar `.icns` are the parts not verified by running them (§88,
-      §110, §137, §140)
+## Next: 0.2.0
 
-## v0.2.0: the feel
+The library root on a NAS no longer freezes the window, culling says
+what each key did, and the editor tells you when a newer release is
+out.
+
+Nothing left to land.
+
+## Tracks
+
+A track is done when its sentence is true. None is ordered before
+another; the feel track's measured items come first within it.
+
+### The feel
 
 The default develop matches the camera JPEG's brightness and the
 sliders feel like the ones people learned on.
+
+Three of these are measurements with a target and go first: the
+baseline exposure per body, the default brightness against the
+embedded JPEG, and the slider response fitted to the reference set.
+The rest are taste, and taste is not decided alone: each ships both
+ways behind a switch, testers say which they keep, and then the
+switch goes and the default follows. "Feels like Lightroom" means the
+same direction and a similar size in the first third of the travel,
+within a tenth of a stop; past that it is a look, and looks are the
+Look section's job.
 
 - [ ] A file opened from the Finder opens in the editor: the delegate's
       `application:openURLs:` is written but has not run on a Mac;
@@ -51,7 +68,7 @@ sliders feel like the ones people learned on.
       from Lightroom per body (R6 II, R5 II, R8, GFX 100S II)
 - [ ] Highlights and whites by the frame's own range or in fixed stops:
       fixed stops for now (§146); ask testers which feels right and
-      decide before this release. The frame's range is what would
+      decide before the track closes. The frame's range is what would
       reach under the median, give the watch its full pull and bring a
       clipped sky under white as Lightroom does
 - [ ] Whites and shadows reshaped against the set: whites moves only
@@ -71,7 +88,7 @@ sliders feel like the ones people learned on.
       people expect (§87). A change to the default look and to every
       mono edit written; waits on the reference frames
 
-## v0.3.0: speed
+### Speed
 
 On a fanless laptop the fit view follows a slider without a wait,
 the sharpen included, and the first Subject mask is there in ten
@@ -101,20 +118,7 @@ seconds.
       feature check: about as much again on a desktop, nothing on the
       Mac; the first x86 assumption, declined twice (§128, §164)
 
-## v0.4.0: cull and rate
-
-A shoot can be culled without developing a frame.
-
-- [ ] Lightbox to see a whole collection and look for consistency
-- [ ] Culling feedback: the frame's stars, flag and label on the loupe
-      and on each compare tile at a readable size, and a short notice
-      over the picture on each change ("Rejected", "3 stars") that the
-      next arrow does not wipe; today the only answer is the strip
-      tile's 9 px badge, and nothing at all with Tab on
-- [ ] Move on after a rating or flag, a switch in the CULLING section,
-      off by default
-
-## v0.5.0: AI masks and fill
+### AI masks and fill
 
 A sky or a person's face is masked from a menu, and a removed object
 is filled from what stood around it.
@@ -144,7 +148,7 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       publisher's bucket (SberDevices, a Sberbank company)
 - [ ] Generative fill behind the patch layer
 
-## v0.6.0: color
+### Color
 
 A camera's own profile and look are a picker away, and a chart shot
 makes a new one. This and the library can swap order on what testers
@@ -156,6 +160,14 @@ ask for first.
       Nikon, Sony and Panasonic styles once files with the settings
       varied make exiv2 a clean oracle for them (§180)
 - [ ] Profile making from a chart shot, after dcamprof (§78)
+- [ ] RawTherapee's DCP profiles offered for a fetch: they are made by
+      that project under the GPL, so they can be hosted by us as the
+      Sky model is and fetched into the profile directory from the
+      Camera section for the bodies they cover, a one-click profile on
+      Linux before the chart shot exists (§78); with attribution and
+      their license shown as lensfun's is. Waits on a tester asking,
+      since it covers a fraction of bodies and the chart shot is the
+      real answer
 - [ ] The monitor's own profile on Windows and macOS: read it from
       WCS and from ColorSync, so "System" means the display rather
       than sRGB. Today `colord_monitors` returns nothing off Linux
@@ -168,7 +180,7 @@ ask for first.
       vectorscope shows the skin cloud against the line and a face on
       the waveform shows its level
 
-## v0.7.0: the library
+### The library
 
 Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
@@ -179,18 +191,70 @@ comes across with its ratings and collections.
   hand), and an error row in the index for a file whose hash fails so
   it stops showing under every chip (§168). The all-roots view and
   the filter remembered between sessions are there since §174
-- [ ] A name for a library root, set from the UI (right-click the
-      root, or a field where roots are added), shown wherever the
-      root's folder name is: "Archive" for a root whose folder is
-      called Photos. The index keeps the name beside the path; the
-      path stays what it is
 - [ ] Archive roots, for a NAS or a mounted cloud folder: Back up
   copies a shoot's new and changed files and sidecars to the archive,
   hash-verified and never deleting there; Remove rejects finds the
   archive's copies by content hash, shows the list, and on confirm
   moves them into a rejects folder on the archive, as culling moves
-  them locally; a removal queued while the root is offline. Cloud
-  through a mount or a configured command, never a provider's API
+  them locally; a removal queued while the root is offline; Bring
+  back, the inverse of Back up, copies a shoot or a selection from
+  the archive to a local root with its sidecars, hash-verified and
+  skipping what is already there, its size shown before the confirm,
+  and never behind the user's back on open. Cloud through a mount or
+  a configured command, never a provider's API
+- [ ] The index as the sidecars' cache, so a root opens without a
+  read from its disk: each row keeps the sidecar's rating, flag,
+  label, keywords and whether an edit exists, keyed by the sidecar's
+  mtime and refreshed by the pass; the sidecar stays the truth. An
+  offline root then still shows its grid, greyed, with the filter
+  working, and only opening a frame needs the disk (today the root is
+  left out, and an online one waits on every sidecar over the wire)
+- [ ] Local previews by content hash: a mid-size picture per frame
+  in the local cache, made by the pass, so a shoot on a NAS is culled
+  in the loupe and the compare view without reading the raw over the
+  network. Lightroom's smart preview, minus the editing
+- [ ] One frame in two places: a file whose hash is under two roots
+  (the shoot and its archive copy) shown once, opened from the copy
+  that is online and fastest, its sidecar written to both when both
+  are there, so "back up, then delete local" removes nothing from the
+  library. Waits on archive roots
+- [ ] Edits synced between a shoot and its archive copy by the
+  sidecars alone, no database crossing machines: the two sidecars
+  compared by hash on the pool; one behind the other (its history a
+  prefix, or its `saved` count lower with its last state in the
+  other's history) copied over; two that diverged joined, the
+  histories in order, the higher count's state current and a labeled
+  step "Reconciled with the copy on Archive" so the other branch is
+  one undo away and nothing is lost; meta last writer wins by field;
+  snapshots by name; the XMP regenerated, not merged. Needs a host
+  and a time on each step, read loosely. Runs in Back up and Bring
+  back, as a write-through on save when both copies are online, and
+  as a pass when a root returns. No lock file, no checked-out flag,
+  no daemon. Waits on one frame in two places
+- [ ] The rest of the network reads off the window's thread, after
+  §187: the indexer's own passes wait on a hung root and every root's
+  reports stop until it answers, so give its passes the roots' 3 s
+  look and skip a root that has not answered; `start` and `watch`
+  still look at each root on the window's thread at launch and when a
+  root is added or taken out; a folder's own open still reads its
+  sidecars on the window's thread; and a root that comes back after a
+  hang is listed again only at the next report, there being no timer
+- [ ] The network assumed slow and sometimes hung: a timeout on every
+  read of a root over a network mount so a sleeping NAS does not hold
+  the pool; a polling fallback for the watcher, since inotify does not
+  fire over NFS or SMB; the indexer's reads several at once on such a
+  root, latency being the limit; check what the content hash reads
+  of a file, since a whole-file hash over 200 GB is a first pass
+  measured in hours
+- [ ] Lightbox over a collection, or the picks until collections
+  exist: the grid with everything that gets in the way of judging
+  consistency taken out. Tiles at a chosen size up to a handful
+  across, the developed picture in each rather than the camera's JPEG
+  so what is compared is what will export, no badges, names or chips,
+  a dark surround, Tab hiding the rest; the sync sheet reachable from
+  it so a frame that stands out is matched to its neighbors; one key
+  into the loupe on a tile and one back. Needs thumbnails rendered
+  from the edit at a larger size
 - [ ] Collections and smart collections in one file under
   `~/.local/share/greycard/`, referencing files by hash with the
   path as a hint
@@ -211,7 +275,7 @@ comes across with its ratings and collections.
 - [ ] A map: the frames' EXIF GPS on tiles, a click to select them, a
   position given to a frame by hand. Low priority
 
-## v0.8.0: merge
+### Merge
 
 A bracket, a focus stack or a panorama becomes a linear DNG beside
 its sources. The plan and the sizes are in §71; the brackets to shoot
@@ -228,17 +292,28 @@ for testing are in `docs/test-frames.md`.
 - [ ] Panorama stitching: feature matching and RANSAC for the coarse
       homography, registration for refinement, multi-band blend from
       the focus stack (§71)
+- [ ] A Compress slider in the Light section: the guide plane of §85
+      pulled toward mid grey by a strength, so bright regions come down
+      and dark ones up together and the texture inside each rides on
+      top untouched (Durand and Dorsey's base and detail, with the
+      guided plane as the base; no new pass, the plane is cached
+      already); an Auto from the frame's range in stops. One slider,
+      not a filmic module with a shoulder and a toe. Wanted most for a
+      merged bracket written with headroom; waits on the guided plane's
+      halo measurement in the feel track, since one slider moving the whole
+      plane makes any halo count
 - [ ] Float samples in the DNG writer, for brackets deeper than 16 bits
       hold. Waits on someone needing it (§71)
 
 ---
 
-## Backlog
+## Pool
 
-Not yet assigned to a release. An item joins one when its "waits on"
+Not yet in a track or in Next. An item joins one when its "waits on"
 clears or a tester asks for it.
 
-### Editor
+
+#### Editor
 
 - [ ] The panel's look, refined as the editor grows (§14); in develop
       order on Develop, Crop, Masks and Retouch tabs since 2026-09-14
@@ -292,7 +367,7 @@ clears or a tester asks for it.
       (§158): widen it or not; a change to existing edits
 
 
-### Engine
+#### Engine
 
 - [ ] `stack.rs` and `register.rs` warps: rows written the way the lens
       correction's were, with captured models re-read per pixel; the
@@ -318,7 +393,7 @@ clears or a tester asks for it.
       feature off by default, or the macOS system decoder, are the
       ways to carry it without that
 
-### Nice-to-have
+#### Nice-to-have
 
 - [ ] Flexible dual monitor support
 - [ ] Reference view
@@ -334,7 +409,7 @@ Work that waits on someone outside the repo: a protocol reaching
 Slint, a runtime exposing what it knows, a rawler release. It joins a
 release when the wait clears.
 
-### Platform
+#### Platform
 
 - [ ] The window's own monitor for the profile, without choosing it.
       Waits on the Wayland color-management protocol reaching Slint's
@@ -343,7 +418,7 @@ release when the wait clears.
 - [ ] Wide-gamut output: a profile away once the compositor says which
       monitor (§17)
 
-### Upstream
+#### Upstream
 
 - [ ] The Denoiser's tile sized from the device's memory, so a short
       allocation on a discrete card is not a crash in Dawn and a

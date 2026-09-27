@@ -8,8 +8,40 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
-## 0.1.3, unreleased
+## 0.2.0, unreleased
 
+- A library root on a network drive no longer freezes the editor while
+  it is walked: the list, the new frames' sidecars and their rows are
+  read off the window's thread, and a burst of passes is one read. A
+  root that stops answering shows as offline within 3 s and no longer
+  stops the list of the other roots; the indexer itself still waits on
+  it, so nothing new is indexed until it answers (§187, 2026-09-27).
+- The user guide says where a camera profile comes from (Adobe's
+  folders, RawTherapee's set, a chart shot) and that the embedded matrix
+  is what most people need (2026-09-27).
+- Check for a newer release at launch, at most once a day, and offer it
+  in the left pane; a switch and Check now in Settings, which now
+  scrolls on a short window (§186, 2026-09-27).
+- The Windows package and the Mac bundle have now been installed and run
+  by testers, which closes the 0.1.0 line that named them as the parts
+  not verified by running them (2026-09-27).
+- A library root can have a name of its own ("Archive" for a folder
+  called Photos), set from its chip's right-click menu and shown in
+  place of the folder's name; the folder is not renamed or moved. Escape
+  closes the name sheet and the preset sheet from their fields (§185,
+  2026-09-27).
+- The Develop, Crop, Masks and Retouch tab bar stays at the top of the
+  panel while the sections under it scroll (§184, 2026-09-27).
+- A half-copied ARW (and a CR3, once rawler stops panicking on one) is
+  refused with the half-copied message instead of opening as a picture
+  blank below the copied part (§182, 2026-09-27).
+- Culling shows the frame's stars, flag and label on the picture, on the
+  loupe and on each compare tile, and a word for each key pressed ("3
+  stars", "Rejected") and for each undo and redo that fades on its own
+  and is not wiped by the arrow; both with Tab on. A held culling key is
+  one press (§183, 2026-09-27).
+- Move on after a rating, flag or label: a switch in the CULLING
+  section, off by default, kept in the settings (§183, 2026-09-27).
 - Fit this camera's look: a button in the Look section surveys the
   library or the open folder by body and picture style, develops
   about forty frames a group, lays the camera's own JPEG over each

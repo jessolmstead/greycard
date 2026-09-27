@@ -21836,3 +21836,624 @@ facet cannot outgrow it.
 four-frame figure is the cheap stand-in); the radial report into the
 lens track's vignetting line; typing `style:` in the filter text (the
 facet is chips only, like the other facets).
+
+## 182. A half-copied raw that decodes (2026-09-27)
+
+**A half-copied raw that decodes.** §179's guard named a half copy
+only when rawler panicked on one, and the ARW never does: 22 of its 25
+zero-tailed cuts decoded to a picture blank below the copied part, and
+a CR3 will do the same once dnglab/dnglab#851 is in a rawler release.
+So the develop now asks the question itself. `decode_source`, which
+`decode_bytes`, `decode_path` and `decode_path_with_metadata` all come
+through, refuses a file whose last 64 KiB are zeros before it asks
+rawler for a sample, with the same words the panic gets, less the
+decoder's own: "the file ends in zeros where a finished one has data:
+it looks half-copied, or still being copied". It costs no read. rawler
+maps the whole file with its pages populated before it decodes, and
+`decode_bytes` was handed the bytes, so the tail is already in memory;
+reading it again from disk as the panic path does would be a second
+open for nothing. It goes ahead of rawler rather than after a
+successful decode because the answer does not depend on what rawler
+makes of the file, and a panic it would have thrown on the zeros is
+spared; the NEF, RAF and RW2 cuts now get the half-copied message
+without "the decoder gave up" behind it. It is a check on the file,
+not on any one format, so a CR3 that stops panicking after #851 lands
+is caught by the same line, and so is whatever format turns out to
+read zeros quietly next.
+
+The probe, the stance and the camera preview do not ask. The probe
+and the stance read the file's head, which a copier writes first, and
+what they read there is the finished file's: the camera and the date
+for the index, the orientation. The maker's JPEG can sit past the
+copy point and come out partly grey while the copy runs, which §163
+already meets: the thumbnail cache makes the picture again when the
+copy moves the file's time. Refusing any of the three would put an
+error on a frame that is fine a few seconds later. Only the develop reads the samples at the end, and only it can
+come out wrong.
+
+Refusing a successful decode is a stronger claim than naming a failed
+one, so the claim was checked against every sample raw. None of the
+74 (one ARW, 46 CR3s, four DNGs, three NEFs, 19 RAFs, one RW2) ends
+in 64 KiB of zeros. The ARW ends in 2048 zeros, padding to its block;
+the NEFs, RAFs, RW2 and DNGs have no run longer than about 950 bytes
+anywhere in their last 64 KiB. The CR3s come closest: their last
+100 KiB or so is the CTMD track, which holds a 78,904-byte run of
+zeros on every body among the samples and ends in some 23 to 25 KiB
+of records after it, so a CR3's last 64 KiB are 70 to 85% zeros with
+a 40 KiB run at the start. That is why the test is the whole tail and
+not a run in it or a share of it. The one finished file that could
+fail it is an uncompressed frame whose last 32,768 samples are exactly
+zero: a DNG from another converter with the black already taken off
+and a clipped black foreground. No camera writes that, and the message
+says what was seen, so a user who meets it knows why.
+
+Only zeros count. A copier that sets the length first leaves the
+rest as the filesystem reads it back, and a preallocated or sparse
+region reads as zeros on every filesystem there is; nothing leaves a
+tail of 0xFF or any other one byte. Widening it would buy no case and
+cost a margin: the RAFs' last 64 KiB are 27 to 52% 0xFF.
+
+The core's test writes a linear DNG of its own, pads it with a whole
+tail of zeros past its directory (which rawler reads without
+complaint, as it does the ARW, and the test checks it does), and sees
+all three decode paths refuse it with exactly the half-copied words
+while its probe and stance still read; the same DNG as written, and
+padded one byte short of a whole tail, decode as before. By hand, a
+copy of the sample ARW with everything past 50% and past 90% zeroed
+now fails `greycard develop` and `greycard info` with "decode failed:
+the file ends in zeros where a finished one has data: it looks
+half-copied, or still being copied", and every sample raw that
+decoded before still does.
+
+## 183. What a culling key answers with, and moving on after it (2026-09-27)
+
+**What a culling key answers with.** The first outside tester put it
+plainly: press X in culling and nothing on the picture says so. The
+strip tile's 9 px badge was the whole answer, and with Tab on there
+was none at all. §117 argued against a word in the status line, and
+that argument still holds — a cull is one key and the arrow to the
+next frame, and the develop that arrow starts outside culling would
+write over the word before it was read — but in culling nothing
+develops, the eye is on the picture and not the strip, and the strip
+may be put away. So the answer goes where the eye is, in two parts.
+
+The frame's own badge, in the top right corner of the picture: the
+strip tile's `ThumbBadges`, the same component at a 16 px glyph
+rather than 9, so what it says and what the strip says cannot drift.
+It reads off the same sidecar the strip row does (`show_frame_tags`,
+called when the selection lands and whenever that frame's badges are
+put out), so the two cannot disagree either. In the compare view each
+tile carries its own at 14 px, in its own top right corner beside the
+name at its top left; the `CompareTile` grew the three numbers the
+`Thumb` already had, filled in `cull_frame` from the sidecar as the
+tiles are laid. One frame alone carries the loupe's badge; two or
+four carry the tiles'. The badge is a badge and not a word — a
+culler reads three stars faster than "3 stars" — and stays up, since
+it is the frame's state and not an event.
+
+The word is for the event: "3 stars", "Rejected", "Pick",
+"Unflagged", "Red", "No label", low in the middle of the picture,
+where the eye is and where it covers the least, on a plate that
+fades over a quarter second. It says what the frame carries now
+rather than which key was pressed, so a label key on a frame that
+already had that label — a toggle, §117 — says "No label", which is
+the settled change `set_meta` now hands back. The flag's past tense
+is the one a culler says aloud; the other two name a state.
+
+The word goes down on a timer of its own, 1.2 s, and nothing else
+takes it down: not the arrow, not the next frame's picture, not a
+decode landing. A culler who rates and moves on in one motion sees
+what the key did on the next frame, which is the point — the tester's
+complaint was the arrow wiping the only answer there was. The next
+key restarts the timer with its own word. Rust holds the timer
+(`State::notice_timer`) and two properties, the text and whether it
+is up; the text is left standing through the fade so the plate does
+not shrink as it goes. The word is culling's only: outside culling
+the strip is the browser and the develop replaces the picture, §117's
+case, and nothing there changed.
+
+**Move on after a key.** Lightroom's auto-advance, off by default:
+the key and the arrow are two presses until a culler asks for one,
+and a switch that moved the frame under a hand that did not expect
+it would cost a wrong rating on the next frame. The switch is in the
+CULLING section, where the keys it changes are explained, and is
+kept in the settings as it is flipped (`keep`, as the Settings
+sheet's own switches are), so a session that never closes cleanly
+keeps it too.
+
+On, a rating, a flag or a label key moves the selection to the next
+frame of the filtered list by the arrow's own path — `step`, the
+callback the right arrow invokes — so it stops at the end as the
+arrow does and opens the frame as the arrow would. There is no
+second path to the next frame. Two cases stay where they are. A
+frame the key took out of the filtered list already hands the
+selection to the nearest frame still shown (§117's rule), which is
+the next frame or the one before at the end; moving on as well
+would skip one. And a set of several frames rated together stays a
+set: the arrow collapses the set to one frame, and a hand that
+Shift-selected three to rate them wants them still selected after.
+
+With move-on on, a quick second press lands on the next frame before
+its picture may be decoded: the badge and the name have already
+changed to the frame the key will go on, and the picture follows,
+which is what Lightroom's auto-advance does too. The key goes where
+the selection is, and the selection is what the badge and the name
+say.
+
+A held key is one press. The window's auto-repeats of a culling key
+are dropped in the key handler (`e.repeat`), always and not only
+with the switch on: a repeat has nothing to add to a rating, would
+flicker a label on and off, and with move-on would rate a run of
+frames at the keyboard's repeat rate, one undo step each. The test
+sends a press and three repeats of 3 with the switch on and finds
+one frame rated and one step taken.
+
+**Move-on and undo.** The change is recorded before the move is
+asked for, so the `tags` step (§179) names the frame that was rated,
+not the one moved on to. Ctrl+Z then does what it already did for a
+culler who rated, arrowed on and pressed it: the frame goes back to
+what it was, and since it is no longer the one on screen the
+selection goes to it. Redo makes the change again on that frame and
+stays there — a redo is not a key, so it does not move on. A key
+pressed after the undo rates the frame on screen and moves on again.
+The test walks this: four frames, a key each, the tags each on the
+frame the key was pressed over and no other, two undos back, a redo,
+and a key after.
+
+Undo and redo get the word as well, since a culler pressing Ctrl+Z
+over a picture is owed the same answer a key gives: "Undo: No
+stars", "Redo: Rejected", the step's direction and then what the
+frame carries now, in the key's own words, read off the difference
+between the frame's tags and the ones the step puts back
+(`tags::between`). A step that moved several frames says "Undone"
+or "Redone" and no more, since one word cannot name three frames'
+states. A step that finds none of its frames (all gone, or all
+changed since, §179) says nothing, as it did nothing.
+
+Leaving culling takes the word down and stops its timer, or coming
+back within the second would show the last key's word over
+whichever frame the mode reopened on.
+
+**`--cull-key`.** A hidden flag beside `--turn`: the culling key to
+press once the first picture shows, for a snapshot of the badge and
+the word. The flag is cleared from the event loop as `--turn`'s is,
+and the capture waits until it has been. The snapshots for this
+change were taken with it, on a folder of six sample raws, the
+loupe with the panels up and with Tab on, and the compare view at
+two and four.
+
+## 184. The tab bar pinned (2026-09-27)
+
+The Develop, Crop, Masks and Retouch tab bar moved out of the panel's
+scroll view into a fixed row of its own, under the scopes header and
+above the sections. This reverses §147, which left the tabs scrolling
+with the sections on the reasoning that pinning them would cost a
+laptop-height panel another row. A tester asked for the bar to stay
+put, and the row it costs measures about 36 px, so the trade is
+accepted now. The gap under the bar is the scroll content's own top
+padding, as before, so the first section sits where it did; the
+review caught a doubled gap in the first cut and the two builds were
+laid over each other to confirm the fix.
+
+Because the tab row is no longer inside the scrolled content, a given
+`--panel-scroll` offset (still the scroll view's `content-y`) reaches
+about 36 px further down than it did before: a snapshot at some PX
+now shows roughly what PX + 36 showed. The offsets quoted in earlier
+sections, §147's 600 px among them, are measurements against the
+layout of their day and are left as they were.
+
+## 185. A name for a library root (2026-09-27)
+
+The roadmap's v0.7.0 line: "A name for a library root, set from the
+UI, shown wherever the root's folder name is: "Archive" for a root
+whose folder is called Photos." Few drives name their folders for
+what is on them. A library with two roots called `Photos`, one on each
+drive, has two chips a person cannot tell apart.
+
+**A label and nothing more.** The root is its path everywhere: the
+view, the watcher, the index's rows, the chip's callbacks and the
+file all go by the path, as before. The name is looked up beside it
+(`Roots::name`, `Roots::label`) and used only where a root is shown.
+Naming a root never moves, renames or re-indexes anything. The sheet
+says so, because in any file manager "rename" on a folder means the
+folder. An empty name, or one of only spaces, takes the name away,
+and the root goes by its folder's name again.
+
+**The file.** `roots.json` keeps its list as it was and gains a map
+beside it:
+
+    {"version": 1, "names": {"/x/Photos": "Archive"}, "roots": ["/x/Photos", "/x/b"]}
+
+serde_json keeps an object's keys sorted, so the names come out by
+path, and before the list.
+
+The version stays 1. The previous build reads `roots` and ignores a
+key it does not know, so a library named in this build still opens
+there with every root in place. A higher version would have been
+refused outright, losing the whole list for the sake of a label. What
+the previous build does lose is the names, if it saves the file (an
+add or a remove), since it writes only what it read. The paths
+survive and the labels go. The map is written only when a root has a
+name, so a library with none keeps its file byte for byte.
+
+Items in `roots` stay plain strings rather than becoming objects with
+a name inside. The previous build takes an object where it expects a
+string as "not a roots file", and would set the whole file aside as
+`roots.json.unreadable`. A name for a path that is not a root, or a
+name that is not text, is dropped on reading and the rest is kept.
+
+A name belongs to its root and goes with it:
+- removing the root drops its name;
+- a folder added above named roots takes their place without their
+  names, since the new root is a different folder;
+- a root removed and added again comes back unnamed.
+
+Two roots may share a name. The path tells them apart in the menu,
+the sheet and the status line. The name is set inside `Roots::edit`,
+in one read and write of the file, so two editors on one library
+keep each other's names as they keep each other's roots.
+
+**Where it is set: the chip's menu alone.** A right-click on a root's
+chip (Control+click on a Mac) opens a menu. The row has one
+`ContextMenuArea` of its own, zero-sized and never enabled itself,
+opened where the right-click was, as §171's frame menu is one for the
+window. It offers the path (grayed), Rename... and Remove from
+library. The press handling follows the grid's cells:
+- a left press that closes the menu does nothing more on any pill it
+  lands on: the root's chip, its cross, "+ Add a folder...", "+ Add
+  this folder" or "All roots". Without that rule a click to dismiss
+  the menu would open the chooser, add the folder open, switch the
+  view or take the root out;
+- a right-click on another root with the menu up opens that root's
+  menu.
+
+Rename... opens a small sheet (`ui/panel/root-sheet.slint`), titled
+"Name this library folder" rather than "Rename", which reads like a
+rename on disk. It shows the full path, and the name field starts
+with the current name selected, so typing replaces it and Enter keeps
+it. The field's placeholder is the folder's own name.
+
+The first cut also put the name field where a root is added: both
+add buttons opened the sheet, and a plain add took an extra Enter.
+The review turned that down. Most roots never need a name, and the
+roadmap's line is met by the chip's menu alone, so adding a root is
+again a single action. The status line after an add says a name can
+be given with a right-click on the chip.
+
+Escape closes the sheet. The field holds the focus, and in Slint 1.18
+a key goes only up the focused item's ancestors, so it never reached
+the window's `keys` scope, where the other sheets' Escape lives. In
+the first cut Escape did nothing while the field had the focus. The
+card now has a `FocusScope` of its own that takes Escape. It wraps the
+card and not the scrim, so a click beside the card still closes it.
+The preset sheet had the same flaw, since its name field also takes
+the focus when it opens, and now has the same fix. A test covers each.
+
+**Where it shows.** The name shows on the chip, which is the only
+place a root's folder name was shown; the grid's header and the filter
+chips never showed a root. A long name is cut to 240 px with an
+ellipsis. In the first cut a 95-character name made a 770 px chip and
+pushed the other roots off a 1000 px window. The whole name is in the
+sheet, and the path is in the menu's first line and the sheet, since
+Slint 1.18 has no tooltip. The chip also carries the path as its
+accessible description, for a screen reader. The status line says a
+named root as "Archive (/x/Photos)", so a root covered or removed is
+never named only by something another root may share.
+
+`--sheet root-name` opens the sheet over the first root, for a
+snapshot.
+
+## 186. The update check (2026-09-27)
+
+A tester who installed 0.1.1 has no way to learn that 0.1.2 is out
+short of watching the repository, and a report against a fixed bug
+costs both sides a round trip. So the editor asks, once a day at most,
+whether a newer release exists, and says so in the left pane above
+Settings... and Report a problem..., where it waits without
+interrupting: the status line is transient, and a dialog at launch is
+the wrong weight for news the user may not want today.
+
+The source is GitHub's releases API,
+`/repos/jessolmstead/greycard/releases/latest`, not a file we host.
+The releases are already there, so the answer cannot drift from what
+is actually published; `latest` leaves out drafts and releases marked
+as pre-releases; and there is no server of ours to keep up, to log
+requests, or to be asked about. The request goes over HTTPS only,
+follows at most two redirects, and carries a User-Agent of
+`greycard/<version>`, which GitHub requires of every client, and the
+Accept header its API documents; with them go the Host header HTTP
+itself needs, and nothing else: no token, no query, no compression
+asked for. It goes through a proxy when the environment names one
+(`HTTPS_PROXY`, `ALL_PROXY`), as ureq does by default. GitHub sees the
+address it comes from, as it would for any page. The unauthenticated
+limit (60 an hour an address) is far past one a day.
+
+It is on by default, with a switch in the Settings sheet and, beside
+it, one plain sentence saying what is sent. Off by default would
+leave exactly the users who need it (testers on an old build, who
+never open Settings) never told. That means the first launch sends
+its request before the switch can have been seen, and that is the
+decision: one GET of public information, carrying nothing about the
+user, is the cost of the news reaching the people who need it. The
+sentence is there so the user does not have to take "no telemetry"
+on trust: the request is one anyone can make from a browser, and the
+words say what it carries. Check now runs the same request from the
+sheet and answers there: the latest, a version available, GitHub
+answering without a release, or GitHub not reached. The button waits
+for its answer, and an answer to an earlier press is dropped by its
+number rather than said over a later one.
+
+Nothing is downloaded or installed. The entry opens the release page
+in the browser, through the same path Report a problem uses, and the
+user decides. An updater would need signing, a way to replace a
+running binary on three platforms, and trust in a download path we
+would then own; the release page already has the notes, the
+checksums and the builds, and a person reading it is the review. A
+page the answer names outside the repository is not opened; the
+repository's releases page stands in.
+
+The throttle: the time of the last check that GitHub answered, and
+the release it last named (tag and page), are kept in the settings.
+Any HTTP answer counts, a rate limit's 403, a 404, a 5xx or a body
+that is not a release, so a GitHub that keeps refusing is asked once
+a day and not every launch; a refusal keeps the release known before.
+Only a failure to reach GitHub at all (DNS, connection, timeout)
+leaves the time as it was, so the next launch tries again, and a
+release found before still shows offline. A launch within 24 hours of
+the last answer asks nothing; a clock set back past it asks again. The
+check runs on its own thread, is never joined, and times out in five
+seconds, so a quit is never held by it; a snapshot, a screenshot, an
+export and the tests never make it.
+
+Versions compare as major.minor.patch in numbers (0.1.10 is after
+0.1.9); a `-` suffix makes a pre-release, which ranks below its
+release, and a `+` suffix is ignored. A release build is never offered
+a pre-release, so an rc tag that slipped through `latest` reaches no
+one on a release, while an rc build is offered its final. A tag that
+does not read as a version is no news, never an error. The entry's x
+remembers the tag it dismissed, so that release is not offered again
+at launch and the next one is; a Check now that finds the dismissed
+tag forgets the dismissal, since that is what it was asked about.
+
+The entry costs the left pane one row at its foot, above Settings...
+and Report a problem..., where it takes height from the scrolling
+sections. The History box now keeps three rows (or its whole list, if
+shorter) at least, so the pane scrolls before that list is squeezed
+out, as it was at 950 px with the entry showing. The Settings sheet,
+now taller than a short window, scrolls within the window less a
+margin, with Done kept below the scroll.
+
+## 187. Keeping a list up with the disk, off the window's thread (2026-09-27)
+
+Opening a library root on a NAS made the editor stop answering for
+seconds at a time, again and again, until the desktop offered to kill
+it. The log had 35 merges on the window's thread taking 79 s between
+them, one merge of 10 to 48 new files taking 0.4 to 15.6 s.
+
+**What it was.** §174's merge kept the list up with the disk by reading
+it again at every pass the indexer reported, and each step of that
+read was on the window's thread:
+- `view_files` opened every folder in the list (`read_dir`) to leave
+  out the ones that could not be read: one round trip a folder, every
+  report, before the merge's timer started;
+- `roots_of` opened every root to leave out the offline ones, and the
+  roots' row did it again for each chip;
+- a merge of up to 200 new files read their sidecars there too, a stat
+  and a read each. A walk's batches are 10 to 50, so every one was
+  under 200 and none went to the pool;
+- the frame on screen was looked for with `exists` and `is_file` in
+  `background_done`, in `follow_current` and twice in `merge`;
+- the index's own reads asked the disk as well. `ids_of` made each
+  folder of the list canonical with a `realpath`, at every merge and at
+  every report that did not merge. `count_under` and `paths_under` made
+  each root canonical at every report. The roots' row made the open
+  folder canonical for "Add this folder", again at every report.
+
+On a local disk each is a few microseconds, and nothing showed. Over a
+network each is a round trip.
+
+**Counted.** The tree: 300 folders of 10 hard links each (3,000 raws
+from the samples), a fresh library, then 20 files linked into 20
+folders every 3 s, ten times, which is 200 watcher passes of one
+folder each. Debug build, local disk.
+- Before, counted by a log line at each call in `roots.rs`: 307 calls
+  on the window's thread for each report (300 folders, 2 roots, 1 to 4
+  for the frame on screen, and the new files' sidecars), 61,708 in all
+  for the 201 reports. That count missed the index's `realpath`s. The
+  review counted every call with an `LD_PRELOAD` shim over libc, and
+  found about 300 more for each merge on the first cut of this change.
+- After, by the same shim: no call on the window's thread in the 45 s
+  of rounds after launch in the last run, 1 in the run before it. That
+  one is `remember_last_file`'s `canonicalize` of the frame on screen
+  when a develop lands, once a develop, not in this path. The launch
+  makes 4 by the review's count (5 in my run: the frame, the `--roots`
+  root made canonical and looked at, and `start` and `watch` opening
+  it). The 200 reports became 22 reads and 12 merges, with about 55,300
+  calls off the window's thread, most of them the thumbnails. The
+  second review had 21 reads and 12 merges, the same at any rate of
+  reports.
+
+**Now.** A read of the list is a `Look`. Everything it needs is taken
+from the window's state when it is asked for; it runs on a thread of
+its own, and lands on the window's thread when done. What it does off
+the window's thread:
+- in a view of the roots, each root looked at on a thread of its own
+  (`Checks`), and one that has not answered in 3 s taken for offline.
+  A hard-mounted share gone away does not answer at all, and a thread
+  asking it is stuck for as long as it is gone. So a root keeps one
+  look out at most: while it has not answered, every read takes the
+  root for offline at once, with no new thread and no wait, and when
+  it answers the next read looks afresh. The first cut started a look
+  for every root at every read. With one root hung that was a stuck
+  thread a read (38 over 40 reports, about 1,200 an hour) and 3 s more
+  on every read. The chips' "offline" comes from the same look
+  (`Library::offline`), kept rather than asked at every `show`;
+- in a folder's view, no root looked at, since a root that does not
+  answer is none of its business; the folder listed, and made
+  canonical;
+- for the roots view, each folder in the list the window does not know
+  can be read looked at once;
+- the list's rows asked of the index on a connection of the read's
+  own, with each folder's canonical form in hand: the index's paths
+  are canonical already, and a folder's view has its one folder made
+  canonical by the read. `Library::ids_of_with` takes that form rather
+  than asking the disk;
+- the new files' sidecars read on the pool, whatever their number
+  (`MERGE_AT_MOST` is gone);
+- the frame on screen looked for, one stat, and followed through the
+  index only when it is gone. Not when it is under a root this read
+  found offline: that stat would not come back either. It is taken for
+  there, and stays on screen and in the list while the rest of its
+  root's frames leave. The first cut looked, and with the frame on
+  screen under the hung root, no read came back: 35 reports and no
+  merge in 105 s of hang, the chip never saying offline (it lands with
+  the read), and the read sent after the give-up hanging the same way.
+  With the fix, the same run merged 36 times, a merge 0.1 to 0.3 s
+  after each report, the first read after the hang 3 s and every one
+  after it 1 to 2 ms, one "greycard root check" thread in all.
+
+The roots are canonical in `roots.json` (§174), so the counts and the
+list ask the index by them as they are (`count_under_canonical`,
+`paths_under_canonical`). The window keeps each folder's canonical
+form (`Library::canonical`) as the reads hand it over, so `refresh_ids`
+after a report that does not merge, `changed_rows`, and "Add this
+folder" ask the disk only for a folder no read has seen. A folder's
+view has its folder made canonical by every read, off the window's
+thread, one `realpath`; and a folder opened by hand is made canonical
+again as it opens. So a folder reached through a link that is pointed
+elsewhere during the session is followed at the next read. The first
+cut kept the first answer for the session, and a retargeted link kept
+the old folder's rows: a frame could take another file's row by its
+name, and "Add this folder" added the old target.
+
+The merge stays on the window's thread, since it swaps the window's
+lists, and asks the disk nothing: it takes the sidecars, the rows and
+the frame on screen as the read found them (`Brought`). A test merges
+a list whose folders do not exist, and lands a read after its folder
+was deleted.
+
+One read is out at a time. A report while one is out sets `stale` and
+returns; the read that lands merges, then one more read goes out for
+everything reported meanwhile. A test says six passes over six folders
+are two reads and two merges, the second covering five of them. A
+read that lands after a file became new to the list, with no sidecar
+for it, is not merged with a blank one (which a save would write over
+the file's own); it is read again.
+
+A read that does not come back in 60 s (a share that stopped answering
+in the middle of it, past the roots' look) no longer holds the list
+for the session. The next refresh gives up on it and sends another,
+and the one given up on is dropped whole if it ever lands. A view's
+read, opened by hand, is given up on the same way: the status line
+says the frames did not come in, rather than "reading N frames..." for
+good, and a capture waiting on the view lets go. What a read saw (the
+roots offline, the folders, their canonical forms) is kept only from a
+read of the list the window holds now. The first cut kept it from any
+read that landed, so a view's read that landed after 60 s put its old
+offline set over a newer one. It also left `merging` set for good, and
+every refresh after it only set `stale`.
+
+**Which folders can be read.** The window keeps the folders a read
+found it could read. A folder that could not be read is not kept
+either way, and every read looks at it again: on a network share, a
+failure can be a moment's (EIO, a timeout). The first cut kept it as
+unreadable, which hid the folder's frames for the session unless a
+pass went over it or the view was opened again, where §174 had them
+back at the next merge. The cost is a look for each unreadable folder
+at each read, off the window's thread; a `lost+found` at 0700 under a
+drive's root is one.
+
+A folder is looked at again when:
+- it is new to the list, or could not be read last time;
+- a pass finishes over it or over a folder above it
+  (`folders_passed`, from `Told::Background`, not from the
+  every-two-seconds progress word);
+- the view is opened by hand, which looks at every folder again.
+
+A pass that finishes while a read is out keeps the read from putting
+back what it saw of the pass's folders, whether or not the pass
+changed anything. Each finished pass is kept with a number, and a read
+keeps a folder only when no pass newer than the read covers it. The
+first cut moved the number only when the pass changed something, so a
+read that saw a folder mid-blip could land after a clean pass over it
+and keep the blip. Such a pass also marks the read stale, so one more
+read follows it.
+
+Which passes have the list read again, for the folders:
+- a tree pass that could not read a folder under it says so as a folder
+  (`Report::unreadable`). `Report::errors` also holds the files that
+  could not be hashed or probed, and the first cut read the list again
+  for those at every pass;
+- a pass that failed outright. A folder locked under a watched root is
+  an inotify event on it (locally, `chmod 000` produced `Tree(rootA/f1)`),
+  and the pass over that folder fails at the folder itself: it comes
+  back as an error with an empty report, not as `unreadable`;
+- a pass over a folder the last read could not read
+  (`Library::unreadable`), even one that found nothing changed: the
+  folder unlocked, its files as they were.
+
+The first cut had only the first. A folder locked and unlocked needed
+an unrelated report to show either way: in the review's run its 15
+frames stayed in the list until a file was added elsewhere. Now each
+shows by its own pass: the frames left 0.16 s after the `chmod 000`
+event and came back 0.14 s after the `chmod 755` one. A test does the
+round trip. On a share mounted over NFS or SMB, inotify sees only what
+this machine does: a folder locked on the server waits for the next
+read, which any report brings.
+
+**The frame on screen.** §174's check that the frame on screen is
+still there after every pass, whatever the pass said, stays, off the
+window's thread: a pass whose path is over the frame on screen has the
+list read again even when nothing changed. So does a pass that could
+not read a folder. In a folder's view, any pass over the folder does.
+
+**What is still in the way.** The indexer's own thread still asks a
+hung root and waits with it: a tree pass or a watcher's pass over a
+share that does not answer blocks that thread, and while it is blocked
+no report comes, for any root. The list keeps what it has, the window
+answers, and the reads above do not hang, but nothing new is indexed
+until the share answers. That was so before this change.
+
+**What is still on the window's thread.**
+- The index's reads over SQLite, on the local disk: the list
+  (`paths_under_canonical`), each root's count, the facets and the
+  filter's rows (`ids_passing`), and `refresh_ids` after a report that
+  does not merge. A few ms, up to 60 ms over 20,000 frames (§174).
+- At launch, and when a root is added or taken out: `start` and `watch`
+  look at each root with a `read_dir`. A root that does not answer
+  would still hold the window there.
+- `remember_last_file` makes the frame on screen canonical after each
+  develop.
+- A folder's own open (Open folder, a double-click) still reads its
+  sidecars on the window's thread, as §174 left it ("a folder is a few
+  hundred at most"). On a NAS that is not true either, and is the next
+  item.
+
+**The merge's own time**, the "list merged" log line, same tree and
+rounds, thumbnails still being made:
+- before: 20 new in 47 to 226 ms (median 80), the 3,000 at once 41 to
+  68 ms;
+- after: 20 new in 31 to 41 ms, the 3,000 at once 29 ms. The rows no
+  longer make each folder canonical, and that was most of the rest,
+  even locally.
+
+A read takes 21 to 30 ms off the window's thread for 3,000 files, and
+52 ms for the first 3,000 with their sidecars and every folder looked
+at. What it means on the NAS was not measured, there being none to
+measure on. The count says what went: about 600 round trips on the
+window's thread for every report (the folders looked at and made
+canonical, the roots, the frame on screen), plus the sidecars of up to
+200 new files, are now none, and 200 reports are 22 reads. The 600 is
+an estimate from the two counts (307 counted a report on master, and
+the review's about 300 `realpath`s a merge), not one measurement. At
+1 ms a round trip that would be about 0.6 s of a frozen window for
+each report, with a walk reporting every two seconds.
+
+**Not done.**
+- The indexer's thread hangs with a hung root, and reports stop for
+  every root until it answers (pre-existing). For the roadmap: give
+  the indexer's passes the roots' 3 s look, and skip a root that has
+  not answered.
+- `start` and `watch` still look at each root on the window's thread at
+  launch and when a root is added or taken out.
+- A folder's own open still reads its sidecars on the window's thread.

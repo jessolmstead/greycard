@@ -254,6 +254,30 @@ is corrected. Answer **Not now** and it will not ask again; the
 **Get lens profiles** button in the Lens section is there whenever you want
 them.
 
+## Camera profiles
+
+You do not need one. The **Camera** section's default, "embedded",
+uses the color matrix every raw file carries from its maker, and that
+is what most people develop with. A DCP profile is for when you want
+Adobe's rendering of your body, or a profile made for one particular
+camera. With none installed, the section names the folder they go in
+(`greycard/profiles` under your data directory), and a `.dcp` put
+there is listed the next time the section is opened.
+
+Where a profile comes from:
+
+- **Adobe's own**, which come free with the DNG Converter or Lightroom
+  and cover nearly every body. Their license does not allow anyone
+  else to redistribute them, so copy the ones for your cameras by
+  hand: on Windows from `C:\ProgramData\Adobe\CameraRaw\CameraProfiles`,
+  on a Mac from `/Library/Application Support/Adobe/CameraRaw/CameraProfiles`.
+  On Linux, the DNG Converter runs once under Wine to unpack them.
+- **RawTherapee's**, made by that project and published under the
+  GPL in its repository, for the bodies it covers.
+- **A chart shot**: a ColorChecker photographed under the light you
+  work in, run through dcamprof or a chart maker's own tool, gives a
+  profile for your own copy of the camera.
+
 ## Known rough edges
 
 - The default look and the Highlights, Whites and Shadows sliders don't

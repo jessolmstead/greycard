@@ -42,6 +42,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
+      - uses: actions/checkout@v4
       - id: version
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -54,12 +55,24 @@ jobs:
               exit 1
               ;;
           esac
+          # The build's own idea of its version comes from Cargo.toml,
+          # and the update check compares that with the latest tag: a
+          # tag ahead of Cargo.toml would ship a build that offers
+          # itself as an update forever. So the two must agree.
+          crate=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -1)
+          if [ "$crate" != "$version" ]; then
+            echo "tag says $version but Cargo.toml says $crate; bump the workspace version first" >&2
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          # Anything below 1.0, and anything with a -rc or -beta on it,
-          # goes out marked as a pre-release.
+          # A version with a -rc or -beta on it goes out marked as a
+          # pre-release. A plain 0.x is a release: the number already
+          # says how far along it is, and the flag would only leave the
+          # repo without a "latest" release for a tester or an update
+          # check to find.
           case "$version" in
-            0.*|*-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
-            *)       echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
+            *-*) echo "prerelease=true" >> "$GITHUB_OUTPUT" ;;
+            *)   echo "prerelease=false" >> "$GITHUB_OUTPUT" ;;
           esac
 
   build:
@@ -203,3 +216,21 @@ jobs:
           prerelease: ${{ needs.version.outputs.prerelease == 'true' }}
           fail_on_unmatched_files: true
           body_path: target/dist/release-notes.md
+
+  site:
+    name: rebuild greycard.org
+    needs: release
+    runs-on: ubuntu-24.04
+    steps:
+      # The site reads the changelog from master at build time, so a
+      # release only has to ask Netlify for a fresh build. A separate job,
+      # so a failure here never touches the release itself.
+      - name: Netlify build hook
+        env:
+          HOOK: ${{ secrets.NETLIFY_BUILD_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "no NETLIFY_BUILD_HOOK secret; the site is not rebuilt"
+            exit 0
+          fi
+          curl --fail --silent --show-error -X POST -d '{}' "$HOOK"
