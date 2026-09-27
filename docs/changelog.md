@@ -8,7 +8,16 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
-## 0.2.0, unreleased
+## 0.2.0, 2026-09-27
+
+The second release. The library arrived: folders added as roots and
+indexed, browsed across roots with filter chips, imported from a card,
+and read without freezing the window when a root is on a network
+drive. Culling got its keys answered on the picture. A button fits
+the camera's own look from its JPEGs. Masks gained a learned Sky.
+And the editor now says when a newer release is out. Read the
+[guide for testers](https://github.com/jessolmstead/greycard/blob/master/docs/user-guide.md)
+for installing on each system, the keys, and how to report a problem.
 
 - A library root on a network drive no longer freezes the editor while
   it is walked: the list, the new frames' sidecars and their rows are
