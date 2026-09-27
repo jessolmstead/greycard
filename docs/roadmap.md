@@ -135,6 +135,10 @@ Decided (§34): ONNX Runtime through `ort`, CPU floor with CUDA, DirectML
 or CoreML when found; models downloaded on first use with their
 licenses, never bundled; a `greycard-ai` crate that core never sees.
 
+- [ ] A Background shape: the Subject mask inverted, one button beside
+      Subject, so a look goes on everything but the subject without
+      drawing it; later the parts models make it the true background
+      rather than the subject's complement
 - [ ] AI masks, after Sky (§175): a learned sky matte for dense canopies and twigs
       against glare, where the color-line matte fails (needs clean
       data we assemble); a 4096-wide raster for Sky so a 100 MP
@@ -251,6 +255,11 @@ comes across with its ratings and collections.
   latency being the limit; check what the content hash reads of a
   file, since a whole-file hash over 200 GB is a first pass measured
   in hours. The polling fallback for the watcher landed in §188
+- [ ] Thumbnails from the edit: the strip's and the grid's picture of a
+  frame with an edit is the developed frame, not the camera's JPEG,
+  made by the pool from the edit at the thumbnail's size and remade
+  when the edit is saved, with the camera's JPEG standing in until it
+  lands; what the lightbox needs too
 - [ ] Lightbox over a collection, or the picks until collections
   exist: the grid with everything that gets in the way of judging
   consistency taken out. Tiles at a chosen size up to a handful

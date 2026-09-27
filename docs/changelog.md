@@ -10,14 +10,6 @@ note a first tester reads.
 
 ## Unreleased
 
-- A library root on a network share (NFS, SMB, sshfs and the like) is
-  no longer watched on Linux and macOS, where setting the watch up
-  froze the editor while every folder was registered and saw only this
-  machine's changes; it is passed over every 10 minutes instead
-  (`network_poll_minutes` in settings.json, 0 for never), and the
-  watcher on the other roots is set up off the window's thread, so
-  adding, removing or starting with a root never holds the window
-  (§188)
 - The scopes can be weighed by the chosen mask: a Selection toggle
   beside them, off at launch, so a skin mask shows the skin's cloud on
   the vectorscope and a face its level on the waveform; the clipping
@@ -35,15 +27,32 @@ note a first tester reads.
   their picture until scrolled near; the 20,000-frame case filled in
   1.6 s with the window drawing throughout, against 3 s of a blank
   window (§191)
-- The frame on screen moved with the rejects or deleted hands on to
-  the nearest frame left, in culling as in the loupe; before, culling
-  kept the old picture up with no row chosen
+
+## 0.2.1, 2026-09-27
+
+Fixes from the first day with 0.2.0 on a NAS root, and one older one.
+
+- A library root on a network share (NFS, SMB, sshfs and the like) is
+  no longer watched on Linux and macOS, where setting the watch up
+  froze the editor while every folder was registered and saw only this
+  machine's changes; it is passed over every 10 minutes instead
+  (`network_poll_minutes` in settings.json, 0 for never), and the
+  watcher on the other roots is set up off the window's thread, so
+  adding, removing or starting with a root never holds the window
+  (§188)
+- The frame on screen moved with the rejects hands on to the nearest
+  frame left, in culling as in the loupe; before, culling kept the old
+  picture up with no row chosen
 - Opening the Settings sheet no longer freezes the window over a
   large root: the count of sidecars out of place, and the move that
   settles them, run off the window's thread, the sheet saying
   "Counting..." and "Moving..." meanwhile
 - The Crop, Masks and Retouch tabs no longer open blank after the
   Develop tab was scrolled down: each tab starts at its top
+- The terminal no longer shows winit's Wayland event loop warning
+  about a re-registered source, which is harmless
+- The test build's dead-code lints on macOS and Windows, which turned
+  the tag's CI red, are gated
 
 ## 0.2.0, 2026-09-27
 
