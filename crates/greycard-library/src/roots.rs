@@ -1100,25 +1100,43 @@ mod tests {
             failed.iter().all(|(p, _)| *p == locked),
             "only the locked folder is said: {failed:?}"
         );
-        let wait = |want: &Change| {
+        // As in the test above: FSEvents can name the root itself, a
+        // tree over the folder the write was in, so a folder's change
+        // is its own pass or a tree pass over it.
+        let wait = |want: &dyn Fn(&Change) -> bool, what: &Path| {
             let until = Instant::now() + Duration::from_secs(10);
+            let mut all = Vec::new();
             while Instant::now() < until {
-                if let Ok(batch) = got.recv_timeout(Duration::from_millis(100))
-                    && batch.contains(want)
-                {
-                    return;
+                if let Ok(batch) = got.recv_timeout(Duration::from_millis(100)) {
+                    all.extend(batch);
+                    if all.iter().any(want) {
+                        return;
+                    }
                 }
             }
-            panic!("never saw {want:?}");
+            panic!("never saw {what:?}: {all:?}");
+        };
+        let reaches = |dir: &Path| {
+            let dir = dir.to_path_buf();
+            move |c: &Change| match c {
+                Change::Folder(p) => *p == dir,
+                Change::Tree(t) => dir.starts_with(t),
+            }
         };
         std::fs::write(shoot.join("a.CR3"), b"not a raw").unwrap();
-        wait(&Change::Folder(shoot.clone()));
+        wait(&reaches(&shoot), &shoot);
         let later = root.join("later");
         std::fs::create_dir_all(&later).unwrap();
-        wait(&Change::Tree(later.clone()));
+        wait(
+            &|c| matches!(c, Change::Tree(t) if later.starts_with(t)),
+            &later,
+        );
         std::thread::sleep(Duration::from_millis(300));
+        // What the new folder said is settled; the write below must be
+        // seen on its own.
+        while got.try_recv().is_ok() {}
         std::fs::write(later.join("b.CR3"), b"not a raw").unwrap();
-        wait(&Change::Folder(later));
+        wait(&reaches(&later), &later);
         drop(watcher);
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
