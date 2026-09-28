@@ -1093,6 +1093,10 @@ fn open_files(
         st.view_generation += 1;
         crate::roots::loading_done(&mut st.library, app);
         st.view = crate::roots::View::Folder;
+        // The chips follow the view: the root that was on goes off,
+        // and "Add this folder" is offered when this one is not under
+        // a root. The first cut left the old chip lit.
+        crate::roots::show(&st, app);
         load_sidecars(&files, st.write_sidecars)
     };
     open_loaded(state, app, worker, files, sidecars, seed_blend, select);

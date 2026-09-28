@@ -2671,6 +2671,36 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A folder opened over a view of the roots takes the chip's
+    /// light with it: the view is the folder's, and no root is on.
+    /// The first cut set the view and left the chip lit.
+    #[test]
+    fn a_folder_opened_over_a_root_view_turns_its_chip_off() {
+        let dir = scratch("chip-off");
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        frames(&a, &["x.tif"]);
+        frames(&b, &["o.tif"]);
+        let app = window(1);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.library.roots.add(&a).unwrap();
+            st.view = View::Roots(Some(a.clone()));
+            show(&st, &app);
+            assert!(app.get_library_roots().row_data(0).unwrap().on);
+        }
+        crate::panel::browser::open_folder(&state, &app, &worker, &b);
+        assert_eq!(state.borrow().view, View::Folder);
+        assert!(
+            !app.get_library_roots().row_data(0).unwrap().on,
+            "the root's chip stayed lit after a folder opened"
+        );
+        assert!(!app.get_library_all_on());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// The row in the grid's header is wired: along it a press finds
     /// the chooser's chip, then the all-roots chip, then the root's
     /// own, then its cross, in that order; and a row of roots longer

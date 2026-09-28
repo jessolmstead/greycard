@@ -42,6 +42,8 @@ note a first tester reads.
   path as the Neutral picker, so the answer is the same whatever
   white the frame was showing and a second press changes nothing;
   frames with nothing neutral in them still fool it (§194)
+- A root's chip in the library row goes off when a folder is opened
+  over its view; before, the old chip stayed lit
 
 ## 0.2.1, 2026-09-27
 
