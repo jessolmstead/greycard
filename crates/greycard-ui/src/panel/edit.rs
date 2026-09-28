@@ -7,7 +7,8 @@ use crate::panel::color::{
 use crate::panel::crop::{read_geometry, show_geometry};
 use crate::panel::cull::{control_over_frame, leave_cull};
 use crate::panel::curve::{
-    curve_points, draw_curve, panel_parametric, set_curve_points, set_panel_parametric,
+    current_channel, curve_points, draw_curve, panel_parametric, select_point, set_curve_points,
+    set_panel_parametric,
 };
 use crate::panel::history::show_history;
 use crate::panel::mask::{component_names, component_on, heading_name, show_component};
@@ -427,8 +428,14 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_denoise_learned_strength(edit.noise.learned_strength);
     app.set_curves_enabled(look.curves.enabled);
     set_panel_parametric(app, &look.curves.parametric);
+    // The selected point outlives a showing of the same curve, not an
+    // undo or another frame that changes it.
+    let shown = curve_points(app, current_channel(app));
     for channel in Channel::ALL {
         set_curve_points(app, channel, look.curves.channel(channel));
+    }
+    if curve_points(app, current_channel(app)) != shown {
+        select_point(app, None);
     }
     let bins = STATE.with(|s| {
         s.borrow()

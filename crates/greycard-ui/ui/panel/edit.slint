@@ -81,6 +81,7 @@ export component LightSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.blacks;
+        scale: 100;
         text: (root.blacks >= 0 ? "+" : "") + round(root.blacks * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
@@ -120,6 +121,7 @@ export component NoiseSection inherits Section {
         default: 1;
         step: 0.05;
         value <=> root.denoise-learned-strength;
+        scale: 100;
         text: round(root.denoise-learned-strength * 100) + "%";
         changed(v) => { root.develop-changed(); }
     }
@@ -164,6 +166,7 @@ export component DetailSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.detail-texture;
+        scale: 100;
         text: (root.detail-texture >= 0 ? "+" : "") + round(root.detail-texture * 100);
         changed(v) => { root.develop-changed(); }
     }
@@ -175,6 +178,7 @@ export component DetailSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.detail-clarity;
+        scale: 100;
         text: (root.detail-clarity >= 0 ? "+" : "") + round(root.detail-clarity * 100);
         changed(v) => { root.develop-changed(); }
     }
@@ -186,6 +190,7 @@ export component DetailSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.detail-dehaze;
+        scale: 100;
         text: (root.detail-dehaze >= 0 ? "+" : "") + round(root.detail-dehaze * 100);
         changed(v) => { root.develop-changed(); }
     }
@@ -255,6 +260,7 @@ export component SharpenSection inherits Section {
         default: 0.1;
         step: 0.01;
         value <=> root.sharpen-threshold;
+        scale: 100;
         text: root.sharpen-auto-threshold
             ? "auto " + round(root.sharpen-measured-threshold * 100) + "%"
             : round(root.sharpen-threshold * 100) + "%";
@@ -300,6 +306,7 @@ export component VignetteSection inherits Section {
         default: 0.5;
         step: 0.01;
         value <=> root.vignette-midpoint;
+        scale: 100;
         text: round(root.vignette-midpoint * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
@@ -310,6 +317,7 @@ export component VignetteSection inherits Section {
         default: 0.5;
         step: 0.01;
         value <=> root.vignette-feather;
+        scale: 100;
         text: round(root.vignette-feather * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
@@ -320,6 +328,7 @@ export component VignetteSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.vignette-roundness;
+        scale: 100;
         text: (root.vignette-roundness >= 0 ? "+" : "") + round(root.vignette-roundness * 100);
         changed(v) => { root.view-changed(); }
     }
@@ -346,6 +355,7 @@ export component GrainSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.grain-amount;
+        scale: 100;
         text: round(root.grain-amount * 100) + "%";
         changed(v) => { root.view-changed(); }
     }

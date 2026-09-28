@@ -86,3 +86,47 @@ pub(crate) fn folder(count: usize) -> Vec<std::path::PathBuf> {
         .map(|i| std::path::PathBuf::from("/nowhere").join(format!("IMG_{i:04}.CR3")))
         .collect()
 }
+
+/// The bounds of the element a screen reader knows as `label`,
+/// scrolled into the panel's view first: its top left and its size,
+/// in logical pixels from the window's top left.
+pub(crate) fn labeled(app: &App, label: &str) -> (slint::LogicalPosition, slint::LogicalSize) {
+    use i_slint_backend_testing::ElementHandle;
+    let find = || {
+        // A control a property has just brought in is built on the
+        // next event: a pointer move at the corner, where nothing is.
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(0.0, 0.0),
+        });
+        ElementHandle::find_by_accessible_label(app, label).next()
+    };
+    let height = app
+        .window()
+        .size()
+        .to_logical(app.window().scale_factor())
+        .height;
+    // The panel's scroll only builds what is in view: down it a
+    // screen at a time from the top until the control is there, then
+    // to where it is well inside the view.
+    app.set_panel_scroll(0.0);
+    for _ in 0..40 {
+        if let Some(element) = find() {
+            let at = element.absolute_position();
+            if at.y > 80.0 && at.y < height - 80.0 {
+                return (at, element.size());
+            }
+            app.set_panel_scroll(app.get_panel_scroll() - (at.y - height / 2.0));
+            let element = find().unwrap_or_else(|| panic!("{label:?} scrolled away"));
+            return (element.absolute_position(), element.size());
+        }
+        app.set_panel_scroll(app.get_panel_scroll() - height / 3.0);
+    }
+    panic!("nothing labeled {label:?}");
+}
+
+/// Type `text` a key at a time into whatever has the focus.
+pub(crate) fn type_text(app: &App, text: &str) {
+    for c in text.chars() {
+        press(app, c.to_string());
+    }
+}

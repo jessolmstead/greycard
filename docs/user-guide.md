@@ -45,7 +45,11 @@ unpack it.
    preview"), and greycard's develop replaces it a second or two later.
 3. **Edit.** The right panel has four tabs: **Develop**, **Crop**,
    **Masks** and **Retouch**. Slider changes show up in the picture as
-   you make them.
+   you make them. To type a value, click the number at a slider's right,
+   type it in the unit shown and press Enter; Escape leaves it as it
+   was. On the point curve, the point you last pressed stays selected,
+   and its **In** and **Out** fields below the curve (0 to 255) take a
+   typed position the same way.
 4. **Export** with the **Export…** button at the bottom of the panel, or
    Ctrl+Shift+E. You can write a JPEG or a TIFF, in sRGB, Display P3 or
    Rec.2020.

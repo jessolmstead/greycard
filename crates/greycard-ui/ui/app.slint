@@ -7,7 +7,9 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { EdgeArrow, PanelButton, Segmented } from "controls.slint";
+import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
+// The typed numbers are read on the Rust side (`entry.rs`).
+export { Typing, TypedNumber } from "controls.slint";
 import { Pt, Thumb, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
@@ -465,7 +467,15 @@ export component App inherits Window {
     // Each tab starts at its top, however it was reached: the scroll is
     // one for all four, and Develop scrolled to its foot left a shorter
     // tab showing only the empty space below its sections.
-    changed panel-tab => { root.panel-scroll = 0px; }
+    // A field open in a section the change takes away is closed, and
+    // the keys handed back: a destroyed field says nothing itself.
+    changed panel-tab => {
+        root.panel-scroll = 0px;
+        Typing.close-all();
+    }
+    changed target => { Typing.close-all(); }
+    changed curve-mode => { Typing.close-all(); }
+    changed culling => { Typing.close-all(); }
     callback tab-changed(string);
     in-out property <bool> adjustment-enabled: true;
     in-out property <bool> mask-invert: false;
@@ -753,6 +763,12 @@ export component App inherits Window {
     callback curve-move(float, float);
     callback curve-release();
     callback curve-double(float, float);
+    // The point curve's selected point, its index in the channel's
+    // points or -1, and its In and Out as the fields show them.
+    in-out property <int> curve-selected: -1;
+    in-out property <string> curve-point-in;
+    in-out property <string> curve-point-out;
+    callback curve-typed(string, string);
     callback curve-reset();
     callback curve-channel-changed();
     callback curve-mode-changed();
@@ -1228,6 +1244,11 @@ export component App inherits Window {
             || root.settings-open || root.sync-open || root.import-open || root.match-open
             || root.root-sheet-open;
     }
+
+    // A value typed into a field, set or let go: the keys are the
+    // window's again, as when a sheet closes.
+    property <int> entries-done: Typing.done;
+    changed entries-done => { keys.focus(); }
 
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
     forward-focus: keys;
@@ -1893,6 +1914,10 @@ export component App inherits Window {
                             curve-move(a, b) => { root.curve-move(a, b); }
                             curve-release => { root.curve-release(); }
                             curve-double(a, b) => { root.curve-double(a, b); }
+                            curve-selected: root.curve-selected;
+                            curve-point-in: root.curve-point-in;
+                            curve-point-out: root.curve-point-out;
+                            curve-typed(a, b) => { root.curve-typed(a, b); }
                             curve-reset => { root.curve-reset(); }
                             curve-channel-changed => { root.curve-channel-changed(); }
                             curve-mode-changed => { root.curve-mode-changed(); }

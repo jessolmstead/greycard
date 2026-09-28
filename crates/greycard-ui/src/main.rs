@@ -18,6 +18,7 @@ mod clipboard;
 mod cull;
 mod delete;
 mod display;
+mod entry;
 mod export;
 mod files;
 mod filter;
@@ -1001,6 +1002,7 @@ fn on_exists_named(name: &str) -> Result<export::OnExists, String> {
 }
 
 pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc<Worker>) {
+    entry::install(app);
     panel::cull::install(app, &state, &worker);
     panel::delete::install(app, &state, &worker);
     panel::mask::install(app, &state, &worker);

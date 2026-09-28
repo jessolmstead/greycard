@@ -82,6 +82,7 @@ export component LensSection inherits Section {
         default: 0;
         step: 0.005;
         value <=> root.lens-manual;
+        scale: 100;
         text: (root.lens-manual >= 0 ? "+" : "") + round(root.lens-manual * 1000) / 10;
         changed(v) => { root.develop-changed(); }
     }
@@ -95,6 +96,7 @@ export component LensSection inherits Section {
         default: 0;
         step: 0.0001;
         value <=> root.lens-ca-red;
+        scale: 1000;
         text: (root.lens-ca-red >= 0 ? "+" : "") + round(root.lens-ca-red * 10000) / 10 + "\u{2030}";
         changed(v) => { root.develop-changed(); }
     }
@@ -105,6 +107,7 @@ export component LensSection inherits Section {
         default: 0;
         step: 0.0001;
         value <=> root.lens-ca-blue;
+        scale: 1000;
         text: (root.lens-ca-blue >= 0 ? "+" : "") + round(root.lens-ca-blue * 10000) / 10 + "\u{2030}";
         changed(v) => { root.develop-changed(); }
     }
@@ -121,6 +124,7 @@ export component LensSection inherits Section {
         default: 1;
         step: 0.01;
         value <=> root.lens-scale;
+        scale: 100;
         text: round(root.lens-scale * 100) + "%";
         changed(v) => { root.develop-changed(); }
     }
@@ -202,6 +206,7 @@ export component LensSection inherits Section {
         default: 1;
         step: 0.05;
         value <=> root.lens-defringe-purple-amount;
+        scale: 100;
         text: round(root.lens-defringe-purple-amount * 100) + "%";
         changed(v) => { root.develop-changed(); }
     }
@@ -245,6 +250,7 @@ export component LensSection inherits Section {
         default: 1;
         step: 0.05;
         value <=> root.lens-defringe-green-amount;
+        scale: 100;
         text: round(root.lens-defringe-green-amount * 100) + "%";
         changed(v) => { root.develop-changed(); }
     }

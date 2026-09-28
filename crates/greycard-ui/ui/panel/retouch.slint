@@ -55,6 +55,7 @@ export component RetouchSection inherits Section {
             default: 0.02;
             step: 0.001;
             value <=> root.patch-size;
+            scale: 100;
             text: round(root.patch-size * 1000) / 10 + "%";
             changed(v) => { root.patch-edited(); }
         }
@@ -65,6 +66,7 @@ export component RetouchSection inherits Section {
             default: 0.3;
             step: 0.01;
             value <=> root.patch-feather;
+            scale: 100;
             text: round(root.patch-feather * 100) + "%";
             changed(v) => { root.patch-edited(); }
         }
@@ -75,6 +77,7 @@ export component RetouchSection inherits Section {
             default: 1;
             step: 0.01;
             value <=> root.patch-opacity;
+            scale: 100;
             text: round(root.patch-opacity * 100) + "%";
             changed(v) => { root.patch-edited(); }
         }

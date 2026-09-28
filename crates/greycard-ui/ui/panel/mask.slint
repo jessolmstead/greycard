@@ -189,6 +189,7 @@ export component AdjustmentsSection inherits Section {
             default: 0.05;
             step: 0.001;
             value <=> root.brush-size;
+            scale: 100;
             text: round(root.brush-size * 1000) / 10 + "%";
             changed(v) => { }
         }
@@ -199,6 +200,7 @@ export component AdjustmentsSection inherits Section {
             default: 0.5;
             step: 0.01;
             value <=> root.brush-feather;
+            scale: 100;
             text: round(root.brush-feather * 100) + "%";
             changed(v) => { }
         }
@@ -209,6 +211,7 @@ export component AdjustmentsSection inherits Section {
             default: 1;
             step: 0.01;
             value <=> root.brush-flow;
+            scale: 100;
             text: round(root.brush-flow * 100) + "%";
             changed(v) => { }
         }
@@ -350,6 +353,7 @@ export component AdjustmentsSection inherits Section {
                         default: 0.5;
                         step: 0.01;
                         value <=> root.mask-feather;
+                        scale: 100;
                         text: round(root.mask-feather * 100) + "%";
                         changed(v) => { root.view-changed(); }
                     }
@@ -364,6 +368,7 @@ export component AdjustmentsSection inherits Section {
                             default: 0.7;
                             step: 0.01;
                             value <=> root.lum-low;
+                            scale: 100;
                             text: round(root.lum-low * 100);
                             // Low pushes High ahead of it.
                             changed(v) => {
@@ -378,6 +383,7 @@ export component AdjustmentsSection inherits Section {
                             default: 0.1;
                             step: 0.01;
                             value <=> root.lum-low-feather;
+                            scale: 100;
                             text: round(root.lum-low-feather * 100);
                             changed(v) => { root.view-changed(); }
                         }
@@ -388,6 +394,7 @@ export component AdjustmentsSection inherits Section {
                             default: 1;
                             step: 0.01;
                             value <=> root.lum-high;
+                            scale: 100;
                             text: round(root.lum-high * 100);
                             changed(v) => {
                                 if (root.lum-low > v) { root.lum-low = v; }
@@ -401,6 +408,7 @@ export component AdjustmentsSection inherits Section {
                             default: 0;
                             step: 0.01;
                             value <=> root.lum-high-feather;
+                            scale: 100;
                             text: round(root.lum-high-feather * 100);
                             changed(v) => { root.view-changed(); }
                         }
@@ -462,6 +470,7 @@ export component AdjustmentsSection inherits Section {
                             default: 0.02;
                             step: 0.001;
                             value <=> root.range-chroma;
+                            scale: 100;
                             text: round(root.range-chroma * 1000) / 10;
                             // The fade runs down to no chroma at most.
                             changed(v) => {
@@ -477,6 +486,7 @@ export component AdjustmentsSection inherits Section {
                             default: 0.01;
                             step: 0.001;
                             value <=> root.range-chroma-feather;
+                            scale: 100;
                             text: round(root.range-chroma-feather * 1000) / 10;
                             changed(v) => {
                                 if (v > root.range-chroma) { root.range-chroma-feather = root.range-chroma; }

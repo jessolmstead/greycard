@@ -1,7 +1,7 @@
 // The CURVES section: the parametric curve and the point curves.
 
 import { Theme } from "../theme.slint";
-import { Section, EditSlider, PanelButton, Segmented, CurveEditor } from "../controls.slint";
+import { Section, EditSlider, PanelButton, Segmented, CurveEditor, ValueField } from "../controls.slint";
 
 export component CurvesSection inherits Section {
     in-out property <bool> curves-enabled;
@@ -20,6 +20,13 @@ export component CurvesSection inherits Section {
     callback curve-move(float, float);
     callback curve-release();
     callback curve-double(float, float);
+    // The point last pressed, which stays selected after the release,
+    // or -1; its In and Out as the fields show them, 0 to 255.
+    in property <int> curve-selected: -1;
+    in property <string> curve-point-in;
+    in property <string> curve-point-out;
+    // A number typed into "in" or "out" for the selected point.
+    callback curve-typed(string, string);
     callback curve-reset();
     callback curve-channel-changed();
     callback curve-mode-changed();
@@ -51,6 +58,42 @@ export component CurvesSection inherits Section {
         released => { root.curve-release(); }
         double-clicked(x, y) => { root.curve-double(x, y); }
     }
+    // The selected point's coordinates, to type: greyed with none.
+    if root.curve-mode == "Point": HorizontalLayout {
+        spacing: Theme.space-2;
+        alignment: start;
+        Text {
+            text: "In";
+            color: root.curve-selected >= 0 && root.curves-enabled ? Theme.text : Theme.text-muted;
+            font-size: Theme.font-sm;
+            vertical-alignment: center;
+        }
+        ValueField {
+            width: 48px;
+            height: Theme.control-height - 4px;
+            boxed: true;
+            enabled: root.curves-enabled && root.curve-selected >= 0;
+            label: "Point in";
+            shown: root.curve-selected >= 0 ? root.curve-point-in : "";
+            committed(typed) => { root.curve-typed("in", typed); }
+        }
+        Rectangle { width: Theme.space-2; }
+        Text {
+            text: "Out";
+            color: root.curve-selected >= 0 && root.curves-enabled ? Theme.text : Theme.text-muted;
+            font-size: Theme.font-sm;
+            vertical-alignment: center;
+        }
+        ValueField {
+            width: 48px;
+            height: Theme.control-height - 4px;
+            boxed: true;
+            enabled: root.curves-enabled && root.curve-selected >= 0;
+            label: "Point out";
+            shown: root.curve-selected >= 0 ? root.curve-point-out : "";
+            committed(typed) => { root.curve-typed("out", typed); }
+        }
+    }
     if root.curve-mode == "Parametric": EditSlider {
         label: "Highlights";
         enabled: root.curves-enabled;
@@ -59,6 +102,7 @@ export component CurvesSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.para-highlights;
+        scale: 100;
         text: (root.para-highlights >= 0 ? "+" : "") + round(root.para-highlights * 100);
         changed(v) => { root.parametric-changed(); }
     }
@@ -70,6 +114,7 @@ export component CurvesSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.para-lights;
+        scale: 100;
         text: (root.para-lights >= 0 ? "+" : "") + round(root.para-lights * 100);
         changed(v) => { root.parametric-changed(); }
     }
@@ -81,6 +126,7 @@ export component CurvesSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.para-darks;
+        scale: 100;
         text: (root.para-darks >= 0 ? "+" : "") + round(root.para-darks * 100);
         changed(v) => { root.parametric-changed(); }
     }
@@ -92,6 +138,7 @@ export component CurvesSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.para-shadows;
+        scale: 100;
         text: (root.para-shadows >= 0 ? "+" : "") + round(root.para-shadows * 100);
         changed(v) => { root.parametric-changed(); }
     }

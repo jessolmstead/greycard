@@ -68,6 +68,58 @@ pub(crate) fn set_curve_points(app: &App, channel: Channel, points: &[Point]) {
     }
 }
 
+/// Where point `i` of `points` goes when moved to (x, y): the ends
+/// stay at the ends, the rest keep their order with a gap to their
+/// neighbors' In, and Out stays within 0 to 1. A drag and a typed
+/// In or Out both land through this.
+pub(crate) fn moved_point(points: &[Point], i: usize, x: f32, y: f32) -> Point {
+    let last = points.len().saturating_sub(1);
+    let x = if i == 0 {
+        0.0
+    } else if i >= last {
+        1.0
+    } else {
+        x.clamp(
+            points[i - 1][0] + curve::MIN_GAP,
+            points[i + 1][0] - curve::MIN_GAP,
+        )
+    };
+    [x, y.clamp(0.0, 1.0)]
+}
+
+/// The selected point, if there is one and the current channel has it.
+pub(crate) fn selected_point(app: &App) -> Option<usize> {
+    let i = usize::try_from(app.get_curve_selected()).ok()?;
+    (i < curve_points(app, current_channel(app)).len()).then_some(i)
+}
+
+/// The point curve's units in the In and Out fields: 0 to 255.
+pub(crate) const FIELD_SCALE: f32 = 255.0;
+
+/// Make `index` the selected point, or none, and show its In and Out.
+pub(crate) fn select_point(app: &App, index: Option<usize>) {
+    app.set_curve_selected(index.map_or(-1, |i| i as i32));
+    show_selected(app);
+}
+
+/// The In and Out fields for the selected point, which a move or a
+/// typed number has just changed; a selection the channel no longer
+/// has is let go.
+pub(crate) fn show_selected(app: &App) {
+    let points = curve_points(app, current_channel(app));
+    match selected_point(app).map(|i| points[i]) {
+        Some([x, y]) => {
+            app.set_curve_point_in(format!("{}", (x * FIELD_SCALE).round()).into());
+            app.set_curve_point_out(format!("{}", (y * FIELD_SCALE).round()).into());
+        }
+        None => {
+            app.set_curve_selected(-1);
+            app.set_curve_point_in("".into());
+            app.set_curve_point_out("".into());
+        }
+    }
+}
+
 /// The curve editor's picture: a grid, the histogram behind, the
 /// diagonal, the channel's curve and its points, 256 pixels square, y
 /// up. For a color curve the line that does nothing is the level one
@@ -262,26 +314,30 @@ pub(crate) fn draw_curve(app: &App, bins: Option<&[u32]>) -> slint::Image {
             }
         }
     } else {
-        // The points: squares with a dark rim.
-        for p in &points {
+        // The points: squares with a dark rim; the selected one a
+        // size up, ringed in the accent.
+        let selected = selected_point(app);
+        for (i, p) in points.iter().enumerate() {
             let (cx, cy) = (
                 (p[0] * (N - 1) as f32).round() as i32,
                 (p[1] * (N - 1) as f32).round() as i32,
             );
-            for dy in -4..=4i32 {
-                for dx in -4..=4i32 {
-                    let rim = dx.abs() == 4 || dy.abs() == 4;
+            // Half the square's side, where its rim starts, the rim.
+            let (half, inner, ring): (i32, i32, [u8; 3]) = if selected == Some(i) {
+                (6, 5, [0x6e, 0xa8, 0xff])
+            } else {
+                (4, 4, [0x14, 0x14, 0x14])
+            };
+            for dy in -half..=half {
+                for dx in -half..=half {
+                    let rim = dx.abs() >= inner || dy.abs() >= inner;
                     let (x, y) = (cx + dx, cy + dy);
                     if x >= 0 && y >= 0 {
                         paint(
                             px,
                             x as usize,
                             y as usize,
-                            if rim {
-                                [0x14, 0x14, 0x14]
-                            } else {
-                                [0xff, 0xff, 0xff]
-                            },
+                            if rim { ring } else { [0xff, 0xff, 0xff] },
                         );
                     }
                 }
@@ -319,8 +375,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 Some(i) => i,
                 None => {
                     let x = x.clamp(0.0, 1.0);
-                    // Not on top of another point's x.
+                    // Not on top of another point's x: a press that
+                    // neither takes a point nor adds one lets the
+                    // selected one go.
                     if points.iter().any(|p| (p[0] - x).abs() < curve::MIN_GAP) {
+                        select_point(&app, None);
+                        app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
                         return;
                     }
                     let at = points.partition_point(|p| p[0] < x);
@@ -330,6 +390,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             };
             state.borrow_mut().curve_drag = Some(index);
             set_curve_points(&app, channel, &points);
+            // Pressed is selected, and stays so after the release.
+            select_point(&app, Some(index));
             app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
             app.window().request_redraw();
         });
@@ -358,20 +420,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             if i >= points.len() {
                 return;
             }
-            // The ends stay at the ends; the rest keep their order.
-            let last = points.len() - 1;
-            let x = if i == 0 {
-                0.0
-            } else if i == last {
-                1.0
-            } else {
-                x.clamp(
-                    points[i - 1][0] + curve::MIN_GAP,
-                    points[i + 1][0] - curve::MIN_GAP,
-                )
-            };
-            points[i] = [x, y.clamp(0.0, 1.0)];
+            points[i] = moved_point(&points, i, x, y);
             set_curve_points(&app, channel, &points);
+            show_selected(&app);
             app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
             app.window().request_redraw();
         });
@@ -416,6 +467,40 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             points.remove(i);
             state.borrow_mut().curve_drag = None;
             set_curve_points(&app, channel, &points);
+            select_point(&app, None);
+            app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
+            app.invoke_view_changed();
+        });
+    }
+    // A number typed into the selected point's In or Out, 0 to 255:
+    // the point moves there as a drag would take it, between its
+    // neighbors, and the move is an edit as a drag's release is.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_curve_typed(move |which, typed| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            if parametric_mode(&app) {
+                return;
+            }
+            let Some(i) = selected_point(&app) else {
+                return;
+            };
+            let Some(v) = crate::entry::parse(typed.as_str(), FIELD_SCALE, 0.0, 1.0) else {
+                return;
+            };
+            let channel = current_channel(&app);
+            let mut points = curve_points(&app, channel);
+            let [x, y] = points[i];
+            let (x, y) = if which.as_str() == "in" {
+                (v, y)
+            } else {
+                (x, v)
+            };
+            points[i] = moved_point(&points, i, x, y);
+            set_curve_points(&app, channel, &points);
+            show_selected(&app);
             app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
             app.invoke_view_changed();
         });
@@ -432,6 +517,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 let channel = current_channel(&app);
                 set_curve_points(&app, channel, &channel.identity());
             }
+            select_point(&app, None);
             app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
             app.invoke_view_changed();
         });
@@ -442,6 +528,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            select_point(&app, None);
             app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
         });
     }
@@ -459,6 +546,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             if parametric_mode(&app) && app.get_picking() == "Curve" {
                 app.invoke_pick_started("Curve".into());
             }
+            select_point(&app, None);
             app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
         });
     }
@@ -471,5 +559,146 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             app.set_curve_image(draw_curve(&app, state.borrow().bins.as_deref()));
             app.invoke_view_changed();
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    /// A point moved, by a drag or a typed number, keeps between its
+    /// neighbors' In with a gap to each; the ends keep to the ends;
+    /// Out keeps to 0 to 1.
+    #[test]
+    fn a_moved_point_keeps_between_its_neighbors() {
+        let points = [[0.0, 0.0], [0.25, 0.3], [0.5, 0.5], [1.0, 1.0]];
+        assert_eq!(moved_point(&points, 2, 0.6, 0.7), [0.6, 0.7]);
+        assert_eq!(
+            moved_point(&points, 2, 0.1, 0.5),
+            [0.25 + curve::MIN_GAP, 0.5]
+        );
+        assert_eq!(
+            moved_point(&points, 2, 1.5, 0.5),
+            [1.0 - curve::MIN_GAP, 0.5]
+        );
+        assert_eq!(moved_point(&points, 1, 0.0, 0.3), [curve::MIN_GAP, 0.3]);
+        assert_eq!(moved_point(&points, 1, 0.3, 2.0), [0.3, 1.0]);
+        assert_eq!(moved_point(&points, 1, 0.3, -1.0), [0.3, 0.0]);
+        // The ends: In is theirs, Out is free.
+        assert_eq!(moved_point(&points, 0, 0.4, 0.2), [0.0, 0.2]);
+        assert_eq!(moved_point(&points, 3, 0.4, 0.8), [1.0, 0.8]);
+    }
+
+    /// A point pressed is selected and stays so after the release;
+    /// its In and Out typed in the window move it, clamped between
+    /// its neighbors, and each is one change; it is still selected
+    /// after. Escape changes nothing; a press that takes no point and
+    /// adds none, or a point deleted, lets the selection go.
+    #[test]
+    fn a_selected_point_takes_a_typed_in_and_out() {
+        use crate::testing;
+        use slint::platform::Key;
+
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_curve_mode("Point".into());
+        app.set_curve_channel("RGB".into());
+        let changes = Rc::new(Cell::new(0));
+        {
+            let changes = changes.clone();
+            app.on_view_changed(move || changes.set(changes.get() + 1));
+        }
+        let points = || curve_points(&app, Channel::Rgb);
+        let type_into = |label: &str, text: &str, key: Key| {
+            let (at, size) = testing::labeled(&app, label);
+            testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+            testing::type_text(&app, text);
+            testing::press(&app, key);
+        };
+        assert_eq!(app.get_curve_selected(), -1);
+
+        app.invoke_curve_press(0.5, 0.5);
+        app.invoke_curve_release();
+        assert_eq!(points().len(), 3);
+        assert_eq!(
+            app.get_curve_selected(),
+            1,
+            "stays selected after the release"
+        );
+        assert_eq!(app.get_curve_point_in(), "128");
+        assert_eq!(app.get_curve_point_out(), "128");
+        let after_press = changes.get();
+
+        // Enter on the reading as it was: 128 is not 0.5, and reading
+        // it back would move the point. Nothing happens.
+        let (at, size) = testing::labeled(&app, "Point in");
+        testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        testing::press(&app, Key::Return);
+        assert_eq!(points()[1], [0.5, 0.5]);
+        assert_eq!(changes.get(), after_press);
+
+        type_into("Point out", "200", Key::Return);
+        assert_eq!(points()[1], [0.5, 200.0 / 255.0]);
+        assert_eq!(app.get_curve_selected(), 1, "still selected");
+        assert_eq!(app.get_curve_point_out(), "200");
+        assert_eq!(changes.get(), after_press + 1, "one change");
+
+        // In past the left neighbor: kept a gap from it.
+        type_into("Point in", "0", Key::Return);
+        assert_eq!(points()[1][0], curve::MIN_GAP);
+        assert_eq!(app.get_curve_point_in(), "3");
+        assert_eq!(app.get_curve_selected(), 1);
+        assert_eq!(changes.get(), after_press + 2);
+
+        // Escape and a non-number: nothing.
+        type_into("Point in", "100", Key::Escape);
+        type_into("Point out", "abc", Key::Return);
+        assert_eq!(points()[1], [curve::MIN_GAP, 200.0 / 255.0]);
+        assert_eq!(changes.get(), after_press + 2);
+
+        // A field open, then a click on a channel, which takes no
+        // focus: the field closes, and a key typed after is the
+        // window's, not the field's.
+        let meta = Rc::new(Cell::new(0));
+        {
+            let meta = meta.clone();
+            app.on_meta_key(move |k| {
+                if k == "5" {
+                    meta.set(meta.get() + 1);
+                }
+                k == "5"
+            });
+        }
+        let (at, size) = testing::labeled(&app, "Point out");
+        testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let (at, size) = testing::labeled(&app, "Blue");
+        testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(app.get_curve_channel(), "Blue");
+        testing::press(&app, "5");
+        testing::press(&app, Key::Return);
+        assert_eq!(meta.get(), 1, "the key reached the window");
+        assert_eq!(changes.get(), after_press + 2);
+        assert_eq!(app.get_curve_selected(), -1, "a channel changed lets go");
+        app.set_curve_channel("RGB".into());
+        app.invoke_curve_channel_changed();
+        assert_eq!(points()[1], [curve::MIN_GAP, 200.0 / 255.0]);
+
+        // A press on nothing it can add a point at: none selected.
+        app.invoke_curve_press(0.005, 0.9);
+        app.invoke_curve_release();
+        assert_eq!(points().len(), 3);
+        assert_eq!(app.get_curve_selected(), -1);
+        assert_eq!(app.get_curve_point_in(), "");
+        // Selected again, then deleted: none selected.
+        app.invoke_curve_press(points()[1][0], points()[1][1]);
+        app.invoke_curve_release();
+        assert_eq!(app.get_curve_selected(), 1);
+        app.invoke_curve_double(points()[1][0], points()[1][1]);
+        assert_eq!(points().len(), 2);
+        assert_eq!(app.get_curve_selected(), -1);
     }
 }

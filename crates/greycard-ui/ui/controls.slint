@@ -144,7 +144,7 @@ export component Section inherits VerticalLayout {
             }
             head := TouchArea {
                 mouse-cursor: MouseCursor.pointer;
-                clicked => { root.collapsed = !root.collapsed; }
+                clicked => { Typing.close-all(); root.collapsed = !root.collapsed; }
             }
         }
         if root.switchable: Switch {
@@ -180,10 +180,150 @@ export component Section inherits VerticalLayout {
     }
 }
 
+// What a number typed into a field comes to, as the Rust side reads
+// it (`entry.rs`): not `ok` when the text holds no number.
+export struct TypedNumber {
+    ok: bool,
+    value: float,
+}
+
+// The reading of typed numbers, one place for every field: the Rust
+// side answers both callbacks, so a slider's shown text and what is
+// typed over it are read by the same code.
+export global Typing {
+    // The shown text as a field starts it: its number alone, the +
+    // sign and the unit off ("+0.40 EV" edits as "0.40").
+    pure callback editable(string) -> string;
+    // What a typed text sets: its number over the scale, clamped to
+    // the minimum and the maximum.
+    pure callback parse(string, float, float, float) -> TypedNumber;
+    // Counted up each time a field lets go of the keyboard, however
+    // it closes: the window hands the keys back to its shortcuts, as
+    // a sheet does when it closes.
+    in-out property <int> done: 0;
+    // Counted up at each field opened. A field closing hands the keys
+    // back only while it is the last one opened, so a click from one
+    // field into another leaves the new one its focus.
+    in-out property <int> opened: 0;
+    // A field is open. A field taken away while open (its section
+    // gone with a tab) leaves this set with nobody to clear it:
+    // `close-all` does, and hands the keys back itself.
+    in-out property <bool> editing: false;
+    // Counted up to close whatever field is open.
+    in-out property <int> cancel: 0;
+    // Close the open field, if any, typed text not counting: for a
+    // click on a control that takes no focus (a tab, a swatch, the
+    // curve, a section's header), and for a tab or a mask target
+    // changed under the field.
+    public function close-all() {
+        if (self.editing) {
+            self.editing = false;
+            self.cancel += 1;
+            self.done += 1;
+        }
+    }
+}
+
+// A reading that a click turns into a text field. Enter hands the
+// typed text to `committed`, unless it is the reading's own number
+// untouched (the reading is rounded, and reading it back would move
+// the value); Escape, the focus going elsewhere or `close-all` puts
+// the reading back as it was. The field starts on the reading's
+// number alone, all selected.
+export component ValueField inherits Rectangle {
+    in property <string> shown;
+    in property <bool> enabled: true;
+    // Drawn as a field at rest too, not only while typed in.
+    in property <bool> boxed: false;
+    in property <TextHorizontalAlignment> alignment: right;
+    // What the field is of, for a screen reader.
+    in property <string> label;
+    out property <bool> editing: false;
+    accessible-role: text-input;
+    accessible-label: root.label;
+    accessible-value: root.shown;
+    accessible-enabled: root.enabled;
+    callback committed(string);
+    // Which opening this is, against `Typing.opened`.
+    property <int> ticket: 0;
+    property <int> cancels: Typing.cancel;
+    changed cancels => {
+        if (root.editing) { root.close(); }
+    }
+    public function edit() {
+        if (root.enabled) {
+            Typing.opened += 1;
+            root.ticket = Typing.opened;
+            Typing.editing = true;
+            root.editing = true;
+        }
+    }
+    function close() {
+        root.editing = false;
+        if (Typing.opened == root.ticket) {
+            Typing.editing = false;
+            Typing.done += 1;
+        }
+    }
+    border-radius: Theme.radius-sm;
+    border-width: root.editing || root.boxed ? 1px : 0;
+    border-color: root.editing ? Theme.focus-ring : Theme.border;
+    background: root.editing || root.boxed ? Theme.base : transparent;
+    TouchArea {
+        enabled: root.enabled && !root.editing;
+        mouse-cursor: root.enabled ? MouseCursor.text : MouseCursor.default;
+        clicked => { root.edit(); }
+    }
+    if !root.editing: Text {
+        x: root.boxed ? Theme.space-1 : 0;
+        width: parent.width - 2 * self.x;
+        height: 100%;
+        text: root.shown;
+        color: root.enabled ? Theme.text-secondary : Theme.text-muted;
+        font-size: Theme.font-sm;
+        horizontal-alignment: root.alignment;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    if root.editing: TextInput {
+        x: Theme.space-1;
+        width: parent.width - 2 * Theme.space-1;
+        height: 100%;
+        text: Typing.editable(root.shown);
+        single-line: true;
+        color: Theme.text;
+        font-size: Theme.font-sm;
+        horizontal-alignment: root.alignment;
+        vertical-alignment: center;
+        init => {
+            self.focus();
+            self.select-all();
+        }
+        accepted => {
+            let typed = self.text;
+            root.close();
+            if (typed != Typing.editable(root.shown)) { root.committed(typed); }
+        }
+        key-pressed(e) => {
+            if (e.text == Key.Escape) {
+                root.close();
+                return accept;
+            }
+            return reject;
+        }
+        // Clicked away: nothing typed counts, and the keys go back.
+        changed has-focus => {
+            if (!self.has-focus && root.editing) { root.close(); }
+        }
+    }
+}
+
 // A slider: label, track with fill, handle, value. A click on the
 // track jumps the value there; a press on the handle grabs it without
 // moving it, then drags it once the pointer clears a small dead zone.
-// Double-click restores the default; the arrow keys nudge.
+// Double-click restores the default; the arrow keys nudge. A click on
+// the value types one: Enter sets it as a drag would, clamped to the
+// range, and Escape leaves the value alone.
 export component EditSlider inherits Rectangle {
     in property <string> label;
     in property <string> text;
@@ -204,7 +344,19 @@ export component EditSlider inherits Rectangle {
     // halving and doubling are the same distance from it. The step
     // and a wheel notch are then in stops too.
     in property <bool> logarithmic: false;
+    // The shown number over the value: 100 for a value shown as a
+    // percent or as -100 to +100, 1 for one shown as it is. A number
+    // typed over the value is read back through it. A logarithmic
+    // slider shows its multiplier, so a typed one is the multiplier.
+    in property <float> scale: 1;
     callback changed(float);
+    accessible-role: slider;
+    accessible-label: root.label;
+    accessible-value: root.text;
+    accessible-value-minimum: root.minimum;
+    accessible-value-maximum: root.maximum;
+    accessible-value-step: root.step;
+    accessible-enabled: root.enabled;
 
     height: Theme.control-height + Theme.space-2;
     // Wider for a section whose labels run long; the sliders of one
@@ -294,16 +446,6 @@ export component EditSlider inherits Rectangle {
         border-color: Theme.focus-ring;
         animate width, height { duration: Theme.quick; }
     }
-    Text {
-        x: track-right + Theme.space-2;
-        width: value-width - Theme.space-2;
-        text: root.text;
-        color: root.enabled ? Theme.text-secondary : Theme.text-muted;
-        font-size: Theme.font-sm;
-        horizontal-alignment: right;
-        vertical-alignment: center;
-        height: 100%;
-    }
     fs := FocusScope {
         enabled: root.enabled;
         key-pressed(e) => {
@@ -365,6 +507,24 @@ export component EditSlider inherits Rectangle {
                 root.scroll-acc -= (root.scroll-acc > 0 ? 1 : -1) * floor(abs(root.scroll-acc) / root.notch) * root.notch;
             }
             return accept;
+        }
+    }
+    // Over the track's touch area, so a click on the value types
+    // one instead of focusing the slider.
+    ValueField {
+        x: track-right + Theme.space-2;
+        width: value-width - Theme.space-2;
+        y: (root.height - self.height) / 2;
+        height: Theme.control-height - 4px;
+        shown: root.text;
+        label: root.label + " value";
+        enabled: root.enabled;
+        committed(typed) => {
+            let entered = Typing.parse(typed, root.scale, root.minimum, root.maximum);
+            if (entered.ok) {
+                root.value = entered.value;
+                root.changed(root.value);
+            }
         }
     }
 }
@@ -510,7 +670,7 @@ export component Segmented inherits Rectangle {
             t := TouchArea {
                 enabled: root.enabled;
                 mouse-cursor: MouseCursor.pointer;
-                clicked => { root.current = option; root.selected(option); }
+                clicked => { Typing.close-all(); root.current = option; root.selected(option); }
             }
         }
     }
@@ -544,6 +704,7 @@ export component CurveEditor inherits Rectangle {
         pointer-event(e) => {
             if (e.button == PointerEventButton.left) {
                 if (e.kind == PointerEventKind.down) {
+                    Typing.close-all();
                     root.pressed(self.mouse-x / root.width, 1 - self.mouse-y / root.height);
                 } else if (e.kind == PointerEventKind.up) {
                     root.released();
@@ -579,7 +740,7 @@ export component Swatches inherits Rectangle {
             t := TouchArea {
                 enabled: root.enabled;
                 mouse-cursor: MouseCursor.pointer;
-                clicked => { root.current = i; root.selected(i); }
+                clicked => { Typing.close-all(); root.current = i; root.selected(i); }
             }
         }
     }

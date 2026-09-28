@@ -2,7 +2,8 @@ use crate::panel::color::{preview_white, show_mixer_band, store_mixer_band, whit
 use crate::panel::crop::read_geometry;
 use crate::panel::cull::{control_over_frame, leave_cull};
 use crate::panel::curve::{
-    current_channel, curve_points, draw_curve, parametric_mode, set_curve_points,
+    current_channel, curve_points, draw_curve, parametric_mode, select_point, set_curve_points,
+    show_selected,
 };
 use crate::panel::edit::{current_turn, read_edit, schedule_save};
 use crate::panel::startup::{FILE, SYSTEM, monitor_note, monitor_settings};
@@ -922,6 +923,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     });
                     st.curve_drag = Some(index);
                     set_curve_points(&app, channel, &points);
+                    select_point(&app, Some(index));
                     app.set_curve_image(draw_curve(&app, st.bins.as_deref()));
                     app.window().request_redraw();
                 }
@@ -1037,6 +1039,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     }
                     points[index][1] = (y0 + (at - y) / PICK_DRAG).clamp(0.0, 1.0);
                     set_curve_points(&app, channel, &points);
+                    show_selected(&app);
                     app.set_curve_image(draw_curve(&app, st.bins.as_deref()));
                 }
                 Some(Picking::Mixer {

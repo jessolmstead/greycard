@@ -107,6 +107,7 @@ export component ColorSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.vibrance;
+        scale: 100;
         text: (root.vibrance >= 0 ? "+" : "") + round(root.vibrance * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
@@ -120,6 +121,7 @@ export component ColorSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.saturation;
+        scale: 100;
         text: (root.saturation >= 0 ? "+" : "") + round(root.saturation * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
@@ -194,6 +196,7 @@ export component MixerSection inherits Section {
         default: 0;
         step: 0.02;
         value <=> root.mixer-saturation;
+        scale: 100;
         text: (root.mixer-saturation >= 0 ? "+" : "") + round(root.mixer-saturation * 100) + "%";
         changed(v) => { root.mixer-changed(); }
     }
@@ -290,6 +293,9 @@ export component BlackWhiteSection inherits Section {
         default: 0;
         step: 0.05;
         value <=> root.bw-weight;
+        // The reading is the weight times the strength, so a
+        // number typed over it goes back through the strength.
+        scale: root.bw-strength;
         // What the band's grey actually
         // moves by, the strength in it: at
         // 3.00x a weight of -1 is -3 EV, and
@@ -429,6 +435,7 @@ export component GradingSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.grade-saturation;
+        scale: 100;
         text: round(root.grade-saturation * 100) + "%";
         changed(v) => { root.grade-changed(); }
     }
@@ -440,6 +447,7 @@ export component GradingSection inherits Section {
         default: 0;
         step: 0.02;
         value <=> root.grade-balance;
+        scale: 100;
         text: (root.grade-balance >= 0 ? "+" : "") + round(root.grade-balance * 100);
         changed(v) => { root.view-changed(); }
     }
@@ -521,6 +529,7 @@ export component TintSection inherits Section {
         default: 0;
         step: 0.01;
         value <=> root.tint-amount;
+        scale: 100;
         text: round(root.tint-amount * 100) + "%";
         changed(v) => { root.tint-changed(); }
     }
