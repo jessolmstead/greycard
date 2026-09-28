@@ -167,10 +167,30 @@ makes a new one. This and the library can swap order on what testers
 ask for first.
 
 - [ ] Camera match follow-ups (§181): a group's error held out over
-      every frame rather than four; the per-lens radial report fed
+      every frame rather than four, and that error deciding whether a
+      new fit of the same body from another folder replaces the table
+      there, where today more frames wins; the per-lens radial report fed
       into the vignetting line below; `style:` in the filter text;
       Nikon, Sony and Panasonic styles once files with the settings
       varied make exiv2 a clean oracle for them (§180)
+- [ ] A progress bar on the camera match run: the sheet shows only a
+      line of words today ("starting...", then the group in hand); give
+      it §192's bar, filled by frames developed over frames to fit
+      across the groups, with the group's name and the frame count
+      under it, and the same bar on the fit itself where its iterations
+      are counted
+- [ ] The look list by make and body, the open frame's body first:
+      the fitted looks carry the body they were fitted on in their
+      title (§181), so group the list under make and body headings,
+      put the group for the frame's own body at the top and mark it,
+      and fold the others the way the camera profile list hides
+      profiles for other cameras with a count; the general LUTs
+      (film presets and the like) in a group of their own
+- [ ] Rename a look from the Look section: the file renamed in the
+      looks folder and the name rewritten in the open folder's
+      sidecars, in presets and in snapshots that carry it, so no edit
+      goes "(missing)"; the TITLE line inside a .cube is the label and
+      can be changed by hand today without breaking anything
 - [ ] Profile making from a chart shot, after dcamprof (§78)
 - [ ] RawTherapee's DCP profiles offered for a fetch: they are made by
       that project under the GPL, so they can be hosted by us as the
