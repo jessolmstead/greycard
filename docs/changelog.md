@@ -31,6 +31,9 @@ note a first tester reads.
   count of the sidecars read, in the grid and the loupe alike, after
   the first 200 ms; a read that stops moving is given up on rather
   than left hanging (§192)
+- A slider's value can be typed: click the number, Enter sets it
+  clamped to the range, Escape leaves it; the point curve's selected
+  point stays selected and takes a typed In and Out in 0–255 (§193)
 
 ## 0.2.1, 2026-09-27
 

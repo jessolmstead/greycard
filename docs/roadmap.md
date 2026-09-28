@@ -24,14 +24,10 @@ None open.
 ## Next: 0.3.0
 
 A NAS root neither freezes the window nor goes stale, frames can be
-deleted from the disk behind a confirmation, and the scopes can be
-read for the mask alone, and a value can be typed.
+deleted from the disk behind a confirmation, the scopes can be read
+for the mask alone, and a value can be typed.
 
-- [ ] A value typed into a slider: click the value text to edit it,
-      Enter commits through the slider's own change, Escape cancels, an
-      entry outside the range clamps, a log slider takes the multiplier
-      as shown; and In and Out fields beside the point curve for the
-      selected point, which stays selected after the release
+Nothing left to land.
 
 ## Tracks
 
