@@ -1837,6 +1837,88 @@ impl Renderer {
         Ok(Some(sum.map(|v| v / n)))
     }
 
+    /// The developed picture on a grid about `across` pixels wide, a
+    /// pixel at each point of it (not a mean), in the working space
+    /// at the white it was developed at, as [`Self::sample`] reads
+    /// it: the whole frame, small, for the auto white balance. Only
+    /// the rows on the grid come back from the GPU. `None` with no
+    /// picture.
+    pub fn sample_grid(&self, across: u32) -> Result<Option<Vec<[f32; 3]>>> {
+        let Some(source) = &self.source else {
+            return Ok(None);
+        };
+        let (w, h) = (source.width(), source.height());
+        let step = (w / across.max(1)).max(1);
+        let rows: Vec<u32> = (step / 2..h).step_by(step as usize).collect();
+        let row = (w * 8).div_ceil(256) * 256;
+        let buffer = self.device.create_buffer(&gpu::BufferDescriptor {
+            label: Some("sample grid"),
+            size: u64::from(row) * rows.len() as u64,
+            usage: gpu::BufferUsages::COPY_DST | gpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = self
+            .device
+            .create_command_encoder(&gpu::CommandEncoderDescriptor {
+                label: Some("sample grid"),
+            });
+        for (i, &y) in rows.iter().enumerate() {
+            encoder.copy_texture_to_buffer(
+                gpu::TexelCopyTextureInfo {
+                    texture: source,
+                    mip_level: 0,
+                    origin: gpu::Origin3d { x: 0, y, z: 0 },
+                    aspect: gpu::TextureAspect::All,
+                },
+                gpu::TexelCopyBufferInfo {
+                    buffer: &buffer,
+                    layout: gpu::TexelCopyBufferLayout {
+                        offset: u64::from(row) * i as u64,
+                        bytes_per_row: Some(row),
+                        rows_per_image: Some(1),
+                    },
+                },
+                gpu::Extent3d {
+                    width: w,
+                    height: 1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
+        self.queue.submit(Some(encoder.finish()));
+        let slice = buffer.slice(..);
+        let (tx, rx) = std::sync::mpsc::channel();
+        slice.map_async(gpu::MapMode::Read, move |r| {
+            let _ = tx.send(r);
+        });
+        self.device
+            .poll(gpu::PollType::wait_indefinitely())
+            .context("waiting for the sample grid")?;
+        rx.recv()
+            .context("map callback")?
+            .context("mapping the sample grid")?;
+        let data = slice
+            .get_mapped_range()
+            .context("reading the sample grid")?;
+        let mut out = Vec::with_capacity(rows.len() * (w / step) as usize);
+        for i in 0..rows.len() {
+            let line = &data[i * row as usize..][..(w * 8) as usize];
+            let texels = bytemuck::cast_slice::<u8, half::f16>(line)
+                .as_chunks::<4>()
+                .0;
+            out.extend(
+                texels
+                    .iter()
+                    .skip((step / 2) as usize)
+                    .step_by(step as usize)
+                    .map(|px| [px[0].to_f32(), px[1].to_f32(), px[2].to_f32()]),
+            );
+        }
+        drop(data);
+        buffer.unmap();
+        Ok(Some(out))
+    }
+
     fn guide_texture(device: &gpu::Device, width: u32, height: u32) -> gpu::Texture {
         device.create_texture(&gpu::TextureDescriptor {
             label: Some("tone guide"),
@@ -2953,6 +3035,31 @@ mod tests {
         }
         eprintln!("light off, GPU against CPU: max difference {worst:.4}");
         assert!(worst < 2.5 / 255.0, "{worst}");
+    }
+
+    /// The auto white balance's grid is the picture's own pixels at
+    /// the grid's points, as the CPU would pick them, row and column.
+    #[test]
+    fn the_sample_grid_reads_the_pixels_on_its_points() {
+        let Some((device, queue)) = device("the sample grid's check") else {
+            return;
+        };
+        let image = field();
+        let (w, h) = (image.width, image.height);
+        let mut renderer = Renderer::new(&device, &queue);
+        assert!(renderer.sample_grid(64).unwrap().is_none());
+        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        let grid = renderer.sample_grid(64).unwrap().unwrap();
+        let step = w / 64;
+        let mut want = Vec::new();
+        for y in (step / 2..h).step_by(step) {
+            for x in (step / 2..w).step_by(step) {
+                let i = (y * w + x) * 3;
+                want.push([0, 1, 2].map(|k| half::f16::from_f32(image.data[i + k]).to_f32()));
+            }
+        }
+        assert_eq!(grid.len(), want.len());
+        assert_eq!(grid, want);
     }
 
     /// A picture already rendered for a display takes a clip where a

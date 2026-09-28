@@ -42,6 +42,156 @@ fn own_develop(st: &State) -> Option<u8> {
         .then(|| placeholder::lagging_turn(Some(shown), st.current, current_turn(st)))
 }
 
+/// Why a neutral set no white.
+#[derive(Debug, PartialEq)]
+pub(crate) enum NeutralMiss {
+    /// The picture on the GPU is not the open frame's develop yet: a
+    /// frame was chosen and its develop has not landed.
+    Waiting,
+    /// No camera profile to read the white through.
+    NoProfile,
+    /// The pixel names no white: a channel at nothing.
+    NoWhite,
+    /// The white would not resolve to a temperature.
+    Unresolved(String),
+}
+
+impl NeutralMiss {
+    /// The status line's words, for the Neutral dropper or for Auto.
+    pub(crate) fn said(&self, auto: bool) -> String {
+        let what = if auto {
+            "auto white balance"
+        } else {
+            "white balance"
+        };
+        match self {
+            Self::Waiting => format!("{what}: wait for the develop"),
+            Self::NoProfile => format!("{what}: no camera profile for this frame"),
+            Self::NoWhite if auto => format!("{what}: nothing neutral to read"),
+            Self::NoWhite => "nothing to read there".to_string(),
+            Self::Unresolved(e) => format!("{what}: {e}"),
+        }
+    }
+}
+
+/// The white balance the picture on the GPU was developed at, when
+/// that picture is the open frame's own develop; `Waiting` in the
+/// moment between choosing a frame and its develop landing, when the
+/// texture and the base are still the last frame's.
+fn own_white(st: &State) -> Result<WhiteBase, NeutralMiss> {
+    own_develop(st)
+        .and(st.base_white)
+        .ok_or(NeutralMiss::Waiting)
+}
+
+/// Temperature and tint from a pixel of the developed picture that
+/// should be grey: what the Neutral dropper and the Auto button both
+/// come to. `px` is in the working space at the white the picture was
+/// developed at, as [`sample_view`] reads it; the white it names goes
+/// to the panel, As shot off, and the develop follows, one step of
+/// the history. On a miss nothing moves, and the caller says why.
+pub(crate) fn white_from_neutral(
+    mut st: std::cell::RefMut<'_, State>,
+    app: &App,
+    px: [f32; 3],
+) -> Result<(), NeutralMiss> {
+    let base = own_white(&st)?;
+    // Through the profile the develop used, not the file's own: a
+    // neutral read through other matrices comes back as another
+    // temperature, and the patch the user clicked would not go
+    // neutral.
+    let profile = white_profile(&mut st).ok_or(NeutralMiss::NoProfile)?;
+    let (frame, _) = st.frame.as_ref().ok_or(NeutralMiss::NoProfile)?;
+    let gains = greycard_core::color::neutral_gains(px, base.gains, base.matrix)
+        .ok_or(NeutralMiss::NoWhite)?;
+    let wb =
+        resolve_white_balance(frame, &profile, WhitePoint::Coefficients(gains)).map_err(|e| {
+            tracing::warn!("white balance from a neutral: {e}");
+            NeutralMiss::Unresolved(e.to_string())
+        })?;
+    let tt = wb.temp_tint;
+    app.set_as_shot(false);
+    app.set_temperature((tt.cct as f32).clamp(2000.0, 12000.0));
+    app.set_tint((tt.duv as f32).clamp(-0.05, 0.05));
+    drop(st);
+    app.invoke_stop_placing();
+    app.invoke_develop_changed();
+    Ok(())
+}
+
+/// How wide a grid of the developed picture the Auto white balance
+/// reads: the scopes' width, enough to average and quick to bring back.
+const AUTO_WHITE_ACROSS: u32 = 512;
+
+/// What the Auto white balance says when the picture has too little
+/// that is neither clipped nor black to read a white from.
+pub(crate) const AUTO_WHITE_TOO_LITTLE: &str =
+    "auto white balance: not enough of the picture to read";
+
+#[cfg(test)]
+thread_local! {
+    /// The picture the Auto white balance reads in a test, which has
+    /// no GPU to read one back from.
+    pub(crate) static AUTO_WHITE_GRID: std::cell::RefCell<Option<Vec<[f32; 3]>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// The whole developed picture, small, in the working space at the
+/// white it was developed at: what the Auto white balance reads.
+fn auto_white_grid(st: &State) -> Option<Vec<[f32; 3]>> {
+    #[cfg(test)]
+    if let Some(grid) = AUTO_WHITE_GRID.with(|g| g.borrow_mut().take()) {
+        return Some(grid);
+    }
+    let started = std::time::Instant::now();
+    let grid = match st.renderer.as_ref()?.sample_grid(AUTO_WHITE_ACROSS) {
+        Ok(grid) => grid,
+        Err(e) => {
+            tracing::warn!("auto white balance: {e:#}");
+            None
+        }
+    };
+    tracing::debug!(
+        "auto white balance: read the picture in {:.1} ms",
+        started.elapsed().as_secs_f64() * 1000.0
+    );
+    grid
+}
+
+/// The Auto button: the white [`greycard_core::color::auto_neutral`]
+/// reads off the whole picture, against the camera's as-shot white,
+/// set the way the Neutral dropper sets the one it is shown.
+pub(crate) fn auto_white(mut st: std::cell::RefMut<'_, State>, app: &App) {
+    let found = (|| {
+        let base = own_white(&st)?;
+        let profile = white_profile(&mut st).ok_or(NeutralMiss::NoProfile)?;
+        let (frame, _) = st.frame.as_ref().ok_or(NeutralMiss::NoProfile)?;
+        let as_shot = resolve_white_balance(frame, &profile, WhitePoint::AsShot)
+            .map_err(|e| NeutralMiss::Unresolved(e.to_string()))?
+            .coefficients_f32();
+        let grid = auto_white_grid(&st).ok_or(NeutralMiss::Waiting)?;
+        Ok(greycard_core::color::auto_neutral(
+            &grid,
+            base.gains,
+            base.matrix,
+            base.clip,
+            as_shot,
+        ))
+    })();
+    let miss = match found {
+        Ok(Some(px)) => match white_from_neutral(st, app, px) {
+            Ok(()) => return,
+            Err(miss) => miss,
+        },
+        Ok(None) => {
+            app.set_status(AUTO_WHITE_TOO_LITTLE.into());
+            return;
+        }
+        Err(miss) => miss,
+    };
+    app.set_status(miss.said(true).into());
+}
+
 /// `source_size` brought to the size the open frame is drawn at, for
 /// everything that measures the edit by it (the crop, the masks, the
 /// droppers): after a turn, a select in culling, culling left, and a
@@ -816,6 +966,16 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
         });
     }
+    // The Auto white balance: the white read off the whole picture.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_wb_auto(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            auto_white(state.borrow_mut(), &app);
+        });
+    }
     // The droppers: a button puts one in hand, or takes it back; a
     // press on the view reads the developed picture there, a drag
     // moves what the press chose, a release records it.
@@ -850,36 +1010,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             match app.get_picking().as_str() {
                 "White" => {
-                    // Through the profile the develop used, not the
-                    // file's own: a neutral read through other
-                    // matrices comes back as another temperature, and
-                    // the patch the user clicked would not go neutral.
-                    let Some(profile) = white_profile(&mut st) else {
-                        return;
-                    };
-                    let (Some(base), Some((frame, _))) = (st.base_white, st.frame.as_ref()) else {
-                        return;
-                    };
-                    let Some(gains) =
-                        greycard_core::color::neutral_gains(px, base.gains, base.matrix)
-                    else {
-                        app.set_status("nothing to read there".into());
-                        return;
-                    };
-                    match resolve_white_balance(frame, &profile, WhitePoint::Coefficients(gains)) {
-                        Ok(wb) => {
-                            let tt = wb.temp_tint;
-                            app.set_as_shot(false);
-                            app.set_temperature((tt.cct as f32).clamp(2000.0, 12000.0));
-                            app.set_tint((tt.duv as f32).clamp(-0.05, 0.05));
-                            drop(st);
-                            app.invoke_stop_placing();
-                            app.invoke_develop_changed();
-                        }
-                        Err(e) => {
-                            tracing::warn!("white balance from the picked point: {e}");
-                            app.set_status(format!("white balance: {e}").into());
-                        }
+                    if let Err(miss) = white_from_neutral(st, &app, px) {
+                        app.set_status(miss.said(false).into());
                     }
                 }
                 "Curve" => {
@@ -1415,5 +1547,125 @@ mod tests {
         crate::testing::press(&app, Key::F7);
         let kept = crate::panel::startup::remember(&app);
         assert!(kept.hide_left && !kept.hide_right && !kept.hide_strip);
+    }
+
+    /// A raw of a camera that is Rec.2020 itself, calibrated under
+    /// D65, its as-shot gains a daylight's: enough of a frame for the
+    /// white balance to resolve against.
+    fn daylight_frame() -> RawFrame {
+        use greycard_core::raw::{Calibration, CfaPattern, LevelPattern, Levels, Samples};
+        let m = greycard_core::color::WORKING_SPACE
+            .from_xyz_matrix()
+            .expect("Rec.2020 inverts");
+        RawFrame {
+            make: "Test".into(),
+            model: "Cam".into(),
+            width: 2,
+            height: 2,
+            channels: 1,
+            layout: greycard_core::raw::SensorLayout::Cfa(CfaPattern::rggb()),
+            samples: Samples::U16(vec![500; 4]),
+            levels: Levels {
+                black: LevelPattern::uniform(0.0, 1),
+                white: LevelPattern::uniform(1000.0, 1),
+            },
+            as_shot_coefficients: Some([1.0, 1.0, 1.0]),
+            calibrations: vec![Calibration {
+                illuminant: 21,
+                color_matrix: m.rows.iter().flatten().map(|&v| v as f32).collect(),
+                forward_matrix: None,
+            }],
+            crop: None,
+            orientation: Orientation::Normal,
+            shot: Default::default(),
+        }
+    }
+
+    /// The Auto button reads the whole picture and sets the white it
+    /// finds the way the Neutral dropper does: As shot off, the
+    /// temperature and tint moved, one step of the history. A picture
+    /// that is all grey under a warm light, developed at daylight,
+    /// wants a lower temperature than the daylight it was shot at.
+    #[test]
+    fn auto_white_balance_sets_the_white_in_one_step() {
+        use greycard_core::color::{WhitePoint, profile_from_frame, resolve_white_balance};
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let frame = daylight_frame();
+        let profile = profile_from_frame(&frame).unwrap();
+        let shot = resolve_white_balance(&frame, &profile, WhitePoint::AsShot).unwrap();
+        {
+            let mut st = state.borrow_mut();
+            st.base_white = Some(WhiteBase::from(&shot, 1.0));
+            st.frame = Some((Arc::new(frame), Box::new(profile)));
+        }
+        let wait = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ))
+        };
+        wait();
+        app.set_as_shot(true);
+        let (temperature, tint) = (app.get_temperature(), app.get_tint());
+        let steps = state.borrow().sidecars[0].history.len();
+
+        // The picture on the GPU is not this frame's develop yet (a
+        // frame was chosen and its develop has not landed): neither
+        // Auto nor the Neutral dropper reads it.
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some(vec![[0.3; 3]; 1000]));
+        app.invoke_wb_auto();
+        assert_eq!(app.get_status(), "auto white balance: wait for the develop");
+        assert_eq!(
+            white_from_neutral(state.borrow_mut(), &app, [0.3, 0.3, 0.2]),
+            Err(NeutralMiss::Waiting)
+        );
+        assert_eq!(
+            NeutralMiss::Waiting.said(false),
+            "white balance: wait for the develop"
+        );
+        assert!(app.get_as_shot());
+        AUTO_WHITE_GRID.with(|g| g.borrow_mut().take());
+        {
+            let mut st = state.borrow_mut();
+            st.shown_turn = Some((0, current_turn(&st)));
+        }
+        // A neutral that names no white says so, in each one's words.
+        assert_eq!(
+            white_from_neutral(state.borrow_mut(), &app, [0.0, 0.3, 0.3]),
+            Err(NeutralMiss::NoWhite)
+        );
+        assert_eq!(NeutralMiss::NoWhite.said(false), "nothing to read there");
+        assert_eq!(
+            NeutralMiss::NoWhite.said(true),
+            "auto white balance: nothing neutral to read"
+        );
+        assert!(app.get_as_shot());
+
+        // Too little to read: nothing moves, and the status says why.
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some(vec![[0.99; 3]; 1000]));
+        app.invoke_wb_auto();
+        assert_eq!(app.get_status(), AUTO_WHITE_TOO_LITTLE);
+        assert!(app.get_as_shot());
+
+        let grid: Vec<[f32; 3]> = (0..2000)
+            .map(|i| {
+                let level = 0.05 + 0.5 * i as f32 / 2000.0;
+                [1.25 * level, level, 0.7 * level]
+            })
+            .collect();
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some(grid));
+        app.invoke_wb_auto();
+        wait();
+        assert!(!app.get_as_shot());
+        assert_ne!(app.get_tint(), tint);
+        assert_ne!(app.get_temperature(), temperature);
+        assert!(
+            (app.get_temperature() as f64) < shot.temp_tint.cct - 500.0,
+            "{} against {}",
+            app.get_temperature(),
+            shot.temp_tint.cct
+        );
+        assert_eq!(state.borrow().sidecars[0].history.len(), steps + 1);
     }
 }

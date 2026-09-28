@@ -600,6 +600,8 @@ export component App inherits Window {
     callback pick-pressed(length, length);
     callback pick-dragged(length, length);
     callback pick-released();
+    // The white balance read off the whole picture.
+    callback wb-auto();
     // The chosen adjustment's name, after the sections it colors.
     in-out property <string> target-name: "";
     callback target-changed(int);
@@ -1859,6 +1861,7 @@ export component App inherits Window {
                             collapsed-wb <=> root.collapsed-wb;
                             picking <=> root.picking;
                             pick-started(a) => { root.pick-started(a); }
+                            wb-auto => { root.wb-auto(); }
                             temperature <=> root.temperature;
                             tint <=> root.tint;
                             raw-input: root.raw-input;

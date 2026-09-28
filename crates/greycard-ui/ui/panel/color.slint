@@ -9,6 +9,8 @@ export component WhiteBalanceSection inherits Section {
     in-out property <bool> collapsed-wb;
     in-out property <string> picking;
     callback pick-started(string);
+    // Temperature and tint read off the whole picture.
+    callback wb-auto();
     in-out property <float> temperature;
     in-out property <float> tint;
     in property <bool> raw-input;
@@ -56,6 +58,11 @@ export component WhiteBalanceSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;
+        PanelButton {
+            text: "Auto";
+            enabled: root.raw-input;
+            clicked => { root.wb-auto(); }
+        }
         PanelButton {
             text: "Neutral";
             icon: @image-url("../icons/pipette.svg");

@@ -50,6 +50,12 @@ unpack it.
    was. On the point curve, the point you last pressed stays selected,
    and its **In** and **Out** fields below the curve (0 to 255) take a
    typed position the same way.
+   In **White balance**, **Neutral** gives you a dropper to click
+   something that should be grey, and **Auto** reads the white from the
+   whole picture instead, leaving out clipped highlights and deep
+   shadows and trusting most what is near grey under the camera's own
+   white balance; it gives the same answer whatever the sliders were
+   set to.
 4. **Export** with the **Export…** button at the bottom of the panel, or
    Ctrl+Shift+E. You can write a JPEG or a TIFF, in sRGB, Display P3 or
    Rec.2020.

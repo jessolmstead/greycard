@@ -194,11 +194,13 @@ pub struct FillReport {
 }
 
 /// The white balance a develop used: camera gains and the camera to
-/// working matrix, rows.
+/// working matrix, rows; and the working-space value its channels
+/// clip at, for the auto white balance to leave clipped pixels out.
 #[derive(Debug, Clone, Copy)]
 pub struct WhiteBase {
     pub gains: [f32; 3],
     pub matrix: [[f32; 3]; 3],
+    pub clip: f32,
 }
 
 impl WhiteBase {
@@ -206,13 +208,16 @@ impl WhiteBase {
     pub const IDENTITY: Self = Self {
         gains: [1.0; 3],
         matrix: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        clip: f32::INFINITY,
     };
 
-    pub fn from(wb: &greycard_core::WhiteBalance) -> Self {
+    /// The white balance `wb`, with channels clipping at `clip`.
+    pub fn from(wb: &greycard_core::WhiteBalance, clip: f32) -> Self {
         let cols = wb.matrix_f32();
         Self {
             gains: wb.coefficients_f32(),
             matrix: std::array::from_fn(|r| std::array::from_fn(|c| cols[c][r])),
+            clip,
         }
     }
 }
@@ -1848,7 +1853,10 @@ fn develop_job(
                     None => image.clone(),
                 },
                 guide: Arc::new(crate::finish::Guide::NONE),
-                white: WhiteBase::IDENTITY,
+                white: WhiteBase {
+                    clip: meta.clip_level(),
+                    ..WhiteBase::IDENTITY
+                },
                 radius: None,
                 clip_level: meta.clip_level(),
                 source: crate::finish::Source::Display,
@@ -2299,7 +2307,7 @@ fn engine_base(
         turn,
         image: Arc::new(d.image),
         guide: Arc::new(crate::finish::Guide::NONE),
-        white: WhiteBase::from(&d.white_balance),
+        white: WhiteBase::from(&d.white_balance, d.clip_level),
         radius: d.sharpen_radius,
         clip_level: d.clip_level,
         source: crate::finish::Source::Scene,
@@ -2434,7 +2442,7 @@ fn run_learned(
             turn,
             model: Arc::new(model.image),
             plain: Arc::new(plain.image),
-            white: WhiteBase::from(&model.white_balance),
+            white: WhiteBase::from(&model.white_balance, model.clip_level),
             radius: model.sharpen_radius,
             clip_level: model.clip_level,
         },

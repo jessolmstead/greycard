@@ -279,7 +279,7 @@ pub(crate) fn preview_white(st: &mut State, panel: WhiteKey) -> Matrix3 {
     let white = panel_white(panel);
     let m = match resolve_white_balance(frame, &profile, white.white_point()) {
         Ok(wb) => {
-            let target = WhiteBase::from(&wb);
+            let target = WhiteBase::from(&wb, base.clip);
             match invert3(base.matrix) {
                 Some(inv) => {
                     let mut scaled = target.matrix;
@@ -584,6 +584,7 @@ mod tests {
         let base = WhiteBase {
             gains: [1.9, 1.0, 1.7],
             matrix: [[1.6, -0.4, -0.2], [-0.1, 1.3, -0.2], [0.0, -0.3, 1.3]],
+            clip: 1.0,
         };
         let inv = invert3(base.matrix).unwrap();
         let mut scaled = base.matrix;

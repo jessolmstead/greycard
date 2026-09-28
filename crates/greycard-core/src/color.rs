@@ -318,6 +318,14 @@ pub fn invert3(m: Matrix3) -> Option<Matrix3> {
     ])
 }
 
+/// A working-space pixel back to what the sensor saw: through `inv`,
+/// the inverse of the develop's camera to working matrix, and out of
+/// the develop's `gains`.
+fn to_camera(px: [f32; 3], gains: [f32; 3], inv: &Matrix3) -> [f32; 3] {
+    let cam = apply3(inv, px);
+    std::array::from_fn(|r| cam[r] / gains[r])
+}
+
 /// The camera-space gains that make a working-space pixel neutral,
 /// green at one: the pixel back through `matrix` and `gains` to what
 /// the sensor saw, and the reciprocal of that.
@@ -329,13 +337,125 @@ pub fn invert3(m: Matrix3) -> Option<Matrix3> {
 /// will not invert, or a pixel with a channel at or below nothing,
 /// where there is no such white.
 pub fn neutral_gains(px: [f32; 3], gains: [f32; 3], matrix: Matrix3) -> Option<[f64; 3]> {
-    let inv = invert3(matrix)?;
-    let cam = apply3(&inv, px);
-    let cam: [f32; 3] = std::array::from_fn(|r| cam[r] / gains[r]);
+    let cam = to_camera(px, gains, &invert3(matrix)?);
     if cam.iter().any(|&v| v <= 0.0) {
         return None;
     }
     Some([(cam[1] / cam[0]) as f64, 1.0, (cam[1] / cam[2]) as f64])
+}
+
+/// Above this fraction of a channel's clip a pixel is taken as
+/// clipped by [`auto_neutral`]: its channels no longer say what the
+/// light was.
+pub const AUTO_CLIP: f32 = 0.95;
+/// Below this fraction of the sensor's white a pixel is noise to
+/// [`auto_neutral`].
+pub const AUTO_FLOOR: f32 = 0.005;
+/// Fewer usable pixels than this and [`auto_neutral`] will not guess.
+pub const AUTO_MIN_PIXELS: usize = 300;
+/// How far from the as-shot white a pixel may be, in the log ratios
+/// of its channels, before [`auto_neutral`]'s first pass counts it at
+/// half.
+const AUTO_PRIOR_SPREAD: f32 = 0.25;
+/// The width of the second pass's pull toward grey, in the same units.
+const AUTO_GREY_SPREAD: f32 = 0.1;
+
+/// A pixel's distance from `white`, squared, in log ratios: red and
+/// blue each against green, after dividing by `white`. Zero for any
+/// pixel of `white`'s color, whatever its brightness.
+fn chroma2(px: [f32; 3], white: [f32; 3]) -> f32 {
+    let g = px[1] / white[1];
+    let rg = (px[0] / white[0] / g).ln();
+    let bg = (px[2] / white[2] / g).ln();
+    rg * rg + bg * bg
+}
+
+/// The weighted mean of `pixels`, or `None` when the weights add up
+/// to nothing.
+fn weighted_mean(pixels: &[[f32; 3]], weight: impl Fn([f32; 3]) -> f32) -> Option<[f32; 3]> {
+    let (mut sum, mut total) = ([0.0f64; 3], 0.0f64);
+    for &p in pixels {
+        let w = f64::from(weight(p));
+        total += w;
+        for k in 0..3 {
+            sum[k] += w * f64::from(p[k]);
+        }
+    }
+    (total > 1e-12 && sum.iter().all(|&s| s > 0.0)).then(|| sum.map(|s| (s / total) as f32))
+}
+
+/// The color of the light over a whole picture, as a working-space
+/// pixel to hand to [`neutral_gains`] the way a neutral dropper hands
+/// it the pixel it picked.
+///
+/// `pixels` are the developed picture, linear, in the working space
+/// at the white it was developed at: `gains` and `matrix` as for
+/// [`neutral_gains`], and `clip` the working-space value its channels
+/// were clipped at. `as_shot` are the camera's own gains for the frame.
+///
+/// The estimate is made in camera space, each pixel taken back through
+/// the matrix and the gains to what the sensor saw, so it does not
+/// depend on the white the picture happens to be developed at: from
+/// any white the same frame gives the same light, and the answer run
+/// on the picture developed at its own answer is that answer again.
+///
+/// Grey-world, the idea of RawTherapee's "automatic, RGB grey", made
+/// harder to drag:
+///
+/// 1. Only the pixels that can say something: every channel above
+///    [`AUTO_FLOOR`] of the sensor's white (below it is noise) and
+///    none above [`AUTO_CLIP`] of where that channel clipped, the
+///    sensor's white or `clip` over its gain, whichever is lower (a
+///    clipped channel has lost the ratio).
+/// 2. Their mean, each pixel weighted `1 / (1 + (d / 0.25)^2)` by its
+///    distance `d` from the as-shot white, `d` the log ratios of red
+///    and blue to green: a pixel far off grey under the camera's own
+///    white, a blue sky, a red wall, counts for less. Among pixels
+///    that all share a cast every weight is the same and this is
+///    plain grey-world.
+/// 3. One re-weighting: the mean again, each pixel weighted
+///    `exp(-d^2 / (2 * 0.1^2))` by its distance from the first
+///    estimate, so the result settles on the pixels that estimate
+///    calls grey. When no pixel is near enough to weigh anything the
+///    first estimate stands.
+///
+/// The means are of the pixels themselves, not of their chromaticity,
+/// so a bright pixel counts for more than a dark one, as in
+/// grey-world. `None` when fewer than [`AUTO_MIN_PIXELS`] pixels are
+/// usable, or the matrix will not invert.
+pub fn auto_neutral(
+    pixels: &[[f32; 3]],
+    gains: [f32; 3],
+    matrix: Matrix3,
+    clip: f32,
+    as_shot: [f32; 3],
+) -> Option<[f32; 3]> {
+    let inv = invert3(matrix)?;
+    // The sensor clips at one in every channel; a develop that did
+    // not rebuild its highlights clipped each lower, at `clip` over
+    // its gain.
+    let top: [f32; 3] = std::array::from_fn(|c| (clip / gains[c]).min(1.0));
+    let usable: Vec<[f32; 3]> = pixels
+        .iter()
+        .map(|&p| to_camera(p, gains, &inv))
+        .filter(|v| {
+            (0..3).all(|c| v[c].is_finite() && v[c] > AUTO_FLOOR && v[c] <= top[c] * AUTO_CLIP)
+        })
+        .collect();
+    if usable.len() < AUTO_MIN_PIXELS {
+        return None;
+    }
+    // The as-shot white as the sensor sees it.
+    let shot = as_shot.map(|g| 1.0 / g);
+    let prior = AUTO_PRIOR_SPREAD * AUTO_PRIOR_SPREAD;
+    let first = weighted_mean(&usable, |p| 1.0 / (1.0 + chroma2(p, shot) / prior))?;
+    let spread = 2.0 * AUTO_GREY_SPREAD * AUTO_GREY_SPREAD;
+    let light = weighted_mean(&usable, |p| (-chroma2(p, first) / spread).exp()).unwrap_or(first);
+    // Forward again, to the pixel the develop made of that light.
+    Some(apply3(
+        &matrix,
+        std::array::from_fn(|c| light[c] * gains[c]),
+    ))
 }
 
 /// sRGB's transfer curve, encoded to linear.
@@ -378,6 +498,173 @@ pub(crate) mod tests {
         );
         // A channel at nothing has no gain to give.
         assert!(neutral_gains([0.0, 0.5, 0.5], [1.0; 3], IDENTITY).is_none());
+    }
+
+    const IDENTITY3: Matrix3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+    /// [`auto_neutral`] on a picture developed with no gains and no
+    /// matrix, the camera's own white at one: working space is
+    /// camera space.
+    fn plain(pixels: &[[f32; 3]], clip: f32) -> Option<[f32; 3]> {
+        auto_neutral(pixels, [1.0; 3], IDENTITY3, clip, [1.0; 3])
+    }
+
+    /// A grey ramp from dark to bright under a light of color `cast`,
+    /// `n` pixels.
+    fn cast_ramp(cast: [f32; 3], n: usize) -> Vec<[f32; 3]> {
+        (0..n)
+            .map(|i| {
+                let level = 0.02 + 0.6 * i as f32 / n as f32;
+                cast.map(|c| c * level)
+            })
+            .collect()
+    }
+
+    /// The light's color `px` names, as red and blue over green.
+    fn ratios(px: [f32; 3]) -> [f32; 2] {
+        [px[0] / px[1], px[2] / px[1]]
+    }
+
+    fn within(got: [f32; 3], cast: [f32; 3], tolerance: f32) -> bool {
+        ratios(got)
+            .iter()
+            .zip(ratios(cast))
+            .all(|(g, w)| (g / w - 1.0).abs() < tolerance)
+    }
+
+    #[test]
+    fn auto_neutral_finds_the_cast_of_a_grey_ramp() {
+        let cast = [1.3f32, 1.0, 0.75];
+        let got = plain(&cast_ramp(cast, 2000), 1.0).unwrap();
+        assert!(within(got, cast, 0.01), "{got:?}");
+        // The gains it leads to are the cast's inverse.
+        let g = neutral_gains(got, [1.0; 3], IDENTITY3).unwrap();
+        assert!((g[0] as f32 * 1.3 - 1.0).abs() < 0.01, "{g:?}");
+        assert!((g[2] as f32 * 0.75 - 1.0).abs() < 0.01, "{g:?}");
+    }
+
+    #[test]
+    fn auto_neutral_is_not_dragged_by_a_big_blue_sky() {
+        // Grey patches under a warm light, and a saturated blue sky
+        // that is most of the frame. Plain grey-world lands between
+        // the two; the weighting brings it back to the patches.
+        let cast = [1.2f32, 1.0, 0.8];
+        let mut pixels = cast_ramp(cast, 1200);
+        for i in 0..2800 {
+            let t = i as f32 / 2800.0;
+            pixels.push([0.04 + 0.02 * t, 0.10 + 0.05 * t, 0.45 + 0.2 * t]);
+        }
+        let got = plain(&pixels, 1.0).unwrap();
+        assert!(within(got, cast, 0.03), "{got:?}");
+        // Plain grey-world would be far off: the test is of the
+        // weighting, not of a sky too small to matter.
+        let n = pixels.len() as f32;
+        let mean = [0, 1, 2].map(|k| pixels.iter().map(|p| p[k]).sum::<f32>() / n);
+        assert!(!within(mean, cast, 0.2), "{mean:?}");
+    }
+
+    #[test]
+    fn auto_neutral_leaves_out_clipped_and_black_pixels() {
+        let cast = [0.8f32, 1.0, 1.3];
+        let ramp = cast_ramp(cast, 1000);
+        let alone = plain(&ramp, 1.0).unwrap();
+        let mut pixels = ramp.clone();
+        // Blown highlights of a colored lamp, and colored noise in
+        // the shadows: plenty of both, none of it counted.
+        for i in 0..800 {
+            let t = i as f32 / 800.0;
+            pixels.push([1.0, 0.4 + 0.3 * t, 0.2]);
+            pixels.push([0.003, 0.0045 * t, 0.001 + 0.002 * t]);
+            pixels.push([f32::NAN, 0.5, 0.5]);
+        }
+        let got = plain(&pixels, 1.0).unwrap();
+        assert!(
+            got.iter().zip(alone).all(|(a, b)| (a - b).abs() < 1e-6),
+            "{got:?} {alone:?}"
+        );
+        // The clip is the develop's: a lamp at 0.6 is clipped in a
+        // develop that clipped there, and is enough to read alone in
+        // one that clipped at the sensor's white.
+        let lamp: Vec<[f32; 3]> = (0..800)
+            .map(|i| [0.6, 0.25 + 0.1 * i as f32 / 800.0, 0.12])
+            .collect();
+        assert!(plain(&lamp, 0.6).is_none());
+        let lit = plain(&lamp, 1.0).unwrap();
+        assert!(lit[0] > lit[1] && lit[1] > lit[2], "{lit:?}");
+    }
+
+    #[test]
+    fn auto_neutral_wants_enough_of_the_picture() {
+        let cast = [1.1f32, 1.0, 0.9];
+        assert!(plain(&cast_ramp(cast, AUTO_MIN_PIXELS - 1), 1.0).is_none());
+        assert!(plain(&cast_ramp(cast, AUTO_MIN_PIXELS), 1.0).is_some());
+        // A frame that is all highlight or all shadow has too few.
+        let mut dark = vec![[0.001f32, 0.002, 0.001]; 5000];
+        dark.extend(vec![[0.99f32, 0.99, 0.99]; 5000]);
+        dark.extend(cast_ramp(cast, 100));
+        assert!(plain(&dark, 1.0).is_none());
+        assert!(plain(&[], 1.0).is_none());
+    }
+
+    /// A scene as the sensor saw it: grey patches under a light the
+    /// camera reads as (0.5, 1, 0.7), and a sky that is most of it.
+    fn camera_scene() -> Vec<[f32; 3]> {
+        let mut scene = cast_ramp([0.5, 1.0, 0.7], 1200);
+        for i in 0..2000 {
+            let t = i as f32 / 2000.0;
+            scene.push([0.03 + 0.01 * t, 0.12 + 0.05 * t, 0.35 + 0.1 * t]);
+        }
+        scene
+    }
+
+    /// `scene` developed at `gains` through `matrix`, highlights
+    /// rebuilt: the working-space picture and its clip.
+    fn developed(scene: &[[f32; 3]], gains: [f32; 3], matrix: Matrix3) -> (Vec<[f32; 3]>, f32) {
+        let pixels = scene
+            .iter()
+            .map(|c| apply3(&matrix, std::array::from_fn(|k| c[k] * gains[k])))
+            .collect();
+        (pixels, gains.iter().copied().fold(1.0, f32::max) * 0.98)
+    }
+
+    /// Two camera to working matrices a white apart, rows summing to
+    /// one so a balanced grey stays grey.
+    const WARM_MATRIX: Matrix3 = [[1.7, -0.5, -0.2], [-0.2, 1.4, -0.2], [0.0, -0.4, 1.4]];
+    const COOL_MATRIX: Matrix3 = [[1.5, -0.4, -0.1], [-0.15, 1.3, -0.15], [0.05, -0.3, 1.25]];
+    /// The camera's own gains for the scene: near, not at, its light.
+    const AS_SHOT: [f32; 3] = [1.9, 1.0, 1.35];
+
+    #[test]
+    fn auto_neutral_does_not_depend_on_the_white_developed_at() {
+        let scene = camera_scene();
+        let answer = |gains: [f32; 3], matrix: Matrix3| {
+            let (pixels, clip) = developed(&scene, gains, matrix);
+            let px = auto_neutral(&pixels, gains, matrix, clip, AS_SHOT).unwrap();
+            neutral_gains(px, gains, matrix).unwrap().map(|g| g as f32)
+        };
+        // A tungsten white and a shade white: the same light.
+        let warm = answer([1.2, 1.0, 2.6], WARM_MATRIX);
+        let cool = answer([2.8, 1.0, 1.0], COOL_MATRIX);
+        for k in 0..3 {
+            assert!((warm[k] / cool[k] - 1.0).abs() < 0.01, "{warm:?} {cool:?}");
+        }
+        // And the light is the patches', not the sky's.
+        assert!((warm[0] * 0.5 - 1.0).abs() < 0.03, "{warm:?}");
+        assert!((warm[2] * 0.7 - 1.0).abs() < 0.03, "{warm:?}");
+    }
+
+    #[test]
+    fn auto_neutral_on_its_own_answer_is_neutral() {
+        let scene = camera_scene();
+        let (pixels, clip) = developed(&scene, AS_SHOT, WARM_MATRIX);
+        let px = auto_neutral(&pixels, AS_SHOT, WARM_MATRIX, clip, AS_SHOT).unwrap();
+        let gains = neutral_gains(px, AS_SHOT, WARM_MATRIX)
+            .unwrap()
+            .map(|g| g as f32);
+        // Developed at the white it found, it finds grey.
+        let (again, clip) = developed(&scene, gains, WARM_MATRIX);
+        let px = auto_neutral(&again, gains, WARM_MATRIX, clip, AS_SHOT).unwrap();
+        assert!(within(px, [1.0; 3], 0.01), "{px:?}");
     }
 
     use crate::raw::Calibration;
