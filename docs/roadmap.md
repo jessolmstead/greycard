@@ -427,6 +427,10 @@ clears or a tester asks for it.
 - [ ] The vibrance protection's skin window (§60, 55 degrees plus or
       minus 15) against the 10 to 59 degrees a pale face measured
       (§158): widen it or not; a change to existing edits
+- [ ] Remember the last chosen export location when exporting again
+- [ ] Rebindable keys: a sheet in Settings to change any shortcut,
+      saved in settings.json, with a conflict warning and a reset to
+      defaults
 
 
 #### Engine

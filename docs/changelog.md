@@ -8,26 +8,31 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
-## Unreleased
+## 0.3.0, 2026-09-27
 
-- The scopes can be weighed by the chosen mask: a Selection toggle
+Quality of life improvements. A library root on a network share neither freezes
+the window nor goes stale. Frames can be deleted from the disk with
+confirmation. The scopes can be read for the chosen
+mask alone, a slider's value can be typed, and White Balance has an
+Auto. A folder of thousands of cached thumbnails opens at once. And
+the fixes from the first day with 0.2.0 on a NAS root are here too.
+Read the
+[guide for testers](https://github.com/jessolmstead/greycard/blob/master/docs/user-guide.md)
+for installing on each system, the hotkeys, and how to report a problem.
+
+- The scopes can be restricted to the chosen mask: a Selection toggle
   beside them, off at launch, so a skin mask shows the skin's cloud on
   the vectorscope and a face its level on the waveform; the clipping
   lamps follow it too while it is on (§189)
-- Delete from disk: Delete selection… and Delete rejects folder… in
-  the CULLING section, and the Delete key (Backspace on a Mac) in the
-  loupe, the grid and culling, open a sheet that names the frames, sidecars and
-  folder, then move them to the system trash, or delete them for good
-  where there is no trash or the trash refused them; the index rows
-  and cached thumbnails go too, and the delete runs off the window's
-  thread (§190, §196)
+- Delete from disk supported in all modes, with the Delete key.
+  The delete runs off the window's thread (§190, §196)
 - A folder of thousands whose thumbnails are all in the cache shows
   its window at once and stays responsive while they come: the pool
   delivers in batches, the rows on screen first, and rows far off keep
   their picture until scrolled near; the 20,000-frame case filled in
   1.6 s with the window drawing throughout, against 3 s of a blank
   window (§191)
-- A view of the roots that takes a while to read shows a bar with a
+- A view of the library roots that takes a while to read shows a bar with a
   count of the sidecars read, in the grid and the loupe alike, after
   the first 200 ms; a read that stops moving is given up on rather
   than left hanging (§192)
@@ -44,11 +49,6 @@ note a first tester reads.
   frames with nothing neutral in them still fool it (§194)
 - A root's chip in the library row goes off when a folder is opened
   over its view; before, the old chip stayed lit
-
-## 0.2.1, 2026-09-27
-
-Fixes from the first day with 0.2.0 on a NAS root, and one older one.
-
 - A library root on a network share (NFS, SMB, sshfs and the like) is
   no longer watched on Linux and macOS, where setting the watch up
   froze the editor while every folder was registered and saw only this
@@ -57,14 +57,14 @@ Fixes from the first day with 0.2.0 on a NAS root, and one older one.
   watcher on the other roots is set up off the window's thread, so
   adding, removing or starting with a root never holds the window
   (§188)
-- The frame on screen moved with the rejects hands on to the nearest
-  frame left, in culling as in the loupe; before, culling kept the old
-  picture up with no row chosen
+- When Move rejects takes away the frame on screen, culling now shows
+  the nearest frame that is left, as the loupe already did; before, it
+  kept showing the moved frame with nothing selected
 - Opening the Settings sheet no longer freezes the window over a
-  large root: the count of sidecars out of place, and the move that
+  large root: the count of sidecars that are out of place, and the move that
   settles them, run off the window's thread, the sheet saying
   "Counting..." and "Moving..." meanwhile
-- The Crop, Masks and Retouch tabs no longer open blank after the
+- The Crop, Masks, and Retouch tabs no longer open blank after the
   Develop tab was scrolled down: each tab starts at its top
 - The terminal no longer shows winit's Wayland event loop warning
   about a re-registered source, which is harmless
