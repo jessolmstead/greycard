@@ -402,6 +402,10 @@ clears or a tester asks for it.
       and so in an export preset; a list of marks so text and a logo
       go on one export; a plate or shadow behind text; a bundled font
       so exports match across machines (§157)
+- [ ] Draw a crop: in crop mode, a drag that starts outside the frame
+      draws a new one from the press point, held to the chosen
+      aspect, instead of only resizing today's handles or moving the
+      whole
 - [ ] Geometry in a sync, mapped through each frame's aspect and turn
       as masks already are (§156)
 - [ ] The range masks' sample from before the Detail section, so dehaze
