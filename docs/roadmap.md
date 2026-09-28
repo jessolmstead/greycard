@@ -429,6 +429,19 @@ clears or a tester asks for it.
       feature off by default, or the macOS system decoder, are the
       ways to carry it without that
 
+#### Immich
+
+- [ ] Check that Immich reads greycard's XMPs from an external library:
+      which fields land (keywords above all) and whether it writes back
+      into the sidecar; an Immich in a container over a copied shoot
+      (§195)
+- [ ] A post-export command in an export preset, run with the exported
+      paths, so `immich upload` (or any other tool) takes the developed
+      picture; the destination folder for a watched library is the
+      pool's naming-and-destination item. Waits on the XMP check (§195)
+- [ ] A paragraph in `where-greycard-fits.md` on greycard as the raw
+      developer for an Immich library. Waits on the XMP check (§195)
+
 #### Nice-to-have
 
 - [ ] Flexible dual monitor support
