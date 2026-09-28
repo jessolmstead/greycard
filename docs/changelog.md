@@ -36,6 +36,12 @@ note a first tester reads.
   point stays selected and takes a typed In and Out in 0–255 (§193)
 - The camera match sheet no longer grows past the window after a run
   over many groups: its body scrolls and the buttons stay in reach
+- An Auto button beside Neutral in WHITE BALANCE: grey-world over the
+  frame in camera space, clipped and black pixels dropped and one pass
+  re-weighting toward what is already near grey, through the same
+  path as the Neutral picker, so the answer is the same whatever
+  white the frame was showing and a second press changes nothing;
+  frames with nothing neutral in them still fool it (§194)
 
 ## 0.2.1, 2026-09-27
 
