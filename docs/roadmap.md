@@ -406,6 +406,14 @@ clears or a tester asks for it.
       draws a new one from the press point, held to the chosen
       aspect, instead of only resizing today's handles or moving the
       whole
+- [ ] An export as a line in History: the file, its preset and the
+      time, at the state it was exported from, so a click goes back to
+      the look that was sent out
+- [ ] The Masks tab laid out to be read at a glance: today it has an
+      Invert for the mask and an Invert shape for each shape, and the
+      shape buttons twice (new mask, then Next shape); one place for
+      each control, and the mask, its shapes and their settings in an
+      order that says which is which
 - [ ] Geometry in a sync, mapped through each frame's aspect and turn
       as masks already are (§156)
 - [ ] The range masks' sample from before the Detail section, so dehaze
