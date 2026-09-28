@@ -215,6 +215,13 @@ Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.
 
+- [ ] A folder tree under a chosen root: the root's folders as a tree
+  in the left pane, from the index rather than the disk so an offline
+  root still shows its shape, each folder with its frame count, a click
+  opening that folder's frames (its subfolders' too, as a switch) and
+  the view's chip staying on; a folder's open then reads only that
+  folder's sidecars rather than the whole root's, which is the cheap
+  way into a 12,000-frame archive
 - [ ] The filter bar's last two chips: a "none" chip for frames with
   no value for a facet (decide it with a library of phone JPEGs in
   hand), and an error row in the index for a file whose hash fails so
@@ -364,6 +371,13 @@ clears or a tester asks for it.
       Monitor, Proof and Demosaic at the bottom, and up and down
       buttons for it in the Settings sheet. Goes with the develop
       panel's move out of app.slint, since that is the same rewiring
+- [ ] The open folder named, and a Recently opened list: the folder's
+      name under the Open folder button (its path as the hover text,
+      the root's name when it is under one), and a list of the last
+      ten folders opened in settings.json beside `last_file`, offered
+      under the button and in the grid's header, with the one open
+      marked; a folder gone from the disk stays listed and says so
+      when chosen
 - [ ] Resizable side panes: drag the left pane's and the develop
       panel's inner edge, today's widths the minimum, about 500 px the
       most, each kept in the settings; first see what a viewport
