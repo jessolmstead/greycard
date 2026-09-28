@@ -3,6 +3,17 @@
 A raw photo editor that is scene-referred, fast, intuitive, ergonomic,
 accurate, and powerful.
 
+<a href="https://greycard.org"><img src="docs/images/develop.webp"
+  alt="The editor on a mountain landscape: the file browser and history
+  on the left, the picture in the middle, and on the right the histogram
+  and the Develop tab's Light and Color sliders, with the folder in a
+  filmstrip along the bottom."></a>
+
+Builds for Linux, Apple silicon Macs and Windows are on [the releases
+page](https://github.com/jessolmstead/greycard/releases/latest);
+[greycard.org](https://greycard.org) has more screenshots. Releases
+in 0.x are test builds.
+
 ## What that means
 
 **Accurate.** White balance is applied as gains in camera space, and
@@ -26,9 +37,25 @@ worse.
 grading, masks and presets, in the places you expect them, and
 Lightroom's presets load. The difference is underneath: each slider
 acts on the light in the scene rather than on a display curve, and
-that is what makes an edit predictable. Culling is a keyboard job on
-the camera's own JPEG, and ratings, flags and labels travel to
-Lightroom and darktable through XMP.
+that is what makes an edit predictable.
+
+**The camera's own look, if you want it.** Every raw carries the
+maker's JPEG of the same frame. Fit this camera's look, in the Look
+section, develops about forty of your frames per body and picture
+style, lays the camera's JPEG over each, and fits the maker's
+rendering as a look you can pick: Canon Standard or Fujifilm's Provia
+learned from your own files, with no license and no reverse
+engineering. [docs/camera-match.md](docs/camera-match.md) has how
+well it fits.
+
+**A shoot, start to finish.** Import from a card renames the files,
+lays a preset on each, and can write a backup copy, every file hashed
+and read back before it counts and nothing ever written to the card.
+Culling is a keyboard job on the camera's own JPEG, with a side by
+side compare, and ratings, flags and labels travel to Lightroom and
+darktable through XMP. Select several frames and sync one's settings
+across them, lay a preset over all of them, or export them all with
+a saved export preset and a watermark.
 
 **Fast.** A slider shows in the viewport as it moves, drawn by the
 shader on the picture already on the GPU. The full develop runs on a
@@ -38,26 +65,26 @@ of a second on a 45 MP raw, and the develop replaces it when it
 lands. Sharpening, chromatic aberration correction and the display
 path all run on the GPU.
 
-**What is in it.** Gradient, radial, brush, subject and object
-masks, each with its own light, color and tint. Heal, clone and a
-learned fill. A learned denoiser trained on a measured noise model,
-mosaic in and color out, running on your machine with published
-weights, and a profiled denoiser beside it. Lens corrections from
-lensfun. Parametric and point curves, 3D LUT looks, a guided
-perspective tool, scopes. Focus stacks merged to linear DNG, and a
-command line that develops any raw to DNG or TIFF on a machine with
-no window.
+**What is in it.** Gradient, radial, brush, subject, object and sky
+masks, and masks by lightness and by color, each with its own light,
+color and tint. Heal, clone and a learned fill. A learned denoiser
+trained on a measured noise model, mosaic in and color out, running on
+your machine with published weights, and a profiled denoiser beside
+it. Lens corrections from lensfun. Parametric and point curves, 3D LUT
+looks, a guided perspective tool, scopes. Focus stacks merged to
+linear DNG, and a command line that develops any raw to DNG or TIFF on
+a machine with no window.
 
 **Your folders are the truth.** Edits and their history live in a
-sidecar beside the file. The library, when it lands, will be an
-index that can be thrown away and rebuilt. Move a shoot to another
-drive and nothing breaks.
+sidecar beside the file. The library is an index that can be thrown
+away and rebuilt. Move a shoot to another drive and nothing breaks.
 
 ## What it does not do yet
 
-- There is no library. It opens a folder, and G lays that folder out
-  whole as a zoomable contact sheet. An index across folders,
-  collections and a Lightroom catalog import are designed and next.
+- The library is young. It watches the folders you give it as roots,
+  indexes them, and filters the grid by camera, lens, ISO, focal
+  length, day and keyword. Collections and a Lightroom catalog import
+  are designed and not built.
 - The tone controls are still being tuned: their ranges and response
   curves are being fitted so that a small move does what your hands
   expect. That work gets the same care as the color science under
@@ -86,6 +113,9 @@ way the scene would. That is what this project is for.
 
 ## Where it fits
 
+[docs/user-guide.md](docs/user-guide.md) is the guide for someone
+opening it for the first time: the basics, masks, several frames at
+once, culling and the keys.
 [docs/where-greycard-fits.md](docs/where-greycard-fits.md) sets it
 beside Lightroom, Capture One, DxO, darktable, RawTherapee and
 RapidRAW, and says what each got right.
@@ -176,7 +206,8 @@ toolkit, tone-mapping choice or edit schema in it. `greycard-bench`
 scores every demosaic and denoiser against the Kodak and McMaster
 sets; fetch them once with `scripts/fetch-bench-data.sh`.
 
-**What it needs.** A GPU with Vulkan on Linux, or Metal on a Mac:
+**What it needs.** A GPU with Vulkan on Linux and Windows, or Metal
+on a Mac:
 the viewport is wgpu through Slint, and there is no software renderer
 for it. The learned models (the denoiser, the subject and object
 masks, the fill) run on the same GPU through ONNX Runtime and Dawn,
@@ -198,6 +229,12 @@ are kept in `~/.cache/greycard/thumbs`, by what is in each file rather
 than where it is, up to 300 MB by default (Settings sets the cap and
 clears it). On a Mac these caches are under
 `~/Library/Caches/greycard` instead.
+
+At launch, at most once a day, the editor asks GitHub's releases API
+whether a newer version is out, and offers it in the left pane as a
+link to its release page. The request carries only the version, in
+its User-Agent; nothing is downloaded or installed. Settings has the
+switch to turn it off, and Check now.
 
 Settings live in `~/.config/greycard/settings.json`, or
 `~/Library/Application Support/greycard/settings.json` on a Mac.

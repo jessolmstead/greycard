@@ -5,7 +5,7 @@ first and then everywhere.
 This document says what that means, how the other editors made their
 choices, and what greycard does differently. It is written for anyone
 deciding whether to use it, contribute to it, or wait. Written
-September 2026, when the engine is built and the library is planned;
+September 2026, when the engine is built and the library has begun;
 the last section says which is which.
 
 ## The short version
@@ -20,7 +20,7 @@ answers.
 greycard answers: light in the scene, and your folders. It is
 scene-referred from the decoder to the display transform, color
 managed at every boundary, in physical units, with a CPU reference
-and a test for every operation. Its library, when built, will index
+and a test for every operation. Its library indexes
 your directories without owning them. It is GPL-3.0-or-later so that
 the best published algorithms can be ported with attribution instead
 of reinvented worse, and it runs its learned tools on your machine.
@@ -171,13 +171,13 @@ is in `roadmap.md`; nothing planned is counted as done.
 | Pipeline | display | display | wide gamut, display | scene | mixed | scene |
 | Working space | ProPhoto | proprietary | DxO wide | Rec.2020 | ProPhoto | linear Rec.2020 |
 | Color managed to the monitor | yes | yes | yes | yes | yes | yes, with soft proofing |
-| Camera color | Adobe's | in-house, the best | DxO's | matrix | matrix, DCP | matrix; DCP and a fit from the camera's own JPEG planned |
+| Camera color | Adobe's | in-house, the best | DxO's | matrix | matrix, DCP | matrix, DCP, and a look fitted from the camera's own JPEG |
 | Demosaic | Adobe's | proprietary | proprietary | RCD, AMaZE | AMaZE, RCD, dual | AMaZE, RCD, dual |
 | Denoise | AI, cloud or large local | conventional | DeepPRIME | profiled | profiled | profiled, and a raw-domain network that runs locally |
-| Masks | AI people, sky, objects | layers | limited | parametric, drawn | local adjustments | gradient, radial, brush, subject and object by model |
+| Masks | AI people, sky, objects | layers | limited | parametric, drawn | local adjustments | gradient, radial, brush, by lightness and color; subject, object and sky by model |
 | Retouch | remove, generative | heal, clone | limited | retouch | spot removal | heal, clone, learned fill |
-| Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; planned |
-| Culling speed | fast, embedded previews | fast | slow | slow | slow | from the embedded JPEG; planned |
+| Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; collections planned |
+| Culling speed | fast, embedded previews | fast | slow | slow | slow | fast, from the embedded JPEG |
 | Tethering | basic | the reference | none | gphoto2 | none | planned |
 | Stacking | HDR, panorama | none | none | none | none | HDR, focus, panorama; planned |
 | License | subscription | subscription or perpetual | perpetual | GPL | GPL | GPL-3.0-or-later |
@@ -187,24 +187,23 @@ is in `roadmap.md`; nothing planned is counted as done.
 
 ## What greycard is for
 
-Photographers who want correct color without learning darktable,
-and who would rather their editor read their folders than own them.
-On Linux, where there is nothing else like it, and on Windows and
-macOS as an alternative that costs nothing and does not hold your
-catalog hostage. People who shoot Fujifilm GFX and Canon bodies, which are
+Photographers who want correct color without learning darktable, and
+who would rather their editor read their folders than own them. On
+Linux, where there is nothing else like it, and on Windows and macOS
+as an alternative that costs nothing and does not hold your catalog
+hostage. People who shoot Fujifilm GFX and Canon bodies, which are
 what it is developed against. Anyone who wants the camera's own
-rendering as a starting point rather than Adobe's, which the planned
-camera match is built to deliver from the JPEG already in every raw
-file. People who print, since the display path is color managed
-with soft proofing. And developers who want a raw engine as a
-library, with no interface toolkit, tone-mapping choice or edit
-schema in it.
+rendering as a starting point rather than Adobe's, which camera match
+fits from the JPEG already in every raw file. People who print, since
+the display path is color managed with soft proofing. And developers
+who want a raw engine as a library, with no interface toolkit,
+tone-mapping choice or edit schema in it.
 
 ## What it is not for, yet
 
 Anyone on an Intel Mac or on Windows for ARM: ort ships no WebGPU
 ONNX Runtime for either, so there is no build. Anyone with a hundred
-thousand rated and keyworded frames in Lightroom, until the library
+thousand rated and keyworded frames in Lightroom, until collections
 and the catalog import exist. Anyone whose camera rawler does not
 decode; support goes upstream to rawler, not into a fork. Anyone who
 wants a phone app, cloud sync, or a preset marketplace, which are not
@@ -239,51 +238,54 @@ Built, as of September 2026: decoding through rawler; the color
 pipeline from camera matrix to monitor profile with soft proofing;
 RCD, AMaZE and a dual demosaic; highlight reconstruction; chromatic
 aberration correction, on the GPU in the editor, and a defringe that
-acts on a fringe's hue;
-camera profiles from DCP files; a profiled denoiser and a learned one
-with published weights; deconvolution sharpening, on the GPU in the
-editor; lens corrections from lensfun; exposure, tone, a parametric
-and a point curve, a color mixer, grading, black and white, texture,
-clarity, dehaze, grain, vignette; gradient, radial, brush, subject and
-object masks; heal, clone and a learned fill, each outlined where it
-was drawn; crop, rotation and a guided perspective tool; scopes;
-presets, including Lightroom's, and three film looks among them;
-3D LUT looks from `.cube` and HaldCLUT files; export with embedded profiles and
-EXIF; a filmstrip and a zoomable grid from the camera's previews,
-with ratings, flags and color labels kept in the sidecar and set from
-the keyboard, and a folder filter on all of them with a count on
-every chip, and read from and written to XMP sidecars so stars,
-labels and keywords travel to Lightroom and darktable (picks and
-rejects do not, since XMP has no field for them); culling from the camera's JPEG, with compare and a
+acts on a fringe's hue; camera profiles from DCP files; a profiled
+denoiser and a learned one with published weights; deconvolution
+sharpening, on the GPU in the editor; lens corrections from lensfun;
+exposure, tone, a parametric and a point curve, a color mixer,
+grading, black and white, texture, clarity, dehaze, grain, vignette;
+gradient, radial, brush, subject and object masks; heal, clone and a
+learned fill, each outlined where it was drawn; crop, rotation and a
+guided perspective tool; scopes; presets, including Lightroom's, and
+three film looks among them; 3D LUT looks from `.cube` and HaldCLUT
+files; export with embedded profiles and EXIF; a filmstrip and a
+zoomable grid from the camera's previews, with ratings, flags and
+color labels kept in the sidecar and set from the keyboard, and a
+folder filter on all of them with a count on every chip, and read from
+and written to XMP sidecars so stars, labels and keywords travel to
+Lightroom and darktable (picks and rejects do not, since XMP has no
+field for them); culling from the camera's JPEG, with compare and a
 rejects folder, a delete to the system trash behind a confirmation,
 and a quarter turn for a frame the camera got the wrong way up, in
-every view; the shot's settings under the file name, with its
-size;
-frame registration and a focus stack merged to a linear DNG from
-the command line; the camera's own picture in the viewport the
-moment a frame is chosen, replaced by the develop when it lands;
-and a package for each of Linux, macOS and Windows that installs
-where that desktop expects, with the file types registered; and a
-Report a problem button that opens the bug form with the version,
-the OS and the GPU filled in and the log beside it; several frames
-at once, with the settings of one synced across them, a preset laid
-over all of them and an export of all of them; export presets and a
-watermark; masks by lightness and by color; the Subject mask on the
-GPU; a Sky mask that refuses a frame with no sky and
-takes its edge through hair and branches; a history that names a step by the preset, sync or snapshot that
-made it; a right-click menu on a frame, with copy and paste of
-settings onto the selection; thumbnails made in parallel on a pool of
-threads, a cold folder of hundreds filling in seconds; an import from a card with
+every view; the shot's settings under the file name, with its size;
+frame registration and a focus stack merged to a linear DNG from the
+command line; the camera's own picture in the viewport the moment a
+frame is chosen, replaced by the develop when it lands; and a package
+for each of Linux, macOS and Windows that installs where that desktop
+expects, with the file types registered; and a Report a problem button
+that opens the bug form with the version, the OS and the GPU filled in
+and the log beside it; several frames at once, with the settings of
+one synced across them, a preset laid over all of them and an export
+of all of them; export presets and a watermark; masks by lightness and
+by color; the Subject mask on the GPU; a Sky mask that refuses a frame
+with no sky and takes its edge through hair and branches; a history
+that names a step by the preset, sync or snapshot that made it; a
+right-click menu on a frame, with copy and paste of settings onto the
+selection; thumbnails made in parallel on a pool of threads, a cold
+folder of hundreds filling in seconds; an import from a card with
 renaming, a preset and a verified backup; roots, folders the library
 watches, with a view of every file under them and the filter
-remembered between sessions; and a library index that fills the grid's filter with chips
-for camera, lens, ISO, focal length, day and keyword, with a filter
-language behind the text field. Nine hundred tests.
+remembered between sessions; a library index that fills the grid's
+filter with chips for camera, lens, ISO, focal length, day and
+keyword, with a filter language behind the text field; a look fitted
+from the camera's own JPEG per body and picture style; an Auto white
+balance beside Neutral; a value typed into any slider; scopes that can
+be read for the chosen mask alone; and a check at launch for a newer
+release, which can be turned off. Nine hundred tests.
 
-Planned, in order: the tone controls made to feel right; sky and people masks and a
-generative fill; a look fitted from the camera's JPEG; the library's roots
-and collections; a Lightroom catalog import; HDR merge and panoramas, and the
-merges in the browser; tethering.
+Planned, in order: the tone controls made to feel right; people masks
+and a generative fill; the library's collections; a Lightroom catalog
+import; HDR merge and panoramas, and the merges in the browser;
+tethering.
 
 The reasoning behind every choice is in `docs/notes.md`, numbered by
 section, and the list is `docs/roadmap.md`.
