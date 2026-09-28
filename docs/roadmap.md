@@ -173,6 +173,12 @@ ask for first.
       into the vignetting line below; `style:` in the filter text;
       Nikon, Sony and Panasonic styles once files with the settings
       varied make exiv2 a clean oracle for them (§180)
+- [ ] The match sheet's groups chosen: a checkbox on each body and
+      style line, all on at first, the run over the checked ones and
+      the Run button counting them, an unchecked group skipped as a
+      small one is, and the choice remembered for the folder's next
+      run; a folder of two bodies and five styles is ten fits of forty
+      frames each, when one style is all that is wanted
 - [ ] A progress bar on the camera match run: the sheet shows only a
       line of words today ("starting...", then the group in hand); give
       it §192's bar, filled by frames developed over frames to fit
