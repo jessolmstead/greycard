@@ -34,6 +34,8 @@ note a first tester reads.
 - A slider's value can be typed: click the number, Enter sets it
   clamped to the range, Escape leaves it; the point curve's selected
   point stays selected and takes a typed In and Out in 0–255 (§193)
+- The camera match sheet no longer grows past the window after a run
+  over many groups: its body scrolls and the buttons stay in reach
 
 ## 0.2.1, 2026-09-27
 

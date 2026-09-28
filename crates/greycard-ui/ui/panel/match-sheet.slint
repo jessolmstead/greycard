@@ -38,16 +38,28 @@ export component MatchSheet inherits Rectangle {
     TouchArea { clicked => { if (!root.match-running) { root.match-close(); } } }
     Rectangle {
         width: 600px;
-        height: min(match-sheet.preferred-height, root.height - 48px);
+        // As tall as it needs, up to the window less a margin; past
+        // that the body scrolls and the buttons stay in reach below
+        // it. A run over a library writes a result line a group, and
+        // the first cut grew past the window with the buttons, so the
+        // sheet could not be closed by them.
+        height: min(match-sheet.preferred-height + button-row.preferred-height, root.height - 48px);
         background: Theme.surface;
         border-radius: Theme.radius-lg;
         border-width: 1px;
         border-color: Theme.border;
         drop-shadow-blur: 32px;
         drop-shadow-color: #00000099;
+        clip: true;
         TouchArea { }
+        VerticalLayout {
+        ScrollView {
+            min-height: 80px;
+            vertical-stretch: 1;
         match-sheet := VerticalLayout {
             padding: Theme.space-5;
+            padding-right: Theme.space-5 + Theme.scrollbar-band;
+            padding-bottom: Theme.space-2;
             spacing: Theme.space-3;
             Text {
                 text: "Fit this camera's look";
@@ -126,8 +138,11 @@ export component MatchSheet inherits Rectangle {
                 color: Theme.text-secondary;
                 wrap: word-wrap;
             }
-            Rectangle { height: Theme.space-2; }
-            HorizontalLayout {
+        }
+        }
+            button-row := HorizontalLayout {
+                padding: Theme.space-5;
+                padding-top: Theme.space-3;
                 spacing: Theme.space-2;
                 PanelButton {
                     text: root.match-running ? "Stop" : "Close";
