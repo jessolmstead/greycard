@@ -1308,12 +1308,12 @@ export component App inherits Window {
                 if (e.text == "-" || e.text == "_") { root.grid-zoom(-1); return accept; }
             }
             // Delete opens the delete sheet over the selection, in the
-            // grid and in culling: only the sheet, whose confirmation
-            // is the delete. A text field with the focus has the key
-            // first. On a Mac the key marked delete sends Backspace,
+            // grid, culling and the loupe: only the sheet, whose
+            // confirmation is the delete. A text field with the focus
+            // has the key first. On a Mac the key marked delete sends Backspace,
             // so Backspace there too; elsewhere Backspace is nobody's.
             if ((e.text == Key.Delete || (e.text == Key.Backspace && Platform.os == OperatingSystemType.macos))
-                && (root.grid-open || root.culling) && !e.repeat
+                && !e.repeat
                 && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta && !e.modifiers.shift
                 && !root.sheet-open()) {
                 root.delete-asked("selection");

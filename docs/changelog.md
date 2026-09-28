@@ -16,11 +16,11 @@ note a first tester reads.
   lamps follow it too while it is on (§189)
 - Delete from disk: Delete selection… and Delete rejects folder… in
   the CULLING section, and the Delete key (Backspace on a Mac) in the
-  grid and culling, open a sheet that names the frames, sidecars and
+  loupe, the grid and culling, open a sheet that names the frames, sidecars and
   folder, then move them to the system trash, or delete them for good
   where there is no trash or the trash refused them; the index rows
   and cached thumbnails go too, and the delete runs off the window's
-  thread (§190)
+  thread (§190, §196)
 - A folder of thousands whose thumbnails are all in the cache shows
   its window at once and stays responsive while they come: the pool
   delivers in batches, the rows on screen first, and rows far off keep

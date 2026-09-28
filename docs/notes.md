@@ -22816,7 +22816,8 @@ now sit beside Move rejects in the CULLING section:
   first. This is accepted because the sheet names the folder before
   anything goes. A rejects folder that is itself a symlink is refused.
 
-The Delete key opens the first sheet in the grid and while culling.
+The Delete key opens the first sheet in the loupe, the grid and while
+culling (the loupe added the same day; see §196).
 On macOS, Backspace does too (`Platform.os`), because the key marked
 delete sends Backspace. A key only ever opens the sheet. Nothing is
 deleted until the sheet is confirmed.
@@ -23008,8 +23009,6 @@ the home trash"), so the file still ends up in the trash.
 **Left out.**
 - **A Delete item in the right-click frame menu.** The menu is shared
   with other branches, and the Delete key already covers it.
-- **Delete in the loupe (develop view).** As asked, the key works
-  only in the grid and while culling.
 - **Disabling Delete rejects folder when there is no rejects folder.**
   The button stays enabled and says so in the status line instead.
   Otherwise the window would have to stat the folder on every rebuild.
@@ -23568,3 +23567,13 @@ dependency of the library and put data in the index that a rebuild
 from disk cannot recover, which is the one thing §72 rules out. Faces
 stay a local model writing names into the meta section as keywords,
 and those keywords reach Immich through the XMP like any other.
+
+## 196. The Delete key in the develop loupe (2026-09-27)
+
+§190 kept the Delete key to the grid and culling. In use, pressing it
+over a frame in the develop loupe and getting nothing read as a bug,
+so the key now opens the same sheet there too. Nothing in the develop
+view binds Delete (no mask, repair or guide is removed with it), a
+text field with the focus still has the key first, and the key still
+only opens the sheet: nothing goes until it is confirmed. The sheet's
+other guards stand: no repeat, no modifiers, no other sheet up.

@@ -888,8 +888,8 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// Delete opens the sheet over the selection in the grid and in
-    /// culling, and nowhere else; Backspace does only on a Mac. The
+    /// Delete opens the sheet over the selection in the loupe, the
+    /// grid and culling; Backspace does only on a Mac. The
     /// sheet takes the keys: Escape is its no, Enter its trash, and
     /// Enter is never the permanent delete.
     #[test]
@@ -901,20 +901,18 @@ mod tests {
         let answers = Rc::new(RefCell::new(Vec::new()));
         let seen = answers.clone();
         app.on_delete_answered(move |a| seen.borrow_mut().push(a));
-        // The loupe: nobody's.
+        // The loupe, the grid, and culling.
         press(&app, Key::Delete);
-        assert!(asked.borrow().is_empty());
-        // The grid, and culling.
         app.set_grid_open(true);
         press(&app, Key::Delete);
         app.set_grid_open(false);
         app.set_culling(true);
         press(&app, Key::Delete);
-        assert_eq!(*asked.borrow(), ["selection", "selection"]);
+        assert_eq!(*asked.borrow(), ["selection", "selection", "selection"]);
         // Backspace is the Mac's delete key, and nobody's elsewhere.
         press(&app, Key::Backspace);
         let mac = cfg!(target_os = "macos");
-        assert_eq!(asked.borrow().len(), if mac { 3 } else { 2 });
+        assert_eq!(asked.borrow().len(), if mac { 4 } else { 3 });
         let before = asked.borrow().len();
         // The sheet up: Delete again does nothing, Enter is the trash.
         app.set_delete_trash(true);
