@@ -174,7 +174,10 @@ mod tests {
             if path.extension().is_none_or(|e| e != "slint") {
                 continue;
             }
-            let source = std::fs::read_to_string(&path).expect("a panel source reads");
+            // A Windows checkout ends its lines in CRLF.
+            let source = std::fs::read_to_string(&path)
+                .expect("a panel source reads")
+                .replace("\r\n", "\n");
             for (at, _) in source.match_indices("EditSlider {") {
                 let body = block(&source[at + "EditSlider {".len()..]);
                 let value = field(body, "value <=> root.").expect("a slider's value");
