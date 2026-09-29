@@ -344,6 +344,32 @@ mod tests {
     }
 
     #[test]
+    fn a_labeled_rows_color_and_chosen_flag_reach_its_cell_after_a_repoint() {
+        let app = app();
+        set_rows(&app, rows(100));
+        show(&app, View::Grid, 10, 8);
+        let model = app.get_thumbs();
+        let mut labeled = model.row_data(19).unwrap();
+        labeled.label = 3;
+        labeled.chosen = true;
+        model.set_row_data(19, labeled);
+        // The window has no cell for row 19 yet.
+        assert!(!has_cell(&app, 19));
+        // A scroll of two rows re-points the slots that held 10 and
+        // 11, bringing 18 and 19 in.
+        assert!(show(&app, View::Grid, 12, 8));
+        let cells = app.get_grid_cells();
+        let cell = cells.row_data(19 % 8).unwrap();
+        assert_eq!(
+            (cell.row, cell.thumb.label, cell.thumb.chosen),
+            (19, 3, true)
+        );
+        // A row that carries no label reaches its cell with none.
+        let plain = cells.row_data(12 % 8).unwrap();
+        assert_eq!((plain.thumb.label, plain.thumb.chosen), (0, false));
+    }
+
+    #[test]
     fn a_change_to_a_row_reaches_its_cell_and_a_new_list_is_held_to() {
         let app = app();
         set_rows(&app, rows(100));

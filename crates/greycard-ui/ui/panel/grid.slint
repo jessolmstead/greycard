@@ -276,10 +276,27 @@ export component GridSheet inherits Rectangle {
                     width: root.grid-cell;
                     height: root.grid-cell + root.grid-label;
                     border-radius: Theme.radius-md;
-                    background: in-set ? Theme.selection : (ct.has-hover ? Theme.hover : transparent);
+                    // The plate: the sheet tinted a quarter of the
+                    // way toward a color label, or the sheet as it
+                    // was (through `transparent`) with none. The
+                    // selection's and the hover's ground go over it,
+                    // in the sibling below, exactly as they go over
+                    // the plain plate: a chosen or hovered labeled
+                    // tile keeps the same cue an unlabeled one does,
+                    // the tint showing through both, `hover-veil`
+                    // (unlike `hover` itself) being translucent too.
+                    background: t.label == 0 ? transparent : Theme.plate-tint(Theme.sheet, t.label);
                     border-width: on ? 2px : (in-set ? 1px : 0);
                     border-color: on ? Theme.accent : Theme.accent-muted;
-                    animate background { duration: Theme.quick; }
+                    Rectangle {
+                        x: 0;
+                        y: 0;
+                        width: parent.width;
+                        height: parent.height;
+                        border-radius: parent.border-radius;
+                        background: in-set ? Theme.selection : (ct.has-hover ? Theme.hover-veil : transparent);
+                        animate background { duration: Theme.quick; }
+                    }
                     Image {
                         x: Theme.space-1;
                         y: Theme.space-1;
@@ -294,6 +311,14 @@ export component GridSheet inherits Rectangle {
                         width: parent.width - 2 * Theme.space-1;
                         height: root.grid-cell - 2 * Theme.space-1;
                         border-radius: Theme.radius-sm;
+                        // Its own ground, the sheet as it is with no
+                        // label, selection or hover: a labeled,
+                        // chosen or hovered plate is lighter or more
+                        // colorful than `text-muted` and
+                        // `border-strong` were chosen against, and a
+                        // box drawn straight over one would lose the
+                        // border and wash the text out.
+                        background: Theme.sheet;
                         border-width: 1px;
                         border-color: Theme.border-strong;
                         Text {

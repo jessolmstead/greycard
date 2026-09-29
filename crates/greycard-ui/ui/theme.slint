@@ -12,6 +12,11 @@ export global Theme {
     out property <color> surface: #1e1e1e;
     out property <color> raised: #262626;
     out property <color> hover: #2e2e2e;
+    // `hover`, as a veil rather than a flat fill: over the plain
+    // plate it composites to the same `hover` grey, but over a
+    // labeled cell's tinted plate it lets the tint show through,
+    // where `hover` itself (opaque) would hide it. Grid cells only.
+    out property <color> hover-veil: #ffffff0d;
     out property <color> pressed: #353535;
     out property <color> border: #303030;
     out property <color> border-strong: #3d3d3d;
@@ -44,6 +49,33 @@ export global Theme {
     out property <color> label-green: #55b46e;
     out property <color> label-blue: #5b9ce6;
     out property <color> label-purple: #a179dd;
+
+    // How far a labeled grid cell's plate tints toward its color
+    // label: a quarter of the way, so five labels are tellable apart
+    // without the grid becoming a quilt. The selection's and the
+    // hover's ground go over the tint, not through a stronger mix of
+    // it, so a chosen or hovered labeled tile still carries the same
+    // cue an unlabeled one does.
+    out property <float> plate-tint-mix: 0.25;
+
+    /// The color label's color (1 to 5), or transparent for none.
+    public pure function label-color(label: int) -> color {
+        return label == 1 ? self.label-red
+            : label == 2 ? self.label-yellow
+            : label == 3 ? self.label-green
+            : label == 4 ? self.label-blue
+            : label == 5 ? self.label-purple
+            : transparent;
+    }
+
+    /// A cell's plate, its `base` color tinted toward a color label
+    /// (0 leaves `base` as it was).
+    public pure function plate-tint(base: color, label: int) -> color {
+        // `Color.mix`'s factor is its first color's own weight, so
+        // the label's share (`plate-tint-mix`) is one minus it: `base`
+        // keeps the rest.
+        return label == 0 ? base : base.mix(self.label-color(label), 1.0 - self.plate-tint-mix);
+    }
 
     // Type scale.
     out property <length> font-xs: 11px;

@@ -103,12 +103,19 @@ export component Filmstrip inherits Rectangle {
                 border-width: on ? 2px : (in-set ? 1px : 0);
                 border-color: on ? Theme.accent : Theme.accent-muted;
                 animate background { duration: Theme.quick; }
+                // The picture is shorter than the row's full 96px by
+                // the color label's band and a gap above it, whether
+                // or not this frame carries one: reserved so a label
+                // never moves the name below it, and so the band
+                // (drawn further down, inside the border) never
+                // covers the border or the name's own descenders.
+                property <length> photo-h: 96px - 5px;
                 VerticalLayout {
                     padding: Theme.space-2;
                     spacing: Theme.space-1;
                     Image {
                         source: t.image;
-                        height: 96px;
+                        height: photo-h;
                         image-fit: contain;
                     }
                     Text {
@@ -124,7 +131,7 @@ export component Filmstrip inherits Rectangle {
                     x: Theme.space-2;
                     y: Theme.space-2;
                     width: parent.width - 2 * Theme.space-2;
-                    height: 96px;
+                    height: photo-h;
                     border-radius: Theme.radius-sm;
                     border-width: 1px;
                     border-color: Theme.border-strong;
@@ -142,11 +149,24 @@ export component Filmstrip inherits Rectangle {
                 // the cell's height is the strip's.
                 ThumbBadges {
                     x: Theme.space-2 + Theme.space-1;
-                    y: Theme.space-2 + 96px - self.height - Theme.space-1;
+                    y: Theme.space-2 + photo-h - self.height - Theme.space-1;
                     rating: t.rating;
                     flag: t.flag;
                     label: t.label;
                     stars: root.meta-stars;
+                }
+                // The strip sits beside the developed picture, where a
+                // tinted plate would pull the eye's color judgment, so
+                // a color label shows as a band instead: below the
+                // picture and inside the border, clear of both it and
+                // the name below, and clear of the badges over the
+                // picture above.
+                if t.label > 0: Rectangle {
+                    x: Theme.radius-md;
+                    y: Theme.space-2 + photo-h + 2px;
+                    width: parent.width - 2 * Theme.radius-md;
+                    height: 3px;
+                    background: Theme.label-color(t.label);
                 }
                 // `clicked` carries no modifiers, so the press
                 // says which were held and the click reads them.
