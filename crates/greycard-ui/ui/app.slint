@@ -667,6 +667,9 @@ export component App inherits Window {
     callback crop-pressed(int);
     callback crop-dragged(int, length, length);
     callback crop-released();
+    callback crop-draw-pressed(length, length);
+    callback crop-draw-dragged(length, length);
+    callback crop-draw-released();
     callback geometry-changed();
     callback geometry-reset();
     callback level-end(length, length, length, length);
@@ -1676,6 +1679,9 @@ export component App inherits Window {
                 crop-pressed(a) => { root.crop-pressed(a); }
                 crop-dragged(a, b, c) => { root.crop-dragged(a, b, c); }
                 crop-released => { root.crop-released(); }
+                crop-draw-pressed(a, b) => { root.crop-draw-pressed(a, b); }
+                crop-draw-dragged(a, b) => { root.crop-draw-dragged(a, b); }
+                crop-draw-released => { root.crop-draw-released(); }
                 level-end(a, b, c, d) => { root.level-end(a, b, c, d); }
                 guide-stroke(a, b, c, d) => { root.guide-stroke(a, b, c, d); }
                 guide-kept: root.guide-kept;

@@ -472,6 +472,226 @@ impl Geometry {
         at(off.0, off.1)
     }
 
+    /// The nearest point of the turned source to `p` (fractions of the
+    /// plane) a fresh crop can actually be drawn from: what a press
+    /// has to land on before one can be. `p` back unchanged when it
+    /// is on the source already and a crop can be drawn there; `None`
+    /// only for an empty source, where nothing is.
+    ///
+    /// A press can be off the source even inside the plane's own unit
+    /// square: turned, the source is a rotated shape inside it, not
+    /// the square itself, and a corner of the square can sit in a
+    /// wedge the turn cut away.
+    ///
+    /// Absent a keystone, the plane and the source are the same
+    /// distances apart — a quarter turn, a mirror and the fine angle
+    /// are all rigid — so clamping in source pixels, where the source
+    /// is just its own rectangle, and mapping the clamped point back
+    /// through [`Self::to_plane`] is the plane's nearest point too,
+    /// not only a point somewhere on the source: nearest is preserved
+    /// exactly by a distance-preserving map. A keystone bends that a
+    /// little, the source's edges no longer straight lines in the
+    /// plane, but the clamp still lands on the source, which is what
+    /// a fresh crop needs before it needs to be the nearest.
+    ///
+    /// The nearest point can be a corner of the turned source itself,
+    /// where no upright rectangle of even [`MIN_CROP`] fits any way
+    /// round — every one pokes out one side or another of a shape
+    /// that has already turned away from the axes there. Stepped
+    /// straight in from the corner toward the plane's own center
+    /// until one does, rather than handed back a point [`Self::drawn`]
+    /// can never do anything with.
+    pub fn anchored(&self, p: (f32, f32), w: f32, h: f32) -> Option<(f32, f32)> {
+        if w <= 0.0 || h <= 0.0 {
+            return None;
+        }
+        let (pw, ph) = self.plane_size(w, h);
+        let nearest = |p: (f32, f32)| -> Option<(f32, f32)> {
+            let source = self.to_source((p.0 * pw, p.1 * ph), w, h);
+            let clamped = (source.0.clamp(0.0, w), source.1.clamp(0.0, h));
+            let back = self.to_plane(clamped, w, h);
+            let q = (back.0 / pw, back.1 / ph);
+            self.fits(
+                &Crop {
+                    x: q.0,
+                    y: q.1,
+                    w: 0.0,
+                    h: 0.0,
+                },
+                w,
+                h,
+            )
+            .then_some(q)
+        };
+        let q = nearest(p)?;
+        // A minimum crop drawable from `q` at all, any way round: the
+        // same test `drawn` is held to, asked of it directly rather
+        // than assumed from `q` being on the source.
+        let drawable = |q: (f32, f32)| self.drawn(q, q, None, w, h).is_some();
+        if drawable(q) {
+            return Some(q);
+        }
+        let center = (0.5, 0.5);
+        if !drawable(center) {
+            return None;
+        }
+        let (mut lo, mut hi) = (0.0f32, 1.0f32);
+        for _ in 0..24 {
+            let mid = (lo + hi) / 2.0;
+            let step = (q.0 + (center.0 - q.0) * mid, q.1 + (center.1 - q.1) * mid);
+            if drawable(step) {
+                hi = mid;
+            } else {
+                lo = mid;
+            }
+        }
+        Some((q.0 + (center.0 - q.0) * hi, q.1 + (center.1 - q.1) * hi))
+    }
+
+    /// A crop drawn from `anchor` to `to` (fractions of the plane, a
+    /// press and the pointer since): the rectangle between the two,
+    /// no smaller than [`MIN_CROP`], held to `ratio` when given by
+    /// growing the shorter side to match. Unlike a handle's drag,
+    /// going past the anchor on either axis flips the rectangle to
+    /// its far side rather than stopping there: the anchor is a
+    /// corner of whichever rectangle comes out, never a wall.
+    ///
+    /// Too big for the source, an aspect held shrinks both axes
+    /// together, straight back toward the anchor, so it stays held
+    /// all the way in; free, each axis is its own, the largest share
+    /// of the whole reach that still fits and then whatever is left
+    /// of each axis alone from there — the same two-step
+    /// [`Self::drag_within`] takes — so a free crop pushed past one
+    /// edge slides along it rather than shrinking on the other axis
+    /// too.
+    ///
+    /// The anchor itself can already be within [`MIN_CROP`] of an
+    /// edge, or on it — [`Self::anchored`] puts a press pulled in
+    /// from the letterbox exactly there. The way the pointer reaches
+    /// can then have no room at all: the floor pushed out from the
+    /// anchor is what does not fit, not the reach shrunk down to it,
+    /// and no amount of shrinking helps when the floor itself is the
+    /// problem. So a side that will not fit going the pointer's way
+    /// is tried the other way instead, at the pointer's own reach
+    /// first and shrunk from there if that still does not fit either,
+    /// each of the four ways in turn before the next axis flips too.
+    /// `None` only when none of the four fits at all — an empty
+    /// source, or `MIN_CROP` bigger than it — since a crop `drawn`
+    /// cannot itself stand on is worse than none at all.
+    pub fn drawn(
+        &self,
+        anchor: (f32, f32),
+        to: (f32, f32),
+        ratio: Option<f32>,
+        w: f32,
+        h: f32,
+    ) -> Option<Crop> {
+        if w <= 0.0 || h <= 0.0 {
+            return None;
+        }
+        let (pw, ph) = self.plane_size(w, h);
+        let (min_w, min_h) = (MIN_CROP * pw.min(ph) / pw, MIN_CROP * pw.min(ph) / ph);
+        let sized = |ew: f32, eh: f32| -> (f32, f32) {
+            let (ew, eh) = (ew.max(min_w), eh.max(min_h));
+            match ratio {
+                None => (ew, eh),
+                Some(ratio) => {
+                    let width_for = |height: f32| height * ph * ratio / pw;
+                    let height_for = |width: f32| width * pw / ratio / ph;
+                    let by_width = height_for(ew);
+                    if by_width >= eh {
+                        (ew, by_width)
+                    } else {
+                        (width_for(eh), eh)
+                    }
+                }
+            }
+        };
+        // A rectangle at the anchor, `ew` by `eh`, out toward `sx`,
+        // `sy` (positive out from the anchor, negative back into it):
+        // the sign a plain reach's own is if it is not being flipped.
+        let place = |sx: f32, sy: f32, ew: f32, eh: f32| -> Crop {
+            let (x0, x1) = if sx >= 0.0 {
+                (anchor.0, anchor.0 + ew)
+            } else {
+                (anchor.0 - ew, anchor.0)
+            };
+            let (y0, y1) = if sy >= 0.0 {
+                (anchor.1, anchor.1 + eh)
+            } else {
+                (anchor.1 - eh, anchor.1)
+            };
+            Crop {
+                x: x0,
+                y: y0,
+                w: x1 - x0,
+                h: y1 - y0,
+            }
+        };
+        // The whole of a reach `(ex, ey)` (magnitudes) out toward
+        // `sx`, `sy`, or, too big, the largest of it that still fits:
+        // held to an aspect, both axes shrunk together, straight back
+        // toward the anchor; free, each axis its own. `None` when
+        // even the floor does not fit that way.
+        let attempt = |sx: f32, sy: f32, ex: f32, ey: f32| -> Option<Crop> {
+            let build = |ex: f32, ey: f32| -> Crop {
+                let (ew, eh) = sized(ex, ey);
+                place(sx, sy, ew, eh)
+            };
+            let whole = build(ex, ey);
+            if self.fits(&whole, w, h) {
+                return Some(whole);
+            }
+            let shrunk = match ratio {
+                Some(_) => {
+                    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+                    for _ in 0..24 {
+                        let mid = (lo + hi) / 2.0;
+                        if self.fits(&build(ex * mid, ey * mid), w, h) {
+                            lo = mid;
+                        } else {
+                            hi = mid;
+                        }
+                    }
+                    build(ex * lo, ey * lo)
+                }
+                None => {
+                    let share = |from: (f32, f32), to: (f32, f32)| {
+                        let (mut lo, mut hi) = (0.0f32, 1.0f32);
+                        for _ in 0..16 {
+                            let mid = (lo + hi) / 2.0;
+                            let p = (
+                                from.0 + (to.0 - from.0) * mid,
+                                from.1 + (to.1 - from.1) * mid,
+                            );
+                            if self.fits(&build(p.0, p.1), w, h) {
+                                lo = mid;
+                            } else {
+                                hi = mid;
+                            }
+                        }
+                        (from.0 + (to.0 - from.0) * lo, from.1 + (to.1 - from.1) * lo)
+                    };
+                    let mut off = share((0.0, 0.0), (ex, ey));
+                    off = share(off, (ex, off.1));
+                    off = share(off, (off.0, ey));
+                    build(off.0, off.1)
+                }
+            };
+            self.fits(&shrunk, w, h).then_some(shrunk)
+        };
+        let (dx, dy) = (to.0 - anchor.0, to.1 - anchor.1);
+        let (sx, sy) = (
+            if dx >= 0.0 { 1.0f32 } else { -1.0 },
+            if dy >= 0.0 { 1.0f32 } else { -1.0 },
+        );
+        let (ex, ey) = (dx.abs(), dy.abs());
+        attempt(sx, sy, ex, ey)
+            .or_else(|| attempt(-sx, sy, ex, ey))
+            .or_else(|| attempt(sx, -sy, ex, ey))
+            .or_else(|| attempt(-sx, -sy, ex, ey))
+    }
+
     /// The largest crop about `center` (fractions) of width over height
     /// `ratio` that lies on the turned source.
     pub fn largest_fit(&self, center: (f32, f32), ratio: f32, w: f32, h: f32) -> Crop {
@@ -1716,5 +1936,341 @@ mod tests {
             small,
             start.dragged(Handle::BottomRight, 0.05, 0.0, Some(1.0), W, H)
         );
+    }
+
+    #[test]
+    fn a_drawn_crop_runs_free_from_its_anchor_to_the_pointer() {
+        let g = Geometry::default();
+        let c = g.drawn((0.2, 0.3), (0.6, 0.5), None, W, H).unwrap();
+        assert!(
+            (c.x - 0.2).abs() < 1e-6 && (c.y - 0.3).abs() < 1e-6,
+            "{c:?}"
+        );
+        assert!(
+            (c.w - 0.4).abs() < 1e-6 && (c.h - 0.2).abs() < 1e-6,
+            "{c:?}"
+        );
+    }
+
+    #[test]
+    fn a_drawn_crop_holds_the_aspect_asked_for() {
+        let g = Geometry::default();
+        // A mostly vertical reach with a wide aspect: the height is
+        // the one reached, and the width grows past what was dragged
+        // to keep the ratio.
+        let c = g.drawn((0.1, 0.1), (0.14, 0.5), Some(2.0), W, H).unwrap();
+        assert!((c.h - 0.4).abs() < 1e-6, "{c:?}");
+        assert!(((c.w * W) / (c.h * H) - 2.0).abs() < 1e-3, "{c:?}");
+        // And the other way about: a mostly horizontal reach with a
+        // tall aspect grows the height instead.
+        let c = g.drawn((0.4, 0.4), (0.5, 0.42), Some(0.5), W, H).unwrap();
+        assert!((c.w - 0.1).abs() < 1e-6, "{c:?}");
+        assert!(((c.w * W) / (c.h * H) - 0.5).abs() < 1e-3, "{c:?}");
+    }
+
+    #[test]
+    fn a_drawn_crop_flips_past_its_anchor_instead_of_stopping_there() {
+        let g = Geometry::default();
+        // Dragged up and to the left of the anchor: the anchor is now
+        // the bottom right corner, not a wall the rectangle stops at.
+        let c = g.drawn((0.6, 0.6), (0.3, 0.4), None, W, H).unwrap();
+        assert!(
+            (c.x - 0.3).abs() < 1e-6 && (c.y - 0.4).abs() < 1e-6,
+            "{c:?}"
+        );
+        assert!(
+            (c.w - 0.3).abs() < 1e-6 && (c.h - 0.2).abs() < 1e-6,
+            "{c:?}"
+        );
+        // A continuous drag that crosses the anchor on the way: the
+        // rectangle at the end reflects only where the pointer ended
+        // up, not anything it passed through.
+        let mid = g.drawn((0.5, 0.5), (0.7, 0.6), None, W, H).unwrap();
+        assert!((mid.x - 0.5).abs() < 1e-6 && (mid.w - 0.2).abs() < 1e-6);
+        let past = g.drawn((0.5, 0.5), (0.3, 0.6), None, W, H).unwrap();
+        assert!(
+            (past.x - 0.3).abs() < 1e-6 && (past.w - 0.2).abs() < 1e-6,
+            "{past:?}"
+        );
+    }
+
+    #[test]
+    fn a_drawn_crop_never_falls_under_the_minimum() {
+        let g = Geometry::default();
+        // A straight vertical drag, free: the width would be zero
+        // without a floor, and `frame` would export a sliver.
+        let c = g.drawn((0.3, 0.3), (0.3, 0.32), None, W, H).unwrap();
+        assert!(c.w > 0.0, "{c:?}");
+        let f = g.frame(W, H);
+        assert!(f.size.0 >= 1.0, "{f:?}");
+        // Too small a reach either way: floored on both axes, not a
+        // sliver the other way either.
+        let c = g.drawn((0.3, 0.3), (0.301, 0.301), None, W, H).unwrap();
+        assert!(c.w > 0.003 && c.h > 0.003, "{c:?}");
+        // Held to an aspect near an edge: still floored, not the
+        // 0.01x0.01 a shrink with no floor left it at.
+        let c = g
+            .drawn((0.99, 0.99), (0.991, 0.991), Some(1.0), W, H)
+            .unwrap();
+        assert!(c.w > 0.003 && c.h > 0.003, "{c:?}");
+    }
+
+    #[test]
+    fn a_free_drawn_crop_past_an_edge_slides_along_it() {
+        let g = Geometry::default();
+        // Past the right edge on one axis only: that axis clamps to
+        // the edge and the other keeps the whole of its own reach,
+        // rather than both shrinking together as an aspect would.
+        let c = g.drawn((0.1, 0.1), (1.2, 0.95), None, W, H).unwrap();
+        assert!((c.x + c.w - 1.0).abs() < 1e-3, "{c:?}");
+        assert!((c.h - 0.85).abs() < 1e-3, "{c:?}");
+    }
+
+    #[test]
+    fn a_press_off_the_source_is_pulled_onto_it_or_refused() {
+        let g = Geometry::default();
+        // Just past the top left corner: pulled onto the source, not
+        // off it, and a draw from there stays free.
+        let a = g.anchored((-0.05, -0.05), W, H).unwrap();
+        assert!(g.fits(
+            &Crop {
+                x: a.0,
+                y: a.1,
+                w: 0.0,
+                h: 0.0
+            },
+            W,
+            H
+        ));
+        assert!(a.0 >= -0.01 && a.1 >= -0.01, "{a:?}");
+        let c = g.drawn(a, (0.5, 0.4), None, W, H).unwrap();
+        assert!(g.fits(&c, W, H), "{c:?}");
+
+        // A small turn: a point just inside the plane's own corner is
+        // in a wedge the turn cut away, off the source though it is
+        // within the unit square. Pulled onto the source all the same.
+        let turned = Geometry {
+            angle: 3.0,
+            ..Default::default()
+        };
+        assert!(!turned.fits(
+            &Crop {
+                x: 0.005,
+                y: 0.005,
+                w: 0.0,
+                h: 0.0
+            },
+            W,
+            H
+        ));
+        let a = turned.anchored((0.005, 0.005), W, H).unwrap();
+        assert!(turned.fits(
+            &Crop {
+                x: a.0,
+                y: a.1,
+                w: 0.0,
+                h: 0.0
+            },
+            W,
+            H
+        ));
+
+        // An empty source: nothing is on it, not even the center.
+        assert!(g.anchored((0.5, 0.5), 0.0, 0.0).is_none());
+        assert!(g.drawn((0.1, 0.1), (0.5, 0.5), None, 0.0, 0.0).is_none());
+    }
+
+    #[test]
+    fn anchored_finds_the_nearest_point_not_a_point_toward_the_center() {
+        let g = Geometry::default();
+        // Right of the picture at a fifth of the way down: the
+        // nearest point is straight across, at the same height, not
+        // pulled down toward the middle by a line to the center.
+        let a = g.anchored((1.1, 0.2), W, H).unwrap();
+        assert!(
+            (a.0 - 1.0).abs() < 1e-4 && (a.1 - 0.2).abs() < 1e-4,
+            "{a:?}"
+        );
+        // Straight out from the top right corner: the corner itself,
+        // not a point a line to the center would have found.
+        let a = g.anchored((1.5, 0.0), W, H).unwrap();
+        assert!(
+            (a.0 - 1.0).abs() < 1e-4 && (a.1 - 0.0).abs() < 1e-4,
+            "{a:?}"
+        );
+        // A small turn: the nearest point to a corner of the unit
+        // square a wedge the turn cut away sits near the edge it is
+        // closest to, not pulled a tenth of the way toward the
+        // middle the way a line to the center would.
+        let turned = Geometry {
+            angle: 3.0,
+            ..Default::default()
+        };
+        let a = turned.anchored((0.005, 0.005), W, H).unwrap();
+        assert!(a.0 < 0.02 && a.1 < 0.06, "{a:?} is not near the edge");
+    }
+
+    /// The nearest point to a press just outside a corner of a turned
+    /// source can be that corner itself, where no upright rectangle
+    /// of even the minimum fits any way round — every one pokes out
+    /// one side or another of a shape that has already turned away
+    /// from the axes there. `anchored` has to step in from it rather
+    /// than hand back a point nothing can ever be drawn from.
+    #[test]
+    fn anchored_steps_in_from_a_corner_nothing_can_be_drawn_from() {
+        let turned = Geometry {
+            angle: 3.0,
+            ..Default::default()
+        };
+        for p in [(1.02, 0.99), (-0.02, -0.02)] {
+            let a = turned.anchored(p, W, H).unwrap();
+            assert!(
+                turned.drawn(a, a, None, W, H).is_some(),
+                "{p:?} -> {a:?} still draws nothing"
+            );
+            assert!(
+                turned.drawn(a, (0.5, 0.5), None, W, H).is_some(),
+                "{p:?} -> {a:?} cannot even draw toward the middle"
+            );
+        }
+        // The same under a keystone, near a corner it also pulls out
+        // of true.
+        let keystoned = Geometry {
+            vertical: 35.0,
+            horizontal: -35.0,
+            ..Default::default()
+        };
+        let p = (-0.02, -0.02);
+        let a = keystoned.anchored(p, W, H).unwrap();
+        assert!(
+            keystoned.drawn(a, a, None, W, H).is_some(),
+            "{p:?} -> {a:?} still draws nothing"
+        );
+        assert!(
+            keystoned.drawn(a, (0.5, 0.5), None, W, H).is_some(),
+            "{p:?} -> {a:?} cannot even draw toward the middle"
+        );
+    }
+
+    /// A press at, or just past, the right or bottom edge, dragged
+    /// further out still: the floor a handle's own drag would apply
+    /// going the pointer's way hangs the rectangle off the edge, the
+    /// same shape the first round's wiped crop took at the corners.
+    /// `drawn` has to turn the floor inward instead, or refuse.
+    #[test]
+    fn a_drawn_crop_floors_inward_at_a_letterbox_edge() {
+        let g = Geometry::default();
+        // Pressed past the right edge and dragged further out still:
+        // anchored to the edge, then drawn with no room to its right,
+        // so the rectangle the reach asks for lands to its left.
+        let anchor = g.anchored((1.1, 0.2), W, H).unwrap();
+        let c = g.drawn(anchor, (1.05, 0.7), None, W, H).unwrap();
+        assert!(g.fits(&c, W, H), "{c:?}");
+        assert!(c.x + c.w <= anchor.0 + 1e-3, "{c:?} hangs off the edge");
+
+        // Pressed just inside the edge, close enough that even the
+        // floor going right does not fit: the same, at the reach's
+        // own size once flipped, not shrunk to the floor besides.
+        let c = g.drawn((0.995, 0.5), (1.2, 0.7), None, W, H).unwrap();
+        assert!(g.fits(&c, W, H), "{c:?}");
+        assert!(
+            (c.h - 0.2).abs() < 1e-3,
+            "{c:?} shrank on its free axis too"
+        );
+
+        // Exactly on the edge, dragged with no horizontal reach at
+        // all: still turns inward rather than a sliver hanging out.
+        let c = g.drawn((1.0, 0.5), (1.0, 0.2), None, W, H).unwrap();
+        assert!(g.fits(&c, W, H), "{c:?}");
+
+        // Held to an aspect, at the bottom right corner: floors
+        // inward on both axes together, the aspect still held.
+        let c = g.drawn((1.0, 1.0), (1.05, 1.03), Some(1.5), W, H).unwrap();
+        assert!(g.fits(&c, W, H), "{c:?}");
+        assert!((c.w * W / (c.h * H) - 1.5).abs() < 1e-2, "{c:?}");
+
+        // The same, turned 3°: the mapping differs but the contract
+        // does not — whatever comes back still fits.
+        let turned = Geometry {
+            angle: 3.0,
+            ..Default::default()
+        };
+        let anchor = turned.anchored((1.02, 0.5), W, H).unwrap();
+        let c = turned.drawn(anchor, (1.1, 0.6), None, W, H).unwrap();
+        assert!(turned.fits(&c, W, H), "{c:?}");
+    }
+
+    /// Every crop `drawn` hands back fits the source it was drawn on
+    /// — the hard requirement a letterbox press broke — over a grid
+    /// of anchors (on the source already, or pulled onto it from past
+    /// every edge and corner) and pointers (short reaches, reaches
+    /// well past the far side, and everything between), free and held
+    /// to two aspects, upright, turned a quarter, turned 3°, and
+    /// keystoned. And every anchor `anchored` accepts is one a crop
+    /// can actually be drawn from: at least a drag toward the plane's
+    /// own center has to find something, or `anchored` handed back a
+    /// point nothing can ever be drawn from, which is what let a
+    /// press just outside a corner of a turned source draw nothing at
+    /// all and go unnoticed the first time this test was written,
+    /// since it only ever checked `Some` results, never that there
+    /// were any.
+    #[test]
+    fn every_drawn_crop_fits_and_every_anchor_can_draw_toward_the_middle() {
+        let raw: Vec<f32> = vec![-0.3, -0.02, 0.0, 0.3, 0.5, 0.7, 1.0, 1.02, 1.3];
+        for g in [
+            Geometry::default(),
+            Geometry {
+                angle: 3.0,
+                ..Default::default()
+            },
+            Geometry {
+                turns: 1,
+                ..Default::default()
+            },
+            Geometry {
+                vertical: 20.0,
+                horizontal: -15.0,
+                ..Default::default()
+            },
+        ] {
+            let anchors: Vec<(f32, f32)> = raw
+                .iter()
+                .flat_map(|&x| raw.iter().map(move |&y| (x, y)))
+                .filter_map(|p| g.anchored(p, W, H))
+                .collect();
+            for &anchor in &anchors {
+                assert!(
+                    g.drawn(anchor, (0.5, 0.5), None, W, H).is_some(),
+                    "{g:?} anchor {anchor:?} cannot draw toward the middle"
+                );
+                for &tx in &raw {
+                    for &ty in &raw {
+                        for ratio in [None, Some(1.5f32), Some(0.5f32)] {
+                            if let Some(c) = g.drawn(anchor, (tx, ty), ratio, W, H) {
+                                assert!(
+                                    g.fits(&c, W, H),
+                                    "{g:?} anchor {anchor:?} to ({tx},{ty}) ratio {ratio:?}: {c:?}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_drawn_crop_shrinks_to_the_frame_and_keeps_its_aspect() {
+        let g = Geometry::default();
+        // Reaching well past the source's edge: clamped to it, the
+        // anchor still a corner, the aspect still held.
+        let c = g.drawn((0.8, 0.5), (1.6, 1.6), Some(1.0), W, H).unwrap();
+        assert!(g.fits(&c, W, H), "{c:?}");
+        assert!(
+            (c.x - 0.8).abs() < 1e-3 && (c.y - 0.5).abs() < 1e-3,
+            "{c:?}"
+        );
+        assert!((c.w * W - c.h * H).abs() < 1.0, "{c:?}");
+        assert!((c.x + c.w - 1.0).abs() < 1e-3, "{c:?}");
     }
 }

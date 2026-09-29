@@ -766,6 +766,13 @@ export component CropHandle inherits TouchArea {
     mouse-cursor: root.cursor;
     pointer-event(e) => {
         self.alt = e.modifiers.alt;
+        // Cancel carries button `other`, always, so it is read ahead
+        // of the left-button filter below or a grab the window took
+        // back mid-drag would never call `dropped`.
+        if (e.kind == PointerEventKind.cancel) {
+            root.dropped();
+            return;
+        }
         if (e.button != PointerEventButton.left) { return; }
         if (e.kind == PointerEventKind.down) {
             self.press-x = self.absolute-position.x + self.mouse-x;

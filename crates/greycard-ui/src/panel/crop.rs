@@ -1,4 +1,4 @@
-use crate::panel::viewport::{effective_zoom, view_to_source};
+use crate::panel::viewport::{effective_zoom, view_to_plane, view_to_source};
 use crate::*;
 
 /// Put a geometry on the panel.
@@ -113,6 +113,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             st.zoom = 0.0;
             st.image_size = (0, 0); // re-centered on the next frame
             st.crop_drag = None;
+            st.crop_draw = None;
             app.window().request_redraw();
         });
     }
@@ -167,6 +168,62 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             if state.borrow_mut().crop_drag.take().is_some() {
+                app.invoke_view_changed();
+            }
+        });
+    }
+    // A press outside the crop, on the picture: a fresh crop from the
+    // press point, drawn to the pointer and held to the aspect in
+    // force, exactly as the Slint side only calls this once a drag
+    // has cleared a few pixels.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_crop_draw_pressed(move |x, y| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let st = state.borrow();
+            let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
+            let raw = view_to_plane(&st, &app, x, y);
+            drop(st);
+            // Off the source (the letterbox, or a wedge a turn cut
+            // away inside the plane's own square): pulled onto it, or
+            // no anchor at all and so no draw, rather than a zero-size
+            // crop that would wipe out today's.
+            let geometry = read_geometry(&app);
+            state.borrow_mut().crop_draw = geometry.anchored(raw, sw, sh);
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_crop_draw_dragged(move |x, y| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let st = state.borrow();
+            let Some(anchor) = st.crop_draw else {
+                return;
+            };
+            let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
+            let to = view_to_plane(&st, &app, x, y);
+            drop(st);
+            let geometry = read_geometry(&app);
+            let (pw, ph) = geometry.plane_size(sw, sh);
+            let ratio = geometry.aspect.ratio(pw, ph, geometry.portrait);
+            let Some(drawn) = geometry.drawn(anchor, to, ratio, sw, sh) else {
+                return;
+            };
+            set_crop(&app, Some(drawn));
+            app.window().request_redraw();
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_crop_draw_released(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            if state.borrow_mut().crop_draw.take().is_some() {
                 app.invoke_view_changed();
             }
         });
@@ -343,8 +400,265 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use super::{refit_crop, show_geometry};
-    use crate::testing::{retouch_state, window};
+    use crate::App;
+    use crate::testing::{drag, retouch_state, window};
+    use i_slint_backend_testing::ElementHandle;
+    use slint::ComponentHandle;
+
+    /// A source small enough that the whole of it, and the room
+    /// around it, sit inside a test window's viewport at zoom 1.
+    const SW: f32 = 400.0;
+    const SH: f32 = 300.0;
+
+    /// The viewport's own local position (logical pixels, no window
+    /// offset) of a point of the plane at fraction `f`: the inverse
+    /// of `view_to_plane` at zoom 1, center (0, 0). What the render
+    /// step works out for the overlay, and what a test works out by
+    /// hand for where to press.
+    fn local(app: &App, f: (f32, f32)) -> (f32, f32) {
+        let scale = app.window().scale_factor();
+        let (vw, vh) = (app.get_view_width() as f32, app.get_view_height() as f32);
+        ((f.0 * SW + vw / 2.0) / scale, (f.1 * SH + vh / 2.0) / scale)
+    }
+
+    /// A window in crop mode, over a source of `SW` by `SH`, zoom
+    /// pinned at one so a test can work out the view's mapping by
+    /// hand, with a small crop already at the middle so there is
+    /// room outside it to press on. The overlay's own rectangle is
+    /// set to match by hand too, exactly as the render step would
+    /// have left it, since nothing here drives that step to run.
+    /// The viewport's own top left, in the window's own logical
+    /// pixels.
+    fn draw_setup(app: &App) -> (Rc<RefCell<crate::State>>, slint::LogicalPosition) {
+        let (state, _worker) = retouch_state(app);
+        {
+            let mut st = state.borrow_mut();
+            st.source_size = (SW as u32, SH as u32);
+            st.zoom = 1.0;
+        }
+        app.set_crop_mode(true);
+        app.set_geo_has_crop(true);
+        app.set_geo_crop_x(0.4);
+        app.set_geo_crop_y(0.4);
+        app.set_geo_crop_w(0.2);
+        app.set_geo_crop_h(0.2);
+        let (l, t) = local(app, (0.4, 0.4));
+        let (r, b) = local(app, (0.6, 0.6));
+        app.set_crop_left(l);
+        app.set_crop_top(t);
+        app.set_crop_width(r - l);
+        app.set_crop_height(b - t);
+        let base = ElementHandle::find_by_element_type_name(app, "Viewport")
+            .next()
+            .expect("the viewport is on screen")
+            .absolute_position();
+        (state, base)
+    }
+
+    /// The window position (logical pixels) of a point of the plane
+    /// at fraction `f`: what a test presses or drags to, to land on a
+    /// fraction it chose.
+    fn at(app: &App, base: slint::LogicalPosition, f: (f32, f32)) -> (f32, f32) {
+        let p = local(app, f);
+        (base.x + p.0, base.y + p.1)
+    }
+
+    #[test]
+    fn a_drag_outside_the_crop_draws_a_new_one_with_the_right_fractions() {
+        let app = window(1);
+        let (_state, base) = draw_setup(&app);
+        // Well clear of the crop at the middle (0.4 to 0.6 each way),
+        // to its near corner and past its far one.
+        let press = at(&app, base, (0.05, 0.05));
+        let to = at(&app, base, (0.9, 0.85));
+        drag(&app, &[press, to]);
+        assert!(app.get_geo_has_crop());
+        let got = (
+            app.get_geo_crop_x(),
+            app.get_geo_crop_y(),
+            app.get_geo_crop_w(),
+            app.get_geo_crop_h(),
+        );
+        let want = (0.05f32, 0.05f32, 0.85f32, 0.8f32);
+        assert!(
+            (got.0 - want.0).abs() < 5e-3
+                && (got.1 - want.1).abs() < 5e-3
+                && (got.2 - want.2).abs() < 5e-3
+                && (got.3 - want.3).abs() < 5e-3,
+            "{got:?} vs {want:?}"
+        );
+    }
+
+    #[test]
+    fn an_aspect_set_holds_while_a_crop_is_drawn() {
+        let app = window(1);
+        let (_state, base) = draw_setup(&app);
+        app.set_aspect_name("1:1".into());
+        let press = at(&app, base, (0.05, 0.05));
+        let to = at(&app, base, (0.09, 0.45));
+        drag(&app, &[press, to]);
+        assert!(app.get_geo_has_crop());
+        let (w, h) = (app.get_geo_crop_w() * SW, app.get_geo_crop_h() * SH);
+        assert!((w - h).abs() < 1.0, "{w} by {h} is not square");
+    }
+
+    #[test]
+    fn a_tiny_drag_outside_the_crop_changes_nothing() {
+        let app = window(1);
+        let (_state, base) = draw_setup(&app);
+        let press = at(&app, base, (0.05, 0.05));
+        let to = (press.0 + 2.0, press.1 + 1.0);
+        drag(&app, &[press, to]);
+        assert_eq!(app.get_geo_crop_x(), 0.4);
+        assert_eq!(app.get_geo_crop_y(), 0.4);
+        assert_eq!(app.get_geo_crop_w(), 0.2);
+        assert_eq!(app.get_geo_crop_h(), 0.2);
+    }
+
+    #[test]
+    fn a_drag_inside_the_crop_still_moves_it() {
+        let app = window(1);
+        let (_state, base) = draw_setup(&app);
+        let press = at(&app, base, (0.5, 0.5));
+        let to = (press.0 + 40.0, press.1);
+        drag(&app, &[press, to]);
+        let scale = app.window().scale_factor();
+        let want_x = 0.4 + 40.0 * scale / SW;
+        assert!(
+            (app.get_geo_crop_x() - want_x).abs() < 5e-3,
+            "{}",
+            app.get_geo_crop_x()
+        );
+        assert!((app.get_geo_crop_w() - 0.2).abs() < 5e-3);
+        assert!((app.get_geo_crop_h() - 0.2).abs() < 5e-3);
+    }
+
+    #[test]
+    fn drawing_past_the_anchor_flips_the_rectangle() {
+        let app = window(1);
+        let (_state, base) = draw_setup(&app);
+        let press = at(&app, base, (0.2, 0.2));
+        let mid = at(&app, base, (0.35, 0.35));
+        let past = at(&app, base, (0.05, 0.35));
+        drag(&app, &[press, mid, past]);
+        let got = (
+            app.get_geo_crop_x(),
+            app.get_geo_crop_y(),
+            app.get_geo_crop_w(),
+            app.get_geo_crop_h(),
+        );
+        // The pointer crossed back over the anchor's x: the anchor is
+        // now the rectangle's right edge, not a wall it stopped at.
+        let want = (0.05f32, 0.2f32, 0.15f32, 0.15f32);
+        assert!(
+            (got.0 - want.0).abs() < 5e-3
+                && (got.1 - want.1).abs() < 5e-3
+                && (got.2 - want.2).abs() < 5e-3
+                && (got.3 - want.3).abs() < 5e-3,
+            "{got:?} vs {want:?}"
+        );
+    }
+
+    #[test]
+    fn a_press_off_the_picture_is_pulled_onto_it_not_wiped() {
+        let app = window(1);
+        let (_state, base) = draw_setup(&app);
+        // Just past the top left corner of the plane: off the
+        // picture, where a zero-size crop there used to fail to fit
+        // and fall back to the whole frame, wiping the one set.
+        let press = at(&app, base, (-0.05, -0.05));
+        let to = at(&app, base, (0.5, 0.4));
+        drag(&app, &[press, to]);
+        assert!(app.get_geo_has_crop());
+        let (w, h) = (app.get_geo_crop_w(), app.get_geo_crop_h());
+        assert!(w > 0.3 && w < 0.6 && h > 0.2 && h < 0.5, "{w} by {h}");
+    }
+
+    #[test]
+    fn a_press_in_a_corner_a_turn_cut_away_is_pulled_onto_the_picture() {
+        let app = window(1);
+        let (_state, base) = draw_setup(&app);
+        // A small straighten: a point just inside the plane's own
+        // corner sits in a wedge the turn cut away, off the source
+        // though it is within the unit square.
+        app.set_geo_angle(3.0);
+        let press = at(&app, base, (0.005, 0.005));
+        let to = at(&app, base, (0.5, 0.4));
+        drag(&app, &[press, to]);
+        assert!(app.get_geo_has_crop());
+        let (w, h) = (app.get_geo_crop_w(), app.get_geo_crop_h());
+        assert!(w > 0.0 && h > 0.0 && w < 0.6 && h < 0.5, "{w} by {h}");
+    }
+
+    #[test]
+    fn a_plain_click_outside_the_crop_still_zooms() {
+        let app = window(1);
+        let (_state, base) = draw_setup(&app);
+        let zoomed = Rc::new(RefCell::new(false));
+        let counted = zoomed.clone();
+        app.on_toggle_zoom(move |_, _| *counted.borrow_mut() = true);
+        let press = at(&app, base, (0.05, 0.05));
+        crate::testing::click(&app, press.0, press.1);
+        assert!(*zoomed.borrow(), "a click under the threshold still zooms");
+        // And the crop is untouched: a click drew nothing.
+        assert_eq!(app.get_geo_crop_x(), 0.4);
+        assert_eq!(app.get_geo_crop_w(), 0.2);
+    }
+
+    #[test]
+    fn a_right_click_outside_the_crop_still_opens_the_frame_menu() {
+        let app = window(1);
+        let (_state, base) = draw_setup(&app);
+        let press = at(&app, base, (0.05, 0.05));
+        let position = slint::LogicalPosition::new(press.0, press.1);
+        let button = slint::platform::PointerEventButton::Right;
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerPressed { position, button });
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerReleased { position, button });
+        assert!(app.get_menu_up(), "a right click still opens the menu");
+        // And drew nothing: it is not a draw gesture.
+        assert_eq!(app.get_geo_crop_x(), 0.4);
+    }
+
+    #[test]
+    fn a_pointer_cancel_mid_draw_clears_the_anchor() {
+        let app = window(1);
+        let (state, base) = draw_setup(&app);
+        let press = at(&app, base, (0.05, 0.05));
+        let to = at(&app, base, (0.5, 0.4));
+        let button = slint::platform::PointerEventButton::Left;
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(press.0, press.1),
+            });
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerPressed {
+                position: slint::LogicalPosition::new(press.0, press.1),
+                button,
+            });
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(to.0, to.1),
+            });
+        assert!(
+            state.borrow().crop_draw.is_some(),
+            "the drag cleared the threshold and started a draw"
+        );
+        // The window lets go of the gesture instead of a release
+        // ending it (focus lost, here simulated as the pointer
+        // leaving the window mid-drag).
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerExited);
+        assert!(
+            state.borrow().crop_draw.is_none(),
+            "the cancel let go of the anchor"
+        );
+    }
 
     /// The frame is measured as it is selected, culled or turned, so
     /// an edit normally reaches the panel already brought up to

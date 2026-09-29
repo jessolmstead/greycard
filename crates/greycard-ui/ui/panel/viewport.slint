@@ -61,6 +61,11 @@ export component Viewport inherits Rectangle {
     callback crop-pressed(int);
     callback crop-dragged(int, length, length);
     callback crop-released();
+    // A press outside the crop, on the picture: drawing a new one
+    // from there rather than resizing or moving the one there is.
+    callback crop-draw-pressed(length, length);
+    callback crop-draw-dragged(length, length);
+    callback crop-draw-released();
     callback level-end(length, length, length, length);
     callback guide-stroke(length, length, length, length);
     in property <[Pt]> guide-kept;
@@ -118,8 +123,14 @@ export component Viewport inherits Rectangle {
         // Whether the press opened the frame menu: its release is
         // then no click, and a Mac's Control+click no pan.
         property <bool> menu-down;
+        // Whether a left drag outside the crop, in crop mode, is
+        // drawing a new one: set on the move that first clears the
+        // drag threshold, so the release knows to end the gesture
+        // there rather than reading as a click.
+        property <bool> crop-drawing;
         mouse-cursor: root.picking != "" ? (root.dropper.width > 0 ? MouseCursor.none : MouseCursor.crosshair)
             : root.placing != "" || root.retouch-mode != "" ? MouseCursor.crosshair
+            : root.crop-mode ? MouseCursor.crosshair
             : self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
         // The keys belong to the picture whenever the pointer is
         // on it, or the last press was: a clicked slider keeps
@@ -170,6 +181,7 @@ export component Viewport inherits Rectangle {
                 self.down-x = self.mouse-x;
                 self.down-y = self.mouse-y;
                 self.dragged = false;
+                self.crop-drawing = false;
             } else if (e.kind == PointerEventKind.up) {
                 if (self.menu-down) {
                     self.menu-down = false;
@@ -177,6 +189,8 @@ export component Viewport inherits Rectangle {
                     root.pick-released();
                 } else if (root.placing != "" || root.retouch-mode != "") {
                     root.place-released();
+                } else if (self.crop-drawing) {
+                    root.crop-draw-released();
                 } else if (!self.dragged && e.button == PointerEventButton.left) {
                     // A click on the empty picture lets go
                     // of a chosen repair, as Esc does.
@@ -184,6 +198,19 @@ export component Viewport inherits Rectangle {
                     // A click that did not drag: zoom in here, or back out.
                     root.toggle-zoom(self.mouse-x, self.mouse-y);
                 }
+            } else if (e.kind == PointerEventKind.cancel) {
+                // The window let go of the gesture rather than this
+                // press ending it (focus lost, the platform taking
+                // over): whatever was mid-flight ends here too, so
+                // nothing is left waiting for a release that is not
+                // coming.
+                if (self.crop-drawing) {
+                    root.crop-draw-released();
+                }
+                self.menu-down = false;
+                self.picked-down = false;
+                self.dragged = false;
+                self.crop-drawing = false;
             }
         }
         moved => {
@@ -195,6 +222,18 @@ export component Viewport inherits Rectangle {
                     root.pick-dragged(self.mouse-x, self.mouse-y);
                 } else if (root.placing != "" || root.retouch-mode != "") {
                     root.place-dragged(self.mouse-x, self.mouse-y);
+                } else if (self.dragged && !self.picked-down && root.crop-mode && !root.placeholder) {
+                    // Crop mode is a mode: a drag out here draws,
+                    // whether or not the picture is zoomed in enough
+                    // that a drag would otherwise have panned it. Not
+                    // over the camera's JPEG though, the same as the
+                    // overlay itself: there is nothing there to draw
+                    // against yet, so a drag still just pans.
+                    if (!self.crop-drawing) {
+                        self.crop-drawing = true;
+                        root.crop-draw-pressed(self.down-x, self.down-y);
+                    }
+                    root.crop-draw-dragged(self.mouse-x, self.mouse-y);
                 } else if (self.dragged && !self.picked-down) {
                     root.pan(self.mouse-x - self.last-x, self.mouse-y - self.last-y);
                 }

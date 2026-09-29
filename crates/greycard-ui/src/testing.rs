@@ -50,6 +50,31 @@ pub(crate) fn click(app: &App, x: f32, y: f32) {
     }
 }
 
+/// A press at `path[0]`, a move through each point after it, and a
+/// release at the last: what dragging across the window, logical
+/// pixels from its top left, does. Each point is its own
+/// `PointerMoved`, so a caller after a click-versus-drag threshold
+/// gets to decide, on the way through, which side of it a step lands.
+pub(crate) fn drag(app: &App, path: &[(f32, f32)]) {
+    let at = |p: (f32, f32)| slint::LogicalPosition::new(p.0, p.1);
+    let button = slint::platform::PointerEventButton::Left;
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: at(path[0]),
+    });
+    app.window().dispatch_event(WindowEvent::PointerPressed {
+        position: at(path[0]),
+        button,
+    });
+    for &p in &path[1..] {
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position: at(p) });
+    }
+    app.window().dispatch_event(WindowEvent::PointerReleased {
+        position: at(*path.last().unwrap()),
+        button,
+    });
+}
+
 pub(crate) fn press(app: &App, key: impl Into<slint::SharedString>) {
     let text = key.into();
     app.window()

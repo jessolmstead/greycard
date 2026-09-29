@@ -327,6 +327,33 @@ pub(crate) fn view_to_source(st: &State, app: &App, x: f32, y: f32) -> (f32, f32
     (at.0 / sw, at.1 / sw)
 }
 
+/// A point of the view (logical pixels) in the crop's own units:
+/// fractions of the leveled plane, the same a handle's drag reads and
+/// writes. Where `view_to_source` goes on to the source through the
+/// perspective and the turn, this stops a step earlier, at the plane
+/// a fresh crop is drawn on.
+pub(crate) fn view_to_plane(st: &State, app: &App, x: f32, y: f32) -> (f32, f32) {
+    let scale = app.window().scale_factor();
+    let (vw, vh) = (
+        app.get_view_width().max(1) as u32,
+        app.get_view_height().max(1) as u32,
+    );
+    let zoom = effective_zoom(st, vw, vh);
+    let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
+    let geometry = read_geometry(app);
+    let frame = if app.get_crop_mode() {
+        geometry.bounds(sw, sh)
+    } else {
+        geometry.frame(sw, sh)
+    };
+    let (pw, ph) = geometry.plane_size(sw, sh);
+    let r = (
+        (x * scale - vw as f32 / 2.0) / zoom + st.center.0 + frame.origin.0,
+        (y * scale - vh as f32 / 2.0) / zoom + st.center.1 + frame.origin.1,
+    );
+    (r.0 / pw, r.1 / ph)
+}
+
 /// The developed picture under a point of the view (logical pixels):
 /// the mean of a few pixels about it, in the working space at the
 /// white it was developed at; `None` off the picture or without one.

@@ -93,6 +93,7 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
     app.set_level_mode(false);
     app.set_crop_mode(false);
     st.crop_drag = None;
+    st.crop_draw = None;
     st.mask_drag = None;
     st.patch_drag = None;
     if st.current.is_some() {

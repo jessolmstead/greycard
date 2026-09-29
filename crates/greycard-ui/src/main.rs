@@ -615,6 +615,9 @@ pub(crate) struct State {
     pub(crate) turn_pressed: Option<std::time::Instant>,
     /// The crop as it was when a handle was pressed.
     pub(crate) crop_drag: Option<Crop>,
+    /// The anchor of a crop being drawn fresh from a press outside
+    /// today's, fractions of the leveled plane, [`Crop`]'s own units.
+    pub(crate) crop_draw: Option<(f32, f32)>,
     /// Which look the panel edits: an adjustment by index, or the
     /// global one. The panel is the truth for that look; `edit` is
     /// for everything else, the other adjustments included.
@@ -926,6 +929,7 @@ impl State {
             shown_turn: None,
             turn_pressed: None,
             crop_drag: None,
+            crop_draw: None,
             target: None,
             placing: None,
             picking: None,
