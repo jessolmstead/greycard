@@ -226,11 +226,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // one. Read before the strip is filled so a folder culled last
     // week opens with its badges on.
     let (mut sidecars, mut seed_blend) = load_sidecars(&files, !cli.no_sidecars);
-    let thumbs = Rc::new(VecModel::<Thumb>::default());
-    for (f, sidecar) in files.iter().zip(&sidecars) {
-        thumbs.push(thumb_for(f, &sidecar.meta));
-    }
-    app.set_thumbs(ModelRc::from(thumbs.clone()));
+    crate::cells::set_rows(
+        &app,
+        files
+            .iter()
+            .zip(&sidecars)
+            .map(|(f, sidecar)| thumb_for(f, &sidecar.meta))
+            .collect(),
+    );
     // The grid's geometry, from one place: the layout in the .slint
     // file and the arithmetic in `grid` read the same numbers.
     app.set_grid_gap(grid::GAP);
@@ -363,10 +366,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             && cli.export.is_none()
             && cli.time_sharpen.is_none()
             && cli.time_cull.is_none()
-            && cli.time_select.is_none(),
+            && cli.time_select.is_none()
+            && cli.time_scroll.is_none(),
         time_sharpen: cli.time_sharpen.map(|n| (n, None, Vec::new())),
         time_cull: cli.time_cull.map(|n| (n, Vec::new())),
         time_select: cli.time_select.map(|n| (n, Vec::new(), Vec::new())),
+        time_scroll: cli
+            .time_scroll
+            .map(|n| crate::panel::browser::ScrollTiming::new(n, cli.time_scroll_by)),
         snapshot_placeholder: cli.snapshot_placeholder,
         cull_develop: cli.cull_develop,
         turn_at_start: cli.turn.filter(|q| q.rem_euclid(4) != 0),
@@ -386,8 +393,6 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         filter,
         awaiting_index: !facets_wanted.is_empty(),
         facets_wanted,
-        // The rows as `thumbs` above put them on the window.
-        rows_shown: files.clone(),
         ..State::empty(files.clone(), &app)
     }));
     app.set_compare_tiles(ModelRc::from(state.borrow().compare_tiles.clone()));
@@ -546,6 +551,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         }
     }
     state.borrow_mut().thumb_run = Some(crate::panel::browser::ThumbRun::new(files.len()));
+    state.borrow_mut().fill_clock = Some(std::time::Instant::now());
     if !files.is_empty() {
         crate::panel::browser::hold_thumbnails_for_develop(&app, &worker);
     }
@@ -700,6 +706,27 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // for the run's line in the log.
                     if let Some(run) = st.thumb_run.as_mut() {
                         run.frame();
+                    }
+                    // The first frame to draw the rows on screen with
+                    // their pictures, and how long since the folder
+                    // opened. Asked for no longer than a snapshot waits
+                    // for the grid: a view that never says what it
+                    // shows is not asked about at every frame after.
+                    if let Some(at) = st.fill_clock {
+                        if crate::panel::browser::screen_filled(st, &app) {
+                            tracing::info!(
+                                "thumbnails: the rows on screen drawn with their pictures \
+                                 {:.2} s from the folder's open",
+                                at.elapsed().as_secs_f64()
+                            );
+                            st.fill_clock = None;
+                        } else if at.elapsed() > crate::panel::browser::GRID_WAIT {
+                            st.fill_clock = None;
+                        }
+                    }
+                    let pictures_in = st.thumb_run.is_none();
+                    if let Some(timing) = st.time_scroll.as_mut() {
+                        timing.before_frame(pictures_in, &app);
                     }
                     // The first frame to show the all-roots view, or a
                     // list merged, and how long since it was asked for.
@@ -1199,6 +1226,13 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 ""
                             }
                         );
+                    }
+                }
+                slint::RenderingState::AfterRendering => {
+                    if let Some(app) = app_weak.upgrade()
+                        && let Some(timing) = state.borrow_mut().time_scroll.as_mut()
+                    {
+                        timing.after_frame(&app);
                     }
                 }
                 slint::RenderingState::RenderingTeardown => {

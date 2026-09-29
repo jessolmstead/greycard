@@ -2,11 +2,15 @@
 // row, scrolled sideways by the wheel.
 
 import { Theme } from "../theme.slint";
-import { Thumb } from "../structs.slint";
+import { Thumb, ThumbCell } from "../structs.slint";
 import { ThumbBadges } from "../controls.slint";
 
 export component Filmstrip inherits Rectangle {
+    /// Every row, for the strip's length; the cells are drawn from
+    /// `cells`, the rows on screen and a margin, each placed by its
+    /// row.
     in property <[Thumb]> thumbs;
+    in property <[ThumbCell]> cells;
     in-out property <int> selected;
     /// A click on a frame, with Ctrl and Shift as they were held
     /// when it was pressed.
@@ -79,104 +83,107 @@ export component Filmstrip inherits Rectangle {
             // The first layout, and a folder swapped in.
             changed width => { root.strip-relay(); }
             changed content-width => { root.strip-relay(); }
-            HorizontalLayout {
-                padding: root.strip-pad;
-                spacing: root.strip-pitch - root.strip-item;
-                alignment: start;
-                for t[i] in root.thumbs: Rectangle {
-                    // The current frame, and the set it is one of:
-                    // every frame in the set wears the selection's
-                    // ground, the current one its ring as well.
-                    property <bool> on: i == root.selected;
-                    property <bool> in-set: on || t.chosen;
-                    width: root.strip-item;
-                    border-radius: Theme.radius-md;
-                    background: in-set ? Theme.selection : (tt.has-hover ? Theme.hover : transparent);
-                    border-width: on ? 2px : (in-set ? 1px : 0);
-                    border-color: on ? Theme.accent : Theme.accent-muted;
-                    animate background { duration: Theme.quick; }
-                    VerticalLayout {
-                        padding: Theme.space-2;
-                        spacing: Theme.space-1;
-                        Image {
-                            source: t.image;
-                            height: 96px;
-                            image-fit: contain;
-                        }
-                        Text {
-                            text: t.name;
-                            color: in-set ? Theme.text : Theme.text-secondary;
-                            font-size: Theme.font-xs;
-                            horizontal-alignment: center;
-                            overflow: elide;
-                        }
-                    }
-                    // Where the picture would be, as the grid marks it.
-                    if t.failed: Rectangle {
-                        x: Theme.space-2;
-                        y: Theme.space-2;
-                        width: parent.width - 2 * Theme.space-2;
+            // Each cell where its row puts it, as the layout that
+            // held a cell for every row put them: the pad, then a
+            // pitch a row.
+            for c in root.cells: cell := Rectangle {
+                property <int> i: c.row;
+                property <Thumb> t: c.thumb;
+                x: root.strip-pad + self.i * root.strip-pitch;
+                y: root.strip-pad;
+                height: parent.height - 2 * root.strip-pad;
+                // The current frame, and the set it is one of:
+                // every frame in the set wears the selection's
+                // ground, the current one its ring as well.
+                property <bool> on: i == root.selected;
+                property <bool> in-set: on || t.chosen;
+                width: root.strip-item;
+                border-radius: Theme.radius-md;
+                background: in-set ? Theme.selection : (tt.has-hover ? Theme.hover : transparent);
+                border-width: on ? 2px : (in-set ? 1px : 0);
+                border-color: on ? Theme.accent : Theme.accent-muted;
+                animate background { duration: Theme.quick; }
+                VerticalLayout {
+                    padding: Theme.space-2;
+                    spacing: Theme.space-1;
+                    Image {
+                        source: t.image;
                         height: 96px;
-                        border-radius: Theme.radius-sm;
-                        border-width: 1px;
-                        border-color: Theme.border-strong;
-                        Text {
-                            text: "Unreadable";
-                            color: Theme.text-muted;
-                            font-size: Theme.font-xs;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
+                        image-fit: contain;
                     }
-                    // Over the picture's bottom corner, not in
-                    // the row with the name: the badges must
-                    // not push the name out of the middle, and
-                    // the cell's height is the strip's.
-                    ThumbBadges {
-                        x: Theme.space-2 + Theme.space-1;
-                        y: Theme.space-2 + 96px - self.height - Theme.space-1;
-                        rating: t.rating;
-                        flag: t.flag;
-                        label: t.label;
-                        stars: root.meta-stars;
+                    Text {
+                        text: t.name;
+                        color: in-set ? Theme.text : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        horizontal-alignment: center;
+                        overflow: elide;
                     }
-                    // `clicked` carries no modifiers, so the press
-                    // says which were held and the click reads them.
-                    // A right-click asks for the menu on the press,
-                    // as a desktop's menus open; a Mac's
-                    // Control+click is one, and its click is then
-                    // not also a click.
-                    tt := TouchArea {
-                        property <bool> ctrl;
-                        property <bool> shift;
-                        property <bool> menu;
-                        mouse-cursor: MouseCursor.pointer;
-                        pointer-event(e) => {
-                            if (e.kind == PointerEventKind.down) {
-                                let closing = root.menu-shown();
-                                self.menu = closing || e.button == PointerEventButton.right
-                                    || (root.ctrl-click-menu && e.button == PointerEventButton.left
-                                        && e.modifiers.meta);
-                                if (closing && e.button == PointerEventButton.left
-                                    && !(root.ctrl-click-menu && e.modifiers.meta)) {
-                                    // The press closed the menu: nothing more.
-                                    return;
-                                }
-                                if (self.menu) {
-                                    root.focus-keys();
-                                    root.frame-menu(i, self.absolute-position.x + self.mouse-x,
-                                        self.absolute-position.y + self.mouse-y);
-                                    return;
-                                }
-                                self.ctrl = e.modifiers.control;
-                                self.shift = e.modifiers.shift;
+                }
+                // Where the picture would be, as the grid marks it.
+                if t.failed: Rectangle {
+                    x: Theme.space-2;
+                    y: Theme.space-2;
+                    width: parent.width - 2 * Theme.space-2;
+                    height: 96px;
+                    border-radius: Theme.radius-sm;
+                    border-width: 1px;
+                    border-color: Theme.border-strong;
+                    Text {
+                        text: "Unreadable";
+                        color: Theme.text-muted;
+                        font-size: Theme.font-xs;
+                        horizontal-alignment: center;
+                        vertical-alignment: center;
+                    }
+                }
+                // Over the picture's bottom corner, not in
+                // the row with the name: the badges must
+                // not push the name out of the middle, and
+                // the cell's height is the strip's.
+                ThumbBadges {
+                    x: Theme.space-2 + Theme.space-1;
+                    y: Theme.space-2 + 96px - self.height - Theme.space-1;
+                    rating: t.rating;
+                    flag: t.flag;
+                    label: t.label;
+                    stars: root.meta-stars;
+                }
+                // `clicked` carries no modifiers, so the press
+                // says which were held and the click reads them.
+                // A right-click asks for the menu on the press,
+                // as a desktop's menus open; a Mac's
+                // Control+click is one, and its click is then
+                // not also a click.
+                tt := TouchArea {
+                    property <bool> ctrl;
+                    property <bool> shift;
+                    property <bool> menu;
+                    mouse-cursor: MouseCursor.pointer;
+                    pointer-event(e) => {
+                        if (e.kind == PointerEventKind.down) {
+                            let closing = root.menu-shown();
+                            self.menu = closing || e.button == PointerEventButton.right
+                                || (root.ctrl-click-menu && e.button == PointerEventButton.left
+                                    && e.modifiers.meta);
+                            if (closing && e.button == PointerEventButton.left
+                                && !(root.ctrl-click-menu && e.modifiers.meta)) {
+                                // The press closed the menu: nothing more.
+                                return;
                             }
+                            if (self.menu) {
+                                root.focus-keys();
+                                root.frame-menu(i, self.absolute-position.x + self.mouse-x,
+                                    self.absolute-position.y + self.mouse-y);
+                                return;
+                            }
+                            self.ctrl = e.modifiers.control;
+                            self.shift = e.modifiers.shift;
                         }
-                        clicked => {
-                            if (self.menu) { return; }
-                            root.focus-keys();
-                            root.frame-clicked(i, self.ctrl, self.shift);
-                        }
+                    }
+                    clicked => {
+                        if (self.menu) { return; }
+                        root.focus-keys();
+                        root.frame-clicked(i, self.ctrl, self.shift);
                     }
                 }
             }

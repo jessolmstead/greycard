@@ -2,14 +2,17 @@
 // with the filter, and the cells riding on one scrolled offset.
 
 import { Theme } from "../theme.slint";
-import { Thumb, FilterChip, FacetRow, RootChip } from "../structs.slint";
+import { Thumb, ThumbCell, FilterChip, FacetRow, RootChip } from "../structs.slint";
 import { PanelButton, ThumbBadges } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 import { RootsRow } from "roots.slint";
 import { LoadingCard } from "loading.slint";
 
 export component GridSheet inherits Rectangle {
+    /// Every row, for the header; the cells are drawn from `cells`,
+    /// the rows on screen and a margin, each placed by its row.
     in property <[Thumb]> thumbs;
+    in property <[ThumbCell]> cells;
     in-out property <int> selected;
     /// A click on a frame, with Ctrl and Shift as they were held
     /// when it was pressed.
@@ -261,7 +264,9 @@ export component GridSheet inherits Rectangle {
                     root.grid-wheel(e.delta-y, e.modifiers.control);
                     return accept;
                 }
-                for t[i] in root.thumbs: Rectangle {
+                for c in root.cells: cell := Rectangle {
+                    property <int> i: c.row;
+                    property <Thumb> t: c.thumb;
                     // As the strip has it: the set on the
                     // selection's ground, the current frame ringed.
                     property <bool> on: i == root.selected;

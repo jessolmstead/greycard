@@ -253,10 +253,12 @@ const THUMBS_AT_ONCE: usize = 32;
 /// How long a turn takes pictures in for, when the window spent
 /// `between` on the frame and the input since the last: as long
 /// again, within [`THUMB_TURN`] and [`THUMB_TURN_MOST`], so half the
-/// window's time goes to the pictures however dear a frame is. A
-/// frame over the browser's twenty thousand cells costs 45 to 200 ms,
-/// and a fixed 8 ms, with a frame after each, took a warm folder of
-/// that size 12 to 28 s to fill.
+/// window's time goes to the pictures however dear a frame is. When
+/// the strip and the grid had a cell for every row, a frame over a
+/// folder of twenty thousand cost 45 to 200 ms, and a fixed 8 ms, with
+/// a frame after each, took a warm folder of that size 12 to 28 s to
+/// fill. They have cells for the screen alone now (`cells.rs`), and a
+/// frame is cheap, but a dear one still gets its half.
 pub(crate) fn thumb_turn(between: Option<Duration>) -> Duration {
     between.map_or(THUMB_TURN, |b| b.clamp(THUMB_TURN, THUMB_TURN_MOST))
 }

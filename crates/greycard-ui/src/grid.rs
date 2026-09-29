@@ -148,6 +148,27 @@ pub fn visible(
     ))
 }
 
+/// The rows the grid has cells for past those on screen, above and
+/// below: the window moves with the scroll in the same event, so one
+/// is enough for the rows that come into view in a frame.
+pub const MARGIN_ROWS: i32 = 1;
+
+/// The frames the grid has cells for at `offset`, as the first and
+/// how many: the rows on screen, the partly shown ones at either edge
+/// included, and [`MARGIN_ROWS`] either side. How many follows the
+/// sheet's height and the cell alone, not the offset, so a scroll
+/// moves the window without changing its size. What is past the last
+/// frame is the caller's to hold it to.
+pub fn window(offset: f32, height: f32, cell: f32, columns: i32, count: i32) -> (usize, usize) {
+    let pitch = row_pitch(cell);
+    if count <= 0 || columns <= 0 || height <= 0.0 || pitch <= 0.0 || !pitch.is_finite() {
+        return (0, 0);
+    }
+    let first_row = (((offset - PAD) / pitch).floor() as i32 - MARGIN_ROWS).max(0);
+    let rows = (height / pitch).ceil() as i32 + 1 + 2 * MARGIN_ROWS;
+    ((first_row * columns) as usize, (rows * columns) as usize)
+}
+
 /// The scroll that shows the selected cell with the least movement,
 /// its padding beside it, or what we have when it is already on
 /// screen. Everything past the ends is clamped away.
@@ -292,6 +313,30 @@ mod tests {
         assert_eq!(visible(9000.0, 206.0, cell, cols, count), Some((8, 10)));
         assert_eq!(visible(0.0, 0.0, cell, cols, count), None);
         assert_eq!(visible(0.0, 500.0, cell, cols, 0), None);
+    }
+
+    #[test]
+    fn the_cells_cover_what_is_on_screen_and_a_row_either_side() {
+        let (cols, count, cell, height) = (8, 20_000, 176.0, 773.0);
+        // 773 over a pitch of 206 is four rows and a part, and a sixth
+        // part-row as it scrolls: seven with a row either side, at any
+        // offset.
+        for offset in [0.0, 5.0, 100.0, 206.0, 1000.0, 123_456.0] {
+            let (first, n) = window(offset, height, cell, cols, count);
+            assert_eq!(n, 7 * 8, "{offset}");
+            let (a, b) = visible(offset, height, cell, cols, count).unwrap();
+            assert!(first <= a as usize && (b as usize) < first + n, "{offset}");
+            assert_eq!(first % 8, 0);
+        }
+        // At the top there is no row above: the window starts at 0.
+        assert_eq!(window(0.0, height, cell, cols, count).0, 0);
+        // Scrolled three rows down, the window starts a row above.
+        assert_eq!(
+            window(PAD + 3.0 * 206.0, height, cell, cols, count).0,
+            2 * 8
+        );
+        assert_eq!(window(0.0, 0.0, cell, cols, count), (0, 0));
+        assert_eq!(window(0.0, height, cell, cols, 0), (0, 0));
     }
 
     #[test]

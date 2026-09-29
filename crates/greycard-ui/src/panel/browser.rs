@@ -217,6 +217,157 @@ pub(crate) fn end_thumb_turn(st: &mut State, started: std::time::Instant) {
     st.thumb_run = None;
 }
 
+/// `--time-scroll`: the moves left, which way the next goes, and for
+/// each move the milliseconds from the move to the end of the frame
+/// that drew it, and of those the frame's own drawing.
+#[derive(Debug)]
+pub(crate) struct ScrollTiming {
+    left: u32,
+    by: f32,
+    begun: bool,
+    moved: Option<std::time::Instant>,
+    drawing: Option<std::time::Instant>,
+    to_frame: Vec<f64>,
+    drawn: Vec<f64>,
+}
+
+impl ScrollTiming {
+    pub(crate) fn new(moves: u32, by: f32) -> Self {
+        Self {
+            left: moves,
+            by,
+            begun: false,
+            moved: None,
+            drawing: None,
+            to_frame: Vec::new(),
+            drawn: Vec::new(),
+        }
+    }
+
+    /// A frame is being drawn. The moves begin a second after the
+    /// folder's last picture came, with the window settled; once they
+    /// have, the drawing's own time starts here when a move waits for
+    /// it.
+    pub(crate) fn before_frame(&mut self, pictures_in: bool, app: &App) {
+        if !self.begun && pictures_in {
+            self.begun = true;
+            let app_weak = app.as_weak();
+            slint::Timer::single_shot(std::time::Duration::from_secs(1), move || {
+                if let Some(app) = app_weak.upgrade() {
+                    scroll_step(&app);
+                }
+            });
+        }
+        if self.moved.is_some() {
+            self.drawing = Some(std::time::Instant::now());
+        }
+    }
+
+    /// A frame has been drawn. When it drew a move its numbers are
+    /// kept and the next move follows.
+    pub(crate) fn after_frame(&mut self, app: &App) {
+        let (Some(moved), Some(drawing)) = (self.moved.take(), self.drawing.take()) else {
+            return;
+        };
+        self.to_frame.push(moved.elapsed().as_secs_f64() * 1e3);
+        self.drawn.push(drawing.elapsed().as_secs_f64() * 1e3);
+        let app_weak = app.as_weak();
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+            if let Some(app) = app_weak.upgrade() {
+                scroll_step(&app);
+            }
+        });
+    }
+}
+
+/// The mean, the 95th percentile and the greatest of `samples`.
+fn spread(what: &str, samples: &[f64]) -> String {
+    if samples.is_empty() {
+        return format!("{what}: nothing measured");
+    }
+    let mut sorted = samples.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let p95 = sorted[((sorted.len() as f64 * 0.95).ceil() as usize).clamp(1, sorted.len()) - 1];
+    format!(
+        "{what}: {:.2} ms mean, {:.2} ms at the 95th percentile, {:.2} ms at most, over {} moves",
+        sorted.iter().sum::<f64>() / sorted.len() as f64,
+        p95,
+        sorted[sorted.len() - 1],
+        sorted.len()
+    )
+}
+
+/// The resident set, from the kernel, for the scroll's last line.
+fn resident_mb() -> Option<f64> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let kb: f64 = status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmRSS:"))?
+        .trim()
+        .trim_end_matches("kB")
+        .trim()
+        .parse()
+        .ok()?;
+    Some(kb / 1024.0)
+}
+
+/// `--time-scroll`'s next move, or its numbers and the end.
+fn scroll_step(app: &App) {
+    let Some(state) = STATE.with(|s| s.borrow().clone()) else {
+        return;
+    };
+    let mut st = state.borrow_mut();
+    let Some(timing) = st.time_scroll.as_mut() else {
+        return;
+    };
+    if timing.left == 0 {
+        for line in [
+            spread("scroll to its frame drawn", &timing.to_frame),
+            spread("the frame's drawing", &timing.drawn),
+            format!(
+                "scroll: {} cells made, {:.0} MB resident",
+                app.get_cells_made(),
+                resident_mb().unwrap_or(0.0)
+            ),
+        ] {
+            tracing::info!("{line}");
+            eprintln!("{line}");
+        }
+        st.time_scroll = None;
+        let _ = slint::quit_event_loop();
+        return;
+    }
+    timing.left -= 1;
+    let mut by = timing.by;
+    drop(st);
+    if !app.invoke_scroll_by(by) {
+        by = -by;
+        app.invoke_scroll_by(by);
+    }
+    if let Some(timing) = state.borrow_mut().time_scroll.as_mut() {
+        timing.by = by;
+        timing.moved = Some(std::time::Instant::now());
+    }
+    app.window().request_redraw();
+}
+
+/// Whether every row on screen, the grid's when it is open and the
+/// strip's when not, has its picture or is marked as having none.
+/// False while neither has said what it shows.
+pub(crate) fn screen_filled(st: &State, app: &App) -> bool {
+    let range = if app.get_grid_open() {
+        st.grid_shown
+    } else {
+        st.strip_shown
+    };
+    let Some((first, last)) = range else {
+        return false;
+    };
+    (first.max(0) as usize..=last.max(0) as usize)
+        .filter_map(|r| st.shown.get(r))
+        .all(|&f| st.thumb_base[f].is_some() || st.thumb_failed[f])
+}
+
 /// A browser row for a file: its name, the badges its meta asks for,
 /// and no picture until the worker has made one.
 pub(crate) fn thumb_for(path: &Path, meta: &Meta) -> Thumb {
@@ -521,19 +672,14 @@ pub(crate) fn show_thumb(st: &mut State, app: &App, i: usize, turns: u8, flip: b
         return;
     };
     // A frame the filter hides has no row; its picture waits for the
-    // list to show it again, and is then put on its row as any other
-    // is, when that row is near the screen. Marking it shown here
-    // would have a filter cleared over thousands put them all on in
-    // the one call.
+    // list to show it again.
     let Some(row) = row_of(st, i) else {
         return;
     };
-    // A row with no picture yet, far from the screen, waits to be
-    // scrolled near (`fill_near_screen`): a picture put on a row costs
-    // the window a frame's work over the browser's every cell, and a
-    // warm folder of twenty thousand put them all on at once. A row
-    // that has one is never left with it standing the wrong way up.
-    if st.thumb_shown[i].is_none() && !row_near_screen(st, row) {
+    // Nor does a row neither view has a cell for: it takes its
+    // picture when one comes to it (`settle_pictures`), turned as the
+    // frame is turned then.
+    if !cells::has_cell(app, row) {
         return;
     }
     st.thumb_shown[i] = Some((turns, flip));
@@ -548,51 +694,33 @@ pub(crate) fn show_thumb(st: &mut State, app: &App, i: usize, turns: u8, flip: b
     }
 }
 
-/// How far either side of the current frame's row its neighbors'
-/// pictures go on the rows as they come: the strip, which follows the
-/// current frame, and the window before the grid or the strip has
-/// said what it shows.
-pub(crate) const ROWS_AROUND: usize = 256;
-
-/// The rows whose pictures go on as soon as they are in hand:
-/// [`ROWS_AROUND`] either side of the current frame's, or of the first
-/// row with none current; and what the grid and the strip last said
-/// they show, each with as much again either side, so a scroll finds
-/// its next screenful ready.
-fn near_screen(st: &State) -> [Option<(usize, usize)>; 3] {
-    let Some(last_row) = st.shown.len().checked_sub(1) else {
-        return [None; 3];
-    };
-    let widened = |(first, last): (i32, i32)| {
-        let (first, last) = (usize::try_from(first).ok()?, usize::try_from(last).ok()?);
-        let reach = last.checked_sub(first)? + 1;
-        Some((first.saturating_sub(reach), (last + reach).min(last_row)))
-    };
-    let at = st.current.and_then(|c| row_of(st, c)).unwrap_or(0);
-    [
-        Some((
-            at.saturating_sub(ROWS_AROUND),
-            (at + ROWS_AROUND).min(last_row),
-        )),
-        st.grid_shown.and_then(widened),
-        st.strip_shown.and_then(widened),
-    ]
-}
-
-/// Whether `row`'s picture goes on the row now, being near what is on
-/// screen.
-pub(crate) fn row_near_screen(st: &State, row: usize) -> bool {
-    near_screen(st)
-        .into_iter()
-        .flatten()
-        .any(|(first, last)| (first..=last).contains(&row))
-}
-
-/// Put the pictures in hand on the rows now near the screen that have
-/// none: after a scroll of the grid or the strip, or a new list.
-pub(crate) fn fill_near_screen(st: &mut State, app: &App) {
-    for (first, last) in near_screen(st).into_iter().flatten() {
-        for row in first..=last {
+/// Put the pictures in hand on the rows the strip or the grid has come
+/// to have a cell for, and take them off the rows neither has one for
+/// any more. A row carries its picture only while a view can draw it:
+/// the rest are kept in `thumb_base`, once, rather than twice over as
+/// bytes and as an image for every frame of the folder.
+pub(crate) fn settle_pictures(st: &mut State, app: &App) {
+    let now = [
+        cells::window(app, cells::View::Strip),
+        cells::window(app, cells::View::Grid),
+    ];
+    let has = |row: usize| now.iter().any(|&(f, n)| (f..f + n).contains(&row));
+    let model = app.get_thumbs();
+    for (first, count) in std::mem::replace(&mut st.pictured, now) {
+        for row in (first..first + count).filter(|&r| !has(r)) {
+            let Some(&f) = st.shown.get(row) else {
+                break;
+            };
+            if st.thumb_shown[f].take().is_some()
+                && let Some(mut t) = model.row_data(row)
+            {
+                t.image = slint::Image::default();
+                model.set_row_data(row, t);
+            }
+        }
+    }
+    for (first, count) in now {
+        for row in first..first + count {
             let Some(&f) = st.shown.get(row) else {
                 break;
             };
@@ -806,48 +934,32 @@ pub(crate) fn reject_count(st: &State) -> usize {
 }
 
 /// The browser's list again: the filter over the flags, the strip's
-/// and the grid's rows made afresh with the pictures already made,
-/// and the selection kept on its row, or put on the nearest row when
-/// its frame is hidden (which the caller then opens).
+/// and the grid's rows made afresh, their cells' pictures put on from
+/// those already made, and the selection kept on its row, or put on
+/// the nearest row when its frame is hidden (which the caller then
+/// opens).
 pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     if !std::mem::take(&mut st.index_pass_ready) {
         st.index_passed = crate::library::index_pass(st);
     }
-    // The pictures already on the window's rows, by the path each row
-    // was made for: carried to the file's new row rather than made
-    // again from its pixels, which cost seconds a change of the filter
-    // over the all-roots view's twenty thousand frames. By path, not
-    // by number: a list renumbered under the rows (the rejects moved
-    // out, a merge) would otherwise hand a frame its neighbor's
-    // picture, and the first cut did.
-    let old = app.get_thumbs();
-    let mut made: HashMap<PathBuf, slint::Image> = std::mem::take(&mut st.rows_shown)
-        .into_iter()
-        .enumerate()
-        .filter_map(|(row, path)| Some((path, old.row_data(row)?.image)))
-        .filter(|(_, image)| image.size().width > 0)
-        .collect();
     st.shown = st.filter.apply(&filter_frames(st));
     show_filter(st, app);
-    let mut thumbs = Vec::with_capacity(st.shown.len());
-    let mut to_make = Vec::new();
-    for &f in &st.shown {
-        let mut thumb = thumb_for(&st.files[f], &st.sidecars[f].meta);
-        thumb.failed = st.thumb_failed[f] && st.thumb_base[f].is_none();
-        if st.thumb_base[f].is_some() {
-            let turned = thumb_turns(st, app, f);
-            match made.remove(&st.files[f]) {
-                Some(image) if st.thumb_shown[f] == Some(turned) => thumb.image = image,
-                _ => to_make.push((f, turned)),
-            }
-        }
-        thumbs.push(thumb);
-    }
-    st.rows_shown = st.shown.iter().map(|&f| st.files[f].clone()).collect();
-    app.set_thumbs(ModelRc::new(VecModel::from(thumbs)));
-    for (f, (turns, flip)) in to_make {
-        show_thumb(st, app, f, turns, flip);
-    }
+    let thumbs = st
+        .shown
+        .iter()
+        .map(|&f| Thumb {
+            failed: st.thumb_failed[f] && st.thumb_base[f].is_none(),
+            ..thumb_for(&st.files[f], &st.sidecars[f].meta)
+        })
+        .collect();
+    // No row has a picture on it now. The rows the views have cells
+    // for take theirs from the pixels in hand, a few screens' worth
+    // however long the list: nothing is carried over from the old
+    // rows, so nothing can land on a row renumbered under it.
+    st.thumb_shown.iter_mut().for_each(|s| *s = None);
+    st.pictured = [(0, 0); 2];
+    cells::set_rows(app, thumbs);
+    settle_pictures(st, app);
 
     app.set_reject_count(reject_count(st) as i32);
     // A frame the filter now hides leaves the set: a key or a sync
@@ -1154,6 +1266,7 @@ pub(crate) fn open_loaded(
     st.grid_shown = None;
     st.strip_shown = None;
     st.thumb_run = Some(ThumbRun::new(files.len()));
+    st.fill_clock = Some(std::time::Instant::now());
     // The old folder's thumbnails still waiting are dropped: their
     // numbering is its list's.
     worker.forget_thumbnails();
@@ -1388,7 +1501,6 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
     // In culling nothing is developed: the frame's JPEG shows.
     if st.cull.is_some() {
         cull_select(st, app, i);
-        fill_near_screen(st, app);
         show_set(st, app);
         return;
     }
@@ -1477,8 +1589,8 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
     // develop: after the job, so the decode that matters
     // most is under way first.
     start_placeholder(st, app, i);
-    // Its neighbors' pictures, which a jump may have left without.
-    fill_near_screen(st, app);
+    // Its neighbors' pictures come as the strip or the grid follows it
+    // there and says what it shows.
     show_set(st, app);
 }
 
@@ -1731,7 +1843,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     // The frames the strip shows: their pictures jump the worker's
     // thumbnail queue, so a scroll into unseen ground fills in
     // seconds rather than after the whole folder. Reported on every
-    // move of the strip; the worker drops a repeat.
+    // move of the strip; the worker drops a repeat. The strip's cells
+    // follow, and the pictures with them.
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_strip_range(move |first, last| {
@@ -1741,18 +1854,20 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
+            let (at, wanted) = cells::strip_window(first as usize, last as usize);
+            let moved = cells::show(&app, cells::View::Strip, at, wanted);
+            let mut st = state.borrow_mut();
+            if moved {
+                settle_pictures(&mut st, &app);
+            }
             // Rows to files: the range between the two, which under a
             // filter is a superset of what is shown, and fine for an
             // order.
-            let mut st = state.borrow_mut();
             let (Some(&f), Some(&l)) = (st.shown.get(first as usize), st.shown.get(last as usize))
             else {
                 return;
             };
-            if st.strip_shown != Some((first, last)) {
-                st.strip_shown = Some((first, last));
-                fill_near_screen(&mut st, &app);
-            }
+            st.strip_shown = Some((first, last));
             worker.want_thumbnails(f, l);
         });
     }
@@ -1810,13 +1925,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let cell = app.get_grid_cell();
             let mut st = state.borrow_mut();
             let count = st.shown.len() as i32;
+            // The grid's cells follow, and the pictures with them.
+            let (at, wanted) = grid::window(scroll, height, cell, columns, count);
+            if cells::show(&app, cells::View::Grid, at, wanted) {
+                settle_pictures(&mut st, &app);
+            }
             let Some((first, last)) = grid::visible(scroll, height, cell, columns, count) else {
                 return;
             };
-            if st.grid_shown != Some((first, last)) {
-                st.grid_shown = Some((first, last));
-                fill_near_screen(&mut st, &app);
-            }
+            st.grid_shown = Some((first, last));
             let (first, last) = (
                 first.max(0) as usize,
                 (last.max(0) as usize).min(st.shown.len().saturating_sub(1)),
@@ -2075,7 +2192,8 @@ mod tests {
         let files = crate::testing::folder(3);
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         app.set_grid_open(true);
-        state.borrow_mut().grid_shown = Some((0, 2));
+        app.invoke_grid_range(0.0, 773.0, 8);
+        assert_eq!(state.borrow().grid_shown, Some((0, 2)));
         let failed = |row: usize| app.get_thumbs().row_data(row).unwrap().failed;
         deliver(&app, picture_for(&files, 0));
         deliver(&app, picture_for(&files, 2));
@@ -2123,12 +2241,13 @@ mod tests {
         assert!(grid_filled(&state.borrow(), &app));
     }
 
-    /// A picture for a row far from the screen is kept, not put on the
-    /// row, until the grid or the strip is scrolled near it; one near
-    /// goes on at once, and a row that has a picture gets the new one
-    /// wherever it is. A batch from the pool is taken in one call.
+    /// A row carries its picture while the grid or the strip has a cell
+    /// for it, and only then: one delivered for a row without a cell is
+    /// kept in hand, goes on when a view comes to the row, and comes
+    /// off when the views have left it. A batch from the pool is taken
+    /// in one call.
     #[test]
-    fn pictures_far_from_the_screen_wait_to_be_scrolled_near() {
+    fn a_row_carries_its_picture_while_a_view_has_a_cell_for_it() {
         use crate::panel::deliver::deliver;
         use crate::worker::Outcome;
         let app = window(1000);
@@ -2136,7 +2255,10 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         let pictured = |row: usize| app.get_thumbs().row_data(row).unwrap().image.size().width;
         app.set_grid_open(true);
-        state.borrow_mut().grid_shown = Some((0, 9));
+        // Eight columns, four rows and a part on screen: cells for
+        // rows 0 to 6, frames 0 to 55.
+        app.invoke_grid_range(0.0, 773.0, 8);
+        assert_eq!(cells::window(&app, cells::View::Grid), (0, 56));
         deliver(
             &app,
             Outcome::Thumbnails(crate::thumbpool::Batch::of(
@@ -2147,21 +2269,24 @@ mod tests {
             let st = state.borrow();
             assert!([5, 300, 900].iter().all(|&i| st.thumb_base[i].is_some()));
         }
-        assert_eq!(pictured(5), 2, "near the screen: on its row");
-        assert_eq!(pictured(300), 0, "far: kept for later");
+        assert_eq!(pictured(5), 2, "a cell: on its row");
+        assert_eq!(pictured(300), 0, "no cell: kept for later");
         assert_eq!(pictured(900), 0);
-        // The grid scrolled to 900's screenful.
-        state.borrow_mut().grid_shown = Some((895, 904));
-        fill_near_screen(&mut state.borrow_mut(), &app);
+        // The grid scrolled to 900's screenful: on, and 5 off.
+        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8);
         assert_eq!(pictured(900), 2);
+        assert_eq!(pictured(5), 0);
+        assert!(state.borrow().thumb_shown[5].is_none());
+        assert!(state.borrow().thumb_base[5].is_some(), "still in hand");
         assert_eq!(pictured(300), 0);
         // The strip, through its own report.
         app.invoke_strip_range(295, 305);
         assert_eq!(pictured(300), 2);
-        // Back to the top: 900's larger picture still goes on its row,
-        // which is never left with an older one.
-        state.borrow_mut().grid_shown = Some((0, 9));
-        state.borrow_mut().strip_shown = Some((0, 9));
+        // Back to the top: 5 on again, 900 off, 300 kept by the strip.
+        app.invoke_grid_range(0.0, 773.0, 8);
+        assert_eq!((pictured(5), pictured(900), pictured(300)), (2, 0, 2));
+        // A larger picture for a row without a cell waits in hand, and
+        // is the one put on when the grid comes back to it.
         deliver(
             &app,
             Outcome::Thumbnail {
@@ -2175,15 +2300,17 @@ mod tests {
                 seconds: 0.0,
             },
         );
+        assert_eq!(pictured(900), 0);
+        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8);
         assert_eq!(pictured(900), 4);
     }
 
-    /// A picture that came while the filter hid its frame is not put
-    /// on a row when the filter is cleared, unless the row is near the
-    /// screen: a cleared filter over thousands would otherwise put
-    /// them all on in one call.
+    /// A picture that came while the filter hid its frame goes on its
+    /// row when the filter is cleared only if a view has a cell for the
+    /// row: a cleared filter over thousands would otherwise put them
+    /// all on in one call.
     #[test]
-    fn pictures_that_came_while_hidden_park_when_the_filter_clears() {
+    fn pictures_that_came_while_hidden_wait_for_a_cell_when_the_filter_clears() {
         use crate::panel::deliver::deliver;
         let app = window(0);
         let files = crate::testing::folder(1000);
@@ -2196,9 +2323,9 @@ mod tests {
             st.filter = filter::Filter::from_name("No rejects").expect("it parses");
             rebuild_browser(&mut st, &app);
             assert_eq!(st.shown.len(), 500);
-            st.grid_shown = Some((0, 9));
         }
         app.set_grid_open(true);
+        app.invoke_grid_range(0.0, 773.0, 8);
         deliver(&app, picture_for(&files, 5));
         deliver(&app, picture_for(&files, 900));
         let pictured = |row: usize| app.get_thumbs().row_data(row).unwrap().image.size().width;
@@ -2208,10 +2335,9 @@ mod tests {
             st.filter = filter::Filter::from_name("All").expect("it parses");
             rebuild_browser(&mut st, &app);
         }
-        assert_eq!(pictured(5), 2, "near the screen: carried to its row");
-        assert_eq!(pictured(900), 0, "far: parked");
-        state.borrow_mut().grid_shown = Some((895, 904));
-        fill_near_screen(&mut state.borrow_mut(), &app);
+        assert_eq!(pictured(5), 2, "a cell: made again on its row");
+        assert_eq!(pictured(900), 0, "no cell: kept for later");
+        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8);
         assert_eq!(pictured(900), 2);
     }
 
@@ -2223,6 +2349,8 @@ mod tests {
         let app = window(100);
         let files = crate::testing::folder(100);
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        // A sheet tall enough for a cell for every frame.
+        app.invoke_grid_range(0.0, 3000.0, 8);
         let batch = crate::thumbpool::Batch::of((0..100).map(|i| picture_for(&files, i)).collect());
         take_thumbnails(&app, &state, batch, std::time::Duration::ZERO);
         let taken = |st: &State| st.thumb_base.iter().filter(|b| b.is_some()).count();
@@ -2231,6 +2359,187 @@ mod tests {
         slint::platform::update_timers_and_animations();
         assert_eq!(taken(&state.borrow()), 100, "the rest on the timer's turn");
         assert!((0..100).all(|r| app.get_thumbs().row_data(r).unwrap().image.size().width == 2));
+    }
+
+    /// How many cells of the strip, or of the grid, are on screen: the
+    /// testing backend finds only elements its clip leaves showing.
+    /// Every cell a view's model holds is made, a `for` outside a
+    /// `ListView` making one for each row, so the model's count is the
+    /// count made.
+    fn cells_on_screen(app: &App, id: &str) -> usize {
+        // A cell a model change has just brought in is built on the
+        // next event: a pointer move at the corner, where nothing is.
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(0.0, 0.0),
+        });
+        i_slint_backend_testing::ElementHandle::find_by_element_id(app, id).count()
+    }
+
+    /// The rows a view's cells show, sorted.
+    fn cell_rows(model: slint::ModelRc<crate::ThumbCell>) -> Vec<i32> {
+        let mut rows: Vec<i32> = model.iter().map(|c| c.row).collect();
+        rows.sort();
+        rows
+    }
+
+    /// A browser of five thousand frames in a 1500 by 950 window,
+    /// opened on the first, with pictures in hand for every frame.
+    fn five_thousand() -> (App, Rc<RefCell<State>>, Vec<PathBuf>) {
+        use crate::panel::deliver::deliver;
+        let app = window(5000);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let files = crate::testing::folder(5000);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        state.borrow_mut().current = Some(0);
+        app.set_selected(0);
+        press(&app, Key::Shift);
+        deliver(
+            &app,
+            crate::worker::Outcome::Thumbnails(crate::thumbpool::Batch::of(
+                (0..5000).map(|i| picture_for(&files, i)).collect(),
+            )),
+        );
+        // The whole batch, over as many turns as it takes.
+        for _ in 0..500 {
+            if state.borrow().thumb_base.iter().all(Option::is_some) {
+                break;
+            }
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+            slint::platform::update_timers_and_animations();
+        }
+        assert!(state.borrow().thumb_base.iter().all(Option::is_some));
+        (app, state, files)
+    }
+
+    /// The strip and the grid make cells for the rows on screen and a
+    /// margin, however long the list: five thousand frames are a strip
+    /// of a screen's width and a grid of seven rows, and no more rows
+    /// than those carry a picture.
+    #[test]
+    fn five_thousand_frames_make_cells_for_the_screen_alone() {
+        let (app, state, _files) = five_thousand();
+        // The strip, 1500 wide at 186 a frame: eight and a part on
+        // screen, and cells for a part more and the margin either side.
+        assert_eq!(cells_on_screen(&app, "Filmstrip::cell"), 9);
+        let strip = app.get_strip_cells().row_count();
+        assert!(strip <= 10 + 2 * cells::STRIP_MARGIN, "{strip}");
+        assert_eq!(app.get_cells_made() as usize, strip, "the grid is closed");
+        assert_eq!(cells_on_screen(&app, "GridSheet::cell"), 0);
+        press(&app, "g");
+        // Eight columns; four rows on screen at the top, as the layout
+        // test has it, and a fifth's part as it scrolls; and cells for
+        // a row either side.
+        assert_eq!(cells_on_screen(&app, "GridSheet::cell"), 4 * 8);
+        let grid = app.get_grid_cells().row_count();
+        assert_eq!(grid, 7 * 8);
+        assert_eq!(app.get_cells_made() as usize, strip + grid);
+        assert_eq!(cell_rows(app.get_grid_cells()), (0..56).collect::<Vec<_>>());
+        // What carries a picture is what has a cell.
+        let rows = app.get_thumbs();
+        let pictured = (0..5000)
+            .filter(|&r| rows.row_data(r).unwrap().image.size().width > 0)
+            .count();
+        assert_eq!(pictured, 56, "the grid's cells take in the strip's");
+        let st = state.borrow();
+        assert_eq!(st.thumb_shown.iter().filter(|s| s.is_some()).count(), 56);
+    }
+
+    /// Scrolled to the far end and back, the grid and the strip still
+    /// have the current frame chosen, ringed and pictured, and a
+    /// picture that came for it while it was off screen is the one it
+    /// shows.
+    #[test]
+    fn scrolling_to_the_end_and_back_keeps_the_current_frame_and_its_picture() {
+        use crate::panel::deliver::deliver;
+        use crate::worker::Outcome;
+        let (app, state, files) = five_thousand();
+        let cell_of =
+            |model: slint::ModelRc<crate::ThumbCell>, row: i32| model.iter().find(|c| c.row == row);
+        for grid in [true, false] {
+            if grid {
+                press(&app, "g");
+            }
+            let cells = || {
+                if grid {
+                    app.get_grid_cells()
+                } else {
+                    app.get_strip_cells()
+                }
+            };
+            let made = app.get_cells_made();
+            assert!(cell_of(cells(), 0).is_some());
+            assert!(app.invoke_scroll_by(1e9));
+            press(&app, Key::Shift);
+            assert!(
+                cell_of(cells(), 4999).is_some(),
+                "the last frame has a cell"
+            );
+            assert!(cell_of(cells(), 0).is_none());
+            assert_eq!(app.get_cells_made(), made, "as many cells at the end");
+            assert_eq!(app.get_selected(), 0);
+            // Its picture is on its row while the other view has a cell
+            // for it, and off when neither has.
+            assert_eq!(
+                state.borrow().thumb_shown[0].is_some(),
+                cells::has_cell(&app, 0)
+            );
+            // A new picture for it while it is away.
+            let (w, h) = if grid { (6, 3) } else { (8, 4) };
+            deliver(
+                &app,
+                Outcome::Thumbnail {
+                    index: 0,
+                    path: files[0].clone(),
+                    size: 360,
+                    width: w,
+                    height: h,
+                    rgb: vec![0; (w * h * 3) as usize],
+                    cached: true,
+                    seconds: 0.0,
+                },
+            );
+            assert!(app.invoke_scroll_by(-1e9));
+            press(&app, Key::Shift);
+            let back = cell_of(cells(), 0).expect("the first frame's cell again");
+            assert_eq!(back.thumb.image.size().width, w, "the newer picture");
+            assert_eq!(app.get_selected(), 0, "still the current frame, ringed");
+            assert_eq!(state.borrow().current, Some(0));
+            if grid {
+                press(&app, "g");
+            }
+        }
+    }
+
+    /// A frame far down the folder, made current, is scrolled into
+    /// view in the grid and in the strip, and has a cell on screen in
+    /// each.
+    #[test]
+    fn a_far_frame_made_current_is_revealed_with_a_cell() {
+        let (app, _state, _files) = five_thousand();
+        press(&app, "g");
+        app.set_selected(4321);
+        press(&app, Key::Shift);
+        let rows = cell_rows(app.get_grid_cells());
+        assert!(rows.contains(&4321), "{rows:?}");
+        let (first, count) = cells::window(&app, cells::View::Grid);
+        assert!(first <= 4321 && 4321 < first + count);
+        assert_eq!(
+            app.get_thumbs().row_data(4321).unwrap().image.size().width,
+            2
+        );
+        assert_eq!(cells_on_screen(&app, "GridSheet::cell"), 5 * 8);
+        // The strip, out of the grid.
+        press(&app, "g");
+        app.set_selected(3210);
+        press(&app, Key::Shift);
+        let rows = cell_rows(app.get_strip_cells());
+        assert!(rows.contains(&3210), "{rows:?}");
+        assert_eq!(
+            app.get_thumbs().row_data(3210).unwrap().image.size().width,
+            2
+        );
+        assert!(cells_on_screen(&app, "Filmstrip::cell") >= 8);
     }
 
     /// The window's share of a turn: as long as it spent drawing and
@@ -2500,7 +2809,7 @@ mod tests {
                 ..Default::default()
             })
             .collect();
-        app.set_thumbs(ModelRc::new(VecModel::from(twelve)));
+        cells::set_rows(&app, twelve);
         press(&app, Key::Shift);
         assert_eq!(*seen.borrow(), vec![(0.0, 8)]);
     }

@@ -14,6 +14,7 @@
 
 mod ai;
 mod camera_match;
+mod cells;
 mod clipboard;
 mod cull;
 mod delete;
@@ -278,6 +279,16 @@ struct Cli {
     /// the mean
     #[arg(long, value_name = "N", hide = true)]
     time_select: Option<u32>,
+    /// Once the folder's thumbnails are all in, move the grid (with
+    /// --grid) or the strip this many times by --time-scroll-by, one
+    /// move a frame and back at either end, logging the time from
+    /// each move to the end of the frame that draws it, then quit
+    #[arg(long, value_name = "N", hide = true)]
+    time_scroll: Option<u32>,
+    /// How far each of --time-scroll's moves goes, logical pixels: a
+    /// fling's 1,000, or a wheel's notch
+    #[arg(long, value_name = "PX", default_value_t = 1000.0, hide = true)]
+    time_scroll_by: f32,
     /// Step to the next frame once the first develop is on screen,
     /// and take the snapshot as soon as that frame's camera picture
     /// stands in for its develop, rather than waiting for the develop
@@ -421,6 +432,11 @@ pub(crate) struct State {
     /// step took from the key to the frame that showed the camera's
     /// picture and to the frame that showed the develop.
     pub(crate) time_select: Option<(u32, Vec<f64>, Vec<f64>)>,
+    /// `--time-scroll`: the moves left and what each cost.
+    pub(crate) time_scroll: Option<panel::browser::ScrollTiming>,
+    /// When the folder on screen was opened, until the first frame
+    /// that draws every row on screen with its picture.
+    pub(crate) fill_clock: Option<std::time::Instant>,
     /// When the selection last moved in the develop view, until the
     /// frame that shows the frame it moved to.
     pub(crate) selected_at: Option<std::time::Instant>,
@@ -490,10 +506,10 @@ pub(crate) struct State {
     /// applied. `selected` on the window is a row; `current` here is
     /// a file.
     pub(crate) shown: Vec<usize>,
-    /// The path each of the window's rows was made for, when the
-    /// browser's list was last put on it: what a rebuild carries each
-    /// row's picture over by.
-    pub(crate) rows_shown: Vec<PathBuf>,
+    /// The rows the strip's cells and the grid's were for when their
+    /// pictures were last put on and taken off (`settle_pictures`),
+    /// first and how many.
+    pub(crate) pictured: [(usize, usize); 2],
     pub(crate) filter: filter::Filter,
     /// The library index's thread, which indexes the open folder and
     /// each frame after its sidecar is written; none in a test, or
@@ -654,7 +670,9 @@ pub(crate) struct State {
     /// overlay to draw.
     pub(crate) guide_kept: Rc<VecModel<Pt>>,
     /// The filmstrip's pictures as the worker made them, unturned, and
-    /// the turns and mirror each is shown with.
+    /// the turns and mirror each is shown with on its row. Only the
+    /// rows the strip or the grid has a cell for carry their picture;
+    /// the rest are `None` here, their pictures kept in `thumb_base`.
     pub(crate) thumb_base: Vec<Option<(u32, u32, Vec<u8>)>>,
     pub(crate) thumb_shown: Vec<Option<(u8, bool)>>,
     /// The long edge each picture was made at, zero until one
@@ -849,6 +867,8 @@ impl State {
             time_sharpen: None,
             time_cull: None,
             time_select: None,
+            time_scroll: None,
+            fill_clock: None,
             selected_at: None,
             cull_develop: false,
             turn_at_start: None,
@@ -881,7 +901,7 @@ impl State {
             },
             cull_at_start: None,
             shown: (0..count).collect(),
-            rows_shown: Vec::new(),
+            pictured: [(0, 0); 2],
             filter: filter::Filter::default(),
             index: None,
             index_reader: None,

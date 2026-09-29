@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use slint::platform::WindowEvent;
-use slint::{ComponentHandle, ModelRc, VecModel};
+use slint::{ComponentHandle, ModelRc};
 
 use crate::worker::Worker;
 use crate::{App, State, Thumb, grid, install_callbacks};
@@ -25,7 +25,7 @@ pub(crate) fn window(count: usize) -> App {
             ..Default::default()
         })
         .collect();
-    app.set_thumbs(ModelRc::new(VecModel::from(thumbs)));
+    crate::cells::set_rows(&app, thumbs);
     app.on_grid_columns(grid::columns);
     app.on_grid_slack(grid::slack);
     app.on_grid_max_scroll(grid::max_scroll);

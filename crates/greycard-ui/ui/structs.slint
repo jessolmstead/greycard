@@ -25,6 +25,14 @@ export struct Thumb {
     failed: bool,
 }
 
+/// One of the strip's or the grid's cells: the browser's row it
+/// shows, and that row. A view has cells only for the rows on screen
+/// and a margin round them (`cells.rs`).
+export struct ThumbCell {
+    row: int,
+    thumb: Thumb,
+}
+
 /// A box drawn for an object, on the view, logical pixels.
 export struct MaskBox {
     x: float,

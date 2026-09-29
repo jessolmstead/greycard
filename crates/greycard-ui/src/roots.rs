@@ -3112,6 +3112,9 @@ mod tests {
         let files = frames(&dir, &names);
         let app = window(8);
         let (state, worker) = state_for(&app, files.clone());
+        // The strip with a cell for every frame, as it has once laid
+        // out: only a row with a cell carries a picture.
+        crate::cells::show(&app, crate::cells::View::Strip, 0, 8);
         {
             let mut st = state.borrow_mut();
             st.write_sidecars = true;

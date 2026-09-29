@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { Pt, Thumb, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, HistoryRow } from "structs.slint";
+import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, HistoryRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -68,6 +68,11 @@ export component App inherits Window {
 
     // The filmstrip.
     in property <[Thumb]> thumbs;
+    /// The strip's cells and the grid's: windows over `thumbs` of the
+    /// rows on screen and a margin, which Rust moves as each view
+    /// reports what it shows (`cells.rs`).
+    in property <[ThumbCell]> strip-cells;
+    in property <[ThumbCell]> grid-cells;
     in-out property <int> selected: -1;
     /// Open the frame on this row and make it the whole selection.
     callback select(int);
@@ -165,18 +170,22 @@ export component App inherits Window {
     /// scrolls to the clamp. `strip-relay` does the real reveal
     /// once the strip has a width.
     function strip-reveal() {
-        if (root.selected < 0 || strip.width <= 0px) { return; }
-        // The frame's edges in the content's coordinates, and the
-        // left edge of what is on screen.
-        let left = root.strip-pad + root.selected * root.strip-pitch;
-        let right = left + root.strip-item;
-        let x = -strip.content-x;
-        let wanted = left - root.strip-pad < x
-            ? left - root.strip-pad
-            : (right + root.strip-pad > x + strip.width
-                ? right + root.strip-pad - strip.width
-                : x);
-        strip.content-x = min(0px, max(strip.width - strip.content-width, -wanted));
+        if (strip.width <= 0px) { return; }
+        // With nothing chosen the strip stays where it is, and still
+        // says what it shows: its cells are made from what it says.
+        if (root.selected >= 0) {
+            // The frame's edges in the content's coordinates, and the
+            // left edge of what is on screen.
+            let left = root.strip-pad + root.selected * root.strip-pitch;
+            let right = left + root.strip-item;
+            let x = -strip.content-x;
+            let wanted = left - root.strip-pad < x
+                ? left - root.strip-pad
+                : (right + root.strip-pad > x + strip.width
+                    ? right + root.strip-pad - strip.width
+                    : x);
+            strip.content-x = min(0px, max(strip.width - strip.content-width, -wanted));
+        }
         root.strip-report();
     }
     /// Put the strip where the selection is visible, worked out from
@@ -294,6 +303,23 @@ export component App inherits Window {
         if (!root.grid-open || root.thumbs.length == 0 || root.grid-h <= 0px) { return; }
         root.grid-range(root.grid-scroll, root.grid-h, root.grid-cols);
     }
+    /// For `--time-scroll`: move the grid, or the strip when the grid
+    /// is closed, `by` further along, as a wheel does. Says whether
+    /// it moved, which at an end it does not.
+    public function scroll-by(by: length) -> bool {
+        if (root.grid-open) {
+            let was = root.grid-scroll;
+            root.grid-scroll = clamp(root.grid-scroll + by, 0px, root.grid-max);
+            root.grid-report();
+            return root.grid-scroll != was;
+        }
+        let was = strip.content-x;
+        strip.content-x = min(0px, max(strip.width - strip.content-width, strip.content-x - by));
+        return strip.content-x != was;
+    }
+    /// How many cells the strip and the grid have made, for
+    /// `--time-scroll`'s line.
+    out property <int> cells-made: root.strip-cells.length + (root.grid-open ? root.grid-cells.length : 0);
 
     // Culling: the camera's own JPEG in the viewport, through the
     // monitor's profile only, and no develop until Enter or a slider.
@@ -2232,6 +2258,7 @@ export component App inherits Window {
             height: root.strip-h;
             visible: !root.strip-hidden;
             thumbs: root.thumbs;
+            cells: root.strip-cells;
             selected <=> root.selected;
             frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
             frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
@@ -2307,6 +2334,7 @@ export component App inherits Window {
     // of the window can reach it.
     if root.grid-open: GridSheet {
         thumbs: root.thumbs;
+        cells: root.grid-cells;
         selected <=> root.selected;
         frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
         frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
