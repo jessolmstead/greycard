@@ -21,13 +21,65 @@ None open.
 
 None open.
 
-## Next: 0.3.0
+## Next: 0.4.0
 
-A NAS root neither freezes the window nor goes stale, frames can be
-deleted from the disk behind a confirmation, the scopes can be read
-for the mask alone, and a value can be typed.
+A large archive on a NAS opens at once, is browsed by folder from
+the left pane, and the last folders opened are a click away; a crop
+can be drawn, an export is a line in History, and the Masks tab reads
+at a glance.
 
-Nothing left to land.
+- [ ] The index as the sidecars' cache, so a root opens without a
+      read from its disk: each row keeps the sidecar's rating, flag,
+      label, keywords and whether an edit exists, keyed by the sidecar's
+      mtime and refreshed by the pass; the sidecar stays the truth. An
+      offline root then still shows its grid, greyed, with the filter
+      working, and only opening a frame needs the disk (today the root is
+      left out, and an online one waits on every sidecar over the wire)
+- [ ] The rest of the network reads off the window's thread, after
+      §187 and §188: the indexer's own passes wait on a root that answers
+      the 3 s look and then hangs mid-walk, and every root's reports stop
+      until it answers, so give its passes the look too and skip a root
+      that has not answered; a folder's own open still reads its sidecars
+      on the window's thread; `Roots::remove` on a path not in the list,
+      and "Add this folder" on a folder no read has seen, still make it
+      canonical there; a network mount below a local root (`~/Pictures`
+      with a share at `~/Pictures/NAS`) is still watched recursively, so
+      classify each mount under a root, not only the root's; and a field
+      for `network_poll_minutes` in the Settings sheet
+- [ ] A folder tree under a chosen root: the root's folders as a tree
+      in the left pane, from the index rather than the disk so an offline
+      root still shows its shape, each folder with its frame count, a click
+      opening that folder's frames (its subfolders' too, as a switch) and
+      the view's chip staying on; a folder's open then reads only that
+      folder's sidecars rather than the whole root's, which is the cheap
+      way into a large archive
+- [ ] The open folder named, and a Recently opened list: the folder's
+      name under the Open folder button (its path as the hover text,
+      the root's name when it is under one), and a list of the last
+      ten folders opened in settings.json beside `last_file`, offered
+      under the button and in the grid's header, with the one open
+      marked; a folder gone from the disk stays listed and says so
+      when chosen
+- [ ] A virtualized grid and strip: only the rows on screen given a
+      cell, where today every row of a 20,000-frame folder has one and
+      a frame costs 45 to 400 ms, the longest wait left while a warm
+      folder's pictures come in (§191)
+- [ ] Draw a crop: in crop mode, a drag that starts outside the frame
+      draws a new one from the press point, held to the chosen
+      aspect, instead of only resizing today's handles or moving the
+      whole
+- [ ] An export as a line in History: the file, its preset and the
+      time, at the state it was exported from, so a click goes back to
+      the look that was sent out
+- [ ] The Masks tab laid out to be read at a glance: today it has an
+      Invert for the mask and an Invert shape for each shape, and the
+      shape buttons twice (new mask, then Next shape); one place for
+      each control, and the mask, its shapes and their settings in an
+      order that says which is which
+- [ ] A Background shape: the Subject mask inverted, one button beside
+      Subject, so a look goes on everything but the subject without
+      drawing it; later the parts models make it the true background
+      rather than the subject's complement
 
 ## Tracks
 
@@ -114,10 +166,6 @@ seconds.
       2.3), and it is the next second (§164). The whole 45 MP develop
       with the hybrid denoise is 12.7 s at six threads, the number a
       tester can watch
-- [ ] A virtualized grid and strip: only the rows on screen given a
-      cell, where today every row of a 20,000-frame folder has one and
-      a frame costs 45 to 400 ms, the longest wait left while a warm
-      folder's pictures come in (§191)
 - [ ] An AVX2-and-FMA path for the wavelet chain's taps behind a
       feature check: about as much again on a desktop, nothing on the
       Mac; the first x86 assumption, declined twice (§128, §164)
@@ -131,10 +179,6 @@ Decided (§34): ONNX Runtime through `ort`, CPU floor with CUDA, DirectML
 or CoreML when found; models downloaded on first use with their
 licenses, never bundled; a `greycard-ai` crate that core never sees.
 
-- [ ] A Background shape: the Subject mask inverted, one button beside
-      Subject, so a look goes on everything but the subject without
-      drawing it; later the parts models make it the true background
-      rather than the subject's complement
 - [ ] AI masks, after Sky (§175): a learned sky matte for dense canopies and twigs
       against glare, where the color-line matte fails (needs clean
       data we assemble); a 4096-wide raster for Sky so a 100 MP
@@ -215,13 +259,6 @@ Directories stay the truth; the catalog is a rebuildable index (§72).
 A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.
 
-- [ ] A folder tree under a chosen root: the root's folders as a tree
-  in the left pane, from the index rather than the disk so an offline
-  root still shows its shape, each folder with its frame count, a click
-  opening that folder's frames (its subfolders' too, as a switch) and
-  the view's chip staying on; a folder's open then reads only that
-  folder's sidecars rather than the whole root's, which is the cheap
-  way into a 12,000-frame archive
 - [ ] The filter bar's last two chips: a "none" chip for frames with
   no value for a facet (decide it with a library of phone JPEGs in
   hand), and an error row in the index for a file whose hash fails so
@@ -238,13 +275,6 @@ comes across with its ratings and collections.
   skipping what is already there, its size shown before the confirm,
   and never behind the user's back on open. Cloud through a mount or
   a configured command, never a provider's API
-- [ ] The index as the sidecars' cache, so a root opens without a
-  read from its disk: each row keeps the sidecar's rating, flag,
-  label, keywords and whether an edit exists, keyed by the sidecar's
-  mtime and refreshed by the pass; the sidecar stays the truth. An
-  offline root then still shows its grid, greyed, with the filter
-  working, and only opening a frame needs the disk (today the root is
-  left out, and an online one waits on every sidecar over the wire)
 - [ ] Local previews by content hash: a mid-size picture per frame
   in the local cache, made by the pass, so a shoot on a NAS is culled
   in the loupe and the compare view without reading the raw over the
@@ -267,17 +297,6 @@ comes across with its ratings and collections.
   back, as a write-through on save when both copies are online, and
   as a pass when a root returns. No lock file, no checked-out flag,
   no daemon. Waits on one frame in two places
-- [ ] The rest of the network reads off the window's thread, after
-  §187 and §188: the indexer's own passes wait on a root that answers
-  the 3 s look and then hangs mid-walk, and every root's reports stop
-  until it answers, so give its passes the look too and skip a root
-  that has not answered; a folder's own open still reads its sidecars
-  on the window's thread; `Roots::remove` on a path not in the list,
-  and "Add this folder" on a folder no read has seen, still make it
-  canonical there; a network mount below a local root (`~/Pictures`
-  with a share at `~/Pictures/NAS`) is still watched recursively, so
-  classify each mount under a root, not only the root's; and a field
-  for `network_poll_minutes` in the Settings sheet
 - [ ] The network assumed slow and sometimes hung: a timeout on every
   read of a root over a network mount so a sleeping NAS does not hold
   the pool; the indexer's reads several at once on such a root,
@@ -371,13 +390,6 @@ clears or a tester asks for it.
       Monitor, Proof and Demosaic at the bottom, and up and down
       buttons for it in the Settings sheet. Goes with the develop
       panel's move out of app.slint, since that is the same rewiring
-- [ ] The open folder named, and a Recently opened list: the folder's
-      name under the Open folder button (its path as the hover text,
-      the root's name when it is under one), and a list of the last
-      ten folders opened in settings.json beside `last_file`, offered
-      under the button and in the grid's header, with the one open
-      marked; a folder gone from the disk stays listed and says so
-      when chosen
 - [ ] Resizable side panes: drag the left pane's and the develop
       panel's inner edge, today's widths the minimum, about 500 px the
       most, each kept in the settings; first see what a viewport
@@ -402,18 +414,6 @@ clears or a tester asks for it.
       and so in an export preset; a list of marks so text and a logo
       go on one export; a plate or shadow behind text; a bundled font
       so exports match across machines (§157)
-- [ ] Draw a crop: in crop mode, a drag that starts outside the frame
-      draws a new one from the press point, held to the chosen
-      aspect, instead of only resizing today's handles or moving the
-      whole
-- [ ] An export as a line in History: the file, its preset and the
-      time, at the state it was exported from, so a click goes back to
-      the look that was sent out
-- [ ] The Masks tab laid out to be read at a glance: today it has an
-      Invert for the mask and an Invert shape for each shape, and the
-      shape buttons twice (new mask, then Next shape); one place for
-      each control, and the mask, its shapes and their settings in an
-      order that says which is which
 - [ ] Geometry in a sync, mapped through each frame's aspect and turn
       as masks already are (§156)
 - [ ] The range masks' sample from before the Detail section, so dehaze
