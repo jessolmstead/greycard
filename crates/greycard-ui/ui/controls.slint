@@ -80,8 +80,8 @@ export component Section inherits VerticalLayout {
     in property <bool> superseded: false;
     in-out property <bool> collapsed: false;
     callback switched();
-    spacing: Theme.space-2;
-    padding-top: Theme.space-3;
+    spacing: 6px;
+    padding-top: Theme.space-1;
     HorizontalLayout {
         spacing: Theme.space-2;
         Rectangle {
@@ -172,7 +172,7 @@ export component Section inherits VerticalLayout {
             y: 0;
             width: 100%;
             height: self.preferred-height;
-            spacing: Theme.space-2;
+            spacing: Theme.space-1;
             opacity: root.switchable && (!root.on || root.superseded) ? 0.45 : 1;
             animate opacity { duration: Theme.quick; }
             @children
@@ -358,7 +358,7 @@ export component EditSlider inherits Rectangle {
     accessible-value-step: root.step;
     accessible-enabled: root.enabled;
 
-    height: Theme.control-height + Theme.space-2;
+    height: Theme.control-height;
     // Wider for a section whose labels run long; the sliders of one
     // block share it so their tracks line up.
     in property <length> label-width: 68px;
