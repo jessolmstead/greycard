@@ -10,6 +10,9 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A color label shows on the whole tile: the grid tile's plate takes a
+  quarter of the label's color, the strip's cell a band under its
+  picture, and the small icon stays (§205)
 - The Masks tab reads at a glance: one card for the mask, one row per
   shape with its own invert, the chosen shape's settings under the
   rows, and one Add-a-shape group, with New mask a separate action;

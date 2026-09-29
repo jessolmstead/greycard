@@ -19,8 +19,7 @@ None open.
 
 ## Tweaks
 
-- [ ] Color-labeled frames should be more obvious than a small color
-      icon. Maybe the background around the frame should go that color?
+None open.
 
 ## Next: 0.4.0
 
