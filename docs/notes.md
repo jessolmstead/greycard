@@ -210,3 +210,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§197. Archive roots: back up, bring back, and the rejects on the archive](notes/197-archive-roots-back-up-bring-back-and-the-rejects.md) (2026-09-28)
 - [§198. An export as a line in History](notes/198-an-export-as-a-line-in-history.md) (2026-09-28)
 - [§199. The export's picture and the GPU's CA, twice over](notes/199-the-export-s-picture-and-the-gpu-s-ca-twice-over.md) (2026-09-28)
+- [§200. Draw a crop by dragging outside today's rectangle](notes/200-draw-a-crop-by-dragging-outside-todays-rectangle.md) (2026-09-28)

@@ -88,10 +88,6 @@ History, and the Masks tab reads at a glance.
       that is online and fastest, its sidecar written to both when both
       are there, so "back up, then delete local" removes nothing from the
       library. Waits on archive roots, part one
-- [ ] Draw a crop: in crop mode, a drag that starts outside the frame
-      draws a new one from the press point, held to the chosen
-      aspect, instead of only resizing today's handles or moving the
-      whole
 - [ ] The Masks tab laid out to be read at a glance: today it has an
       Invert for the mask and an Invert shape for each shape, and the
       shape buttons twice (new mask, then Next shape); one place for

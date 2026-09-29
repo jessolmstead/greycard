@@ -10,6 +10,10 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A crop can be drawn: in crop mode a drag that starts outside the
+  rectangle draws a new one from the press point, held to the chosen
+  aspect and clamped to the picture; a press in the letterbox starts
+  from the nearest point of the picture (§200)
 - An export is a line in History: the file, its preset and the time,
   as a row above the state it was rendered from, so a click goes back
   to the look that was sent out; failed, skipped and canceled exports
