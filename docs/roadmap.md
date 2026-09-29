@@ -24,9 +24,10 @@ None open.
 ## Next: 0.4.0
 
 A large archive on a NAS opens at once, is browsed by folder from
-the left pane, and the last folders opened are a click away; a crop
-can be drawn, an export is a line in History, and the Masks tab reads
-at a glance.
+the left pane and culled without reading a raw over the wire, a shoot
+is backed up to it and brought back by hash, and the last folders
+opened are a click away; a crop can be drawn, an export is a line in
+History, and the Masks tab reads at a glance.
 
 - [ ] The index as the sidecars' cache, so a root opens without a
       read from its disk: each row keeps the sidecar's rating, flag,
@@ -64,6 +65,26 @@ at a glance.
       cell, where today every row of a 20,000-frame folder has one and
       a frame costs 45 to 400 ms, the longest wait left while a warm
       folder's pictures come in (§191)
+- [ ] Local previews by content hash: a mid-size picture per frame
+      in the local cache, made by the pass, so a shoot on a NAS is culled
+      in the loupe and the compare view without reading the raw over the
+      network. Lightroom's smart preview, minus the editing
+- [ ] Archive roots, for a NAS or a mounted cloud folder: Back up
+      copies a shoot's new and changed files and sidecars to the archive,
+      hash-verified and never deleting there; Remove rejects finds the
+      archive's copies by content hash, shows the list, and on confirm
+      moves them into a rejects folder on the archive, as culling moves
+      them locally; a removal queued while the root is offline; Bring
+      back, the inverse of Back up, copies a shoot or a selection from
+      the archive to a local root with its sidecars, hash-verified and
+      skipping what is already there, its size shown before the confirm,
+      and never behind the user's back on open. Cloud through a mount or
+      a configured command, never a provider's API
+- [ ] One frame in two places: a file whose hash is under two roots
+      (the shoot and its archive copy) shown once, opened from the copy
+      that is online and fastest, its sidecar written to both when both
+      are there, so "back up, then delete local" removes nothing from the
+      library. Waits on archive roots
 - [ ] Draw a crop: in crop mode, a drag that starts outside the frame
       draws a new one from the press point, held to the chosen
       aspect, instead of only resizing today's handles or moving the
@@ -264,26 +285,6 @@ comes across with its ratings and collections.
   hand), and an error row in the index for a file whose hash fails so
   it stops showing under every chip (§168). The all-roots view and
   the filter remembered between sessions are there since §174
-- [ ] Archive roots, for a NAS or a mounted cloud folder: Back up
-  copies a shoot's new and changed files and sidecars to the archive,
-  hash-verified and never deleting there; Remove rejects finds the
-  archive's copies by content hash, shows the list, and on confirm
-  moves them into a rejects folder on the archive, as culling moves
-  them locally; a removal queued while the root is offline; Bring
-  back, the inverse of Back up, copies a shoot or a selection from
-  the archive to a local root with its sidecars, hash-verified and
-  skipping what is already there, its size shown before the confirm,
-  and never behind the user's back on open. Cloud through a mount or
-  a configured command, never a provider's API
-- [ ] Local previews by content hash: a mid-size picture per frame
-  in the local cache, made by the pass, so a shoot on a NAS is culled
-  in the loupe and the compare view without reading the raw over the
-  network. Lightroom's smart preview, minus the editing
-- [ ] One frame in two places: a file whose hash is under two roots
-  (the shoot and its archive copy) shown once, opened from the copy
-  that is online and fastest, its sidecar written to both when both
-  are there, so "back up, then delete local" removes nothing from the
-  library. Waits on archive roots
 - [ ] Edits synced between a shoot and its archive copy by the
   sidecars alone, no database crossing machines: the two sidecars
   compared by hash on the pool; one behind the other (its history a
