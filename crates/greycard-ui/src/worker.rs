@@ -790,6 +790,29 @@ fn fetch_lenses(queue: &Arc<(Mutex<Queue>, Condvar)>, deliver: &dyn Fn(Outcome))
     }
 }
 
+/// The last develop, kept for an export under the same develop and the
+/// same orientation.
+struct Last {
+    edit: Edit,
+    turn: u8,
+    image: Arc<WorkingImage>,
+    /// Whether the base this picture came from had its CA corrected on the GPU.
+    /// The export's picture must be from the CPU, not the GPU.
+    ca_on_gpu: bool,
+}
+
+impl Last {
+    /// The develop that just finished, from the base it ran on.
+    fn made(edit: Edit, base: &Base, image: Arc<WorkingImage>) -> Self {
+        Self {
+            edit,
+            turn: base.turn,
+            image,
+            ca_on_gpu: base.ca_on_gpu,
+        }
+    }
+}
+
 fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::thumbpool::Pool>) {
     let (lock, cv) = &*queue;
     let mut ai = Ai::new();
@@ -814,7 +837,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
     let mut turn: u8 = 0;
     // The last develop, kept for an export under the same settings
     // and the same turn.
-    let mut last: Option<(Edit, u8, Arc<WorkingImage>)> = None;
+    let mut last: Option<Last> = None;
     // The last develop before its dehaze and sharpen, so a change to
     // either costs only those.
     let mut base: Option<Base> = None;
@@ -1069,7 +1092,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                         &mut gpu,
                         &deliver,
                     );
-                    last = image.map(|i| (edit, turn, i));
+                    last = image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i)));
                     deliver(outcome);
                 }
                 Err(e) => deliver(Outcome::Failed {
@@ -1097,7 +1120,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                         &mut gpu,
                         &deliver,
                     );
-                    last = image.map(|i| (edit, turn, i));
+                    last = image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i)));
                     deliver(outcome);
                 }
             }
@@ -1227,13 +1250,13 @@ fn file_label(path: &std::path::Path) -> String {
 /// The open file's picture under `edit` at `turn`: the last develop's
 /// when it was of the same develop and turn, else developed afresh.
 /// The export's picture is the reference's, on the CPU, whatever the
-/// viewport ran on.
+/// viewport ran on. If the last develop had CA on the GPU, redevelop.
 #[allow(clippy::too_many_arguments)]
 fn open_picture(
     edit: &Edit,
     turn: u8,
     input: Option<&Input>,
-    last: &mut Option<(Edit, u8, Arc<WorkingImage>)>,
+    last: &mut Option<Last>,
     base: &mut Option<Base>,
     learned: &mut Option<LearnedBase>,
     ai: &mut Ai,
@@ -1241,11 +1264,12 @@ fn open_picture(
     lenses: Option<&greycard_lens::Database>,
     deliver: &Deliver,
 ) -> Result<Arc<WorkingImage>, String> {
-    if let Some((e, t, image)) = &*last
-        && *t == turn
-        && e.same_develop(edit)
+    if let Some(l) = &*last
+        && l.turn == turn
+        && l.edit.same_develop(edit)
+        && !l.ca_on_gpu
     {
-        return Ok(image.clone());
+        return Ok(l.image.clone());
     }
     let Some(f) = input else {
         return Err("no file is open".into());
@@ -1254,7 +1278,9 @@ fn open_picture(
         f, edit, turn, 0, base, learned, ai, cache, lenses, &mut None, deliver,
     ) {
         (_, Some(image)) => {
-            *last = Some((edit.clone(), turn, image.clone()));
+            *last = base
+                .as_ref()
+                .map(|b| Last::made(edit.clone(), b, image.clone()));
             Ok(image)
         }
         (Outcome::Failed { message, .. }, None) => Err(message),
@@ -3298,6 +3324,64 @@ mod tests {
         let (exported, again, reference) = (exported.unwrap(), again.unwrap(), reference.unwrap());
         assert_eq!(exported.data, reference.data);
         assert_eq!(again.data, reference.data);
+    }
+
+    /// A last develop whose CA ran on the GPU is not handed to an export:
+    /// it develops afresh on the CPU, and that picture is then reused.
+    #[test]
+    fn an_export_does_not_reuse_a_gpu_ca_develop() {
+        let frame = Arc::new(aberrated_frame(400, 320));
+        // The reference, from nothing.
+        let (_, reference) = develop_once(&frame, &mut None, &mut None);
+        let reference = reference.unwrap();
+        // A base as a GPU session leaves it, and a last develop from it
+        // that is plainly not the reference: a flat grey picture.
+        let mut base = None;
+        let (_, image) = develop_once(&frame, &mut base, &mut None);
+        let image = image.unwrap();
+        base.as_mut().unwrap().ca_on_gpu = true;
+        let wrong = Arc::new(
+            WorkingImage::from_data(image.width, image.height, vec![0.5; image.data.len()])
+                .unwrap(),
+        );
+        let mut last = Some(Last::made(
+            Edit::default(),
+            base.as_ref().unwrap(),
+            wrong.clone(),
+        ));
+        let mut learned = None;
+        let mut ai = Ai::new();
+        let deliver: Deliver = Arc::new(|_| {});
+        let input = Input::Raw(frame.clone());
+        let mut export = |last: &mut Option<Last>, base: &mut Option<Base>, ai: &mut Ai| {
+            open_picture(
+                &Edit::default(),
+                0,
+                Some(&input),
+                last,
+                base,
+                &mut learned,
+                ai,
+                None,
+                None,
+                &deliver,
+            )
+            .unwrap()
+        };
+        let got = export(&mut last, &mut base, &mut ai);
+        assert!(!Arc::ptr_eq(&got, &wrong), "the GPU develop was reused");
+        assert_eq!(
+            got.data, reference.data,
+            "the export's picture is the reference's"
+        );
+        assert!(
+            last.as_ref().is_some_and(|l| !l.ca_on_gpu),
+            "the last develop is the CPU's now"
+        );
+        assert!(base.as_ref().is_some_and(|b| !b.ca_on_gpu));
+        // Now that it is the CPU's, it is reused.
+        let again = export(&mut last, &mut base, &mut ai);
+        assert!(Arc::ptr_eq(&got, &again), "the CPU develop is kept");
     }
 
     /// A device error in the CA correction falls back to the reference
