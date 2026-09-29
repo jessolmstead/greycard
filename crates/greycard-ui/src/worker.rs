@@ -1696,6 +1696,20 @@ struct LearnedBase {
     white: WhiteBase,
     radius: Option<f32>,
     clip_level: f32,
+    /// Whether the CA correction in this pair ran on the GPU. The
+    /// correction is applied to the mosaic before the network sees
+    /// it, so it is in both pictures and in every base blended from
+    /// them; a develop without a GPU (the export) makes the pair
+    /// again on the CPU rather than serve it, as the base's own check
+    /// does for the base.
+    ca_on_gpu: bool,
+}
+
+/// Whether a kept learned pair can serve a develop at `turn` under
+/// `edit`: the same turn and the same learned settings, and, without a
+/// GPU, only a pair whose CA correction was not the GPU's.
+fn pair_serves(l: &LearnedBase, turn: u8, edit: &Edit, has_gpu: bool) -> bool {
+    l.turn == turn && l.edit.same_learned(edit) && (has_gpu || !l.ca_on_gpu)
 }
 
 /// What the lens database says of a file.
@@ -1893,7 +1907,17 @@ fn develop_job(
             }),
             (Input::Raw(frame), Some(model)) => {
                 match learned_base(
-                    frame, edit, turn, &settings, model, learned, ai, cache, stamp, ca,
+                    frame,
+                    edit,
+                    turn,
+                    &settings,
+                    model,
+                    learned,
+                    ai,
+                    cache,
+                    stamp,
+                    ca,
+                    gpu.is_some(),
                 ) {
                     Ok((b, r)) => {
                         report = r;
@@ -1916,9 +1940,22 @@ fn develop_job(
             }
         }
         ca_note = ca_ran.take();
+        let ca_on_gpu = matches!(ca_note, Some((CaRan::Gpu, _)));
+        // A learned pair made in this develop carries this develop's
+        // CA; a pair kept from an earlier one already says where its
+        // own ran, and the base took that from it.
+        if ca_on_gpu
+            && matches!(
+                report,
+                LearnedReport::Ran { .. } | LearnedReport::Cached { .. }
+            )
+            && let Some(l) = learned.as_mut()
+        {
+            l.ca_on_gpu = true;
+        }
         match made {
             Ok(mut b) => {
-                b.ca_on_gpu = matches!(ca_note, Some((CaRan::Gpu, _)));
+                b.ca_on_gpu |= ca_on_gpu;
                 let corrects = !edit.lens.is_identity(lenses.is_some());
                 let defringe = edit.lens.defringe();
                 if corrects || defringe.is_some() {
@@ -2360,10 +2397,11 @@ fn learned_base(
     cache: Option<&greycard_ai::DenoiseCache>,
     stamp: u64,
     ca: Option<CaCorrector<'_>>,
+    has_gpu: bool,
 ) -> Result<(Base, LearnedReport), LearnedReport> {
     let report = if learned
         .as_ref()
-        .is_some_and(|l| l.turn == turn && l.edit.same_learned(edit))
+        .is_some_and(|l| pair_serves(l, turn, edit, has_gpu))
     {
         LearnedReport::Kept
     } else {
@@ -2397,7 +2435,7 @@ fn learned_base(
             stamp,
             patched: None,
             pre: None,
-            ca_on_gpu: false,
+            ca_on_gpu: l.ca_on_gpu,
         },
         report,
     ))
@@ -2471,6 +2509,8 @@ fn run_learned(
             white: WhiteBase::from(&model.white_balance, model.clip_level),
             radius: model.sharpen_radius,
             clip_level: model.clip_level,
+            // Set by the caller once it knows where the CA ran.
+            ca_on_gpu: false,
         },
         report,
     ))
@@ -3201,6 +3241,7 @@ mod tests {
             white: WhiteBase::IDENTITY,
             radius: None,
             clip_level: 1.0,
+            ca_on_gpu: false,
         };
         let turned = |image: &WorkingImage| orient(image.clone(), Orientation::Rotate90);
         for strength in [0.0f32, 0.5, 1.0] {
@@ -3324,6 +3365,42 @@ mod tests {
         let (exported, again, reference) = (exported.unwrap(), again.unwrap(), reference.unwrap());
         assert_eq!(exported.data, reference.data);
         assert_eq!(again.data, reference.data);
+    }
+
+    /// A learned pair whose CA ran on the GPU serves a develop with a
+    /// GPU and not one without, which makes the pair again on the CPU;
+    /// a pair whose CA was the CPU's serves both. The turn and the
+    /// learned settings still have to match.
+    #[test]
+    fn a_gpu_ca_learned_pair_is_not_served_to_an_export() {
+        let edit = Edit::default();
+        let image = Arc::new(WorkingImage::new(4, 4));
+        let pair = |ca_on_gpu: bool| LearnedBase {
+            edit: edit.clone(),
+            turn: 0,
+            model: image.clone(),
+            plain: image.clone(),
+            white: WhiteBase::IDENTITY,
+            radius: None,
+            clip_level: 1.0,
+            ca_on_gpu,
+        };
+        let gpu = pair(true);
+        assert!(pair_serves(&gpu, 0, &edit, true));
+        assert!(
+            !pair_serves(&gpu, 0, &edit, false),
+            "the export makes it again"
+        );
+        let cpu = pair(false);
+        assert!(pair_serves(&cpu, 0, &edit, true));
+        assert!(pair_serves(&cpu, 0, &edit, false));
+        assert!(!pair_serves(&cpu, 1, &edit, false), "another turn");
+        let mut other = edit.clone();
+        other.noise.learned = greycard_edit::Learned::Best;
+        assert!(
+            !pair_serves(&cpu, 0, &other, false),
+            "other learned settings"
+        );
     }
 
     /// A last develop whose CA ran on the GPU is not handed to an export:
