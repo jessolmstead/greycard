@@ -69,22 +69,24 @@ History, and the Masks tab reads at a glance.
       in the local cache, made by the pass, so a shoot on a NAS is culled
       in the loupe and the compare view without reading the raw over the
       network. Lightroom's smart preview, minus the editing
-- [ ] Archive roots, for a NAS or a mounted cloud folder: Back up
-      copies a shoot's new and changed files and sidecars to the archive,
-      hash-verified and never deleting there; Remove rejects finds the
-      archive's copies by content hash, shows the list, and on confirm
-      moves them into a rejects folder on the archive, as culling moves
-      them locally; a removal queued while the root is offline; Bring
-      back, the inverse of Back up, copies a shoot or a selection from
-      the archive to a local root with its sidecars, hash-verified and
-      skipping what is already there, its size shown before the confirm,
-      and never behind the user's back on open. Cloud through a mount or
-      a configured command, never a provider's API
+- [ ] Archive roots, part one (§197): a root marked as an archive in
+      roots.json, never deleted from; Back up copies a shoot's or a
+      selection's new frames and newer sidecars to it, mirrored under
+      the root's label, whole-file hash-verified, off the window's
+      thread with a bar and a Cancel; Bring back is the inverse from
+      the archive's chip view, skipping frames already under a local
+      root; an archive left out of All roots until one frame in two
+      places lands
+- [ ] Archive roots, part two (§197): Remove rejects finds the rejects
+      folder's frames on the archive by hash, shows the list, and on
+      confirm moves them into a rejects folder there as culling does
+      here; a removal confirmed while the archive is offline is queued
+      and run when it answers. Waits on part one
 - [ ] One frame in two places: a file whose hash is under two roots
       (the shoot and its archive copy) shown once, opened from the copy
       that is online and fastest, its sidecar written to both when both
       are there, so "back up, then delete local" removes nothing from the
-      library. Waits on archive roots
+      library. Waits on archive roots, part one
 - [ ] Draw a crop: in crop mode, a drag that starts outside the frame
       draws a new one from the press point, held to the chosen
       aspect, instead of only resizing today's handles or moving the
