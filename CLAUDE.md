@@ -31,10 +31,13 @@
   checked against those.
 
 ## Docs
-- `docs/notes.md` is the design and strategy record. Append to it; do not start
-  another notes file. It is published with the repo, so what goes in it is the
-  reasoning behind a technical decision, never the reasoning behind an
-  identity or account one — that belongs in `CLAUDE.local.md`.
+- `docs/notes/` is the design and strategy record: one file a section,
+  `NNN-slug.md`, numbered in order and never renumbered, with its line in
+  the index `docs/notes.md`. `§N` anywhere in the repo means section N. A
+  new decision is a new section with the next number; never a second notes
+  tree. It is published with the repo, so what goes in it is the reasoning
+  behind a technical decision, never the reasoning behind an identity or
+  account one — that belongs in `CLAUDE.local.md`.
 - `docs/roadmap.md` is the plan: a release is one sentence a tester can
   verify and the short list under it; the pool and the tracks hold the
   rest. One line an item, checkboxes, and for a blocked item what it

@@ -287,5 +287,6 @@ and a generative fill; the library's collections; a Lightroom catalog
 import; HDR merge and panoramas, and the merges in the browser;
 tethering.
 
-The reasoning behind every choice is in `docs/notes.md`, numbered by
-section, and the list is `docs/roadmap.md`.
+The reasoning behind every choice is in `docs/notes/`, one numbered
+section a file with `docs/notes.md` as the index, and the list is
+`docs/roadmap.md`.

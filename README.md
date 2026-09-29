@@ -119,8 +119,8 @@ once, culling and the keys.
 [docs/where-greycard-fits.md](docs/where-greycard-fits.md) sets it
 beside Lightroom, Capture One, DxO, darktable, RawTherapee and
 RapidRAW, and says what each got right.
-[docs/notes.md](docs/notes.md) is the design record, every decision
-numbered. [docs/roadmap.md](docs/roadmap.md) is the plan, by
+[docs/notes.md](docs/notes.md) indexes the design record, one
+numbered file a decision under docs/notes/. [docs/roadmap.md](docs/roadmap.md) is the plan, by
 release, and [docs/changelog.md](docs/changelog.md) is what shipped.
 
 ## Installing and running it
