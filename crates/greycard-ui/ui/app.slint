@@ -598,7 +598,8 @@ export component App inherits Window {
     // One per shape: whether it counts towards the mask.
     in-out property <[bool]> component-on: [];
     in-out property <int> component: 0;
-    in-out property <bool> component-invert: false;
+    // One per shape: whether it is inverted, beside it in its row.
+    in-out property <[bool]> shape-invert: [];
     in-out property <string> shape-mode: "Add";
     in-out property <[bool]> adjustment-on: [];
     // The shape being placed goes into the chosen mask rather than
@@ -632,11 +633,12 @@ export component App inherits Window {
     in-out property <string> target-name: "";
     callback target-changed(int);
     callback adjustment-toggled(int);
-    callback add-adjustment(string);
+    callback new-mask();
     callback delete-adjustment();
     callback add-shape(string, string);
     callback delete-shape-at(int);
     callback shape-toggled(int);
+    callback invert-shape-toggled(int);
     callback component-changed(int);
     callback renamed();
     // A press on the view while placing, and whether it was the right button.
@@ -1866,8 +1868,8 @@ export component App inherits Window {
                             adjustment-name <=> root.adjustment-name;
                             component-names <=> root.component-names;
                             component-on <=> root.component-on;
+                            shape-invert <=> root.shape-invert;
                             component <=> root.component;
-                            component-invert <=> root.component-invert;
                             shape-mode <=> root.shape-mode;
                             adjustment-on <=> root.adjustment-on;
                             placing-into <=> root.placing-into;
@@ -1879,11 +1881,12 @@ export component App inherits Window {
                             brush-op <=> root.brush-op;
                             target-changed(a) => { root.target-changed(a); }
                             adjustment-toggled(a) => { root.adjustment-toggled(a); }
-                            add-adjustment(a) => { root.add-adjustment(a); }
+                            new-mask => { root.new-mask(); }
                             delete-adjustment => { root.delete-adjustment(); }
                             add-shape(a, b) => { root.add-shape(a, b); }
                             delete-shape-at(a) => { root.delete-shape-at(a); }
                             shape-toggled(a) => { root.shape-toggled(a); }
+                            invert-shape-toggled(a) => { root.invert-shape-toggled(a); }
                             component-changed(a) => { root.component-changed(a); }
                             renamed => { root.renamed(); }
                             view-changed => { root.view-changed(); }

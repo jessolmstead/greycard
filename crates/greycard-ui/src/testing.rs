@@ -112,6 +112,23 @@ pub(crate) fn folder(count: usize) -> Vec<std::path::PathBuf> {
         .collect()
 }
 
+/// How many elements anywhere in the window carry `label` as their
+/// accessible label: whether a control the layout means to show once
+/// is there once, or twice by a mistake in it.
+pub(crate) fn count_labeled(app: &App, label: &str) -> usize {
+    use i_slint_backend_testing::ElementHandle;
+    // As `labeled`'s own first move: a control a property has just
+    // brought in is built on the next event. Query only once the
+    // layout has settled into the shape under test — a query before
+    // a control's `if` turns true leaves later ones, even of a
+    // control already there, finding nothing: call this again after
+    // such a change rather than before it.
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(0.0, 0.0),
+    });
+    ElementHandle::find_by_accessible_label(app, label).count()
+}
+
 /// The bounds of the element a screen reader knows as `label`,
 /// scrolled into the panel's view first: its top left and its size,
 /// in logical pixels from the window's top left.

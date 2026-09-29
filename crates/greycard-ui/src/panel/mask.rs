@@ -17,8 +17,6 @@ pub(crate) struct Placing {
     /// strokes.
     pub(crate) index: usize,
     pub(crate) component: Option<usize>,
-    /// A new adjustment, rather than a shape added to one.
-    pub(crate) fresh: bool,
     /// An object's press has become a box.
     pub(crate) boxed: bool,
 }
@@ -56,13 +54,20 @@ pub(crate) fn component_on(mask: &Mask) -> ModelRc<bool> {
     ))
 }
 
+/// Which of a mask's shapes are inverted, one per row: at a glance
+/// beside each, not only the chosen one's.
+pub(crate) fn component_invert(mask: &Mask) -> ModelRc<bool> {
+    ModelRc::new(VecModel::from(
+        mask.components.iter().map(|c| c.invert).collect::<Vec<_>>(),
+    ))
+}
+
 /// Put the chosen shape's own controls on the panel.
 pub(crate) fn show_component(mask: &Mask, app: &App) {
     let i = (app.get_component().max(0) as usize).min(mask.components.len().saturating_sub(1));
     app.set_component(i as i32);
     match mask.components.get(i) {
         Some(c) => {
-            app.set_component_invert(c.invert);
             let feather = match c.shape {
                 Shape::Radial { feather, .. } => Some(feather),
                 _ => None,
@@ -166,16 +171,41 @@ pub(crate) fn read_range(shape: &mut Shape, app: &App) {
 /// Whether a shape is made whole by its button, with no drag on the
 /// picture: a model's subject, or a range of the picture's own.
 fn made_at_once(kind: &str) -> bool {
-    matches!(kind, "Subject" | "Sky" | "Luminance" | "Color")
+    matches!(
+        kind,
+        "Subject" | "Background" | "Sky" | "Luminance" | "Color"
+    )
 }
 
 /// What the status line says once a shape made at once is in.
 fn made_hint(kind: &str) -> &'static str {
     match kind {
         "Subject" => "finding the subject",
+        "Background" => "finding the background",
         "Sky" => "finding the sky",
         "Color" => "click a color in the picture to center the window on it; Esc to keep the skin",
         _ => "",
+    }
+}
+
+/// A mask fresh from "New mask" carries this placeholder until its
+/// first shape lands.
+fn placeholder_name(id: u64) -> String {
+    format!("Mask {id}")
+}
+
+/// The mask's name once its first shape lands, as `add_adjustment`
+/// used to name one made whole ("Subject 3", "Linear 1"): only while
+/// it still carries `placeholder_name`'s text, so a mask already
+/// renamed by hand is left alone. Says whether it renamed anything,
+/// so a caller only refreshes the panel's own copy of the name when
+/// it would otherwise go stale.
+fn name_first_shape(a: &mut Adjustment, shape_name: &str) -> bool {
+    if a.name == placeholder_name(a.id) {
+        a.name = format!("{shape_name} {}", a.id);
+        true
+    } else {
+        false
     }
 }
 
@@ -302,13 +332,17 @@ pub(crate) fn step(
             model,
             model.id == greycard_ai::SUBJECT_WEBGPU.id && have(&greycard_ai::SUBJECT),
         )
-    } else if matches!(shape, Shape::Subject {}) && have(&greycard_ai::SUBJECT) {
+    } else if matches!(shape, Shape::Subject {} | Shape::Background {})
+        && have(&greycard_ai::SUBJECT)
+    {
         // Nothing to offer right now (another sheet is up, a fetch is
         // running, or this model was already declined or failed this
         // session), but the store's own original runs: use it rather
-        // than wait on an offer that is not coming this round. For a
-        // Subject want alone: an Object or a Sky asked for with the
-        // Subject model would load the wrong file.
+        // than wait on an offer that is not coming this round. A
+        // Background wants exactly what a Subject want does — the
+        // same model, the same fallback — so it is treated as one
+        // here too. For either want alone: an Object or a Sky asked
+        // for with the Subject model would load the wrong file.
         Step::Ask(&greycard_ai::SUBJECT)
     } else {
         Step::Wait
@@ -463,6 +497,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
+            // A brush, an object or a sky left in hand keeps taking
+            // strokes and picks into the mask it was armed for
+            // (`placing.index`), not whichever this switches to: put
+            // it down first, as leaving the Masks tab already does.
+            if st.placing.take().is_some() {
+                app.set_placing("".into());
+                app.set_status("".into());
+            }
             let edit = read_edit(&app, &st.edit, st.target);
             st.edit = edit;
             let target = (i > 0).then(|| i as usize - 1);
@@ -507,69 +549,42 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.window().request_redraw();
         });
     }
+    // A mask on its own, with no shape yet: the single way to start
+    // one now that a shape is chosen afterward, from the one "Add a
+    // shape" row the chosen mask always shows.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_add_adjustment(move |kind| {
+        app.on_new_mask(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             let mut st = state.borrow_mut();
-            // The button of the tool in hand puts it down.
-            if app.get_placing() == kind && !app.get_placing_into() {
-                st.placing = None;
-                app.set_placing("".into());
-                app.set_status("".into());
-                return;
-            }
             if st.edit.adjustments.len() >= MAX_LOCALS {
                 app.set_status(format!("at most {MAX_LOCALS} adjustments").into());
                 return;
             }
-            // A subject needs no placing: the model finds it; nor does
-            // a range, which is the picture's own.
-            if made_at_once(kind.as_str()) {
-                let edit = read_edit(&app, &st.edit, st.target);
-                st.edit = edit;
-                let id = st.edit.next_id();
-                let shape = Shape::of_kind(kind.as_str());
-                st.edit.adjustments.push(Adjustment {
-                    id,
-                    name: format!("{} {id}", shape.name()),
-                    enabled: true,
-                    mask: Mask {
-                        components: vec![Component {
-                            shape,
-                            mode: Mode::Add,
-                            invert: false,
-                            enabled: true,
-                        }],
-                        invert: false,
-                    },
-                    look: Look::default(),
-                });
-                st.target = Some(st.edit.adjustments.len() - 1);
-                st.placing = None;
-                app.set_placing("".into());
-                app.set_component(0);
-                show_edit(&st, &st.edit, &app, st.target);
-                drop(st);
-                app.invoke_view_changed();
-                arm_range_pick(&app, kind.as_str());
-                return;
-            }
-            st.placing = Some(Placing {
-                kind: Shape::of_kind(kind.as_str()),
-                mode: Mode::Add,
-                from: (0.0, 0.0),
-                index: usize::MAX,
-                component: None,
-                fresh: true,
-                boxed: false,
+            let edit = read_edit(&app, &st.edit, st.target);
+            st.edit = edit;
+            let id = st.edit.next_id();
+            st.edit.adjustments.push(Adjustment {
+                id,
+                name: placeholder_name(id),
+                enabled: true,
+                mask: Mask {
+                    components: Vec::new(),
+                    invert: false,
+                },
+                look: Look::default(),
             });
-            tool_in_hand(&mut st, &app);
-            app.set_placing_into(false);
-            app.set_placing(kind.clone());
-            app.set_status(placing_hint(kind.as_str()).into());
+            st.target = Some(st.edit.adjustments.len() - 1);
+            st.fresh_mask = Some(id);
+            if st.placing.take().is_some() {
+                app.set_placing("".into());
+            }
+            app.set_component(0);
+            show_edit(&st, &st.edit, &app, st.target);
+            drop(st);
+            app.invoke_view_changed();
         });
     }
     // A shape added to the chosen adjustment's mask, joined by the
@@ -598,6 +613,20 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     .get(index)
                     .and_then(|a| a.mask.components.get(chosen))
                     .is_some_and(|c| matches!(c.shape, Shape::Sky { .. }));
+            // A mask's first shape is always Add: there is nothing
+            // before it to join, take from or intersect with, and the
+            // Add/Subtract/Intersect row is left over from a shape
+            // added to some other mask earlier.
+            let first_shape = st
+                .edit
+                .adjustments
+                .get(index)
+                .is_some_and(|a| a.mask.components.is_empty());
+            let joined = if first_shape {
+                Mode::Add
+            } else {
+                Mode::from_name(mode.as_str()).unwrap_or_default()
+            };
             if made_at_once(kind.as_str()) && !sky_chosen {
                 let edit = read_edit(&app, &st.edit, st.target);
                 st.edit = edit;
@@ -606,11 +635,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 };
                 a.mask.components.push(Component {
                     shape: Shape::of_kind(kind.as_str()),
-                    mode: Mode::from_name(mode.as_str()).unwrap_or_default(),
+                    mode: joined,
                     invert: false,
                     enabled: true,
                 });
+                name_first_shape(a, kind.as_str());
                 let which = a.mask.components.len() - 1;
+                st.fresh_mask = None;
                 st.placing = None;
                 app.set_placing("".into());
                 app.set_component(which as i32);
@@ -655,11 +686,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             st.placing = Some(Placing {
                 kind: Shape::of_kind(kind.as_str()),
-                mode: Mode::from_name(mode.as_str()).unwrap_or_default(),
+                mode: joined,
                 from: (0.0, 0.0),
                 index,
                 component,
-                fresh: false,
                 boxed: false,
             });
             tool_in_hand(&mut st, &app);
@@ -746,6 +776,40 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.invoke_view_changed();
         });
     }
+    // A shape's own invert, beside it in its row rather than only in
+    // the card of whichever shape happens to be chosen.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_invert_shape_toggled(move |c| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let Some(i) = st.target else {
+                return;
+            };
+            let edit = read_edit(&app, &st.edit, st.target);
+            st.edit = edit;
+            if let Some(component) = st
+                .edit
+                .adjustments
+                .get_mut(i)
+                .and_then(|a| a.mask.components.get_mut(c.max(0) as usize))
+            {
+                component.invert = !component.invert;
+            }
+            // Only the one list this touches, not the whole panel's
+            // `show_edit`: that rebuilds `component-names` as a fresh
+            // model every time, which tears down the shapes list's
+            // rows (the row just given keyboard focus among them) even
+            // though not one of their names or their count changed.
+            if let Some(a) = st.edit.adjustments.get(i) {
+                app.set_shape_invert(component_invert(&a.mask));
+            }
+            drop(st);
+            app.invoke_view_changed();
+        });
+    }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_adjustment_toggled(move |i| {
@@ -805,6 +869,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(i) = st.target else {
                 return;
             };
+            // A brush, an object or a sky left in hand has its
+            // `placing.index` shifted out from under it by the
+            // remove below — put it down first rather than let a
+            // later stroke or pick land in whatever mask slid into
+            // its place.
+            if st.placing.take().is_some() {
+                app.set_placing("".into());
+                app.set_status("".into());
+            }
             let edit = read_edit(&app, &st.edit, st.target);
             st.edit = edit;
             if i < st.edit.adjustments.len() {
@@ -897,42 +970,27 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     boxes: Vec::new(),
                 },
                 s @ (Shape::Subject {}
+                | Shape::Background {}
                 | Shape::Sky { .. }
                 | Shape::Luminance { .. }
                 | Shape::Color { .. }
                 | Shape::Unknown) => s.clone(),
             };
-            let name = shape.name();
             let component = Component {
                 shape,
                 mode: placing.mode,
                 invert: false,
                 enabled: true,
             };
-            let which;
-            if placing.fresh {
-                let id = st.edit.next_id();
-                st.edit.adjustments.push(Adjustment {
-                    id,
-                    name: format!("{name} {id}"),
-                    enabled: true,
-                    mask: Mask {
-                        components: vec![component],
-                        invert: false,
-                    },
-                    look: Look::default(),
-                });
-                placing.index = st.edit.adjustments.len() - 1;
-                which = 0;
-                st.target = Some(placing.index);
-            } else {
-                let Some(a) = st.edit.adjustments.get_mut(placing.index) else {
-                    app.set_placing("".into());
-                    return;
-                };
-                a.mask.components.push(component);
-                which = a.mask.components.len() - 1;
-            }
+            let Some(a) = st.edit.adjustments.get_mut(placing.index) else {
+                app.set_placing("".into());
+                return;
+            };
+            // Named only once it lands (`on_place_released`): a press
+            // that turns out to be nothing placed must not have
+            // renamed the mask on its way to being taken back.
+            a.mask.components.push(component);
+            let which = a.mask.components.len() - 1;
             placing.component = Some(which);
             placing.from = at;
             placing.boxed = false;
@@ -1009,6 +1067,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     }
                 }
                 Shape::Subject {}
+                | Shape::Background {}
                 | Shape::Sky { .. }
                 | Shape::Luminance { .. }
                 | Shape::Color { .. }
@@ -1052,7 +1111,24 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if placing.kind.is_brush()
                 || matches!(placing.kind, Shape::Object { .. } | Shape::Sky { .. })
             {
-                placing.fresh = false;
+                // A stroke, a pick or a box is never nothing placed:
+                // the mask it landed in is never taken back for it,
+                // and is named for it now if it is still nameless —
+                // the panel's own name, the list and the heading
+                // refreshed with it, or the next `read_edit` copies
+                // the panel's now-stale text straight back over it.
+                // Only on the stroke that actually renames it, or
+                // every later stroke in the same brush would rebuild
+                // the shapes list (and the focus in it) for nothing.
+                st.fresh_mask = None;
+                let named = st
+                    .edit
+                    .adjustments
+                    .get_mut(placing.index)
+                    .is_some_and(|a| name_first_shape(a, placing.kind.name()));
+                if named {
+                    show_edit(&st, &st.edit, &app, st.target);
+                }
                 placing.boxed = false;
                 st.placing = Some(placing);
                 drop(st);
@@ -1075,6 +1151,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     }
                     Shape::Brush { .. }
                     | Shape::Subject {}
+                    | Shape::Background {}
                     | Shape::Sky { .. }
                     | Shape::Object { .. }
                     | Shape::Luminance { .. }
@@ -1082,18 +1159,47 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     | Shape::Unknown => true,
                 });
             if drawn {
+                st.fresh_mask = None;
+                let named = st
+                    .edit
+                    .adjustments
+                    .get_mut(placing.index)
+                    .is_some_and(|a| name_first_shape(a, placing.kind.name()));
+                if named {
+                    // The panel's own name, the list and the heading:
+                    // left stale, the next `read_edit` (any later
+                    // action) would copy the panel's old text straight
+                    // back over the name just given here.
+                    show_edit(&st, &st.edit, &app, st.target);
+                }
                 app.set_status("".into());
-            } else if placing.fresh && placing.index < st.edit.adjustments.len() {
-                st.edit.adjustments.remove(placing.index);
-                st.target = None;
-                show_edit(&st, &st.edit, &app, None);
-                app.set_status("nothing placed".into());
             } else if let Some(a) = st.edit.adjustments.get_mut(placing.index)
                 && which < a.mask.components.len()
             {
                 a.mask.components.remove(which);
-                app.set_component(which.saturating_sub(1) as i32);
-                show_edit(&st, &st.edit, &app, st.target);
+                // Only the one mask "New mask" left with nothing in
+                // it, taking back the shape it was about to take its
+                // name and its "Add" from, goes with it — and only
+                // while it is still exactly as "New mask" left it: no
+                // shape landed (or once did), no look moved, its name
+                // still the placeholder and its own Invert still off.
+                // Any one of those is deliberate work on this mask,
+                // never taken back for an unrelated abandoned drag.
+                let id = a.id;
+                let fresh = a.mask.components.is_empty()
+                    && a.look == Look::default()
+                    && a.name == placeholder_name(id)
+                    && !a.mask.invert
+                    && st.fresh_mask == Some(id);
+                if fresh {
+                    st.edit.adjustments.remove(placing.index);
+                    st.target = None;
+                    st.fresh_mask = None;
+                    show_edit(&st, &st.edit, &app, None);
+                } else {
+                    app.set_component(which.saturating_sub(1) as i32);
+                    show_edit(&st, &st.edit, &app, st.target);
+                }
                 app.set_status("nothing placed".into());
             }
             drop(st);
@@ -1181,7 +1287,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 mod tests {
     use super::*;
 
-    use crate::testing::{click, window};
+    use crate::testing::{click, count_labeled, window};
     use std::cell::Cell;
 
     /// The left bar: the navigator, the snapshots and the history,
@@ -1301,6 +1407,50 @@ mod tests {
         // offered this round, but the original already runs, so it is
         // asked for rather than left waiting on an offer that is not
         // coming.
+        assert_eq!(
+            step(&shape, original, &gpu, &[], &[], false, failed_on_webgpu),
+            Some(Step::Ask(&SUBJECT))
+        );
+    }
+
+    /// A Background wants exactly what a Subject want does: the same
+    /// model, the same fallback to the store's own original when
+    /// nothing can be offered this round. Before this was fixed,
+    /// `step` only recognized `Shape::Subject {}` for that fallback,
+    /// so a Background waited on an offer that was not coming while a
+    /// Subject in the same mask already ran.
+    #[test]
+    fn a_background_falls_back_to_the_original_exactly_as_a_subject_does() {
+        use greycard_ai::{Provider, SUBJECT, SUBJECT_WEBGPU};
+        let gpu = [Provider::WebGpu, Provider::Cpu];
+        let shape = Shape::Background {};
+        let original = |m: &greycard_ai::Model| m.id == SUBJECT.id;
+        let failed_on_webgpu = |_: &greycard_ai::Model| true;
+
+        assert_eq!(
+            step(&shape, original, &gpu, &[], &[], true, failed_on_webgpu),
+            Some(Step::Offer(&SUBJECT_WEBGPU, true))
+        );
+        assert_eq!(
+            step(
+                &shape,
+                original,
+                &gpu,
+                &[SUBJECT_WEBGPU.id],
+                &[],
+                true,
+                failed_on_webgpu
+            ),
+            Some(Step::Ask(&SUBJECT))
+        );
+        let no_record = |_: &greycard_ai::Model| false;
+        assert_eq!(
+            step(&shape, original, &gpu, &[], &[], true, no_record),
+            Some(Step::Ask(&SUBJECT))
+        );
+        // The sheet busy, the WebGPU rewrite on record as failing: the
+        // store's own original already runs, so a Background is asked
+        // for it rather than left waiting, exactly as a Subject is.
         assert_eq!(
             step(&shape, original, &gpu, &[], &[], false, failed_on_webgpu),
             Some(Step::Ask(&SUBJECT))
@@ -1428,7 +1578,8 @@ mod tests {
         let app = window(1);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
         app.set_panel_tab("Masks".into());
-        app.invoke_add_adjustment("Sky".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Sky".into(), "Add".into());
         {
             let st = state.borrow();
             assert_eq!(st.target, Some(0));
@@ -1512,8 +1663,10 @@ mod tests {
         let app = window(1);
         let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
         app.set_panel_tab("Masks".into());
-        app.invoke_add_adjustment("Luminance".into());
-        app.invoke_add_adjustment("Color".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Luminance".into(), "Add".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Color".into(), "Add".into());
         let second = app.get_target_name();
         assert!(!second.is_empty());
         app.invoke_target_changed(1);
@@ -1566,7 +1719,8 @@ mod tests {
         let app = window(1);
         let (state, _worker) = crate::testing::state_for(&app, Vec::new());
         app.set_panel_tab("Masks".into());
-        app.invoke_add_adjustment("Luminance".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Luminance".into(), "Add".into());
         {
             let st = state.borrow();
             assert_eq!(st.target, Some(0));
@@ -1648,5 +1802,482 @@ mod tests {
             panic!()
         };
         assert_eq!((low, high), (0.8, 0.8));
+    }
+
+    /// "New mask" starts a mask with no shape; a made-at-once shape
+    /// (as `add_shape` used to add straight from `add_adjustment`)
+    /// goes into it exactly the same way. The button reading the
+    /// layout is its own test below.
+    #[test]
+    fn a_new_mask_starts_empty_and_takes_its_first_shape_from_add_a_shape() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        {
+            let st = state.borrow();
+            assert_eq!(st.target, Some(0));
+            assert!(st.edit.adjustments[0].mask.components.is_empty());
+            // Named while empty, never a blank row: `show_names`
+            // reads `Adjustment.name` raw, with no fallback of its
+            // own for an empty one.
+            assert_eq!(st.edit.adjustments[0].name, "Mask 1");
+        }
+        assert_eq!(
+            app.get_adjustment_names()
+                .iter()
+                .collect::<Vec<slint::SharedString>>(),
+            vec![
+                slint::SharedString::from("Global"),
+                slint::SharedString::from("Mask 1"),
+            ]
+        );
+        assert_eq!(app.get_component_kind(), "");
+        app.invoke_add_shape("Sky".into(), "Add".into());
+        assert_eq!(app.get_component_kind(), "Sky");
+        let st = state.borrow();
+        assert_eq!(
+            st.edit.adjustments[0].mask.components,
+            vec![Component {
+                shape: Shape::Sky { picks: Vec::new() },
+                mode: Mode::Add,
+                invert: false,
+                enabled: true,
+            }]
+        );
+        // Named for its first shape now, as a made-at-once shape from
+        // the old `add_adjustment` always was ("Sky 1", not "Mask 1").
+        assert_eq!(st.edit.adjustments[0].name, "Sky 1");
+    }
+
+    /// A shape's mode is always Add when it is the mask's first, even
+    /// with Subtract or Intersect left over on the row from a shape
+    /// added to some other mask: there is nothing before it to join,
+    /// take from or intersect with, and a first shape read as
+    /// anything but Add evaluates to nothing everywhere the mask is
+    /// not inverted, silently doing nothing.
+    #[test]
+    fn a_masks_first_shape_is_always_add_whatever_the_row_says() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Luminance".into(), "Subtract".into());
+        {
+            let st = state.borrow();
+            assert_eq!(st.edit.adjustments[0].mask.components[0].mode, Mode::Add);
+            assert_eq!(st.edit.adjustments[0].mask.components[0].mode.sign(), "+");
+        }
+        // Left on Subtract for the next mask's first shape too.
+        app.invoke_new_mask();
+        app.invoke_add_shape("Subject".into(), "Subtract".into());
+        {
+            let st = state.borrow();
+            assert_eq!(st.edit.adjustments[1].mask.components[0].mode, Mode::Add);
+            assert_eq!(
+                st.edit.adjustments[1].mask.at_with(0.5, 0.5, |_, _, _| 1.0),
+                1.0
+            );
+        }
+        // A dragged (not made-at-once) first shape is Add as well.
+        app.invoke_new_mask();
+        app.invoke_add_shape("Linear".into(), "Subtract".into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_dragged(600.0, 500.0);
+        app.invoke_place_released();
+        let st = state.borrow();
+        assert_eq!(
+            st.edit.adjustments.len(),
+            3,
+            "the drag was far enough to be drawn, not abandoned"
+        );
+        assert_eq!(st.edit.adjustments[2].mask.components[0].mode, Mode::Add);
+    }
+
+    /// A placed shape (not one made whole) abandoned without a drag,
+    /// the would-have-been first shape of a mask "New mask" just made
+    /// and nothing has touched since, takes the mask with it: the
+    /// same nothing a fresh adjustment left behind before "New mask"
+    /// gave a mask no shape yet a target of its own.
+    #[test]
+    fn an_abandoned_first_shape_in_a_new_mask_leaves_no_empty_mask_behind() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Linear".into(), "Add".into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_released();
+        let st = state.borrow();
+        assert!(
+            st.edit.adjustments.is_empty(),
+            "an empty mask, untouched since New mask, should not linger: {:?}",
+            st.edit.adjustments
+        );
+        assert_eq!(st.target, None);
+    }
+
+    /// The same abandoned first shape, but the mask's look was
+    /// touched first (an Exposure moved): the mask stays, empty look
+    /// and all, since a look's worth of work is never silently
+    /// dropped along with a shape that never landed.
+    #[test]
+    fn a_masks_look_touched_before_an_abandoned_first_shape_keeps_the_mask() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.set_exposure(1.5);
+        app.invoke_add_shape("Linear".into(), "Add".into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_released();
+        let st = state.borrow();
+        assert_eq!(
+            st.edit.adjustments.len(),
+            1,
+            "the mask stays: its look was touched"
+        );
+        assert!(st.edit.adjustments[0].mask.components.is_empty());
+        assert_eq!(st.edit.adjustments[0].look.light.exposure, 1.5);
+    }
+
+    /// A mask that once had a shape, emptied again by deleting it
+    /// (not by an abandoned drag), is never taken by a later abandoned
+    /// shape: `fresh_mask` cleared the moment the first shape landed,
+    /// whatever became of it since.
+    #[test]
+    fn a_mask_once_emptied_by_deleting_its_shape_is_never_taken_later() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Luminance".into(), "Add".into());
+        app.invoke_delete_shape_at(0);
+        {
+            let st = state.borrow();
+            assert_eq!(st.edit.adjustments.len(), 1);
+            assert!(st.edit.adjustments[0].mask.components.is_empty());
+        }
+        app.invoke_add_shape("Linear".into(), "Add".into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_released();
+        let st = state.borrow();
+        assert_eq!(
+            st.edit.adjustments.len(),
+            1,
+            "a mask that once had a shape is never taken, however it is emptied since"
+        );
+        assert!(st.edit.adjustments[0].mask.components.is_empty());
+    }
+
+    /// A shape is named for its kind only once it lands, at the
+    /// release that finds it drawn — never at the press that merely
+    /// arms a placing. An abandoned drag (a press with no movement)
+    /// must not rename a mask it never gave a shape to: `fresh_mask`
+    /// only tracks the one mask "New mask" most recently left with
+    /// nothing in it, so a second "New mask" leaves the first one
+    /// kept regardless of its own look, name or Invert — and it must
+    /// come out of this with the name "New mask" gave it, not the
+    /// kind of a shape that never landed.
+    #[test]
+    fn an_abandoned_first_shape_does_not_rename_the_mask() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        app.invoke_add_shape("Linear".into(), "Add".into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_released();
+        let st = state.borrow();
+        assert_eq!(
+            st.edit.adjustments.len(),
+            2,
+            "not the tracked fresh mask (the second one is): kept"
+        );
+        assert_eq!(
+            st.edit.adjustments[0].name, "Mask 1",
+            "never renamed for a shape that did not land"
+        );
+        assert!(st.edit.adjustments[0].mask.components.is_empty());
+    }
+
+    /// The same abandoned drag, but the mask's look was touched first,
+    /// so it is kept even though it is the tracked fresh mask: it must
+    /// still come out nameless, not wrongly renamed for the shape that
+    /// never landed, so a later made-at-once shape can still name it.
+    #[test]
+    fn a_kept_but_still_nameless_mask_is_named_by_its_next_real_shape() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.set_exposure(1.5);
+        app.invoke_add_shape("Linear".into(), "Add".into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_released();
+        {
+            let st = state.borrow();
+            assert_eq!(st.edit.adjustments.len(), 1, "kept: its look was touched");
+            assert_eq!(
+                st.edit.adjustments[0].name, "Mask 1",
+                "not renamed for the shape that never landed"
+            );
+            assert!(st.edit.adjustments[0].mask.components.is_empty());
+        }
+        app.invoke_add_shape("Subject".into(), "Add".into());
+        let st = state.borrow();
+        assert_eq!(st.edit.adjustments[0].name, "Subject 1");
+    }
+
+    /// The rename a landed, drawn shape gives its mask has to reach
+    /// the panel's own copy of the name too — the LineEdit, the list,
+    /// the heading — or a later `read_edit` (any panel action that
+    /// flushes it, an invert toggle among them) copies the panel's
+    /// still-stale "Mask N" straight back over it.
+    #[test]
+    fn a_drawn_shapes_name_survives_a_later_read_edit() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Linear".into(), "Add".into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_dragged(600.0, 500.0);
+        app.invoke_place_released();
+        {
+            let st = state.borrow();
+            assert_eq!(st.edit.adjustments[0].name, "Linear 1");
+        }
+        app.invoke_invert_shape_toggled(0);
+        let st = state.borrow();
+        assert_eq!(
+            st.edit.adjustments[0].name, "Linear 1",
+            "a later read_edit must not copy the panel's stale name back over it"
+        );
+    }
+
+    /// The same, for a brush's first stroke (the "stays in hand"
+    /// release path, not the "drawn" one a Linear or a Radial takes).
+    #[test]
+    fn a_brush_strokes_name_survives_a_later_read_edit() {
+        use crate::testing::{labeled, press};
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Brush".into(), "Add".into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_released();
+        {
+            let st = state.borrow();
+            assert_eq!(st.edit.adjustments[0].name, "Brush 1");
+        }
+        app.invoke_invert_shape_toggled(0);
+        assert_eq!(state.borrow().edit.adjustments[0].name, "Brush 1");
+
+        // Named once, on the stroke that gave it its name: a later
+        // stroke on the same brush does not rename it again, so it
+        // must not rebuild the shapes list for nothing either. Click
+        // the row's own invert to focus it, then take a second
+        // stroke; if the list were rebuilt for it, the row (and the
+        // focus on it) would be a fresh one, and Space would do
+        // nothing.
+        let (at, size) = labeled(&app, "Invert this shape");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let inverted_by_click = state.borrow().edit.adjustments[0].mask.components[0].invert;
+        app.invoke_place_pressed(320.0, 220.0, false);
+        app.invoke_place_released();
+        press(&app, " ");
+        assert_ne!(
+            state.borrow().edit.adjustments[0].mask.components[0].invert,
+            inverted_by_click,
+            "focus survived the second stroke: Space still reaches the same row"
+        );
+    }
+
+    /// A mask "New mask" left renamed by hand, or with its own Invert
+    /// switched on, is never taken back for an abandoned first shape:
+    /// "exactly as New mask left it" means the placeholder name and
+    /// Invert off too, not only no shapes and a default look.
+    #[test]
+    fn a_renamed_or_inverted_fresh_mask_is_never_taken_by_an_abandoned_shape() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.set_adjustment_name("Portrait".into());
+        app.invoke_renamed();
+        app.invoke_add_shape("Linear".into(), "Add".into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_released();
+        {
+            let st = state.borrow();
+            assert_eq!(st.edit.adjustments.len(), 1, "renamed by hand: kept");
+            assert_eq!(st.edit.adjustments[0].name, "Portrait");
+        }
+
+        // A second mask, its own Invert switched on instead of a rename.
+        app.invoke_new_mask();
+        app.set_mask_invert(true);
+        app.invoke_add_shape("Linear".into(), "Add".into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_released();
+        let st = state.borrow();
+        assert_eq!(st.edit.adjustments.len(), 2, "Invert switched on: kept");
+        assert!(st.edit.adjustments[1].mask.invert);
+    }
+
+    /// A shape's own invert is a switch on its row, not a control only
+    /// the chosen shape's card shows; toggling it does not need the
+    /// row to be chosen first.
+    #[test]
+    fn a_shapes_invert_is_its_own_row_and_does_not_need_it_chosen() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Luminance".into(), "Add".into());
+        app.invoke_add_shape("Color".into(), "Add".into());
+        assert_eq!(app.get_component(), 1, "the color just added is chosen");
+        // The first row's invert, though the second is chosen.
+        app.invoke_invert_shape_toggled(0);
+        {
+            let st = state.borrow();
+            let components = &st.edit.adjustments[0].mask.components;
+            assert!(components[0].invert, "the row toggled, not the chosen one");
+            assert!(!components[1].invert);
+        }
+        assert_eq!(
+            app.get_shape_invert().iter().collect::<Vec<_>>(),
+            vec![true, false]
+        );
+        app.invoke_invert_shape_toggled(0);
+        assert!(!state.borrow().edit.adjustments[0].mask.components[0].invert);
+    }
+
+    /// A shape's own invert is reachable from the keyboard, not only
+    /// a click: it takes focus as any control does, and Space or
+    /// Enter toggles it from there.
+    #[test]
+    fn a_shapes_invert_is_reachable_from_the_keyboard() {
+        use crate::testing::{labeled, press};
+        use slint::platform::Key;
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_add_shape("Luminance".into(), "Add".into());
+        let (at, size) = labeled(&app, "Invert this shape");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert!(
+            state.borrow().edit.adjustments[0].mask.components[0].invert,
+            "the click both focuses it and toggles it"
+        );
+        press(&app, " ");
+        assert!(
+            !state.borrow().edit.adjustments[0].mask.components[0].invert,
+            "Space toggles the focused row back"
+        );
+        press(&app, Key::Return);
+        assert!(
+            state.borrow().edit.adjustments[0].mask.components[0].invert,
+            "Enter toggles it again"
+        );
+    }
+
+    /// A brush, an object or a sky left in hand has its
+    /// `placing.index` invalidated by a delete: deleting the very
+    /// mask being placed into shifts whatever came after it down to
+    /// fill the gap, so a stroke taken after the delete would
+    /// otherwise land in, and rename, an unrelated mask that happened
+    /// to slide into the deleted one's slot.
+    #[test]
+    fn deleting_a_mask_with_a_tool_in_hand_puts_the_tool_down() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_new_mask();
+        app.invoke_target_changed(1); // choose the first mask ("Mask 1")
+        app.invoke_add_shape("Brush".into(), "Add".into());
+        app.invoke_place_pressed(300.0, 200.0, false);
+        app.invoke_place_released();
+        assert!(state.borrow().placing.is_some(), "the brush stays in hand");
+        app.invoke_delete_adjustment();
+        assert!(
+            state.borrow().placing.is_none(),
+            "the tool is put down, not left armed for whatever slid into the deleted mask's slot"
+        );
+        // The remaining mask (the second "New mask") is untouched.
+        let st = state.borrow();
+        assert_eq!(st.edit.adjustments.len(), 1);
+        assert_eq!(st.edit.adjustments[0].name, "Mask 2");
+        assert!(st.edit.adjustments[0].mask.components.is_empty());
+    }
+
+    /// With no mask chosen, "New mask" is there and nothing offers a
+    /// shape yet: there is no mask to add one to.
+    #[test]
+    fn new_mask_is_there_with_nothing_chosen_and_no_shape_button_yet() {
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        assert_eq!(count_labeled(&app, "New mask"), 1);
+        assert_eq!(count_labeled(&app, "Subject"), 0);
+        assert_eq!(count_labeled(&app, "Background"), 0);
+    }
+
+    /// The Masks tab's own read of the roadmap line this redesign is
+    /// for: the shape buttons (Background beside Subject) sit once,
+    /// under the chosen mask's "Add a shape", and "New mask" is the
+    /// only other way to start one — never the two ways to reach the
+    /// same button that used to double Subject, Sky and the rest.
+    #[test]
+    fn the_shape_buttons_and_new_mask_each_appear_once() {
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        // Queried only after the mask exists: a query on this window
+        // before its "if" turns true leaves every later one, even of
+        // a control already there, finding nothing (a quirk of the
+        // testing backend's element cache, not of the layout).
+        app.invoke_new_mask();
+        for label in [
+            "Linear",
+            "Radial",
+            "Brush",
+            "Subject",
+            "Background",
+            "Sky",
+            "Object",
+            "Luminance",
+            "Color",
+            "New mask",
+        ] {
+            assert_eq!(count_labeled(&app, label), 1, "{label} should appear once");
+        }
+    }
+
+    /// The Add/Subtract/Intersect row only makes sense once the mask
+    /// already has a shape to join, take from or intersect with — a
+    /// first shape is always Add, whatever it says. A mask "New mask"
+    /// just made, with none yet, does not show it; one with a shape
+    /// does.
+    #[test]
+    fn the_mode_row_is_hidden_until_the_mask_has_a_shape() {
+        let empty = window(1);
+        let (_state, _worker) = crate::testing::state_for(&empty, Vec::new());
+        empty.set_panel_tab("Masks".into());
+        empty.invoke_new_mask();
+        assert_eq!(count_labeled(&empty, "Next shape mode"), 0);
+
+        let with_shape = window(1);
+        let (_state, _worker) = crate::testing::state_for(&with_shape, Vec::new());
+        with_shape.set_panel_tab("Masks".into());
+        with_shape.invoke_new_mask();
+        with_shape.invoke_add_shape("Subject".into(), "Add".into());
+        assert_eq!(count_labeled(&with_shape, "Next shape mode"), 1);
     }
 }

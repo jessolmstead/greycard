@@ -1,5 +1,6 @@
 // The ADJUSTMENTS section on the Masks tab: the list, the chosen
-// one's shapes and the tools that add them.
+// one's own controls, its shapes, and the one row that adds another
+// to it.
 
 import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
@@ -30,10 +31,10 @@ export component AdjustmentsSection inherits Section {
     in-out property <string> adjustment-name;
     in-out property <[string]> component-names;
     in-out property <[bool]> component-on;
+    // One per shape, beside its name: at a glance, not only the
+    // chosen row's, in a card the others do not show.
+    in-out property <[bool]> shape-invert;
     in-out property <int> component;
-    in-out property <bool> component-invert;
-    in-out property <string> shape-mode;
-    in-out property <[bool]> adjustment-on;
     in-out property <bool> placing-into;
     in-out property <string> component-kind;
     in property <string> component-heading;
@@ -41,13 +42,18 @@ export component AdjustmentsSection inherits Section {
     in-out property <float> brush-feather;
     in-out property <float> brush-flow;
     in-out property <string> brush-op;
+    in-out property <string> shape-mode;
+    in-out property <[bool]> adjustment-on;
     callback target-changed(int);
     callback adjustment-toggled(int);
-    callback add-adjustment(string);
+    // A mask on its own, with no shape yet: the one way to start one,
+    // now that the shape buttons only add to the mask already chosen.
+    callback new-mask();
     callback delete-adjustment();
     callback add-shape(string, string);
     callback delete-shape-at(int);
     callback shape-toggled(int);
+    callback invert-shape-toggled(int);
     callback component-changed(int);
     callback renamed();
     callback view-changed();
@@ -123,123 +129,43 @@ export component AdjustmentsSection inherits Section {
             }
         }
     }
-    HorizontalLayout {
-        spacing: Theme.space-2;
-        PanelButton {
-            text: "Linear";
-            icon: @image-url("../icons/plus.svg");
-            primary: root.placing == "Linear" && !root.placing-into;
-            clicked => { root.add-adjustment("Linear"); }
-        }
-        PanelButton {
-            text: "Radial";
-            icon: @image-url("../icons/plus.svg");
-            primary: root.placing == "Radial" && !root.placing-into;
-            clicked => { root.add-adjustment("Radial"); }
-        }
-        PanelButton {
-            text: "Brush";
-            icon: @image-url("../icons/plus.svg");
-            primary: root.placing == "Brush" && !root.placing-into;
-            clicked => { root.add-adjustment("Brush"); }
-        }
+    PanelButton {
+        text: "New mask";
+        icon: @image-url("../icons/plus.svg");
+        clicked => { root.new-mask(); }
     }
-    // The learned masks: the subject or the sky found, or things
-    // picked.
-    HorizontalLayout {
-        spacing: Theme.space-2;
-        PanelButton {
-            text: "Subject";
-            icon: @image-url("../icons/user-round.svg");
-            clicked => { root.add-adjustment("Subject"); }
-        }
-        PanelButton {
-            text: "Sky";
-            icon: @image-url("../icons/cloud.svg");
-            clicked => { root.add-adjustment("Sky"); }
-        }
-        PanelButton {
-            text: "Object";
-            icon: @image-url("../icons/mouse-pointer-click.svg");
-            primary: root.placing == "Object" && !root.placing-into;
-            clicked => { root.add-adjustment("Object"); }
-        }
-    }
-    // The range masks: the picture's own lightness or color.
-    HorizontalLayout {
-        spacing: Theme.space-2;
-        PanelButton {
-            text: "Luminance";
-            icon: @image-url("../icons/sun.svg");
-            clicked => { root.add-adjustment("Luminance"); }
-        }
-        PanelButton {
-            text: "Color";
-            icon: @image-url("../icons/palette.svg");
-            clicked => { root.add-adjustment("Color"); }
-        }
-    }
-    // The brush in hand: its next stroke.
-    if root.placing == "Brush": VerticalLayout {
-        spacing: Theme.space-2;
-        EditSlider {
-            label: "Size";
-            minimum: 0.002;
-            maximum: 0.5;
-            default: 0.05;
-            step: 0.001;
-            value <=> root.brush-size;
-            scale: 100;
-            text: round(root.brush-size * 1000) / 10 + "%";
-            changed(v) => { }
-        }
-        EditSlider {
-            label: "Feather";
-            minimum: 0;
-            maximum: 1;
-            default: 0.5;
-            step: 0.01;
-            value <=> root.brush-feather;
-            scale: 100;
-            text: round(root.brush-feather * 100) + "%";
-            changed(v) => { }
-        }
-        EditSlider {
-            label: "Flow";
-            minimum: 0;
-            maximum: 1;
-            default: 1;
-            step: 0.01;
-            value <=> root.brush-flow;
-            scale: 100;
-            text: round(root.brush-flow * 100) + "%";
-            changed(v) => { }
-        }
-        Segmented {
-            options: ["Add", "Subtract", "Erase"];
-            current <=> root.brush-op;
-        }
-    }
-    // The chosen adjustment: its name and switches, then its shapes
-    // set in under them, the chosen shape's own controls in a card.
+    // The chosen mask: its name and its own switches, one block: then
+    // its shapes as a list under it, each a row that says its kind,
+    // has its own invert and reaches its settings by being chosen;
+    // then, once, the row that adds another shape to it.
     if root.target > 0: VerticalLayout {
         spacing: Theme.space-2;
-        LineEdit {
-            text <=> root.adjustment-name;
-            placeholder-text: "Name";
-            edited(t) => { root.renamed(); }
-        }
-        HorizontalLayout {
-            spacing: Theme.space-2;
-            Toggle {
-                label: "Show mask";
-                checked <=> root.show-mask;
-                toggled => { root.show-mask-toggled(); root.view-changed(); }
-            }
-            Toggle {
-                label: "Invert";
-                checked <=> root.mask-invert;
-                toggled => { root.view-changed(); }
+        Rectangle {
+            border-radius: Theme.radius-md;
+            background: Theme.base;
+            border-width: 1px;
+            border-color: Theme.border;
+            VerticalLayout {
+                padding: Theme.space-2;
+                spacing: Theme.space-2;
+                LineEdit {
+                    text <=> root.adjustment-name;
+                    placeholder-text: "Name";
+                    edited(t) => { root.renamed(); }
+                }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    Toggle {
+                        label: "Show mask";
+                        checked <=> root.show-mask;
+                        toggled => { root.show-mask-toggled(); root.view-changed(); }
+                    }
+                    Toggle {
+                        label: "Invert";
+                        checked <=> root.mask-invert;
+                        toggled => { root.view-changed(); }
+                    }
+                }
             }
         }
         Text {
@@ -264,10 +190,12 @@ export component AdjustmentsSection inherits Section {
                     for name[i] in root.component-names: Rectangle {
                         property <bool> on: i == root.component;
                         property <bool> lit: root.component-on[i];
+                        property <bool> inverted: root.shape-invert[i];
                         height: Theme.control-height;
                         border-radius: Theme.radius-sm;
                         // Chosen as a history step is, so it stands out
-                        // among shapes of one kind.
+                        // among shapes of one kind; its settings are
+                        // the card just under this list.
                         background: on ? Theme.selection : (shape-row.has-hover ? Theme.hover : transparent);
                         animate background { duration: Theme.quick; }
                         shape-row := TouchArea {
@@ -303,6 +231,62 @@ export component AdjustmentsSection inherits Section {
                                 vertical-alignment: center;
                                 horizontal-stretch: 1;
                             }
+                            // The shape's own invert, beside it here
+                            // rather than only in the card below for
+                            // whichever row happens to be chosen: a
+                            // half-filled circle, which reads as
+                            // invert rather than mirror.
+                            Rectangle {
+                                width: Theme.control-height - 4px;
+                                border-radius: Theme.radius-sm;
+                                border-width: invert-focus.has-focus ? 2px : 0;
+                                border-color: Theme.focus-ring;
+                                accessible-role: button;
+                                accessible-label: "Invert this shape";
+                                Image {
+                                    source: @image-url("../icons/contrast.svg");
+                                    colorize: inverted ? Theme.accent : (invert-hit.has-hover || invert-focus.has-focus ? Theme.text : Theme.text-secondary);
+                                    width: Theme.icon;
+                                    height: Theme.icon;
+                                    x: (parent.width - self.width) / 2;
+                                    y: (parent.height - self.height) / 2;
+                                }
+                                invert-focus := FocusScope {
+                                    key-pressed(e) => {
+                                        if (e.text == " " || e.text == Key.Return) {
+                                            root.invert-shape-toggled(i);
+                                            return accept;
+                                        }
+                                        return reject;
+                                    }
+                                }
+                                invert-hit := TouchArea {
+                                    mouse-cursor: MouseCursor.pointer;
+                                    clicked => {
+                                        invert-focus.focus();
+                                        root.invert-shape-toggled(i);
+                                    }
+                                }
+                                if invert-hit.has-hover || invert-focus.has-focus: Rectangle {
+                                    y: -self.height - 4px;
+                                    x: parent.width - self.width;
+                                    width: tip-text.width + Theme.space-2 * 2;
+                                    height: Theme.control-height - 6px;
+                                    border-radius: Theme.radius-sm;
+                                    background: Theme.raised;
+                                    border-width: 1px;
+                                    border-color: Theme.border;
+                                    tip-text := Text {
+                                        text: "Invert this shape";
+                                        color: Theme.text;
+                                        font-size: Theme.font-xs;
+                                        x: Theme.space-2;
+                                        vertical-alignment: center;
+                                        height: 100%;
+                                        wrap: no-wrap;
+                                    }
+                                }
+                            }
                             if root.component-names.length > 1: Rectangle {
                                 width: Theme.control-height - 4px;
                                 Text {
@@ -323,9 +307,14 @@ export component AdjustmentsSection inherits Section {
                     }
                 }
             }
-            // The chosen shape's own controls, carded under the list
-            // so they read apart from the adjustment's.
-            if root.component-kind != "": Rectangle {
+            // The chosen shape's own settings, reached by choosing its
+            // row above; its invert is there already, not repeated
+            // here. Nothing shown for a shape whose only setting is
+            // its own invert (Linear, Brush, Subject, Background, Sky,
+            // Object) — a card with nothing in it but the row's own
+            // name would say it twice.
+            if root.component-kind != ""
+                && (root.has-feather || root.component-kind == "Luminance" || root.component-kind == "Color"): Rectangle {
                 border-radius: Theme.radius-md;
                 background: Theme.base;
                 border-width: 1px;
@@ -340,11 +329,6 @@ export component AdjustmentsSection inherits Section {
                         font-weight: Theme.weight-semibold;
                         letter-spacing: 0.8px;
                         overflow: elide;
-                    }
-                    Toggle {
-                        label: "Invert shape";
-                        checked <=> root.component-invert;
-                        toggled => { root.view-changed(); }
                     }
                     if root.has-feather: EditSlider {
                         label: "Feather";
@@ -496,81 +480,147 @@ export component AdjustmentsSection inherits Section {
                     }
                 }
             }
-            // Another shape into the mask, joined as the Add/Subtract/
-            // Intersect row says; on a chosen brush, sky or object,
-            // more of it. The row is the next shape's, not the chosen
-            // one's, and dims while a chosen one is being added to.
+            // The brush in hand: its next stroke, wherever "Add a
+            // shape" below put it there from — directly under the
+            // chosen shape's own settings, since it is the chosen
+            // shape's own settings while a brush is chosen.
+            if root.placing == "Brush": VerticalLayout {
+                spacing: Theme.space-2;
+                EditSlider {
+                    label: "Size";
+                    minimum: 0.002;
+                    maximum: 0.5;
+                    default: 0.05;
+                    step: 0.001;
+                    value <=> root.brush-size;
+                    scale: 100;
+                    text: round(root.brush-size * 1000) / 10 + "%";
+                    changed(v) => { }
+                }
+                EditSlider {
+                    label: "Feather";
+                    minimum: 0;
+                    maximum: 1;
+                    default: 0.5;
+                    step: 0.01;
+                    value <=> root.brush-feather;
+                    scale: 100;
+                    text: round(root.brush-feather * 100) + "%";
+                    changed(v) => { }
+                }
+                EditSlider {
+                    label: "Flow";
+                    minimum: 0;
+                    maximum: 1;
+                    default: 1;
+                    step: 0.01;
+                    value <=> root.brush-flow;
+                    scale: 100;
+                    text: round(root.brush-flow * 100) + "%";
+                    changed(v) => { }
+                }
+                Segmented {
+                    options: ["Add", "Subtract", "Erase"];
+                    current <=> root.brush-op;
+                }
+            }
+            // Add a shape: the row it joins as, then its kind. Under
+            // the shapes list and the chosen one's own settings (so
+            // the order reads mask, shapes, the chosen shape's
+            // settings, then how to add another).
+            Text {
+                text: "Add a shape";
+                color: Theme.text-secondary;
+                font-size: Theme.font-xs;
+                font-weight: Theme.weight-medium;
+                vertical-alignment: center;
+                height: Theme.control-height - Theme.space-2;
+            }
             Rectangle {
+                // Dims while a chosen brush, sky or object is the one
+                // in hand, so the row it would otherwise duplicate
+                // reads as spoken for.
                 opacity: root.placing-into && root.placing == root.component-kind
                     && (root.placing == "Brush" || root.placing == "Sky" || root.placing == "Object")
                     ? 0.4 : 1.0;
                 VerticalLayout {
-                    padding-top: Theme.space-1;
-                    spacing: Theme.space-1;
-                    Text {
-                        text: "Next shape";
-                        color: Theme.text-secondary;
-                        font-size: Theme.font-xs;
-                    }
-                    Segmented {
+                    spacing: Theme.space-2;
+                    // A mask with no shape yet has nothing to join,
+                    // take from or intersect with: its first shape is
+                    // always Add, so the row that picks among them for
+                    // a second one is not shown to ask a question a
+                    // first shape has no answer to.
+                    if root.component-names.length > 0: Segmented {
+                        accessible-role: button;
+                        accessible-label: "Next shape mode";
                         options: ["Add", "Subtract", "Intersect"];
                         current <=> root.shape-mode;
                     }
-                }
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                PanelButton {
-                    text: "Linear";
-                    icon: @image-url("../icons/plus.svg");
-                    primary: root.placing == "Linear" && root.placing-into;
-                    clicked => { root.add-shape("Linear", root.shape-mode); }
-                }
-                PanelButton {
-                    text: "Radial";
-                    icon: @image-url("../icons/plus.svg");
-                    primary: root.placing == "Radial" && root.placing-into;
-                    clicked => { root.add-shape("Radial", root.shape-mode); }
-                }
-                PanelButton {
-                    text: root.component-kind == "Brush" ? "Paint" : "Brush";
-                    icon: root.component-kind == "Brush" ? @image-url("../icons/brush.svg") : @image-url("../icons/plus.svg");
-                    primary: root.placing == "Brush" && root.placing-into;
-                    clicked => { root.add-shape("Brush", root.shape-mode); }
-                }
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                PanelButton {
-                    text: "Subject";
-                    icon: @image-url("../icons/user-round.svg");
-                    clicked => { root.add-shape("Subject", root.shape-mode); }
-                }
-                // On a chosen sky, clicks that correct it.
-                PanelButton {
-                    text: root.component-kind == "Sky" ? "Pick" : "Sky";
-                    icon: @image-url("../icons/cloud.svg");
-                    primary: root.placing == "Sky" && root.placing-into;
-                    clicked => { root.add-shape("Sky", root.shape-mode); }
-                }
-                PanelButton {
-                    text: root.component-kind == "Object" ? "Pick" : "Object";
-                    icon: @image-url("../icons/mouse-pointer-click.svg");
-                    primary: root.placing == "Object" && root.placing-into;
-                    clicked => { root.add-shape("Object", root.shape-mode); }
-                }
-            }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                PanelButton {
-                    text: "Luminance";
-                    icon: @image-url("../icons/sun.svg");
-                    clicked => { root.add-shape("Luminance", root.shape-mode); }
-                }
-                PanelButton {
-                    text: "Color";
-                    icon: @image-url("../icons/palette.svg");
-                    clicked => { root.add-shape("Color", root.shape-mode); }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        PanelButton {
+                            text: "Linear";
+                            icon: @image-url("../icons/plus.svg");
+                            primary: root.placing == "Linear" && root.placing-into;
+                            clicked => { root.add-shape("Linear", root.shape-mode); }
+                        }
+                        PanelButton {
+                            text: "Radial";
+                            icon: @image-url("../icons/plus.svg");
+                            primary: root.placing == "Radial" && root.placing-into;
+                            clicked => { root.add-shape("Radial", root.shape-mode); }
+                        }
+                        PanelButton {
+                            text: root.component-kind == "Brush" ? "Paint" : "Brush";
+                            icon: root.component-kind == "Brush" ? @image-url("../icons/brush.svg") : @image-url("../icons/plus.svg");
+                            primary: root.placing == "Brush" && root.placing-into;
+                            clicked => { root.add-shape("Brush", root.shape-mode); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        PanelButton {
+                            text: "Subject";
+                            icon: @image-url("../icons/user-round.svg");
+                            clicked => { root.add-shape("Subject", root.shape-mode); }
+                        }
+                        // The Subject model's complement: everything a look
+                        // should reach but the subject, with no shape drawn.
+                        PanelButton {
+                            text: "Background";
+                            icon: @image-url("../icons/image.svg");
+                            clicked => { root.add-shape("Background", root.shape-mode); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        // On a chosen sky, clicks that correct it.
+                        PanelButton {
+                            text: root.component-kind == "Sky" ? "Pick" : "Sky";
+                            icon: @image-url("../icons/cloud.svg");
+                            primary: root.placing == "Sky" && root.placing-into;
+                            clicked => { root.add-shape("Sky", root.shape-mode); }
+                        }
+                        PanelButton {
+                            text: root.component-kind == "Object" ? "Pick" : "Object";
+                            icon: @image-url("../icons/mouse-pointer-click.svg");
+                            primary: root.placing == "Object" && root.placing-into;
+                            clicked => { root.add-shape("Object", root.shape-mode); }
+                        }
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        PanelButton {
+                            text: "Luminance";
+                            icon: @image-url("../icons/sun.svg");
+                            clicked => { root.add-shape("Luminance", root.shape-mode); }
+                        }
+                        PanelButton {
+                            text: "Color";
+                            icon: @image-url("../icons/palette.svg");
+                            clicked => { root.add-shape("Color", root.shape-mode); }
+                        }
+                    }
                 }
             }
         }

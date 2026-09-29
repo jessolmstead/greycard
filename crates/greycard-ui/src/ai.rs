@@ -78,7 +78,9 @@ pub fn model_with(
     original_failed_on_webgpu: impl Fn(&Model) -> bool,
 ) -> Option<&'static Model> {
     match shape {
-        Shape::Subject {} => Some(greycard_ai::subject::pick(
+        // A Background runs the same Subject model and takes one
+        // minus its matte; it waits on, and is offered, the same file.
+        Shape::Subject {} | Shape::Background {} => Some(greycard_ai::subject::pick(
             providers.contains(&Provider::WebGpu),
             have,
             |m| unavailable.contains(&m.id),
@@ -110,10 +112,21 @@ fn sky_model(have: impl Fn(&Model) -> bool, unavailable: &[&str]) -> &'static Mo
 /// and one made by an older pipeline once the pipeline changes.
 const SKY_PIPELINE: &str = "sky-1";
 
+/// A Background's own raster from the Subject matte it shares: one
+/// minus every byte. Any other shape reads it unchanged; the CPU
+/// reference the composed Background is checked against.
+fn background_or_not(shape: &Shape, base: &[u8]) -> Vec<u8> {
+    if matches!(shape, Shape::Background {}) {
+        base.iter().map(|&v| 255 - v).collect()
+    } else {
+        base.to_vec()
+    }
+}
+
 /// Whether the shape has anything for a model to go on.
 pub fn prompted(shape: &Shape) -> bool {
     match shape {
-        Shape::Subject {} | Shape::Sky { .. } => true,
+        Shape::Subject {} | Shape::Background {} | Shape::Sky { .. } => true,
         Shape::Object { picks, boxes } => !picks.is_empty() || !boxes.is_empty(),
         _ => false,
     }
@@ -146,6 +159,13 @@ pub struct Ai {
     embedding: Option<(u64, Embedding)>,
     /// What has been made, with the shape it was made for.
     cache: HashMap<Key, (Shape, Arc<Raster>)>,
+    /// The Subject matte at the raster's size, of base develop
+    /// `stamp`, and the provider that made it: run once and read by a
+    /// Background sharing it, so a mask with both costs the model one
+    /// call, not two, whichever shape asks for it first. The provider
+    /// is carried along so a hit here still says where its run
+    /// happened and still turns Show mask on, as an actual run does.
+    subject_matte: Option<(u64, Vec<u8>, Provider)>,
 }
 
 /// Why the learned denoiser is not to be had.
@@ -222,6 +242,7 @@ impl Ai {
             preview: None,
             embedding: None,
             cache: HashMap::new(),
+            subject_matte: None,
         }
     }
 
@@ -273,13 +294,18 @@ impl Ai {
         self.preview = None;
         self.embedding = None;
         self.sky_prior = None;
+        self.subject_matte = None;
     }
 
     /// A Subject model just arrived in the store: drop the one
     /// loaded, if any, so the next Subject mask picks up the new
     /// file rather than reusing the session's first choice forever.
+    /// The shared matte is that model's; a different one makes a
+    /// different matte, so a Background waiting on it must not read
+    /// what the old model made.
     pub fn forget_subject(&mut self) {
         self.subject = None;
+        self.subject_matte = None;
     }
 
     /// Whether the fill model is in the store, so a fill not kept
@@ -459,7 +485,7 @@ impl Ai {
     fn cached_path(&self, shape: &Shape, model: Option<&'static Model>) -> Option<PathBuf> {
         let file = self.file.as_ref()?;
         let model = match shape {
-            Shape::Subject {} => self.subject_model(model)?,
+            Shape::Subject {} | Shape::Background {} => self.subject_model(model)?,
             Shape::Sky { .. } => &SKY,
             _ => model_for(shape, self.store.as_ref(), &[])?,
         };
@@ -523,6 +549,29 @@ impl Ai {
                 seconds: 0.0,
             });
         }
+        // A Background reads the Subject matte, the model run once
+        // for whichever of the two asks for it first; a hit here
+        // needs no store and loads nothing. The provider that made
+        // the shared matte is still returned, so the status line and
+        // Show mask react as they do to an actual run rather than
+        // going quiet the way a plain cache hit does.
+        if matches!(shape, Shape::Subject {} | Shape::Background {})
+            && let Some((s, base, provider)) = &self.subject_matte
+            && *s == stamp
+        {
+            let data = background_or_not(shape, base);
+            if let Some(path) = &cached {
+                write_raster(path, height, &data);
+            }
+            let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+            self.cache.insert(key, (shape.clone(), raster.clone()));
+            return Ok(Made {
+                raster,
+                provider: Some(*provider),
+                seconds: 0.0,
+                note: None,
+            });
+        }
         let store = self
             .store
             .clone()
@@ -562,25 +611,40 @@ impl Ai {
         }
         let (_, rgb, luma) = self.preview.as_ref().expect("a preview was just made");
         let start = Instant::now();
-        let (mask, provider) = match shape {
-            Shape::Subject {} => {
-                let subject = match &mut self.subject {
-                    Some(s) => s,
-                    None => {
-                        let chosen = self
-                            .subject_model(model)
-                            .ok_or("no Subject model to load")?;
-                        self.subject.insert(
-                            Subject::load_model(&store, chosen, &self.providers)
-                                .map_err(|e| e.to_string())?,
-                        )
-                    }
-                };
-                (
-                    subject.mask(rgb).map_err(|e| e.to_string())?,
-                    subject.provider(),
-                )
+        if matches!(shape, Shape::Subject {} | Shape::Background {}) {
+            let subject = match &mut self.subject {
+                Some(s) => s,
+                None => {
+                    let chosen = self
+                        .subject_model(model)
+                        .ok_or("no Subject model to load")?;
+                    self.subject.insert(
+                        Subject::load_model(&store, chosen, &self.providers)
+                            .map_err(|e| e.to_string())?,
+                    )
+                }
+            };
+            let mask = subject.mask(rgb).map_err(|e| e.to_string())?;
+            let provider = subject.provider();
+            let radius = (rgb.width / 256).max(2);
+            let refined = refine(&mask, luma, rgb.width, rgb.height, radius, 1e-3);
+            dump(rgb, &mask, &refined);
+            let base = refined.resampled(RASTER_WIDTH, height).to_u8();
+            self.subject_matte = Some((stamp, base.clone(), provider));
+            let data = background_or_not(shape, &base);
+            if let Some(path) = &cached {
+                write_raster(path, height, &data);
             }
+            let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+            self.cache.insert(key, (shape.clone(), raster.clone()));
+            return Ok(Made {
+                raster,
+                provider: Some(provider),
+                seconds: start.elapsed().as_secs_f64(),
+                note: None,
+            });
+        }
+        let (mask, provider) = match shape {
             Shape::Object { picks, boxes } => {
                 let sam = match &mut self.sam {
                     Some(s) => s,
@@ -957,6 +1021,74 @@ mod tests {
         for &x in &[0.0f32, 0.002, 0.18, 0.5, 1.0] {
             assert!((decode(encode(x)) - x).abs() < 1e-5);
         }
+    }
+
+    /// A Background reads the Subject matte the model made, one minus
+    /// it, byte for byte — the CPU reference the composed Background
+    /// is checked against — and the model runs once for the pair:
+    /// whichever shape asks first fills `subject_matte`, and the one
+    /// that reads it after touches neither the store nor a model, and
+    /// still says where the shared run happened rather than going
+    /// quiet the way a plain cache hit does.
+    #[test]
+    fn a_background_is_one_minus_the_shared_subject_matte_and_costs_it_nothing() {
+        let mut ai = Ai::new();
+        // Not the real user's store: a shared-matte hit must need
+        // none, and the last check below wants a load that fails.
+        ai.store = None;
+        ai.file = Some(PathBuf::from("frame.CR3"));
+        let base: Vec<u8> = (0..RASTER_WIDTH * RASTER_WIDTH)
+            .map(|i| (i % 256) as u8)
+            .collect();
+        ai.subject_matte = Some((5, base.clone(), Provider::Cpu));
+        let image = WorkingImage::new(4, 4);
+        let edit = Edit::default();
+
+        let background = ai
+            .raster(
+                5,
+                &image,
+                &edit,
+                crate::finish::Source::Scene,
+                (1, 0),
+                &Shape::Background {},
+                None,
+            )
+            .expect("the shared matte, no store or model needed");
+        assert_eq!(
+            background.provider,
+            Some(Provider::Cpu),
+            "a shared hit still says where the run it reads happened"
+        );
+        let expected: Vec<u8> = base.iter().map(|&v| 255 - v).collect();
+        assert_eq!(background.raster.data(), expected.as_slice());
+
+        // The Subject reads the very same run, not a second one.
+        let subject = ai
+            .raster(
+                5,
+                &image,
+                &edit,
+                crate::finish::Source::Scene,
+                (1, 1),
+                &Shape::Subject {},
+                None,
+            )
+            .expect("the same shared matte");
+        assert_eq!(subject.provider, Some(Provider::Cpu));
+        assert_eq!(subject.raster.data(), base.as_slice());
+
+        // A different stamp (a new base develop) is not the same run.
+        let stale = ai.raster(
+            6,
+            &image,
+            &edit,
+            crate::finish::Source::Scene,
+            (1, 2),
+            &Shape::Background {},
+            None,
+        );
+        assert!(stale.is_err(), "no store to make a fresh matte from");
     }
 
     /// An install with only the Subject original: `step` offers the

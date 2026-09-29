@@ -157,6 +157,14 @@ pub enum Shape {
     /// The picture's subject, found by a model (greycard-ai). Like a
     /// brush it has no value of its own.
     Subject {},
+    /// Everything the Subject model does not call the subject: one
+    /// minus its matte, from the same run (greycard-ui's `ai` shares
+    /// it, so a mask with both costs one model call rather than two).
+    /// A kind of its own, not a Subject with `invert` set, so a later
+    /// model that finds the true background — rather than the
+    /// subject's complement — can fill it without touching the
+    /// schema. Like a brush it has no value of its own.
+    Background {},
     /// The picture's sky, found by a model (greycard-ai's `sky`), and
     /// nothing on a picture with none. `picks` are clicks that correct
     /// it: on sky it missed, or (not positive) on what is not sky.
@@ -381,7 +389,11 @@ impl Shape {
                     stroke.turn(t);
                 }
             }
-            Shape::Subject {} | Shape::Luminance { .. } | Shape::Color { .. } | Shape::Unknown => {}
+            Shape::Subject {}
+            | Shape::Background {}
+            | Shape::Luminance { .. }
+            | Shape::Color { .. }
+            | Shape::Unknown => {}
             Shape::Sky { picks } => {
                 for pick in picks {
                     pick.pos = t.pos(pick.pos);
@@ -503,6 +515,7 @@ impl Shape {
                 strokes: Vec::new(),
             },
             "Subject" => Shape::Subject {},
+            "Background" => Shape::Background {},
             "Luminance" => Shape::LUMINANCE,
             "Color" => Shape::skin(),
             "Sky" => Shape::Sky { picks: Vec::new() },
@@ -531,6 +544,7 @@ impl Shape {
         match *self {
             Shape::Brush { .. }
             | Shape::Subject {}
+            | Shape::Background {}
             | Shape::Sky { .. }
             | Shape::Object { .. }
             | Shape::Luminance { .. }
@@ -564,6 +578,7 @@ impl Shape {
         match *self {
             Shape::Brush { .. }
             | Shape::Subject {}
+            | Shape::Background {}
             | Shape::Sky { .. }
             | Shape::Object { .. }
             | Shape::Luminance { .. }
@@ -668,6 +683,7 @@ impl Shape {
             Shape::Radial { .. } => "Radial",
             Shape::Brush { .. } => "Brush",
             Shape::Subject {} => "Subject",
+            Shape::Background {} => "Background",
             Shape::Sky { .. } => "Sky",
             Shape::Object { .. } => "Object",
             Shape::Luminance { .. } => "Luminance",
@@ -685,7 +701,11 @@ impl Shape {
     pub fn is_raster(&self) -> bool {
         matches!(
             self,
-            Shape::Brush { .. } | Shape::Subject {} | Shape::Sky { .. } | Shape::Object { .. }
+            Shape::Brush { .. }
+                | Shape::Subject {}
+                | Shape::Background {}
+                | Shape::Sky { .. }
+                | Shape::Object { .. }
         )
     }
 
@@ -693,7 +713,7 @@ impl Shape {
     pub fn is_learned(&self) -> bool {
         matches!(
             self,
-            Shape::Subject {} | Shape::Sky { .. } | Shape::Object { .. }
+            Shape::Subject {} | Shape::Background {} | Shape::Sky { .. } | Shape::Object { .. }
         )
     }
 
@@ -703,6 +723,7 @@ impl Shape {
         match *self {
             Shape::Brush { .. }
             | Shape::Subject {}
+            | Shape::Background {}
             | Shape::Sky { .. }
             | Shape::Object { .. }
             | Shape::Luminance { .. }
@@ -1195,6 +1216,23 @@ mod tests {
         assert!(json.contains("\"kind\":\"subject\"") && json.contains("\"kind\":\"object\""));
         let back: Mask = serde_json::from_str(&json).unwrap();
         assert_eq!(back, mask);
+    }
+
+    /// A Background is a kind of its own — not a Subject with
+    /// `invert` set — so a sidecar says plainly which it is, and a
+    /// later model can fill it differently without a schema change.
+    #[test]
+    fn a_background_is_learned_and_round_trips_on_its_own_kind() {
+        let background = Shape::Background {};
+        assert!(background.is_raster() && background.is_learned());
+        assert!(background.handles().is_empty());
+        assert_eq!(background.at(0.5, 0.5), 0.0);
+        assert_eq!(background.name(), "Background");
+        assert_eq!(Shape::of_kind("Background"), Shape::Background {});
+        assert_ne!(Shape::Background {}, Shape::Subject {});
+        let json = serde_json::to_string(&background).unwrap();
+        assert_eq!(json, r#"{"kind":"background"}"#);
+        assert_eq!(serde_json::from_str::<Shape>(&json).unwrap(), background);
     }
 
     #[test]

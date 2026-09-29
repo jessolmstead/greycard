@@ -929,6 +929,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 }
                                 Shape::Brush { .. }
                                 | Shape::Subject {}
+                                | Shape::Background {}
                                 | Shape::Sky { .. }
                                 | Shape::Object { .. }
                                 | Shape::Luminance { .. }

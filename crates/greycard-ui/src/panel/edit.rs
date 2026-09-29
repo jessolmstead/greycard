@@ -11,7 +11,9 @@ use crate::panel::curve::{
     set_panel_parametric,
 };
 use crate::panel::history::show_history;
-use crate::panel::mask::{component_names, component_on, heading_name, show_component};
+use crate::panel::mask::{
+    component_invert, component_names, component_on, heading_name, show_component,
+};
 use crate::panel::retouch::show_patches;
 use crate::*;
 
@@ -334,7 +336,6 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
         }
         let which = app.get_component().max(0) as usize;
         if let Some(c) = a.mask.components.get_mut(which) {
-            c.invert = app.get_component_invert();
             if let Shape::Radial { feather, .. } = &mut c.shape {
                 *feather = app.get_mask_feather().clamp(0.0, 1.0);
             }
@@ -457,6 +458,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
         app.set_target_name(heading_name(&a.name, i).into());
         app.set_component_names(component_names(&a.mask));
         app.set_component_on(component_on(&a.mask));
+        app.set_shape_invert(component_invert(&a.mask));
         show_component(&a.mask, app);
     } else {
         app.set_target_name("".into());

@@ -638,6 +638,13 @@ pub(crate) struct State {
     /// global one. The panel is the truth for that look; `edit` is
     /// for everything else, the other adjustments included.
     pub(crate) target: Option<usize>,
+    /// The id of a mask "New mask" made that has not yet taken a
+    /// shape: still nameless work in progress, so a shape drawn into
+    /// it and abandoned takes the mask with it. Cleared the moment a
+    /// shape lands in any mask, so a mask once emptied by deleting
+    /// its shapes, or the mask "New mask" made once it has moved on
+    /// to something else, is never taken by mistake.
+    pub(crate) fresh_mask: Option<u64>,
     /// A mask shape being drawn in the viewport.
     pub(crate) placing: Option<Placing>,
     /// A dropper's press, while the pointer is down.
@@ -951,6 +958,7 @@ impl State {
             crop_drag: None,
             crop_draw: None,
             target: None,
+            fresh_mask: None,
             placing: None,
             picking: None,
             show_mask: None,

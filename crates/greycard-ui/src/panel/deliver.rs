@@ -746,7 +746,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 .and_then(|a| a.mask.components.get(key.1))
                 .is_some_and(|c| c.enabled);
             if live
-                && matches!(shape, Shape::Subject {} | Shape::Sky { .. })
+                && matches!(
+                    shape,
+                    Shape::Subject {} | Shape::Background {} | Shape::Sky { .. }
+                )
                 && provider.is_some()
                 && note.is_none()
             {
