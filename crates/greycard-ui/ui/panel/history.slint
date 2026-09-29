@@ -4,6 +4,7 @@
 import { ScrollView, LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { Section, PanelButton } from "../controls.slint";
+import { HistoryRow } from "../structs.slint";
 
 export component SnapshotsSection inherits Section {
     in-out property <int> selected;
@@ -112,7 +113,7 @@ export component SnapshotsSection inherits Section {
 }
 
 export component HistorySection inherits Section {
-    in-out property <[string]> history-names;
+    in-out property <[HistoryRow]> history-rows;
     in-out property <int> history-current;
     callback history-clicked(int);
     callback history-hovered(int);
@@ -121,7 +122,7 @@ export component HistorySection inherits Section {
     title: "HISTORY";
     icon: @image-url("../icons/undo-2.svg");
     collapsed <=> root.collapsed-history;
-    if root.history-names.length > 0: Rectangle {
+    if root.history-rows.length > 0: Rectangle {
         border-radius: Theme.radius-md;
         background: Theme.base;
         border-width: 1px;
@@ -140,7 +141,7 @@ export component HistorySection inherits Section {
             history-list := VerticalLayout {
                 padding: 2px;
                 spacing: 2px;
-                for name[i] in root.history-names: Rectangle {
+                for row[i] in root.history-rows: Rectangle {
                     height: Theme.control-height - 6px;
                     border-radius: Theme.radius-sm;
                     background: i == root.history-current ? Theme.selection
@@ -153,22 +154,52 @@ export component HistorySection inherits Section {
                     }
                     HorizontalLayout {
                         padding-left: Theme.space-2;
-                        padding-right: Theme.space-2;
+                        // An export's time clears the fluent ScrollView's
+                        // bar, as the snapshots' bins do.
+                        padding-right: row.exported ? Theme.space-1 + Theme.scrollbar-band
+                            : Theme.space-2;
+                        spacing: Theme.space-1;
+                        // An export is a record of what went out, not a
+                        // change: the export's mark before its words,
+                        // in italics, and when it was written after.
+                        if row.exported: Rectangle {
+                            width: 12px;
+                            Image {
+                                source: @image-url("../icons/image-down.svg");
+                                colorize: Theme.text-muted;
+                                width: 12px;
+                                height: 12px;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                        }
                         Text {
-                            text: name;
-                            color: i < root.history-current ? Theme.text-muted
+                            text: row.name;
+                            // Muted when undone: a step waiting to be
+                            // redone, or an export made from one. The
+                            // current state's exports sit above its row
+                            // and are as live as it is.
+                            color: row.undone ? Theme.text-muted
                                 : i == root.history-current ? Theme.text
                                 : history-row.has-hover ? Theme.text : Theme.text-secondary;
                             font-size: Theme.font-xs;
+                            font-italic: row.exported;
                             vertical-alignment: center;
+                            horizontal-stretch: 1;
                             overflow: elide;
+                        }
+                        if row.exported: Text {
+                            text: row.time;
+                            color: Theme.text-muted;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
                         }
                     }
                 }
             }
         }
     }
-    if root.history-names.length == 0: Text {
+    if root.history-rows.length == 0: Text {
         text: "Nothing yet: each change is a step here.";
         font-size: Theme.font-xs;
         color: Theme.text-muted;

@@ -1106,6 +1106,16 @@ pub struct Sidecar {
         deserialize_with = "meta::loose"
     )]
     pub current_label: Option<String>,
+    /// The exports made from [`Self::current`]: see [`Step::exports`].
+    /// Written as `exported` after `step`, left out when there are
+    /// none, and read loosely, a record at a time.
+    #[serde(
+        rename = "exported",
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "loose_exports"
+    )]
+    pub current_exports: Vec<Exported>,
     /// The rating, the flag, the label, the keywords and the words:
     /// see [`meta`]. Absent from every sidecar written before it
     /// existed, and the default there; left out again when it says
@@ -1201,20 +1211,117 @@ fn is_no_turn(turn: &u8) -> bool {
 /// (an edit ignores a field it does not know), labels dropped. Read
 /// loosely, as the meta is: a `step` that is not a string reads as
 /// no label rather than costing the state.
+///
+/// The exports made from the state ride on it the same way, under an
+/// `exported` key beside `step`: see [`Step::exports`].
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Step {
     pub edit: Edit,
     pub label: Option<String>,
+    /// The files written from this state, oldest first. A record of
+    /// what went out, not a change: it adds no state to walk, so undo
+    /// and redo step over it and carry it with its state, and a
+    /// state that goes (undone and then replaced, or past the cap)
+    /// takes its records with it.
+    pub exports: Vec<Exported>,
 }
 
 impl Step {
     /// A state with no words of its own.
     pub fn plain(edit: Edit) -> Self {
-        Self { edit, label: None }
+        Self {
+            edit,
+            label: None,
+            exports: Vec::new(),
+        }
     }
 
     fn parts(&self) -> (&Edit, Option<&str>) {
         (&self.edit, self.label.as_deref())
+    }
+}
+
+/// An export made from a state of the history: the file written, the
+/// export preset the sheet was when it was one, and when it finished.
+///
+/// Kept on the state it was exported from ([`Step::exports`],
+/// [`Sidecar::current_exports`]) rather than as a state of its own:
+/// an export changes nothing in the edit, so a step for it would be
+/// an undo that does nothing, and an export that finished after the
+/// panel moved on would have had to land between two states. On the
+/// state, the history panel shows it as a row of its own above that
+/// state's, and a click on it goes to that state
+/// ([`Sidecar::rows`]).
+///
+/// A build from before it reads a sidecar with records as though
+/// they were not there, and drops them at its next save.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct Exported {
+    /// The file written, as the path it was written to.
+    pub file: String,
+    /// The export preset's name, when the sheet was one as saved.
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "meta::loose"
+    )]
+    pub preset: Option<String>,
+    /// When it was written, seconds since the Unix epoch.
+    #[serde(default, deserialize_with = "meta::loose")]
+    pub at: u64,
+}
+
+impl Exported {
+    /// The file's name, without its folder.
+    pub fn file_name(&self) -> &str {
+        Path::new(&self.file)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(&self.file)
+    }
+
+    /// What the history panel's row says: [`history::export_label`].
+    pub fn label(&self) -> String {
+        history::export_label(self.file_name(), self.preset.as_deref())
+    }
+}
+
+/// The export records under a key, each read on its own: one that
+/// will not read is left out, the rest kept, and a key that is not a
+/// list reads as none.
+fn loose_exports<'de, D: serde::Deserializer<'de>>(
+    d: D,
+) -> std::result::Result<Vec<Exported>, D::Error> {
+    Ok(exports_from(serde_json::Value::deserialize(d)?))
+}
+
+fn exports_from(value: serde_json::Value) -> Vec<Exported> {
+    match value {
+        serde_json::Value::Array(items) => items
+            .into_iter()
+            .filter_map(|i| serde_json::from_value(i).ok())
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// A row of the history panel, newest first: a state, or an export
+/// made from one ([`Sidecar::rows`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Row {
+    /// The state at this index among [`Sidecar::states`].
+    State(usize),
+    /// Export `export` (oldest first) of the state at `state`.
+    Exported { state: usize, export: usize },
+}
+
+impl Row {
+    /// The state the row goes to when clicked: its own, or the one it
+    /// was exported from.
+    pub fn state(self) -> usize {
+        match self {
+            Self::State(i) | Self::Exported { state: i, .. } => i,
+        }
     }
 }
 
@@ -1241,10 +1348,13 @@ impl Serialize for Step {
             edit: &'a Edit,
             #[serde(skip_serializing_if = "Option::is_none")]
             step: &'a Option<String>,
+            #[serde(skip_serializing_if = "Vec::is_empty")]
+            exported: &'a Vec<Exported>,
         }
         Written {
             edit: &self.edit,
             step: &self.label,
+            exported: &self.exports,
         }
         .serialize(serializer)
     }
@@ -1262,8 +1372,17 @@ impl<'de> Deserialize<'de> for Step {
                 serde_json::Value::String(s) => Some(s),
                 _ => None,
             });
+        let exports = value
+            .as_object_mut()
+            .and_then(|o| o.remove("exported"))
+            .map(exports_from)
+            .unwrap_or_default();
         let edit = Edit::deserialize(value).map_err(serde::de::Error::custom)?;
-        Ok(Self { edit, label })
+        Ok(Self {
+            edit,
+            label,
+            exports,
+        })
     }
 }
 
@@ -1459,6 +1578,7 @@ impl Sidecar {
         let previous = Step {
             edit: std::mem::replace(&mut self.current, edit),
             label: std::mem::replace(&mut self.current_label, label),
+            exports: std::mem::take(&mut self.current_exports),
         };
         self.history.push(previous);
         if self.history.len() > HISTORY {
@@ -1505,16 +1625,88 @@ impl Sidecar {
         self.history.len()
     }
 
-    /// The index among [`Self::states`] of the state a list showing
-    /// the newest first has at `row`. None for a row past the end,
-    /// or a negative one, which is what a list with nothing chosen
-    /// hands back.
+    /// The index among [`Self::states`] of the state the history
+    /// panel's row `row` goes to ([`Self::rows`]): its own, or for an
+    /// export's row the state it was exported from. None for a row
+    /// past the end, or a negative one, which is what a list with
+    /// nothing chosen hands back.
     pub fn state_at_row(&self, row: i32) -> Option<usize> {
-        let n = self.states();
+        self.row(row).map(Row::state)
+    }
+
+    /// The history panel's row `row` of [`Self::rows`]; None past the
+    /// end or for a negative one.
+    pub fn row(&self, row: i32) -> Option<Row> {
         usize::try_from(row)
             .ok()
-            .filter(|&r| r < n)
-            .map(|r| n - 1 - r)
+            .and_then(|r| self.rows().get(r).copied())
+    }
+
+    /// The history panel's rows, newest first: every state, each
+    /// under the exports made from it, newest of those first. An
+    /// export's row sits between its state and the next, since that
+    /// is where the look it sent out stands in the history, whenever
+    /// the file itself finished.
+    pub fn rows(&self) -> Vec<Row> {
+        let mut rows = Vec::with_capacity(self.states());
+        for state in (0..self.states()).rev() {
+            let n = self.exports(state).len();
+            rows.extend((0..n).rev().map(|export| Row::Exported { state, export }));
+            rows.push(Row::State(state));
+        }
+        rows
+    }
+
+    /// Where among [`Self::rows`] the state at `index` is.
+    pub fn row_of_state(&self, index: usize) -> Option<usize> {
+        self.rows().iter().position(|r| *r == Row::State(index))
+    }
+
+    /// The exports made from the state at `index` among
+    /// [`Self::states`], oldest first.
+    pub fn exports(&self, index: usize) -> &[Exported] {
+        let position = self.position();
+        if index < position {
+            self.history.get(index).map_or(&[], |s| &s.exports)
+        } else if index == position {
+            &self.current_exports
+        } else {
+            let past = index - position - 1;
+            self.redo
+                .len()
+                .checked_sub(past + 1)
+                .map_or(&[], |i| &self.redo[i].exports)
+        }
+    }
+
+    /// Note that `exported` was written from `edit`: on the state that
+    /// is `edit`, the current one when it is, and otherwise the
+    /// nearest to it, back through the history and then forward
+    /// through what was undone. Nothing is recorded as a state, and
+    /// undo and redo are as they were. False, and nothing noted, when
+    /// no state here is `edit` any more: the history moved on past it
+    /// while the file was written (undone and then replaced), and a
+    /// record with no state to go back to would not do what its row
+    /// promises.
+    pub fn record_export(&mut self, edit: &Edit, exported: Exported) -> bool {
+        if self.current == *edit {
+            self.current_exports.push(exported);
+            return true;
+        }
+        // The redo stack is newest first: its nearest is its last.
+        let found = self
+            .history
+            .iter_mut()
+            .rev()
+            .chain(self.redo.iter_mut().rev())
+            .find(|s| s.edit == *edit);
+        match found {
+            Some(step) => {
+                step.exports.push(exported);
+                true
+            }
+            None => false,
+        }
     }
 
     /// The state at `index` among [`Self::states`], oldest first.
@@ -1607,6 +1799,7 @@ impl Sidecar {
         let undone = Step {
             edit: std::mem::replace(&mut self.current, previous.edit),
             label: std::mem::replace(&mut self.current_label, previous.label),
+            exports: std::mem::replace(&mut self.current_exports, previous.exports),
         };
         self.redo.push(undone);
         true
@@ -1635,24 +1828,36 @@ impl Sidecar {
         }
         // Oldest first: the history, the current state, then the redo
         // stack from its end.
-        self.history
-            .dedup_by(|later, earlier| later.edit == earlier.edit);
+        // The exports made from either of two states that merge are
+        // the merged state's, the earlier's first.
+        self.history.dedup_by(|later, earlier| {
+            let same = later.edit == earlier.edit;
+            if same {
+                earlier.exports.append(&mut later.exports);
+            }
+            same
+        });
         let current = &self.current;
-        if let Some(earlier) = self.history.pop_if(|s| s.edit == *current) {
+        if let Some(mut earlier) = self.history.pop_if(|s| s.edit == *current) {
             self.current_label = earlier.label;
+            earlier.exports.append(&mut self.current_exports);
+            self.current_exports = earlier.exports;
         }
         // The redo stack is newest first, so its earlier state is the
         // later in the vector.
         self.redo.dedup_by(|earlier, later| {
             if later.edit == earlier.edit {
                 std::mem::swap(&mut later.label, &mut earlier.label);
+                let mut merged = std::mem::take(&mut earlier.exports);
+                merged.append(&mut later.exports);
+                later.exports = merged;
                 true
             } else {
                 false
             }
         });
-        while self.redo.last().is_some_and(|s| s.edit == self.current) {
-            self.redo.pop();
+        while let Some(mut later) = self.redo.pop_if(|s| s.edit == self.current) {
+            self.current_exports.append(&mut later.exports);
         }
         true
     }
@@ -1665,6 +1870,7 @@ impl Sidecar {
         let current = Step {
             edit: std::mem::replace(&mut self.current, next.edit),
             label: std::mem::replace(&mut self.current_label, next.label),
+            exports: std::mem::replace(&mut self.current_exports, next.exports),
         };
         self.history.push(current);
         true
@@ -3750,6 +3956,95 @@ mod tests {
             json.find("\"history\"").unwrap(),
         );
         assert!(current < step && step < history, "{json}");
+    }
+
+    /// The export records are written beside the states they ride on,
+    /// read back whole, read one at a time when some will not read,
+    /// and are nothing at all to a build that does not know them.
+    #[test]
+    fn export_records_round_trip_and_an_older_build_reads_past_them() {
+        let exposed = |ev: f32| {
+            let mut e = Edit::default();
+            e.light.exposure = ev;
+            e
+        };
+        let web = Exported {
+            file: "/out/IMG_0001.jpg".into(),
+            preset: Some("Web".into()),
+            at: 1_790_000_000,
+        };
+        let mut sidecar = Sidecar::default();
+        sidecar.record(exposed(1.0));
+        assert!(sidecar.record_export(&exposed(1.0), web.clone()));
+        sidecar.record(exposed(2.0));
+        assert!(sidecar.record_export(
+            &exposed(2.0),
+            Exported {
+                preset: None,
+                ..web.clone()
+            }
+        ));
+        let json = serde_json::to_string(&sidecar).unwrap();
+        let back: Sidecar = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, sidecar);
+        assert_eq!(back.history[1].exports, vec![web.clone()]);
+        // No preset, no key; and none at all where there were none.
+        assert_eq!(json.matches("\"preset\"").count(), 1, "{json}");
+        assert_eq!(json.matches("\"exported\"").count(), 2, "{json}");
+
+        // A build from before: the sidecar and each state read as they
+        // did, the records unknown fields.
+        #[derive(Deserialize)]
+        struct Before {
+            current: Edit,
+            history: Vec<Edit>,
+        }
+        let before: Before = serde_json::from_str(&json).unwrap();
+        assert_eq!(before.current, exposed(2.0));
+        assert_eq!(before.history, vec![Edit::default(), exposed(1.0)]);
+
+        // A record that will not read costs itself, not the others,
+        // and a key that is not a list costs the records only.
+        let mut value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        value["history"][1]["exported"] =
+            serde_json::json!([{"file": 3}, {"file": "a.jpg", "at": "noon"}]);
+        value["exported"] = serde_json::json!("lots");
+        let back: Sidecar = serde_json::from_value(value).unwrap();
+        assert_eq!(back.current, exposed(2.0));
+        assert!(back.current_exports.is_empty());
+        assert_eq!(
+            back.history[1].exports,
+            vec![Exported {
+                file: "a.jpg".into(),
+                preset: None,
+                at: 0,
+            }]
+        );
+    }
+
+    /// Two states that merge (a source completing the earlier into
+    /// the later) keep both states' exports, the earlier's first.
+    #[test]
+    fn states_that_merge_keep_both_their_exports() {
+        let (placed, done) = a_placed_spot();
+        let record = |file: &str| Exported {
+            file: file.into(),
+            ..Exported::default()
+        };
+        let mut sidecar = Sidecar::default();
+        assert!(sidecar.record(placed.clone()));
+        assert!(sidecar.record_export(&placed, record("first.jpg")));
+        assert!(sidecar.record(done.clone()));
+        assert!(sidecar.record_export(&done, record("second.jpg")));
+        assert!(sidecar.undo());
+        assert!(sidecar.take_sources(&done.retouch.patches));
+        assert_eq!(sidecar.states(), 2);
+        let files: Vec<&str> = sidecar
+            .current_exports
+            .iter()
+            .map(|e| e.file.as_str())
+            .collect();
+        assert_eq!(files, vec!["first.jpg", "second.jpg"]);
     }
 
     /// A clone spot as placed, waiting on its source, and as the

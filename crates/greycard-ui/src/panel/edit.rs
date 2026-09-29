@@ -148,10 +148,59 @@ pub(crate) fn schedule_save(st: &mut State, app_weak: slint::Weak<App>) {
     );
 }
 
+/// The panel's `edit`, as the state every action that records the
+/// panel first records (a save, an undo, a history click, a snapshot,
+/// a preset or a paste over it): `edit` itself, or None while the
+/// panel still shows the command line's overrides unmoved.
+///
+/// `--develop-temperature` and `--exposure` put an edit on the panel
+/// that is not the frame's (see [`crate::panel::startup::Overrides`]),
+/// and it is never recorded as a state of its own: until the panel
+/// moves off it, there is nothing of the panel's to record, and an
+/// undo, a click or a preset goes from the sidecar's own current
+/// state. The first edit that differs from it ends that, one-shot:
+/// the flag goes and the new edit is recorded on top of the sidecar's
+/// current state like any other, the override's values that are still
+/// on the panel with it, as they would be for anything the user did
+/// over what the panel showed. So does anything that puts one of the
+/// sidecar's states on the panel instead (`take_current`), and leaving
+/// the frame (`open_row`). After that, the override's values are
+/// values like any others, and saved as such.
+pub(crate) fn panel_state(st: &mut State, edit: Edit) -> Option<Edit> {
+    let Some(c) = st.current else {
+        return Some(edit);
+    };
+    match &st.overridden {
+        Some((file, shown)) if *file == st.files[c] && *shown == edit => None,
+        Some(_) => {
+            st.overridden = None;
+            Some(edit)
+        }
+        None => Some(edit),
+    }
+}
+
+/// Record what the panel holds as the current file's state, before an
+/// action that goes on from it (an undo, a history click, a snapshot,
+/// a preset or a paste over it), without writing the sidecar; true
+/// when that was news to the history. Nothing while the panel is the
+/// command line's overrides unmoved ([`panel_state`]).
+pub(crate) fn record_panel(st: &mut State, app: &App) -> bool {
+    let Some(c) = st.current else {
+        return false;
+    };
+    let edit = read_edit(app, &st.edit, st.target);
+    panel_state(st, edit).is_some_and(|edit| st.sidecars[c].record(edit))
+}
+
 /// Record `edit` as the current file's, and write its sidecar if that
-/// changed anything.
+/// changed anything; nothing while it is the command line's overrides
+/// unmoved ([`panel_state`]).
 pub(crate) fn save_edit(st: &mut State, edit: Edit) {
     let Some(c) = st.current else {
+        return;
+    };
+    let Some(edit) = panel_state(st, edit) else {
         return;
     };
     if st.sidecars[c].record(edit) && st.write_sidecars && !crate::panel::delete::held(st, c) {

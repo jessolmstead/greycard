@@ -73,6 +73,24 @@ pub fn snapshot_label(name: &str) -> String {
     format!("Snapshot: {name}")
 }
 
+/// A file exported from a state ([`crate::Exported`]), by its name,
+/// extension and all, with the export preset's after it when the
+/// sheet was one: "IMG_0001.jpg · Web". No "Exported" before it: the
+/// row's own mark says it is an export, a record and not a change,
+/// and the words it would cost are the preset's. When it was written
+/// goes beside it, and the hover says the rest.
+pub fn export_label(file: &str, preset: Option<&str>) -> String {
+    match preset.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(preset) => format!("{file} · {preset}"),
+        None => file.to_string(),
+    }
+}
+
+/// How many characters an export's row shows at a scale of one before
+/// it elides the rest: [`ROW_CHARS`] less the export's mark before the
+/// words and the time after them, measured on the panel.
+pub const EXPORT_ROW_CHARS: usize = 22;
+
 /// One entry per section that differs, in the panel's order, each
 /// as specific as a single moved control allows.
 fn changes(b: &Edit, a: &Edit) -> Vec<String> {
@@ -874,5 +892,127 @@ mod tests {
             "Preset ×3: Faded film"
         );
         assert_eq!(paste_label("IMG_0001.CR3"), "Paste from IMG_0001.CR3");
+    }
+
+    fn exported(file: &str, preset: Option<&str>, at: u64) -> crate::Exported {
+        crate::Exported {
+            file: file.into(),
+            preset: preset.map(str::to_string),
+            at,
+        }
+    }
+
+    #[test]
+    fn an_export_is_named_by_its_file_and_its_preset() {
+        assert_eq!(export_label("IMG_0001.jpg", None), "IMG_0001.jpg");
+        assert_eq!(
+            export_label("IMG_0001.jpg", Some("Web")),
+            "IMG_0001.jpg · Web"
+        );
+        // A blank preset is none.
+        assert_eq!(export_label("IMG_0001.jpg", Some(" ")), "IMG_0001.jpg");
+        // The row names the file, not the folder it went to.
+        let e = exported("/out/web/5M0A3021.jpg", Some("Web"), 0);
+        assert_eq!(e.file_name(), "5M0A3021.jpg");
+        assert_eq!(e.label(), "5M0A3021.jpg · Web");
+        // A camera's name, its extension and a preset of a short word
+        // fit an export's row whole, the preset too, in any format.
+        for file in ["5M0A3021.jpg", "DSCF1234.png", "IMG_0001.tiff"] {
+            for preset in ["Web", "Print", "Client"] {
+                let words = export_label(file, Some(preset));
+                assert!(words.chars().count() <= EXPORT_ROW_CHARS, "{words}");
+            }
+        }
+        const { assert!(EXPORT_ROW_CHARS < ROW_CHARS) };
+    }
+
+    /// An export rides on the state it was sent out from: a row of its
+    /// own above that state's, a click on which goes to that state;
+    /// no state of its own, so one undo is one change undone, and the
+    /// record goes to the redo and back with its state.
+    #[test]
+    fn an_export_row_goes_back_to_the_state_it_was_sent_from() {
+        use crate::{Row, Sidecar};
+        let base = Edit::default();
+        let mut sent = base.clone();
+        sent.light.exposure = 0.5;
+        let mut moved = sent.clone();
+        moved.color.saturation = 0.3;
+
+        let mut sidecar = Sidecar::default();
+        assert!(sidecar.record(sent.clone()));
+        // The panel moved on while the file was written: the record
+        // lands on the state that was rendered, not the current one.
+        assert!(sidecar.record(moved.clone()));
+        assert!(sidecar.record_export(&sent, exported("/o/IMG_0001.jpg", Some("Web"), 10)));
+        assert_eq!(sidecar.states(), 3, "no state for the export");
+        assert!(sidecar.current_exports.is_empty());
+        assert_eq!(sidecar.exports(1).len(), 1);
+        assert_eq!(
+            sidecar.rows(),
+            vec![
+                Row::State(2),
+                Row::Exported {
+                    state: 1,
+                    export: 0
+                },
+                Row::State(1),
+                Row::State(0),
+            ]
+        );
+        assert_eq!(sidecar.row_of_state(2), Some(0));
+        assert_eq!(sidecar.row_of_state(1), Some(2));
+        // The export's row goes where its state's does.
+        assert_eq!(sidecar.state_at_row(1), Some(1));
+        assert_eq!(sidecar.state_at_row(4), None);
+        assert_eq!(sidecar.state_at_row(-1), None);
+        // The state rows are named as they were.
+        assert_eq!(sidecar.describe(2).as_deref(), Some("Saturation +0.30"));
+        assert_eq!(sidecar.describe(1).as_deref(), Some("Exposure +0.50"));
+
+        // Clicked: the state that was sent out.
+        assert!(sidecar.go_to(sidecar.state_at_row(1).unwrap()));
+        assert_eq!(sidecar.current, sent);
+        assert_eq!(sidecar.current_exports.len(), 1);
+        assert_eq!(sidecar.redo.len(), 1);
+        // Forward and back: the record stays with its state.
+        assert!(sidecar.redo());
+        assert_eq!(sidecar.current, moved);
+        assert_eq!(sidecar.exports(1).len(), 1);
+        // One undo is one change: the saturation, not the export.
+        assert!(sidecar.undo());
+        assert_eq!(sidecar.current, sent);
+        assert!(sidecar.undo());
+        assert_eq!(sidecar.current, base);
+        assert_eq!(sidecar.exports(1).len(), 1, "on the redo stack");
+        assert!(sidecar.redo());
+        assert_eq!(sidecar.current_exports.len(), 1);
+
+        // A second export of the same state sits above the first.
+        assert!(sidecar.record_export(&sent, exported("/o/IMG_0001-1.jpg", None, 20)));
+        let rows = sidecar.rows();
+        assert_eq!(
+            &rows[1..3],
+            &[
+                Row::Exported {
+                    state: 1,
+                    export: 1
+                },
+                Row::Exported {
+                    state: 1,
+                    export: 0
+                },
+            ]
+        );
+
+        // A state undone and then replaced takes its records with it,
+        // and an edit that is no state here any more records nothing.
+        assert!(sidecar.undo());
+        let mut other = base.clone();
+        other.light.exposure = -1.0;
+        assert!(sidecar.record(other));
+        assert!(sidecar.rows().iter().all(|r| matches!(r, Row::State(_))));
+        assert!(!sidecar.record_export(&sent, exported("/o/late.jpg", None, 30)));
+        assert!(sidecar.rows().iter().all(|r| matches!(r, Row::State(_))));
     }
 }

@@ -125,6 +125,10 @@ pub enum Job {
         path: PathBuf,
         settings: crate::export::Settings,
         on_exists: crate::export::OnExists,
+        /// The frame on screen when it was asked for, and the export
+        /// preset the sheet was then: handed back with `Exported`.
+        source: PathBuf,
+        preset: Option<String>,
     },
     /// Write a set of frames, each under its own edit and all under
     /// the set's settings: queued as one export a frame, so a develop
@@ -345,6 +349,12 @@ pub enum Outcome {
         /// What the policy made of a file of that name being there
         /// already; none when nothing was.
         note: Option<String>,
+        /// The frame, the edit the file was written under and the
+        /// export preset, as the job had them: what the frame's
+        /// history records.
+        source: PathBuf,
+        edit: Edit,
+        preset: Option<String>,
     },
     /// Nothing written: a file of that name was there and the policy
     /// says to leave it.
@@ -366,6 +376,10 @@ pub enum Outcome {
         set: Arc<crate::queue::Set>,
         index: usize,
         source: PathBuf,
+        /// The edit the frame was written under: the one asked for,
+        /// its learned blend seeded from the ISO when the frame's was
+        /// still to be seeded.
+        edit: Edit,
         done: crate::queue::Done,
     },
     /// The set's last frame is done with, whichever way.
@@ -907,6 +921,10 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
         // done after its last; a panic in it is that frame's failure.
         if let Job::ExportFrame { set, index, frame } = job {
             let mut panicked = false;
+            // The edit the file was written under: the frame's, its
+            // learned blend seeded from the ISO when it was still to
+            // be, as a first open would have seeded it.
+            let mut rendered = frame.edit.clone();
             let (done, finished) = crate::queue::step(&set, index, &frame.source, || {
                 // The name the policy chose, which the status line says:
                 // the one written, not the one asked for.
@@ -930,6 +948,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                     // and the open file's state is left as it was.
                     let written = if opened_path.as_deref() == Some(frame.source.as_path()) {
                         let edit = seeded(&frame.edit, frame.seed_blend, input.as_ref());
+                        rendered = edit.clone();
                         open_picture(
                             &edit,
                             frame.turn % 4,
@@ -964,6 +983,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                             &set.settings,
                             &path,
                         )
+                        .map(|edit| rendered = edit)
                     };
                     match written {
                         Ok(()) => crate::queue::Done::Exported {
@@ -995,6 +1015,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                 set: set.clone(),
                 index,
                 source: frame.source,
+                edit: rendered,
                 done,
             });
             if finished {
@@ -1129,6 +1150,8 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                 path,
                 settings,
                 on_exists,
+                source,
+                preset,
             } => {
                 let start = Instant::now();
                 // What is already there decides the name before the
@@ -1170,6 +1193,9 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                         path,
                         seconds: start.elapsed().as_secs_f64(),
                         note,
+                        source,
+                        edit,
+                        preset,
                     },
                     Err(message) => Outcome::ExportFailed { message },
                 });
@@ -1310,7 +1336,7 @@ fn export_other(
     deliver: &Deliver,
     settings: &crate::export::Settings,
     path: &std::path::Path,
-) -> Result<(), String> {
+) -> Result<Edit, String> {
     let (input, metadata) = timed_open(&frame.source).map_err(|e| format!("{e:#}"))?;
     let edit = seeded(&frame.edit, frame.seed_blend, Some(&input));
     ai.forget(Some(frame.source.clone()));
@@ -1341,7 +1367,8 @@ fn export_other(
         Some(&metadata),
         settings,
         path,
-    )
+    )?;
+    Ok(edit)
 }
 
 /// Finish `image`, the develop `base` was made for, under `edit` and

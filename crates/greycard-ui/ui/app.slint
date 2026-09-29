@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { Pt, Thumb, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip } from "structs.slint";
+import { Pt, Thumb, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, HistoryRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -556,7 +556,7 @@ export component App inherits Window {
     callback snapshot-hovered(int);
     callback snapshot-renamed(int, string);
     callback snapshot-deleted(int);
-    in-out property <[string]> history-names: [];
+    in-out property <[HistoryRow]> history-rows: [];
     in-out property <int> history-current: -1;
     callback history-clicked(int);
     callback history-hovered(int);
@@ -1577,7 +1577,7 @@ export component App inherits Window {
                         // click makes a step current; what lies past it
                         // stays until the next change.
                         if !root.culling: HistorySection {
-                            history-names <=> root.history-names;
+                            history-rows <=> root.history-rows;
                             history-current <=> root.history-current;
                             history-clicked(a) => { root.history-clicked(a); }
                             history-hovered(a) => { root.history-hovered(a); }

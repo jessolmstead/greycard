@@ -550,6 +550,15 @@ pub(crate) struct State {
     /// develop then runs where every later one does, so a screenshot
     /// or an export shows the same path a session would.
     pub(crate) select_at_start: Option<usize>,
+    /// `--develop-temperature` and `--exposure`: laid over the first
+    /// file's edit on the panel when it is opened, not over its
+    /// sidecar's. See [`panel::startup::Overrides`].
+    pub(crate) overrides_at_start: Option<(usize, panel::startup::Overrides)>,
+    /// The first file, and its edit as those overrides left it on the
+    /// panel, until the panel moves off it or the frame is left: while
+    /// the panel shows exactly this, there is nothing of the panel's
+    /// to record (`panel::edit::panel_state`).
+    pub(crate) overridden: Option<(PathBuf, Edit)>,
     /// The rendering setup has run and opened what it was to open: a
     /// list put in the browser from then on opens its own frame.
     pub(crate) setup_ran: bool,
@@ -890,6 +899,8 @@ impl State {
             view_generation: 0,
             compare_tiles: Rc::new(VecModel::default()),
             select_at_start: None,
+            overrides_at_start: None,
+            overridden: None,
             setup_ran: false,
             also_at_start: Vec::new(),
             base_white: None,

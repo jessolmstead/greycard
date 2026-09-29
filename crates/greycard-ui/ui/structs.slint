@@ -97,3 +97,15 @@ export struct FacetRow {
     code: int,
     chips: [FacetChip],
 }
+
+/// One row of the history, newest first: a state, named for what it
+/// changed, or an export made from the state below it, marked as a
+/// record with when it was written. `undone` when its state is one
+/// undone and waiting to be redone. Rust owns the order; see
+/// `greycard_edit::Sidecar::rows`.
+export struct HistoryRow {
+    name: string,
+    exported: bool,
+    time: string,
+    undone: bool,
+}

@@ -27,7 +27,7 @@ use crate::panel::browser::{
     chosen_frames, file_name, migrate_frame, show_badges, show_thumb, thumb_turns,
 };
 use crate::panel::cull::leave_cull;
-use crate::panel::edit::{read_edit, save_edit, write_sidecar};
+use crate::panel::edit::{panel_state, read_edit, save_edit, write_sidecar};
 use crate::panel::history::{show_history, take_current};
 use crate::*;
 use greycard_edit::camera::{self, ProfileChoice};
@@ -395,7 +395,9 @@ pub(crate) fn apply_preset(
             app.set_status(format!("{} is on already{left_off_tail}", preset.name).into());
             return;
         }
-        st.sidecars[c].record(edit);
+        if let Some(edit) = panel_state(st, edit) {
+            st.sidecars[c].record(edit);
+        }
         st.sidecars[c].record_as(applied, Some(preset_label(&preset.name)));
         let said = format!("{} applied{left_off_tail}", preset.name);
         // As the set's own non-culling branch below: left for the
@@ -428,7 +430,9 @@ pub(crate) fn apply_preset(
         let applied = current_preset.applied(&edit);
         let changed = applied != edit;
         if changed {
-            st.sidecars[c].record(edit);
+            if let Some(edit) = panel_state(st, edit) {
+                st.sidecars[c].record(edit);
+            }
             st.sidecars[c].record_as(applied, Some(label.clone()));
         }
         changed
@@ -696,7 +700,9 @@ pub(crate) fn paste_selection(
         let edit = read_edit(app, &st.edit, st.target);
         let applied = clip.applied(&fits, &edit);
         if applied != edit {
-            st.sidecars[c].record(edit);
+            if let Some(edit) = panel_state(st, edit) {
+                st.sidecars[c].record(edit);
+            }
             st.sidecars[c].record_as(applied, Some(label.clone()));
             current_changed = true;
         }
@@ -1343,7 +1349,10 @@ mod tests {
         }
         assert_eq!(st.sidecars[2].current_label, None);
         assert_eq!(
-            app.get_history_names().row_data(0).as_deref(),
+            app.get_history_rows()
+                .row_data(0)
+                .map(|r| r.name.to_string())
+                .as_deref(),
             Some("Preset ×3: Portra 400")
         );
         // Outside the set: untouched.
@@ -1860,9 +1869,9 @@ mod tests {
         }];
         app.invoke_select(0);
         let rows = |app: &App| -> Vec<String> {
-            let names = app.get_history_names();
+            let names = app.get_history_rows();
             (0..names.row_count())
-                .map(|r| names.row_data(r).unwrap().to_string())
+                .map(|r| names.row_data(r).unwrap().name.to_string())
                 .collect()
         };
 
@@ -1915,9 +1924,9 @@ mod tests {
     }
 
     fn history_rows(app: &App) -> Vec<String> {
-        let names = app.get_history_names();
+        let names = app.get_history_rows();
         (0..names.row_count())
-            .map(|r| names.row_data(r).unwrap().to_string())
+            .map(|r| names.row_data(r).unwrap().name.to_string())
             .collect()
     }
 

@@ -1,11 +1,16 @@
 use crate::panel::browser::file_name;
 use crate::panel::cull::leave_cull;
-use crate::panel::edit::{current_turn, edit_to_develop, read_edit, show_edit, write_sidecar};
+use crate::panel::edit::{
+    current_turn, edit_to_develop, read_edit, record_panel, show_edit, write_sidecar,
+};
 use crate::*;
+use greycard_edit::{Exported, Row};
+use std::path::Path;
 
 /// The undo and redo buttons, the history's rows and the snapshots'
 /// names follow the current file's sidecar. The rows are newest
-/// first, each named for what it changed from the one before.
+/// first, each named for what it changed from the one before, and
+/// each export made from a state a row just above that state's.
 pub(crate) fn show_history(st: &State, app: &App) {
     let names = |v: Vec<String>| {
         ModelRc::new(VecModel::from(
@@ -15,7 +20,7 @@ pub(crate) fn show_history(st: &State, app: &App) {
         ))
     };
     let Some(c) = st.current else {
-        app.set_history_names(names(Vec::new()));
+        app.set_history_rows(ModelRc::default());
         app.set_history_current(-1);
         app.set_snapshot_names(names(Vec::new()));
         return;
@@ -23,34 +28,201 @@ pub(crate) fn show_history(st: &State, app: &App) {
     let sidecar = &st.sidecars[c];
     app.set_can_undo(!sidecar.history.is_empty());
     app.set_can_redo(!sidecar.redo.is_empty());
-    let n = sidecar.states();
-    let rows: Vec<String> = (0..n)
-        .rev()
-        .map(|i| {
-            let state = sidecar.state(i).expect("a state within the count");
-            // The words the step was recorded with, or what moved.
-            match sidecar.describe(i) {
-                Some(name) => name,
-                // A fresh raw's learned-denoiser blend starts from its
-                // ISO (`Noise::blend_for_iso`), not the plain default,
-                // so that field alone is left out of the comparison.
-                None if {
-                    let mut plain = state.clone();
-                    plain.noise.learned_strength = Edit::default().noise.learned_strength;
-                    plain == Edit::default() || *state == Edit::for_picture()
-                } =>
-                {
-                    "Original".to_string()
+    let now = now();
+    let position = sidecar.position();
+    let rows: Vec<HistoryRow> = sidecar
+        .rows()
+        .into_iter()
+        .map(|row| match row {
+            Row::State(i) => HistoryRow {
+                name: state_name(sidecar, i).into(),
+                exported: false,
+                time: Default::default(),
+                undone: i > position,
+            },
+            // A record, not a change: marked as one, with when.
+            Row::Exported { state, export } => {
+                let e = &sidecar.exports(state)[export];
+                HistoryRow {
+                    name: e.label().into(),
+                    exported: true,
+                    time: row_time(e.at, now).into(),
+                    undone: state > position,
                 }
-                None => "Earliest kept".to_string(),
             }
         })
         .collect();
-    app.set_history_names(names(rows));
-    app.set_history_current((n - 1 - sidecar.position()) as i32);
+    app.set_history_rows(ModelRc::new(VecModel::from(rows)));
+    app.set_history_current(
+        sidecar
+            .row_of_state(sidecar.position())
+            .map_or(-1, |r| r as i32),
+    );
     app.set_snapshot_names(names(
         sidecar.snapshots.iter().map(|s| s.name.clone()).collect(),
     ));
+}
+
+/// What the history's row for the state at `i` says: the words the
+/// step was recorded with, or what moved.
+fn state_name(sidecar: &Sidecar, i: usize) -> String {
+    let state = sidecar.state(i).expect("a state within the count");
+    match sidecar.describe(i) {
+        Some(name) => name,
+        // A fresh raw's learned-denoiser blend starts from its ISO
+        // (`Noise::blend_for_iso`), not the plain default, so that
+        // field alone is left out of the comparison.
+        None if {
+            let mut plain = state.clone();
+            plain.noise.learned_strength = Edit::default().noise.learned_strength;
+            plain == Edit::default() || *state == Edit::for_picture()
+        } =>
+        {
+            "Original".to_string()
+        }
+        None => "Earliest kept".to_string(),
+    }
+}
+
+/// Note in `source`'s history that `written` was exported from it
+/// under `edit`, with `preset` the export preset the sheet was: on
+/// the state that is `edit`, which is the one the file was rendered
+/// under whatever the panel has done since (see
+/// [`Sidecar::record_export`]), and the sidecar written as any save
+/// writes it. Here on the window's thread, where every other save of
+/// the frame's sidecar is made, so the two never cross.
+///
+/// A frame the window has let go of since the export began (another
+/// folder opened) has its sidecar read from where it is, noted, and
+/// written back. Nothing is noted when the edit is no state of the
+/// history (one undone and replaced since, or the command line's
+/// overrides, which are never the frame's), or the sidecar will not
+/// read.
+pub(crate) fn record_export(
+    st: &mut State,
+    app: &App,
+    source: &Path,
+    edit: &Edit,
+    written: &Path,
+    preset: Option<String>,
+) {
+    let exported = Exported {
+        file: written.to_string_lossy().into_owned(),
+        preset,
+        at: now(),
+    };
+    let not_kept = || {
+        tracing::info!(
+            "{}: exported under an edit that is no state of its history \
+             (undone and replaced since, or the command line's); not recorded",
+            file_name(source)
+        );
+    };
+    if let Some(i) = st.files.iter().position(|f| f == source) {
+        // A frame never opened: its blend was seeded for the export
+        // as its first open would have, and takes that seed now.
+        if st.seed_blend.get(i).copied().unwrap_or(false)
+            && take_seed(&mut st.sidecars[i], edit)
+            && let Some(seed) = st.seed_blend.get_mut(i)
+        {
+            *seed = false;
+        }
+        if !st.sidecars[i].record_export(edit, exported) {
+            not_kept();
+            return;
+        }
+        write_sidecar(st, i);
+        if st.current == Some(i) {
+            show_history(st, app);
+        }
+        return;
+    }
+    if !st.write_sidecars {
+        return;
+    }
+    let raw = !greycard_core::picture::is_picture_path(source);
+    let mut sidecar = match Sidecar::load(source) {
+        Ok(Some(s)) => s,
+        Ok(None) if !raw => Sidecar {
+            current: Edit::for_picture(),
+            ..Sidecar::default()
+        },
+        Ok(None) => Sidecar::default(),
+        Err(e) => {
+            tracing::warn!("{}: sidecar: {e}; export not recorded", file_name(source));
+            return;
+        }
+    };
+    // The same seed for a frame the window has let go of, by the rule
+    // a load decides it by.
+    if raw && crate::files::never_developed(&sidecar) {
+        take_seed(&mut sidecar, edit);
+    }
+    if !sidecar.record_export(edit, exported) {
+        not_kept();
+        return;
+    }
+    match sidecar.save_in(source, st.placement) {
+        Ok(()) => {
+            if let Some(indexer) = &st.index {
+                indexer.file(source.to_path_buf());
+            }
+        }
+        Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(source)),
+    }
+}
+
+/// Give a frame still waiting on its ISO seed the learned blend its
+/// export was rendered with (the worker seeds a set's frame as its
+/// first open would), in place and not as a step, as the open's own
+/// seed is taken (`Outcome::Opened`); true when it took it. Nothing
+/// when the two differ in anything else: then the export was not of
+/// this state, and the seed waits for the open.
+fn take_seed(sidecar: &mut Sidecar, rendered: &Edit) -> bool {
+    let mut seeded = sidecar.current.clone();
+    seeded.noise.learned_strength = rendered.noise.learned_strength;
+    if seeded != *rendered {
+        return false;
+    }
+    sidecar.current = seeded;
+    true
+}
+
+/// A moment in local time, broken into its parts.
+fn local(secs: u64) -> Option<chrono::DateTime<chrono::Local>> {
+    chrono::DateTime::from_timestamp(i64::try_from(secs).ok()?, 0)
+        .map(|t| t.with_timezone(&chrono::Local))
+}
+
+/// A moment as a date and a time in local time, in the form
+/// [`date_of`] writes: what an export's row says on hover.
+pub(crate) fn local_date_of(secs: u64) -> String {
+    use chrono::{Datelike, Timelike};
+    match local(secs) {
+        Some(t) => format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}",
+            t.year(),
+            t.month(),
+            t.day(),
+            t.hour(),
+            t.minute()
+        ),
+        None => date_of(secs),
+    }
+}
+
+/// When an export was written, as its row has room for: the time when
+/// that was on the day of `now`, the date otherwise; both local.
+fn row_time(secs: u64, now: u64) -> String {
+    use chrono::{Datelike, Timelike};
+    let (Some(t), Some(today)) = (local(secs), local(now)) else {
+        return String::new();
+    };
+    if t.date_naive() == today.date_naive() {
+        format!("{:02}:{:02}", t.hour(), t.minute())
+    } else {
+        format!("{:04}-{:02}-{:02}", t.year(), t.month(), t.day())
+    }
 }
 
 /// Show `edit` in the viewport in place of the panel's while a row
@@ -121,6 +293,9 @@ pub(crate) fn take_current(st: &mut State, app: &App, worker: &Worker) {
     let Some(c) = st.current else {
         return;
     };
+    // The panel is the sidecar's again: the command line's overrides,
+    // if they were on it, are done with (`panel_state`).
+    st.overridden = None;
     // In culling the sidecar's current state is what the leaving
     // develops; the history moved, and the mode ends on that.
     if st.cull.is_some() {
@@ -183,8 +358,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             }
             // Whatever the panel holds is a state first.
-            let edit = read_edit(&app, &st.edit, st.target);
-            st.sidecars[c].record(edit);
+            record_panel(&mut st, &app);
             let moved = if back {
                 st.sidecars[c].undo()
             } else {
@@ -230,8 +404,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // news to the history, what was undone is gone, and an
             // undone row's state follows the panel's as a step.
             let position = st.sidecars[c].position();
-            let edit = read_edit(&app, &st.edit, st.target);
-            let dirty = st.sidecars[c].record(edit);
+            let dirty = record_panel(&mut st, &app);
             let moved = if dirty && index > position {
                 // Named by what moved, not by the words it had: it
                 // follows the panel's state now, not the one the
@@ -258,12 +431,26 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let sidecar = &st.sidecars[c];
-            let hovered = sidecar.state_at_row(row).and_then(|i| {
-                let name = app.get_history_names().row_data(row as usize)?;
-                Some((sidecar.state(i)?.clone(), i, name))
+            let hovered = sidecar.row(row).and_then(|r| {
+                let name = app.get_history_rows().row_data(row as usize)?.name;
+                Some((sidecar.state(r.state())?.clone(), r, name))
             });
             match hovered {
-                Some((edit, i, name)) => {
+                Some((edit, Row::Exported { state, export }, _)) => {
+                    let e = &sidecar.exports(state)[export];
+                    let preset = match &e.preset {
+                        Some(p) => format!(" with the export preset {p}"),
+                        None => String::new(),
+                    };
+                    let what = format!(
+                        "{}, exported {}{preset}; click to go back to the state it was \
+                         exported from",
+                        e.file,
+                        local_date_of(e.at)
+                    );
+                    peek(&mut st, &app, Some(edit), &what);
+                }
+                Some((edit, Row::State(i), name)) => {
                     let what = if i == sidecar.position() {
                         format!("the current state: {name}")
                     } else {
@@ -290,8 +477,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // In culling the panel is not the frame's: the snapshot
             // is of the sidecar's current state as it stands.
             if st.cull.is_none() {
-                let edit = read_edit(&app, &st.edit, st.target);
-                st.sidecars[c].record(edit);
+                record_panel(&mut st, &app);
             }
             let name = format!("Snapshot {}", st.sidecars[c].snapshots.len() + 1);
             let i = st.sidecars[c].take_snapshot(name.clone(), now());
@@ -328,11 +514,18 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 }
                 return;
             }
-            let edit = read_edit(&app, &st.edit, st.target);
-            st.sidecars[c].record(edit);
+            record_panel(&mut st, &app);
             st.status_kept = None;
             if !st.sidecars[c].restore_snapshot(i as usize) {
-                app.set_status(format!("{name} is the current state").into());
+                // The sidecar is there already, but a panel still
+                // showing the command line's overrides is not: it
+                // takes the snapshot's state all the same.
+                if st.overridden.is_some() {
+                    app.set_status(format!("{name} restored").into());
+                    take_current(&mut st, &app, &worker);
+                } else {
+                    app.set_status(format!("{name} is the current state").into());
+                }
                 return;
             }
             app.set_status(format!("{name} restored").into());
@@ -419,6 +612,537 @@ mod tests {
         assert_eq!(date_of(0), "1970-01-01 00:00 UTC");
         assert_eq!(date_of(951_782_400), "2000-02-29 00:00 UTC");
         assert_eq!(date_of(1_789_000_000), "2026-09-10 00:26 UTC");
+    }
+
+    /// An export's moment in local time: the date and time on hover,
+    /// the time alone on its row when it was today, the date when not.
+    #[test]
+    fn an_export_s_moment_reads_in_local_time() {
+        let at = 1_789_000_000;
+        let whole = local_date_of(at);
+        assert_eq!(whole.len(), "2026-09-10 00:26".len(), "{whole}");
+        assert!(!whole.contains("UTC"));
+        assert_eq!(row_time(at, at), whole[11..]);
+        assert_eq!(row_time(at, at + 3 * 86_400), whole[..10]);
+    }
+
+    /// The panel's edit made a state, as the save timer (or the
+    /// export button) makes it.
+    fn save(app: &App, state: &Rc<RefCell<State>>) {
+        let mut st = state.borrow_mut();
+        let edit = read_edit(app, &st.edit, st.target);
+        crate::panel::edit::save_edit(&mut st, edit);
+        show_history(&st, app);
+    }
+
+    fn rows(app: &App) -> Vec<(String, bool)> {
+        let rows = app.get_history_rows();
+        (0..rows.row_count())
+            .map(|r| {
+                let row = rows.row_data(r).unwrap();
+                (row.name.to_string(), row.exported)
+            })
+            .collect()
+    }
+
+    /// Which rows are drawn as undone, newest first.
+    fn undone(app: &App) -> Vec<bool> {
+        let rows = app.get_history_rows();
+        (0..rows.row_count())
+            .map(|r| rows.row_data(r).unwrap().undone)
+            .collect()
+    }
+
+    /// An export that finishes after the panel moved on is recorded on
+    /// the state it was written from, as a row of its own marked as
+    /// one; a click on it goes back to that look; undo walks the
+    /// changes as before; a failed export records nothing.
+    #[test]
+    fn an_export_is_a_row_on_the_state_it_was_written_from() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let source = state.borrow().files[0].clone();
+
+        // Exported at +0.5, and the panel moved on to +1.0 while the
+        // file was written.
+        app.set_exposure(0.5);
+        save(&app, &state);
+        let sent = state.borrow().sidecars[0].current.clone();
+        assert_eq!(sent.light.exposure, 0.5);
+        app.set_exposure(1.0);
+        save(&app, &state);
+        let states = state.borrow().sidecars[0].states();
+        crate::panel::deliver::deliver(
+            &app,
+            Outcome::Exported {
+                path: PathBuf::from("/out/IMG_0000.jpg"),
+                seconds: 1.0,
+                note: None,
+                source: source.clone(),
+                edit: sent.clone(),
+                preset: Some("Web".into()),
+            },
+        );
+        {
+            let st = state.borrow();
+            let s = &st.sidecars[0];
+            assert_eq!(s.states(), states, "no state for the export");
+            assert_eq!(s.current.light.exposure, 1.0, "the panel's moved on");
+            assert!(s.current_exports.is_empty());
+            let on = s.exports(1);
+            assert_eq!(on.len(), 1);
+            assert_eq!(on[0].file, "/out/IMG_0000.jpg");
+            assert_eq!(on[0].preset.as_deref(), Some("Web"));
+            assert!(on[0].at > 0);
+        }
+        assert_eq!(
+            rows(&app),
+            [
+                ("Exposure +1.00".to_string(), false),
+                ("IMG_0000.jpg · Web".to_string(), true),
+                ("Exposure +0.50".to_string(), false),
+                ("Original".to_string(), false),
+            ]
+        );
+        assert_eq!(app.get_history_current(), 0);
+        assert_eq!(undone(&app), [false; 4]);
+        assert!(!app.get_history_rows().row_data(1).unwrap().time.is_empty());
+
+        // A failed export, a skipped one, and a set's frame that failed
+        // or was canceled: nothing.
+        crate::panel::deliver::deliver(
+            &app,
+            Outcome::ExportFailed {
+                message: "disk full".into(),
+            },
+        );
+        crate::panel::deliver::deliver(
+            &app,
+            Outcome::ExportSkipped {
+                path: PathBuf::from("/out/IMG_0000.jpg"),
+            },
+        );
+        let set = Arc::new(crate::queue::Set::new(
+            1,
+            None,
+            crate::export::Settings::default(),
+            crate::export::OnExists::Increment,
+        ));
+        for done in [
+            crate::queue::Done::Failed {
+                message: "no".into(),
+            },
+            crate::queue::Done::Canceled,
+        ] {
+            crate::panel::deliver::deliver(
+                &app,
+                Outcome::SetFrameDone {
+                    set: set.clone(),
+                    index: 0,
+                    source: source.clone(),
+                    edit: sent.clone(),
+                    done,
+                },
+            );
+        }
+        assert_eq!(rows(&app).len(), 4);
+        assert_eq!(state.borrow().sidecars[0].exports(1).len(), 1);
+
+        // Hovered, the viewport shows the look that went out.
+        app.invoke_history_hovered(1);
+        assert_eq!(state.borrow().peek.as_ref(), Some(&sent));
+        assert!(app.get_status().contains("/out/IMG_0000.jpg, exported"));
+        app.invoke_history_hovered(-1);
+
+        // Clicked: that state is current, the panel and all.
+        app.invoke_history_clicked(1);
+        assert_eq!(state.borrow().sidecars[0].current, sent);
+        assert_eq!(app.get_exposure(), 0.5);
+        assert_eq!(app.get_history_current(), 2, "the state's row, lit");
+        assert_eq!(state.borrow().sidecars[0].current_exports.len(), 1);
+        // The current state's export above it reads as live; only the
+        // step undone above them is muted.
+        assert_eq!(undone(&app), [true, false, false, false]);
+
+        // One undo is one change: back to the original, not a step
+        // for the export; and a redo brings the record back with its
+        // state.
+        app.invoke_undo();
+        assert_eq!(state.borrow().sidecars[0].current, Edit::default());
+        // The export's state undone: its row is muted with it.
+        assert_eq!(undone(&app), [true, true, true, false]);
+        app.invoke_redo();
+        assert_eq!(state.borrow().sidecars[0].current, sent);
+        assert_eq!(state.borrow().sidecars[0].current_exports.len(), 1);
+        app.invoke_redo();
+        assert_eq!(state.borrow().sidecars[0].current.light.exposure, 1.0);
+        assert!(rows(&app)[1].1);
+    }
+
+    /// A frame the window let go of while its file was written (another
+    /// folder opened): its sidecar is read from the disk, noted, and
+    /// written back through the same save, counted; a later export of
+    /// a state it no longer has writes nothing.
+    #[test]
+    fn a_frame_no_longer_shown_is_noted_on_the_disk() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../target/scratch/export-record-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let raw = dir.join("IMG_0100.CR3");
+        let mut on_disk = Sidecar::default();
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.75;
+        on_disk.record(edit.clone());
+        on_disk.save(&raw).unwrap();
+
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        state.borrow_mut().write_sidecars = true;
+        let exported = |edit: &Edit| Outcome::Exported {
+            path: dir.join("IMG_0100.jpg"),
+            seconds: 1.0,
+            note: None,
+            source: raw.clone(),
+            edit: edit.clone(),
+            preset: None,
+        };
+        crate::panel::deliver::deliver(&app, exported(&edit));
+        let back = Sidecar::load(&raw).unwrap().unwrap();
+        assert_eq!(back.saved, 2);
+        assert_eq!(back.current, edit);
+        assert_eq!(back.current_exports.len(), 1);
+        assert_eq!(back.current_exports[0].label(), "IMG_0100.jpg");
+        // The window's own frames are untouched.
+        assert_eq!(state.borrow().sidecars[0], Sidecar::default());
+
+        crate::panel::deliver::deliver(&app, exported(&Edit::for_picture()));
+        assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), back);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn scratch(what: &str) -> PathBuf {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../target/scratch/export-{what}-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn exposed(ev: f32) -> Edit {
+        let mut e = Edit::default();
+        e.light.exposure = ev;
+        e
+    }
+
+    /// A shoot of `frames` raws in `dir`, the first with a sidecar at
+    /// 0.5 EV carrying one export record, opened in a window as a run
+    /// with `--exposure 1.0` (and `--develop-temperature 4000`, when
+    /// `temperature`) opens it: the window, the state, the first raw,
+    /// and its sidecar's bytes on disk.
+    fn launched(
+        dir: &Path,
+        frames: usize,
+        temperature: bool,
+    ) -> (App, Rc<RefCell<State>>, Rc<Worker>, PathBuf, Vec<u8>) {
+        let raws: Vec<PathBuf> = (0..frames)
+            .map(|i| dir.join(format!("IMG_02{i:02}.CR3")))
+            .collect();
+        let mut kept = Sidecar::default();
+        kept.record(exposed(0.5));
+        kept.record_export(
+            &exposed(0.5),
+            Exported {
+                file: "/out/earlier.jpg".into(),
+                preset: None,
+                at: 1,
+            },
+        );
+        kept.save(&raws[0]).unwrap();
+        let bytes = std::fs::read(Sidecar::path_for(&raws[0])).unwrap();
+        let app = crate::testing::window(frames);
+        let (state, worker) = crate::testing::state_for(&app, raws.clone());
+        {
+            let mut st = state.borrow_mut();
+            st.write_sidecars = true;
+            st.sidecars[0] = Sidecar::load(&raws[0]).unwrap().unwrap();
+            st.overrides_at_start = Some((
+                0,
+                crate::panel::startup::Overrides {
+                    temperature: temperature.then_some(4000.0),
+                    exposure: Some(1.0),
+                },
+            ));
+        }
+        app.invoke_select(0);
+        (app, state, worker, raws[0].clone(), bytes)
+    }
+
+    fn on_disk(raw: &Path) -> Sidecar {
+        Sidecar::load(raw).unwrap().unwrap()
+    }
+
+    /// `--exposure` on a batch export: the command line's value is the
+    /// panel's, never the sidecar's. The file is written at it, but it
+    /// is no state of the frame's, so nothing is recorded, and the
+    /// run's closing save finds nothing to save: the sidecar is left
+    /// byte for byte as it was, its 0.5 EV state and that state's
+    /// record with it. The first move ends that, one-shot: 1.0, then
+    /// 1.5, then 1.0 again is on disk at 1.0.
+    #[test]
+    fn a_command_line_exposure_leaves_the_sidecar_as_it_was() {
+        let dir = scratch("override");
+        let half = exposed(0.5);
+        let (app, state, _worker, raw, bytes) = launched(&dir, 1, true);
+        state.borrow_mut().batch = true;
+        let rendered = state.borrow().edit.clone();
+        assert_eq!(rendered.light.exposure, 1.0, "the panel's");
+        assert_eq!(
+            state.borrow().sidecars[0].current,
+            half,
+            "not the sidecar's"
+        );
+
+        // The batch export lands, and the run closes with the save it
+        // always makes of the open file.
+        crate::panel::deliver::deliver(
+            &app,
+            Outcome::Exported {
+                path: dir.join("IMG_0200.jpg"),
+                seconds: 1.0,
+                note: None,
+                source: raw.clone(),
+                edit: rendered,
+                preset: None,
+            },
+        );
+        {
+            let mut st = state.borrow_mut();
+            let edit = read_edit(&app, &st.edit, st.target);
+            crate::panel::edit::save_edit(&mut st, edit);
+        }
+        assert!(
+            std::fs::read(Sidecar::path_for(&raw)).unwrap() == bytes,
+            "rewritten"
+        );
+        assert_eq!(state.borrow().sidecars[0].states(), 2);
+        assert_eq!(state.borrow().sidecars[0].exports(1).len(), 1);
+
+        // Moved on the panel, the edit is a state as any would be, and
+        // the overrides are done with: moved back to exactly their
+        // values, that is a state too, and it is what is on disk.
+        app.set_exposure(1.5);
+        save(&app, &state);
+        assert_eq!(state.borrow().sidecars[0].states(), 3);
+        assert_eq!(on_disk(&raw).current.light.exposure, 1.5);
+        app.set_exposure(1.0);
+        save(&app, &state);
+        assert_eq!(state.borrow().sidecars[0].states(), 4);
+        assert_eq!(state.borrow().sidecars[0].current.light.exposure, 1.0);
+        assert_eq!(on_disk(&raw).current.light.exposure, 1.0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Left and come back to, a frame opened under `--exposure` is its
+    /// sidecar's again: nothing of the override's was recorded on the
+    /// way out, and on the way back an edit that happens to be the
+    /// override's values is saved like any other.
+    #[test]
+    fn a_frame_left_and_come_back_to_is_its_sidecar_s_again() {
+        let dir = scratch("override-return");
+        let (app, state, _worker, raw, bytes) = launched(&dir, 2, false);
+        app.invoke_select(1);
+        assert!(std::fs::read(Sidecar::path_for(&raw)).unwrap() == bytes);
+        app.invoke_select(0);
+        assert_eq!(app.get_exposure(), 0.5, "the sidecar's, not the override's");
+        assert_eq!(state.borrow().edit, exposed(0.5));
+        app.set_exposure(1.0);
+        save(&app, &state);
+        assert_eq!(state.borrow().sidecars[0].states(), 3);
+        assert_eq!(on_disk(&raw).current, exposed(1.0));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Undo as the first thing done after an `--exposure` launch goes
+    /// back from the sidecar's own current state: the override is not
+    /// recorded on the way, so the redo stack the sidecar carried is
+    /// still there to walk, and redo lands on the sidecar's states.
+    #[test]
+    fn a_first_undo_under_an_override_records_nothing_and_keeps_the_redo() {
+        let dir = scratch("override-undo");
+        let (app, state, _worker, _raw, _) = launched(&dir, 1, false);
+        // The sidecar as a session left it: 0.75 undone, back at 0.5,
+        // and the launch's override on the panel at 1.0.
+        {
+            let mut st = state.borrow_mut();
+            let s = &mut st.sidecars[0];
+            s.record(exposed(0.75));
+            s.undo();
+            assert_eq!(s.current, exposed(0.5));
+            assert_eq!(s.redo.len(), 1);
+        }
+        assert_eq!(app.get_exposure(), 1.0);
+
+        app.invoke_undo();
+        {
+            let st = state.borrow();
+            let s = &st.sidecars[0];
+            assert_eq!(s.current, Edit::default());
+            assert_eq!(s.states(), 3, "no state for the override");
+            assert!(
+                (0..s.states()).all(|i| s.state(i) != Some(&exposed(1.0))),
+                "the override is no state"
+            );
+            assert_eq!(s.redo.len(), 2, "the carried redo kept");
+            assert!(st.overridden.is_none(), "done with");
+        }
+        assert_eq!(app.get_exposure(), 0.0);
+        app.invoke_redo();
+        assert_eq!(state.borrow().sidecars[0].current, exposed(0.5));
+        app.invoke_redo();
+        assert_eq!(state.borrow().sidecars[0].current, exposed(0.75));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A frame never opened, exported in a set: the worker seeds its
+    /// learned blend from the ISO, as a first open would, and the
+    /// sidecar its export creates carries that seed as the frame's
+    /// current state, not a step; the next load reads it back as the
+    /// seed, not the plain default.
+    #[test]
+    fn an_export_of_a_frame_never_opened_keeps_its_iso_seed() {
+        let seed = greycard_edit::Noise::blend_for_iso(Some(200));
+        assert!(seed < 1.0);
+        let mut rendered = Edit::default();
+        rendered.noise.learned_strength = seed;
+
+        // In the window's list, waiting on its seed.
+        let dir = scratch("seed");
+        let (listed, gone) = (dir.join("IMG_0300.CR3"), dir.join("IMG_0301.CR3"));
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, vec![listed.clone()]);
+        {
+            let mut st = state.borrow_mut();
+            st.write_sidecars = true;
+            st.seed_blend[0] = true;
+        }
+        let set = Arc::new(crate::queue::Set::new(
+            2,
+            Some(dir.clone()),
+            crate::export::Settings::default(),
+            crate::export::OnExists::Increment,
+        ));
+        for (i, source) in [&listed, &gone].into_iter().enumerate() {
+            crate::panel::deliver::deliver(
+                &app,
+                Outcome::SetFrameDone {
+                    set: set.clone(),
+                    index: i,
+                    source: source.clone(),
+                    edit: rendered.clone(),
+                    done: crate::queue::Done::Exported {
+                        path: dir.join(format!("{i}.jpg")),
+                        seconds: 1.0,
+                        note: None,
+                    },
+                },
+            );
+        }
+        assert!(!state.borrow().seed_blend[0], "taken");
+        // Both on disk, the one the window had and the one it had not:
+        // the seed as current, no step, the record on it.
+        for raw in [&listed, &gone] {
+            let back = Sidecar::load(raw).unwrap().unwrap();
+            assert_eq!(back.current, rendered, "{}", raw.display());
+            assert!(back.history.is_empty());
+            assert_eq!(back.current_exports.len(), 1);
+            let (loaded, seed_again) = crate::panel::browser::load_sidecar(raw, true);
+            assert_eq!(loaded.current.noise.learned_strength, seed);
+            assert!(!seed_again, "seeded already");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A set records one row a frame, each on that frame's own state
+    /// under the set's preset; a frame that failed records nothing.
+    #[test]
+    fn a_set_records_a_row_on_each_frame_it_wrote() {
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(3));
+        let mut edits = Vec::new();
+        {
+            let mut st = state.borrow_mut();
+            for (i, ev) in [0.25, -0.5, 1.5].into_iter().enumerate() {
+                let mut e = Edit::default();
+                e.light.exposure = ev;
+                st.sidecars[i].record(e.clone());
+                edits.push(e);
+            }
+        }
+        let set = Arc::new(
+            crate::queue::Set::new(
+                3,
+                Some(PathBuf::from("/out")),
+                crate::export::Settings::default(),
+                crate::export::OnExists::Increment,
+            )
+            .with_preset(Some("Print".into())),
+        );
+        let files = state.borrow().files.clone();
+        for (i, done) in [
+            crate::queue::Done::Exported {
+                path: PathBuf::from("/out/IMG_0000.jpg"),
+                seconds: 1.0,
+                note: None,
+            },
+            crate::queue::Done::Failed {
+                message: "no".into(),
+            },
+            crate::queue::Done::Exported {
+                path: PathBuf::from("/out/IMG_0002.jpg"),
+                seconds: 1.0,
+                note: None,
+            },
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            crate::panel::deliver::deliver(
+                &app,
+                Outcome::SetFrameDone {
+                    set: set.clone(),
+                    index: i,
+                    source: files[i].clone(),
+                    edit: edits[i].clone(),
+                    done,
+                },
+            );
+        }
+        let st = state.borrow();
+        for (i, want) in [Some("/out/IMG_0000.jpg"), None, Some("/out/IMG_0002.jpg")]
+            .into_iter()
+            .enumerate()
+        {
+            let s = &st.sidecars[i];
+            assert_eq!(s.states(), 2, "frame {i}");
+            match want {
+                Some(file) => {
+                    assert_eq!(s.current_exports.len(), 1, "frame {i}");
+                    assert_eq!(s.current_exports[0].file, file);
+                    assert_eq!(s.current_exports[0].preset.as_deref(), Some("Print"));
+                    assert_eq!(
+                        s.current_exports[0].label(),
+                        format!("{} · Print", &file[5..])
+                    );
+                }
+                None => assert!(s.current_exports.is_empty(), "frame {i}"),
+            }
+        }
     }
 
     /// A develop landing with `sources` for the state developing now.

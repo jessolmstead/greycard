@@ -1211,17 +1211,15 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
 
     // Open the file to start on, if there is one yet.
     if let Some(i) = initial_select {
-        if let Some(t) = cli.develop_temperature {
-            state.borrow_mut().sidecars[i].current.white_balance = WhiteBalance::Custom {
-                temperature: t as f64,
-                tint: 0.0,
-            };
-        }
-        // Into the file's edit, as the temperature is: the panel
-        // takes the edit when the file arrives, and would drop a
-        // value set on it now.
-        if cli.exposure != 0.0 {
-            state.borrow_mut().sidecars[i].current.light.exposure = cli.exposure;
+        // Laid over the file's edit when it is opened: the panel takes
+        // the edit when the file arrives, and would drop a value set
+        // on it now.
+        let overrides = Overrides {
+            temperature: cli.develop_temperature,
+            exposure: (cli.exposure != 0.0).then_some(cli.exposure),
+        };
+        if !overrides.is_empty() {
+            state.borrow_mut().overrides_at_start = Some((i, overrides));
         }
         state.borrow_mut().preview_temperature = cli.preview_temperature;
         // Opened from the rendering setup, once the worker has the
@@ -1476,6 +1474,42 @@ pub(crate) fn sync_rows<T: Clone + PartialEq + 'static>(model: &VecModel<T>, row
             }
         } else {
             model.push(row);
+        }
+    }
+}
+
+/// `--develop-temperature` and `--exposure`: what the command line
+/// lays over the first file's edit for this run, on the panel's edit
+/// and not the sidecar's, so a run that exports or takes a picture of
+/// the frame at another exposure leaves the frame's edit and its
+/// history as it found them, and an export record names only a look
+/// the frame really had. The overridden edit is never recorded as a
+/// state of its own: while the panel shows it unmoved, a save, an
+/// undo, a click in the history, a snapshot or a preset records
+/// nothing of the panel's (`panel::edit::panel_state`). Once the user
+/// moves anything, what the panel then holds is recorded like any
+/// edit, with whatever of the override's values it still carries.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub(crate) struct Overrides {
+    pub temperature: Option<f32>,
+    pub exposure: Option<f32>,
+}
+
+impl Overrides {
+    pub(crate) fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// `edit` with these laid over it.
+    pub(crate) fn apply(&self, edit: &mut Edit) {
+        if let Some(t) = self.temperature {
+            edit.white_balance = WhiteBalance::Custom {
+                temperature: t as f64,
+                tint: 0.0,
+            };
+        }
+        if let Some(ev) = self.exposure {
+            edit.light.exposure = ev;
         }
     }
 }

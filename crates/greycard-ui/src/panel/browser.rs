@@ -1411,7 +1411,16 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
     // does not know which way up its Original crop goes
     // until the frame does.
     migrate_frame(st, i);
-    let edit = st.sidecars[i].current.clone();
+    let mut edit = st.sidecars[i].current.clone();
+    // The frame the command line's overrides were on is left, or
+    // opened again: they are done with (`panel_state`).
+    st.overridden = None;
+    // The command line's temperature and exposure, over the first
+    // file's edit on the panel and not on its sidecar.
+    if let Some((_, overrides)) = st.overrides_at_start.take_if(|(f, _)| *f == i) {
+        overrides.apply(&mut edit);
+        st.overridden = Some((st.files[i].clone(), edit.clone()));
+    }
     // A mask asked for on the command line is the first file's
     // target, so a screenshot can show the panel's block for it.
     st.target = if st.current.is_none() {

@@ -99,6 +99,9 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
         let outgoing = read_edit(app, &st.edit, st.target);
         save_edit(st, outgoing);
     }
+    // The panel is not the frame's from here, and the sidecar's when
+    // culling ends: the command line's overrides are done with.
+    st.overridden = None;
     // A save or a develop still on its timer would read a panel that
     // is no longer the frame's.
     st.save_timer.stop();

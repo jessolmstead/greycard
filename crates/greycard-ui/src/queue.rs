@@ -68,6 +68,9 @@ pub struct Set {
     pub folder: Option<PathBuf>,
     pub settings: Settings,
     pub on_exists: OnExists,
+    /// The export preset the sheet was when the set began, for each
+    /// frame's history; none when the sheet was not one as saved.
+    pub preset: Option<String>,
     pub started: std::time::Instant,
     canceled: AtomicBool,
     tally: Mutex<Tally>,
@@ -85,10 +88,16 @@ impl Set {
             folder,
             settings,
             on_exists,
+            preset: None,
             started: std::time::Instant::now(),
             canceled: AtomicBool::new(false),
             tally: Mutex::new(Tally::default()),
         }
+    }
+
+    /// The set, with `preset` as the export preset it was begun under.
+    pub fn with_preset(self, preset: Option<String>) -> Self {
+        Self { preset, ..self }
     }
 
     /// Stop after the frame in hand: every frame not yet begun is

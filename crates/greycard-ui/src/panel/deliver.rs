@@ -105,6 +105,13 @@ pub(crate) fn chosen_preset(app: &App) -> Option<String> {
     (!name.is_empty() && !sheet::reserved(&name)).then(|| name.to_string())
 }
 
+/// The export preset an export is written under, for the frame's
+/// history: the one chosen, when the sheet is still that preset as
+/// saved. An edited sheet is not the preset, and says nothing.
+pub(crate) fn preset_in_use(app: &App) -> Option<String> {
+    chosen_preset(app).filter(|_| !app.get_export_preset_edited())
+}
+
 /// The picker's entries and the one chosen, and whether the sheet has
 /// moved from it: the presets as `presets` has them.
 pub(crate) fn show_presets_picker(app: &App, presets: &[ExportPreset], chosen: Option<&str>) {
@@ -328,6 +335,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     }
                     if let Some(s) = st.sidecars.get_mut(i) {
                         s.current.noise.learned_strength = b;
+                    }
+                    // The overrides' edit is the panel's, seed and all.
+                    let file = st.files.get(i).cloned();
+                    if let Some((f, e)) = st.overridden.as_mut()
+                        && file.as_ref() == Some(f)
+                    {
+                        e.noise.learned_strength = b;
                     }
                 }
                 st.edit.noise.learned_strength = b;
@@ -596,14 +610,27 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     for (source, edit, ..) in &frames {
                         warn_missing_look(edit, source);
                     }
-                    start_set(&mut st, app, frames, Some(path), settings, on_exists);
+                    let preset = preset_in_use(app);
+                    start_set(
+                        &mut st,
+                        app,
+                        frames,
+                        Some(path),
+                        settings,
+                        on_exists,
+                        preset,
+                    );
                     return;
                 }
                 app.set_busy(true);
                 warn_missing_look(&st.edit, &path);
                 // The sheet's choices as remembered, the format from
                 // the path's extension.
-                let settings = batch_settings(&path, read_export_settings(app));
+                let sheet = read_export_settings(app);
+                let settings = batch_settings(&path, sheet.clone());
+                // A format the path changed is not the preset's file.
+                let preset = preset_in_use(app).filter(|_| settings == sheet);
+                let source = st.current.map(|c| st.files[c].clone()).unwrap_or_default();
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {
                         w.send(Job::Export {
@@ -611,6 +638,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                             path,
                             settings,
                             on_exists: read_on_exists(app),
+                            source,
+                            preset,
                         });
                     }
                 });
@@ -654,7 +683,19 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             path,
             seconds,
             note,
+            source,
+            edit,
+            preset,
         } => {
+            // Into the frame's history before a batch run quits below.
+            crate::panel::history::record_export(
+                &mut state.borrow_mut(),
+                app,
+                &source,
+                &edit,
+                &path,
+                preset,
+            );
             let said = match &note {
                 Some(note) => format!(" ({note})"),
                 None => String::new(),
@@ -851,6 +892,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             set,
             index,
             source,
+            edit,
             done,
         } => {
             let at = format!("{} of {}", index + 1, set.total);
@@ -864,6 +906,14 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     if let Some(note) = note {
                         tracing::warn!("exported {}: {note}", path.display());
                     }
+                    crate::panel::history::record_export(
+                        &mut state.borrow_mut(),
+                        app,
+                        &source,
+                        &edit,
+                        &path,
+                        set.preset.clone(),
+                    );
                 }
                 queue::Done::Skipped { path } => {
                     tracing::warn!("skipped {at}: {} is there already", path.display());
@@ -970,6 +1020,7 @@ pub(crate) fn start_set(
     folder: Option<PathBuf>,
     settings: export::Settings,
     on_exists: export::OnExists,
+    preset: Option<String>,
 ) {
     st.export_choosing = false;
     // Nothing to write would never be said done: the spinner would run
@@ -995,7 +1046,8 @@ pub(crate) fn start_set(
             out,
         })
         .collect();
-    let set = Arc::new(queue::Set::new(frames.len(), folder, settings, on_exists));
+    let set =
+        Arc::new(queue::Set::new(frames.len(), folder, settings, on_exists).with_preset(preset));
     tracing::info!(
         "exporting {} {}: {}",
         queue::frames(frames.len()),
@@ -1152,7 +1204,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             let (raw, edit, frames) = {
-                let st = state.borrow();
+                let mut st = state.borrow_mut();
                 let Some(c) = st.current else {
                     return;
                 };
@@ -1161,12 +1213,19 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 if st.exporting.is_some() || st.export_choosing {
                     return;
                 }
-                (
-                    st.files[c].clone(),
-                    read_edit(&app, &st.edit, st.target),
-                    set_frames(&st, &app),
-                )
+                let edit = read_edit(&app, &st.edit, st.target);
+                // What the panel holds is a state first, as for an
+                // undo or a snapshot: the export is recorded on the
+                // state it was written from once it is done, and a
+                // panel that moved on meanwhile would otherwise have
+                // saved over it before it ever was one.
+                if st.cull.is_none() {
+                    crate::panel::edit::save_edit(&mut st, edit.clone());
+                    show_history(&st, &app);
+                }
+                (st.files[c].clone(), edit, set_frames(&st, &app))
             };
+            let preset = preset_in_use(&app);
             let settings = read_export_settings(&app);
             // A mark asked for with nothing to draw: say so and keep
             // the sheet up, rather than write the picture unmarked.
@@ -1209,7 +1268,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                             return;
                         };
                         let mut st = state.borrow_mut();
-                        start_set(&mut st, &app, frames, folder, settings, on_exists);
+                        start_set(&mut st, &app, frames, folder, settings, on_exists, preset);
                     });
                 });
                 return;
@@ -1245,6 +1304,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                                 path,
                                 settings,
                                 on_exists,
+                                source: raw,
+                                preset,
                             });
                         }
                     });
