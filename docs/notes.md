@@ -213,3 +213,5 @@ in its section; the roadmap and the changelog only point at it.
 - [§200. Draw a crop by dragging outside today's rectangle](notes/200-draw-a-crop-by-dragging-outside-todays-rectangle.md) (2026-09-28)
 - [§201. Threads and channels, not async](notes/201-threads-and-channels-not-async.md) (2026-09-28)
 - [§202. The strip and the grid with cells for the screen alone](notes/202-the-strip-and-the-grid-with-cells-for-the-screen-alone.md) (2026-09-28)
+- [§203. The Masks tab laid out to be read at a glance](notes/203-the-masks-tab-laid-out-to-be-read-at-a-glance.md) (2026-09-29)
+- [§204. A Background shape](notes/204-a-background-shape.md) (2026-09-29)

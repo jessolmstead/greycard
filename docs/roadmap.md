@@ -84,15 +84,6 @@ History, and the Masks tab reads at a glance.
       that is online and fastest, its sidecar written to both when both
       are there, so "back up, then delete local" removes nothing from the
       library. Waits on archive roots, part one
-- [ ] The Masks tab laid out to be read at a glance: today it has an
-      Invert for the mask and an Invert shape for each shape, and the
-      shape buttons twice (new mask, then Next shape); one place for
-      each control, and the mask, its shapes and their settings in an
-      order that says which is which
-- [ ] A Background shape: the Subject mask inverted, one button beside
-      Subject, so a look goes on everything but the subject without
-      drawing it; later the parts models make it the true background
-      rather than the subject's complement
 
 ## Tracks
 

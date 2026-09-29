@@ -10,6 +10,13 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The Masks tab reads at a glance: one card for the mask, one row per
+  shape with its own invert, the chosen shape's settings under the
+  rows, and one Add-a-shape group, with New mask a separate action;
+  a new mask's first shape is always Add (§203)
+- A Background shape beside Subject: the complement of the Subject
+  matte from the same model run, so a look goes on everything but the
+  subject without drawing it (§204)
 - The grid and the strip make cells only for the rows on screen: a
   20,000-frame folder shows its first frame in half a second instead
   of two, a fast scroll draws a frame in about 13 ms instead of about
