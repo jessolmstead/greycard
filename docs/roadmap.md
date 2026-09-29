@@ -92,9 +92,6 @@ History, and the Masks tab reads at a glance.
       draws a new one from the press point, held to the chosen
       aspect, instead of only resizing today's handles or moving the
       whole
-- [ ] An export as a line in History: the file, its preset and the
-      time, at the state it was exported from, so a click goes back to
-      the look that was sent out
 - [ ] The Masks tab laid out to be read at a glance: today it has an
       Invert for the mask and an Invert shape for each shape, and the
       shape buttons twice (new mask, then Next shape); one place for
@@ -406,12 +403,6 @@ clears or a tester asks for it.
       WARP, slow but right; the develop already runs on the CPU, the
       viewport does not. A tester on such a machine decides whether
       the viewport wants a CPU path too
-- [ ] The single export's reuse of the viewport's last develop should
-      require a CPU CA: with the learned denoiser on and sharpen off
-      the picture comes back to the CPU with the GPU's CA in it, so a
-      frame exported on screen differs from the same frame exported in
-      a set (45 px at 2048 on 5M0A1023, §167). The base's `ca_on_gpu`
-      check is the model
 - [ ] Export naming patterns (a suffix, a sequence number, the date)
       on the sheet and in an export preset, for a set (§167)
 - [ ] Export naming patterns and a destination folder on the sheet,

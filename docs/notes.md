@@ -208,3 +208,5 @@ in its section; the roadmap and the changelog only point at it.
 - [§195. Immich as a neighbor, not a backend](notes/195-immich-as-a-neighbor-not-a-backend.md) (2026-09-27)
 - [§196. The Delete key in the develop loupe](notes/196-the-delete-key-in-the-develop-loupe.md) (2026-09-27)
 - [§197. Archive roots: back up, bring back, and the rejects on the archive](notes/197-archive-roots-back-up-bring-back-and-the-rejects.md) (2026-09-28)
+- [§198. An export as a line in History](notes/198-an-export-as-a-line-in-history.md) (2026-09-28)
+- [§199. The export's picture and the GPU's CA, twice over](notes/199-the-export-s-picture-and-the-gpu-s-ca-twice-over.md) (2026-09-28)

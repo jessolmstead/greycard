@@ -8,6 +8,18 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
+## 0.4.0, unreleased
+
+- An export is a line in History: the file, its preset and the time,
+  as a row above the state it was rendered from, so a click goes back
+  to the look that was sent out; failed, skipped and canceled exports
+  record nothing, a set records one per frame, and a command-line
+  exposure or temperature override never reaches the sidecar (§198)
+- A frame exported from the screen is the same picture as the frame
+  exported in a set: the last develop and the learned denoiser's kept
+  pair both say when their CA correction was the GPU's, and an export
+  develops those afresh on the CPU (§199)
+
 ## 0.3.0, 2026-09-27
 
 Quality of life improvements. A library root on a network share neither freezes
