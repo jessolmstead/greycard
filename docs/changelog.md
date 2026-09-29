@@ -10,6 +10,10 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The grid and the strip make cells only for the rows on screen: a
+  20,000-frame folder shows its first frame in half a second instead
+  of two, a fast scroll draws a frame in about 13 ms instead of about
+  95, and the window holds a quarter less memory (§202)
 - A crop can be drawn: in crop mode a drag that starts outside the
   rectangle draws a new one from the press point, held to the chosen
   aspect and clamped to the picture; a press in the letterbox starts

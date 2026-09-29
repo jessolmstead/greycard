@@ -62,10 +62,6 @@ History, and the Masks tab reads at a glance.
       under the button and in the grid's header, with the one open
       marked; a folder gone from the disk stays listed and says so
       when chosen
-- [ ] A virtualized grid and strip: only the rows on screen given a
-      cell, where today every row of a 20,000-frame folder has one and
-      a frame costs 45 to 400 ms, the longest wait left while a warm
-      folder's pictures come in (§191)
 - [ ] Local previews by content hash: a mid-size picture per frame
       in the local cache, made by the pass, so a shoot on a NAS is culled
       in the loupe and the compare view without reading the raw over the
