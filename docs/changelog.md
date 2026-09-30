@@ -10,6 +10,13 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A root's folders as a tree in the left pane, built from the index so
+  an offline root still shows its shape, each folder with its count; a
+  click opens that folder's own frames, or everything under it with the
+  With subfolders switch, the root's chip staying lit, and a folder of
+  twelve opens as twelve rows whatever the root holds (§209)
+- A snapshot's --keys were sent twice when a click opened a list whose
+  frame developed; they go once (§209)
 - A rating or a label picked from the frame menu's sub-menus with the
   pointer no longer leaves the window deaf to every key and click: the
   keys get their focus back once the two popups have closed (§208)

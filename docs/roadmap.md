@@ -40,13 +40,6 @@ History, and the Masks tab reads at a glance.
       with a share at `~/Pictures/NAS`) is still watched recursively, so
       classify each mount under a root, not only the root's; and a field
       for `network_poll_minutes` in the Settings sheet
-- [ ] A folder tree under a chosen root: the root's folders as a tree
-      in the left pane, from the index rather than the disk so an offline
-      root still shows its shape, each folder with its frame count, a click
-      opening that folder's frames (its subfolders' too, as a switch) and
-      the view's chip staying on; a folder's open then reads only that
-      folder's sidecars rather than the whole root's, which is the cheap
-      way into a large archive
 - [ ] Local previews by content hash: a mid-size picture per frame
       in the local cache, made by the pass, so a shoot on a NAS is culled
       in the loupe and the compare view without reading the raw over the
