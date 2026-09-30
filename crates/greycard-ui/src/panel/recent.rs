@@ -43,8 +43,12 @@ fn folder_of(files: &[PathBuf]) -> Option<PathBuf> {
 /// pane. A run with no settings file to write (a capture, an export,
 /// a test) keeps the list in the window only.
 pub(crate) fn opened(st: &mut State, app: &App) {
-    st.recent.open = match st.view {
+    st.recent.open = match &st.view {
         crate::roots::View::Folder => folder_of(&st.files),
+        // A folder of a root's tree is a folder opened, with or without
+        // the folders under it; the index's spelling is canonical, and
+        // an offline root's folder is recorded without a look at it.
+        crate::roots::View::Branch { folder, .. } => Some(folder.clone()),
         crate::roots::View::Roots(_) => None,
     };
     if let Some(dir) = st.recent.open.clone() {
@@ -89,7 +93,7 @@ fn own_name(dir: &Path) -> String {
 pub(crate) fn show(st: &State, app: &App) {
     let roots = &st.library.roots;
     let (name, root, path) = match (&st.view, &st.recent.open) {
-        (crate::roots::View::Folder, Some(dir)) => {
+        (crate::roots::View::Folder | crate::roots::View::Branch { .. }, Some(dir)) => {
             let (name, root) = named(roots, dir);
             (name, root, dir.display().to_string())
         }
@@ -97,7 +101,9 @@ pub(crate) fn show(st: &State, app: &App) {
             (roots.label(r), String::new(), r.display().to_string())
         }
         (crate::roots::View::Roots(None), _) => ("All roots".into(), String::new(), String::new()),
-        (crate::roots::View::Folder, None) => Default::default(),
+        (crate::roots::View::Folder | crate::roots::View::Branch { .. }, None) => {
+            Default::default()
+        }
     };
     app.set_open_folder_name(name.into());
     app.set_open_folder_root(root.into());

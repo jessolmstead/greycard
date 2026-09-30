@@ -414,6 +414,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             folders: remembered.recent_folders.clone(),
             ..Default::default()
         },
+        tree: crate::tree::Tree::with_subfolders(remembered.folder_tree_subfolders),
         awaiting_index: !facets_wanted.is_empty(),
         facets_wanted,
         ..State::empty(Vec::new(), &app)
@@ -1368,6 +1369,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         let kept = settings::Settings::load();
         settings.last_file = kept.last_file;
         settings.recent_folders = kept.recent_folders;
+        settings.folder_tree_subfolders = kept.folder_tree_subfolders;
         settings.xmp_sidecars = kept.xmp_sidecars;
         settings.sidecars_in_folder = kept.sidecars_in_folder;
         settings.cull_move_on = kept.cull_move_on;
@@ -1702,6 +1704,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         last_file: String::new(),
         // Written as each folder opens.
         recent_folders: Vec::new(),
+        // Written as the tree's switch is flipped.
+        folder_tree_subfolders: false,
         // Not the panel's either: the settings file is where it is set.
         thumb_cache_mb: 0,
         network_poll_minutes: 0,

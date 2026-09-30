@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, HistoryRow } from "structs.slint";
+import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, HistoryRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -41,6 +41,7 @@ import { Viewport } from "panel/viewport.slint";
 import { FrameMenu } from "panel/frame-menu.slint";
 import { RootSheet } from "panel/root-sheet.slint";
 import { FolderName, RecentMenu } from "panel/recent.slint";
+import { FoldersSection } from "panel/folders.slint";
 
 export component App inherits Window {
     title: "greycard";
@@ -420,6 +421,17 @@ export component App inherits Window {
     in property <[RecentFolder]> recent-folders: [];
     /// A folder chosen from Recently opened, by its path.
     callback recent-chosen(string);
+    /// The open root's folders as a tree in the left pane, shown while
+    /// a root's view is open; a folder chosen or folded there, by its
+    /// row in the list shown; and the switch that takes in the
+    /// folders under the one chosen.
+    in property <bool> folder-tree-shown: false;
+    in property <[FolderRow]> folder-tree: [];
+    in-out property <bool> folder-tree-subfolders: false;
+    in-out property <bool> collapsed-folders: false;
+    callback folder-tree-picked(int);
+    callback folder-tree-folded(int);
+    callback folder-tree-subfolders-changed();
     /// The hover text over everything, and where; empty for none.
     out property <string> tip-text;
     property <length> tip-x;
@@ -1632,6 +1644,16 @@ export component App inherits Window {
                                 tip(t, x, y) => { root.tip-at(t, x, y); }
                                 menu-shown => { return root.menu-shown(); }
                             }
+                        }
+                        // The open root's folders, from the index.
+                        if root.folder-tree-shown: FoldersSection {
+                            rows: root.folder-tree;
+                            subfolders <=> root.folder-tree-subfolders;
+                            collapsed-folders <=> root.collapsed-folders;
+                            picked(p) => { root.folder-tree-picked(p); }
+                            folded(p) => { root.folder-tree-folded(p); }
+                            subfolders-changed => { root.folder-tree-subfolders-changed(); }
+                            focus-keys => { keys.focus(); }
                         }
                         NavigatorSection {
                             zoom-text: root.zoom-text;

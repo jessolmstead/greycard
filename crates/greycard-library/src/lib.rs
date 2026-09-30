@@ -1093,6 +1093,56 @@ impl Library {
         Ok(n as usize)
     }
 
+    /// Each folder under a root (canonical, as [`Roots`] keeps it) that
+    /// the index holds files in, the root itself among them, with how
+    /// many are directly in it, the missing left out; by folder. What
+    /// a tree of the root's folders is built from: a folder with files
+    /// only in the folders under it is not here, and its place in the
+    /// tree is made by theirs.
+    pub fn folder_counts_under_canonical(&self, root: &Path) -> Result<Vec<(PathBuf, usize)>> {
+        let (clause, params) = under_roots_as(std::slice::from_ref(&root.to_path_buf()), false);
+        let sql = format!(
+            "SELECT folder, count(*) FROM files WHERE missing_since IS NULL AND ({clause}) \
+             GROUP BY folder ORDER BY folder"
+        );
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
+            Ok((
+                path_from_bytes(&r.get::<_, Vec<u8>>(0)?),
+                r.get::<_, i64>(1)? as usize,
+            ))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The files directly in one folder (canonical, as the index keys
+    /// it), not those in the folders under it, with what each row
+    /// mirrors of the file's sidecar; by name, the missing left out.
+    /// A folder of a root opened from the index reads no sidecar.
+    pub fn rows_in_canonical(&self, folder: &Path) -> Result<Vec<(PathBuf, RowMeta)>> {
+        let sql = format!(
+            "SELECT files.path, {META_COLUMNS} FROM files WHERE folder = ? \
+             AND missing_since IS NULL ORDER BY name"
+        );
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(params![path_bytes(folder)], |r| {
+            Ok((path_from_bytes(&r.get::<_, Vec<u8>>(0)?), row_meta(r, 1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// How many files are directly in one folder (canonical), the
+    /// missing left out.
+    pub fn count_in_canonical(&self, folder: &Path) -> Result<usize> {
+        let n: i64 = self
+            .conn
+            .prepare_cached(
+                "SELECT count(*) FROM files WHERE folder = ? AND missing_since IS NULL",
+            )?
+            .query_row(params![path_bytes(folder)], |r| r.get(0))?;
+        Ok(n as usize)
+    }
+
     /// The camera match's groups: each body and fixed style the index
     /// holds frames of, under `roots` or in the whole library, with
     /// how many of its frames had every adaptive setting off and how

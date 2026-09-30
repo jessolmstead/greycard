@@ -94,6 +94,11 @@ pub struct Settings {
     /// stays until newer ones push it off the end; choosing it says
     /// it is gone rather than taking it out behind the user's back.
     pub recent_folders: Vec<String>,
+    /// Whether a folder chosen in a root's tree in the left pane opens
+    /// with the frames of the folders under it too, or only its own.
+    /// Off by default: a folder's own frames are the cheap way into a
+    /// large archive. Written as the switch is flipped.
+    pub folder_tree_subfolders: bool,
     /// The most the thumbnail cache under the user's cache directory
     /// may hold, in megabytes; past it the least recently used
     /// pictures go. Zero turns the cache off.
@@ -171,6 +176,7 @@ impl Default for Settings {
             lenses_declined: false,
             last_file: String::new(),
             recent_folders: Vec::new(),
+            folder_tree_subfolders: false,
             thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
             network_poll_minutes: 10,
             import: ImportChoices::default(),
@@ -315,6 +321,7 @@ mod tests {
             lenses_declined: true,
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
+            folder_tree_subfolders: true,
             thumb_cache_mb: 1024,
             network_poll_minutes: 30,
             import: ImportChoices {
@@ -360,6 +367,8 @@ mod tests {
         assert_eq!(read.scope, Settings::default().scope);
         // A file from before Recently opened has an empty list.
         assert!(read.recent_folders.is_empty());
+        // And from before the folder tree, a folder's own frames.
+        assert!(!read.folder_tree_subfolders);
         // A file from before the update check has it on.
         assert!(read.update.check);
         assert_eq!(read.update.checked_at, 0);

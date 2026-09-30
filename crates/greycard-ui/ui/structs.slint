@@ -111,6 +111,21 @@ export struct RecentFolder {
     open: bool,
 }
 
+/// A folder in the open root's tree, as the left pane shows it: its
+/// name and path, how deep under the root, its count (the frames
+/// directly in it, or folded, all those under it; -1 for none shown),
+/// whether it has folders under it and shows them, and whether it is
+/// the one open.
+export struct FolderRow {
+    name: string,
+    path: string,
+    depth: int,
+    count: int,
+    children: bool,
+    expanded: bool,
+    open: bool,
+}
+
 /// A facet's row of chips: its caption, which facet it is (its place
 /// in `greycard_library::Facet::ALL`), and the chips.
 export struct FacetRow {

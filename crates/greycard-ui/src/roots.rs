@@ -71,6 +71,67 @@ pub(crate) enum View {
     Folder,
     /// Every file under the roots, or under one of them.
     Roots(Option<PathBuf>),
+    /// One folder under a root, from the index as a view of the root
+    /// is: the frames directly in it, or with `deep` those in the
+    /// folders under it too. Still that root's view, narrowed: its
+    /// chip stays on.
+    Branch {
+        root: PathBuf,
+        folder: PathBuf,
+        deep: bool,
+    },
+}
+
+impl View {
+    /// The root whose view this is, when it is one root's.
+    pub(crate) fn root(&self) -> Option<&Path> {
+        match self {
+            View::Roots(Some(r)) | View::Branch { root: r, .. } => Some(r),
+            View::Roots(None) | View::Folder => None,
+        }
+    }
+
+    /// The list comes from the index's rows, not from a folder's
+    /// listing on disk.
+    pub(crate) fn lists_rows(&self) -> bool {
+        !matches!(self, View::Folder)
+    }
+
+    /// What the index is asked to list: the files under each of these
+    /// folders, or with the flag, those directly in the one folder.
+    fn listed(&self, all: &[PathBuf]) -> (Vec<PathBuf>, bool) {
+        match self {
+            View::Folder => (Vec::new(), false),
+            View::Roots(None) => (all.to_vec(), false),
+            View::Roots(Some(r)) => (vec![r.clone()], false),
+            View::Branch { folder, deep, .. } => (vec![folder.clone()], !deep),
+        }
+    }
+}
+
+/// The index's rows for a view: under each of `under`, by folder then
+/// name, or with `only`, directly in the one folder, by name.
+fn rows_listed(
+    lib: &greycard_library::Library,
+    under: &[PathBuf],
+    only: bool,
+) -> greycard_library::Result<Vec<(PathBuf, RowMeta)>> {
+    match (only, under) {
+        (true, [folder]) => lib.rows_in_canonical(folder),
+        _ => lib.rows_under_canonical(under),
+    }
+}
+
+/// How many frames a view of the index lists, for the status line,
+/// counted by the index's own ranges.
+fn count_listed(lib: &greycard_library::Library, under: &[PathBuf], only: bool) -> usize {
+    match (only, under) {
+        (true, [folder]) => lib.count_in_canonical(folder).unwrap_or(0),
+        _ => under
+            .iter()
+            .map(|r| lib.count_under_canonical(r).unwrap_or(0))
+            .sum(),
+    }
 }
 
 /// The roots as the editor holds them: the list, where it is kept,
@@ -602,8 +663,10 @@ pub(crate) fn recount(st: &mut State) {
 /// The roots' row in the grid's header.
 pub(crate) fn show(st: &State, app: &App) {
     let roots = st.library.roots.list();
+    // A folder of a root's tree keeps the root's chip on.
     let on = match &st.view {
         View::Roots(r) => Some(r.clone()),
+        View::Branch { root, .. } => Some(Some(root.clone())),
         View::Folder => None,
     };
     let chips: Vec<RootChip> = roots
@@ -631,6 +694,8 @@ pub(crate) fn show(st: &State, app: &App) {
     );
     // The open folder's name, which says the root it is under.
     crate::panel::recent::show(st, app);
+    // The open root's folders, the one open marked.
+    crate::tree::show(st, app);
 }
 
 /// A root as its chip names it: the name the user gave it, else the
@@ -842,13 +907,14 @@ pub(crate) fn remove(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>,
     recount(&mut st);
     let view = st.view.clone();
     let refresh = match &view {
-        View::Roots(Some(r)) if r == dir => {
+        View::Roots(Some(r)) | View::Branch { root: r, .. } if r == dir => {
             st.view = View::Roots(None);
             true
         }
-        View::Roots(_) => true,
+        View::Roots(_) | View::Branch { .. } => true,
         View::Folder => false,
     };
+    crate::tree::want(&mut st, app);
     show(&st, app);
     drop(st);
     if refresh {
@@ -905,7 +971,7 @@ fn roots_of(st: &State, view: &View) -> Vec<PathBuf> {
     match view {
         View::Folder => Vec::new(),
         View::Roots(None) => st.library.roots.list().to_vec(),
-        View::Roots(Some(r)) => vec![r.clone()],
+        View::Roots(Some(r)) | View::Branch { root: r, .. } => vec![r.clone()],
     }
 }
 
@@ -1007,8 +1073,11 @@ enum Source {
     /// in from their rows. The rows are read off the window's thread
     /// too, on a connection of the read's own, unless the window has
     /// no path to the index and read them itself (the tests' windows).
+    /// With `only`, `roots` is one folder of a root's tree, and its own
+    /// rows alone are listed.
     Roots {
         roots: Vec<PathBuf>,
+        only: bool,
         rows: Option<Vec<(PathBuf, RowMeta)>>,
     },
 }
@@ -1294,11 +1363,12 @@ impl Look {
             }
             Source::Roots {
                 roots,
+                only,
                 rows: listed,
             } => {
                 let listed = match listed {
                     Some(listed) => listed,
-                    None => match lib.as_ref().map(|l| l.rows_under_canonical(&roots)) {
+                    None => match lib.as_ref().map(|l| rows_listed(l, &roots, only)) {
                         Some(Ok(listed)) => listed,
                         Some(Err(e)) => {
                             tracing::warn!("library: {e}");
@@ -1606,7 +1676,15 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
                 fresh.len(),
                 from_disk
             );
-            if files.is_empty() {
+            // A folder of a root's tree with no frame of its own (the
+            // year above the days) is open, empty, and says where its
+            // frames are: the tree marks it, and the switch is a press
+            // away. With the switch on, that there is nothing under it.
+            let bare = match (&view, files.is_empty()) {
+                (View::Branch { folder, deep, .. }, true) => Some((folder.clone(), *deep)),
+                _ => None,
+            };
+            if files.is_empty() && bare.is_none() {
                 take_empty(state, app, worker, view, asked);
                 return;
             }
@@ -1623,7 +1701,11 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
                 "library: the list in the browser {:.0} ms after it was asked for",
                 asked.elapsed().as_secs_f64() * 1e3
             );
+            crate::tree::want(&mut st, app);
             show(&st, app);
+            if let Some((folder, deep)) = bare {
+                app.set_status(crate::tree::nothing_in(&folder, deep).into());
+            }
         }
         Purpose::Merge => {
             let mut again = {
@@ -1706,6 +1788,7 @@ fn take_empty(
     let mut st = state.borrow_mut();
     loading_done(&mut st.library, app);
     st.library.painted = Some((asked, "the view asked for"));
+    crate::tree::want(&mut st, app);
     show(&st, app);
     if passing {
         app.set_status("Nothing indexed under the roots yet; the pass is running".into());
@@ -1730,19 +1813,15 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         return;
     };
     let asked = Instant::now();
-    let roots = roots_of(&st, &view);
+    let (roots, only) = view.listed(st.library.roots.list());
     // The rows are read off the window's thread, on a connection of the
     // read's own, when the window knows where the index is; here only
     // their count, for the status line, from the folder index's range.
     // A window with a reader and no path (the tests') reads them here.
     let (rows, count) = if st.index_path.is_some() {
-        let count = roots
-            .iter()
-            .map(|r| lib.count_under_canonical(r).unwrap_or(0))
-            .sum::<usize>();
-        (None, count)
+        (None, count_listed(lib, &roots, only))
     } else {
-        match lib.rows_under_canonical(&roots) {
+        match rows_listed(lib, &roots, only) {
             Ok(rows) => {
                 let count = rows.len();
                 (Some(rows), count)
@@ -1787,7 +1866,7 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         token: 0,
         epoch: st.library.readable_epoch,
         roots: every_root(&st, &view),
-        source: Source::Roots { roots, rows },
+        source: Source::Roots { roots, only, rows },
         known: HashSet::new(),
         have: HashSet::new(),
         write: st.write_sidecars,
@@ -2019,15 +2098,15 @@ fn ask(st: &State) -> Option<Look> {
             // share that does not answer) is none of its business.
             (Source::Folder(dir), Vec::new())
         }
-        View::Roots(_) => {
+        View::Roots(_) | View::Branch { .. } => {
             let lib = st.index_reader.as_ref()?;
-            let roots = roots_of(st, &st.view);
+            let (roots, only) = st.view.listed(st.library.roots.list());
             // The rows off the window's thread when the index's path is
             // known, as `open_view` has them; else read here.
             let rows = if st.index_path.is_some() {
                 None
             } else {
-                match lib.rows_under_canonical(&roots) {
+                match rows_listed(lib, &roots, only) {
                     Ok(rows) => Some(rows),
                     Err(e) => {
                         tracing::debug!("library: {e}; the list kept");
@@ -2035,7 +2114,10 @@ fn ask(st: &State) -> Option<Look> {
                     }
                 }
             };
-            (Source::Roots { roots, rows }, every_root(st, &st.view))
+            (
+                Source::Roots { roots, only, rows },
+                every_root(st, &st.view),
+            )
         }
     };
     let known = match source {
@@ -2434,6 +2516,13 @@ pub(crate) fn background_done(
             }
         }
         recount(&mut st);
+        // The open root's tree built again when the pass changed which
+        // files are where under it: a folder added, emptied or moved. A
+        // sidecar's change (a rating) moves no count.
+        if report.added + report.moved + report.missing + report.returned > 0 {
+            crate::tree::passed(&mut st, path);
+        }
+        crate::tree::want(&mut st, app);
         show(&st, app);
         // A file changed on disk (a copy that finished) has another
         // picture: asked for again, those files and no others.
@@ -2475,6 +2564,17 @@ pub(crate) fn background_done(
         match st.view.clone() {
             View::Roots(None) => worth,
             View::Roots(Some(r)) => worth && (path.starts_with(&r) || r.starts_with(path)),
+            // A folder's own list changes only by a pass over it or over
+            // a folder above it; with those under it, by one under it too.
+            View::Branch { folder, deep, .. } => {
+                worth
+                    && (folder.starts_with(path)
+                        || if deep {
+                            path.starts_with(&folder)
+                        } else {
+                            path == folder.as_path()
+                        })
+            }
             // The folder's own list is what the read brings, the frame
             // on screen with it. A folder whose canonical form the
             // window does not know yet is read: the read brings that.
@@ -2682,7 +2782,10 @@ pub(crate) fn land_sent(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worke
     let mut landed = 0;
     loop {
         let looks: Vec<Look> = tests::SENT.with(|s| s.borrow_mut().drain(..).collect());
-        if looks.is_empty() {
+        // The folder trees a landing asked for, built and landed with
+        // it; not counted, since they are not reads of the list.
+        let trees = crate::tree::land_sent(state, app);
+        if looks.is_empty() && trees == 0 {
             return landed;
         }
         for look in looks {

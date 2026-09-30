@@ -2870,6 +2870,49 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A root's folders as a tree is built from them: each folder with
+    /// files directly in it and how many, the root's own among them, a
+    /// folder beside the root whose name starts like it left out, and
+    /// a folder's own rows without those of the folders under it.
+    #[test]
+    fn a_roots_folders_are_counted_and_a_folders_own_rows_listed() {
+        let dir = scratch("folder-counts");
+        let (a, a2, ab, abc) = (
+            dir.join("a"),
+            dir.join("a2"),
+            dir.join("a").join("day"),
+            dir.join("a").join("day").join("more"),
+        );
+        for d in [&a, &a2, &ab, &abc] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        write_frame(&a.join("z.tif"), &R5, 1);
+        write_frame(&ab.join("c.tif"), &R6, 2);
+        write_frame(&ab.join("b.tif"), &A7, 3);
+        write_frame(&abc.join("d.tif"), &A7, 4);
+        write_frame(&a2.join("n.tif"), &R5, 5);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!(
+            lib.folder_counts_under_canonical(&a).unwrap(),
+            [(a.clone(), 1), (ab.clone(), 2), (abc.clone(), 1)]
+        );
+        // The parent of them all has no file of its own and is not
+        // listed.
+        assert_eq!(lib.folder_counts_under_canonical(&dir).unwrap().len(), 4);
+        let own: Vec<PathBuf> = lib
+            .rows_in_canonical(&ab)
+            .unwrap()
+            .into_iter()
+            .map(|(p, _)| p)
+            .collect();
+        assert_eq!(own, [ab.join("b.tif"), ab.join("c.tif")]);
+        assert_eq!(lib.count_in_canonical(&ab).unwrap(), 2);
+        assert_eq!(lib.count_in_canonical(&dir).unwrap(), 0);
+        assert!(lib.rows_in_canonical(&dir).unwrap().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A file moved from one folder under a root to another, either
     /// way round the walk's order, keeps its row and is not missing
     /// at the end of the tree pass; and the window can ask where the

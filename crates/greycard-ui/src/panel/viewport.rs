@@ -712,7 +712,12 @@ pub(crate) fn schedule_snapshot(
     // picture is up, and the session goes on as any other.
     static KEYS_SENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let path = match snapshot.take_if(|_| ready) {
-        Some(path) => Some(path),
+        // The keys go with the snapshot, once: a later develop (a list
+        // a click opened) must not send them again.
+        Some(path) => {
+            KEYS_SENT.store(true, std::sync::atomic::Ordering::Relaxed);
+            Some(path)
+        }
         None if ready
             && SNAPSHOT_KEYS.get().is_some()
             && !KEYS_SENT.swap(true, std::sync::atomic::Ordering::Relaxed) =>

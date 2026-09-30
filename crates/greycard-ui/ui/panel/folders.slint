@@ -1,0 +1,110 @@
+// The open root's folders as a tree, in the left pane under the name
+// of what is open: each folder indented under the one it is in, a
+// triangle where it has folders of its own, its count muted after its
+// name, the one open lit. A click opens the folder's frames from the
+// index; the switch above takes in the folders under it too. Built
+// from the index, so a root that is offline still shows its shape.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { Section, Toggle } from "../controls.slint";
+import { FolderRow } from "../structs.slint";
+
+export component FoldersSection inherits Section {
+    in property <[FolderRow]> rows;
+    in-out property <bool> subfolders;
+    in-out property <bool> collapsed-folders;
+    /// A folder chosen, by its row.
+    callback picked(int);
+    /// A folder's triangle pressed, by its row.
+    callback folded(int);
+    callback subfolders-changed();
+    /// The keys take the focus back after a press: nothing here keeps it.
+    callback focus-keys();
+
+    title: "FOLDERS";
+    icon: @image-url("../icons/folder-open.svg");
+    collapsed <=> root.collapsed-folders;
+    Toggle {
+        label: "With subfolders";
+        checked <=> root.subfolders;
+        toggled => { root.subfolders-changed(); root.focus-keys(); }
+    }
+    if root.rows.length > 0: Rectangle {
+        border-radius: Theme.radius-md;
+        background: Theme.base;
+        border-width: 1px;
+        border-color: Theme.border;
+        // As the history's box: the list's height up to 320 px, the
+        // rest a scroll away, so a root of a thousand folders never
+        // pushes the pane past the window.
+        preferred-height: min(folder-list.preferred-height, 320px);
+        max-height: self.preferred-height;
+        min-height: min(folder-list.preferred-height, 3 * (Theme.control-height - 6px) + 4px);
+        vertical-stretch: 1;
+        ScrollView {
+            folder-list := VerticalLayout {
+                padding: 2px;
+                spacing: 1px;
+                for row[i] in root.rows: Rectangle {
+                    height: Theme.control-height - 8px;
+                    border-radius: Theme.radius-sm;
+                    background: row.open ? Theme.selection
+                        : folder-row.has-hover ? Theme.hover : transparent;
+                    accessible-role: button;
+                    accessible-label: row.name;
+                    accessible-description: row.path;
+                    accessible-action-default => { root.picked(i); }
+                    animate background { duration: Theme.quick; }
+                    folder-row := TouchArea {
+                        mouse-cursor: MouseCursor.pointer;
+                        clicked => { root.picked(i); root.focus-keys(); }
+                    }
+                    HorizontalLayout {
+                        padding-left: 2px + row.depth * 12px;
+                        // Clears the fluent ScrollView's bar, as the
+                        // snapshots' bins do.
+                        padding-right: Theme.space-1 + Theme.scrollbar-band;
+                        spacing: 2px;
+                        // The triangle, or its room, so names at one
+                        // depth line up whether or not they fold.
+                        Rectangle {
+                            width: 14px;
+                            if row.children: Image {
+                                source: @image-url("../icons/chevron-right.svg");
+                                colorize: fold.has-hover ? Theme.text : Theme.text-muted;
+                                width: 10px;
+                                height: 10px;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                                transform-rotation: row.expanded ? 90deg : 0deg;
+                            }
+                            fold := TouchArea {
+                                enabled: row.children;
+                                mouse-cursor: row.children ? MouseCursor.pointer : MouseCursor.default;
+                                accessible-role: button;
+                                accessible-label: (row.expanded ? "Fold " : "Unfold ") + row.name;
+                                clicked => { root.folded(i); root.focus-keys(); }
+                            }
+                        }
+                        Text {
+                            text: row.name;
+                            color: row.open || folder-row.has-hover ? Theme.text : Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            font-weight: row.open ? Theme.weight-medium : Theme.weight-regular;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                        if row.count >= 0: Text {
+                            text: row.count;
+                            color: Theme.text-muted;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

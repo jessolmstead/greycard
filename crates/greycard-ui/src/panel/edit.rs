@@ -608,6 +608,11 @@ pub(crate) type Fold = (&'static str, fn(&App) -> bool, fn(&App, bool));
 
 pub(crate) const FOLDS: &[Fold] = &[
     (
+        "folders",
+        App::get_collapsed_folders,
+        App::set_collapsed_folders,
+    ),
+    (
         "navigator",
         App::get_collapsed_navigator,
         App::set_collapsed_navigator,

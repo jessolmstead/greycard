@@ -48,6 +48,7 @@ mod tags;
 #[cfg(test)]
 pub(crate) mod testing;
 mod thumbpool;
+mod tree;
 mod update;
 mod watermark;
 mod wheel;
@@ -578,6 +579,9 @@ pub(crate) struct State {
     /// The folder open, as the Open folder button names it, and the
     /// folders opened before it.
     pub(crate) recent: panel::recent::Recent,
+    /// The open root's folders as a tree in the left pane, and the
+    /// switch that opens a folder with those under it.
+    pub(crate) tree: tree::Tree,
     /// The camera match's sheet: its scope, what the survey found and
     /// a run under way.
     pub(crate) camera_match: panel::camera_match::Sheet,
@@ -969,6 +973,7 @@ impl State {
             facets_last: RefCell::new(Vec::new()),
             library: roots::Library::default(),
             recent: panel::recent::Recent::default(),
+            tree: tree::Tree::default(),
             camera_match: Default::default(),
             view: roots::View::Folder,
             view_generation: 0,
@@ -1114,6 +1119,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::recent::install(app, &state, &worker);
     panel::camera_match::install(app, &state);
     roots::install(app, &state, &worker);
+    tree::install(app, &state, &worker);
     report::install(app, &state);
     update::install(app, &state);
 

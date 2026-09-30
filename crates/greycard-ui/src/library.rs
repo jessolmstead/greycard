@@ -645,7 +645,7 @@ pub(crate) fn index_open_folder(st: &mut State, ids: Option<Vec<Option<i64>>>) {
     // under every root for it would be the launch pass again. A folder
     // pass still running for the list before is dropped, by the
     // generation, so it does not report over the view.
-    if matches!(st.view, crate::roots::View::Roots(_)) {
+    if st.view.lists_rows() {
         st.index_generation += 1;
         st.index_progress = None;
         indexer.folders(Vec::new(), st.index_generation);
@@ -715,7 +715,7 @@ pub(crate) fn refresh_ids(st: &mut State) -> bool {
         st.index_ids = vec![None; st.files.len()];
         return false;
     }
-    let standing: Vec<usize> = if matches!(st.view, crate::roots::View::Roots(_)) {
+    let standing: Vec<usize> = if st.view.lists_rows() {
         Vec::new()
     } else {
         (0..st.files.len())
