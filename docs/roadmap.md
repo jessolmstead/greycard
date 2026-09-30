@@ -29,10 +29,6 @@ is backed up to it and brought back by hash, and the last folders
 opened are a click away; a crop can be drawn, an export is a line in
 History, and the Masks tab reads at a glance.
 
-- [ ] The grid's left pane (§211): Open folder, Recently opened, Import,
-      the roots as rows and the folder tree in the left pane over the
-      grid, the header down to the selection line, the filter's chips
-      and the facets; the tree shown too for a disk folder under a root
 - [ ] The rest of the network reads off the window's thread, after
       §187 and §188: the indexer's own passes wait on a root that answers
       the 3 s look and then hangs mid-walk, and every root's reports stop

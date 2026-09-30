@@ -274,11 +274,12 @@ right-click menu on a frame, with copy and paste of settings onto the
 selection; thumbnails made in parallel on a pool of threads, a cold
 folder of hundreds filling in seconds; an import from a card with
 renaming, a preset and a verified backup; roots, folders the library
-watches, with a view of every file under them, their folders as a
-tree in the left pane from the index, and the filter remembered
-between sessions; a library index that fills the grid's
-filter with chips for camera, lens, ISO, focal length, day and
-keyword, with a filter language behind the text field; a look fitted
+watches, with a view of every file under them, the roots and their
+folders as a tree in the left pane from the index, over the grid as
+over the loupe, and the filter remembered between sessions; a library
+index that fills the grid's filter with chips for camera, lens, ISO,
+focal length, day and keyword, with a filter language behind the text
+field; a look fitted
 from the camera's own JPEG per body and picture style; an Auto white
 balance beside Neutral; a value typed into any slider; scopes that can
 be read for the chosen mask alone; and a check at launch for a newer

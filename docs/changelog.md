@@ -10,6 +10,11 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The grid keeps the left pane: Open folder, Recently opened, Import,
+  the roots as rows with their counts and the folder tree, so the
+  header drops from five rows to the selection line, the filter's
+  chips and the facets; the tree shows too for a disk folder under a
+  root, unfolded to it (§211)
 - A local preview of each frame under a root, the camera's JPEG at
   2048 on the long edge in the thumbnail cache, made by the pool behind
   the thumbnails: the culling loupe and the compare view show it alone
