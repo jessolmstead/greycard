@@ -10,6 +10,19 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A rating or a label picked from the frame menu's sub-menus with the
+  pointer no longer leaves the window deaf to every key and click: the
+  keys get their focus back once the two popups have closed (§208)
+- The window no longer redraws sixty times a second at rest: the
+  viewport draws only for a changed view or source and the scopes'
+  bins go out once per readback, so an idle editor costs no frame
+  (§208)
+- femtovg's render pipelines are kept across a frame's flushes instead
+  of being compiled again every frame, about thirty milliseconds of
+  the window's thread back on every frame with layers; a fork pinned
+  by revision, proposed upstream as femtovg/femtovg#371 (§208)
+- Snapshot flags --press and --keys drive a key, or a sequence of keys
+  and pointer events, into the window before the capture (§208)
 - A root or a folder the index knows opens from the index's rows, no
   sidecar read until a frame needs the whole of it, off the window's
   thread; an offline root stays in the view, dimmed, its pictures from
