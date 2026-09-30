@@ -253,8 +253,9 @@ color labels kept in the sidecar and set from the keyboard, and a
 folder filter on all of them with a count on every chip, and read from
 and written to XMP sidecars so stars, labels and keywords travel to
 Lightroom and darktable (picks and rejects do not, since XMP has no
-field for them); culling from the camera's JPEG, with compare and a
-rejects folder, a delete to the system trash behind a confirmation,
+field for them); culling from the camera's JPEG, or from a local preview of it
+when the frame's root is offline or on a network share, with compare
+and a rejects folder, a delete to the system trash behind a confirmation,
 and a quarter turn for a frame the camera got the wrong way up, in
 every view; the shot's settings under the file name, with its size;
 frame registration and a focus stack merged to a linear DNG from the

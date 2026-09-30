@@ -10,6 +10,11 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A local preview of each frame under a root, the camera's JPEG at
+  2048 on the long edge in the thumbnail cache, made by the pool behind
+  the thumbnails: the culling loupe and the compare view show it alone
+  under an offline root and first under a network one, so a shoot on a
+  NAS is culled without reading the raw over the wire (§210)
 - A root's folders as a tree in the left pane, built from the index so
   an offline root still shows its shape, each folder with its count; a
   click opens that folder's own frames, or everything under it with the

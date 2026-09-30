@@ -220,3 +220,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§207. The index as the sidecars' cache](notes/207-the-index-as-the-sidecars-cache.md) (2026-09-29)
 - [§208. A pick from a sub-menu froze the window, and what was found on the way](notes/208-a-pick-from-a-sub-menu-froze-the-window.md) (2026-09-29)
 - [§209. A root's folders as a tree](notes/209-a-roots-folders-as-a-tree.md) (2026-09-30)
+- [§210. Local previews by content hash](notes/210-local-previews-by-content-hash.md) (2026-09-30)

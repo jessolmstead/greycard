@@ -40,10 +40,6 @@ History, and the Masks tab reads at a glance.
       with a share at `~/Pictures/NAS`) is still watched recursively, so
       classify each mount under a root, not only the root's; and a field
       for `network_poll_minutes` in the Settings sheet
-- [ ] Local previews by content hash: a mid-size picture per frame
-      in the local cache, made by the pass, so a shoot on a NAS is culled
-      in the loupe and the compare view without reading the raw over the
-      network. Lightroom's smart preview, minus the editing
 - [ ] Archive roots, part one (§197): a root marked as an archive in
       roots.json, never deleted from; Back up copies a shoot's or a
       selection's new frames and newer sidecars to it, mirrored under
