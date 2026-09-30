@@ -1,0 +1,148 @@
+// The folder open, named under the Open folder button and in the
+// grid's header, and Recently opened: a click on the name offers the
+// last ten folders, the one open checked. One menu for the window, as
+// the frame menu is; the names say where they were clicked and the
+// window opens it there.
+
+import { Theme } from "../theme.slint";
+import { RecentFolder } from "../structs.slint";
+
+// The name: the folder's own, the root it is under after it, and a
+// chevron for the list it opens. With nothing open and a list to
+// offer, it says so, and the empty editor can still go back to where
+// it was. A folder chosen that has gone says so here in its place,
+// where the eye is, until the next folder opens.
+export component FolderName inherits Rectangle {
+    in property <string> name;
+    in property <string> root-name;
+    in property <string> path;
+    in property <string> note;
+    /// There is a list to offer: the chevron says the name opens it.
+    in property <bool> has-list;
+    /// A sheet is up over the window: no hover text is put up.
+    in property <bool> quiet;
+    /// A click, and where the list goes: just below the name, in the
+    /// window's pixels.
+    callback menu(length, length);
+    /// The hover text, the path, and where it goes, in the window's
+    /// pixels; an empty text takes it down.
+    callback tip(string, length, length);
+    /// Whether a menu is up: the press that closes it reaches the name
+    /// too, and is not a click on it.
+    pure callback menu-shown() -> bool;
+    property <bool> tipped;
+    height: 18px;
+    accessible-role: button;
+    accessible-label: "Recently opened";
+    accessible-description: root.path;
+    accessible-value: root.name;
+    accessible-action-default => {
+        root.menu(root.absolute-position.x, root.absolute-position.y + root.height);
+    }
+
+    function untip() {
+        if (root.tipped) {
+            root.tipped = false;
+            root.tip("", 0, 0);
+        }
+    }
+
+    // The path, once the pointer has rested on the name a moment.
+    Timer {
+        interval: 600ms;
+        running: ta.has-hover && root.path != "" && !root.tipped && !root.quiet;
+        triggered => {
+            root.tipped = true;
+            root.tip(root.path, root.absolute-position.x, root.absolute-position.y + root.height + 2px);
+        }
+    }
+    ta := TouchArea {
+        property <bool> skip;
+        mouse-cursor: MouseCursor.pointer;
+        changed has-hover => {
+            if (!self.has-hover) { root.untip(); }
+        }
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                self.skip = root.menu-shown() || e.button != PointerEventButton.left;
+            }
+        }
+        clicked => {
+            root.untip();
+            if (self.skip) { return; }
+            root.menu(root.absolute-position.x, root.absolute-position.y + root.height);
+        }
+    }
+    HorizontalLayout {
+        spacing: Theme.space-1;
+        alignment: start;
+        if root.note != "": Text {
+            text: root.note;
+            color: Theme.text;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 1;
+        }
+        if root.note == "": Text {
+            text: root.name != "" ? root.name : "Recently opened";
+            color: ta.has-hover ? Theme.text : Theme.text-secondary;
+            font-size: Theme.font-xs;
+            font-weight: root.name != "" ? Theme.weight-medium : Theme.weight-regular;
+            vertical-alignment: center;
+            overflow: elide;
+            min-width: 24px;
+        }
+        if root.note == "" && root.root-name != "": Text {
+            text: "in " + root.root-name;
+            color: Theme.text-muted;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            overflow: elide;
+            min-width: 24px;
+        }
+        if root.has-list: Image {
+            source: @image-url("../icons/chevron-down.svg");
+            width: 10px;
+            height: 10px;
+            y: (parent.height - self.height) / 2;
+            colorize: ta.has-hover ? Theme.text : Theme.text-muted;
+        }
+    }
+}
+
+// The list, placed where the name was clicked. Zero-sized and never
+// enabled itself, so it takes no click of its own.
+export component RecentMenu inherits Rectangle {
+    in property <[RecentFolder]> folders;
+    /// A folder chosen, by its path.
+    callback chosen(string);
+    width: 0px;
+    height: 0px;
+
+    /// Open the list at (x, y), the window's logical pixels.
+    public function open(x: length, y: length) {
+        area.show({ x: x - self.absolute-position.x, y: y - self.absolute-position.y });
+    }
+
+    area := ContextMenuArea {
+        enabled: false;
+        Menu {
+            MenuItem {
+                title: "Recently opened";
+                enabled: false;
+            }
+            MenuSeparator { }
+            if root.folders.length == 0: MenuItem {
+                title: "No folders yet";
+                enabled: false;
+            }
+            for f in root.folders: MenuItem {
+                title: f.title;
+                checkable: true;
+                checked: f.open;
+                activated => { root.chosen(f.path); }
+            }
+        }
+    }
+}

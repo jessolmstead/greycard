@@ -6,6 +6,7 @@
 //! what it holds and the copy all run on their own threads and post
 //! back, so a slow or sleeping mount holds up nothing but itself.
 
+use crate::files::tilde;
 use crate::import::{self, Job, Options, Report, Scan};
 use crate::naming::Fields;
 use crate::panel::browser::open_folder;
@@ -62,17 +63,6 @@ const NONE: &str = "None";
 
 fn path_text(p: &Option<PathBuf>) -> slint::SharedString {
     p.as_deref().map(tilde).unwrap_or_default().into()
-}
-
-/// A path as the sheet shows it: the home folder as `~`, so the end
-/// of a long path, which is the part that differs, has the room.
-fn tilde(p: &Path) -> String {
-    match dirs::home_dir().and_then(|h| p.strip_prefix(&h).ok().map(Path::to_path_buf)) {
-        Some(rest) if !rest.as_os_str().is_empty() => {
-            format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display())
-        }
-        _ => p.display().to_string(),
-    }
 }
 
 /// What the note under the source says of what it holds.

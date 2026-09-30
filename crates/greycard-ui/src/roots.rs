@@ -620,6 +620,8 @@ pub(crate) fn show(st: &State, app: &App) {
         }
         .into(),
     );
+    // The open folder's name, which says the root it is under.
+    crate::panel::recent::show(st, app);
 }
 
 /// A root as its chip names it: the name the user gave it, else the

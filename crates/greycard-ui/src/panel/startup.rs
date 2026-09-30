@@ -391,6 +391,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             || cli.move_rejects)
             .then(|| cli.cull_compare.unwrap_or(1)),
         filter,
+        recent: crate::panel::recent::Recent {
+            open: None,
+            folders: remembered.recent_folders.clone(),
+            ..Default::default()
+        },
         awaiting_index: !facets_wanted.is_empty(),
         facets_wanted,
         ..State::empty(files.clone(), &app)
@@ -513,6 +518,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             // A capture waits for the view, not the folder under it.
             st.library.awaiting = st.batch;
         }
+    }
+    // The launch's folder, the command line's or the last one's, is
+    // opened as any other is: named in the pane and put at the front
+    // of Recently opened. Its list was made before the window ran, not
+    // through the browser's open, so it is recorded here; unless the
+    // roots' view is about to take its place.
+    if state.borrow().library.wanted.is_none() {
+        crate::panel::recent::opened(&mut state.borrow_mut(), &app);
     }
     match library_path {
         Some(path) => {
@@ -1342,6 +1355,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.filter = filter::Saved::of(&state.borrow().filter);
         let kept = settings::Settings::load();
         settings.last_file = kept.last_file;
+        settings.recent_folders = kept.recent_folders;
         settings.xmp_sidecars = kept.xmp_sidecars;
         settings.sidecars_in_folder = kept.sidecars_in_folder;
         settings.cull_move_on = kept.cull_move_on;
@@ -1674,6 +1688,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         cull_move_on: false,
         lenses_declined: false,
         last_file: String::new(),
+        // Written as each folder opens.
+        recent_folders: Vec::new(),
         // Not the panel's either: the settings file is where it is set.
         thumb_cache_mb: 0,
         network_poll_minutes: 0,

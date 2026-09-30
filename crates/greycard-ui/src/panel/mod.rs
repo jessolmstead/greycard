@@ -13,6 +13,7 @@ pub(crate) mod import;
 pub(crate) mod mask;
 pub(crate) mod menu;
 pub(crate) mod prefs;
+pub(crate) mod recent;
 pub(crate) mod retouch;
 pub(crate) mod startup;
 pub(crate) mod sync;

@@ -1280,6 +1280,7 @@ pub(crate) fn open_loaded(
     st.index_tries = 0;
     st.index_error = None;
     crate::library::index_open_folder(&mut st);
+    crate::panel::recent::opened(&mut st, app);
     let ids = started.elapsed();
     rebuild_browser(&mut st, app);
     let listed = started.elapsed();

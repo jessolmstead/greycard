@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, HistoryRow } from "structs.slint";
+import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, HistoryRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -40,6 +40,7 @@ import { Filmstrip } from "panel/strip.slint";
 import { Viewport } from "panel/viewport.slint";
 import { FrameMenu } from "panel/frame-menu.slint";
 import { RootSheet } from "panel/root-sheet.slint";
+import { FolderName, RecentMenu } from "panel/recent.slint";
 
 export component App inherits Window {
     title: "greycard";
@@ -247,6 +248,10 @@ export component App inherits Window {
     /// the same queue ordering the strip's range drives.
     callback grid-range(length, length, int);
     changed grid-open => {
+        // A name under the pointer that goes with the grid or the pane
+        // hears nothing of the pointer leaving: its hover text goes
+        // here instead of staying over the window for good.
+        root.tip-text = "";
         if (root.grid-open) {
             // Nothing can be placed on a picture that is not on
             // screen: whatever was in hand is put down on the way in,
@@ -401,6 +406,38 @@ export component App inherits Window {
     callback library-root-add-open();
     /// A root's menu asked to rename it, by its path.
     callback library-root-rename(string);
+    /// The folder open, as the Open folder button and the grid's
+    /// header name it: its own name (or the root's, or "All roots"
+    /// for a view of the roots), the root it is under, and its path
+    /// for the hover text; all empty with nothing open. The note is
+    /// what a folder chosen from Recently opened that has gone said,
+    /// shown in the name's place until the next folder opens.
+    in property <string> open-folder-name: "";
+    in property <string> open-folder-root: "";
+    in property <string> open-folder-path: "";
+    in property <string> open-folder-note: "";
+    /// Recently opened, the most recent first, the one open checked.
+    in property <[RecentFolder]> recent-folders: [];
+    /// A folder chosen from Recently opened, by its path.
+    callback recent-chosen(string);
+    /// The hover text over everything, and where; empty for none.
+    out property <string> tip-text;
+    property <length> tip-x;
+    property <length> tip-y;
+    changed left-hidden => { root.tip-text = ""; }
+    function recent-menu-at(x: length, y: length) {
+        root.tip-text = "";
+        if (root.sheet-open()) { return; }
+        // As a root's menu: the keys take the focus first, so the
+        // window can tell the menu is up by their losing it.
+        keys.focus();
+        recent-menu.open(x, y);
+    }
+    function tip-at(text: string, x: length, y: length) {
+        root.tip-text = text;
+        root.tip-x = x;
+        root.tip-y = y;
+    }
     /// The root sheet: a root's name, from its chip's menu. The path
     /// is the root's, and the folder's own name is what an empty name
     /// falls back to.
@@ -1554,10 +1591,27 @@ export component App inherits Window {
                         padding: Theme.space-4;
                         padding-top: Theme.space-2;
                         spacing: Theme.space-2;
-                        PanelButton {
-                            text: "Open folder...";
-                            icon: @image-url("icons/folder-open.svg");
-                            clicked => { root.open-folder(); }
+                        // The button, and under it the folder it
+                        // opened, which offers the ones before it.
+                        VerticalLayout {
+                            spacing: 2px;
+                            PanelButton {
+                                text: "Open folder...";
+                                icon: @image-url("icons/folder-open.svg");
+                                clicked => { root.open-folder(); }
+                            }
+                            if root.open-folder-name != "" || root.open-folder-note != ""
+                                || root.recent-folders.length > 0: FolderName {
+                                name: root.open-folder-name;
+                                root-name: root.open-folder-root;
+                                path: root.open-folder-path;
+                                note: root.open-folder-note;
+                                has-list: root.recent-folders.length > 0;
+                                quiet: root.sheet-open();
+                                menu(x, y) => { root.recent-menu-at(x, y); }
+                                tip(t, x, y) => { root.tip-at(t, x, y); }
+                                menu-shown => { return root.menu-shown(); }
+                            }
                         }
                         NavigatorSection {
                             zoom-text: root.zoom-text;
@@ -2397,6 +2451,14 @@ export component App inherits Window {
         library-root-add => { root.library-root-add(); }
         library-root-add-open => { root.library-root-add-open(); }
         library-root-rename(p) => { root.library-root-rename(p); }
+        open-folder-name: root.open-folder-name;
+        open-folder-root: root.open-folder-root;
+        open-folder-path: root.open-folder-path;
+        open-folder-note: root.open-folder-note;
+        recent-any: root.recent-folders.length > 0;
+        sheet-up: root.sheet-open();
+        recent-menu(x, y) => { root.recent-menu-at(x, y); }
+        tip(t, x, y) => { root.tip-at(t, x, y); }
         loading-shown: root.loading-shown;
         loading-fraction: root.loading-fraction;
         loading-line: root.loading-line;
@@ -2590,5 +2652,37 @@ export component App inherits Window {
         meta(k, v) => { root.menu-meta(k, v); }
         reveal => { root.menu-reveal(); }
         export => { root.menu-export(); }
+    }
+
+    // Recently opened: one list for the window, opened below the
+    // folder's name in the left pane or the grid's header.
+    recent-menu := RecentMenu {
+        x: 0;
+        y: 0;
+        folders: root.recent-folders;
+        chosen(p) => { root.recent-chosen(p); }
+    }
+
+    // The hover text, over everything and kept inside the window; not
+    // over a sheet, which a key can open while the pointer rests on a
+    // name.
+    if root.tip-text != "" && !root.sheet-open(): Rectangle {
+        x: max(0px, min(root.tip-x, root.width - self.width - Theme.space-1));
+        y: root.tip-y;
+        width: min(tip-label.preferred-width + 2 * Theme.space-2, root.width);
+        height: tip-label.preferred-height + 2 * Theme.space-1;
+        background: Theme.raised;
+        border-color: Theme.border-strong;
+        border-width: 1px;
+        border-radius: Theme.radius-sm;
+        tip-label := Text {
+            x: Theme.space-2;
+            width: parent.width - 2 * Theme.space-2;
+            text: root.tip-text;
+            color: Theme.text;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            overflow: elide;
+        }
     }
 }

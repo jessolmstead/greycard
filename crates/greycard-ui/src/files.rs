@@ -116,6 +116,18 @@ pub fn list_files(path: &std::path::Path) -> Result<Vec<PathBuf>> {
     }
 }
 
+/// A path as a sheet or a list shows it: the home folder as `~`, so
+/// the end of a long path, which is the part that differs, has the
+/// room.
+pub fn tilde(p: &Path) -> String {
+    match dirs::home_dir().and_then(|h| p.strip_prefix(&h).ok().map(Path::to_path_buf)) {
+        Some(rest) if !rest.as_os_str().is_empty() => {
+            format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display())
+        }
+        _ => p.display().to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

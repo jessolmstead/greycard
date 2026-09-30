@@ -98,6 +98,15 @@ export struct RootChip {
     offline: bool,
 }
 
+/// A folder in Recently opened: how the list says it (its name, and
+/// the root it is under or the folder it is in), its path, and whether
+/// it is the one open.
+export struct RecentFolder {
+    title: string,
+    path: string,
+    open: bool,
+}
+
 /// A facet's row of chips: its caption, which facet it is (its place
 /// in `greycard_library::Facet::ALL`), and the chips.
 export struct FacetRow {

@@ -6,6 +6,7 @@ import { Thumb, ThumbCell, FilterChip, FacetRow, RootChip } from "../structs.sli
 import { PanelButton, ThumbBadges } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 import { RootsRow } from "roots.slint";
+import { FolderName } from "recent.slint";
 import { LoadingCard } from "loading.slint";
 
 export component GridSheet inherits Rectangle {
@@ -96,6 +97,17 @@ export component GridSheet inherits Rectangle {
     callback library-root-add();
     callback library-root-add-open();
     callback library-root-rename(string);
+    // The folder open, and Recently opened offered from its name: see
+    // `FolderName`.
+    in property <string> open-folder-name;
+    in property <string> open-folder-root;
+    in property <string> open-folder-path;
+    in property <string> open-folder-note;
+    in property <bool> recent-any;
+    /// A sheet is up over the window: the name puts up no hover text.
+    in property <bool> sheet-up;
+    callback recent-menu(length, length);
+    callback tip(string, length, length);
     /// A view's sidecars being read, past the moment a fast one takes:
     /// its bar over the sheet, which holds the list before it until
     /// the new one lands.
@@ -145,6 +157,25 @@ export component GridSheet inherits Rectangle {
                         text: "Open folder...";
                         icon: @image-url("../icons/folder-open.svg");
                         clicked => { root.focus-keys(); root.open-folder(); }
+                    }
+                    // Beside it, the folder it opened, which offers
+                    // the ones before it.
+                    if root.open-folder-name != "" || root.open-folder-note != ""
+                        || root.recent-any: VerticalLayout {
+                        alignment: center;
+                        max-width: 240px;
+                        horizontal-stretch: 0;
+                        FolderName {
+                            name: root.open-folder-name;
+                            root-name: root.open-folder-root;
+                            path: root.open-folder-path;
+                            note: root.open-folder-note;
+                            has-list: root.recent-any;
+                            quiet: root.sheet-up;
+                            menu(x, y) => { root.recent-menu(x, y); }
+                            tip(t, x, y) => { root.tip(t, x, y); }
+                            menu-shown => { return root.menu-shown(); }
+                        }
                     }
                     // Beside it, the other way a folder fills: from a
                     // card. Ctrl+Shift+I reaches the same sheet.

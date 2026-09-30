@@ -2,11 +2,12 @@
 //!
 //! A small JSON file under the user's configuration directory holding
 //! the export sheet's choices and its presets, the scope on show, the clipping
-//! warnings, the soft proof's choices, the monitor's profile and the
-//! last file open, by the same names the panel uses for them. Read at
-//! startup, written when the window closes and after an export; the
-//! last file is also written as soon as it develops, so it survives a
-//! session that never closes cleanly. Trouble either way is ignored: a
+//! warnings, the soft proof's choices, the monitor's profile, the
+//! last file open and the folders opened, by the same names the panel
+//! uses for them. Read at startup, written when the window closes and
+//! after an export; the last file is also written as soon as it
+//! develops, and a folder as it opens, so they survive a session that
+//! never closes cleanly. Trouble either way is ignored: a
 //! preference is not worth an error, and the defaults are good.
 
 use std::path::PathBuf;
@@ -86,6 +87,13 @@ pub struct Settings {
     /// as it develops, not waited for the window to close; empty
     /// until then.
     pub last_file: String,
+    /// The folders opened, the most recent first and at most
+    /// [`RECENT_FOLDERS`] of them, each by its canonical path and
+    /// once: a folder opened again moves to the front. Written as a
+    /// folder opens, as `last_file` is. A folder gone from the disk
+    /// stays until newer ones push it off the end; choosing it says
+    /// it is gone rather than taking it out behind the user's back.
+    pub recent_folders: Vec<String>,
     /// The most the thumbnail cache under the user's cache directory
     /// may hold, in megabytes; past it the least recently used
     /// pictures go. Zero turns the cache off.
@@ -162,6 +170,7 @@ impl Default for Settings {
             cull_move_on: false,
             lenses_declined: false,
             last_file: String::new(),
+            recent_folders: Vec::new(),
             thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
             network_poll_minutes: 10,
             import: ImportChoices::default(),
@@ -169,6 +178,17 @@ impl Default for Settings {
             update: crate::update::Kept::default(),
         }
     }
+}
+
+/// How many folders Recently opened keeps.
+pub const RECENT_FOLDERS: usize = 10;
+
+/// `folder` opened: put at the front of `list`, taken from wherever
+/// it was further down, and the list cut to [`RECENT_FOLDERS`].
+pub fn push_recent(list: &mut Vec<String>, folder: &str) {
+    list.retain(|f| f != folder);
+    list.insert(0, folder.to_string());
+    list.truncate(RECENT_FOLDERS);
 }
 
 /// `$XDG_CONFIG_HOME/greycard/settings.json` when that is set, else
@@ -294,6 +314,7 @@ mod tests {
             cull_move_on: true,
             lenses_declined: true,
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
+            recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
             thumb_cache_mb: 1024,
             network_poll_minutes: 30,
             import: ImportChoices {
@@ -337,9 +358,34 @@ mod tests {
         assert_eq!(read.export.mark, Settings::default().export.mark);
         assert!(read.export_presets.is_empty());
         assert_eq!(read.scope, Settings::default().scope);
+        // A file from before Recently opened has an empty list.
+        assert!(read.recent_folders.is_empty());
         // A file from before the update check has it on.
         assert!(read.update.check);
         assert_eq!(read.update.checked_at, 0);
+    }
+
+    #[test]
+    fn a_folder_opened_again_moves_to_the_front_and_the_list_keeps_ten() {
+        let mut list = Vec::new();
+        for i in 0..12 {
+            push_recent(&mut list, &format!("/p/{i}"));
+        }
+        // The newest first, and the two oldest pushed off the end.
+        assert_eq!(list.len(), RECENT_FOLDERS);
+        assert_eq!(list[0], "/p/11");
+        assert_eq!(list[9], "/p/2");
+        // Opened again: moved up, not listed twice.
+        push_recent(&mut list, "/p/5");
+        assert_eq!(list.len(), RECENT_FOLDERS);
+        assert_eq!(list[0], "/p/5");
+        assert_eq!(list.iter().filter(|f| *f == "/p/5").count(), 1);
+        assert_eq!(list[1], "/p/11");
+        assert_eq!(list[9], "/p/2");
+        // The one already at the front stays where it is.
+        push_recent(&mut list, "/p/5");
+        assert_eq!(list[0], "/p/5");
+        assert_eq!(list[1], "/p/11");
     }
 
     #[test]
@@ -362,6 +408,7 @@ mod tests {
             }],
             export_preset: "Web 2048".into(),
             scope: "Parade".into(),
+            recent_folders: vec!["/home/x/Pictures/shoot".into()],
             ..Settings::default()
         };
         mine.save_to(&path);

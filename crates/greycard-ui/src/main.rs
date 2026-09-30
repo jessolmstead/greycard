@@ -550,6 +550,9 @@ pub(crate) struct State {
     pub(crate) facets_last: RefCell<Vec<(filter::Facet, Vec<greycard_library::FacetCount>)>>,
     /// The library's roots, their counts and their watcher.
     pub(crate) library: roots::Library,
+    /// The folder open, as the Open folder button names it, and the
+    /// folders opened before it.
+    pub(crate) recent: panel::recent::Recent,
     /// The camera match's sheet: its scope, what the survey found and
     /// a run under way.
     pub(crate) camera_match: panel::camera_match::Sheet,
@@ -924,6 +927,7 @@ impl State {
             index_pass_ready: false,
             facets_last: RefCell::new(Vec::new()),
             library: roots::Library::default(),
+            recent: panel::recent::Recent::default(),
             camera_match: Default::default(),
             view: roots::View::Folder,
             view_generation: 0,
@@ -1063,6 +1067,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::sync::install(app, &state, &worker);
     panel::menu::install(app, &state, &worker);
     panel::import::install(app, &state, &worker);
+    panel::recent::install(app, &state, &worker);
     panel::camera_match::install(app, &state);
     roots::install(app, &state, &worker);
     report::install(app, &state);
