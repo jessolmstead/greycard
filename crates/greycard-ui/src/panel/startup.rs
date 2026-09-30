@@ -1137,7 +1137,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             app.set_nav_height(bottom - top);
                         }
                     }
-                    let texture = renderer.render(vw, vh, &view);
+                    let (texture, drew) = renderer.render(vw, vh, &view);
                     if let Some(at) = st.turn_pressed.take() {
                         tracing::info!(
                             "turn: on screen {:.0} ms after the key, the develop there read \
@@ -1211,7 +1211,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         &texture,
                         ready,
                     );
-                    app.set_texture(slint::Image::try_from(texture).expect("the texture imports"));
+                    // A new image only for a frame drawn anew: the same
+                    // one handed over again would mark the window dirty
+                    // and have it draw another frame, without end.
+                    if drew {
+                        app.set_texture(
+                            slint::Image::try_from(texture).expect("the texture imports"),
+                        );
+                    }
                     if let Some(b) = fresh {
                         app.set_curve_image(draw_curve(&app, Some(b.as_slice())));
                         let clipping = scope::Clipping::of(&b);
@@ -1229,13 +1236,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // asking for it is enough to get it.
                     if timing {
                         tracing::info!(
-                            "frame: {:.2} ms{}",
+                            "frame: {:.2} ms{}{}",
                             started.elapsed().as_secs_f64() * 1e3,
                             if pending.is_some() {
                                 " (with upload)"
                             } else {
                                 ""
-                            }
+                            },
+                            if drew { " (drawn)" } else { "" }
                         );
                     }
                 }

@@ -496,7 +496,7 @@ impl Warn {
 }
 
 /// What one frame of the viewport shows of the edit.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct View {
     pub zoom: f32,
     pub center: (f32, f32),
@@ -653,6 +653,12 @@ pub struct Renderer {
     output: [[f32; 3]; 3],
     oklab: crate::finish::Oklab,
     scopes: Scopes,
+    /// What the target holds: the size and the view it was drawn
+    /// for. `render` draws again only for another view or size, or
+    /// after the source or a table changed underneath (`redraw`),
+    /// so a window at rest costs no frame.
+    drawn: Option<(u32, u32, View)>,
+    redraw: bool,
 }
 
 /// The scopes: the whole image drawn small through the same shader,
@@ -670,6 +676,10 @@ struct Scopes {
     in_flight: Option<std::sync::mpsc::Receiver<Result<(), gpu::BufferAsyncError>>>,
     /// The last bins read, and which scope asked for them.
     latest: Option<(Scope, Vec<u32>)>,
+    /// `latest` came in since `analyze` last handed it out: the bins
+    /// go to the window once, or every frame would repaint the scope
+    /// and the curve and ask for the next frame, without end.
+    fresh: bool,
     /// The analysis picture itself, read back beside the bins for
     /// the navigator: its staging buffer, sized for the picture's
     /// height, the read on its way, and the last picture read, not
@@ -815,6 +825,7 @@ impl Scopes {
             analysis: None,
             in_flight: None,
             latest: None,
+            fresh: false,
             picture_staging: None,
             picture_in_flight: None,
             picture: None,
@@ -1019,6 +1030,8 @@ impl Renderer {
         let output = crate::export::Space::Srgb.matrix();
         Self {
             scopes: Scopes::new(device),
+            drawn: None,
+            redraw: true,
             device: device.clone(),
             queue: queue.clone(),
             pipeline,
@@ -1101,6 +1114,7 @@ impl Renderer {
     pub fn set_display_lut(&mut self, lut: &Lut3d) {
         self.lut = Self::lut_texture(&self.device, &self.queue, lut);
         self.scopes.image_changed = true;
+        self.redraw = true;
     }
 
     /// Use this table for encoded pictures from now on. The scopes
@@ -1114,6 +1128,7 @@ impl Renderer {
         if self.output != matrix {
             self.output = matrix;
             self.scopes.image_changed = true;
+            self.redraw = true;
         }
     }
 
@@ -1194,6 +1209,7 @@ impl Renderer {
                     self.look.texture = Self::look_texture(&self.device, &self.queue, table);
                     self.look.of = Some(table.clone());
                     self.scopes.image_changed = true;
+                    self.redraw = true;
                 }
                 let (which, gamma) = match table.encoding {
                     lut::Encoding::Srgb => (0.0, 0.0),
@@ -1227,6 +1243,7 @@ impl Renderer {
         }
         if was != self.look.params {
             self.scopes.image_changed = true;
+            self.redraw = true;
         }
     }
 
@@ -1566,6 +1583,7 @@ impl Renderer {
                     scope::normalize(&mut bins, (t.width() * t.height()) as usize);
                 }
                 self.scopes.latest = Some((taken, bins));
+                self.scopes.fresh = true;
             }
             self.scopes.staging.unmap();
         }
@@ -1737,7 +1755,11 @@ impl Renderer {
             self.scopes.picture_in_flight = Some(rx);
         }
         (
-            self.scopes.latest.as_ref().map(|(s, b)| (*s, b.as_slice())),
+            if std::mem::take(&mut self.scopes.fresh) {
+                self.scopes.latest.as_ref().map(|(s, b)| (*s, b.as_slice()))
+            } else {
+                None
+            },
             self.scopes.in_flight.is_some() || self.scopes.picture_in_flight.is_some(),
         )
     }
@@ -1942,6 +1964,7 @@ impl Renderer {
     /// stand for `scale` source pixels each way, so the shader divides
     /// a source position by what the texture covers to sample it.
     pub fn set_guide(&mut self, guide: &crate::finish::Guide) {
+        self.redraw = true;
         let (w, h) = (guide.width as u32, guide.height as u32);
         if guide.data.is_empty() || w == 0 || h == 0 {
             self.guide_cover = [1.0, 1.0, 0.0, 0.0];
@@ -1971,6 +1994,7 @@ impl Renderer {
         let cover = guide.scale as f32;
         self.guide_cover = [w as f32 * cover, h as f32 * cover, 1.0, 0.0];
         self.scopes.image_changed = true;
+        self.redraw = true;
     }
 
     /// Show a developed picture that is on the GPU already: an
@@ -1979,6 +2003,7 @@ impl Renderer {
         self.source = Some(texture);
         self.encoded = false;
         self.scopes.image_changed = true;
+        self.redraw = true;
     }
 
     /// A picture of encoded sRGB bytes, RGBA, on the GPU: the camera's
@@ -2067,6 +2092,7 @@ impl Renderer {
 
     /// Put a developed image on the GPU.
     pub fn upload(&mut self, image: &Halves) {
+        self.redraw = true;
         let (w, h) = (image.width, image.height);
         let halves = &image.pixels;
         let texture = self.device.create_texture(&gpu::TextureDescriptor {
@@ -2107,11 +2133,66 @@ impl Renderer {
         self.source = Some(texture);
         self.encoded = false;
         self.scopes.image_changed = true;
+        self.redraw = true;
     }
 
     /// Draw the view: `width` by `height` display pixels, `zoom` display
     /// pixels per image pixel, the image pixel `center` in the middle.
-    pub fn render(&mut self, width: u32, height: u32, v: &View) -> gpu::Texture {
+    pub fn render(&mut self, width: u32, height: u32, v: &View) -> (gpu::Texture, bool) {
+        let same = !self.redraw
+            && self
+                .drawn
+                .as_ref()
+                .is_some_and(|(w, h, d)| *w == width && *h == height && d == v);
+        if same && let Some(t) = &self.target {
+            return (t.clone(), false);
+        }
+        if std::env::var_os("GREYCARD_UI_TIMING").is_some() {
+            let why = if self.redraw {
+                "flag".to_string()
+            } else if let Some((w, h, d)) = &self.drawn {
+                if *w != width || *h != height {
+                    "size".to_string()
+                } else {
+                    let mut f = Vec::new();
+                    macro_rules! diff { ($($n:ident),*) => { $( if d.$n != v.$n { f.push(stringify!($n)); } )* } }
+                    diff!(
+                        zoom,
+                        center,
+                        light,
+                        mixer,
+                        color,
+                        bw,
+                        tint,
+                        matrix,
+                        persp,
+                        plane,
+                        cubic,
+                        frame_origin,
+                        frame_size,
+                        curves,
+                        white,
+                        locals,
+                        show_mask,
+                        show_sharpen,
+                        mask_alone,
+                        weigh_by,
+                        vignette,
+                        grain,
+                        warn,
+                        canvas,
+                        source,
+                        source_turn
+                    );
+                    format!("{f:?}")
+                }
+            } else {
+                "first".to_string()
+            };
+            tracing::info!("viewport drawn: {why}");
+        }
+        self.redraw = false;
+        self.drawn = Some((width, height, v.clone()));
         self.brushes
             .sync(&self.device, &self.queue, &locals_gpu(&v.locals).rasters);
         let target = match &self.target {
@@ -2129,7 +2210,7 @@ impl Renderer {
             });
         self.draw(&mut encoder, &target, v);
         self.queue.submit(Some(encoder.finish()));
-        target
+        (target, true)
     }
 
     /// The target as an 8-bit sRGB image, for a screenshot.
@@ -2444,7 +2525,7 @@ mod tests {
             view.locals = locals.to_vec();
             view.show_mask = Some(k);
             view.mask_alone = true;
-            let target = renderer.render(w as u32, h as u32, &view);
+            let target = renderer.render(w as u32, h as u32, &view).0;
             let shown = renderer.read_back(&target).expect("read back");
             // The largest difference, their sum, how many pixels are
             // more than a level out, and how many the CPU has over half
@@ -2632,7 +2713,7 @@ mod tests {
         ];
         locals[0].baked.light.exposure = 0.5;
         view.locals = locals;
-        let _ = renderer.render(w as u32, h as u32, &view);
+        let _ = renderer.render(w as u32, h as u32, &view).0;
         // The analysis picture as `analyze` draws it.
         let aw = ANALYSIS_WIDTH;
         let ah = (aw * h as u32 / w as u32).max(1);
@@ -2645,7 +2726,7 @@ mod tests {
             ..view.clone()
         };
         let mut shot = |v: &View| {
-            let t = renderer.render(aw, ah, v);
+            let t = renderer.render(aw, ah, v).0;
             renderer.read_back(&t).expect("read back")
         };
         let plain = shot(&whole(None, None));
@@ -2797,7 +2878,7 @@ mod tests {
         view.mixer.hue[1] = 20.0;
         view.mixer.saturation[5] = 0.6;
         let mut shot = |view: &View| {
-            let target = renderer.render(w as u32, h as u32, view);
+            let target = renderer.render(w as u32, h as u32, view).0;
             renderer.read_back(&target).expect("read back")
         };
         let without = shot(&view);
@@ -2905,7 +2986,7 @@ mod tests {
                     source_turn: lag,
                     ..view.clone()
                 };
-                let target = renderer.render(w as u32, h as u32, &v);
+                let target = renderer.render(w as u32, h as u32, &v).0;
                 renderer.read_back(&target).expect("read back")
             };
             let developed = shot(&turned, &turned_guide, 0);
@@ -2997,7 +3078,7 @@ mod tests {
         view.plane = (w as f32, h as f32);
         view.frame_size = (w as f32, h as f32);
         let mut shot = |view: &View| {
-            let target = renderer.render(w as u32, h as u32, view);
+            let target = renderer.render(w as u32, h as u32, view).0;
             renderer.read_back(&target).expect("read back")
         };
         let mut set = Light {
@@ -3088,7 +3169,7 @@ mod tests {
             view.plane = (w as f32, h as f32);
             view.frame_size = (w as f32, h as f32);
             view.source = source;
-            let target = renderer.render(w as u32, h as u32, &view);
+            let target = renderer.render(w as u32, h as u32, &view).0;
             let shown = renderer.read_back(&target).expect("read back");
             let global = Baked::global(&greycard_edit::Edit::default(), source);
             let mut worst = 0.0f32;
