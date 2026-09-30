@@ -216,3 +216,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§203. The Masks tab laid out to be read at a glance](notes/203-the-masks-tab-laid-out-to-be-read-at-a-glance.md) (2026-09-29)
 - [§204. A Background shape](notes/204-a-background-shape.md) (2026-09-29)
 - [§205. A color label tints the grid's plate, and bands the strip's foot](notes/205-a-color-label-tints-the-grids-plate.md) (2026-09-29)
+- [§206. The open folder named, and Recently opened](notes/206-the-open-folder-named-and-recently-opened.md) (2026-09-29)

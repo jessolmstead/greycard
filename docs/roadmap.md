@@ -54,13 +54,6 @@ History, and the Masks tab reads at a glance.
       the view's chip staying on; a folder's open then reads only that
       folder's sidecars rather than the whole root's, which is the cheap
       way into a large archive
-- [ ] The open folder named, and a Recently opened list: the folder's
-      name under the Open folder button (its path as the hover text,
-      the root's name when it is under one), and a list of the last
-      ten folders opened in settings.json beside `last_file`, offered
-      under the button and in the grid's header, with the one open
-      marked; a folder gone from the disk stays listed and says so
-      when chosen
 - [ ] Local previews by content hash: a mid-size picture per frame
       in the local cache, made by the pass, so a shoot on a NAS is culled
       in the loupe and the compare view without reading the raw over the

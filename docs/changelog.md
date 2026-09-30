@@ -10,6 +10,11 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The open folder is named under the Open folder button and in the
+  grid's header, with its root and its path as the hover text, and a
+  click on the name offers the last ten folders opened, the open one
+  checked; a folder gone from the disk stays listed and says so when
+  chosen (§206)
 - A color label shows on the whole tile: the grid tile's plate takes a
   quarter of the label's color, the strip's cell a band under its
   picture, and the small icon stays (§205)
