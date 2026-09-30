@@ -1,7 +1,6 @@
 use crate::panel::assets::show_presets;
 use crate::panel::browser::{
-    grid_filled, load_sidecars, open_folder, open_paths, rebuild_browser, row_of, show_thumb,
-    thumb_for, time_select,
+    grid_filled, open_folder, open_paths, rebuild_browser, row_of, show_thumb, time_select,
 };
 use crate::panel::color::{preview_white, white_key};
 use crate::panel::cull::{cull_frame, develop_landed, show_filter, standing_in};
@@ -70,21 +69,26 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // otherwise nothing yet: the desktop's folder chooser is asked
     // for one once the window is up, and if that is canceled the
     // empty editor is left showing, its Open folder button waiting.
-    let (files, initial_select): (Vec<PathBuf>, Option<usize>) = match &cli.path {
+    // Which of them to start on is settled off the window's thread
+    // with the list's sidecars (`roots::open_listing`), since matching
+    // the last file to the list makes folders canonical.
+    let (files, select): (Vec<PathBuf>, crate::roots::Select) = match &cli.path {
         Some(path) => {
             let files = files::list_files(path)?;
             anyhow::ensure!(!files.is_empty(), "no RAW files at {}", path.display());
             let select = if path.is_dir() {
-                files::select_index(&files, last_file.as_deref())
+                crate::roots::Select::Last(last_file.clone())
             } else {
-                0
+                crate::roots::Select::Row(0)
             };
-            (files, Some(select))
+            (files, select)
         }
         // The all-roots view asked for, and no path: the view is what
         // opens, and nothing of the last file's folder is read or
         // developed first.
-        None if cli.all_roots || !cli.roots.is_empty() => (Vec::new(), None),
+        None if cli.all_roots || !cli.roots.is_empty() => {
+            (Vec::new(), crate::roots::Select::Row(0))
+        }
         None => {
             let from_last = last_file
                 .as_deref()
@@ -92,11 +96,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 .and_then(|dir| files::list_files(dir).ok())
                 .filter(|files| !files.is_empty());
             match from_last {
-                Some(files) => {
-                    let select = files::select_index(&files, last_file.as_deref());
-                    (files, Some(select))
-                }
-                None => (Vec::new(), None),
+                Some(files) => (files, crate::roots::Select::Last(last_file.clone())),
+                None => (Vec::new(), crate::roots::Select::Row(0)),
             }
         }
     };
@@ -222,18 +223,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             .map(|s| slint::SharedString::from(s.name()))
             .collect::<Vec<_>>(),
     )));
-    // Each file's edit, and its meta, from its sidecar when there is
-    // one. Read before the strip is filled so a folder culled last
-    // week opens with its badges on.
-    let (mut sidecars, mut seed_blend) = load_sidecars(&files, !cli.no_sidecars);
-    crate::cells::set_rows(
-        &app,
-        files
-            .iter()
-            .zip(&sidecars)
-            .map(|(f, sidecar)| thumb_for(f, &sidecar.meta))
-            .collect(),
-    );
+    // The files' sidecars are not read here: the list lands through
+    // `roots::open_listing` once the loop runs, each frame from its row
+    // in the index where it has one, the rest read off the window's
+    // thread. Until then the strip is empty.
+    crate::cells::set_rows(&app, Vec::new());
     // The grid's geometry, from one place: the layout in the .slint
     // file and the arithmetic in `grid` read the same numbers.
     app.set_grid_gap(grid::GAP);
@@ -289,12 +283,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     };
     let filtering = !filter.is_empty();
     app.set_filter_text(filter.text.clone().into());
-    app.set_reject_count(
-        sidecars
-            .iter()
-            .filter(|s| s.meta.flag == meta::Flag::Reject)
-            .count() as i32,
-    );
+    app.set_reject_count(0);
 
     let preset_store = preset::Store::user();
     // The film presets this build ships, put there the first time
@@ -307,19 +296,45 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     } else {
         greycard_edit::Placement::Beside
     };
-    if let (Some(name), Some(i)) = (&cli.preset, initial_select) {
-        let found = preset_store.as_ref().and_then(|s| s.find(name));
-        match found {
-            Some(entry) => preset_at_start(
-                &mut sidecars[i],
-                &mut seed_blend[i],
-                &files[i],
-                &entry.preset,
-                (!cli.no_sidecars).then_some(placement),
-            ),
+    // What the command line asks of the first frame, applied to its
+    // sidecar when the list lands and before it is opened.
+    let preset_at_start_wanted = match &cli.preset {
+        Some(name) if !files.is_empty() => match preset_store.as_ref().and_then(|s| s.find(name)) {
+            Some(entry) => Some(entry.preset.clone()),
             None => anyhow::bail!("no preset called {name}"),
-        }
-    }
+        },
+        _ => None,
+    };
+    // `--develop-temperature` and `--exposure` are laid over the file's
+    // edit when it is opened (`Overrides`, through `overrides_at_start`,
+    // which names the frame once the list has landed and said which it
+    // is).
+    let overrides = Overrides {
+        temperature: cli.develop_temperature,
+        exposure: (cli.exposure != 0.0).then_some(cli.exposure),
+    };
+    let tweak_at_start: Option<crate::Tweak> =
+        (preset_at_start_wanted.is_some() || !overrides.is_empty()).then(|| {
+            let preset = preset_at_start_wanted;
+            let placement = (!cli.no_sidecars).then_some(placement);
+            Box::new(move |st: &mut State, i: usize| {
+                if let Some(preset) = preset {
+                    // Written only where a save would be (`writable`).
+                    let placement = placement.filter(|_| crate::panel::edit::writable(st, i));
+                    let st = &mut *st;
+                    preset_at_start(
+                        &mut st.sidecars[i],
+                        &mut st.seed_blend[i],
+                        &st.files[i],
+                        &preset,
+                        placement,
+                    );
+                }
+                if !overrides.is_empty() {
+                    st.overrides_at_start = Some((i, overrides));
+                }
+            }) as crate::Tweak
+        });
 
     let export_into_folder = cli
         .export
@@ -327,8 +342,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         .is_some_and(|p| export_folder(p, !cli.also.is_empty()));
     check_also(&cli, export_into_folder, files.len())?;
     let state = Rc::new(RefCell::new(State {
-        sidecars,
-        seed_blend,
+        tweak_at_start,
         write_sidecars: !cli.no_sidecars,
         xmp_sidecars: cli.xmp_sidecars || remembered.xmp_sidecars,
         cull_move_on: remembered.cull_move_on,
@@ -398,7 +412,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         },
         awaiting_index: !facets_wanted.is_empty(),
         facets_wanted,
-        ..State::empty(files.clone(), &app)
+        ..State::empty(Vec::new(), &app)
     }));
     app.set_compare_tiles(ModelRc::from(state.borrow().compare_tiles.clone()));
     // `--sheet import`: the sheet shows what the import flags name.
@@ -520,16 +534,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         }
     }
     // The launch's folder, the command line's or the last one's, is
-    // opened as any other is: named in the pane and put at the front
-    // of Recently opened. Its list was made before the window ran, not
-    // through the browser's open, so it is recorded here; unless the
-    // roots' view is about to take its place.
-    if state.borrow().library.wanted.is_none() {
-        crate::panel::recent::opened(&mut state.borrow_mut(), &app);
-    }
+    // named in the pane and put at the front of Recently opened when
+    // its list lands through the browser's open (`open_loaded`), as
+    // any other folder is; the pane is named empty until then.
+    crate::panel::recent::show(&state.borrow(), &app);
     match library_path {
         Some(path) => {
             let app_weak = app.as_weak();
+            // Known from here, so the launch's own folder can take its
+            // rows from the index before the indexer has said it is
+            // open; a file that is not there yet is a read that fails
+            // and the sidecars read instead.
+            state.borrow_mut().index_path = Some(path.clone());
             let started = crate::library::Indexer::start(path, move |told| {
                 let app_weak = app_weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
@@ -542,7 +558,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             match started {
                 Ok(indexer) => {
                     st.index = Some(indexer);
-                    crate::library::index_open_folder(&mut st);
+                    crate::library::index_open_folder(&mut st, None);
                     // After the open folder's own pass is asked for,
                     // so that one goes first.
                     crate::roots::start(&mut st, &app);
@@ -551,6 +567,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     tracing::warn!("no library index: the indexer did not start: {e}");
                     st.awaiting_index = false;
                     st.library.awaiting = false;
+                    // No view of the roots will come to take the
+                    // launch's folder's place.
+                    st.library.wanted = None;
                 }
             }
             crate::panel::cull::show_filter(&st, &app);
@@ -561,20 +580,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             let mut st = state.borrow_mut();
             st.awaiting_index = false;
             st.library.awaiting = false;
+            st.library.wanted = None;
         }
     }
-    state.borrow_mut().thumb_run = Some(crate::panel::browser::ThumbRun::new(files.len()));
-    state.borrow_mut().fill_clock = Some(std::time::Instant::now());
-    if !files.is_empty() {
-        crate::panel::browser::hold_thumbnails_for_develop(&app, &worker);
-    }
-    for (i, f) in files.iter().enumerate() {
-        worker.send(Job::Thumbnail {
-            index: i,
-            path: f.clone(),
-        });
-    }
-
     app.set_mask_handles(ModelRc::from(state.borrow().mask_handles.clone()));
     app.set_mask_boxes(ModelRc::from(state.borrow().mask_boxes.clone()));
     app.set_mask_picks(ModelRc::from(state.borrow().mask_picks.clone()));
@@ -670,27 +678,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         Some(Some(row)) => {
                             let app_weak = app_weak.clone();
                             slint::Timer::single_shot(std::time::Duration::ZERO, move || {
-                                if let Some(app) = app_weak.upgrade() {
-                                    app.invoke_select(row as i32);
-                                    // `--also`: Ctrl+clicks on those rows.
-                                    let state = STATE.with(|s| s.borrow().clone());
-                                    let (also, rows) = state
-                                        .map(|s| {
-                                            let mut st = s.borrow_mut();
-                                            (std::mem::take(&mut st.also_at_start), st.shown.len())
-                                        })
-                                        .unwrap_or_default();
-                                    for r in also {
-                                        // A row the filter left out is
-                                        // said, not passed over quietly.
-                                        if r >= rows {
-                                            tracing::warn!(
-                                                "--also {r}: the browser shows {rows} rows (from 0); not in the set"
-                                            );
-                                            continue;
-                                        }
-                                        app.invoke_frame_clicked(r as i32, true, false);
-                                    }
+                                if let (Some(app), Some(state)) =
+                                    (app_weak.upgrade(), STATE.with(|s| s.borrow().clone()))
+                                {
+                                    // With `--also`'s Ctrl+clicks.
+                                    crate::panel::browser::open_at_start(&state, &app, row);
                                 }
                             });
                         }
@@ -829,6 +821,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // The filmstrip's picture of this file follows its turns.
                     if let Some(i) = st.current
                         && st.thumb_base.get(i).is_some_and(|b| b.is_some())
+                        && crate::rows::is_loaded(st, i)
                     {
                         let (turns, flip) = panel.geometry.shown_turns(st.sidecars[i].turn);
                         if st.thumb_shown[i] != Some((turns, flip)) {
@@ -1257,23 +1250,30 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             .context("Slint's rendering notifier")?;
     }
 
-    // Open the file to start on, if there is one yet.
-    if let Some(i) = initial_select {
-        // Laid over the file's edit when it is opened: the panel takes
-        // the edit when the file arrives, and would drop a value set
-        // on it now.
-        let overrides = Overrides {
-            temperature: cli.develop_temperature,
-            exposure: (cli.exposure != 0.0).then_some(cli.exposure),
-        };
-        if !overrides.is_empty() {
-            state.borrow_mut().overrides_at_start = Some((i, overrides));
-        }
-        state.borrow_mut().preview_temperature = cli.preview_temperature;
-        // Opened from the rendering setup, once the worker has the
-        // device, so the first develop takes the same path as the
-        // rest of the session.
-        state.borrow_mut().select_at_start = Some(i);
+    state.borrow_mut().preview_temperature = cli.preview_temperature;
+    // Open the folder to start on, if there is one yet: listed and its
+    // sidecars found off the window's thread once the loop runs, and
+    // its frame opened from the rendering setup when the list is in
+    // before it, so the first develop takes the same path as the rest
+    // of the session.
+    if !files.is_empty() {
+        let app_weak = app.as_weak();
+        slint::Timer::single_shot(std::time::Duration::ZERO, move || {
+            let (Some(app), Some(state), Some(worker)) = (
+                app_weak.upgrade(),
+                STATE.with(|s| s.borrow().clone()),
+                WORKER.with(|w| w.borrow().clone()),
+            ) else {
+                return;
+            };
+            crate::roots::open_listing(
+                &state,
+                &app,
+                &worker,
+                crate::roots::Listing::Files(files),
+                select,
+            );
+        });
     } else if state.borrow().library.wanted.is_none() {
         // Nothing to open yet: ask the desktop for a folder once the
         // event loop is running. Canceled, the empty editor stays up

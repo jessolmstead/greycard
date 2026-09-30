@@ -45,7 +45,7 @@ pub(crate) fn edit_to_develop(app: &App, edit: &Edit) -> Edit {
 /// will not parse costs the interop and nothing else: the `.gcd` is
 /// written either way.
 pub(crate) fn write_sidecar(st: &mut State, c: usize) {
-    if !st.write_sidecars || crate::panel::delete::held(st, c) {
+    if !writable(st, c) {
         return;
     }
     if st.xmp_sidecars {
@@ -64,6 +64,16 @@ pub(crate) fn write_sidecar(st: &mut State, c: usize) {
         Ok(_) => crate::library::sidecar_written(st, c),
         Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),
     }
+}
+
+/// Whether frame `c`'s sidecar may be written now: sidecars are on,
+/// the frame is not being deleted, and the sidecar in memory is the
+/// frame's own and not its row standing in (`rows`), which would put
+/// the default edit over whatever the file holds.
+pub(crate) fn writable(st: &State, c: usize) -> bool {
+    st.write_sidecars
+        && !crate::panel::delete::held(st, c)
+        && st.from_row.get(c).is_none_or(|r| r.read)
 }
 
 /// The open frame's quarter turns, for a job the worker develops:
@@ -144,7 +154,16 @@ pub(crate) fn schedule_save(st: &mut State, app_weak: slint::Weak<App>) {
             };
             let mut st = state.borrow_mut();
             let edit = read_edit(&app, &st.edit, st.target);
-            save_edit(&mut st, edit);
+            if save_edit(&mut st, edit)
+                && let Some(c) = st.current
+                && let Some(why) = crate::rows::not_kept(&st, c)
+            {
+                // The panel moved over the default standing in for a
+                // frame whose sidecar is not in (its root offline, its
+                // read still out or given up on): said, since nothing
+                // of it is kept.
+                app.set_status(why.into());
+            }
             show_history(&st, &app);
         },
     );
@@ -191,26 +210,43 @@ pub(crate) fn record_panel(st: &mut State, app: &App) -> bool {
     let Some(c) = st.current else {
         return false;
     };
+    if !crate::rows::panel_is_frames(st, c) {
+        return false;
+    }
     let edit = read_edit(app, &st.edit, st.target);
     panel_state(st, edit).is_some_and(|edit| st.sidecars[c].record(edit))
 }
 
 /// Record `edit` as the current file's, and write its sidecar if that
 /// changed anything; nothing while it is the command line's overrides
-/// unmoved ([`panel_state`]).
-pub(crate) fn save_edit(st: &mut State, edit: Edit) {
+/// unmoved ([`panel_state`]). True when the change was refused because
+/// the panel is not the frame's own (its sidecar stands in: its root
+/// offline, its read still out or given up on; or the panel still
+/// shows the stand-in it had then) and the panel differs from the
+/// sidecar in memory: nothing is recorded,
+/// since the stand-in cannot be written and the read's landing would
+/// replace it whole, and the caller with a status line says why
+/// ([`crate::rows::not_kept`]).
+pub(crate) fn save_edit(st: &mut State, edit: Edit) -> bool {
     let Some(c) = st.current else {
-        return;
+        return false;
     };
     let Some(edit) = panel_state(st, edit) else {
-        return;
+        return false;
     };
-    if st.sidecars[c].record(edit) && st.write_sidecars && !crate::panel::delete::held(st, c) {
+    if !crate::rows::panel_is_frames(st, c) {
+        return st.sidecars[c].current != edit;
+    }
+    if !st.sidecars[c].record(edit) {
+        return false;
+    }
+    if writable(st, c) {
         match st.sidecars[c].save_in(&st.files[c], st.placement) {
             Ok(_) => crate::library::sidecar_written(st, c),
             Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),
         }
     }
+    false
 }
 
 /// Put the repair sources the engine chose into `st.edit` and into
@@ -234,7 +270,7 @@ pub(crate) fn take_sources(st: &mut State, sources: &[greycard_edit::retouch::Pa
     if !st.sidecars[c].take_sources(sources) {
         return false;
     }
-    if st.write_sidecars && !crate::panel::delete::held(st, c) {
+    if writable(st, c) {
         match st.sidecars[c].save_in(&st.files[c], st.placement) {
             Ok(_) => crate::library::sidecar_written(st, c),
             Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),

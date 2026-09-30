@@ -181,11 +181,27 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
     }
     let (frames, allowed) = match which {
         Which::Selection => {
-            let frames: Vec<PathBuf> = chosen_frames(st)
+            let chosen = chosen_frames(st);
+            // A frame under a root that is offline is not there to
+            // delete, and nothing is written where its root was.
+            let (offline, here): (Vec<usize>, Vec<usize>) = chosen
+                .into_iter()
+                .partition(|&i| crate::rows::is_offline(st, i));
+            let frames: Vec<PathBuf> = here
                 .into_iter()
                 .filter_map(|i| st.files.get(i).cloned())
                 .collect();
-            if frames.is_empty() {
+            if let Some(&i) = offline.first() {
+                let what = if frames.is_empty() {
+                    ": nothing to delete"
+                } else {
+                    ": its frames are left out"
+                };
+                crate::rows::say_offline_for(st, app, i, what);
+                if frames.is_empty() {
+                    return;
+                }
+            } else if frames.is_empty() {
                 app.set_status("nothing is chosen to delete".into());
                 return;
             }

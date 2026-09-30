@@ -248,6 +248,18 @@ mod tests {
         dir.to_path_buf()
     }
 
+    /// A folder's open, its list landed: it is read off the window's
+    /// thread (`roots::open_listing`), and a test lands it.
+    fn open_folder(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
+        crate::panel::browser::open_folder(state, app, worker, dir);
+        crate::roots::land_sent(state, app, worker);
+    }
+
+    fn chosen(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &str) {
+        app.invoke_recent_chosen(dir.into());
+        crate::roots::land_sent(state, app, worker);
+    }
+
     fn listed(app: &App) -> Vec<(String, bool)> {
         app.get_recent_folders()
             .iter()
@@ -280,7 +292,7 @@ mod tests {
         assert_eq!(count_labeled(&app, "Recently opened"), 1);
 
         // Chosen from the list: open, and at the front again.
-        app.invoke_recent_chosen(a_s.as_ref().into());
+        chosen(&state, &app, &worker, a_s.as_ref());
         assert_eq!(app.get_open_folder_name(), "a");
         assert_eq!(
             listed(&app),
@@ -406,7 +418,11 @@ mod tests {
             let mut st = state.borrow_mut();
             st.library.roots.add(&root).unwrap();
             st.library.roots.set_name(&root, "Archive");
+            // A `--roots` launch whose index then failed: no view will
+            // come, and a folder opened by hand is recorded.
+            st.library.wanted = Some(crate::roots::View::Roots(None));
         }
+        crate::library::told(&app, crate::library::Told::Failed("no index".into()));
         open_folder(&state, &app, &worker, &under);
         assert_eq!(app.get_open_folder_name(), "harbor");
         assert_eq!(app.get_open_folder_root(), "Archive");
@@ -433,7 +449,7 @@ mod tests {
         std::fs::remove_dir_all(&a).unwrap();
         let before = listed(&app);
 
-        app.invoke_recent_chosen(a.to_string_lossy().as_ref().into());
+        chosen(&state, &app, &worker, a.to_string_lossy().as_ref());
         assert!(
             app.get_status().contains("is not there any more"),
             "{}",

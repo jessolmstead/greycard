@@ -87,23 +87,36 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 /// The steps a library is brought up by in place rather than rebuilt:
 /// from the version on the left to the next, the statements on the
 /// right. Schema 3 added the maker's rendering tags, which the camera
 /// match groups frames by; a schema 2 row gets them from the next
 /// pass over its folder, which reads the tags of every row whose
-/// `style_read` is zero and nothing else of the file.
-const MIGRATIONS: &[(i32, &str)] = &[(
-    2,
-    "ALTER TABLE files ADD COLUMN maker TEXT;
-     ALTER TABLE files ADD COLUMN style TEXT;
-     ALTER TABLE files ADD COLUMN style_fixed INTEGER NOT NULL DEFAULT 0;
-     ALTER TABLE files ADD COLUMN peripheral INTEGER;
-     ALTER TABLE files ADD COLUMN style_read INTEGER NOT NULL DEFAULT 0;
-     CREATE INDEX IF NOT EXISTS files_style ON files(model, style);",
-)];
+/// `style_read` is zero and nothing else of the file. Schema 4 added
+/// whether the sidecar holds a develop (`edited`) and the quarter
+/// turns its picture is shown at (`turns`), both read from the
+/// sidecar beside the meta; a schema 3 row's sidecar hash is cleared
+/// so the next pass over its folder reads the sidecar again and fills
+/// them, and nothing else of the file is read.
+const MIGRATIONS: &[(i32, &str)] = &[
+    (
+        2,
+        "ALTER TABLE files ADD COLUMN maker TEXT;
+         ALTER TABLE files ADD COLUMN style TEXT;
+         ALTER TABLE files ADD COLUMN style_fixed INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE files ADD COLUMN peripheral INTEGER;
+         ALTER TABLE files ADD COLUMN style_read INTEGER NOT NULL DEFAULT 0;
+         CREATE INDEX IF NOT EXISTS files_style ON files(model, style);",
+    ),
+    (
+        3,
+        "ALTER TABLE files ADD COLUMN edited INTEGER NOT NULL DEFAULT 0;
+         ALTER TABLE files ADD COLUMN turns INTEGER NOT NULL DEFAULT 0;
+         UPDATE files SET sidecar_hash = NULL WHERE sidecar IS NOT NULL;",
+    ),
+];
 
 /// `PRAGMA application_id`: "GRCY", so a SQLite file that is not a
 /// library is never rebuilt over.
@@ -143,7 +156,9 @@ CREATE TABLE IF NOT EXISTS files (
     style         TEXT,
     style_fixed   INTEGER NOT NULL DEFAULT 0,
     peripheral    INTEGER,
-    style_read    INTEGER NOT NULL DEFAULT 0
+    style_read    INTEGER NOT NULL DEFAULT 0,
+    edited        INTEGER NOT NULL DEFAULT 0,
+    turns         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS files_folder ON files(folder);
 CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
@@ -163,7 +178,13 @@ const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash
     files.make, files.model, files.camera, files.lens, files.iso, files.focal, \
     files.aperture, files.shutter, files.taken, files.sidecar, files.sidecar_mtime, \
     files.rating, files.flag, files.label, files.keywords, files.missing_since, \
-    files.maker, files.style, files.style_fixed, files.peripheral";
+    files.maker, files.style, files.style_fixed, files.peripheral, files.edited, \
+    files.turns";
+
+/// The columns [`RowMeta`] is read from, in the order `row_meta`
+/// reads them, after the path.
+const META_COLUMNS: &str = "files.id, files.hash, files.mtime, files.rating, files.flag, files.label, \
+    files.keywords, files.edited, files.turns";
 
 /// The index, open.
 pub struct Library {
@@ -316,6 +337,11 @@ pub struct Entry {
     /// Whether the file was gone from its path the last time its
     /// folder was indexed.
     pub missing: bool,
+    /// Whether the sidecar holds a develop: see [`RowMeta::edited`].
+    pub edited: bool,
+    /// The quarter turns the picture is shown at, packed: see
+    /// [`RowMeta::turns`].
+    pub turns: u8,
 }
 
 impl Entry {
@@ -325,6 +351,51 @@ impl Entry {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
     }
+}
+
+/// What a row mirrors of a file's sidecar, with the file's identity:
+/// enough for a browser to list the file, badge it, filter it and
+/// find its thumbnail without reading the sidecar or the file. The
+/// sidecar stays the truth; this is as of the last pass over the
+/// folder, or the last save the editor indexed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RowMeta {
+    pub id: i64,
+    /// The content hash, hex; see [`hash`].
+    pub hash: String,
+    /// The file's mtime, nanoseconds since the epoch.
+    pub mtime: i64,
+    pub meta: Meta,
+    /// The sidecar holds a develop: a step in its history, a snapshot,
+    /// or a current edit that is not the frame's default (a raw's
+    /// `Edit::default()`, a picture's `Edit::for_picture()`). A frame
+    /// only rated, or never opened, has none. A sidecar whose edit
+    /// this build cannot read counts as edited: there is something in
+    /// it, whatever it is.
+    pub edited: bool,
+    /// The quarter turns and the mirror the frame's picture is shown
+    /// at (`Geometry::shown_turns` of its edit with its own turn),
+    /// packed as the turns plus four when mirrored: see
+    /// [`RowMeta::shown_turns`].
+    pub turns: u8,
+}
+
+impl RowMeta {
+    /// The quarter turns clockwise and whether the picture is mirrored,
+    /// as the grid and the strip draw it.
+    pub fn shown_turns(&self) -> (u8, bool) {
+        unpack_turns(self.turns)
+    }
+}
+
+/// `(turns, flip)` as the `turns` column holds it.
+pub fn pack_turns((turns, flip): (u8, bool)) -> u8 {
+    (turns % 4) + if flip { 4 } else { 0 }
+}
+
+/// The `turns` column as `(turns, flip)`.
+pub fn unpack_turns(packed: u8) -> (u8, bool) {
+    (packed % 4, packed & 4 != 0)
 }
 
 /// One chip of a facet: a value the files hold and how many hold it.
@@ -941,6 +1012,64 @@ impl Library {
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// [`Library::paths_under_canonical`] with what each row mirrors
+    /// of the file's sidecar beside the path, by folder then name: a
+    /// view of the roots built from this reads no sidecar.
+    pub fn rows_under_canonical(&self, roots: &[PathBuf]) -> Result<Vec<(PathBuf, RowMeta)>> {
+        if roots.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (clause, params) = under_roots_as(roots, false);
+        let sql = format!(
+            "SELECT files.path, {META_COLUMNS} FROM files WHERE missing_since IS NULL \
+             AND ({clause}) ORDER BY folder, name"
+        );
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
+            Ok((path_from_bytes(&r.get::<_, Vec<u8>>(0)?), row_meta(r, 1)?))
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// [`Library::ids_of_with`] with what each row mirrors of the
+    /// file's sidecar: `None` for a file the index has no row for yet.
+    pub fn rows_of_with(
+        &self,
+        paths: &[PathBuf],
+        canonical: &mut dyn FnMut(&Path) -> PathBuf,
+    ) -> Result<Vec<Option<RowMeta>>> {
+        let mut folders: HashMap<PathBuf, (PathBuf, HashMap<Vec<u8>, RowMeta>)> = HashMap::new();
+        let mut out = Vec::with_capacity(paths.len());
+        let sql = format!(
+            "SELECT files.path, {META_COLUMNS} FROM files WHERE folder = ? \
+             AND missing_since IS NULL"
+        );
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        for path in paths {
+            let (Some(parent), Some(name)) = (path.parent(), path.file_name()) else {
+                out.push(None);
+                continue;
+            };
+            if !folders.contains_key(parent) {
+                let dir = if parent.as_os_str().is_empty() {
+                    Path::new(".")
+                } else {
+                    parent
+                };
+                let canonical = canonical(dir);
+                let rows = stmt
+                    .query_map(params![path_bytes(&canonical)], |r| {
+                        Ok((r.get::<_, Vec<u8>>(0)?, row_meta(r, 1)?))
+                    })?
+                    .collect::<rusqlite::Result<HashMap<_, _>>>()?;
+                folders.insert(parent.to_path_buf(), (canonical, rows));
+            }
+            let (canonical, rows) = &folders[parent];
+            out.push(rows.get(&path_bytes(&canonical.join(name))).cloned());
+        }
+        Ok(out)
+    }
+
     /// How many files the index holds under one root, the missing
     /// left out: the count beside the root's name.
     pub fn count_under(&self, root: &Path) -> Result<usize> {
@@ -1363,6 +1492,28 @@ fn entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
             .map(|b| path_from_bytes(&b)),
         sidecar_mtime: row.get(15)?,
         missing: row.get::<_, Option<i64>>(20)?.is_some(),
+        edited: row.get::<_, i64>(25)? != 0,
+        turns: (row.get::<_, i64>(26)?.clamp(0, 7)) as u8,
+    })
+}
+
+/// A [`RowMeta`] from a row of [`META_COLUMNS`] starting at `from`.
+fn row_meta(row: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<RowMeta> {
+    let keywords: String = row.get(from + 6)?;
+    let mut meta = Meta {
+        rating: row.get::<_, i64>(from + 3)?.clamp(0, 255) as u8,
+        flag: filter::flag_from_name(&row.get::<_, String>(from + 4)?),
+        label: filter::label_from_name(&row.get::<_, String>(from + 5)?),
+        ..Meta::default()
+    };
+    meta.set_keywords(serde_json::from_str(&keywords).unwrap_or_default());
+    Ok(RowMeta {
+        id: row.get(from)?,
+        hash: row.get(from + 1)?,
+        mtime: row.get(from + 2)?,
+        meta,
+        edited: row.get::<_, i64>(from + 7)? != 0,
+        turns: (row.get::<_, i64>(from + 8)?.clamp(0, 7)) as u8,
     })
 }
 

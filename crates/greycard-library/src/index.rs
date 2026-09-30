@@ -567,37 +567,70 @@ fn row_at(conn: &Connection, path: &[u8]) -> Result<Option<Row>> {
         .optional()?)
 }
 
-/// The sidecar a file has now: where, its bytes' hash, its mtime,
-/// and the bytes themselves for the meta to be read from once.
+/// What a file has beside it now that the row mirrors: its `.gcd`,
+/// where it is, and the XMP another tool wrote, with one hash over
+/// both so a change to either has the row written again, and the
+/// bytes themselves for the meta to be read from once. `None` when
+/// the frame has neither.
 struct SidecarNow {
-    path: PathBuf,
+    /// The `.gcd`, wherever it was found; none when the frame has only
+    /// an XMP.
+    path: Option<PathBuf>,
     hash: String,
+    /// The `.gcd`'s mtime, else the XMP's.
     mtime: i64,
-    json: Vec<u8>,
+    json: Option<Vec<u8>>,
+    /// The XMP beside the frame, as `xmp::path_of` picks it.
+    xmp: Option<PathBuf>,
 }
 
 /// A sidecar is small and is read whole: its hash is what says
 /// whether it changed, since a save that changes one digit of a
 /// rating changes neither its length nor, within one timestamp
-/// tick, its mtime.
+/// tick, its mtime. The XMP beside the frame is read the same way
+/// and folded into the hash, so a rating given in another tool is
+/// seen by the next pass as a save here is.
 fn sidecar_of(raw: &Path) -> Option<SidecarNow> {
-    let path = Sidecar::find(raw)?;
-    let json = std::fs::read(&path).ok()?;
-    let mtime = std::fs::metadata(&path).map(|m| mtime_of(&m)).unwrap_or(0);
+    let path = Sidecar::find(raw);
+    let xmp = greycard_edit::xmp::path_of(raw);
+    if path.is_none() && xmp.is_none() {
+        return None;
+    }
+    let json = path.as_deref().and_then(|p| std::fs::read(p).ok());
+    let xmp_bytes = xmp.as_deref().and_then(|p| std::fs::read(p).ok());
+    if json.is_none() && xmp_bytes.is_none() {
+        return None;
+    }
+    let mtime = path
+        .as_deref()
+        .or(xmp.as_deref())
+        .and_then(|p| std::fs::metadata(p).ok())
+        .map(|m| mtime_of(&m))
+        .unwrap_or(0);
+    // A frame with a `.gcd` alone hashes as it always did; the XMP,
+    // when there is one, goes in after it with its length, so that a
+    // byte moved from one file to the other is a change too.
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(json.as_deref().unwrap_or_default());
+    if let Some(x) = &xmp_bytes {
+        hasher.update(&(x.len() as u64).to_le_bytes());
+        hasher.update(x);
+    }
     Some(SidecarNow {
-        hash: blake3::hash(&json).to_hex().to_string(),
         path,
+        hash: hasher.finalize().to_hex().to_string(),
         mtime,
         json,
+        xmp,
     })
 }
 
 impl Row {
     fn same_sidecar(&self, now: Option<&SidecarNow>) -> bool {
         match now {
-            None => self.sidecar.is_none(),
+            None => self.sidecar.is_none() && self.sidecar_hash.is_none(),
             Some(s) => {
-                self.sidecar.as_deref() == Some(path_bytes(&s.path).as_slice())
+                self.sidecar.as_deref() == s.path.as_deref().map(path_bytes).as_deref()
                     && self.sidecar_hash.as_deref() == Some(s.hash.as_str())
             }
         }
@@ -812,13 +845,13 @@ fn write_batch(
                     write_style(&tx, row.id, &style)?;
                     report.styled += 1;
                 }
-                settle_same(&tx, row, sidecar.as_ref(), report)?;
+                settle_same(&tx, row, path, sidecar.as_ref(), report)?;
             }
             Plan::Changed { row, hash, exif } => {
                 let row = current(&tx, &key, row)?;
                 update_file(&tx, row.id, size, mtime, &hash, &exif)?;
                 if !row.same_sidecar(sidecar.as_ref()) {
-                    write_meta(&tx, row.id, sidecar.as_ref())?;
+                    write_meta(&tx, row.id, path, sidecar.as_ref())?;
                 }
                 report.changed += 1;
                 report.changed_files.push(path.to_path_buf());
@@ -829,12 +862,12 @@ fn write_batch(
                     // were read; this row is current, and the sidecar
                     // it knows may be newer than the one read.
                     if row.size == size && row.mtime == mtime {
-                        settle_same(&tx, row, sidecar.as_ref(), report)?;
+                        settle_same(&tx, row, path, sidecar.as_ref(), report)?;
                     } else {
                         let exif = exif.unwrap_or_else(|| probe(path, report));
                         update_file(&tx, row.id, size, mtime, &hash, &exif)?;
                         if !row.same_sidecar(sidecar.as_ref()) {
-                            write_meta(&tx, row.id, sidecar.as_ref())?;
+                            write_meta(&tx, row.id, path, sidecar.as_ref())?;
                         }
                         report.changed += 1;
                         report.changed_files.push(path.to_path_buf());
@@ -853,7 +886,7 @@ fn write_batch(
                         mtime,
                         id
                     ])?;
-                    write_meta(&tx, id, sidecar.as_ref())?;
+                    write_meta(&tx, id, path, sidecar.as_ref())?;
                     // A rename within the folder: the old row is this
                     // one, and is not to be marked missing.
                     existing.remove(&old_path);
@@ -894,7 +927,7 @@ fn write_batch(
                         exif.style.peripheral,
                     ])?;
                     let id = tx.last_insert_rowid();
-                    write_meta(&tx, id, sidecar.as_ref())?;
+                    write_meta(&tx, id, path, sidecar.as_ref())?;
                     report.added += 1;
                 }
             }
@@ -909,6 +942,7 @@ fn write_batch(
 fn settle_same(
     tx: &Transaction<'_>,
     row: Row,
+    raw: &Path,
     sidecar: Option<&SidecarNow>,
     report: &mut Report,
 ) -> Result<()> {
@@ -920,7 +954,7 @@ fn settle_same(
     if row.same_sidecar(sidecar) {
         report.unchanged += 1;
     } else {
-        write_meta(tx, row.id, sidecar)?;
+        write_meta(tx, row.id, raw, sidecar)?;
         report.meta_refreshed += 1;
     }
     Ok(())
@@ -1126,38 +1160,191 @@ pub fn read_meta(sidecar: &Path) -> Meta {
 }
 
 fn meta_from_json(json: &[u8], sidecar: &Path) -> Meta {
+    parsed(Some(json), sidecar).meta
+}
+
+/// What a row mirrors of a sidecar: its meta, whether it holds a
+/// develop, and the quarter turns its picture is shown at.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct Summary {
+    pub(crate) meta: Meta,
+    pub(crate) edited: bool,
+    /// Packed as [`crate::pack_turns`] packs them.
+    pub(crate) turns: u8,
+}
+
+/// The `.gcd`'s JSON read for what the row mirrors of it, before the
+/// XMP beside the frame has its say.
+#[derive(Default)]
+struct Parsed {
+    meta: Meta,
+    turn: u8,
+    /// What the sidecar last took from an XMP, so the same XMP is not
+    /// taken again.
+    mark: Option<greycard_edit::xmp::Adopted>,
+    /// The edit, brought up to this build's shape; none when there is
+    /// no `current` in the file.
+    current: Option<greycard_edit::Edit>,
+    /// A step in the history, or a snapshot.
+    stepped: bool,
+    /// The file, or its edit, could not be read: there is something
+    /// in it, whatever it is.
+    unreadable: bool,
+}
+
+/// The meta is read as `meta` alone, loosely, so a sidecar whose edit
+/// this build cannot read still gives up its stars. The edit is read
+/// for two things only: whether it is a develop at all, and which way
+/// up it shows the picture. `current` is brought up to this build's
+/// shape and parsed for that; the history and the snapshots are not
+/// parsed, only counted.
+fn parsed(json: Option<&[u8]>, sidecar: &Path) -> Parsed {
+    let Some(json) = json else {
+        return Parsed::default();
+    };
     let value: serde_json::Value = match serde_json::from_slice(json) {
         Ok(v) => v,
         Err(e) => {
             log::warn!("{}: {e}", sidecar.display());
-            return Meta::default();
+            return Parsed {
+                unreadable: true,
+                ..Parsed::default()
+            };
         }
     };
-    value
+    let meta: Meta = value
         .get("meta")
         .cloned()
         .and_then(|m| serde_json::from_value(m).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    let mark: Option<greycard_edit::xmp::Adopted> = value
+        .get("xmp")
+        .cloned()
+        .and_then(|m| serde_json::from_value(m).ok());
+    let count = |key: &str| {
+        value
+            .get(key)
+            .and_then(|v| v.as_array())
+            .map_or(0, Vec::len)
+    };
+    let (current, unreadable) = match value.get("current").cloned().map(|c| {
+        greycard_edit::migrate(c)
+            .and_then(|c| Ok(serde_json::from_value::<greycard_edit::Edit>(c)?))
+    }) {
+        None => (None, false),
+        Some(Ok(edit)) => (Some(edit), false),
+        Some(Err(e)) => {
+            log::warn!("{}: the edit was not read: {e}", sidecar.display());
+            (None, true)
+        }
+    };
+    Parsed {
+        meta,
+        turn: value
+            .get("turn")
+            .and_then(|t| t.as_u64())
+            .map_or(0, |t| (t % 4) as u8),
+        mark,
+        current,
+        stepped: count("history") > 0 || count("snapshots") > 0,
+        unreadable,
+    }
+}
+
+/// What the row mirrors of what `raw` has beside it: the `.gcd`'s
+/// meta and turn with the XMP's word taken over them exactly as the
+/// editor takes it when it opens the frame (`xmp::adopt`: an XMP the
+/// sidecar has not already taken from, by its mark, has its fields
+/// laid over the meta and its orientation over the turn), whether the
+/// sidecar holds a develop, and the quarter turns the picture is
+/// shown at. `now` is `None` for a frame with nothing beside it.
+///
+/// A develop is a step in the history, a snapshot, or a current edit
+/// that is not the frame's default (a picture's is not a raw's); a
+/// `.gcd` this build cannot read counts as one, since there is
+/// something in it. The XMP's orientation goes onto the frame's turn,
+/// not into its edit, as it does in the editor: it moves the turns the
+/// picture is shown at, and a frame only turned in another tool does
+/// not count as developed.
+fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
+    let Some(now) = now else {
+        return Summary::default();
+    };
+    let said = now
+        .path
+        .clone()
+        .or_else(|| now.xmp.clone())
+        .unwrap_or_else(|| raw.to_path_buf());
+    let p = parsed(now.json.as_deref(), &said);
+    let default = if greycard_core::picture::is_picture_path(raw) {
+        greycard_edit::Edit::for_picture()
+    } else {
+        greycard_edit::Edit::default()
+    };
+    let mut sidecar = Sidecar {
+        current: p.current.clone().unwrap_or_else(|| default.clone()),
+        meta: p.meta,
+        turn: p.turn,
+        xmp: p.mark,
+        ..Sidecar::default()
+    };
+    if now.xmp.is_some() {
+        // The camera's tag is asked for only when the packet says
+        // something about the orientation, as the editor asks.
+        greycard_edit::xmp::adopt(raw, &mut sidecar, || {
+            greycard_core::decode::orientation_path(raw)
+                .inspect_err(|e| log::warn!("{}: orientation: {e}", raw.display()))
+                .ok()
+        });
+    }
+    let edited = p.stepped || p.unreadable || sidecar.current != default;
+    Summary {
+        meta: sidecar.meta,
+        edited,
+        turns: crate::pack_turns(sidecar.current.geometry.shown_turns(sidecar.turn)),
+    }
+}
+
+/// [`summary_of`] over a `.gcd`'s bytes alone, with no XMP beside the
+/// frame; `raw` says whose default the edit is measured against, a
+/// raw's when `None`.
+#[cfg(test)]
+pub(crate) fn summary_from_json(json: &[u8], sidecar: &Path, raw: Option<&Path>) -> Summary {
+    let now = SidecarNow {
+        path: Some(sidecar.to_path_buf()),
+        hash: String::new(),
+        mtime: 0,
+        json: Some(json.to_vec()),
+        xmp: None,
+    };
+    summary_of(Some(&now), raw.unwrap_or(Path::new("frame.cr3")))
 }
 
 /// The row's meta from its sidecar, or the empty meta when it has
-/// none, and the sidecar's hash so the next pass can tell.
-fn write_meta(tx: &Transaction<'_>, id: i64, sidecar: Option<&SidecarNow>) -> Result<()> {
-    let meta = sidecar
-        .map(|s| meta_from_json(&s.json, &s.path))
-        .unwrap_or_default();
+/// none, and the sidecar's hash so the next pass can tell. `raw` is
+/// the frame, whose kind says what the default edit is.
+fn write_meta(
+    tx: &Transaction<'_>,
+    id: i64,
+    raw: &Path,
+    sidecar: Option<&SidecarNow>,
+) -> Result<()> {
+    let summary = summary_of(sidecar, raw);
+    let meta = &summary.meta;
     tx.prepare_cached(
         "UPDATE files SET sidecar = ?, sidecar_hash = ?, sidecar_mtime = ?, rating = ?, \
-         flag = ?, label = ?, keywords = ? WHERE id = ?",
+         flag = ?, label = ?, keywords = ?, edited = ?, turns = ? WHERE id = ?",
     )?
     .execute(params![
-        sidecar.map(|s| path_bytes(&s.path)),
+        sidecar.and_then(|s| s.path.as_deref().map(path_bytes)),
         sidecar.map(|s| s.hash.as_str()),
         sidecar.map(|s| s.mtime),
         i64::from(meta.rating),
         filter::flag_name(meta.flag),
         filter::label_name(meta.label),
         serde_json::to_string(&meta.keywords).unwrap_or_else(|_| "[]".into()),
+        i64::from(summary.edited),
+        i64::from(summary.turns),
         id
     ])?;
     tx.prepare_cached("DELETE FROM keywords WHERE file = ?")?
@@ -3101,6 +3288,8 @@ pub(crate) mod tests {
                      ALTER TABLE files DROP COLUMN style_fixed;
                      ALTER TABLE files DROP COLUMN peripheral;
                      ALTER TABLE files DROP COLUMN style_read;
+                     ALTER TABLE files DROP COLUMN edited;
+                     ALTER TABLE files DROP COLUMN turns;
                      PRAGMA user_version = 2;",
                 )
                 .unwrap();
@@ -3131,14 +3320,299 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(unread, 3);
         assert_eq!(lib.styles_unread(None).unwrap(), 0);
-        // The next pass reads the tags and nothing else.
+        // The next pass reads the tags, and the two sidecars again for
+        // schema 4's columns, and nothing else.
         let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
-        assert_eq!((report.styled, report.unchanged), (3, 3), "{report:?}");
-        assert_eq!(report.added + report.changed + report.meta_refreshed, 0);
+        assert_eq!(
+            (report.styled, report.unchanged, report.meta_refreshed),
+            (3, 1, 2),
+            "{report:?}"
+        );
+        assert_eq!(report.added + report.changed, 0);
         assert_eq!(lib.styles_unread(None).unwrap(), 0);
         let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
         assert_eq!(report.styled, 0, "{report:?}");
         drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A row says whether its sidecar holds a develop, and which way
+    /// up the picture is shown, beside the meta: what a browser needs
+    /// to list a frame, badge it and turn its thumbnail without
+    /// reading the sidecar. A frame only rated has no develop; a
+    /// picture's default is a picture's, not a raw's.
+    #[test]
+    fn a_row_mirrors_the_develop_and_the_turns_beside_the_meta() {
+        use greycard_edit::Edit;
+        let dir = scratch("edited");
+        let rated = dir.join("rated.tif");
+        let developed = dir.join("developed.tif");
+        let turned = dir.join("turned.tif");
+        let bare = dir.join("bare.tif");
+        for (i, p) in [&rated, &developed, &turned, &bare].iter().enumerate() {
+            write_frame(p, &R5, i as u16 + 1);
+        }
+        let fresh = || Sidecar {
+            current: Edit::for_picture(),
+            ..Sidecar::default()
+        };
+        // Rated only: the picture's own default edit, three stars.
+        let mut s = fresh();
+        s.meta.rating = 3;
+        s.save(&rated).unwrap();
+        // Developed: one step in the history.
+        let mut s = fresh();
+        let mut e = Edit::for_picture();
+        e.light.exposure = 0.7;
+        s.record(e);
+        s.save(&developed).unwrap();
+        // Turned: the edit's quarter turn and mirror, and the frame's
+        // own turn on top.
+        let mut s = fresh();
+        let mut e = Edit::for_picture();
+        e.geometry.turns = 1;
+        e.geometry.flip = true;
+        let shown = e.geometry.shown_turns(1);
+        s.record(e);
+        s.turn = 1;
+        s.save(&turned).unwrap();
+
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let rows = lib
+            .rows_under_canonical(std::slice::from_ref(&dir))
+            .unwrap();
+        let by_name: HashMap<String, &crate::RowMeta> = rows
+            .iter()
+            .map(|(p, r)| (p.file_name().unwrap().to_string_lossy().into_owned(), r))
+            .collect();
+        assert_eq!(by_name.len(), 4);
+        let r = by_name["rated.tif"];
+        assert_eq!(
+            (r.meta.rating, r.edited, r.shown_turns()),
+            (3, false, (0, false))
+        );
+        let d = by_name["developed.tif"];
+        assert_eq!((d.meta.rating, d.edited), (0, true));
+        let t = by_name["turned.tif"];
+        assert!(t.edited);
+        assert_eq!(t.shown_turns(), shown);
+        assert_eq!(shown, (2, true), "the turn and the mirror both count");
+        let b = by_name["bare.tif"];
+        assert_eq!((b.edited, b.shown_turns()), (false, (0, false)));
+        assert_eq!(b.hash, crate::hash_file(&bare).unwrap());
+        // By path, a file the index has not seen among them.
+        let asked = lib
+            .rows_of_with(
+                &[rated.clone(), dir.join("none.tif"), turned.clone()],
+                &mut |d| d.to_path_buf(),
+            )
+            .unwrap();
+        assert_eq!(asked[0].as_ref().map(|r| r.meta.rating), Some(3));
+        assert!(asked[1].is_none());
+        assert_eq!(
+            asked[2].as_ref().map(|r| r.turns),
+            Some(crate::pack_turns(shown))
+        );
+        let e = lib.by_path(&turned).unwrap().unwrap();
+        assert_eq!((e.edited, crate::unpack_turns(e.turns)), (true, shown));
+
+        // The rated frame gets a develop: the next pass reads its
+        // sidecar again and the row says so.
+        let mut s = Sidecar::load(&rated).unwrap().unwrap();
+        let mut e = s.current.clone();
+        e.light.exposure = -0.3;
+        s.record(e);
+        s.save(&rated).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(
+            (report.meta_refreshed, report.unchanged),
+            (1, 3),
+            "{report:?}"
+        );
+        let e = lib.by_path(&rated).unwrap().unwrap();
+        assert_eq!((e.meta.rating, e.edited), (3, true));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A sidecar whose edit this build cannot read still gives up its
+    /// stars, counts as edited, and shows its picture by the frame's
+    /// own turn alone.
+    #[test]
+    fn an_unreadable_edit_is_an_edit_with_its_stars_kept() {
+        let json = br#"{"version": 99, "current": {"light": "nonsense"}, "meta": {"rating": 4}, "turn": 3}"#;
+        let s = summary_from_json(json, Path::new("x.gcd"), Some(Path::new("x.cr3")));
+        assert_eq!(s.meta.rating, 4);
+        assert!(s.edited);
+        assert_eq!(crate::unpack_turns(s.turns), (1, false));
+        // Nothing but meta: no develop, and a raw's default is the
+        // raw's.
+        let s = summary_from_json(br#"{"meta": {"rating": 1}}"#, Path::new("x.gcd"), None);
+        assert_eq!((s.meta.rating, s.edited, s.turns), (1, false, 0));
+        // Not JSON at all: there is something in it, and it counts as
+        // a develop; nothing else is known of it.
+        let s = summary_from_json(b"not json", Path::new("x.gcd"), None);
+        assert_eq!(
+            s,
+            Summary {
+                edited: true,
+                ..Summary::default()
+            }
+        );
+    }
+
+    /// A library at schema 3 is brought up in place: the two columns
+    /// added, and every row with a sidecar marked for the next pass
+    /// to read the sidecar again and fill them, nothing else of the
+    /// file read.
+    #[test]
+    fn a_schema_3_library_is_brought_up_and_its_sidecars_read_again() {
+        let dir = scratch("migrate-3");
+        let db = dir.join("library.sqlite");
+        let shoot_dir = dir.join("shoot");
+        std::fs::create_dir_all(&shoot_dir).unwrap();
+        let (r5, _, _) = shoot(&shoot_dir);
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+            lib.conn_mut()
+                .execute_batch(
+                    "ALTER TABLE files DROP COLUMN edited;
+                     ALTER TABLE files DROP COLUMN turns;
+                     PRAGMA user_version = 3;",
+                )
+                .unwrap();
+        }
+        assert!(matches!(
+            Library::open_read_only(&db),
+            Err(Error::NeedsRebuild(_))
+        ));
+        let mut lib = Library::open(&db).unwrap();
+        let version: i32 = lib
+            .conn_mut()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, crate::SCHEMA_VERSION);
+        assert_eq!(lib.len().unwrap(), 3);
+        let e = lib.by_path(&r5).unwrap().unwrap();
+        assert_eq!(
+            (e.meta.rating, e.edited),
+            (4, false),
+            "the meta kept, the develop not known yet"
+        );
+        let waiting: i64 = lib
+            .conn_mut()
+            .query_row(
+                "SELECT count(*) FROM files WHERE sidecar IS NOT NULL AND sidecar_hash IS NULL",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            waiting, 2,
+            "the two rows with a sidecar wait for it to be read again"
+        );
+        // The next pass reads those two sidecars and nothing else.
+        let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+        assert_eq!(
+            (report.meta_refreshed, report.unchanged),
+            (2, 1),
+            "{report:?}"
+        );
+        assert_eq!(report.added + report.changed, 0);
+        let e = lib.by_path(&r5).unwrap().unwrap();
+        // The shoot's sidecars carry a raw's default edit on a picture,
+        // which is a develop of a picture.
+        assert_eq!((e.meta.rating, e.edited), (4, true));
+        let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+        assert_eq!(report.meta_refreshed, 0, "{report:?}");
+        drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The row takes an XMP beside the frame the way the editor takes
+    /// it when it opens the frame: an XMP alone gives its rating and
+    /// keywords; an XMP the `.gcd` has not taken from yet lays its
+    /// fields over the `.gcd`'s meta, whatever the two files' times;
+    /// one the `.gcd` has taken from already (its mark) says nothing
+    /// more, so a rating cleared here is not undone by an older
+    /// opinion; and a change to the XMP is a change to the row.
+    #[test]
+    fn a_row_takes_the_xmp_beside_the_frame_as_the_editor_does() {
+        use greycard_edit::xmp;
+        let dir = scratch("xmp");
+        let only = dir.join("only.tif");
+        let both = dir.join("both.tif");
+        let taken = dir.join("taken.tif");
+        let bare = dir.join("bare.tif");
+        for (i, p) in [&only, &both, &taken, &bare].iter().enumerate() {
+            write_frame(p, &R6, i as u16 + 1);
+        }
+        let three = Meta {
+            rating: 3,
+            keywords: vec!["Harbor".into()],
+            ..Meta::default()
+        };
+        // Rated in another tool, never opened here.
+        std::fs::write(xmp::short_path(&only), xmp::fresh(&three, None)).unwrap();
+        // A `.gcd` with two stars and a label, and an XMP it has not
+        // taken from: the XMP's rating and keywords over it, the label
+        // kept (the XMP does not name one).
+        let mut s = Sidecar::default();
+        s.meta.rating = 2;
+        s.meta.label = Label::Red;
+        s.save(&both).unwrap();
+        std::fs::write(xmp::short_path(&both), xmp::fresh(&three, None)).unwrap();
+        // Taken from and then cleared here: the same XMP has nothing
+        // new to say, however its time compares.
+        let mut s = Sidecar::default();
+        std::fs::write(xmp::short_path(&taken), xmp::fresh(&three, None)).unwrap();
+        assert!(xmp::adopt(&taken, &mut s, || None).moved());
+        s.meta.set_rating(0);
+        s.save(&taken).unwrap();
+
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let row = |lib: &Library, p: &Path| lib.by_path(p).unwrap().unwrap();
+        let e = row(&lib, &only);
+        assert_eq!((e.meta.rating, e.edited), (3, false));
+        assert_eq!(e.meta.keywords, ["Harbor"]);
+        assert!(e.sidecar.is_none(), "no .gcd; the XMP is what the row read");
+        let e = row(&lib, &both);
+        assert_eq!((e.meta.rating, e.meta.label), (3, Label::Red));
+        assert_eq!(e.meta.keywords, ["Harbor"]);
+        assert_eq!(row(&lib, &taken).meta.rating, 0, "already taken from");
+        assert_eq!(row(&lib, &bare).meta.rating, 0);
+        // The same, through the filter and the rows.
+        assert_eq!(names(&lib, "rating>=3"), ["both.tif", "only.tif"]);
+        let rows = lib
+            .rows_under_canonical(std::slice::from_ref(&dir))
+            .unwrap();
+        assert_eq!(rows.len(), 4);
+
+        // The other tool rates `only` five: the XMP changed, and the
+        // next pass reads it again.
+        let five = Meta {
+            rating: 5,
+            ..Meta::default()
+        };
+        std::fs::write(xmp::short_path(&only), xmp::fresh(&five, None)).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(
+            (report.meta_refreshed, report.unchanged),
+            (1, 3),
+            "{report:?}"
+        );
+        assert_eq!(row(&lib, &only).meta.rating, 5);
+        // A `.gcd` appearing beside the XMP is a change too.
+        let mut s = Sidecar::default();
+        s.meta.rating = 1;
+        s.save(&only).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.meta_refreshed, 1, "{report:?}");
+        // The `.gcd` has no mark, so the XMP is taken over it, as the
+        // editor would take it on opening.
+        assert_eq!(row(&lib, &only).meta.rating, 5);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

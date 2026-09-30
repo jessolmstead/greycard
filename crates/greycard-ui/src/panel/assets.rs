@@ -3,7 +3,6 @@ use crate::panel::cull::{control_over_frame, leave_cull};
 use crate::panel::edit::{develop_soon, read_edit, schedule_save};
 use crate::panel::sync;
 use crate::*;
-use greycard_edit::camera;
 
 /// Whether to offer the lens profiles unprompted: only with no
 /// database on the machine, never after a Not now, and once a launch.
@@ -526,12 +525,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             // Another row clicked is the question left unanswered.
             app.set_preset_confirm_remove(-1);
-            let mut st = state.borrow_mut();
-            let Some(preset) = st.presets.get(i as usize).map(|e| e.preset.clone()) else {
+            let Some(preset) = state
+                .borrow()
+                .presets
+                .get(i as usize)
+                .map(|e| e.preset.clone())
+            else {
                 return;
             };
-            let profiles = camera::list();
-            sync::apply_preset(&mut st, &app, &worker, &preset, &profiles, sync::probe);
+            sync::preset_pressed(&state, &app, &worker, preset);
         });
     }
     {

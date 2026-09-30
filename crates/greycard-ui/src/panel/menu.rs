@@ -156,7 +156,7 @@ pub(crate) fn menu_asked(state: &Rc<RefCell<State>>, app: &App, row: i32) {
     app.set_menu_label(shared(metas.iter().map(|m| m.label.code())));
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
     // A right-click is a Control+click on a Mac, and a Mac's Control
     // is what Slint calls `meta`.
     app.set_ctrl_click_menu(cfg!(target_os = "macos"));
@@ -169,13 +169,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
         });
     }
     {
-        let (state, app_weak) = (state.clone(), app.as_weak());
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_menu_meta(move |kind, value| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
             if let Some(change) = menu_change(&kind, value) {
-                meta_on_selection(&state, &app, change);
+                meta_on_selection(&state, &app, &worker, change);
             }
         });
     }

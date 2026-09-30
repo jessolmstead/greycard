@@ -617,17 +617,26 @@ pub(crate) fn folders_of(files: &[PathBuf]) -> Vec<PathBuf> {
 /// Ask the indexer, if there is one, for the folders of the files
 /// now open. The files' rows as the index already holds them are
 /// read at once: a folder indexed last week has its facets before
-/// this pass has looked at a file.
-pub(crate) fn index_open_folder(st: &mut State) {
-    // A folder opened by hand is made canonical again as it opens: a
-    // link to it may point elsewhere now. The all-roots view's folders
-    // are the index's own, canonical already.
-    if st.view == crate::roots::View::Folder {
-        for dir in folders_of(&st.files) {
-            st.library.canonical.remove(&dir);
+/// this pass has looked at a file. When the read that brought the
+/// list asked the index already, `ids` are its answers, and the rows
+/// are not read again here.
+pub(crate) fn index_open_folder(st: &mut State, ids: Option<Vec<Option<i64>>>) {
+    match ids {
+        Some(ids) if ids.len() == st.files.len() => st.index_ids = ids,
+        _ => {
+            // A folder opened by hand is made canonical again as it
+            // opens: a link to it may point elsewhere now. The
+            // all-roots view's folders are the index's own, canonical
+            // already, and a read off the window's thread has made
+            // its folders canonical too.
+            if st.view == crate::roots::View::Folder {
+                for dir in folders_of(&st.files) {
+                    st.library.canonical.remove(&dir);
+                }
+            }
+            refresh_ids(st);
         }
     }
-    refresh_ids(st);
     let Some(indexer) = &st.index else {
         return;
     };
@@ -688,39 +697,83 @@ const READER_UNAVAILABLE: &str = "The library index could not be read";
 /// Each file's row id, as the index holds it now; `None` for a file
 /// it has no row for yet, and for every file while there is no index.
 /// A read that fails — busy past its few milliseconds — keeps the
-/// last answer.
-pub(crate) fn refresh_ids(st: &mut State) {
+/// last answer. In a folder's list, each frame still standing in from
+/// its row takes the row as it is now (`rows::apply_row`), so a pass
+/// that read a changed sidecar shows at the next word from the
+/// indexer; true when some frame's badges, turns or filter answer
+/// changed that way, and the browser's rows want rebuilding.
+///
+/// Only the ids are read for the whole list, one column a row, since
+/// this runs on the window's thread at every word from the indexer.
+/// The rows themselves, meta and keywords parsed, are read for the
+/// frames standing in, and only in a folder's list: a view of the
+/// roots has its rows brought by the merge its pass starts, off the
+/// window's thread (`roots::background_done`).
+pub(crate) fn refresh_ids(st: &mut State) -> bool {
     let started = Instant::now();
-    let Some(lib) = &st.index_reader else {
+    if st.index_reader.is_none() {
         st.index_ids = vec![None; st.files.len()];
-        return;
+        return false;
+    }
+    let standing: Vec<usize> = if matches!(st.view, crate::roots::View::Roots(_)) {
+        Vec::new()
+    } else {
+        (0..st.files.len())
+            .filter(|&i| !crate::rows::is_loaded(st, i))
+            .collect()
     };
-    // Each folder's canonical form as the window has kept it: a read
-    // off the window's thread hands them over with the list, so the
-    // disk is asked here only for a folder no read has seen yet.
-    let known = &mut st.library.canonical;
-    let asked = lib.ids_of_with(&st.files, &mut |dir| {
-        known
-            .entry(dir.to_path_buf())
-            .or_insert_with(|| greycard_library::key_folder(dir))
-            .clone()
-    });
-    match asked {
+    let paths: Vec<PathBuf> = standing.iter().map(|&i| st.files[i].clone()).collect();
+    let (ids, rows) = {
+        let lib = st.index_reader.as_ref().expect("a reader, looked at above");
+        // Each folder's canonical form as the window has kept it: a
+        // read off the window's thread hands them over with the list,
+        // so the disk is asked here only for a folder no read has seen
+        // yet.
+        let known = &mut st.library.canonical;
+        let mut canonical = |dir: &std::path::Path| {
+            known
+                .entry(dir.to_path_buf())
+                .or_insert_with(|| greycard_library::key_folder(dir))
+                .clone()
+        };
+        let ids = lib.ids_of_with(&st.files, &mut canonical);
+        let rows = if paths.is_empty() || ids.is_err() {
+            None
+        } else {
+            Some(lib.rows_of_with(&paths, &mut canonical))
+        };
+        (ids, rows)
+    };
+    match ids {
         Ok(ids) => st.index_ids = ids,
         Err(e) => {
             tracing::debug!("index: {e}; keeping the last answer");
             if st.index_ids.len() != st.files.len() {
                 st.index_ids = vec![None; st.files.len()];
             }
-            return;
+            return false;
         }
     }
+    let mut moved = false;
+    match rows {
+        Some(Ok(rows)) => {
+            for (i, row) in standing.into_iter().zip(rows) {
+                if let Some(row) = row {
+                    moved |= crate::rows::apply_row(st, i, &row);
+                }
+            }
+        }
+        Some(Err(e)) => tracing::debug!("index: {e}; the rows standing in kept"),
+        None => {}
+    }
     tracing::debug!(
-        "index: {} of {} frames have rows, read in {:.1} ms",
+        "index: {} of {} frames have rows, read in {:.1} ms{}",
         st.index_ids.iter().flatten().count(),
         st.files.len(),
-        started.elapsed().as_secs_f64() * 1e3
+        started.elapsed().as_secs_f64() * 1e3,
+        if moved { "; some meta moved" } else { "" }
     );
+    moved
 }
 
 /// Which frames the index's tests pass, as [`filter::Frame::index`]
@@ -1085,6 +1138,9 @@ pub(crate) fn told(app: &App, told: Told) {
             tracing::warn!("no library index: {message}");
             let mut st = state.borrow_mut();
             st.index = None;
+            // The view of the roots asked for will not come, and a
+            // folder opened meanwhile is recorded as any other.
+            st.library.wanted = None;
             st.index_progress = None;
             st.index_error = Some(format!("No library index: {message}"));
             st.awaiting_index = false;
@@ -1148,7 +1204,7 @@ pub(crate) fn told(app: &App, told: Told) {
                         };
                         let mut st = state.borrow_mut();
                         if st.index_generation == generation {
-                            index_open_folder(&mut st);
+                            index_open_folder(&mut st, None);
                             crate::panel::cull::show_filter(&st, &app);
                         }
                     });
@@ -1162,11 +1218,11 @@ pub(crate) fn told(app: &App, told: Told) {
                 st.index_error = None;
             }
             st.index_progress = None;
-            refresh_ids(&mut st);
+            let moved = refresh_ids(&mut st);
             let chose = !st.facets_wanted.is_empty() && choose_wanted(&mut st);
             st.awaiting_index = false;
             drop(st);
-            reread(&state, app, chose);
+            reread(&state, app, chose || moved);
             app.window().request_redraw();
         }
         Told::FilesIndexed => reread(&state, app, false),
@@ -1182,9 +1238,9 @@ pub(crate) fn told(app: &App, told: Told) {
 /// and the answer changed; otherwise only the chips.
 fn reread(state: &Rc<RefCell<State>>, app: &App, changed: bool) {
     let mut st = state.borrow_mut();
-    refresh_ids(&mut st);
+    let moved = refresh_ids(&mut st);
     let pass = index_pass(&st);
-    if changed || pass != st.index_passed {
+    if changed || moved || pass != st.index_passed {
         // The list is made from this answer, not asked again.
         st.index_passed = pass;
         st.index_pass_ready = true;

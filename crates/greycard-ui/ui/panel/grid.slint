@@ -335,6 +335,9 @@ export component GridSheet inherits Rectangle {
                         height: root.grid-cell - 2 * Theme.space-1;
                         source: t.image;
                         image-fit: contain;
+                        // A frame whose root is offline: there, but
+                        // not to be had until the drive is back.
+                        opacity: t.offline ? 0.4 : 1;
                     }
                     if t.failed: Rectangle {
                         x: Theme.space-1;

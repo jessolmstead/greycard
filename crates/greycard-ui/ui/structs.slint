@@ -23,6 +23,10 @@ export struct Thumb {
     /// format the decoder refuses): the cell says so rather than
     /// staying empty as if one were on its way.
     failed: bool,
+    /// The frame is under a root of the library that is offline (a
+    /// drive unplugged): listed from the index, drawn dimmed, its
+    /// picture from the cache if one is there.
+    offline: bool,
 }
 
 /// One of the strip's or the grid's cells: the browser's row it

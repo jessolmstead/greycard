@@ -158,6 +158,10 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     let Some(mut cull) = st.cull.take() else {
         return;
     };
+    // A pick whose sidecar was on its way is left with the mode: the
+    // frame stays current, and the open that would have followed
+    // finds it no longer the pick.
+    crate::rows::pick_over(st, app);
     st.prefetch.want(Vec::new());
     app.set_culling(false);
     app.set_panel_tab(cull.tab_kept.clone());
@@ -178,6 +182,12 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     // within its second would show it over another frame.
     st.notice_timer.stop();
     app.set_notice_on(false);
+    // The panel takes the frame's edit here, so it is no stand-in's
+    // any more, and the load is not an open of its own.
+    st.panel_stand_in = None;
+    if !crate::rows::load_frame(st, app, c) {
+        st.panel_stand_in = Some(st.files[c].clone());
+    }
     let edit = with.unwrap_or_else(|| st.sidecars[c].current.clone());
     st.target = None;
     show_edit(st, &edit, app, None);
@@ -200,7 +210,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     // saying it had would gate the panel off the developed picture
     // that is still on screen.
     if let Some(preview) = st.hold.as_ref().and_then(|h| h.cache.best(c)) {
-        let (turns, flip) = thumb_turns_of(&st.sidecars, c, app, true);
+        let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, c, app, true);
         let plane = Geometry {
             turns,
             flip,
@@ -238,6 +248,9 @@ pub(crate) fn control_over_frame(st: &mut State, app: &App) -> Option<Edit> {
     if touched == before {
         return None;
     }
+    if !crate::rows::load_frame(st, app, c) {
+        return None;
+    }
     let frame = &st.sidecars[c].current;
     match greycard_edit::overlay_changes(&before, &touched, frame) {
         Ok(edit) => Some(edit),
@@ -256,6 +269,12 @@ pub(crate) fn cull_select(st: &mut State, app: &App, file: usize) {
         return;
     };
     let was = st.current;
+    // Culling reaching a frame reads its whole sidecar, if it was
+    // standing in from its row: the history panel and the keys want
+    // it, and leaving the mode develops it. One under a root that is
+    // offline is stepped onto all the same, and the status says why
+    // there is no picture.
+    crate::rows::load_frame(st, app, file);
     // As the loupe takes it: leaving culling develops this frame,
     // and a part-migrated Original crop would be measured first.
     migrate_frame(st, file);
@@ -455,7 +474,7 @@ fn placeholder_arrived(st: &mut State, app: &App, file: usize) {
     let Some(preview) = st.hold.as_ref().and_then(|h| h.cache.best(file)) else {
         return;
     };
-    let (turns, flip) = thumb_turns_of(&st.sidecars, file, app, true);
+    let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, file, app, true);
     let plane = Geometry {
         turns,
         flip,
@@ -669,7 +688,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     let rects = cull::tile_rects(vw, vh, rows.len().max(1));
     // The current frame's picture, which the others' centers follow.
     let current_full = cull.cache.best(c).map(|p| {
-        let (turns, flip) = thumb_turns_of(&st.sidecars, c, app, from_panel(c));
+        let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, c, app, from_panel(c));
         Geometry {
             turns,
             flip,
@@ -743,7 +762,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
             let texture = renderer.encoded_texture(preview.width, preview.height, &preview.rgba);
             cull.textures.insert(file, (preview.id, texture));
         }
-        let (turns, flip) = thumb_turns_of(&st.sidecars, file, app, from_panel(file));
+        let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, file, app, from_panel(file));
         let geometry = Geometry {
             turns,
             flip,
@@ -980,10 +999,17 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
 /// fields borrowed apart.
 pub(crate) fn thumb_turns_of(
     sidecars: &[Sidecar],
+    from_row: &[crate::rows::FromRow],
     file: usize,
     app: &App,
     from_panel: bool,
 ) -> (u8, bool) {
+    // A frame whose sidecar stands in from its row: the row says.
+    if let Some(from) = from_row.get(file)
+        && !from.read
+    {
+        return from.turns;
+    }
     let turn = sidecars[file].turn;
     if from_panel {
         read_geometry(app).shown_turns(turn)
@@ -1135,6 +1161,10 @@ pub(crate) fn to_move_out(st: &State, i: usize) -> bool {
     st.sidecars
         .get(i)
         .is_some_and(|s| s.meta.flag == meta::Flag::Reject)
+        // Under a root that is offline nothing is moved and nothing is
+        // made: a rejects folder made where the drive was would be a
+        // folder on the mount point, and its frames marked missing.
+        && !crate::rows::is_offline(st, i)
         && st
             .files
             .get(i)
@@ -1263,6 +1293,7 @@ pub(crate) fn drop_files(
     st.files = files;
     st.sidecars = kept.iter().map(|&i| st.sidecars[i].clone()).collect();
     st.seed_blend = kept.iter().map(|&i| st.seed_blend[i]).collect();
+    st.from_row = kept.iter().map(|&i| st.from_row[i].clone()).collect();
     st.thumb_base = kept.iter().map(|&i| st.thumb_base[i].take()).collect();
     st.thumb_shown = kept.iter().map(|&i| st.thumb_shown[i]).collect();
     st.thumb_made = kept.iter().map(|&i| st.thumb_made[i]).collect();
@@ -1275,7 +1306,7 @@ pub(crate) fn drop_files(
         .iter()
         .map(|&i| st.index_passed.get(i).copied().unwrap_or(true))
         .collect();
-    crate::library::index_open_folder(st);
+    crate::library::index_open_folder(st, None);
     // The indices the previews and the worker's thumbnails were
     // keyed by have moved: the previews are decoded again (cheap),
     // and a thumbnail still owed is asked for again.
@@ -1291,11 +1322,9 @@ pub(crate) fn drop_files(
         let from: Vec<Option<usize>> = kept.iter().map(|&i| Some(i)).collect();
         run.renumber(&from);
     }
-    worker.replace_thumbnails(
-        crate::roots::owed_thumbnails(st),
-        // The rows are the old list's until the rebuild below.
-        None,
-    );
+    // The rows are the old list's until the rebuild below, so none are
+    // put first.
+    crate::roots::ask_owed(st, worker);
     let went = current_path
         .as_ref()
         .map(|p| st.files.iter().position(|f| f == p));
@@ -2033,14 +2062,17 @@ mod tests {
         let loaded = camera_picture(&state.borrow(), 1, (6000, 4000));
         deliver_preview(&app, loaded);
         let before = state.borrow().generation;
-        let turns_before = thumb_turns_of(&state.borrow().sidecars, 1, &app, true);
+        let turns_before = {
+            let st = state.borrow();
+            thumb_turns_of(&st.sidecars, &st.from_row, 1, &app, true)
+        };
         app.invoke_frame_turned(1);
         let st = state.borrow();
         assert!(st.generation > before, "the develop was not re-keyed");
         assert_eq!(standing_in(&st), Some(1), "the turn took it down");
         assert_ne!(
             turns_before,
-            thumb_turns_of(&st.sidecars, 1, &app, true),
+            thumb_turns_of(&st.sidecars, &st.from_row, 1, &app, true),
             "the camera picture would be drawn the same way up"
         );
         assert!(app.get_placeholder());

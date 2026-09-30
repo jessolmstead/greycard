@@ -379,6 +379,7 @@ pub(crate) fn thumb_for(path: &Path, meta: &Meta) -> Thumb {
         label: meta.label.code(),
         chosen: false,
         failed: false,
+        offline: false,
     }
 }
 
@@ -494,6 +495,10 @@ pub(crate) fn set_meta(
     frames: &[usize],
     change: meta::Change,
 ) -> (meta::Change, Option<usize>) {
+    // A change is written to the whole sidecar, so each frame's is
+    // read first where it stands in from its row; one under a root
+    // that is offline is left out, and the status line says so.
+    let frames = &crate::rows::load_frames(st, app, frames);
     let was_shown: Vec<bool> = frames.iter().map(|&i| row_of(st, i).is_some()).collect();
     let before: Vec<Tags> = frames
         .iter()
@@ -580,6 +585,10 @@ pub(crate) fn turn_frames(
     if quarters.rem_euclid(4) == 0 {
         return;
     }
+    // A turn is written to the whole sidecar, so each frame's is read
+    // first where it stands in from its row; one under a root that is
+    // offline is left out, and the status line says so.
+    let frames = &crate::rows::load_frames(st, app, frames);
     // The frame whose edit the panel owns: the open one, and not
     // while culling, where the panel still holds the last-opened
     // frame's edit and the sidecars are the truth.
@@ -741,7 +750,9 @@ pub(crate) fn show_no_thumb(st: &mut State, app: &App, i: usize) {
         return;
     };
     st.thumb_failed[i] = true;
-    if had {
+    // A frame under a root that is offline had only the cache to
+    // come from: its tile is dimmed already, and says nothing more.
+    if had || crate::rows::is_offline(st, i) {
         return;
     }
     let Some(row) = row_of(st, i) else {
@@ -918,6 +929,12 @@ pub(crate) fn filter_shows(st: &State, file: usize) -> bool {
 /// [`Geometry::shown_turns`]. That is what makes a turn cost a
 /// redraw here and not a decode.
 pub(crate) fn thumb_turns(st: &State, app: &App, file: usize) -> (u8, bool) {
+    // A frame whose sidecar stands in from its row: the row says.
+    if let Some(from) = st.from_row.get(file)
+        && !from.read
+    {
+        return from.turns;
+    }
     let turn = st.sidecars[file].turn;
     if st.current == Some(file) && st.cull.is_none() {
         read_geometry(app).shown_turns(turn)
@@ -944,12 +961,19 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     }
     st.shown = st.filter.apply(&filter_frames(st));
     show_filter(st, app);
+    // Under a root that is offline the tile is dimmed, and a picture
+    // the cache did not have is no failure of the file's.
+    let dimmed = !st.library.offline.is_empty();
     let thumbs = st
         .shown
         .iter()
-        .map(|&f| Thumb {
-            failed: st.thumb_failed[f] && st.thumb_base[f].is_none(),
-            ..thumb_for(&st.files[f], &st.sidecars[f].meta)
+        .map(|&f| {
+            let offline = dimmed && crate::rows::is_offline(st, f);
+            Thumb {
+                offline,
+                failed: st.thumb_failed[f] && st.thumb_base[f].is_none() && !offline,
+                ..thumb_for(&st.files[f], &st.sidecars[f].meta)
+            }
         })
         .collect();
     // No row has a picture on it now. The rows the views have cells
@@ -1018,6 +1042,7 @@ pub(crate) fn grid_filled_rows(
 /// one: a frame given a star in the browser has a sidecar with a
 /// default edit in it, and it should still open at the blend its ISO
 /// asks for.
+#[cfg(test)]
 pub(crate) fn load_sidecars(files: &[PathBuf], write_sidecars: bool) -> (Vec<Sidecar>, Vec<bool>) {
     files
         .iter()
@@ -1025,33 +1050,29 @@ pub(crate) fn load_sidecars(files: &[PathBuf], write_sidecars: bool) -> (Vec<Sid
         .unzip()
 }
 
-/// [`load_sidecars`] on every core, for a list too long to read on
-/// the window's thread: the all-roots view's, which is the whole
-/// library. The order is the list's. `read`, when given, is bumped
-/// for each sidecar read, for the window's bar.
-pub(crate) fn load_sidecars_parallel(
-    files: &[PathBuf],
-    write_sidecars: bool,
-    read: Option<&std::sync::atomic::AtomicUsize>,
-) -> (Vec<Sidecar>, Vec<bool>) {
-    use rayon::prelude::*;
-    files
-        .par_iter()
-        .map(|f| {
-            let one = load_sidecar(f, write_sidecars);
-            if let Some(read) = read {
-                read.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-            one
-        })
-        .unzip()
+/// [`load_sidecar_said`] without the word on what went wrong, for the
+/// tests.
+#[cfg(test)]
+pub(crate) fn load_sidecar(f: &Path, write_sidecars: bool) -> (Sidecar, bool) {
+    let (sidecar, seed, _) = load_sidecar_said(f, write_sidecars);
+    (sidecar, seed)
 }
 
-/// One file's sidecar, as [`load_sidecars`] reads each.
-pub(crate) fn load_sidecar(f: &Path, write_sidecars: bool) -> (Sidecar, bool) {
+/// One file's sidecar, read from disk, and whether the frame is a raw
+/// whose edit is still the default (see [`load_sidecars`]): what
+/// [`crate::rows::from_disk`] reads for a frame the index has no row
+/// for, and for a frame whose row stood in until now. Beside them,
+/// what went wrong when the `.gcd` was not there or could not be read
+/// and the default stands in for it, so a frame whose row says it has
+/// a develop is not given the default in its place.
+pub(crate) fn load_sidecar_said(
+    f: &Path,
+    write_sidecars: bool,
+) -> (Sidecar, bool, Option<crate::rows::Trouble>) {
     if !write_sidecars {
-        return (Sidecar::default(), false);
+        return (Sidecar::default(), false, None);
     }
+    let mut trouble = None;
     // A picture that is not a raw starts from its own default.
     let fresh = || {
         if greycard_core::picture::is_picture_path(f) {
@@ -1083,12 +1104,16 @@ pub(crate) fn load_sidecar(f: &Path, write_sidecars: bool) -> (Sidecar, bool) {
             let seed = raw && files::never_developed(&s);
             (s, seed)
         }
-        Ok(None) => fresh(),
+        Ok(None) => {
+            trouble = Some(crate::rows::Trouble::Missing);
+            fresh()
+        }
         Err(e) => {
             tracing::warn!(
                 "{}: sidecar: {e}; starting from the default edit",
                 file_name(f)
             );
+            trouble = Some(crate::rows::Trouble::Unreadable(format!("{e}")));
             fresh()
         }
     };
@@ -1132,28 +1157,25 @@ pub(crate) fn load_sidecar(f: &Path, write_sidecars: bool) -> (Sidecar, bool) {
             );
         }
     }
-    (sidecar, seed)
+    (sidecar, seed, trouble)
 }
 
-/// Replace the file list with `dir`'s files, the same scan the launch
-/// path does, and select the last file open if it lies there, else
-/// the first. An empty folder is left alone rather than emptying the
-/// strip under the user's feet.
+/// Replace the file list with `dir`'s files, and select the last file
+/// open if it lies there, else the first. The folder is listed and its
+/// frames' sidecars found off the window's thread
+/// ([`crate::roots::open_listing`]); an empty folder, or a path that is
+/// not one, is said and the list left alone rather than emptied under
+/// the user's feet.
 pub(crate) fn open_folder(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path) {
-    let Ok(files) = files::list_files(dir) else {
-        tracing::warn!("{}: not a folder", dir.display());
-        app.set_status(format!("{}: not a folder", dir.display()).into());
-        return;
-    };
-    if files.is_empty() {
-        tracing::warn!("no pictures in {}", dir.display());
-        app.set_status(format!("no pictures in {}", dir.display()).into());
-        return;
-    }
     let last = settings::Settings::load().last_file;
     let last = (!last.is_empty()).then(|| PathBuf::from(last));
-    let select = files::select_index(&files, last.as_deref());
-    open_files(state, app, worker, files, select);
+    crate::roots::open_listing(
+        state,
+        app,
+        worker,
+        crate::roots::Listing::Folder(dir.to_path_buf()),
+        crate::roots::Select::Last(last),
+    );
 }
 
 /// What the desktop asked to open, the Finder's double-click or Open
@@ -1183,46 +1205,27 @@ pub(crate) fn open_paths(
         state.borrow_mut().filter = filter::Filter::default();
         app.set_filter_text("".into());
     }
-    open_files(state, app, worker, files, 0);
+    crate::roots::open_listing(
+        state,
+        app,
+        worker,
+        crate::roots::Listing::Files(files),
+        crate::roots::Select::Row(0),
+    );
 }
 
-/// A new list of files in the browser, a folder's or the desktop's,
-/// `select` opened. Its sidecars are read here, on the window's
-/// thread: a folder is a few hundred at most. The all-roots view,
-/// which can be the whole library, reads them elsewhere and comes in
-/// by [`open_loaded`].
-fn open_files(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    worker: &Rc<Worker>,
-    files: Vec<PathBuf>,
-    select: usize,
-) {
-    let (sidecars, seed_blend) = {
-        let mut st = state.borrow_mut();
-        // A view of the roots still being read is dropped by the
-        // generation, and nothing is loading any more.
-        st.view_generation += 1;
-        crate::roots::loading_done(&mut st.library, app);
-        st.view = crate::roots::View::Folder;
-        // The chips follow the view: the root that was on goes off,
-        // and "Add this folder" is offered when this one is not under
-        // a root. The first cut left the old chip lit.
-        crate::roots::show(&st, app);
-        load_sidecars(&files, st.write_sidecars)
-    };
-    open_loaded(state, app, worker, files, sidecars, seed_blend, select);
-}
-
-/// A new list of files in the browser with their sidecars read,
-/// `select` opened.
+/// A new list of files in the browser, each with its sidecar as a read
+/// off the window's thread brought it (read from disk, or standing in
+/// from its row in the index: see [`crate::rows`]), `select` opened.
+/// `ids_known` says the read asked the index for every file's row, so
+/// each `Held::id` is the answer and the index is not asked again here.
 pub(crate) fn open_loaded(
     state: &Rc<RefCell<State>>,
     app: &App,
     worker: &Rc<Worker>,
     files: Vec<PathBuf>,
-    sidecars: Vec<Sidecar>,
-    seed_blend: Vec<bool>,
+    held: Vec<crate::rows::Held>,
+    ids_known: bool,
     select: usize,
 ) {
     let started = std::time::Instant::now();
@@ -1253,8 +1256,23 @@ pub(crate) fn open_loaded(
     st.prefetch.want(Vec::new());
     st.current = None;
     st.picked.clear();
+    // The requests for the old list's sidecars are dropped with it.
+    crate::rows::list_replaced(&mut st, app);
+    let count = files.len();
+    let mut sidecars = Vec::with_capacity(count);
+    let mut seed_blend = Vec::with_capacity(count);
+    let mut from_row = Vec::with_capacity(count);
+    let mut ids = Vec::with_capacity(count);
+    for h in held {
+        sidecars.push(h.sidecar);
+        seed_blend.push(h.seed);
+        from_row.push(h.from_row);
+        ids.push(h.id);
+    }
     st.sidecars = sidecars;
     st.seed_blend = seed_blend;
+    st.from_row = from_row;
+    let ids = ids_known.then_some(ids);
     st.thumb_base = vec![None; files.len()];
     st.thumb_shown = vec![None; files.len()];
     // A folder of its own: the grid's zoom does not carry its
@@ -1279,9 +1297,24 @@ pub(crate) fn open_loaded(
     st.index_progress = None;
     st.index_tries = 0;
     st.index_error = None;
-    crate::library::index_open_folder(&mut st);
-    crate::panel::recent::opened(&mut st, app);
+    crate::library::index_open_folder(&mut st, ids);
+    // Named, and put at the front of Recently opened; not the launch's
+    // folder while the roots' view asked for is about to take its
+    // place (`wanted`, cleared when the index fails or there is none,
+    // so no view is waited on for ever).
+    if st.library.wanted.is_none() {
+        crate::panel::recent::opened(&mut st, app);
+    }
     let ids = started.elapsed();
+    // What the command line asked of the first frame, onto its
+    // sidecar before it is opened: the launch's list is the first to
+    // land, and the frame's own sidecar is read for it.
+    if let Some(tweak) = st.tweak_at_start.take()
+        && select < st.files.len()
+        && crate::rows::load_frame(&mut st, app, select)
+    {
+        tweak(&mut st, select);
+    }
     rebuild_browser(&mut st, app);
     let listed = started.elapsed();
     // The file to open, as a row of the list; hidden by the filter,
@@ -1304,11 +1337,11 @@ pub(crate) fn open_loaded(
     if row.is_some() {
         hold_thumbnails_for_develop(app, worker);
     }
-    for (i, f) in files.iter().enumerate() {
-        worker.send(Job::Thumbnail {
-            index: i,
-            path: f.clone(),
-        });
+    {
+        let st = state.borrow();
+        for i in 0..files.len() {
+            worker.send(crate::rows::thumb_job(&st, i));
+        }
     }
     tracing::debug!(
         "browser: {} frames in, rows read by {:.1} ms, the list made by {:.1} ms, \
@@ -1319,10 +1352,36 @@ pub(crate) fn open_loaded(
         started.elapsed().as_secs_f64() * 1e3
     );
     if let Some(row) = row {
-        app.invoke_select(row as i32);
+        open_at_start(state, app, row);
     } else if !files.is_empty() && !deferred {
         tracing::warn!("no frames pass the filter");
         app.set_status(filter::NOTHING_SHOWN.into());
+        // A batch run would wait for a picture that never comes.
+        let mut st = state.borrow_mut();
+        if st.batch {
+            st.failed = true;
+            let _ = slint::quit_event_loop();
+        }
+    }
+}
+
+/// Open browser row `row`, and put the `--also` rows beside it in the
+/// set (Ctrl+clicks on those rows), which the launch asked for once:
+/// from the rendering setup when the list was in before it, else when
+/// the list lands.
+pub(crate) fn open_at_start(state: &Rc<RefCell<State>>, app: &App, row: usize) {
+    app.invoke_select(row as i32);
+    let (also, rows) = {
+        let mut st = state.borrow_mut();
+        (std::mem::take(&mut st.also_at_start), st.shown.len())
+    };
+    for r in also {
+        // A row the filter left out is said, not passed over quietly.
+        if r >= rows {
+            tracing::warn!("--also {r}: the browser shows {rows} rows (from 0); not in the set");
+            continue;
+        }
+        app.invoke_frame_clicked(r as i32, true, false);
     }
 }
 
@@ -1483,7 +1542,9 @@ pub(crate) fn file_name(p: &std::path::Path) -> String {
 /// Open the frame on browser row `row`: decode and develop it on the
 /// worker, or in culling show its JPEG. It becomes the current frame;
 /// the set becomes that frame alone, or with `extend` (Shift and an
-/// arrow) keeps what it held and takes this frame as well.
+/// arrow) keeps what it held and takes this frame as well. A frame
+/// whose sidecar stands in from its row is current from this moment
+/// and opened when its sidecar lands ([`pick_pending`]).
 pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, extend: bool) {
     // The window's rows are the browser's list, which the
     // filter may have shortened; the file is what is opened.
@@ -1499,8 +1560,104 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
     if let Some(compare) = st.cull_at_start.take() {
         enter_cull(st, app, compare);
     }
+    if !crate::rows::is_loaded(st, i) && !crate::rows::is_offline(st, i) {
+        pick_pending(st, app, i, row);
+        return;
+    }
+    open_frame(st, app, worker, i);
+}
+
+/// Frame `i` picked while its sidecar stands in from its row: it is
+/// the current frame from now, the panel shows the default edit that
+/// stands in, read-only, the status says the sidecar is being read,
+/// and a request goes out for it; the open proper
+/// ([`open_frame`]) runs when the read lands, if the frame is still the
+/// pick. Keys pressed on it meanwhile are requests of their own, queued
+/// behind this one, and reach the frame once it is open; nothing
+/// reaches the frame that was current before the pick.
+fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
+    // Leaving the frame before: its panel saved, as an open saves it,
+    // unless it was itself a pick whose panel was never its own.
+    if st.cull.is_none()
+        && let Some(c) = st.current
+        && st.pick_pending.as_deref() != st.files.get(c).map(PathBuf::as_path)
+    {
+        let outgoing = read_edit(app, &st.edit, st.target);
+        if st.base_white.is_some() {
+            st.held = Some(outgoing.clone());
+        } else {
+            st.zoom = 0.0;
+        }
+        save_edit(st, outgoing);
+    }
+    let path = st.files[i].clone();
+    st.pick_pending = Some(path.clone());
+    st.current = Some(i);
+    st.generation += 1;
+    if st.cull.is_none() {
+        let edit = st.sidecars[i].current.clone();
+        st.target = None;
+        st.placing = None;
+        app.set_placing("".into());
+        st.guiding.clear();
+        st.overridden = None;
+        show_edit(st, &edit, app, None);
+        st.edit = edit;
+        st.panel_stand_in = Some(path.clone());
+        show_history(st, app);
+    }
+    app.set_selected(row);
+    app.set_file_name(file_name(&path).into());
+    app.set_busy(true);
+    app.set_status(format!("reading {}'s sidecar...", file_name(&path)).into());
+    show_set(st, app);
+    crate::rows::request_in(
+        st,
+        app,
+        vec![path.clone()],
+        &format!("open of {}", file_name(&path)),
+        true,
+        Box::new(move |state, app, worker, at| {
+            let mut st = state.borrow_mut();
+            let Some(i) = at.first().copied().flatten() else {
+                // Gone before its sidecar came: the pick is over.
+                if st.pick_pending.as_deref() == Some(path.as_path()) {
+                    crate::rows::pick_over(&mut st, app);
+                    app.set_busy(false);
+                }
+                return;
+            };
+            // Still the pick: opened. Moved on from: its sidecar is in
+            // memory now, and nothing shows.
+            if st.pick_pending.as_deref() != Some(path.as_path()) || st.current != Some(i) {
+                return;
+            }
+            // Still the pick and standing in: its read was started
+            // under a list since replaced by a view's read (the
+            // generation moved) and filled nothing, so it is asked for
+            // again. One that failed opens as it stands in, the status
+            // line saying why (`rows::take`).
+            if !crate::rows::is_loaded(&st, i)
+                && !crate::rows::is_offline(&st, i)
+                && st.from_row.get(i).is_some_and(|r| r.unread.is_none())
+            {
+                let row = row_of(&st, i).map_or(-1, |r| r as i32);
+                pick_pending(&mut st, app, i, row);
+                return;
+            }
+            open_frame(&mut st, app, worker, i);
+        }),
+    );
+}
+
+/// The open proper of frame `i`, its sidecar in memory (or its root
+/// offline): the develop on the worker, or in culling its JPEG.
+pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
+    let row = row_of(st, i).map_or(-1, |r| r as i32);
+    let offline = !crate::rows::is_loaded(st, i);
     // In culling nothing is developed: the frame's JPEG shows.
     if st.cull.is_some() {
+        crate::rows::pick_over(st, app);
         cull_select(st, app, i);
         show_set(st, app);
         return;
@@ -1509,8 +1666,11 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
     // The viewport keeps the old picture under the old look
     // until the new frame's camera JPEG is decoded, which
     // stands in until its develop lands; a file chosen from
-    // the strip opens fitted either way.
-    if st.current.is_some() {
+    // the strip opens fitted either way. A pick whose sidecar was on
+    // its way had no panel of its own to keep.
+    if let Some(c) = st.current
+        && st.pick_pending.as_deref() != st.files.get(c).map(PathBuf::as_path)
+    {
         let outgoing = read_edit(app, &st.edit, st.target);
         if st.base_white.is_some() {
             st.held = Some(outgoing.clone());
@@ -1518,6 +1678,33 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
             st.zoom = 0.0;
         }
         save_edit(st, outgoing);
+    }
+    crate::rows::pick_over(st, app);
+    // The panel is the frame's own from here, or the stand-in's again
+    // below.
+    st.panel_stand_in = None;
+    if offline {
+        // The panel shows the frame's default edit, the one standing
+        // in, and not the last frame's: a sync, a copy or a preset
+        // from here would otherwise take another frame's edit for this
+        // one's, and every one of them refuses an unloaded source.
+        let edit = st.sidecars[i].current.clone();
+        st.target = None;
+        st.placing = None;
+        app.set_placing("".into());
+        st.guiding.clear();
+        show_edit(st, &edit, app, None);
+        st.edit = edit;
+        st.panel_stand_in = Some(st.files[i].clone());
+        st.current = Some(i);
+        st.generation += 1;
+        app.set_selected(row);
+        app.set_file_name(file_name(&st.files[i]).into());
+        app.set_busy(false);
+        show_history(st, app);
+        crate::rows::say_offline_for(st, app, i, ": nothing to develop, and no change is kept");
+        show_set(st, app);
+        return;
     }
     // Before the edit reaches the panel, and so before any
     // refit can run on it: a sidecar from an older build
@@ -1678,28 +1865,107 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
 pub(crate) fn meta_on_selection(
     state: &Rc<RefCell<State>>,
     app: &App,
+    worker: &Rc<Worker>,
     change: meta::Change,
 ) -> bool {
-    let mut st = state.borrow_mut();
-    // The whole selection: the current frame and the set.
-    let frames = chosen_frames(&st);
-    if frames.is_empty() {
+    // The whole selection: the current frame and the set, as it is
+    // now. A request for their sidecars, and the change over exactly
+    // those frames once they are in (`rows::request`): at once when
+    // they are, in its turn otherwise.
+    let paths: Vec<PathBuf> = {
+        let st = state.borrow();
+        chosen_frames(&st)
+            .into_iter()
+            .map(|i| st.files[i].clone())
+            .collect()
+    };
+    if paths.is_empty() {
         return false;
     }
-    let (settled, next) = set_meta(&mut st, app, &frames, change);
-    let culling = st.cull.is_some();
-    let move_on = culling && st.cull_move_on && frames.len() == 1;
-    if culling {
+    // Culling's move-on steps now, at the press, not when the key
+    // lands: the request carries the frame the user saw, and the pick
+    // moves to the next frame (a stand-in if unloaded, a request of its
+    // own), so each key in a run of keys reaches its own frame. Stepped
+    // when the key landed, every key pressed during the first frame's
+    // read named that frame, and each stepped again.
+    let move_on = {
+        let st = state.borrow();
+        st.cull.is_some() && st.cull_move_on && paths.len() == 1
+    };
+    // On the last row the step has nowhere to go, so a key that takes
+    // the frame out of the filtered list leaves nothing on screen
+    // unless the landing may put the selection on the nearest row
+    // (§123's rule), as the key applied at once does below. So it may,
+    // there: the end frame is the same whether the key applied at
+    // once or waited for its read.
+    let at_end = {
+        let st = state.borrow();
+        st.current
+            .and_then(|c| row_of(&st, c))
+            .is_some_and(|r| r + 1 == st.shown.len())
+    };
+    let may_select = !move_on || at_end;
+    let what = match change {
+        meta::Change::Rating(_) => "rating key",
+        meta::Change::Flag(_) => "flag key",
+        meta::Change::Label(_) => "label key",
+    };
+    let ran = crate::rows::request(
+        state,
+        app,
+        worker,
+        paths,
+        what,
+        Box::new(move |state, app, _, at| {
+            let frames: Vec<usize> = at.into_iter().flatten().collect();
+            meta_on(state, app, &frames, change, may_select);
+        }),
+    );
+    if move_on {
+        // The key applied now, and the frame taken out of the filtered
+        // list by it: the nearest frame shown takes the selection, once,
+        // not the one after (the landing did that itself on the last
+        // row). Otherwise one step on, whether the key applied or is
+        // queued behind the frame's read.
+        let hidden = {
+            let st = state.borrow();
+            st.current
+                .filter(|&c| ran && row_of(&st, c).is_none())
+                .and_then(|c| cull::nearest_row(&st.shown, c))
+        };
+        match hidden {
+            Some(_) if may_select => {}
+            Some(row) => app.invoke_select(row as i32),
+            None => app.invoke_step(1, false),
+        }
+    }
+    true
+}
+
+/// `change` over `frames`, their sidecars in hand: recorded, written,
+/// and the word said in culling; with `may_select`, the selection put
+/// on the nearest row when the frame left the filtered list (not when
+/// the press moved it on already).
+fn meta_on(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    frames: &[usize],
+    change: meta::Change,
+    may_select: bool,
+) {
+    let mut st = state.borrow_mut();
+    if frames.is_empty() {
+        return;
+    }
+    let (settled, next) = set_meta(&mut st, app, frames, change);
+    if st.cull.is_some() {
         say_notice(&mut st, app, tags::notice(settled));
     }
     drop(st);
     // The frame left the filtered list: on to the nearest.
-    if let Some(row) = next {
+    if let (Some(row), true) = (next, may_select) {
         app.invoke_select(row as i32);
-    } else if move_on {
-        app.invoke_step(1, false);
     }
-    true
 }
 
 /// How long the word for a key stays up before it fades: long enough
@@ -1730,7 +1996,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     // A key that names what a frame already carries is still the
     // browser's key and is still eaten: it just writes nothing.
     {
-        let (state, app_weak) = (state.clone(), app.as_weak());
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_meta_key(move |key| {
             let Some(app) = app_weak.upgrade() else {
                 return false;
@@ -1738,7 +2004,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(change) = meta::Change::from_key(&key) else {
                 return false;
             };
-            meta_on_selection(&state, &app, change)
+            meta_on_selection(&state, &app, &worker, change)
         });
     }
     // The frame's own turn, [ and ], and the panel's two buttons:
@@ -1750,10 +2016,27 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let mut st = state.borrow_mut();
-            // The whole selection, as the meta keys have it.
-            let frames = chosen_frames(&st);
-            turn_frames(&mut st, &app, &worker, &frames, quarters);
+            // The whole selection, as the meta keys have it: a request
+            // for its sidecars, and the turn over exactly those frames
+            // once they are in.
+            let paths: Vec<PathBuf> = {
+                let st = state.borrow();
+                chosen_frames(&st)
+                    .into_iter()
+                    .map(|i| st.files[i].clone())
+                    .collect()
+            };
+            crate::rows::request(
+                &state,
+                &app,
+                &worker,
+                paths,
+                "turn",
+                Box::new(move |state, app, worker, at| {
+                    let frames: Vec<usize> = at.into_iter().flatten().collect();
+                    turn_frames(&mut state.borrow_mut(), app, worker, &frames, quarters);
+                }),
+            );
         });
     }
     // Selecting a file: decode and develop it on the worker.
@@ -1959,10 +2242,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     && st.thumb_asked[i] < want
                 {
                     st.thumb_asked[i] = want;
-                    worker.send(Job::Thumbnail {
-                        index: i,
-                        path: st.files[i].clone(),
-                    });
+                    worker.send(crate::rows::thumb_job(&st, i));
                 }
             }
             // After the pushes, which clear the queue's order.
@@ -3035,7 +3315,8 @@ mod tests {
             let (one, _) = load_sidecars(&files, true);
             let serial = t.elapsed().as_secs_f64();
             let t = std::time::Instant::now();
-            let (pool, _) = load_sidecars_parallel(&files, true, None);
+            let none = vec![None; files.len()];
+            let pool = crate::rows::bring(&files, &none, true, None);
             let parallel = t.elapsed().as_secs_f64();
             assert_eq!(one.len(), pool.len());
             eprintln!(

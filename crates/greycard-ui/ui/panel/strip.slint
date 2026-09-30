@@ -115,6 +115,9 @@ export component Filmstrip inherits Rectangle {
                     spacing: Theme.space-1;
                     Image {
                         source: t.image;
+                        // A frame whose root is offline: there, but
+                        // not to be had until the drive is back.
+                        opacity: t.offline ? 0.4 : 1;
                         height: photo-h;
                         image-fit: contain;
                     }

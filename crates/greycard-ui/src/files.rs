@@ -9,19 +9,6 @@
 
 use crate::*;
 
-/// `files`' index of `last`, when it is among them; the first
-/// otherwise. Compared by the canonical path, since a directory scan
-/// and a remembered path are not always spelled the same way.
-pub fn select_index(files: &[PathBuf], last: Option<&Path>) -> usize {
-    last.and_then(|want| {
-        let want = std::fs::canonicalize(want).unwrap_or_else(|_| want.to_path_buf());
-        files
-            .iter()
-            .position(|f| std::fs::canonicalize(f).map(|c| c == want).unwrap_or(false))
-    })
-    .unwrap_or(0)
-}
-
 /// Whether a raw's sidecar has nothing in it that a develop put
 /// there: the edit is the default, and there is no history and no
 /// snapshot behind it. A file rated but never developed has a
@@ -132,38 +119,6 @@ pub fn tilde(p: &Path) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn select_index_finds_the_last_file_or_falls_back_to_the_first() {
-        let dir = std::env::temp_dir().join(format!(
-            "greycard-select-index-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-        let files: Vec<PathBuf> = ["a.cr3", "b.cr3", "c.cr3"]
-            .iter()
-            .map(|n| {
-                let p = dir.join(n);
-                std::fs::write(&p, b"").unwrap();
-                p
-            })
-            .collect();
-        // The middle file, found by its canonical path even when
-        // spelled with a redundant `.`.
-        let spelled = dir.join(".").join("b.cr3");
-        assert_eq!(select_index(&files, Some(&spelled)), 1);
-        // Not among them: the first file.
-        assert_eq!(select_index(&files, Some(Path::new("/no/such/file"))), 0);
-        // Nothing remembered: the first file.
-        assert_eq!(select_index(&files, None), 0);
-        std::fs::remove_dir_all(&dir).unwrap();
-    }
-
-    /// Only regular files are listed: a folder named as a raw is not,
-    /// and on Unix neither is a named pipe, whose read never returns.
     #[test]
     fn a_folder_lists_only_its_regular_files() {
         let dir = std::env::temp_dir().join(format!(

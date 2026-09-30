@@ -118,6 +118,16 @@ pub enum Job {
         index: usize,
         path: PathBuf,
     },
+    /// A file's thumbnail from the cache alone, under the key its row
+    /// in the index gives (the content hash and the mtime stamp): for
+    /// a frame whose file cannot be read, its root being offline. A
+    /// miss is a `NoThumbnail`, and nothing is made.
+    CachedThumbnail {
+        index: usize,
+        path: PathBuf,
+        hash: String,
+        stamp: u64,
+    },
     /// Write the open frame under `edit` to `path`, doing what
     /// `on_exists` says if a file of that name is there already.
     Export {
@@ -622,10 +632,61 @@ impl Worker {
             self.pool.push(index, path);
             return;
         }
+        if let Job::CachedThumbnail {
+            index,
+            path,
+            hash,
+            stamp,
+        } = job
+        {
+            // Off the window's thread, since a hit reads the entry's
+            // file; not through the pool, whose lookup and making both
+            // start from the file, which this frame's cannot be. At
+            // the size the pool makes and keeps pictures at, or the
+            // entry it kept is never found.
+            let (thumbs, deliver, size) = (
+                self.thumbs.clone(),
+                self.deliver.clone(),
+                crate::grid::made_size(self.pool.size()),
+            );
+            rayon::spawn(move || {
+                let started = Instant::now();
+                let hit = thumbs
+                    .lock()
+                    .expect("thumbnail cache")
+                    .as_mut()
+                    .and_then(|c| {
+                        c.get(
+                            &hash,
+                            size,
+                            Tag {
+                                recipe: THUMB_RECIPE,
+                                stamp,
+                            },
+                        )
+                    });
+                deliver(match hit {
+                    Some(thumb) => Outcome::Thumbnail {
+                        index,
+                        path,
+                        size,
+                        width: thumb.width,
+                        height: thumb.height,
+                        rgb: thumb.rgb,
+                        cached: true,
+                        seconds: started.elapsed().as_secs_f64(),
+                    },
+                    None => Outcome::NoThumbnail { index, path },
+                });
+            });
+            return;
+        }
         let (lock, cv) = &*self.queue;
         let mut q = lock.lock().expect("worker queue");
         match job {
-            Job::Thumbnail { .. } => unreachable!("thumbnails go to the pool above"),
+            Job::Thumbnail { .. } | Job::CachedThumbnail { .. } => {
+                unreachable!("thumbnails go to the pool above")
+            }
             job @ (Job::Export { .. } | Job::ExportFrame { .. }) => q.exports.push_back(job),
             Job::ExportSet { set, frames } => {
                 for (index, frame) in frames.into_iter().enumerate() {
@@ -1226,6 +1287,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
             | Job::FetchLenses
             | Job::Gpu
             | Job::Thumbnail { .. }
+            | Job::CachedThumbnail { .. }
             | Job::ExportSet { .. }
             | Job::ExportFrame { .. } => {
                 unreachable!(
@@ -1539,9 +1601,11 @@ impl Blame {
             // there as the set's failure.
             Job::ExportSet { .. } | Job::ExportFrame { .. } => Blame::Nobody,
             Job::Mask { key, .. } => Blame::Mask(*key),
-            Job::Thumbnail { .. } | Job::Fetch { .. } | Job::FetchLenses | Job::Gpu => {
-                Blame::Nobody
-            }
+            Job::Thumbnail { .. }
+            | Job::CachedThumbnail { .. }
+            | Job::Fetch { .. }
+            | Job::FetchLenses
+            | Job::Gpu => Blame::Nobody,
         }
     }
 
@@ -3604,6 +3668,67 @@ mod tests {
         assert_eq!((thumb.width, thumb.height), (3, 2));
         // Another size is not the same entry.
         assert!(cached_thumbnail(&cache, &moved, 256).is_err());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// An offline frame's picture: looked up by the row's hash and
+    /// stamp at the size the pool keeps pictures at, the file itself
+    /// gone.
+    #[test]
+    fn a_cached_thumbnail_job_finds_what_the_pool_kept() {
+        let dir = thumb_scratch("offline");
+        let raw = dir.join("IMG_0002.CR3");
+        std::fs::write(&raw, vec![0x2au8; 90_000]).unwrap();
+        let hash = greycard_library::hash_file(&raw).unwrap();
+        let stamp = thumb_tag(file_stat(&raw).unwrap()).stamp;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let tx = Mutex::new(tx);
+        let worker = Worker::new(move |o| {
+            let line = match o {
+                Outcome::Thumbnail {
+                    index,
+                    size,
+                    width,
+                    cached,
+                    ..
+                } => format!("thumbnail {index} {size} {width} {cached}"),
+                Outcome::NoThumbnail { index, .. } => format!("none {index}"),
+                _ => return,
+            };
+            tx.lock().unwrap().send(line).unwrap();
+        });
+        let mut thumbs = Thumbs::at(dir.join("thumbs"), greycard_library::thumbs::DEFAULT_CAP);
+        let made = crate::grid::made_size(worker.pool.size());
+        let kept = Thumb {
+            width: 5,
+            height: 4,
+            rgb: vec![90; 60],
+        };
+        thumbs
+            .put(&hash, made, thumb_tag(file_stat(&raw).unwrap()), &kept)
+            .unwrap();
+        worker.set_thumb_cache(Some(thumbs));
+        std::fs::remove_file(&raw).unwrap();
+        worker.send(Job::CachedThumbnail {
+            index: 3,
+            path: raw.clone(),
+            hash: hash.clone(),
+            stamp,
+        });
+        let wait = std::time::Duration::from_secs(10);
+        assert_eq!(
+            rx.recv_timeout(wait).unwrap(),
+            format!("thumbnail 3 {made} 5 true")
+        );
+        // Another stamp is another entry: a miss, and nothing made.
+        worker.send(Job::CachedThumbnail {
+            index: 4,
+            path: raw,
+            hash,
+            stamp: stamp + 1,
+        });
+        assert_eq!(rx.recv_timeout(wait).unwrap(), "none 4");
+        worker.stop();
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

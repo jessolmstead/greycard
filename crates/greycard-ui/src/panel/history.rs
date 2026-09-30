@@ -118,7 +118,16 @@ pub(crate) fn record_export(
             file_name(source)
         );
     };
-    if let Some(i) = st.files.iter().position(|f| f == source) {
+    // A frame in the list whose sidecar stands in from its row (the
+    // list replaced while the export ran) is recorded on disk below,
+    // as a frame the window has let go of is: a stand-in is never
+    // written.
+    if let Some(i) = st
+        .files
+        .iter()
+        .position(|f| f == source)
+        .filter(|&i| crate::rows::is_loaded(st, i))
+    {
         // A frame never opened: its blend was seeded for the export
         // as its first open would have, and takes that seed now.
         if st.seed_blend.get(i).copied().unwrap_or(false)
@@ -303,7 +312,7 @@ pub(crate) fn take_current(st: &mut State, app: &App, worker: &Worker) {
         return;
     }
     let edit = st.sidecars[c].current.clone();
-    if st.write_sidecars && !crate::panel::delete::held(st, c) {
+    if crate::panel::edit::writable(st, c) {
         match st.sidecars[c].save_in(&st.files[c], st.placement) {
             Ok(_) => crate::library::sidecar_written(st, c),
             Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),
@@ -348,13 +357,26 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             // In culling the keys are the ratings', flags' and
             // labels': undo steps back the session's changes to those
-            // and touches no develop, and culling stays up.
+            // and touches no develop, and culling stays up. A request
+            // like a key's, with nothing to read, so it queues behind
+            // the keys still waiting on their reads and takes back the
+            // last key the user pressed, not the last that landed.
             if st.cull.is_some() {
-                let next = crate::panel::browser::step_tags(&mut st, &app, back);
                 drop(st);
-                if let Some(row) = next {
-                    app.invoke_select(row as i32);
-                }
+                crate::rows::request(
+                    &state,
+                    &app,
+                    &worker,
+                    Vec::new(),
+                    if back { "undo" } else { "redo" },
+                    Box::new(move |state, app, _, _| {
+                        let next =
+                            crate::panel::browser::step_tags(&mut state.borrow_mut(), app, back);
+                        if let Some(row) = next {
+                            app.invoke_select(row as i32);
+                        }
+                    }),
+                );
                 return;
             }
             // Whatever the panel holds is a state first.
@@ -474,6 +496,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(c) = st.current else {
                 return;
             };
+            // A sidecar that stands in takes no snapshot: it could not
+            // be written, and the read's landing would replace it.
+            if let Some(why) = crate::rows::not_kept(&st, c) {
+                app.set_status(why.into());
+                return;
+            }
             // In culling the panel is not the frame's: the snapshot
             // is of the sidecar's current state as it stands.
             if st.cull.is_none() {

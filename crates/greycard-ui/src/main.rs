@@ -39,6 +39,7 @@ mod queue;
 mod render;
 mod report;
 mod roots;
+mod rows;
 mod scope;
 mod selection;
 mod settings;
@@ -395,6 +396,10 @@ enum Fetch {
     Lenses,
 }
 
+/// A change to one frame's sidecar, by its number in the list, made
+/// once when the launch's list lands: see `State::tweak_at_start`.
+pub(crate) type Tweak = Box<dyn FnOnce(&mut State, usize)>;
+
 pub(crate) struct State {
     pub(crate) files: Vec<PathBuf>,
     pub(crate) current: Option<usize>,
@@ -405,8 +410,17 @@ pub(crate) struct State {
     pub(crate) picked: Vec<usize>,
     /// The edit the worker is developing, or last developed.
     pub(crate) edit: Edit,
-    /// Every file's sidecar: its current edit and history.
+    /// Every file's sidecar: its current edit and history. A frame the
+    /// index listed holds a stand-in from its row until something needs
+    /// the whole sidecar; see `rows`.
     pub(crate) sidecars: Vec<Sidecar>,
+    /// Whether each file's sidecar was read from disk, and what its
+    /// row stands in for while it was not (`rows::FromRow`).
+    pub(crate) from_row: Vec<rows::FromRow>,
+    /// What the command line asked of the first frame opened
+    /// (`--preset`, `--develop-temperature`, `--exposure`), applied to
+    /// its sidecar when the launch's list lands, before it is opened.
+    pub(crate) tweak_at_start: Option<Tweak>,
     /// Which files are raws with no sidecar yet, whose learned-denoiser
     /// blend the worker seeds from the ISO on their first open.
     pub(crate) seed_blend: Vec<bool>,
@@ -562,6 +576,20 @@ pub(crate) struct State {
     /// Counts every list put in the browser, so a list read on
     /// another thread that arrives after a later one is dropped.
     pub(crate) view_generation: u64,
+    /// The requests for frames' sidecars out, in order, and the bar
+    /// over their reads (`rows::request`).
+    pub(crate) loads: rows::Loads,
+    /// The frame picked whose sidecar is on its way: current already,
+    /// its panel read-only, and opened when the read lands if it is
+    /// still the pick. Nothing of the panel's is saved for it.
+    pub(crate) pick_pending: Option<PathBuf>,
+    /// The frame whose panel shows the edit standing in from its row,
+    /// not its own: a pick whose sidecar was on its way, or a frame
+    /// opened while its sidecar could not be had. Nothing of the panel
+    /// is recorded for it (`rows::panel_is_frames`) until the frame is
+    /// opened on its own sidecar, which `rows::take` does the moment
+    /// that sidecar is in.
+    pub(crate) panel_stand_in: Option<PathBuf>,
     /// The compare view's tiles on the view, one model for the life
     /// of the window, as the handles' are.
     pub(crate) compare_tiles: Rc<VecModel<CompareTile>>,
@@ -869,6 +897,8 @@ impl State {
             picked: Vec::new(),
             edit: Edit::default(),
             sidecars: vec![Sidecar::default(); count],
+            from_row: vec![rows::FromRow::read(); count],
+            tweak_at_start: None,
             seed_blend: vec![false; count],
             write_sidecars: false,
             xmp_sidecars: false,
@@ -931,6 +961,9 @@ impl State {
             camera_match: Default::default(),
             view: roots::View::Folder,
             view_generation: 0,
+            loads: rows::Loads::default(),
+            pick_pending: None,
+            panel_stand_in: None,
             compare_tiles: Rc::new(VecModel::default()),
             select_at_start: None,
             overrides_at_start: None,

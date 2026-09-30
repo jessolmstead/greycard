@@ -217,10 +217,10 @@ pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
                     .is_some_and(|(f, l)| (f..=l).contains(&(index as i32)))
             {
                 st.thumb_asked[index] = st.thumb_want;
-                let path = path.clone();
+                let job = crate::rows::thumb_job(st, index);
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {
-                        w.send(Job::Thumbnail { index, path });
+                        w.send(job);
                     }
                 });
             }
@@ -607,7 +607,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     }
                     let settings = read_export_settings(app);
                     let on_exists = read_on_exists(app);
-                    let frames = set_frames(&st, app);
+                    let frames = set_frames(&mut st, app);
                     // Each frame's own look, as the single run says its one.
                     for (source, edit, ..) in &frames {
                         warn_missing_look(edit, source);
@@ -980,8 +980,24 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
 /// its own edit, its turn and whether its blend is still to be seeded;
 /// the frame on screen under the panel's edit. One frame when the
 /// selection is one frame.
-pub(crate) fn set_frames(st: &State, app: &App) -> Vec<(PathBuf, Edit, u8, bool)> {
-    chosen_frames(st)
+pub(crate) fn set_frames(st: &mut State, app: &App) -> Vec<(PathBuf, Edit, u8, bool)> {
+    let chosen = chosen_frames(st);
+    set_frames_of(st, app, &chosen)
+}
+
+/// [`set_frames`] over `frames` rather than the selection: what an
+/// export pressed on a selection whose sidecars were still to be read
+/// takes when they are in.
+pub(crate) fn set_frames_of(
+    st: &mut State,
+    app: &App,
+    frames: &[usize],
+) -> Vec<(PathBuf, Edit, u8, bool)> {
+    // Each frame's whole sidecar first, read where it stands in from
+    // its row; a frame under a root that is offline cannot be decoded
+    // either, and is left out with a word in the status line.
+    let frames = crate::rows::load_frames(st, app, frames);
+    frames
         .into_iter()
         .map(|f| {
             let edit = if Some(f) == st.current {
@@ -1073,7 +1089,7 @@ pub(crate) fn start_set(
     });
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
     // Stop a set after the frame in hand.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
@@ -1203,121 +1219,188 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
     }
     // Export the current file under the panel's edit, beside it.
     {
-        let (state, app_weak) = (state.clone(), app.as_weak());
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_export(move || {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let (raw, edit, frames) = {
-                let mut st = state.borrow_mut();
+            // A request for the set's sidecars, and the export over
+            // exactly those frames once they are in, from the frame on
+            // screen at the press, whatever is on screen by then.
+            let (pressed, paths) = {
+                let st = state.borrow();
                 let Some(c) = st.current else {
                     return;
                 };
-                // One set at a time, and one chooser for it: a second
-                // would start a set the first could not be told from.
-                if st.exporting.is_some() || st.export_choosing {
-                    return;
-                }
-                let edit = read_edit(&app, &st.edit, st.target);
-                // What the panel holds is a state first, as for an
-                // undo or a snapshot: the export is recorded on the
-                // state it was written from once it is done, and a
-                // panel that moved on meanwhile would otherwise have
-                // saved over it before it ever was one.
-                if st.cull.is_none() {
-                    crate::panel::edit::save_edit(&mut st, edit.clone());
-                    show_history(&st, &app);
-                }
-                (st.files[c].clone(), edit, set_frames(&st, &app))
+                let paths: Vec<PathBuf> = chosen_frames(&st)
+                    .into_iter()
+                    .map(|i| st.files[i].clone())
+                    .collect();
+                (st.files[c].clone(), paths)
             };
-            let preset = preset_in_use(&app);
-            let settings = read_export_settings(&app);
-            // A mark asked for with nothing to draw: say so and keep
-            // the sheet up, rather than write the picture unmarked.
-            if let Some(Err(e)) = settings.watermark.as_ref().map(|m| m.check()) {
-                app.set_status(format!("not exported: {e:#}").into());
-                app.set_export_open(true);
-                return;
-            }
-            let on_exists = read_on_exists(&app);
-            // Two frames or more: the set, into a folder.
-            if frames.len() > 1 {
-                let start = raw.parent().map(Path::to_path_buf).unwrap_or_default();
-                let weak = app.as_weak();
-                state.borrow_mut().export_choosing = true;
-                app.set_status(
-                    format!("choosing where to export {} frames...", frames.len()).into(),
-                );
-                export::choose_folder("Export to a folder", start, move |chosen| {
-                    let _ = weak.upgrade_in_event_loop(move |app| {
-                        let folder = match chosen {
-                            Ok(Some(folder)) => Some(folder),
-                            Ok(None) => {
-                                if let Some(state) = STATE.with(|s| s.borrow().clone()) {
-                                    state.borrow_mut().export_choosing = false;
-                                }
-                                app.set_status("export canceled".into());
-                                return;
-                            }
-                            // No chooser to ask: each beside its own
-                            // file, under a name no camera writes.
-                            Err(e) => {
-                                tracing::warn!(
-                                    "folder chooser: {e:#}; exporting each beside its file"
-                                );
-                                None
-                            }
-                        };
-                        // The window's state, from its own thread.
-                        let Some(state) = STATE.with(|s| s.borrow().clone()) else {
-                            return;
-                        };
-                        let mut st = state.borrow_mut();
-                        start_set(&mut st, &app, frames, folder, settings, on_exists, preset);
-                    });
-                });
-                return;
-            }
-            let suggested = raw.with_extension(settings.format.extension());
-            let weak = app.as_weak();
-            app.set_status("choosing where to export...".into());
-            export::choose_path(suggested, settings.format, move |chosen| {
-                let _ = weak.upgrade_in_event_loop(move |app| {
-                    // A path the user picked in the desktop's chooser
-                    // is a path the chooser asked them to confirm; the
-                    // sheet's policy is for the paths the editor
-                    // decides by itself.
-                    let (path, on_exists) = match chosen {
-                        Ok(Some(path)) => (path, export::OnExists::Overwrite),
-                        Ok(None) => {
-                            app.set_status("export canceled".into());
-                            return;
-                        }
-                        Err(e) => {
-                            // No chooser to ask: beside the file, under a
-                            // name no camera writes.
-                            tracing::warn!("file chooser: {e:#}; exporting beside the file");
-                            (export_path(&raw, settings.format), on_exists)
-                        }
-                    };
-                    app.set_status(format!("exporting {}...", file_name(&path)).into());
-                    app.set_busy(true);
-                    WORKER.with(|w| {
-                        if let Some(w) = &*w.borrow() {
-                            w.send(Job::Export {
-                                edit,
-                                path,
-                                settings,
-                                on_exists,
-                                source: raw,
-                                preset,
-                            });
-                        }
-                    });
-                });
-            });
+            crate::rows::request(
+                &state,
+                &app,
+                &worker,
+                paths,
+                "export",
+                Box::new(move |state, app, _, at| {
+                    let frames: Vec<usize> = at.into_iter().flatten().collect();
+                    export_frames(state, app, &pressed, &frames);
+                }),
+            );
         });
     }
+}
+
+/// The export pressed on `pressed`, the set's sidecars in hand: that
+/// frame under the panel's edit, and `frames` as the set, into a folder
+/// chosen when they are two or more. A pressed frame no longer on
+/// screen when the sidecars came in (the user moved on while they were
+/// read) is exported under its own sidecar's edit, never the panel's,
+/// and as a set of one: the worker's open picture is another frame's.
+fn export_frames(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: &[usize]) {
+    let (raw, edit, frames, on_screen) = {
+        let mut st = state.borrow_mut();
+        // One set at a time, and one chooser for it: a second
+        // would start a set the first could not be told from.
+        if st.exporting.is_some() || st.export_choosing {
+            return;
+        }
+        // Gone from the list: the request says so.
+        let Some(p) = st.files.iter().position(|f| f == pressed) else {
+            return;
+        };
+        let on_screen = st.current == Some(p);
+        // The frame on screen with a panel that is not its own (its
+        // root offline, its sidecar not read): nothing to export, and
+        // the worker's open picture is another frame's.
+        if on_screen
+            && st.cull.is_none()
+            && let Some(why) = crate::rows::refused(&st, p, "nothing is exported")
+        {
+            app.set_status(why.into());
+            return;
+        }
+        let edit = if on_screen {
+            let edit = read_edit(app, &st.edit, st.target);
+            // What the panel holds is a state first, as for an
+            // undo or a snapshot: the export is recorded on the
+            // state it was written from once it is done, and a
+            // panel that moved on meanwhile would otherwise have
+            // saved over it before it ever was one.
+            if st.cull.is_none() {
+                crate::panel::edit::save_edit(&mut st, edit.clone());
+                show_history(&st, app);
+            }
+            edit
+        } else {
+            if !crate::rows::load_frame(&mut st, app, p) {
+                return;
+            }
+            st.sidecars[p].current.clone()
+        };
+        let mut frames = set_frames_of(&mut st, app, frames);
+        // One frame is the pressed one, as on screen it would be.
+        if !on_screen && frames.len() <= 1 {
+            frames = vec![(
+                st.files[p].clone(),
+                edit.clone(),
+                st.sidecars[p].turn,
+                st.seed_blend.get(p).copied().unwrap_or(false),
+            )];
+        }
+        (st.files[p].clone(), edit, frames, on_screen)
+    };
+    let preset = preset_in_use(app);
+    let settings = read_export_settings(app);
+    // A mark asked for with nothing to draw: say so and keep
+    // the sheet up, rather than write the picture unmarked.
+    if let Some(Err(e)) = settings.watermark.as_ref().map(|m| m.check()) {
+        app.set_status(format!("not exported: {e:#}").into());
+        app.set_export_open(true);
+        return;
+    }
+    let on_exists = read_on_exists(app);
+    // Two frames or more, or a frame no longer on screen: the set,
+    // into a folder.
+    if frames.len() > 1 || !on_screen {
+        let start = raw.parent().map(Path::to_path_buf).unwrap_or_default();
+        let weak = app.as_weak();
+        state.borrow_mut().export_choosing = true;
+        app.set_status(
+            match frames.as_slice() {
+                [(one, ..)] => format!("choosing where to export {}...", file_name(one)),
+                _ => format!("choosing where to export {} frames...", frames.len()),
+            }
+            .into(),
+        );
+        export::choose_folder("Export to a folder", start, move |chosen| {
+            let _ = weak.upgrade_in_event_loop(move |app| {
+                let folder = match chosen {
+                    Ok(Some(folder)) => Some(folder),
+                    Ok(None) => {
+                        if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                            state.borrow_mut().export_choosing = false;
+                        }
+                        app.set_status("export canceled".into());
+                        return;
+                    }
+                    // No chooser to ask: each beside its own
+                    // file, under a name no camera writes.
+                    Err(e) => {
+                        tracing::warn!("folder chooser: {e:#}; exporting each beside its file");
+                        None
+                    }
+                };
+                // The window's state, from its own thread.
+                let Some(state) = STATE.with(|s| s.borrow().clone()) else {
+                    return;
+                };
+                let mut st = state.borrow_mut();
+                start_set(&mut st, &app, frames, folder, settings, on_exists, preset);
+            });
+        });
+        return;
+    }
+    let suggested = raw.with_extension(settings.format.extension());
+    let weak = app.as_weak();
+    app.set_status("choosing where to export...".into());
+    export::choose_path(suggested, settings.format, move |chosen| {
+        let _ = weak.upgrade_in_event_loop(move |app| {
+            // A path the user picked in the desktop's chooser
+            // is a path the chooser asked them to confirm; the
+            // sheet's policy is for the paths the editor
+            // decides by itself.
+            let (path, on_exists) = match chosen {
+                Ok(Some(path)) => (path, export::OnExists::Overwrite),
+                Ok(None) => {
+                    app.set_status("export canceled".into());
+                    return;
+                }
+                Err(e) => {
+                    // No chooser to ask: beside the file, under a
+                    // name no camera writes.
+                    tracing::warn!("file chooser: {e:#}; exporting beside the file");
+                    (export_path(&raw, settings.format), on_exists)
+                }
+            };
+            app.set_status(format!("exporting {}...", file_name(&path)).into());
+            app.set_busy(true);
+            WORKER.with(|w| {
+                if let Some(w) = &*w.borrow() {
+                    w.send(Job::Export {
+                        edit,
+                        path,
+                        settings,
+                        on_exists,
+                        source: raw,
+                        preset,
+                    });
+                }
+            });
+        });
+    });
 }
 
 #[cfg(test)]
@@ -1456,7 +1539,7 @@ mod tests {
             st.sidecars[1].current.light.exposure = -2.0;
         }
         app.set_exposure(0.5);
-        let frames = set_frames(&state.borrow(), &app);
+        let frames = set_frames(&mut state.borrow_mut(), &app);
         let got: Vec<(String, f32, u8)> = frames
             .iter()
             .map(|(f, e, t, _)| (file_name(f), e.light.exposure, *t))

@@ -370,6 +370,11 @@ impl Pool {
         self.lock().size = Some(size);
     }
 
+    /// The long edge pictures are made at now.
+    pub(crate) fn size(&self) -> u32 {
+        self.lock().size.unwrap_or(crate::worker::THUMB_WIDTH)
+    }
+
     /// Another folder: what is waiting is dropped, and a picture in
     /// hand is not delivered when it is done.
     pub(crate) fn forget(&self) {

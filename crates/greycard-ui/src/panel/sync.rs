@@ -61,21 +61,6 @@ fn sync_title(s: Section) -> String {
     }
 }
 
-/// The current frame's edit as a sync reads it. Outside culling the
-/// panel is the frame's, and what it holds is recorded and saved
-/// first, as a preset's apply does, so the frame synced from has the
-/// state that went out in its own history. In culling the panel is
-/// not the frame's and the sidecar is the truth.
-fn sync_source(st: &mut State, app: &App) -> Option<Edit> {
-    let c = st.current?;
-    if st.cull.is_some() {
-        return Some(st.sidecars[c].current.clone());
-    }
-    let edit = read_edit(app, &st.edit, st.target);
-    save_edit(st, edit.clone());
-    Some(edit)
-}
-
 /// A raw frame's make, model and ISO, read from its metadata without
 /// a pixel decoded; `None` for a picture that is not a raw, or a file
 /// that will not say.
@@ -206,6 +191,10 @@ pub(crate) fn lay_over_targets(
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> Synced {
+    // Each target's whole sidecar first, read where it stands in from
+    // its row (on the pool when there are several); one under a root
+    // that is offline is left out, and the status line says so.
+    let targets = &crate::rows::load_frames(st, app, targets);
     // As a turn does: a sidecar from an older build is brought up to
     // date before anything acts on it, when its shape can be had.
     for &f in targets {
@@ -284,6 +273,7 @@ pub(crate) fn lay_over_targets(
 /// Lay `sections` of the current frame over the rest of the set,
 /// through [`lay_over_targets`]. The current frame's edit is not
 /// touched.
+#[cfg(test)]
 pub(crate) fn sync_selection(
     st: &mut State,
     app: &App,
@@ -291,23 +281,65 @@ pub(crate) fn sync_selection(
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> Synced {
-    let Some(from) = sync_source(st, app) else {
+    let Some(c) = st.current else {
         return Synced::default();
     };
     let targets = sync_targets(st);
-    let preset = Preset::from_edit("", &from, sections);
-    let learned_from = preset.sections.contains(&Section::Noise).then_some(&from);
-    let label = st.current.map(|c| sync_label(&file_name(&st.files[c])));
+    sync_onto(st, app, c, &targets, sections, profiles, probe)
+}
+
+/// Lay `sections` of frame `from` over `targets`: [`sync_selection`]
+/// with the frames named rather than read from the selection, which is
+/// what a sync pressed on frames whose sidecars were still to be read
+/// runs when they are in. `from` is read from the panel when it is the
+/// frame on screen outside culling, and from its sidecar otherwise; a
+/// frame whose sidecar stands in (its root offline) is no source.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn sync_onto(
+    st: &mut State,
+    app: &App,
+    from: usize,
+    targets: &[usize],
+    sections: &[Section],
+    profiles: &[camera::Entry],
+    probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
+) -> Synced {
+    let Some(from_edit) = source_edit(st, app, from) else {
+        return Synced::default();
+    };
+    let preset = Preset::from_edit("", &from_edit, sections);
+    let learned_from = preset
+        .sections
+        .contains(&Section::Noise)
+        .then_some(&from_edit);
+    let label = Some(sync_label(&file_name(&st.files[from])));
     lay_over_targets(
         st,
         app,
         &preset,
-        &targets,
+        targets,
         learned_from,
         label.as_deref(),
         profiles,
         probe,
     )
+}
+
+/// Frame `from`'s edit as a sync reads it: the panel's when it is the
+/// frame on screen outside culling (recorded and saved first, as
+/// `sync_source` did), its sidecar's otherwise; none, said, for a
+/// frame whose sidecar stands in.
+fn source_edit(st: &mut State, app: &App, from: usize) -> Option<Edit> {
+    if !crate::rows::is_loaded(st, from) {
+        crate::rows::say_offline_for(st, app, from, ": nothing to sync from");
+        return None;
+    }
+    if st.current == Some(from) && st.cull.is_none() && crate::rows::panel_is_frames(st, from) {
+        let edit = read_edit(app, &st.edit, st.target);
+        save_edit(st, edit.clone());
+        return Some(edit);
+    }
+    Some(st.sidecars[from].current.clone())
 }
 
 /// What a preset click does, for the current frame alone or for a
@@ -327,6 +359,7 @@ pub(crate) fn sync_selection(
 /// a sync lays sections over its targets ([`lay_over_targets`]), and
 /// a left-off open frame is folded into the same status line as any
 /// left-off target.
+#[cfg(test)]
 pub(crate) fn apply_preset(
     st: &mut State,
     app: &App,
@@ -335,10 +368,100 @@ pub(crate) fn apply_preset(
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) {
-    let Some(c) = st.current else {
+    let frames = chosen_frames(st);
+    apply_preset_to(st, app, worker, preset, &frames, profiles, probe);
+}
+
+/// The preset's click, from the callback: a request for the
+/// selection's sidecars, and the preset over exactly those frames once
+/// they are in.
+pub(crate) fn preset_pressed(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+    preset: Preset,
+) {
+    let paths: Vec<PathBuf> = {
+        let st = state.borrow();
+        chosen_frames(&st)
+            .into_iter()
+            .map(|i| st.files[i].clone())
+            .collect()
+    };
+    crate::rows::request(
+        state,
+        app,
+        worker,
+        paths,
+        "preset",
+        Box::new(move |state, app, worker, at| {
+            let frames: Vec<usize> = at.into_iter().flatten().collect();
+            let profiles = camera::list();
+            apply_preset_to(
+                &mut state.borrow_mut(),
+                app,
+                worker,
+                &preset,
+                &frames,
+                &profiles,
+                probe,
+            );
+        }),
+    );
+}
+
+/// [`apply_preset`] over `frames` rather than the selection. The frame
+/// on screen takes it through the panel when it is among them; the
+/// rest as a sync's targets. When the frame on screen is not among
+/// them (the selection moved on while their sidecars were read), they
+/// all take it as targets and the panel is left alone.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn apply_preset_to(
+    st: &mut State,
+    app: &App,
+    worker: &Worker,
+    preset: &Preset,
+    frames: &[usize],
+    profiles: &[camera::Entry],
+    probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
+) {
+    let Some(c) = st.current.filter(|c| frames.contains(c)) else {
+        // The pressed-on frames, none of them on screen: as a sync's
+        // targets, every one.
+        let targets: Vec<usize> = frames.to_vec();
+        if targets.is_empty() {
+            return;
+        }
+        let label = preset_over_set_label(targets.len(), &preset.name);
+        let synced = lay_over_targets(
+            st,
+            app,
+            preset,
+            &targets,
+            None,
+            Some(&label),
+            profiles,
+            probe,
+        );
+        let moved = synced.moved.len();
+        app.set_status(preset_onto_words(st, &preset.name, moved, targets.len(), &synced).into());
         return;
     };
-    let targets = sync_targets(st);
+    // The frame on screen under a root that is offline: nothing to lay
+    // the preset over, said.
+    if !crate::rows::load_frame(st, app, c) {
+        crate::rows::say_offline_for(st, app, c, ": the preset is not applied");
+        return;
+    }
+    // Loaded, the panel is the frame's own (`rows::take` opened it);
+    // one still showing a stand-in is never recorded as a state.
+    if st.cull.is_none()
+        && let Some(why) = crate::rows::not_kept(st, c)
+    {
+        app.set_status(why.into());
+        return;
+    }
+    let targets: Vec<usize> = frames.iter().copied().filter(|&f| f != c).collect();
     // The same camera-profile fit check either way, one frame or a
     // set. A profile left off this way is still there to choose by
     // hand from the CAMERA PROFILE section, which warns "Made for X,
@@ -577,6 +700,13 @@ pub(crate) fn copy_settings_of(st: &mut State, app: &App, file: usize) {
     if file >= st.files.len() {
         return;
     }
+    // The panel's edit is the frame's only when the frame's own was
+    // read: under an offline root the panel shows the default that
+    // stands in, and there is nothing to copy.
+    if !crate::rows::load_frame(st, app, file) {
+        crate::rows::say_offline_for(st, app, file, ": nothing to copy");
+        return;
+    }
     let edit = if st.cull.is_none() && st.current == Some(file) {
         read_edit(app, &st.edit, st.target)
     } else {
@@ -665,18 +795,22 @@ pub(crate) fn paste_open(st: &mut State, app: &App) {
     app.set_sync_open(true);
 }
 
-/// Lay the clipboard's `sections` over the selection, the frame it
-/// came from left out: a sync with the clipboard between. The frame on
+/// Lay the clipboard's `sections` over `chosen`, the frame it came
+/// from left out: a sync with the clipboard between. The frame on
 /// screen, outside culling, takes it through the panel as a preset
 /// click does (the camera-profile fit checked the same way); the rest,
 /// and in culling every frame, through [`lay_over_targets`], exactly
 /// as a sync's targets. Each frame that moved gets one step, "Paste
 /// from" the frame copied. The status line says what happened, and
-/// rides the develop the frame on screen asks for.
-pub(crate) fn paste_selection(
+/// rides the develop the frame on screen asks for. `chosen` is what the
+/// paste was pressed on, whatever the selection is by the time the
+/// frames' sidecars are in.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn paste_onto(
     st: &mut State,
     app: &App,
     worker: &Worker,
+    chosen: &[usize],
     sections: &[Section],
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
@@ -684,14 +818,14 @@ pub(crate) fn paste_selection(
     let Some(clip) = st.clipboard.clone() else {
         return Synced::default();
     };
-    let targets = clip.targets(&chosen_frames(st), &st.files);
+    let targets = clip.targets(chosen, &st.files);
     let preset = clip.preset(sections);
     let label = clip.label();
     // Outside culling the frame on screen is the panel's, and what
     // the panel holds is a state first, then the paste over it.
-    let panel_frame = st
-        .current
-        .filter(|c| st.cull.is_none() && targets.contains(c));
+    let panel_frame = st.current.filter(|&c| {
+        st.cull.is_none() && targets.contains(&c) && crate::rows::panel_is_frames(st, c)
+    });
     let mut current_changed = false;
     let mut current_left_off = false;
     if let Some(c) = panel_frame {
@@ -878,13 +1012,38 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     return;
                 }
                 st.sync_last = Some(sections.clone());
-                let profiles = camera::list();
-                let start = std::time::Instant::now();
-                let synced = paste_selection(&mut st, &app, &worker, &sections, &profiles, probe);
-                tracing::info!(
-                    "pasted onto {} frames in {:.1} ms",
-                    synced.moved.len(),
-                    start.elapsed().as_secs_f64() * 1e3
+                // A request for the chosen frames' sidecars, and the
+                // paste over exactly those frames once they are in.
+                let paths: Vec<PathBuf> = chosen_frames(&st)
+                    .into_iter()
+                    .map(|i| st.files[i].clone())
+                    .collect();
+                drop(st);
+                crate::rows::request(
+                    &state,
+                    &app,
+                    &worker,
+                    paths,
+                    "paste",
+                    Box::new(move |state, app, worker, at| {
+                        let chosen: Vec<usize> = at.into_iter().flatten().collect();
+                        let profiles = camera::list();
+                        let start = std::time::Instant::now();
+                        let synced = paste_onto(
+                            &mut state.borrow_mut(),
+                            app,
+                            worker,
+                            &chosen,
+                            &sections,
+                            &profiles,
+                            probe,
+                        );
+                        tracing::info!(
+                            "pasted onto {} frames in {:.1} ms",
+                            synced.moved.len(),
+                            start.elapsed().as_secs_f64() * 1e3
+                        );
+                    }),
                 );
                 return;
             }
@@ -907,13 +1066,41 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             // A paste's sheet opens on this choice from now on.
             st.sync_last = Some(sections.clone());
-            let profiles = camera::list();
-            let start = std::time::Instant::now();
-            let synced = sync_selection(&mut st, &app, &sections, &profiles, probe);
-            let took = start.elapsed();
-            let said = synced_words(&st, sections.len(), targets.len(), &synced);
-            tracing::info!("{said} in {:.1} ms", took.as_secs_f64() * 1e3);
-            app.set_status(said.into());
+            // A request for the source's and the targets' sidecars, and
+            // the sync from exactly that frame onto exactly those once
+            // they are in: the first path the source, the rest the
+            // targets.
+            let Some(c) = st.current else {
+                return;
+            };
+            let paths: Vec<PathBuf> = std::iter::once(c)
+                .chain(targets.iter().copied())
+                .map(|i| st.files[i].clone())
+                .collect();
+            drop(st);
+            crate::rows::request(
+                &state,
+                &app,
+                &worker,
+                paths,
+                "sync",
+                Box::new(move |state, app, _, at| {
+                    let Some(from) = at.first().copied().flatten() else {
+                        app.set_status("the frame to sync from is gone; nothing synced".into());
+                        return;
+                    };
+                    let targets: Vec<usize> = at.into_iter().skip(1).flatten().collect();
+                    let profiles = camera::list();
+                    let start = std::time::Instant::now();
+                    let mut st = state.borrow_mut();
+                    let synced =
+                        sync_onto(&mut st, app, from, &targets, &sections, &profiles, probe);
+                    let took = start.elapsed();
+                    let said = synced_words(&st, sections.len(), targets.len(), &synced);
+                    tracing::info!("{said} in {:.1} ms", took.as_secs_f64() * 1e3);
+                    app.set_status(said.into());
+                }),
+            );
         });
     }
 }
