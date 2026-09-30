@@ -42,6 +42,7 @@ import { FrameMenu } from "panel/frame-menu.slint";
 import { RootSheet } from "panel/root-sheet.slint";
 import { FolderName, RecentMenu } from "panel/recent.slint";
 import { FoldersSection } from "panel/folders.slint";
+import { RootsSection } from "panel/roots.slint";
 
 export component App inherits Window {
     title: "greycard";
@@ -392,9 +393,9 @@ export component App inherits Window {
     in property <[FacetRow]> filter-facets: [];
     in property <string> filter-facet-note: "";
     callback filter-facet-toggled(int, string);
-    /// The library's roots, in the grid's header: each with its file
-    /// count, the all-roots view, and whether the folder open can be
-    /// added with a press.
+    /// The library's roots, in the left pane with the grid: each with
+    /// its file count, the all-roots view, and whether the folder open
+    /// can be added with a press.
     in property <[RootChip]> library-roots: [];
     in property <bool> library-all-on: false;
     in property <int> library-all-count: 0;
@@ -407,8 +408,8 @@ export component App inherits Window {
     callback library-root-add-open();
     /// A root's menu asked to rename it, by its path.
     callback library-root-rename(string);
-    /// The folder open, as the Open folder button and the grid's
-    /// header name it: its own name (or the root's, or "All roots"
+    /// The folder open, as the left pane names it under its Open
+    /// folder button: its own name (or the root's, or "All roots"
     /// for a view of the roots), the root it is under, and its path
     /// for the hover text; all empty with nothing open. The note is
     /// what a folder chosen from Recently opened that has gone said,
@@ -429,6 +430,7 @@ export component App inherits Window {
     in property <[FolderRow]> folder-tree: [];
     in-out property <bool> folder-tree-subfolders: false;
     in-out property <bool> collapsed-folders: false;
+    in-out property <bool> collapsed-roots: false;
     callback folder-tree-picked(int);
     callback folder-tree-folded(int);
     callback folder-tree-subfolders-changed();
@@ -450,7 +452,7 @@ export component App inherits Window {
         root.tip-x = x;
         root.tip-y = y;
     }
-    /// The root sheet: a root's name, from its chip's menu. The path
+    /// The root sheet: a root's name, from its row's menu. The path
     /// is the root's, and the folder's own name is what an empty name
     /// falls back to.
     in-out property <bool> root-sheet-open: false;
@@ -1177,8 +1179,10 @@ export component App inherits Window {
     /// finishes the frame in hand and stops.
     in property <bool> import-running: false;
     in property <bool> import-stopping: false;
-    /// The import's progress, then its end, for the grid's header,
-    /// which covers the status plate; empty when there is nothing to say.
+    /// The import's progress, then its end, for the left pane under
+    /// Import with the grid up (or the grid's header with the pane put
+    /// away), since the grid covers the status plate; empty when there
+    /// is nothing to say.
     in property <string> import-status: "";
     callback import-asked();
     callback import-choose(string);
@@ -1419,10 +1423,19 @@ export component App inherits Window {
                 root.delete-asked("selection");
                 return accept;
             }
+            // Over the grid, F7 and Tab put the left pane away and
+            // bring it back: the pane is the one of the three the
+            // grid leaves showing.
+            if ((e.text == Key.Tab || e.text == Key.F7) && root.grid-open
+                && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
+                && !e.modifiers.shift && !root.sheet-open()) {
+                root.left-hidden = !root.left-hidden;
+                return accept;
+            }
             // Tab as Lightroom has it. Nothing else here binds it, and
             // a LineEdit with the focus has it first, so typing in the
-            // filter or a name never reaches this. Not over the grid,
-            // which has the window already.
+            // filter or a name never reaches this. Over the grid it is
+            // the pane's alone (above).
             if (e.text == Key.Tab && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta
                 && !e.modifiers.shift && !root.sheet-open() && !root.grid-open) {
                 // Any one showing: all away. All away: all back.
@@ -1594,160 +1607,10 @@ export component App inherits Window {
 
     VerticalLayout {
         HorizontalLayout {
-            // The left panel: the navigator, the presets, the
-            // snapshots and the history, as an editor keeps them on
-            // its left; at its foot, the way to report a problem,
-            // found where it is looked for and nowhere near the work.
-            // Put away by F7 or Tab: out of the layout altogether. At
-            // zero width its wrapping texts would grow tall and raise
-            // the window's minimum height past the screen's.
-            if !root.left-hidden: Rectangle {
-                width: root.left-w;
-                background: Theme.surface;
-                Rectangle { x: parent.width - 1px; width: 1px; height: 100%; background: Theme.border; }
-                VerticalLayout {
-                // The sections scroll; Settings and Report stay put
-                // beneath them, as the develop panel does on the
-                // right. Presets, Snapshots and History each cap
-                // their own list, and the navigator is just one
-                // thumbnail, held to the pane's width — nothing here
-                // is unbounded on its own, but their sum, on a small
-                // or high-DPI screen, still could be. A ScrollView
-                // never passes its content's size up to its parent,
-                // so nothing here can raise the window's minimum
-                // height past the screen's (see the note above about
-                // Windows leaving fullscreen).
-                ScrollView {
-                    VerticalLayout {
-                        alignment: start;
-                        padding: Theme.space-4;
-                        padding-top: Theme.space-2;
-                        spacing: Theme.space-2;
-                        // The button, and under it the folder it
-                        // opened, which offers the ones before it.
-                        VerticalLayout {
-                            spacing: 2px;
-                            PanelButton {
-                                text: "Open folder...";
-                                icon: @image-url("icons/folder-open.svg");
-                                clicked => { root.open-folder(); }
-                            }
-                            if root.open-folder-name != "" || root.open-folder-note != ""
-                                || root.recent-folders.length > 0: FolderName {
-                                name: root.open-folder-name;
-                                root-name: root.open-folder-root;
-                                path: root.open-folder-path;
-                                note: root.open-folder-note;
-                                has-list: root.recent-folders.length > 0;
-                                quiet: root.sheet-open();
-                                menu(x, y) => { root.recent-menu-at(x, y); }
-                                tip(t, x, y) => { root.tip-at(t, x, y); }
-                                menu-shown => { return root.menu-shown(); }
-                            }
-                        }
-                        // The open root's folders, from the index.
-                        if root.folder-tree-shown: FoldersSection {
-                            rows: root.folder-tree;
-                            subfolders <=> root.folder-tree-subfolders;
-                            collapsed-folders <=> root.collapsed-folders;
-                            picked(p) => { root.folder-tree-picked(p); }
-                            folded(p) => { root.folder-tree-folded(p); }
-                            subfolders-changed => { root.folder-tree-subfolders-changed(); }
-                            focus-keys => { keys.focus(); }
-                        }
-                        NavigatorSection {
-                            zoom-text: root.zoom-text;
-                            collapsed-navigator <=> root.collapsed-navigator;
-                            navigator: root.navigator;
-                            nav-partial: root.nav-partial;
-                            nav-left: root.nav-left;
-                            nav-top: root.nav-top;
-                            nav-width: root.nav-width;
-                            nav-height: root.nav-height;
-                            navigate(a, b) => { root.navigate(a, b); }
-                            focus-keys => { keys.focus(); }
-                        }
-                        // The presets: a click lays one over the edit, the
-                        // bin removes it, and the edit is saved or a
-                        // Lightroom preset brought in below the list. Not
-                        // in culling, as the snapshots and the history.
-                        if !root.culling: PresetsSection {
-                            selected <=> root.selected;
-                            collapsed-presets <=> root.collapsed-presets;
-                            preset-names <=> root.preset-names;
-                            confirm-remove <=> root.preset-confirm-remove;
-                            preset-applied(a) => { root.preset-applied(a); }
-                            preset-deleted(a) => { root.preset-deleted(a); }
-                            preset-import => { root.preset-import(); }
-                            preset-save-open => { root.preset-save-open(); }
-                            set-count: root.set-count;
-                            sync-open-asked => { root.sync-open-asked(); }
-                        }
-                        // The snapshots: whole states kept by name. A
-                        // click restores one as a step; a double-click
-                        // renames it; the bin removes it.
-                        // Not in culling, where the panel is not the
-                        // frame's and a step is the way out of the mode.
-                        if !root.culling: SnapshotsSection {
-                            selected <=> root.selected;
-                            snapshot-names <=> root.snapshot-names;
-                            snapshot-editing <=> root.snapshot-editing;
-                            snapshot-taken => { root.snapshot-taken(); }
-                            snapshot-restored(a) => { root.snapshot-restored(a); }
-                            snapshot-hovered(a) => { root.snapshot-hovered(a); }
-                            snapshot-renamed(a, b) => { root.snapshot-renamed(a, b); }
-                            snapshot-deleted(a) => { root.snapshot-deleted(a); }
-                            collapsed-snapshots <=> root.collapsed-snapshots;
-                        }
-                        // The history: every step, newest first, the
-                        // current one lit and the undone ones muted. A
-                        // click makes a step current; what lies past it
-                        // stays until the next change.
-                        if !root.culling: HistorySection {
-                            history-rows <=> root.history-rows;
-                            history-current <=> root.history-current;
-                            history-clicked(a) => { root.history-clicked(a); }
-                            history-hovered(a) => { root.history-hovered(a); }
-                            collapsed-history <=> root.collapsed-history;
-                        }
-                    }
-                }
-                VerticalLayout {
-                    padding: Theme.space-4;
-                    padding-top: Theme.space-2;
-                    spacing: Theme.space-2;
-                    // A newer release, when the check found one: the
-                    // page in the browser, or Not now for this one.
-                    if root.update-version != "": HorizontalLayout {
-                        spacing: Theme.space-2;
-                        PanelButton {
-                            text: root.update-version + " is available";
-                            icon: @image-url("icons/sparkles.svg");
-                            horizontal-stretch: 1;
-                            clicked => { root.update-open(); }
-                        }
-                        PanelButton {
-                            icon: @image-url("icons/x.svg");
-                            accessible-role: button;
-                            accessible-label: "Not now: do not offer " + root.update-version + " again";
-                            width: Theme.control-height;
-                            horizontal-stretch: 0;
-                            clicked => { root.update-dismissed(); }
-                        }
-                    }
-                    PanelButton {
-                        text: "Settings...";
-                        icon: @image-url("icons/settings.svg");
-                        clicked => { root.settings-asked(); }
-                    }
-                    PanelButton {
-                        text: "Report a problem...";
-                        icon: @image-url("icons/bug.svg");
-                        clicked => { root.report-asked(); }
-                    }
-                }
-                }
-            }
+            // The left pane's room: the pane itself is drawn over it,
+            // after the grid (below), so that the grid, which covers
+            // the rest of the window, leaves it showing.
+            if !root.left-hidden: Rectangle { width: root.left-w; }
             // Viewport. Everything drawn over the picture — a mask's
             // outline and handles, the brush under the pointer, the
             // crop's shade — is placed in view pixels off a geometry
@@ -2381,15 +2244,6 @@ export component App inherits Window {
     // after. With all three away they go quiet (see EdgeArrow).
     property <length> view-mid: (root.height - root.strip-h) / 2;
     EdgeArrow {
-        x: root.left-w;
-        y: root.view-mid - self.height / 2;
-        width: 16px;
-        height: 40px;
-        quiet: root.all-hidden();
-        icon: root.left-hidden ? @image-url("icons/chevron-right.svg") : @image-url("icons/chevron-left.svg");
-        clicked => { root.left-hidden = !root.left-hidden; keys.focus(); }
-    }
-    EdgeArrow {
         x: root.width - root.right-w - self.width;
         y: root.view-mid - self.height / 2;
         width: 16px;
@@ -2432,6 +2286,10 @@ export component App inherits Window {
     // texture, and everything named inside it, stays where the rest
     // of the window can reach it.
     if root.grid-open: GridSheet {
+        x: root.left-w;
+        y: 0;
+        width: root.width - root.left-w;
+        height: root.height;
         thumbs: root.thumbs;
         cells: root.grid-cells;
         selected <=> root.selected;
@@ -2476,34 +2334,236 @@ export component App inherits Window {
         filter-exact-toggled => { root.filter-exact-toggled(); }
         filter-text-edited(a) => { root.filter-text-edited(a); }
         filter-cleared => { root.filter-cleared(); }
-        open-folder => { root.open-folder(); }
-        import-running: root.import-running;
-        import-stopping: root.import-stopping;
-        import-line: root.import-status;
-        import-asked => { root.import-asked(); }
-        import-stop => { root.import-stop(); }
+        // Said here only with the pane, which says it under Import,
+        // put away.
+        import-line: root.left-hidden ? root.import-status : "";
         focus-keys => { keys.focus(); }
-        library-roots: root.library-roots;
-        library-all-on: root.library-all-on;
-        library-all-count: root.library-all-count;
-        library-can-add-open: root.library-can-add-open;
-        library-note: root.library-note;
-        library-root-picked(p) => { root.library-root-picked(p); }
-        library-root-removed(p) => { root.library-root-removed(p); }
-        library-root-add => { root.library-root-add(); }
-        library-root-add-open => { root.library-root-add-open(); }
-        library-root-rename(p) => { root.library-root-rename(p); root.menu-done(); }
-        open-folder-name: root.open-folder-name;
-        open-folder-root: root.open-folder-root;
-        open-folder-path: root.open-folder-path;
-        open-folder-note: root.open-folder-note;
-        recent-any: root.recent-folders.length > 0;
-        sheet-up: root.sheet-open();
-        recent-menu(x, y) => { root.recent-menu-at(x, y); }
-        tip(t, x, y) => { root.tip-at(t, x, y); }
         loading-shown: root.loading-shown;
         loading-fraction: root.loading-fraction;
         loading-line: root.loading-line;
+    }
+
+    // The left pane: the folder open and Recently opened, then the
+    // navigator, the presets, the snapshots and the history, as an
+    // editor keeps them on its left; with the grid up, what is browsed
+    // in its place: Import, the roots and the open root's folders. At
+    // its foot, the way to report a problem, found where it is looked
+    // for and nowhere near the work. Drawn over its room in the layout
+    // and over the grid, which covers everything else. Put away by F7
+    // or Tab: gone altogether. At zero width its wrapping texts would
+    // grow tall.
+    if !root.left-hidden: Rectangle {
+        x: 0;
+        y: 0;
+        width: root.left-w;
+        height: root.grid-open ? root.height : root.height - root.strip-h;
+        background: Theme.surface;
+        // Over the grid the pane lies over the strip's left end, which
+        // the grid leaves drawn under it: a press or a wheel in the
+        // pane's gaps must not reach a cell there. First, so the
+        // sections after it have their events before it.
+        TouchArea {
+            scroll-event(e) => { return accept; }
+        }
+        Rectangle { x: parent.width - 1px; width: 1px; height: 100%; background: Theme.border; }
+        VerticalLayout {
+        // The sections scroll; Settings and Report stay put
+        // beneath them, as the develop panel does on the
+        // right. Presets, Snapshots and History each cap
+        // their own list, and the navigator is just one
+        // thumbnail, held to the pane's width — nothing here
+        // is unbounded on its own, but their sum, on a small
+        // or high-DPI screen, still could be. A ScrollView
+        // never passes its content's size up to its parent,
+        // so nothing here can raise the window's minimum
+        // height past the screen's (see the note above about
+        // Windows leaving fullscreen).
+        ScrollView {
+            VerticalLayout {
+                alignment: start;
+                padding: Theme.space-4;
+                padding-top: Theme.space-2;
+                spacing: Theme.space-2;
+                // The button, and under it the folder it
+                // opened, which offers the ones before it.
+                VerticalLayout {
+                    spacing: 2px;
+                    PanelButton {
+                        text: "Open folder...";
+                        icon: @image-url("icons/folder-open.svg");
+                        clicked => { keys.focus(); root.open-folder(); }
+                    }
+                    if root.open-folder-name != "" || root.open-folder-note != ""
+                        || root.recent-folders.length > 0: FolderName {
+                        name: root.open-folder-name;
+                        root-name: root.open-folder-root;
+                        path: root.open-folder-path;
+                        note: root.open-folder-note;
+                        has-list: root.recent-folders.length > 0;
+                        quiet: root.sheet-open();
+                        menu(x, y) => { root.recent-menu-at(x, y); }
+                        tip(t, x, y) => { root.tip-at(t, x, y); }
+                        menu-shown => { return root.menu-shown(); }
+                    }
+                }
+                // The other way a folder fills, from a card, and while
+                // it runs its progress under it: the grid covers the
+                // status plate. Ctrl+Shift+I reaches the same sheet.
+                if root.grid-open: VerticalLayout {
+                    spacing: 2px;
+                    PanelButton {
+                        text: root.import-running ? (root.import-stopping ? "Stopping..." : "Stop import") : "Import...";
+                        icon: @image-url("icons/camera.svg");
+                        enabled: !root.import-stopping;
+                        clicked => {
+                            keys.focus();
+                            if (root.import-running) { root.import-stop(); } else { root.import-asked(); }
+                        }
+                    }
+                    if root.import-status != "": Text {
+                        text: root.import-status;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
+                }
+                // The library's roots, with the grid: a row a root.
+                if root.grid-open: RootsSection {
+                    roots: root.library-roots;
+                    all-on: root.library-all-on;
+                    all-count: root.library-all-count;
+                    can-add-open: root.library-can-add-open;
+                    empty-note: root.library-note;
+                    ctrl-click-menu: root.ctrl-click-menu;
+                    collapsed-roots <=> root.collapsed-roots;
+                    picked(p) => { root.library-root-picked(p); }
+                    removed(p) => { root.library-root-removed(p); }
+                    add => { root.library-root-add(); }
+                    add-open => { root.library-root-add-open(); }
+                    rename(p) => { root.library-root-rename(p); }
+                    focus-keys => { keys.focus(); }
+                    menu-done => { root.menu-done(); }
+                    menu-shown => { return root.menu-shown(); }
+                    quiet: root.sheet-open();
+                    tip(t, x, y) => { root.tip-at(t, x, y); }
+                }
+                // The open root's folders, from the index.
+                if root.folder-tree-shown: FoldersSection {
+                    rows: root.folder-tree;
+                    subfolders <=> root.folder-tree-subfolders;
+                    collapsed-folders <=> root.collapsed-folders;
+                    picked(p) => { root.folder-tree-picked(p); }
+                    folded(p) => { root.folder-tree-folded(p); }
+                    subfolders-changed => { root.folder-tree-subfolders-changed(); }
+                    focus-keys => { keys.focus(); }
+                }
+                // The frame's, and so the loupe's alone.
+                if !root.grid-open: NavigatorSection {
+                    zoom-text: root.zoom-text;
+                    collapsed-navigator <=> root.collapsed-navigator;
+                    navigator: root.navigator;
+                    nav-partial: root.nav-partial;
+                    nav-left: root.nav-left;
+                    nav-top: root.nav-top;
+                    nav-width: root.nav-width;
+                    nav-height: root.nav-height;
+                    navigate(a, b) => { root.navigate(a, b); }
+                    focus-keys => { keys.focus(); }
+                }
+                // The presets: a click lays one over the edit, the
+                // bin removes it, and the edit is saved or a
+                // Lightroom preset brought in below the list. Not
+                // in culling, as the snapshots and the history.
+                if !root.culling && !root.grid-open: PresetsSection {
+                    selected <=> root.selected;
+                    collapsed-presets <=> root.collapsed-presets;
+                    preset-names <=> root.preset-names;
+                    confirm-remove <=> root.preset-confirm-remove;
+                    preset-applied(a) => { root.preset-applied(a); }
+                    preset-deleted(a) => { root.preset-deleted(a); }
+                    preset-import => { root.preset-import(); }
+                    preset-save-open => { root.preset-save-open(); }
+                    set-count: root.set-count;
+                    sync-open-asked => { root.sync-open-asked(); }
+                }
+                // The snapshots: whole states kept by name. A
+                // click restores one as a step; a double-click
+                // renames it; the bin removes it.
+                // Not in culling, where the panel is not the
+                // frame's and a step is the way out of the mode.
+                if !root.culling && !root.grid-open: SnapshotsSection {
+                    selected <=> root.selected;
+                    snapshot-names <=> root.snapshot-names;
+                    snapshot-editing <=> root.snapshot-editing;
+                    snapshot-taken => { root.snapshot-taken(); }
+                    snapshot-restored(a) => { root.snapshot-restored(a); }
+                    snapshot-hovered(a) => { root.snapshot-hovered(a); }
+                    snapshot-renamed(a, b) => { root.snapshot-renamed(a, b); }
+                    snapshot-deleted(a) => { root.snapshot-deleted(a); }
+                    collapsed-snapshots <=> root.collapsed-snapshots;
+                }
+                // The history: every step, newest first, the
+                // current one lit and the undone ones muted. A
+                // click makes a step current; what lies past it
+                // stays until the next change.
+                if !root.culling && !root.grid-open: HistorySection {
+                    history-rows <=> root.history-rows;
+                    history-current <=> root.history-current;
+                    history-clicked(a) => { root.history-clicked(a); }
+                    history-hovered(a) => { root.history-hovered(a); }
+                    collapsed-history <=> root.collapsed-history;
+                }
+            }
+        }
+        VerticalLayout {
+            padding: Theme.space-4;
+            padding-top: Theme.space-2;
+            spacing: Theme.space-2;
+            // A newer release, when the check found one: the
+            // page in the browser, or Not now for this one.
+            if root.update-version != "": HorizontalLayout {
+                spacing: Theme.space-2;
+                PanelButton {
+                    text: root.update-version + " is available";
+                    icon: @image-url("icons/sparkles.svg");
+                    horizontal-stretch: 1;
+                    clicked => { root.update-open(); }
+                }
+                PanelButton {
+                    icon: @image-url("icons/x.svg");
+                    accessible-role: button;
+                    accessible-label: "Not now: do not offer " + root.update-version + " again";
+                    width: Theme.control-height;
+                    horizontal-stretch: 0;
+                    clicked => { root.update-dismissed(); }
+                }
+            }
+            PanelButton {
+                text: "Settings...";
+                icon: @image-url("icons/settings.svg");
+                clicked => { root.settings-asked(); }
+            }
+            PanelButton {
+                text: "Report a problem...";
+                icon: @image-url("icons/bug.svg");
+                clicked => { root.report-asked(); }
+            }
+        }
+        }
+    }
+
+    // The left pane's arrow, over the grid too, at the grid's edge
+    // and the window's middle there: the grid keeps the pane, and the
+    // arrow is its way back. Quiet only in the loupe with all three
+    // away, as the others.
+    EdgeArrow {
+        x: root.left-w;
+        y: root.grid-open ? (root.height - self.height) / 2 : root.view-mid - self.height / 2;
+        width: 16px;
+        height: 40px;
+        quiet: root.all-hidden() && !root.grid-open;
+        icon: root.left-hidden ? @image-url("icons/chevron-right.svg") : @image-url("icons/chevron-left.svg");
+        clicked => { root.left-hidden = !root.left-hidden; keys.focus(); }
     }
 
     // The model sheet: a download offered, with its license, until
@@ -2568,7 +2628,7 @@ export component App inherits Window {
         preset-saved => { root.preset-saved(); }
     }
 
-    // The root sheet: a root's name, from its chip's menu.
+    // The root sheet: a root's name, from its row's menu.
     if root.root-sheet-open: RootSheet {
         open <=> root.root-sheet-open;
         path: root.root-sheet-path;
@@ -2697,7 +2757,7 @@ export component App inherits Window {
     }
 
     // Recently opened: one list for the window, opened below the
-    // folder's name in the left pane or the grid's header.
+    // folder's name in the left pane.
     recent-menu := RecentMenu {
         x: 0;
         y: 0;

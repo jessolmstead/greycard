@@ -1081,6 +1081,9 @@ pub(crate) fn told(app: &App, told: Told) {
             st.index_path = Some(path);
             open_reader(&mut st);
             crate::roots::recount(&mut st);
+            // The launch's folder, when it lies under a root, has its
+            // root's tree once the index can be read.
+            crate::tree::want(&mut st, app);
             crate::roots::show(&st, app);
             let wanted = st.library.wanted.take();
             drop(st);
@@ -1628,9 +1631,10 @@ mod tests {
         let pressed = Rc::new(RefCell::new(Vec::new()));
         let seen = pressed.clone();
         app.on_filter_facet_toggled(move |_, key| seen.borrow_mut().push(key.to_string()));
-        // The facet row is the header's fourth, under the controls,
-        // the library's roots and the meta chips.
-        let (x, y) = (200.0, 120.0);
+        // The facet row is the header's third, under the selection's
+        // line and the meta chips with the words; the sheet starts at
+        // the left pane's edge, 240 in.
+        let (x, y) = (440.0, 92.0);
         crate::testing::click(&app, x, y);
         let position = slint::LogicalPosition::new(x, y);
         app.window().dispatch_event(WindowEvent::PointerScrolled {

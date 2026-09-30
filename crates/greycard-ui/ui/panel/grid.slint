@@ -2,11 +2,9 @@
 // with the filter, and the cells riding on one scrolled offset.
 
 import { Theme } from "../theme.slint";
-import { Thumb, ThumbCell, FilterChip, FacetRow, RootChip } from "../structs.slint";
+import { Thumb, ThumbCell, FilterChip, FacetRow } from "../structs.slint";
 import { PanelButton, ThumbBadges } from "../controls.slint";
 import { FilterBar } from "filter.slint";
-import { RootsRow } from "roots.slint";
-import { FolderName } from "recent.slint";
 import { LoadingCard } from "loading.slint";
 
 export component GridSheet inherits Rectangle {
@@ -77,37 +75,11 @@ export component GridSheet inherits Rectangle {
     callback filter-exact-toggled();
     callback filter-text-edited(string);
     callback filter-cleared();
-    callback open-folder();
-    /// An import running, and its progress and then its end, said here
-    /// in place of the selection since the grid covers the status plate.
-    in property <bool> import-running;
-    in property <bool> import-stopping;
+    /// An import's progress and then its end, said in place of the
+    /// selection while the left pane, which says it under Import, is
+    /// put away: the grid covers the status plate. Empty for none.
     in property <string> import-line;
-    callback import-asked();
-    callback import-stop();
     callback focus-keys();
-    // The library's roots: see `RootsRow`.
-    in property <[RootChip]> library-roots;
-    in property <bool> library-all-on;
-    in property <int> library-all-count;
-    in property <bool> library-can-add-open;
-    in property <string> library-note;
-    callback library-root-picked(string);
-    callback library-root-removed(string);
-    callback library-root-add();
-    callback library-root-add-open();
-    callback library-root-rename(string);
-    // The folder open, and Recently opened offered from its name: see
-    // `FolderName`.
-    in property <string> open-folder-name;
-    in property <string> open-folder-root;
-    in property <string> open-folder-path;
-    in property <string> open-folder-note;
-    in property <bool> recent-any;
-    /// A sheet is up over the window: the name puts up no hover text.
-    in property <bool> sheet-up;
-    callback recent-menu(length, length);
-    callback tip(string, length, length);
     /// A view's sidecars being read, past the moment a fast one takes:
     /// its bar over the sheet, which holds the list before it until
     /// the new one lands.
@@ -124,22 +96,20 @@ export component GridSheet inherits Rectangle {
     }
     VerticalLayout {
         // The header: what is selected and how large the cells
-        // are, then the filter, where the three-way Show used to
-        // be. It takes two rows now, because the chips and the
-        // words being looked for do not fit on one at a window
-        // narrow enough to work on.
+        // are, then the filter. Where the frames are (the folder, the
+        // roots, the tree) is the left pane's; what is looked for
+        // among them is here, over the sheet it narrows.
         Rectangle {
-            // Two rows of controls and three rows of chips: the
-            // library's roots, the filter bar's meta chips and its
-            // facets. Spelled out
-            // rather than asked of the layout: a header whose
-            // height settles a frame late re-flows the sheet twice
-            // on the way in, and the second re-flow is a folder's
-            // worth of thumbnails asked for again. The facets' row
-            // is there before the index has anything to put in it
-            // for the same reason.
-            height: 2 * Theme.control-height + 3 * (Theme.control-height - 4px)
-                + 6 * Theme.space-2 + 1px;
+            // Two rows of controls and one of chips: the selection's
+            // line, the filter's meta chips with its words, and its
+            // facets. Spelled out rather than asked of the layout: a
+            // header whose height settles a frame late re-flows the
+            // sheet twice on the way in, and the second re-flow is a
+            // folder's worth of thumbnails asked for again. The
+            // facets' row is there before the index has anything to
+            // put in it for the same reason.
+            height: 2 * Theme.control-height + (Theme.control-height - 4px)
+                + 4 * Theme.space-2 + 1px;
             background: Theme.surface;
             Rectangle { y: parent.height - 1px; height: 1px; width: 100%; background: Theme.border; }
             header := VerticalLayout {
@@ -149,45 +119,7 @@ export component GridSheet inherits Rectangle {
                 spacing: Theme.space-2;
                 HorizontalLayout {
                     spacing: Theme.space-3;
-                    // The left panel's first button, here where the
-                    // grid covers it: the grid is where a folder is
-                    // looked over, so it is where the next is asked
-                    // for. Ctrl+O reaches the same callback.
-                    PanelButton {
-                        text: "Open folder...";
-                        icon: @image-url("../icons/folder-open.svg");
-                        clicked => { root.focus-keys(); root.open-folder(); }
-                    }
-                    // Beside it, the folder it opened, which offers
-                    // the ones before it.
-                    if root.open-folder-name != "" || root.open-folder-note != ""
-                        || root.recent-any: VerticalLayout {
-                        alignment: center;
-                        max-width: 240px;
-                        horizontal-stretch: 0;
-                        FolderName {
-                            name: root.open-folder-name;
-                            root-name: root.open-folder-root;
-                            path: root.open-folder-path;
-                            note: root.open-folder-note;
-                            has-list: root.recent-any;
-                            quiet: root.sheet-up;
-                            menu(x, y) => { root.recent-menu(x, y); }
-                            tip(t, x, y) => { root.tip(t, x, y); }
-                            menu-shown => { return root.menu-shown(); }
-                        }
-                    }
-                    // Beside it, the other way a folder fills: from a
-                    // card. Ctrl+Shift+I reaches the same sheet.
-                    PanelButton {
-                        text: root.import-running ? (root.import-stopping ? "Stopping..." : "Stop import") : "Import...";
-                        icon: @image-url("../icons/camera.svg");
-                        enabled: !root.import-stopping;
-                        clicked => {
-                            root.focus-keys();
-                            if (root.import-running) { root.import-stop(); } else { root.import-asked(); }
-                        }
-                    }
+                    height: Theme.control-height;
                     if root.import-line != "": Text {
                         text: root.import-line;
                         color: Theme.text-secondary;
@@ -226,21 +158,6 @@ export component GridSheet inherits Rectangle {
                         icon: @image-url("../icons/image.svg");
                         clicked => { root.focus-keys(); root.grid-open = false; }
                     }
-                }
-                RootsRow {
-                    roots: root.library-roots;
-                    all-on: root.library-all-on;
-                    all-count: root.library-all-count;
-                    can-add-open: root.library-can-add-open;
-                    note: root.library-note;
-                    picked(p) => { root.focus-keys(); root.library-root-picked(p); }
-                    removed(p) => { root.focus-keys(); root.library-root-removed(p); }
-                    add => { root.focus-keys(); root.library-root-add(); }
-                    add-open => { root.focus-keys(); root.library-root-add-open(); }
-                    rename(p) => { root.library-root-rename(p); }
-                    ctrl-click-menu: root.ctrl-click-menu;
-                    menu-opening => { root.focus-keys(); }
-                    menu-shown => { return root.menu-shown(); }
                 }
                 FilterBar {
                     takes-focus: true;

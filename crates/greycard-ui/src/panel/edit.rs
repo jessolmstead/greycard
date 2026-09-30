@@ -607,6 +607,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
 pub(crate) type Fold = (&'static str, fn(&App) -> bool, fn(&App, bool));
 
 pub(crate) const FOLDS: &[Fold] = &[
+    ("roots", App::get_collapsed_roots, App::set_collapsed_roots),
     (
         "folders",
         App::get_collapsed_folders,

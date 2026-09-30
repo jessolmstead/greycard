@@ -166,6 +166,23 @@ pub(crate) fn labeled(app: &App, label: &str) -> (slint::LogicalPosition, slint:
     panic!("nothing labeled {label:?}");
 }
 
+/// The buttons a screen reader knows as `label`, top first: their top
+/// left and size, in logical pixels from the window's top left. A
+/// text's own label is its words, so a row whose name is drawn in it
+/// is found once here rather than twice.
+pub(crate) fn buttons(app: &App, label: &str) -> Vec<(slint::LogicalPosition, slint::LogicalSize)> {
+    use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(0.0, 0.0),
+    });
+    let mut found: Vec<_> = ElementHandle::find_by_accessible_label(app, label)
+        .filter(|e| e.accessible_role() == Some(AccessibleRole::Button))
+        .map(|e| (e.absolute_position(), e.size()))
+        .collect();
+    found.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
+    found
+}
+
 /// Type `text` a key at a time into whatever has the focus.
 pub(crate) fn type_text(app: &App, text: &str) {
     for c in text.chars() {

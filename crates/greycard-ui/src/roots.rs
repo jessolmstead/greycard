@@ -10,7 +10,7 @@
 //! pass, since a file whose size and mtime are unchanged is not read.
 //! The watcher's changes go to the same thread, ahead of the launch
 //! pass and behind the window. A root that is not there (a drive
-//! unplugged) is offline: no pass, no watch, its chip says so, and
+//! unplugged) is offline: no pass, no watch, its row says so, and
 //! the view leaves its files out rather than show them as gone.
 //!
 //! Which roots are there, which are on a network mount, and the
@@ -45,7 +45,7 @@
 //! without a picture is asked for one again. The frame on screen is
 //! followed to where the index says it went, and never to a copy of it.
 //!
-//! A root can have a name of the user's, given from its chip's menu
+//! A root can have a name of the user's, given from its row's menu
 //! (right-click, Rename...), and shown wherever the
 //! folder's own name would be. It is a label and nothing more: the
 //! root is its path everywhere, and naming it moves nothing.
@@ -74,7 +74,7 @@ pub(crate) enum View {
     /// One folder under a root, from the index as a view of the root
     /// is: the frames directly in it, or with `deep` those in the
     /// folders under it too. Still that root's view, narrowed: its
-    /// chip stays on.
+    /// row stays lit.
     Branch {
         root: PathBuf,
         folder: PathBuf,
@@ -83,14 +83,6 @@ pub(crate) enum View {
 }
 
 impl View {
-    /// The root whose view this is, when it is one root's.
-    pub(crate) fn root(&self) -> Option<&Path> {
-        match self {
-            View::Roots(Some(r)) | View::Branch { root: r, .. } => Some(r),
-            View::Roots(None) | View::Folder => None,
-        }
-    }
-
     /// The list comes from the index's rows, not from a folder's
     /// listing on disk.
     pub(crate) fn lists_rows(&self) -> bool {
@@ -196,7 +188,7 @@ pub(crate) struct Library {
     pub(crate) merge_token: u64,
     pub(crate) stale: bool,
     /// The roots found offline when last looked at, off the window's
-    /// thread (or on launch): what their chips say.
+    /// thread (or on launch): what their rows say.
     pub(crate) offline: HashSet<PathBuf>,
     /// The folders under the roots a read has found can be read. A
     /// folder not here, one that could not be read among them, is
@@ -220,6 +212,11 @@ pub(crate) struct Library {
     /// over one has the list read again, even one that found nothing
     /// changed (the folder readable again, its files as they were).
     pub(crate) unreadable: HashSet<PathBuf>,
+    /// The roots' rows as the pane shows them: one model for the
+    /// session, its rows replaced only when they change, since `show`
+    /// runs at every pass and recount and a row rebuilt under the
+    /// pointer loses its hover text and a press in progress.
+    pub(crate) rows: Rc<VecModel<RootChip>>,
 }
 
 /// Whether a root is there to be read: a drive unplugged takes its
@@ -660,10 +657,11 @@ pub(crate) fn recount(st: &mut State) {
     st.library.counts = counts;
 }
 
-/// The roots' row in the grid's header.
+/// The roots in the grid's left pane, and what depends on them: the
+/// open folder's name and the tree.
 pub(crate) fn show(st: &State, app: &App) {
     let roots = st.library.roots.list();
-    // A folder of a root's tree keeps the root's chip on.
+    // A folder of a root's tree keeps the root's row lit.
     let on = match &st.view {
         View::Roots(r) => Some(r.clone()),
         View::Branch { root, .. } => Some(Some(root.clone())),
@@ -680,7 +678,10 @@ pub(crate) fn show(st: &State, app: &App) {
             offline: st.library.offline.contains(r),
         })
         .collect();
-    app.set_library_roots(ModelRc::new(VecModel::from(chips)));
+    let model = &st.library.rows;
+    if !model.iter().eq(chips.iter().cloned()) {
+        model.set_vec(chips);
+    }
     app.set_library_all_on(on == Some(None));
     app.set_library_all_count(st.library.counts.iter().sum::<usize>() as i32);
     app.set_library_can_add_open(open_folder_to_add(st).is_some());
@@ -698,7 +699,7 @@ pub(crate) fn show(st: &State, app: &App) {
     crate::tree::show(st, app);
 }
 
-/// A root as its chip names it: the name the user gave it, else the
+/// A root as its row names it: the name the user gave it, else the
 /// folder's own name, or the whole path for a disk's root, which has
 /// none.
 pub(crate) fn root_name(roots: &Roots, root: &Path) -> String {
@@ -757,7 +758,7 @@ fn edit_roots<T>(
 
 /// Add a folder to the roots: kept, watched, passed over, and the
 /// view brought up if it lists the roots. It goes by its folder's
-/// name until it is given one from its chip's menu.
+/// name until it is given one from its row's menu.
 ///
 /// The folder is made canonical and looked at off the window's thread
 /// (a folder on a share can take a round trip, or never answer), and
@@ -828,7 +829,7 @@ fn add_checked(
         Ok(Added::New(root)) => {
             app.set_status(
                 format!(
-                    "{} is in the library now; right-click its chip to name it",
+                    "{} is in the library now; right-click its row to name it",
                     said(&st.library.roots, &root)
                 )
                 .into(),
@@ -924,7 +925,7 @@ pub(crate) fn remove(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>,
 
 /// Give a root a name, or with an empty one take its name away. The
 /// root is still its path, and nothing on disk is touched; only its
-/// chip and what the status line calls it change.
+/// row and what the status line calls it change.
 pub(crate) fn rename(state: &Rc<RefCell<State>>, app: &App, dir: &Path, name: &str) {
     let mut st = state.borrow_mut();
     let before = st.library.roots.name(dir).map(str::to_owned);
@@ -976,7 +977,7 @@ fn roots_of(st: &State, view: &View) -> Vec<PathBuf> {
 }
 
 /// Every root, and the view's own if it is not among them: each is
-/// looked at off the window's thread, for its chip.
+/// looked at off the window's thread, for its row.
 fn every_root(st: &State, view: &View) -> Vec<PathBuf> {
     let mut all = st.library.roots.list().to_vec();
     for r in roots_of(st, view) {
@@ -2671,6 +2672,7 @@ pub(crate) fn empty_view(st: &mut State, app: &App) {
 /// The header's callbacks: a root chosen, all of them, one added by
 /// the chooser or as the folder open, one taken out, one named.
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+    app.set_library_roots(ModelRc::from(state.borrow().library.rows.clone()));
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_library_root_rename(move |path| {
@@ -3038,11 +3040,11 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The roots' row: a chip a root with its count from the index,
-    /// the all-roots chip with their sum, and "Add this folder" while
-    /// the folder open is under none of them.
+    /// The pane's roots, with the grid up: a row a root with its count
+    /// from the index, All roots with their sum, the one open lit, and
+    /// "Add this folder" while the folder open is under none of them.
     #[test]
-    fn the_header_lists_the_roots_with_their_counts() {
+    fn the_pane_lists_the_roots_with_their_counts() {
         let dir = scratch("header");
         let (a, b) = (dir.join("a"), dir.join("b"));
         std::fs::create_dir_all(a.join("day")).unwrap();
@@ -3056,6 +3058,9 @@ mod tests {
             .index_tree(&dir, &mut |_| {})
             .unwrap();
         let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1200.0, 700.0));
+        app.set_grid_open(true);
         let (state, _worker) = state_for(&app, open);
         let mut st = state.borrow_mut();
         st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
@@ -3069,6 +3074,12 @@ mod tests {
         assert_eq!(app.get_library_all_count(), 3);
         assert!(!app.get_library_all_on());
         assert!(app.get_library_can_add_open(), "b is under no root");
+        drop(st);
+        let (count, lit, _) = root_row(&app, "a");
+        assert_eq!((count.as_str(), lit), ("3", false));
+        assert_eq!(root_row(&app, "All roots").0, "3");
+        assert_eq!(buttons_named(&app, "+ Add this folder"), 1);
+        let mut st = state.borrow_mut();
         st.library.roots.add(&b).unwrap();
         st.view = View::Roots(None);
         recount(&mut st);
@@ -3077,6 +3088,24 @@ mod tests {
         assert!(app.get_library_all_on());
         assert!(!app.get_library_can_add_open());
         assert_eq!(app.get_library_note(), "");
+        drop(st);
+        let (count, lit, _) = root_row(&app, "All roots");
+        assert_eq!((count.as_str(), lit), ("4", true));
+        assert_eq!(root_row(&app, "b").0, "1");
+        assert!(!root_row(&app, "b").1);
+        assert_eq!(
+            buttons_named(&app, "+ Add this folder"),
+            0,
+            "b is a root now"
+        );
+        // One root's view: its row lit, All roots not.
+        let mut st = state.borrow_mut();
+        st.view = View::Roots(Some(a.clone()));
+        show(&st, &app);
+        drop(st);
+        assert!(root_row(&app, "a").1);
+        assert!(!root_row(&app, "All roots").1);
+        let mut st = state.borrow_mut();
         // A name given is the chip's, and the path is still the root.
         st.library.roots.set_name(&a, "Archive");
         assert_eq!(root_name(&st.library.roots, &a), "Archive");
@@ -3125,86 +3154,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The row in the grid's header is wired: along it a press finds
-    /// the chooser's chip, then the all-roots chip, then the root's
-    /// own, then its cross, in that order; and a row of roots longer
-    /// than the header scrolls sideways under a plain wheel to its
-    /// last root, rather than squeezing every name to an ellipsis
-    /// (the review's six roots in 560 px).
-    #[test]
-    fn the_roots_row_hands_back_what_was_pressed() {
-        let app = window(0);
-        app.window()
-            .set_size(slint::LogicalSize::new(1200.0, 700.0));
-        app.set_grid_open(true);
-        app.set_library_roots(ModelRc::new(VecModel::from(vec![RootChip {
-            name: "shoots".into(),
-            path: "/x/shoots".into(),
-            count: 12,
-            on: false,
-            offline: false,
-        }])));
-        app.set_library_all_count(12);
-        let seen = Rc::new(RefCell::new(Vec::<String>::new()));
-        let s = seen.clone();
-        app.on_library_root_picked(move |p| s.borrow_mut().push(format!("picked {p}")));
-        let s = seen.clone();
-        app.on_library_root_removed(move |p| s.borrow_mut().push(format!("removed {p}")));
-        let s = seen.clone();
-        app.on_library_root_add(move || s.borrow_mut().push("add".into()));
-        let s = seen.clone();
-        app.on_library_root_add_open(move || s.borrow_mut().push("add open".into()));
-        // The row is the header's second, under the controls.
-        for x in (0..600).step_by(3) {
-            crate::testing::click(&app, x as f32, 56.0);
-        }
-        let firsts = |seen: &[String]| {
-            let mut said: Vec<String> = Vec::new();
-            for s in seen {
-                if !said.contains(s) {
-                    said.push(s.clone());
-                }
-            }
-            said
-        };
-        assert_eq!(
-            firsts(&seen.borrow()),
-            ["add", "picked ", "picked /x/shoots", "removed /x/shoots"],
-            "{:?}",
-            seen.borrow()
-        );
-
-        // Six roots with long names in a narrow window.
-        seen.borrow_mut().clear();
-        app.window().set_size(slint::LogicalSize::new(560.0, 700.0));
-        let six: Vec<RootChip> = (0..6)
-            .map(|i| RootChip {
-                name: format!("a long shoot folder name {i}").into(),
-                path: format!("/x/r{i}").into(),
-                count: 100,
-                on: false,
-                offline: false,
-            })
-            .collect();
-        app.set_library_roots(ModelRc::new(VecModel::from(six)));
-        let (x, y) = (400.0, 56.0);
-        crate::testing::click(&app, x, y);
-        app.window()
-            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
-                position: slint::LogicalPosition::new(x, y),
-                delta_x: 0.0,
-                delta_y: -5000.0,
-            });
-        for x in (300..550).step_by(3) {
-            crate::testing::click(&app, x as f32, y);
-        }
-        assert!(
-            seen.borrow().iter().any(|s| s == "picked /x/r5"),
-            "the last root is reached: {:?}",
-            seen.borrow()
-        );
-    }
-
     fn right_click(app: &App, x: f32, y: f32) {
         use slint::platform::{PointerEventButton, WindowEvent};
         let position = slint::LogicalPosition::new(x, y);
@@ -3223,23 +3172,173 @@ mod tests {
         }
     }
 
-    /// The first point along the roots row where a right-click opens a
-    /// root's menu, from `from` on, stepping 3 px; the right button
-    /// alone, which nothing in the row but a root's chip answers.
-    fn menu_opens_at(app: &App, from: f32, y: f32) -> Option<f32> {
-        (from as i32..600).step_by(3).map(|x| x as f32).find(|&x| {
-            right_click(app, x, y);
-            app.get_menu_up()
-        })
+    /// The middle of the button a screen reader knows as `label`: the
+    /// one highest up, so a root's row comes before the tree's row of
+    /// the same name.
+    fn middle_of(app: &App, label: &str) -> (f32, f32) {
+        let (at, size) = crate::testing::buttons(app, label)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("no button {label:?}"));
+        (at.x + size.width / 2.0, at.y + size.height / 2.0)
     }
 
-    /// A root is named from its chip's menu, and the name is only a
+    /// A point near the left end of that button: clear of a menu opened
+    /// from a row's right half, which drops down and to the right of
+    /// the pointer over the rows below it.
+    fn left_of(app: &App, label: &str) -> (f32, f32) {
+        let (at, size) = crate::testing::buttons(app, label)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| panic!("no button {label:?}"));
+        (at.x + 4.0, at.y + size.height / 2.0)
+    }
+
+    /// How many buttons a screen reader knows as `label`.
+    fn buttons_named(app: &App, label: &str) -> usize {
+        crate::testing::buttons(app, label).len()
+    }
+
+    /// A root's row in the pane, by its name: its count as a screen
+    /// reader has it, whether it is lit, and its width.
+    fn root_row(app: &App, name: &str) -> (String, bool, f32) {
+        use i_slint_backend_testing::ElementHandle;
+        crate::testing::count_labeled(app, name);
+        let row = ElementHandle::find_by_accessible_label(app, name)
+            .find(|e| e.accessible_item_selectable() == Some(true))
+            .unwrap_or_else(|| panic!("no root's row {name:?}"));
+        (
+            row.accessible_value().unwrap_or_default().to_string(),
+            row.accessible_item_selected().unwrap_or(false),
+            row.size().width,
+        )
+    }
+
+    /// A window with the grid up over two roots of the test's own,
+    /// every press of the pane's roots recorded and reaching nothing
+    /// else.
+    fn roots_in_the_pane(names: &[&str]) -> (App, Rc<RefCell<Vec<String>>>) {
+        let app = window(0);
+        app.window()
+            .set_size(slint::LogicalSize::new(1200.0, 700.0));
+        app.set_grid_open(true);
+        let chips: Vec<RootChip> = names
+            .iter()
+            .map(|n| RootChip {
+                name: (*n).into(),
+                path: format!("/x/{n}").into(),
+                count: 3,
+                on: false,
+                offline: false,
+            })
+            .collect();
+        app.set_library_all_count(3 * names.len() as i32);
+        app.set_library_roots(ModelRc::new(VecModel::from(chips)));
+        app.set_library_can_add_open(true);
+        let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+        let s = seen.clone();
+        app.on_library_root_picked(move |p| s.borrow_mut().push(format!("picked {p}")));
+        let s = seen.clone();
+        app.on_library_root_removed(move |p| s.borrow_mut().push(format!("removed {p}")));
+        let s = seen.clone();
+        app.on_library_root_add(move || s.borrow_mut().push("add".into()));
+        let s = seen.clone();
+        app.on_library_root_add_open(move || s.borrow_mut().push("add open".into()));
+        slint::platform::update_timers_and_animations();
+        (app, seen)
+    }
+
+    /// The pane's roots are wired, with the grid up: All roots, a root's
+    /// row, and the two ways to add one each hand back their own press;
+    /// the header carries none of it. A long name is cut short inside
+    /// the pane rather than widening it, and every root of six is a
+    /// row that answers.
+    #[test]
+    fn the_panes_roots_hand_back_what_was_pressed() {
+        let (app, seen) = roots_in_the_pane(&["shoots"]);
+        for label in [
+            "All roots",
+            "shoots",
+            "+ Add a root...",
+            "+ Add this folder",
+        ] {
+            let (x, y) = middle_of(&app, label);
+            assert!(x < 240.0, "{label} is in the pane, at {x}");
+            crate::testing::click(&app, x, y);
+        }
+        assert_eq!(
+            *seen.borrow(),
+            ["picked ", "picked /x/shoots", "add", "add open"]
+        );
+        // The count at the row's right, and nothing lit.
+        assert_eq!(root_row(&app, "shoots").0, "3");
+        assert_eq!(root_row(&app, "All roots").0, "3");
+        assert!(!root_row(&app, "shoots").1);
+        // The header keeps none of it: the pane put away takes every
+        // root with it, and the loupe's pane has none.
+        assert_eq!(buttons_named(&app, "All roots"), 1);
+        crate::testing::press(&app, slint::platform::Key::F7);
+        assert!(app.get_left_hidden());
+        assert_eq!(crate::testing::count_labeled(&app, "All roots"), 0);
+        assert_eq!(crate::testing::count_labeled(&app, "shoots"), 0);
+        assert_eq!(crate::testing::count_labeled(&app, "+ Add a root..."), 0);
+        crate::testing::press(&app, slint::platform::Key::F7);
+        assert_eq!(buttons_named(&app, "All roots"), 1);
+        app.set_grid_open(false);
+        assert_eq!(crate::testing::count_labeled(&app, "All roots"), 0);
+        app.set_grid_open(true);
+
+        // Six roots with long names: each a row inside the pane, and
+        // the last one reached.
+        seen.borrow_mut().clear();
+        let six: Vec<RootChip> = (0..6)
+            .map(|i| RootChip {
+                name: format!("a long shoot folder name that runs on {i}").into(),
+                path: format!("/x/r{i}").into(),
+                count: 100,
+                on: i == 5,
+                offline: i == 0,
+            })
+            .collect();
+        app.set_library_roots(ModelRc::new(VecModel::from(six)));
+        // A root whose drive is out says so in place of its count.
+        assert_eq!(
+            root_row(&app, "a long shoot folder name that runs on 0").0,
+            "offline"
+        );
+        assert_eq!(
+            root_row(&app, "a long shoot folder name that runs on 1").0,
+            "100"
+        );
+        let last = "a long shoot folder name that runs on 5";
+        let (_, lit, width) = root_row(&app, last);
+        assert!(lit, "the one open is lit");
+        assert!(width <= 240.0, "{width}");
+        let (x, y) = middle_of(&app, last);
+        // Cut short, the whole name is its hover text after a rest;
+        // All roots, whole already, has none.
+        let rest_on = |x: f32, y: f32| {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(x, y),
+                });
+            i_slint_backend_testing::mock_elapsed_time(Duration::from_millis(800));
+            slint::platform::update_timers_and_animations();
+        };
+        rest_on(x, y);
+        assert_eq!(app.get_tip_text(), last);
+        let all = middle_of(&app, "All roots");
+        rest_on(all.0, all.1);
+        assert_eq!(app.get_tip_text(), "", "the tip went with the pointer");
+        crate::testing::click(&app, x, y);
+        assert_eq!(*seen.borrow(), ["picked /x/r5"]);
+    }
+
+    /// A root is named from its row's menu, and the name is only a
     /// label: the root is its path throughout. A plain add is one
-    /// action, with no sheet. A right-click on the chip opens the menu
+    /// action, with no sheet. A right-click on the row opens the menu
     /// and picks nothing, and the press that closes the menu is not a
-    /// press on the chip. The chip is found with the right button
-    /// alone; the two left clicks are on the chip, just above where
-    /// its menu opened.
+    /// press on the row; the next is.
     #[test]
     fn a_root_is_named_from_its_menu() {
         let dir = scratch("rename");
@@ -3257,15 +3356,17 @@ mod tests {
         show(&state.borrow(), &app);
         slint::platform::update_timers_and_animations();
 
-        // The roots row is the header's second, under the controls.
-        let y = 56.0;
-        let x =
-            menu_opens_at(&app, 0.0, y).expect("a right-click on the root's chip opens its menu");
+        let (x, y) = middle_of(&app, "Photos");
+        right_click(&app, x, y);
+        assert!(
+            app.get_menu_up(),
+            "a right-click on the root's row opens its menu"
+        );
         assert_eq!(state.borrow().view, View::Folder, "nothing picked");
         assert!(state.borrow().library.wanted.is_none());
-        // The press that closes it, on the chip just above where the
+        // The press that closes it, on the row just left of where the
         // menu opened, is let go by.
-        let (x, y) = (x + 8.0, y - 6.0);
+        let (x, y) = left_of(&app, "Photos");
         crate::testing::click(&app, x, y);
         assert!(!app.get_menu_up());
         assert!(state.borrow().library.wanted.is_none(), "not a pick");
@@ -3273,7 +3374,7 @@ mod tests {
             state.borrow().library.roots.list(),
             std::slice::from_ref(&photos)
         );
-        // The next is a press on the chip, which picks its root.
+        // The next is a press on the row, which picks its root.
         crate::testing::click(&app, x, y);
         assert_eq!(
             state.borrow_mut().library.wanted.take(),
@@ -3295,6 +3396,7 @@ mod tests {
             ("Archive", photos.to_str().unwrap())
         );
         assert!(photos.is_dir(), "the folder is where it was");
+        assert_eq!(buttons_named(&app, "Archive"), 1);
 
         // Opened again, the sheet has the name to change; Escape,
         // with the field holding the focus, leaves it as it was.
@@ -3351,83 +3453,167 @@ mod tests {
 
     /// With a root's menu up, a right-click on another root opens that
     /// root's, and the left press that closes it does nothing on
-    /// whatever pill it lands on: not the chooser, not the folder
-    /// open added, not the all-roots view. The row's callbacks are
-    /// the test's own, so no press reaches anything outside it.
+    /// whatever row it lands on: not All roots, not the other root,
+    /// not the ways to add one. The pane's callbacks are the test's
+    /// own, so no press reaches anything outside it.
     #[test]
     fn the_press_that_closes_a_roots_menu_is_nothing_more() {
-        let app = window(0);
-        app.window()
-            .set_size(slint::LogicalSize::new(1200.0, 700.0));
-        app.set_grid_open(true);
-        let chip = |name: &str| RootChip {
-            name: name.into(),
-            path: format!("/x/{name}").into(),
-            count: 3,
-            on: false,
-            offline: false,
+        let (app, seen) = roots_in_the_pane(&["one", "two"]);
+        // The menus asked for at a row's right, the closing presses
+        // made at the rows' left, clear of the menu dropped over them.
+        let right = |label: &str| {
+            let (x, y) = middle_of(&app, label);
+            (x + 60.0, y)
         };
-        app.set_library_roots(ModelRc::new(VecModel::from(vec![chip("one"), chip("two")])));
-        app.set_library_all_count(6);
-        app.set_library_can_add_open(true);
-        let seen = Rc::new(RefCell::new(Vec::<String>::new()));
-        let s = seen.clone();
-        app.on_library_root_picked(move |p| s.borrow_mut().push(format!("picked {p}")));
-        let s = seen.clone();
-        app.on_library_root_removed(move |p| s.borrow_mut().push(format!("removed {p}")));
-        let s = seen.clone();
-        app.on_library_root_add(move || s.borrow_mut().push("add".into()));
-        let s = seen.clone();
-        app.on_library_root_add_open(move || s.borrow_mut().push("add open".into()));
-        slint::platform::update_timers_and_animations();
-        let y = 56.0;
-
-        // The two chips, and the gap between them, by the right
-        // button alone.
-        let one = menu_opens_at(&app, 0.0, y).expect("the first root's chip");
-        crate::testing::press(&app, slint::platform::Key::Escape);
-        assert!(!app.get_menu_up());
-        let gap = (one as i32..600)
-            .step_by(3)
-            .map(|x| x as f32)
-            .find(|&x| {
-                right_click(&app, x, y);
-                let up = app.get_menu_up();
-                if up {
-                    crate::testing::press(&app, slint::platform::Key::Escape);
-                }
-                !up
-            })
-            .expect("the first chip ends");
-        let two = menu_opens_at(&app, gap, y).expect("the second root's chip");
-        crate::testing::press(&app, slint::platform::Key::Escape);
-
+        let one = right("one");
+        let two = right("two");
+        // All roots has no menu.
+        let all = right("All roots");
+        right_click(&app, all.0, all.1);
+        assert!(!app.get_menu_up(), "All roots has no menu");
         // A right-click on the second with the first's menu up opens
         // the second's.
-        right_click(&app, one, y);
+        right_click(&app, one.0, one.1);
         assert!(app.get_menu_up());
-        right_click(&app, two, y);
+        right_click(&app, two.0, two.1);
         assert!(app.get_menu_up(), "the second root's menu is up");
         crate::testing::press(&app, slint::platform::Key::Escape);
         assert!(!app.get_menu_up());
 
-        // Every point of the row before the first root, closing its
-        // menu, does nothing there.
-        for x in (0..one as i32).step_by(3) {
-            right_click(&app, one, y);
+        // Every row, closing the first's menu, does nothing there.
+        let rows = [
+            "All roots",
+            "one",
+            "two",
+            "+ Add a root...",
+            "+ Add this folder",
+        ];
+        for label in rows {
+            right_click(&app, one.0, one.1);
             assert!(app.get_menu_up());
-            crate::testing::click(&app, x as f32, y);
-            assert!(!app.get_menu_up(), "closed at {x}");
+            let (x, y) = left_of(&app, label);
+            crate::testing::click(&app, x, y);
+            assert!(!app.get_menu_up(), "closed on {label}");
         }
         assert!(seen.borrow().is_empty(), "{:?}", seen.borrow());
-        // And with no menu up, the same row answers.
-        for x in (0..one as i32).step_by(3) {
-            crate::testing::click(&app, x as f32, y);
+        // And with no menu up, the same rows answer.
+        for label in rows {
+            let (x, y) = left_of(&app, label);
+            crate::testing::click(&app, x, y);
         }
-        let said = seen.borrow();
-        for want in ["add", "add open", "picked "] {
-            assert!(said.iter().any(|s| s == want), "{want}: {said:?}");
-        }
+        assert_eq!(
+            *seen.borrow(),
+            [
+                "picked ",
+                "picked /x/one",
+                "picked /x/two",
+                "add",
+                "add open"
+            ]
+        );
+    }
+
+    /// With the grid up the pane lies over the strip's left end, which
+    /// the grid leaves drawn under it: a press or a wheel in the pane's
+    /// empty foot reaches no strip cell. In the loupe the same point is
+    /// the strip's, and answers.
+    #[test]
+    fn the_pane_over_the_grid_keeps_the_strip_under_it_from_the_pointer() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::{Key, WindowEvent};
+        let app = window(40);
+        app.window()
+            .set_size(slint::LogicalSize::new(1200.0, 700.0));
+        let (_state, _worker) = state_for(&app, crate::testing::folder(40));
+        let clicked = Rc::new(RefCell::new(0));
+        let c = clicked.clone();
+        app.on_frame_clicked(move |_, _, _| *c.borrow_mut() += 1);
+        // Where the strip's first cell on screen starts: it moves when
+        // the strip scrolls.
+        let strip_at = || {
+            crate::testing::press(&app, Key::Shift);
+            ElementHandle::find_by_element_id(&app, "Filmstrip::cell")
+                .map(|e| e.absolute_position().x)
+                .fold(f32::INFINITY, f32::min)
+        };
+        // In the strip's first cell (12 to 190 across, 564 to 688
+        // down), and with the grid up in the pane's left margin, clear
+        // of its buttons.
+        let (x, y) = (14.0, 620.0);
+        let press_and_wheel = || {
+            crate::testing::click(&app, x, y);
+            app.window().dispatch_event(WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(x, y),
+                delta_x: 0.0,
+                delta_y: -300.0,
+            });
+        };
+        // The loupe: the point is the strip's first cell, and answers.
+        let before = strip_at();
+        assert!(before.is_finite(), "the strip has cells");
+        press_and_wheel();
+        assert_eq!(*clicked.borrow(), 1, "the strip's cell in the loupe");
+        assert!(strip_at() < before, "the strip scrolled in the loupe");
+        app.invoke_scroll_by(-1e9);
+        // The grid up: the point is the pane's, and nothing reaches the
+        // strip under it.
+        app.set_grid_open(true);
+        let before = strip_at();
+        *clicked.borrow_mut() = 0;
+        press_and_wheel();
+        assert_eq!(*clicked.borrow(), 0, "a strip cell under the pane");
+        assert_eq!(strip_at(), before, "the strip scrolled under the pane");
+    }
+
+    /// With the grid up, the pane's Import asks for the sheet, and
+    /// Ctrl+O and Ctrl+Shift+I still reach the chooser and the sheet
+    /// with the header's buttons gone. An import's running line is
+    /// the pane's, under Import, and the header's in place of the
+    /// selection only while the pane is put away.
+    #[test]
+    fn the_panes_import_and_the_keys_still_reach_their_sheets() {
+        use slint::platform::{Key, WindowEvent};
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1200.0, 700.0));
+        app.set_grid_open(true);
+        let seen = Rc::new(RefCell::new(Vec::<&str>::new()));
+        let s = seen.clone();
+        app.on_import_asked(move || s.borrow_mut().push("import"));
+        let s = seen.clone();
+        app.on_open_folder(move || s.borrow_mut().push("open"));
+        slint::platform::update_timers_and_animations();
+        let (at, size) = crate::testing::labeled(&app, "Import...");
+        assert!(at.x < 240.0, "in the pane");
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let chord = |mods: &[Key], key: &str| {
+            for k in mods {
+                app.window()
+                    .dispatch_event(WindowEvent::KeyPressed { text: (*k).into() });
+            }
+            crate::testing::press(&app, key);
+            for k in mods.iter().rev() {
+                app.window()
+                    .dispatch_event(WindowEvent::KeyReleased { text: (*k).into() });
+            }
+        };
+        chord(&[Key::Control], "o");
+        chord(&[Key::Control, Key::Shift], "I");
+        assert_eq!(*seen.borrow(), ["import", "open", "import"]);
+
+        let line = "Copying 3 of 10";
+        app.set_import_running(true);
+        app.set_import_status(line.into());
+        assert_eq!(crate::testing::count_labeled(&app, line), 1, "the pane's");
+        assert_eq!(crate::testing::count_labeled(&app, "Stop import"), 1);
+        crate::testing::press(&app, Key::F7);
+        assert!(app.get_left_hidden());
+        assert_eq!(
+            crate::testing::count_labeled(&app, line),
+            1,
+            "the header's, the pane away"
+        );
+        assert_eq!(crate::testing::count_labeled(&app, "Stop import"), 0);
     }
 
     /// The preset sheet's name field holds the focus as the root
@@ -3938,7 +4124,7 @@ mod tests {
     }
 
     /// A root that is not there (unplugged, its mount point gone) is
-    /// offline: its chip says so, the launch pass does not touch it, so
+    /// offline: its row says so, the launch pass does not touch it, so
     /// its rows stay as they were rather than all go missing, and its
     /// frames are in the view all the same, from their rows: dimmed,
     /// badged, and filtered like any other. Opening one says why

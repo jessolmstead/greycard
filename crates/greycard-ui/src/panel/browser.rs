@@ -2719,22 +2719,22 @@ mod tests {
         assert_eq!(app.get_cells_made() as usize, strip, "the grid is closed");
         assert_eq!(cells_on_screen(&app, "GridSheet::cell"), 0);
         press(&app, "g");
-        // Eight columns; four rows on screen at the top, as the layout
-        // test has it, and a fifth's part as it scrolls; and cells for
-        // a row either side.
-        assert_eq!(cells_on_screen(&app, "GridSheet::cell"), 4 * 8);
+        // Six columns beside the left pane; four rows on screen at the
+        // top and a pixel of a fifth, as the layout test has it, a
+        // sixth's part as it scrolls; and cells for a row either side.
+        assert_eq!(cells_on_screen(&app, "GridSheet::cell"), 5 * 6);
         let grid = app.get_grid_cells().row_count();
-        assert_eq!(grid, 7 * 8);
+        assert_eq!(grid, 8 * 6);
         assert_eq!(app.get_cells_made() as usize, strip + grid);
-        assert_eq!(cell_rows(app.get_grid_cells()), (0..56).collect::<Vec<_>>());
+        assert_eq!(cell_rows(app.get_grid_cells()), (0..48).collect::<Vec<_>>());
         // What carries a picture is what has a cell.
         let rows = app.get_thumbs();
         let pictured = (0..5000)
             .filter(|&r| rows.row_data(r).unwrap().image.size().width > 0)
             .count();
-        assert_eq!(pictured, 56, "the grid's cells take in the strip's");
+        assert_eq!(pictured, 48, "the grid's cells take in the strip's");
         let st = state.borrow();
-        assert_eq!(st.thumb_shown.iter().filter(|s| s.is_some()).count(), 56);
+        assert_eq!(st.thumb_shown.iter().filter(|s| s.is_some()).count(), 48);
     }
 
     /// Scrolled to the far end and back, the grid and the strip still
@@ -2820,7 +2820,7 @@ mod tests {
             app.get_thumbs().row_data(4321).unwrap().image.size().width,
             2
         );
-        assert_eq!(cells_on_screen(&app, "GridSheet::cell"), 5 * 8);
+        assert_eq!(cells_on_screen(&app, "GridSheet::cell"), 6 * 6);
         // The strip, out of the grid.
         press(&app, "g");
         app.set_selected(3210);
@@ -3025,9 +3025,10 @@ mod tests {
             "sheet height {}",
             app.get_grid_h()
         );
+        // Beside the left pane, 240 of the 1500.
         let cols = grid::columns(app.get_grid_w(), 176.0);
-        assert_eq!(cols, 8);
-        assert_eq!(seen.borrow().last().map(|r| r.2), Some(8));
+        assert_eq!(cols, 6);
+        assert_eq!(seen.borrow().last().map(|r| r.2), Some(6));
     }
 
     #[test]
@@ -3047,14 +3048,15 @@ mod tests {
         app.set_selected(0);
         press(&app, "g");
         press(&app, Key::DownArrow);
-        // Eight 176 cells across 1500, rows 206 apart: under a
-        // header of two rows, the library's roots, the filter's chips
-        // and its facets the sheet shows four rows and none of a
-        // fifth, so the first thirty-two frames are what the worker
-        // is told to make first.
-        assert_eq!(*steps.borrow(), 8);
-        assert_eq!(*seen.borrow(), vec![(0.0, 773.0, 8)]);
-        assert_eq!(grid::visible(0.0, 773.0, 176.0, 8, 120), Some((0, 31)));
+        // Six 176 cells across the 1,260 the left pane leaves of
+        // 1500, rows 206 apart: under a header of the selection's
+        // line, the filter's chips with its words, and its facets the
+        // sheet is 837 tall and shows four rows and a pixel of a
+        // fifth, so the first thirty frames are what the worker is
+        // told to make first.
+        assert_eq!(*steps.borrow(), 6);
+        assert_eq!(*seen.borrow(), vec![(0.0, 837.0, 6)]);
+        assert_eq!(grid::visible(0.0, 837.0, 176.0, 6, 120), Some((0, 29)));
         // A frame at the foot of the sheet scrolls it there, and what
         // it says it shows follows the scroll.
         seen.borrow_mut().clear();
@@ -3062,13 +3064,26 @@ mod tests {
         // Slint runs the changed handlers with the next event, which
         // in a window is the next frame.
         press(&app, Key::Shift);
-        let scrolled = grid::reveal(0.0, 773.0, 176.0, 8, 120, 119);
-        assert_eq!(scrolled, grid::max_scroll(773.0, 176.0, 8, 120));
-        assert_eq!(*seen.borrow(), vec![(scrolled, 773.0, 8)]);
+        let scrolled = grid::reveal(0.0, 837.0, 176.0, 6, 120, 119);
+        assert_eq!(scrolled, grid::max_scroll(837.0, 176.0, 6, 120));
+        assert_eq!(*seen.borrow(), vec![(scrolled, 837.0, 6)]);
         assert_eq!(
-            grid::visible(scrolled, 773.0, 176.0, 8, 120),
-            Some((88, 119))
+            grid::visible(scrolled, 837.0, 176.0, 6, 120),
+            Some((90, 119))
         );
+        // The pane put away, by F7 as in the loupe: the sheet takes
+        // the whole width and eight cells a row, as before the pane.
+        seen.borrow_mut().clear();
+        press(&app, Key::F7);
+        assert!(app.get_left_hidden());
+        press(&app, Key::Shift);
+        assert_eq!(seen.borrow().last().map(|r| (r.1, r.2)), Some((837.0, 8)));
+        // And back by Tab, which over the grid is the pane's alone.
+        press(&app, Key::Tab);
+        press(&app, Key::Shift);
+        assert!(!app.get_left_hidden());
+        assert!(!app.get_right_hidden() && !app.get_strip_hidden());
+        assert_eq!(seen.borrow().last().map(|r| r.2), Some(6));
     }
 
     #[test]
@@ -3103,7 +3118,7 @@ mod tests {
             .collect();
         cells::set_rows(&app, twelve);
         press(&app, Key::Shift);
-        assert_eq!(*seen.borrow(), vec![(0.0, 8)]);
+        assert_eq!(*seen.borrow(), vec![(0.0, 6)]);
     }
 
     /// The shape a turn maps masks by is the frame's own, and a

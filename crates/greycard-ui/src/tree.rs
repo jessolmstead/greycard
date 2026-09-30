@@ -1,6 +1,8 @@
 //! The open root's folders as a tree in the left pane: shown while a
-//! root's view is open (its chip, or a folder of it), each folder with
-//! its frame count, a click opening that folder's frames.
+//! root's view is open (its row, or a folder of it), and for a folder
+//! opened from the disk that lies under a root, that folder marked;
+//! each folder with its frame count, a click opening that folder's
+//! frames.
 //!
 //! The tree is the index's, not the disk's: every folder the index
 //! holds frames in under the root, and the folders above them up to
@@ -12,7 +14,7 @@
 //! A folder opened from the tree is a view of the index narrowed to
 //! it ([`View::Branch`]): its own rows, or with the switch those under
 //! it too, each frame standing in from its row until something needs
-//! its sidecar, and the root's chip staying on. Recently opened records
+//! its sidecar, and the root's row staying lit. Recently opened records
 //! it as the folder it is, through the browser's open as every list.
 
 use std::collections::{BTreeMap, HashSet};
@@ -59,6 +61,10 @@ pub(crate) struct Tree {
     /// its tree is shown, and left as the user leaves it after.
     expanded: HashSet<PathBuf>,
     seen: HashSet<PathBuf>,
+    /// The folder last marked open: a folder marked anew has the
+    /// folders above it unfolded once, so the mark is in sight however
+    /// it was opened, and a fold made after is left alone.
+    revealed: Option<PathBuf>,
     /// The rows as the pane shows them: one model for the session, its
     /// rows replaced only when they change.
     rows: Rc<VecModel<FolderRow>>,
@@ -74,7 +80,7 @@ pub(crate) struct Tree {
 /// by name (case folded, then as spelled) before the next. A folder the
 /// index has nothing directly in is still there when something under
 /// it is. A folder not under the root is left out. The root's name is
-/// left empty: the pane names it as the root's chip does.
+/// left empty: the pane names it as the root's row does.
 pub(crate) fn build(root: &Path, counts: &[(PathBuf, usize)]) -> Vec<Node> {
     #[derive(Default)]
     struct Dir {
@@ -151,7 +157,7 @@ pub(crate) fn count_shown(n: &Node, expanded: bool) -> Option<usize> {
 
 /// The view a folder of `root`'s tree opens: its own frames, or with
 /// `deep` those under it too; the root with those under it is the
-/// root's own view, as its chip opens it.
+/// root's own view, as its row opens it.
 pub(crate) fn view_for(root: &Path, folder: &Path, deep: bool) -> View {
     if deep && folder == root {
         View::Roots(Some(root.to_path_buf()))
@@ -164,13 +170,21 @@ pub(crate) fn view_for(root: &Path, folder: &Path, deep: bool) -> View {
     }
 }
 
-/// The folder the tree marks open: the view's folder, or the root for
-/// the root's own view.
-fn open_folder(view: &View) -> Option<&Path> {
-    match view {
-        View::Branch { folder, .. } => Some(folder),
-        View::Roots(Some(r)) => Some(r),
-        View::Roots(None) | View::Folder => None,
+/// The root whose tree the pane shows, and the folder it marks open:
+/// the view's own for a root's view or a folder of its tree, and for a
+/// folder opened from the disk, the root it lies under with the folder
+/// itself marked. None for all the roots, files from several folders,
+/// or a folder under no root.
+pub(crate) fn shown_for(st: &State) -> Option<(&Path, &Path)> {
+    match &st.view {
+        View::Branch { root, folder, .. } => Some((root, folder)),
+        View::Roots(Some(r)) => Some((r, r)),
+        View::Roots(None) => None,
+        View::Folder => {
+            let dir = st.recent.open.as_deref()?;
+            let root = st.library.roots.root_of(dir)?;
+            Some((root, dir))
+        }
     }
 }
 
@@ -198,10 +212,12 @@ fn root_count(st: &State, root: &Path) -> Option<usize> {
 /// The tree the view wants, asked for when it is not the one held: a
 /// root's view opened, another root's, or the root's count moved or a
 /// pass gone over it since the tree was built. None held for a view
-/// that is not one root's. The tree already held is kept on screen
-/// until the new one lands, unless it is another root's.
+/// that is not one root's, or a folder under no root. The tree already
+/// held is kept on screen until the new one lands, unless it is
+/// another root's.
 pub(crate) fn want(st: &mut State, app: &App) {
-    let Some(root) = st.view.root().map(Path::to_path_buf) else {
+    reveal(st);
+    let Some(root) = shown_for(st).map(|(r, _)| r.to_path_buf()) else {
         if st.tree.root.is_some() || st.tree.asked.is_some() {
             st.tree.root = None;
             st.tree.nodes.clear();
@@ -255,6 +271,28 @@ pub(crate) fn want(st: &mut State, app: &App) {
     if !send(app, build) {
         st.tree.asked = None;
     }
+}
+
+/// The folder the tree marks, when it is marked anew, with the folders
+/// between it and the root unfolded: a folder opened from the disk, or
+/// from Recently opened, is shown where it is rather than inside a
+/// folded year.
+fn reveal(st: &mut State) {
+    let Some((root, folder)) = shown_for(st) else {
+        st.tree.revealed = None;
+        return;
+    };
+    if st.tree.revealed.as_deref() == Some(folder) {
+        return;
+    }
+    let (root, folder) = (root.to_path_buf(), folder.to_path_buf());
+    for above in folder.ancestors().skip(1) {
+        if !above.starts_with(&root) {
+            break;
+        }
+        st.tree.expanded.insert(above.to_path_buf());
+    }
+    st.tree.revealed = Some(folder);
 }
 
 /// A pass in the background changed something under `path`: the tree
@@ -401,12 +439,21 @@ pub(crate) fn land_sent(state: &Rc<RefCell<State>>, app: &App) -> usize {
 }
 
 /// The pane's tree as the state has it: shown while a root's view is
-/// open, its rows once built, the open folder marked. Called whenever
-/// the roots' row is, since a root's name is its first row's.
+/// open or a folder under a root, its rows once built, the open folder
+/// marked. Called whenever the roots' rows are, since a root's name is
+/// its first row's.
 pub(crate) fn show(st: &State, app: &App) {
-    let root = st.view.root();
+    let shown = shown_for(st);
+    let root = shown.map(|(r, _)| r);
     app.set_folder_tree_shown(root.is_some());
-    let open = open_folder(&st.view);
+    // Over a folder from the disk the list is its own frames whatever
+    // the switch was left at, so it shows off; turned on, it opens the
+    // folder with those under it.
+    let switch = st.tree.subfolders && st.view != View::Folder;
+    if app.get_folder_tree_subfolders() != switch {
+        app.set_folder_tree_subfolders(switch);
+    }
+    let open = shown.map(|(_, f)| f);
     let nodes: Vec<&Node> = match (root, &st.tree.root) {
         (Some(want), Some(have)) if want == have.as_path() => {
             visible(&st.tree.nodes, &st.tree.expanded)
@@ -487,12 +534,13 @@ fn subfolders_changed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>
         st.tree.subfolders = on;
         crate::panel::prefs::keep(&st, |s| s.folder_tree_subfolders = on);
         // None to open when it is the view open already: the root's
-        // own view, the switch turned on over it.
-        match (st.view.root(), open_folder(&st.view)) {
-            (Some(root), Some(folder)) => {
-                Some(view_for(root, folder, on)).filter(|v| *v != st.view)
-            }
-            _ => None,
+        // own view, the switch turned on over it; or a folder opened
+        // from the disk, the switch turned off, which lists its own
+        // frames already.
+        match shown_for(&st) {
+            Some(_) if st.view == View::Folder && !on => None,
+            Some((root, folder)) => Some(view_for(root, folder, on)).filter(|v| *v != st.view),
+            None => None,
         }
     };
     if let Some(view) = again {
@@ -778,7 +826,7 @@ mod tests {
 
     /// The root's view shows its tree from the index, the root marked
     /// open; a folder chosen opens its own frames alone, and with the
-    /// switch those under it too, the root's chip on throughout; the
+    /// switch those under it too, the root's row lit throughout; the
     /// root chosen with the switch is the root's own view.
     #[test]
     fn a_folder_opens_its_own_frames_or_with_the_switch_those_under_it() {
@@ -806,7 +854,7 @@ mod tests {
             }
         );
         let chip = app.get_library_roots().row_data(0).unwrap();
-        assert!(chip.on, "the root's chip stays on");
+        assert!(chip.on, "the root's row stays lit");
         assert_eq!(rows(&app)[1], ("day".into(), 1, 3, true));
         // No sidecar read: every frame stands in from its row.
         {
@@ -824,7 +872,7 @@ mod tests {
             View::Branch { deep: true, .. }
         ));
 
-        // The root, with the switch on: the root's view, as its chip.
+        // The root, with the switch on: the root's view, as its row.
         pick(&app, "archive");
         land_sent(&state, &app, &worker);
         assert_eq!(state.borrow().view, View::Roots(Some(root.clone())));
@@ -855,6 +903,132 @@ mod tests {
             "{}",
             app.get_status()
         );
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder opened from the disk that lies under a root has the
+    /// root's tree with that folder marked, in the loupe's pane and the
+    /// grid's alike; a click there opens a folder of the tree as the
+    /// root's view does, and the switch turned on over the disk's
+    /// folder opens it with those under it. A folder under no root has
+    /// no tree.
+    #[test]
+    fn a_disk_folder_under_a_root_shows_the_roots_tree_marked_there() {
+        let dir = scratch("disk");
+        let (app, state, worker) = archive(&dir, Some((1200.0, 800.0)));
+        let root = dir.join("archive");
+        let day = root.join("day");
+        crate::panel::browser::open_folder(&state, &app, &worker, &day);
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
+        assert!(app.get_folder_tree_shown());
+        assert_eq!(
+            rows(&app),
+            [("archive".into(), 0, 1, false), ("day".into(), 1, 3, true)],
+            "the root's tree, the day marked"
+        );
+        assert!(
+            !app.get_library_roots().row_data(0).unwrap().on,
+            "a folder from the disk is not the root's view"
+        );
+
+        // In the grid's pane too, where a click on the root opens it
+        // from the index, the root's row lit.
+        app.set_grid_open(true);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(crate::testing::buttons(&app, "day").len(), 1);
+        let (at, size) = labeled(&app, "Unfold day");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(rows(&app)[2], ("more".into(), 2, 1, false));
+        // Chosen by its row: a click on a row the unfold has just
+        // added lands past the box's old foot on the testing backend,
+        // which has not laid the box out again.
+        pick(&app, "more");
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["m.tif"]);
+        assert!(matches!(
+            state.borrow().view,
+            View::Branch { deep: false, .. }
+        ));
+        assert!(app.get_library_roots().row_data(0).unwrap().on);
+
+        // The day from the disk again, and the switch turned on over
+        // it: the day with the folders under it, from the index.
+        crate::panel::browser::open_folder(&state, &app, &worker, &day);
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().view, View::Folder);
+        app.set_folder_tree_subfolders(true);
+        app.invoke_folder_tree_subfolders_changed();
+        land_sent(&state, &app, &worker);
+        assert_eq!(
+            state.borrow().view,
+            View::Branch {
+                root: root.clone(),
+                folder: day.clone(),
+                deep: true
+            }
+        );
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif"]);
+        assert!(app.get_folder_tree_subfolders());
+        // The day from the disk once more, the switch left on: the list
+        // is the day's own frames, so the switch shows off, and turned
+        // on it opens the day with those under it again.
+        crate::panel::browser::open_folder(&state, &app, &worker, &day);
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
+        assert!(state.borrow().tree.subfolders, "the setting kept");
+        assert!(!app.get_folder_tree_subfolders(), "shown off");
+        app.set_folder_tree_subfolders(true);
+        app.invoke_folder_tree_subfolders_changed();
+        land_sent(&state, &app, &worker);
+        assert!(matches!(
+            state.borrow().view,
+            View::Branch { deep: true, .. }
+        ));
+        assert!(app.get_folder_tree_subfolders());
+        // The switch off again, and the day from the disk.
+        app.set_folder_tree_subfolders(false);
+        app.invoke_folder_tree_subfolders_changed();
+        land_sent(&state, &app, &worker);
+        crate::panel::browser::open_folder(&state, &app, &worker, &day);
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().view, View::Folder);
+
+        // A folder deeper down, opened from the disk with the day
+        // folded over it: the day unfolded to show it, marked.
+        let row = rows(&app).iter().position(|r| r.0 == "day").unwrap();
+        app.invoke_folder_tree_folded(row as i32);
+        assert_eq!(rows(&app).len(), 2, "the day folded");
+        crate::panel::browser::open_folder(&state, &app, &worker, &day.join("more"));
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(
+            rows(&app),
+            [
+                ("archive".into(), 0, 1, false),
+                ("day".into(), 1, 2, false),
+                ("more".into(), 2, 1, true)
+            ]
+        );
+        // Folded again by hand, it stays folded while the folder is
+        // open.
+        app.invoke_folder_tree_folded(1);
+        crate::roots::show(&state.borrow(), &app);
+        crate::tree::want(&mut state.borrow_mut(), &app);
+        assert_eq!(rows(&app).len(), 2);
+
+        // A folder under no root: no tree.
+        let elsewhere = dir.join("elsewhere");
+        frames(&elsewhere, &["e.tif"]);
+        crate::panel::browser::open_folder(&state, &app, &worker, &elsewhere);
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["e.tif"]);
+        assert!(!app.get_folder_tree_shown());
+        assert!(crate::testing::buttons(&app, "day").is_empty());
         state.borrow_mut().index_reader = None;
         drop(state);
         std::fs::remove_dir_all(&dir).unwrap();

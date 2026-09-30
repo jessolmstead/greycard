@@ -220,7 +220,7 @@ struct Cli {
     /// source is read), match (the camera match's sheet, as the Look
     /// section's button opens it), matched (the same, its Fit
     /// pressed once the scope is read), root-name (the library's
-    /// first root's name, as its chip's Rename... opens it) or delete
+    /// first root's name, as its row's Rename... opens it) or delete
     /// (the delete sheet over the selection; never answered)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,

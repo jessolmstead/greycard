@@ -1,53 +1,80 @@
-// The library's roots in the grid's header: the ways to add one, the
-// all-roots view, and a chip a root with its file count and a cross to
-// take it out. A root is a folder; taking one out forgets it and
-// touches nothing on disk. A right-click on a root's chip offers its
+// The library's roots in the grid's left pane: All roots first, then a
+// row a root with its file count, the one open lit, and at the foot the
+// ways to add one. A root is a folder; taking one out forgets it and
+// touches nothing on disk. A right-click on a root's row offers its
 // path, a new name for it, and taking it out.
 
 import { Theme } from "../theme.slint";
+import { Section } from "../controls.slint";
 import { RootChip } from "../structs.slint";
 
-// A pill: what it names, how many files, and a cross when it can be
-// taken out. It keeps its whole width: the row scrolls rather than
-// squeeze a name to an ellipsis.
-component RootPill inherits Rectangle {
+// A row: what it names, how many files at its right, muted, or
+// "offline" there and the row dimmed when its drive is not there.
+component RootRow inherits Rectangle {
     in property <string> text;
     in property <int> count;
     in property <bool> on;
-    in property <bool> removable: false;
-    in property <bool> shows-count: true;
     /// Not there now: dimmed, and said in place of the count.
     in property <bool> offline: false;
-    /// The root's folder, for a screen reader: the name may be one
-    /// the user gave it.
+    /// The root's folder, for a screen reader and the hover text: the
+    /// name may be one the user gave it.
     in property <string> path;
     /// Whether a right-click (or a Mac's Control+click) asks for the
-    /// root's menu; the chips that are not roots have none.
+    /// root's menu; All roots has none.
     in property <bool> has-menu: false;
     in property <bool> ctrl-click-menu;
     callback clicked();
-    callback removed();
     /// A right-click, where, in the window's pixels.
     callback menu(length, length);
-    /// Whether a menu is up: the press that closes it reaches the
-    /// chip under it too, and is not a press there, least of all on
-    /// the cross.
+    /// Whether a menu is up: the press that closes it reaches the row
+    /// under it too, and is not a press there.
     pure callback menu-shown() -> bool;
-    height: Theme.control-height - 4px;
-    border-radius: (Theme.control-height - 4px) / 2;
-    border-width: 1px;
-    border-color: root.on ? Theme.accent : Theme.border;
-    background: root.on ? Theme.selection : (ta.has-hover ? Theme.hover : Theme.base);
-    opacity: root.offline ? 0.55 : 1;
-    horizontal-stretch: 0;
+    /// The hover text, the whole name when the row cuts it short, and
+    /// where it goes, in the window's pixels; an empty text takes it
+    /// down.
+    callback tip(string, length, length);
+    /// A sheet is up over the window: no hover text is put up.
+    in property <bool> quiet;
+    property <bool> tipped;
+    height: Theme.control-height - 6px;
+    border-radius: Theme.radius-sm;
+    background: root.on ? Theme.selection : (ta.has-hover ? Theme.hover : transparent);
     accessible-role: button;
     accessible-label: root.text;
     accessible-description: root.path;
+    accessible-value: root.offline ? "offline" : root.count;
+    // The one open is the list's selected item, for a screen reader
+    // as for the eye.
+    accessible-item-selectable: true;
+    accessible-item-selected: root.on;
+    accessible-action-default => { root.clicked(); }
     animate background { duration: Theme.quick; }
+
+    function untip() {
+        if (root.tipped) {
+            root.tipped = false;
+            root.tip("", 0, 0);
+        }
+    }
+
+    // The whole name, once the pointer has rested on a row that cuts
+    // it short, as the folder's name under Open folder has its path.
+    Timer {
+        interval: 600ms;
+        running: ta.has-hover && name.preferred-width > name.width && !root.tipped && !root.quiet;
+        triggered => {
+            root.tipped = true;
+            root.tip(root.text, root.absolute-position.x, root.absolute-position.y + root.height + 2px);
+        }
+    }
     ta := TouchArea {
         property <bool> skip;
         mouse-cursor: MouseCursor.pointer;
+        changed has-hover => {
+            if (!self.has-hover) { root.untip(); }
+        }
         pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) { root.untip(); }
             if (e.kind != PointerEventKind.down) { return; }
             // As the grid's cells: a left press that closes the menu
             // is nothing more, and a right-click on another root while
@@ -56,7 +83,7 @@ component RootPill inherits Rectangle {
             let ctrl-menu = root.ctrl-click-menu && e.button == PointerEventButton.left
                 && e.modifiers.meta;
             let asks = root.has-menu && (e.button == PointerEventButton.right || ctrl-menu);
-            self.skip = closing || asks;
+            self.skip = closing || asks || e.button != PointerEventButton.left;
             if (asks) {
                 root.menu(self.absolute-position.x + self.mouse-x,
                     self.absolute-position.y + self.mouse-y);
@@ -67,70 +94,83 @@ component RootPill inherits Rectangle {
             root.clicked();
         }
     }
+    // The name at the row's left edge, in line with the pane's other
+    // controls and the switch under FOLDERS.
     HorizontalLayout {
-        padding-left: Theme.space-2;
-        padding-right: root.removable ? Theme.space-1 : Theme.space-2;
-        spacing: Theme.space-1;
-        alignment: center;
-        // A long name is cut short: the whole of it, and the path,
-        // are in the root's menu and its sheet.
-        Text {
+        padding-left: 0;
+        padding-right: Theme.space-2;
+        spacing: Theme.space-2;
+        // A name longer than the pane is cut short: the whole of it
+        // is its hover text, and the path is in its menu.
+        name := Text {
             text: root.text;
-            max-width: 240px;
-            overflow: elide;
-            color: root.on ? Theme.text : Theme.text-secondary;
+            color: root.on || ta.has-hover ? Theme.text : Theme.text-secondary;
             font-size: Theme.font-xs;
             font-weight: root.on ? Theme.weight-medium : Theme.weight-regular;
             vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+            opacity: root.offline ? 0.55 : 1;
         }
-        if root.shows-count: Text {
+        Text {
             text: root.offline ? "offline" : root.count;
             color: Theme.text-muted;
             font-size: Theme.font-xs;
             vertical-alignment: center;
-        }
-        if root.removable: Rectangle {
-            width: 16px;
-            border-radius: 8px;
-            background: xa.has-hover ? Theme.hover : transparent;
-            Image {
-                source: @image-url("../icons/x.svg");
-                width: 10px;
-                height: 10px;
-                colorize: xa.has-hover ? Theme.text : Theme.text-muted;
-            }
-            xa := TouchArea {
-                property <bool> skip;
-                mouse-cursor: MouseCursor.pointer;
-                pointer-event(e) => {
-                    if (e.kind == PointerEventKind.down) {
-                        self.skip = root.menu-shown() || e.button != PointerEventButton.left
-                            || (root.ctrl-click-menu && e.modifiers.meta);
-                    }
-                }
-                clicked => {
-                    if (self.skip) { return; }
-                    root.removed();
-                }
-            }
+            horizontal-stretch: 0;
         }
     }
 }
 
-// The row, scrolled sideways when it runs past the header, as the
-// facet row is, and by a plain wheel for the same reason: Slint's
-// Flickable moves sideways only for a drag or Shift and the wheel.
-// The ways to add a root come first, so they are never the part past
-// the edge.
-export component RootsRow inherits Rectangle {
+// A way to add a root, at the section's foot: a word, lit under the
+// pointer.
+component AddLink inherits Rectangle {
+    in property <string> text;
+    callback clicked();
+    pure callback menu-shown() -> bool;
+    height: Theme.control-height - 6px;
+    border-radius: Theme.radius-sm;
+    background: ta.has-hover ? Theme.hover : transparent;
+    accessible-role: button;
+    accessible-label: root.text;
+    accessible-action-default => { root.clicked(); }
+    ta := TouchArea {
+        property <bool> skip;
+        mouse-cursor: MouseCursor.pointer;
+        pointer-event(e) => {
+            if (e.kind == PointerEventKind.down) {
+                self.skip = root.menu-shown() || e.button != PointerEventButton.left;
+            }
+        }
+        clicked => {
+            if (self.skip) { return; }
+            root.clicked();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 0;
+        padding-right: Theme.space-2;
+        Text {
+            text: root.text;
+            color: ta.has-hover ? Theme.text : Theme.text-secondary;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            overflow: elide;
+        }
+    }
+}
+
+export component RootsSection inherits Section {
     in property <[RootChip]> roots;
     in property <bool> all-on;
     in property <int> all-count;
     /// The folder open is not under a root, and can be added with a
     /// press.
     in property <bool> can-add-open;
-    in property <string> note;
+    /// What to say with no roots yet.
+    in property <string> empty-note;
     in property <bool> ctrl-click-menu;
+    in-out property <bool> collapsed-roots;
     /// A root chosen, by its path; empty for all of them.
     callback picked(string);
     callback removed(string);
@@ -138,111 +178,97 @@ export component RootsRow inherits Rectangle {
     callback add-open();
     /// A new name asked for a root, by its path.
     callback rename(string);
-    /// Before a root's menu opens: the keys take the focus, so the
-    /// window can tell the menu is up by their losing it.
-    callback menu-opening();
+    /// The keys take the focus: after a press, and before a root's menu
+    /// opens, so the window can tell the menu is up by their losing it.
+    callback focus-keys();
+    /// After a pick from the menu: the focus back on the keys once the
+    /// menu has closed.
+    callback menu-done();
+    /// A root's whole name as hover text; see `RootRow`.
+    callback tip(string, length, length);
+    in property <bool> quiet;
     pure callback menu-shown() -> bool;
     /// The root the menu is about.
     property <string> menu-path;
-    height: Theme.control-height - 4px;
-    clip: true;
+
+    title: "ROOTS";
+    icon: @image-url("../icons/folder-open.svg");
+    collapsed <=> root.collapsed-roots;
 
     function open-menu(path: string, x: length, y: length) {
-        root.menu-opening();
+        root.focus-keys();
         root.menu-path = path;
-        menu.show({ x: x - self.absolute-position.x, y: y - self.absolute-position.y });
+        menu.show({ x: x - list.absolute-position.x, y: y - list.absolute-position.y });
     }
 
-    // One menu for the row, placed where the right-click was, as the
-    // frame menu is one for the window. Zero-sized and never enabled
-    // itself, so it takes no click of its own.
-    menu := ContextMenuArea {
-        x: 0;
-        y: 0;
-        width: 0px;
-        height: 0px;
-        enabled: false;
-        Menu {
-            // The path, grayed: what tells two roots named alike apart.
-            MenuItem {
-                title: root.menu-path;
-                enabled: false;
-            }
-            MenuSeparator { }
-            MenuItem {
-                title: "Rename...";
-                activated => { root.rename(root.menu-path); }
-            }
-            MenuItem {
-                title: "Remove from library";
-                activated => { root.removed(root.menu-path); }
+    list := VerticalLayout {
+        spacing: 1px;
+        // One menu for the section, placed where the right-click was,
+        // as the frame menu is one for the window. Zero-sized and never
+        // enabled itself, so it takes no click of its own.
+        menu := ContextMenuArea {
+            width: 0px;
+            height: 0px;
+            enabled: false;
+            Menu {
+                // The path, grayed: what tells two roots named alike
+                // apart.
+                MenuItem {
+                    title: root.menu-path;
+                    enabled: false;
+                }
+                MenuSeparator { }
+                MenuItem {
+                    title: "Rename...";
+                    activated => { root.rename(root.menu-path); root.menu-done(); }
+                }
+                MenuItem {
+                    title: "Remove from library";
+                    activated => { root.removed(root.menu-path); root.menu-done(); }
+                }
             }
         }
-    }
-    flick := Flickable {
-        content-width: max(self.width, row.preferred-width);
-        content-height: self.height;
-        TouchArea {
-            width: max(flick.width, row.preferred-width);
-            height: flick.height;
-            scroll-event(e) => {
-                if (row.preferred-width <= flick.width) {
-                    return reject;
-                }
-                flick.content-x = max(flick.width - row.preferred-width,
-                    min(0px, flick.content-x + (e.delta-x != 0px ? e.delta-x : e.delta-y)));
-                return accept;
+        if root.roots.length > 0: RootRow {
+            text: "All roots";
+            count: root.all-count;
+            on: root.all-on;
+            menu-shown => { return root.menu-shown(); }
+            clicked => { root.picked(""); root.focus-keys(); }
+        }
+        for r in root.roots: RootRow {
+            text: r.name;
+            count: r.count;
+            on: r.on;
+            offline: r.offline;
+            has-menu: true;
+            path: r.path;
+            quiet: root.quiet;
+            tip(t, x, y) => { root.tip(t, x, y); }
+            ctrl-click-menu: root.ctrl-click-menu;
+            menu-shown => { return root.menu-shown(); }
+            clicked => { root.picked(r.path); root.focus-keys(); }
+            menu(x, y) => { root.open-menu(r.path, x, y); }
+        }
+        if root.empty-note != "": Text {
+            text: root.empty-note;
+            color: Theme.text-muted;
+            font-size: Theme.font-xs;
+            wrap: word-wrap;
+        }
+        // Where the chip was: the folder open added as it is, when it
+        // is under no root, and beside it any folder, by the chooser.
+        HorizontalLayout {
+            spacing: Theme.space-1;
+            alignment: start;
+            if root.can-add-open: AddLink {
+                text: "+ Add this folder";
+                menu-shown => { return root.menu-shown(); }
+                clicked => { root.focus-keys(); root.add-open(); }
             }
-            row := HorizontalLayout {
-                spacing: Theme.space-1;
-                alignment: start;
-                Text {
-                    text: "Library";
-                    color: Theme.text-secondary;
-                    font-size: Theme.font-xs;
-                    vertical-alignment: center;
-                }
-                Rectangle { width: Theme.space-1; }
-                RootPill {
-                    text: "+ Add a folder...";
-                    shows-count: false;
-                    menu-shown => { return root.menu-shown(); }
-                    clicked => { root.add(); }
-                }
-                if root.can-add-open: RootPill {
-                    text: "+ Add this folder";
-                    shows-count: false;
-                    menu-shown => { return root.menu-shown(); }
-                    clicked => { root.add-open(); }
-                }
-                Rectangle { width: Theme.space-2; }
-                if root.roots.length > 0: RootPill {
-                    text: "All roots";
-                    count: root.all-count;
-                    on: root.all-on;
-                    menu-shown => { return root.menu-shown(); }
-                    clicked => { root.picked(""); }
-                }
-                for r in root.roots: RootPill {
-                    text: r.name;
-                    count: r.count;
-                    on: r.on;
-                    offline: r.offline;
-                    removable: true;
-                    has-menu: true;
-                    path: r.path;
-                    ctrl-click-menu: root.ctrl-click-menu;
-                    menu-shown => { return root.menu-shown(); }
-                    clicked => { root.picked(r.path); }
-                    removed => { root.removed(r.path); }
-                    menu(x, y) => { root.open-menu(r.path, x, y); }
-                }
-                if root.note != "": Text {
-                    text: root.note;
-                    color: Theme.text-muted;
-                    font-size: Theme.font-xs;
-                    vertical-alignment: center;
-                }
+            AddLink {
+                text: "+ Add a root...";
+                menu-shown => { return root.menu-shown(); }
+                clicked => { root.focus-keys(); root.add(); }
             }
         }
     }

@@ -1,6 +1,5 @@
-//! The folder open, named under the Open folder button and in the
-//! grid's header, and Recently opened: the last ten folders, offered
-//! from that name.
+//! The folder open, named under the left pane's Open folder button,
+//! and Recently opened: the last ten folders, offered from that name.
 //!
 //! Every list the browser takes passes through `open_loaded`, and the
 //! launch's own list is set up before the window runs; both end here,
@@ -310,7 +309,8 @@ mod tests {
 
     /// A click on the name opens the list, and the press that closes
     /// it is not a second click that opens it again. The name is under
-    /// the button and, with the grid up, in its header as well.
+    /// the button, in the left pane, and with the grid up it is still
+    /// the pane's, once: the grid's header no longer has one.
     #[test]
     fn a_click_on_the_name_opens_the_list() {
         let dir = scratch("click");
@@ -329,17 +329,17 @@ mod tests {
         click(&app, x, y);
         assert!(!app.get_menu_up(), "the press closed it and opened nothing");
         app.set_grid_open(true);
-        assert_eq!(count_labeled(&app, "Recently opened"), 2);
+        assert_eq!(count_labeled(&app, "Recently opened"), 1);
         drop(state);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// The hover text goes with the name it is over: the grid closed
-    /// under the pointer takes its header's name away, which never
-    /// hears the pointer leave, and the path must not stay up over
-    /// the viewport.
+    /// The hover text goes with the name it is over: the pane put away
+    /// under the pointer, by F7 over the grid, takes the name away,
+    /// which never hears the pointer leave, and the path must not stay
+    /// up over the sheet.
     #[test]
-    fn the_hover_text_goes_when_the_grid_takes_its_name_away() {
+    fn the_hover_text_goes_when_the_pane_takes_its_name_away() {
         use i_slint_backend_testing::{ElementHandle, mock_elapsed_time};
         use slint::platform::WindowEvent;
         let dir = scratch("tip");
@@ -350,12 +350,10 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         open_folder(&state, &app, &worker, &a);
         app.set_grid_open(true);
-        assert_eq!(count_labeled(&app, "Recently opened"), 2);
-        // The header's, in the button's row, above the left pane's
-        // under its button.
+        assert_eq!(count_labeled(&app, "Recently opened"), 1);
         let (at, size) = ElementHandle::find_by_accessible_label(&app, "Recently opened")
             .map(|e| (e.absolute_position(), e.size()))
-            .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
+            .next()
             .unwrap();
         let move_to = |x: f32, y: f32| {
             app.window().dispatch_event(WindowEvent::PointerMoved {
@@ -370,7 +368,8 @@ mod tests {
             a.to_str().unwrap(),
             "the path after a rest"
         );
-        app.set_grid_open(false);
+        crate::testing::press(&app, slint::platform::Key::F7);
+        assert!(app.get_left_hidden());
         move_to(700.0, 400.0);
         mock_elapsed_time(std::time::Duration::from_secs(5));
         slint::platform::update_timers_and_animations();

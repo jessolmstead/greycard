@@ -533,8 +533,9 @@ pub(crate) fn finished(state: &Rc<RefCell<State>>, app: &App, opts: &Options, re
     }
     // After the open, whose own words would stand over these.
     say(app, line.clone());
-    // The grid's header says it for a while and then goes back to
-    // the selection; the status plate keeps it until the next words.
+    // The grid's pane (or its header, the pane put away) says it for
+    // a while and then lets it go; the status plate keeps it until the
+    // next words.
     let weak = app.as_weak();
     slint::Timer::single_shot(std::time::Duration::from_secs(20), move || {
         if let Some(app) = weak.upgrade()
@@ -644,8 +645,8 @@ pub(crate) fn start_when_read(app: &App, tries: u32) {
     });
 }
 
-/// The import's words: on the status line, and in the grid's header,
-/// which covers it.
+/// The import's words: on the status line, and in the grid's left
+/// pane, since the grid covers the line.
 fn say(app: &App, line: String) {
     app.set_status(line.as_str().into());
     app.set_import_status(line.into());
