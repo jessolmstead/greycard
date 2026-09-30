@@ -558,6 +558,9 @@ pub(crate) enum Shown {
     /// The delete sheet over the selection, as the Delete key opens
     /// it. Never answered: a capture never deletes.
     Delete,
+    /// A meta key (a rating, a flag or a color label) pressed over the
+    /// selection (`--press`), for a snapshot of what follows it.
+    Key(char),
     /// The crop tool, on the Crop tab.
     Crop,
     /// The level tool, on the Crop tab.
@@ -640,6 +643,9 @@ impl Shown {
                 app.invoke_sync_applied();
             }
             Self::Menu(row) => app.set_menu_at(row as i32),
+            Self::Key(key) => {
+                app.invoke_meta_key(key.to_string().into());
+            }
             Self::Import => app.invoke_import_asked(),
             Self::Imported => {
                 app.invoke_import_asked();
@@ -689,6 +695,10 @@ impl Shown {
     }
 }
 
+/// `--keys`, kept here since the snapshot is scheduled while the
+/// state is borrowed.
+pub(crate) static SNAPSHOT_KEYS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
 pub(crate) fn schedule_snapshot(
     snapshot: &mut Option<PathBuf>,
     panel_scroll: &mut Option<f32>,
@@ -698,14 +708,31 @@ pub(crate) fn schedule_snapshot(
     ready: bool,
     then_quit: bool,
 ) {
-    let Some(path) = snapshot.take_if(|_| ready) else {
-        return;
+    // `--keys` with no snapshot: the keys are still sent once the
+    // picture is up, and the session goes on as any other.
+    static KEYS_SENT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let path = match snapshot.take_if(|_| ready) {
+        Some(path) => Some(path),
+        None if ready
+            && SNAPSHOT_KEYS.get().is_some()
+            && !KEYS_SENT.swap(true, std::sync::atomic::Ordering::Relaxed) =>
+        {
+            None
+        }
+        None => return,
     };
     let app_weak = app.as_weak();
+    let keys: Vec<String> = SNAPSHOT_KEYS
+        .get()
+        .map(|k| k.split_whitespace().map(str::to_owned).collect())
+        .unwrap_or_default();
     let state = state.clone();
     let scroll = panel_scroll.take();
     let shown = shown.take();
     let capture = move || {
+        let Some(path) = path else {
+            return;
+        };
         if let Some(app) = app_weak.upgrade() {
             let wrote = match app.window().take_snapshot() {
                 Ok(pixels) => {
@@ -749,14 +776,86 @@ pub(crate) fn schedule_snapshot(
     // A sheet or a tool asked for is opened after the scroll and given
     // longer to settle: a sheet fades in.
     let opened = std::time::Duration::from_millis(1500);
+    // `--keys`: each sent to the window as a press and a release, a
+    // fifth of a second apart, once what was asked for is up.
+    let then_keys = {
+        let app_weak = app.as_weak();
+        move || {
+            let step = std::time::Duration::from_millis(200);
+            let n = keys.len() as u32;
+            for (i, key) in keys.into_iter().enumerate() {
+                let app_weak = app_weak.clone();
+                slint::Timer::single_shot(step * (i as u32 + 1), move || {
+                    let Some(app) = app_weak.upgrade() else {
+                        return;
+                    };
+                    use slint::platform::{Key, PointerEventButton, WindowEvent};
+                    // `wait`: a step with nothing sent.
+                    if key == "wait" {
+                        return;
+                    }
+                    // A pointer token: move:X,Y, press:X,Y, release:X,Y
+                    // or click:X,Y (a press and a release), logical
+                    // pixels; a right click is rclick:X,Y.
+                    if let Some((what, at)) = key.split_once(':')
+                        && let Some((x, y)) = at.split_once(',')
+                        && let (Ok(x), Ok(y)) = (x.parse::<f32>(), y.parse::<f32>())
+                    {
+                        let position = slint::LogicalPosition::new(x, y);
+                        let button = if what == "rclick" {
+                            PointerEventButton::Right
+                        } else {
+                            PointerEventButton::Left
+                        };
+                        let w = app.window();
+                        match what {
+                            "move" => w.dispatch_event(WindowEvent::PointerMoved { position }),
+                            "press" => {
+                                w.dispatch_event(WindowEvent::PointerMoved { position });
+                                w.dispatch_event(WindowEvent::PointerPressed { position, button });
+                            }
+                            "release" => {
+                                w.dispatch_event(WindowEvent::PointerReleased { position, button });
+                            }
+                            _ => {
+                                w.dispatch_event(WindowEvent::PointerMoved { position });
+                                w.dispatch_event(WindowEvent::PointerPressed { position, button });
+                                w.dispatch_event(WindowEvent::PointerReleased { position, button });
+                            }
+                        }
+                        return;
+                    }
+                    let text: slint::SharedString = match key.as_str() {
+                        "down" => Key::DownArrow.into(),
+                        "up" => Key::UpArrow.into(),
+                        "left" => Key::LeftArrow.into(),
+                        "right" => Key::RightArrow.into(),
+                        "enter" => Key::Return.into(),
+                        "esc" => Key::Escape.into(),
+                        "tab" => Key::Tab.into(),
+                        "f6" => Key::F6.into(),
+                        "f7" => Key::F7.into(),
+                        "f8" => Key::F8.into(),
+                        other => other.into(),
+                    };
+                    tracing::info!("keys: {key}");
+                    app.window()
+                        .dispatch_event(WindowEvent::KeyPressed { text: text.clone() });
+                    app.window()
+                        .dispatch_event(WindowEvent::KeyReleased { text });
+                });
+            }
+            slint::Timer::single_shot(step * (n + 1) + opened, capture);
+        }
+    };
     let open_then = {
         let app_weak = app.as_weak();
         move || match (shown, app_weak.upgrade()) {
             (Some(what), Some(app)) => {
                 what.open(&app);
-                slint::Timer::single_shot(opened, capture);
+                slint::Timer::single_shot(opened, then_keys);
             }
-            _ => capture(),
+            _ => then_keys(),
         }
     };
     let app_weak = app.as_weak();

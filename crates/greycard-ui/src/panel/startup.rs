@@ -341,6 +341,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         .as_deref()
         .is_some_and(|p| export_folder(p, !cli.also.is_empty()));
     check_also(&cli, export_into_folder, files.len())?;
+    if let Some(keys) = cli.keys.clone() {
+        let _ = crate::panel::viewport::SNAPSHOT_KEYS.set(keys);
+    }
     let state = Rc::new(RefCell::new(State {
         tweak_at_start,
         write_sidecars: !cli.no_sidecars,
@@ -360,7 +363,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         snapshot_shown: cli
             .sheet
             .or(cli.tool)
-            .or(cli.menu.map(crate::panel::viewport::Shown::Menu)),
+            .or(cli.menu.map(crate::panel::viewport::Shown::Menu))
+            .or(cli.press.map(crate::panel::viewport::Shown::Key)),
         export_then_quit: cli.export.clone(),
         export_into_folder,
         export_presets: remembered.export_presets.clone(),
