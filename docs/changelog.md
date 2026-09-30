@@ -10,6 +10,11 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A root or a folder the index knows opens from the index's rows, no
+  sidecar read until a frame needs the whole of it, off the window's
+  thread; an offline root stays in the view, dimmed, its pictures from
+  the cache, with the filter working, and nothing is written under it
+  (§207)
 - The open folder is named under the Open folder button and in the
   grid's header, with its root and its path as the hover text, and a
   click on the name offers the last ten folders opened, the open one

@@ -217,3 +217,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§204. A Background shape](notes/204-a-background-shape.md) (2026-09-29)
 - [§205. A color label tints the grid's plate, and bands the strip's foot](notes/205-a-color-label-tints-the-grids-plate.md) (2026-09-29)
 - [§206. The open folder named, and Recently opened](notes/206-the-open-folder-named-and-recently-opened.md) (2026-09-29)
+- [§207. The index as the sidecars' cache](notes/207-the-index-as-the-sidecars-cache.md) (2026-09-29)

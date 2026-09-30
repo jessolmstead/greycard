@@ -29,13 +29,6 @@ is backed up to it and brought back by hash, and the last folders
 opened are a click away; a crop can be drawn, an export is a line in
 History, and the Masks tab reads at a glance.
 
-- [ ] The index as the sidecars' cache, so a root opens without a
-      read from its disk: each row keeps the sidecar's rating, flag,
-      label, keywords and whether an edit exists, keyed by the sidecar's
-      mtime and refreshed by the pass; the sidecar stays the truth. An
-      offline root then still shows its grid, greyed, with the filter
-      working, and only opening a frame needs the disk (today the root is
-      left out, and an online one waits on every sidecar over the wire)
 - [ ] The rest of the network reads off the window's thread, after
       §187 and §188: the indexer's own passes wait on a root that answers
       the 3 s look and then hangs mid-walk, and every root's reports stop
