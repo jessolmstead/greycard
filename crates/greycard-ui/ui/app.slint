@@ -1283,6 +1283,26 @@ export component App inherits Window {
     pure function menu-shown() -> bool {
         return root.menu-up;
     }
+    /// After a menu item is picked: the focus back on the keys. Slint
+    /// gives it back itself when a menu closes, but not when the pick
+    /// was made with the pointer from a sub-menu, where two popups
+    /// close at once; `menu-up` then stayed true, every surface let
+    /// every press go by as the closing click, and the keys had no
+    /// focus to take, so the window looked frozen until Escape.
+    function menu-done() {
+        menu-refocus.running = true;
+    }
+    // After the pick's own turn: the activation runs before the
+    // popups close, and their closing moves the focus once more, so
+    // a focus given back in the handler itself is taken again.
+    menu-refocus := Timer {
+        interval: 1ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (root.menu-up || !keys.has-focus) { keys.focus(); }
+        }
+    }
     function frame-menu-at(row: int, x: length, y: length) {
         if (root.sheet-open()) { return; }
         root.frame-menu-asked(row);
@@ -2450,7 +2470,7 @@ export component App inherits Window {
         library-root-removed(p) => { root.library-root-removed(p); }
         library-root-add => { root.library-root-add(); }
         library-root-add-open => { root.library-root-add-open(); }
-        library-root-rename(p) => { root.library-root-rename(p); }
+        library-root-rename(p) => { root.library-root-rename(p); root.menu-done(); }
         open-folder-name: root.open-folder-name;
         open-folder-root: root.open-folder-root;
         open-folder-path: root.open-folder-path;
@@ -2647,11 +2667,11 @@ export component App inherits Window {
         file: root.menu-file;
         can-meta: root.menu-can-meta;
         can-export: !root.export-open && !root.export-running && root.selected >= 0 && !root.culling;
-        copy => { root.menu-copy(); }
-        paste => { root.paste-asked(); }
-        meta(k, v) => { root.menu-meta(k, v); }
-        reveal => { root.menu-reveal(); }
-        export => { root.menu-export(); }
+        copy => { root.menu-copy(); root.menu-done(); }
+        paste => { root.paste-asked(); root.menu-done(); }
+        meta(k, v) => { root.menu-meta(k, v); root.menu-done(); }
+        reveal => { root.menu-reveal(); root.menu-done(); }
+        export => { root.menu-export(); root.menu-done(); }
     }
 
     // Recently opened: one list for the window, opened below the
@@ -2660,7 +2680,7 @@ export component App inherits Window {
         x: 0;
         y: 0;
         folders: root.recent-folders;
-        chosen(p) => { root.recent-chosen(p); }
+        chosen(p) => { root.recent-chosen(p); root.menu-done(); }
     }
 
     // The hover text, over everything and kept inside the window; not
