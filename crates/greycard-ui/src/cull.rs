@@ -94,6 +94,10 @@ pub struct Preview {
     /// picture's, or a frame no larger than the view would never be
     /// shown (see `Cache`).
     pub full: bool,
+    /// This is the frame's local preview from the cache, not the
+    /// camera's JPEG read from the file: the file is out of reach, or
+    /// still on its way over the network.
+    pub local: bool,
     /// How long the decode took, for the log.
     pub seconds: f64,
 }
@@ -109,17 +113,37 @@ impl Preview {
             rgba,
             source,
             full,
+            local: false,
             seconds: 0.0,
         }
+    }
+
+    /// A frame's local preview as the cache keeps it, as the GPU takes
+    /// it: its own pixels are all there is of it, so 1:1 is those.
+    pub fn local(thumb: greycard_library::thumbs::Thumb, full: bool) -> Self {
+        let mut rgba = Vec::with_capacity(thumb.rgb.len() / 3 * 4);
+        for px in thumb.rgb.as_chunks::<3>().0 {
+            rgba.extend_from_slice(&[px[0], px[1], px[2], 255]);
+        }
+        let mut preview = Self::new(
+            thumb.width,
+            thumb.height,
+            rgba,
+            (thumb.width, thumb.height),
+            full,
+        );
+        preview.local = true;
+        preview
     }
 
     pub fn bytes(&self) -> usize {
         self.rgba.len()
     }
 
-    /// The preview is smaller than a camera's full frame would be.
+    /// The preview is smaller than a camera's full frame would be. A
+    /// local preview is small by design and says so in its own words.
     pub fn small(&self) -> bool {
-        self.source.0.max(self.source.1) < SMALL_LONG_EDGE
+        !self.local && self.source.0.max(self.source.1) < SMALL_LONG_EDGE
     }
 
     /// This copy is the JPEG's every pixel: 1:1 needs no other.
@@ -172,9 +196,11 @@ impl Cache {
 
     /// Whether a copy of `file` at the JPEG's every pixel is held:
     /// the full slot's, or a window preview of a JPEG no larger than
-    /// the view.
+    /// the view. A local preview is its own every pixel and not the
+    /// JPEG's, so it is not: at 1:1 the file's is still asked for
+    /// where the file can be read.
     pub fn has_own_size(&self, file: usize) -> bool {
-        self.best(file).is_some_and(|p| p.own_size())
+        self.best(file).is_some_and(|p| p.own_size() && !p.local)
     }
 
     pub fn insert(&mut self, file: usize, preview: Arc<Preview>) {
@@ -316,16 +342,99 @@ pub enum Loaded {
         size: u32,
         message: String,
     },
+    /// A local preview asked for is not kept.
+    NoPreview { file: usize, path: PathBuf },
 }
 
-/// One decode wanted: the file, its path, and the long edge to make
-/// it at, zero for the JPEG's own size.
+/// One decode wanted: the file, its path, the long edge to make it
+/// at (zero for the JPEG's own size), and where the picture comes
+/// from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Want {
     pub file: usize,
     pub path: PathBuf,
     pub size: u32,
+    pub from: Source,
+    /// A decode for the culling loupe, which makes the frame's local
+    /// preview from the picture in hand when it is owed one. The
+    /// develop view's is not: its cores are the develop's.
+    pub make_preview: bool,
 }
+
+impl Want {
+    /// A decode of the file itself: the camera's JPEG, or the picture.
+    pub fn of_file(file: usize, path: PathBuf, size: u32) -> Self {
+        Self {
+            file,
+            path,
+            size,
+            from: Source::File,
+            make_preview: false,
+        }
+    }
+
+    /// A decode of the file for the culling loupe.
+    pub fn for_loupe(file: usize, path: PathBuf, size: u32) -> Self {
+        Self {
+            make_preview: true,
+            ..Self::of_file(file, path, size)
+        }
+    }
+
+    /// The local preview alone, for the loupe.
+    pub fn local(file: usize, path: PathBuf, size: u32, (hash, stamp): (String, u64)) -> Self {
+        Self {
+            from: Source::Preview { hash, stamp },
+            ..Self::of_file(file, path, size)
+        }
+    }
+
+    /// The same picture of the same file from the same place: one a
+    /// thread is on is not begun again.
+    fn same(&self, other: &Want) -> bool {
+        self.file == other.file
+            && self.size == other.size
+            && self.path == other.path
+            && self.from == other.from
+    }
+}
+
+/// Where the loupe's picture of a frame comes from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Source {
+    /// The file: its camera JPEG, or the picture itself.
+    File,
+    /// The local preview alone, under the file's hash and stamp:
+    /// nothing of the file is read.
+    Preview { hash: String, stamp: u64 },
+}
+
+/// Where the loupe takes a frame's picture from: the local preview
+/// under this key, the file, or both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Plan {
+    pub preview: Option<(String, u64)>,
+    pub file: bool,
+}
+
+/// Where a frame's picture comes from, by its root: the file on a
+/// local disk; the local preview alone under an offline root (nothing
+/// at all when there is no key to find it by); the local preview and
+/// the file under a root on a network mount, the preview wanted ahead
+/// of every file there, so the window's previews are all up before any
+/// read goes over the share. With no key there, only the file: the
+/// key would be read from the file's head over the share, which is the
+/// read the preview is there to go ahead of.
+pub fn source_for(offline: bool, remote: bool, key: Option<(String, u64)>) -> Plan {
+    Plan {
+        preview: if offline || remote { key } else { None },
+        file: !offline,
+    }
+}
+
+/// What the loupe says of a frame out of reach with no local preview
+/// kept, in place of a decode's failure.
+pub const NO_LOCAL_PREVIEW: &str = "its root is offline, and no local preview of it is kept";
 
 #[derive(Default)]
 struct Queue {
@@ -343,7 +452,14 @@ type Deliver = Arc<dyn Fn(Loaded) + Send + Sync>;
 /// every move; a thread takes the front of it.
 pub struct Prefetcher {
     queue: Arc<(Mutex<Queue>, Condvar)>,
+    previews: Previewed,
+    /// The last list wanted, for the tests to read what was asked.
+    #[cfg(test)]
+    asked: Mutex<Vec<Want>>,
 }
+
+/// The local previews, once the editor has a cache to keep them in.
+type Previewed = Arc<Mutex<Option<Arc<crate::previews::Previews>>>>;
 
 impl Prefetcher {
     /// Two or three threads: a decode is single-threaded and forty
@@ -352,17 +468,34 @@ impl Prefetcher {
     pub fn new(deliver: impl Fn(Loaded) + Send + Sync + 'static) -> Self {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let deliver: Deliver = Arc::new(deliver);
+        let previews: Previewed = Arc::new(Mutex::new(None));
         let threads = std::thread::available_parallelism()
             .map(|n| (n.get() / 4).clamp(1, 3))
             .unwrap_or(1);
         for k in 0..threads {
-            let (q, d) = (queue.clone(), deliver.clone());
+            let (q, d, p) = (queue.clone(), deliver.clone(), previews.clone());
             std::thread::Builder::new()
                 .name(format!("greycard cull {k}"))
-                .spawn(move || run(q, d))
+                .spawn(move || run(q, d, p))
                 .expect("spawning a cull thread");
         }
-        Self { queue }
+        Self {
+            queue,
+            previews,
+            #[cfg(test)]
+            asked: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// The last list wanted.
+    #[cfg(test)]
+    pub(crate) fn asked(&self) -> Vec<Want> {
+        self.asked.lock().expect("cull asked").clone()
+    }
+
+    /// The local previews to read and to make: the worker's.
+    pub(crate) fn set_previews(&self, previews: Arc<crate::previews::Previews>) {
+        *self.previews.lock().expect("cull previews") = Some(previews);
     }
 
     /// What to decode from now on, in this order: the whole of what
@@ -370,11 +503,15 @@ impl Prefetcher {
     /// before and is not here is forgotten; one a thread is already
     /// on is not started again, and arrives as it was going to.
     pub fn want(&self, list: Vec<Want>) {
+        #[cfg(test)]
+        {
+            *self.asked.lock().expect("cull asked") = list.clone();
+        }
         let (lock, cv) = &*self.queue;
         let mut q = lock.lock().expect("cull queue");
         q.wanted = list
             .into_iter()
-            .filter(|w| !q.in_flight.contains(w))
+            .filter(|w| !q.in_flight.iter().any(|f| f.same(w)))
             .collect();
         cv.notify_all();
     }
@@ -384,16 +521,16 @@ impl Prefetcher {
     pub fn push_front(&self, want: Want) {
         let (lock, cv) = &*self.queue;
         let mut q = lock.lock().expect("cull queue");
-        if q.in_flight.contains(&want) {
+        if q.in_flight.iter().any(|f| f.same(&want)) {
             return;
         }
-        q.wanted.retain(|w| *w != want);
+        q.wanted.retain(|w| !w.same(&want));
         q.wanted.push_front(want);
         cv.notify_one();
     }
 }
 
-fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver) {
+fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, previews: Previewed) {
     let (lock, cv) = &*queue;
     loop {
         let want = {
@@ -406,38 +543,105 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver) {
                 q = cv.wait(q).expect("cull queue");
             }
         };
-        let made = std::panic::catch_unwind(|| decode(&want.path, want.size));
+        let previews = previews.lock().expect("cull previews").clone();
+        let delivered = std::cell::Cell::new(false);
+        let fetched = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            fetch(&want, previews.as_ref(), &|loaded| {
+                delivered.set(true);
+                deliver(loaded)
+            })
+        }));
         lock.lock()
             .expect("cull queue")
             .in_flight
-            .retain(|w| *w != want);
-        deliver(match made {
-            Ok(Ok(preview)) => Loaded::Ok {
-                file: want.file,
-                path: want.path,
-                size: want.size,
-                preview: Arc::new(preview),
-            },
-            Ok(Err(e)) => Loaded::Failed {
-                file: want.file,
-                path: want.path,
-                size: want.size,
-                message: format!("{e:#}"),
-            },
-            Err(_) => Loaded::Failed {
+            .retain(|w| !w.same(&want));
+        // A panic after a picture was delivered leaves that picture up.
+        if fetched.is_err() && !delivered.get() {
+            deliver(Loaded::Failed {
                 file: want.file,
                 path: want.path,
                 size: want.size,
                 message: "the decode panicked".into(),
+            });
+        }
+    }
+}
+
+/// One picture wanted, from where it says, handed to `deliver`: the
+/// local preview from the cache, which reads nothing of the file, or
+/// the file's. A picture decoded from the file for the loupe makes the
+/// frame's local preview when it is owed one, on another thread, so
+/// this one goes on to the next decode at once.
+pub(crate) fn fetch(
+    want: &Want,
+    previews: Option<&Arc<crate::previews::Previews>>,
+    deliver: &dyn Fn(Loaded),
+) {
+    if let Source::Preview { hash, stamp } = &want.from {
+        deliver(match previews.and_then(|p| p.get(hash, *stamp)) {
+            Some(thumb) => Loaded::Ok {
+                file: want.file,
+                path: want.path.clone(),
+                size: want.size,
+                preview: Arc::new(Preview::local(thumb, want.size == 0)),
+            },
+            None => Loaded::NoPreview {
+                file: want.file,
+                path: want.path.clone(),
             },
         });
+        return;
+    }
+    match decode_keeping(&want.path, want.size) {
+        Ok((preview, picture, orientation)) => {
+            deliver(Loaded::Ok {
+                file: want.file,
+                path: want.path.clone(),
+                size: want.size,
+                preview: Arc::new(preview),
+            });
+            if want.make_preview
+                && let Some(previews) = previews
+                && let Some((owed, in_hand)) = previews.take_for_picture(&want.path)
+            {
+                let path = want.path.clone();
+                rayon::spawn(move || {
+                    // Caught here: a panic on rayon's pool with no
+                    // handler takes the editor down with it.
+                    let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        in_hand
+                            .previews()
+                            .make_taken(&path, &owed, &picture, orientation);
+                    }));
+                    if let Err(payload) = made {
+                        tracing::warn!(
+                            "preview {}: the making panicked: {}",
+                            path.display(),
+                            crate::worker::panic_message(payload.as_ref())
+                        );
+                    }
+                    drop(in_hand);
+                });
+            }
+        }
+        Err(e) => deliver(Loaded::Failed {
+            file: want.file,
+            path: want.path.clone(),
+            size: want.size,
+            message: format!("{e:#}"),
+        }),
     }
 }
 
 /// The camera's JPEG (or, for a picture that is not a raw, the
 /// picture itself) at `size` on its long edge, zero for its own,
-/// turned as its orientation tag says.
-pub fn decode(path: &Path, size: u32) -> anyhow::Result<Preview> {
+/// turned as its orientation tag says; and the camera's picture it was
+/// made from with that orientation, for a local preview to be made
+/// from.
+fn decode_keeping(
+    path: &Path,
+    size: u32,
+) -> anyhow::Result<(Preview, image::RgbImage, Orientation)> {
     let started = Instant::now();
     let (image, orientation) = camera_picture(path)?;
     let (pw, ph) = (image.width(), image.height());
@@ -462,12 +666,23 @@ pub fn decode(path: &Path, size: u32) -> anyhow::Result<Preview> {
     // JPEG was no larger than the view and came back whole.
     let mut preview = Preview::new(w, h, rgba, source, size == 0);
     preview.seconds = started.elapsed().as_secs_f64();
-    Ok(preview)
+    Ok((preview, image, orientation))
 }
+
+/// The files read for a camera picture, for the tests that say a frame
+/// out of reach reads none: by path, since the tests run beside each
+/// other.
+#[cfg(test)]
+pub(crate) static FILE_READS: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
 
 /// The camera's own rendering of a file, and the orientation it is
 /// to be shown in.
-fn camera_picture(path: &Path) -> anyhow::Result<(image::RgbImage, Orientation)> {
+pub(crate) fn camera_picture(path: &Path) -> anyhow::Result<(image::RgbImage, Orientation)> {
+    #[cfg(test)]
+    FILE_READS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .push(path.to_path_buf());
     if greycard_core::picture::is_picture_path(path) {
         // The picture module's reader for the tag: one answer a file,
         // so the loupe, the strip and the develop cannot disagree
@@ -534,7 +749,12 @@ fn box_down(w: u32, h: u32, rgb: &[u8], factor: u32) -> (u32, u32, Vec<u8>) {
 
 /// RGB bytes turned as the engine's `develop::orient` turns a
 /// picture, so the loupe agrees with the strip and the develop.
-fn turn_rgb8(w: u32, h: u32, rgb: &[u8], orientation: Orientation) -> (u32, u32, Vec<u8>) {
+pub(crate) fn turn_rgb8(
+    w: u32,
+    h: u32,
+    rgb: &[u8],
+    orientation: Orientation,
+) -> (u32, u32, Vec<u8>) {
     if orientation == Orientation::Normal {
         return (w, h, rgb.to_vec());
     }
@@ -842,6 +1062,119 @@ mod tests {
         assert_eq!(four[3], (502, 302, 498, 298));
         assert_eq!(tile_at(1000, 600, 4, 600.0, 400.0), Some(3));
         assert_eq!(tile_at(1000, 600, 4, 499.0, 100.0), None);
+    }
+
+    /// The loupe's source by the frame's root: the file on a local
+    /// disk, the local preview alone under an offline root (nothing
+    /// without a key to find it by), the preview and the file on a
+    /// network mount, and the file alone there with no key.
+    #[test]
+    fn the_loupe_takes_the_file_the_preview_or_both_by_the_root() {
+        let key = Some(("ab".repeat(32), 7));
+        let plan = |preview: Option<(String, u64)>, file| Plan { preview, file };
+        assert_eq!(source_for(false, false, key.clone()), plan(None, true));
+        assert_eq!(source_for(false, false, None), plan(None, true));
+        assert_eq!(
+            source_for(true, false, key.clone()),
+            plan(key.clone(), false)
+        );
+        assert_eq!(source_for(true, true, None), plan(None, false), "nothing");
+        assert_eq!(
+            source_for(false, true, key.clone()),
+            plan(key.clone(), true)
+        );
+        assert_eq!(source_for(false, true, None), plan(None, true));
+        // The preview and the file of one frame are two wants, and a
+        // thread on one does not keep the other from being begun.
+        let a = Want::of_file(3, PathBuf::from("/s/a.CR3"), 1024);
+        let b = Want::local(3, PathBuf::from("/s/a.CR3"), 1024, ("ab".repeat(32), 7));
+        assert!(!a.same(&b));
+        assert!(a.same(&Want::for_loupe(3, PathBuf::from("/s/a.CR3"), 1024)));
+        assert!(!a.same(&Want {
+            size: 0,
+            ..a.clone()
+        }));
+        // A local preview is never the JPEG's every pixel.
+        let mut cache = Cache::default();
+        let thumb = greycard_library::thumbs::Thumb {
+            width: 4,
+            height: 2,
+            rgb: vec![0; 24],
+        };
+        cache.insert(3, Arc::new(Preview::local(thumb, false)));
+        assert!(cache.best(3).unwrap().own_size());
+        assert!(!cache.has_own_size(3), "1:1 still asks for the file's");
+    }
+
+    /// A local preview asked for comes from the cache, with no read of
+    /// the file, and one not kept says so; the develop view's decode of
+    /// a frame makes no preview, and the loupe's makes the one owed, on
+    /// another thread, from the picture in hand.
+    #[test]
+    fn the_local_preview_reads_no_file_and_a_decode_makes_one() {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-cull-fetch-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("frame.png");
+        image::RgbImage::from_fn(3000, 2000, |x, y| {
+            image::Rgb([(x % 256) as u8, (y % 256) as u8, 40])
+        })
+        .save(&file)
+        .unwrap();
+        let mut thumbs =
+            greycard_library::Thumbs::at(dir.join("thumbs"), greycard_library::thumbs::DEFAULT_CAP);
+        thumbs.seed_usage(Default::default());
+        let cache: crate::worker::ThumbCache = Arc::new(Mutex::new(Some(thumbs)));
+        let previews = Arc::new(crate::previews::Previews::new(cache));
+        previews.set_roots(vec![dir.clone()]);
+        let (hash, stamp) = crate::previews::Previews::key_of(&file).unwrap();
+        let stat = crate::worker::file_stat(&file).unwrap();
+        previews.note(&file, stat, &hash);
+        assert!(previews.owes(&file));
+
+        let run = |want: &Want| {
+            let got = std::cell::RefCell::new(Vec::new());
+            fetch(want, Some(&previews), &|l| got.borrow_mut().push(l));
+            got.into_inner()
+        };
+        // None kept yet: said so, and nothing of the file read.
+        let local = Want::local(0, file.clone(), 1000, (hash.clone(), stamp));
+        assert!(matches!(&run(&local)[..], [Loaded::NoPreview { .. }]));
+        assert!(
+            !FILE_READS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains(&file)
+        );
+
+        let got = run(&Want::of_file(0, file.clone(), 1000));
+        assert!(matches!(&got[..], [Loaded::Ok { preview, .. }] if !preview.local));
+        assert!(previews.owes(&file), "the develop view's decode makes none");
+        let got = run(&Want::for_loupe(0, file.clone(), 1000));
+        assert!(matches!(&got[..], [Loaded::Ok { preview, .. }] if !preview.local));
+        assert!(!previews.owes(&file), "taken by the loupe's decode");
+        let started = Instant::now();
+        let kept = loop {
+            if let Some(kept) = previews.get(&hash, stamp) {
+                break kept;
+            }
+            assert!(started.elapsed().as_secs() < 10, "made off the thread");
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        };
+        assert_eq!((kept.width, kept.height), (2048, 1365));
+
+        // Kept now: the preview alone comes back marked local, with the
+        // file gone.
+        std::fs::remove_file(&file).unwrap();
+        let got = run(&local);
+        assert!(matches!(&got[..], [Loaded::Ok { preview, .. }] if preview.local));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

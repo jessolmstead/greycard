@@ -154,13 +154,8 @@ pub fn overlays(placeholder_up: bool) -> Overlays {
 /// develop view's words. `size` is the picture as shown, so it
 /// follows the frame's turn; `small` is a preview smaller than the
 /// camera's full frame.
-pub fn status(size: (u32, u32), small: bool) -> String {
-    let (w, h) = size;
-    let what = if small {
-        format!("a small camera preview, {w} \u{d7} {h}")
-    } else {
-        format!("the camera JPEG, {w} \u{d7} {h}")
-    };
+pub fn status(size: (u32, u32), small: bool, local: bool) -> String {
+    let what = crate::panel::cull::picture_words(size, small, local);
     format!("{WORD}: {what}, fitted, through the monitor profile only; developing...")
 }
 
@@ -310,10 +305,13 @@ mod tests {
 
     #[test]
     fn the_status_names_the_camera_jpeg_its_size_and_the_develop_coming() {
-        let line = status((8192, 5464), false);
+        let line = status((8192, 5464), false, false);
         assert!(line.starts_with("camera preview: the camera JPEG, 8192 \u{d7} 5464"));
         assert!(line.ends_with("developing..."));
-        assert!(status((1616, 1080), true).contains("a small camera preview, 1616 \u{d7} 1080"));
+        assert!(
+            status((1616, 1080), true, false).contains("a small camera preview, 1616 \u{d7} 1080")
+        );
+        assert!(status((2048, 1365), false, true).contains("the local preview, 2048 \u{d7} 1365"));
     }
 
     #[test]

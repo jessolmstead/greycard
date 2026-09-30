@@ -35,6 +35,7 @@ mod naming;
 mod outline;
 mod panel;
 mod placeholder;
+mod previews;
 mod queue;
 mod render;
 mod report;

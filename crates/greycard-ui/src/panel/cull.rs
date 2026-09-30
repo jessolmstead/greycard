@@ -22,6 +22,15 @@ pub(crate) struct Cull {
     pub(crate) cache: cull::Cache,
     /// Files with no preview to show, and why.
     pub(crate) failed: HashMap<usize, String>,
+    /// Files whose local preview was asked for and is not kept: not
+    /// asked for again, their file (where it can be read) is what
+    /// shows.
+    pub(crate) no_local: std::collections::HashSet<usize>,
+    /// Files whose local preview is up and whose file could not be
+    /// read after it: the preview stays, and the file is not asked
+    /// for again, so a share that has stopped answering is not tried
+    /// at every step.
+    pub(crate) file_failed: std::collections::HashSet<usize>,
     /// The file whose full-size copy has been asked for and has not
     /// arrived.
     pub(crate) full_asked: Option<usize>,
@@ -52,10 +61,25 @@ pub(crate) struct Cull {
 }
 
 impl Cull {
+    /// Another list, or the old one renumbered: what was learned of
+    /// its files by their numbers goes.
+    pub(crate) fn clear_failures(&mut self) {
+        self.failed.clear();
+        self.no_local.clear();
+        self.file_failed.clear();
+    }
+
+    /// Whether `file`'s own picture is still worth asking its file for.
+    fn wants_file(&self, file: usize) -> bool {
+        !self.failed.contains_key(&file) && !self.file_failed.contains(&file)
+    }
+
     pub(crate) fn new(tab_kept: slint::SharedString, size: u32) -> Self {
         Self {
             cache: cull::Cache::default(),
             failed: HashMap::new(),
+            no_local: std::collections::HashSet::new(),
+            file_failed: std::collections::HashSet::new(),
             full_asked: None,
             textures: HashMap::new(),
             compare: 1,
@@ -218,10 +242,10 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
         }
         .plane_size(preview.source.0 as f32, preview.source.1 as f32);
         let shown = (plane.0.round() as u32, plane.1.round() as u32);
-        let small = preview.small();
+        let (small, local) = (preview.small(), preview.local);
         st.placeholder = Some(placeholder::Wait::held(c, st.generation));
         show_overlays(st, app, true);
-        say_placeholder(app, shown, small);
+        say_placeholder(app, shown, small, local);
     }
     app.set_status("developing...".into());
     app.set_busy(true);
@@ -339,26 +363,66 @@ pub(crate) fn cull_refresh(st: &mut State) {
         cull.cache.bytes() / 1_000_000
     );
     let size = cull.size;
+    let (files, from_row, library) = (&st.files, &st.from_row, &st.library);
+    let plan = |f: usize| loupe_plan(files, from_row, library, f);
+    let frames: Vec<usize> = order.iter().map(|&r| st.shown[r]).collect();
     let mut wants = Vec::new();
-    if st.zoom > 0.0 && !cull.cache.has_own_size(c) && !cull.failed.contains_key(&c) {
-        wants.push(cull::Want {
-            file: c,
-            path: st.files[c].clone(),
-            size: 0,
-        });
+    // At 1:1, the frame's full JPEG before anything, where its file can
+    // be read.
+    if st.zoom > 0.0 && !cull.cache.has_own_size(c) && cull.wants_file(c) && plan(c).file {
+        wants.push(cull::Want::for_loupe(c, files[c].clone(), 0));
     }
-    for r in order {
-        let f = st.shown[r];
-        if cull.cache.get(f).is_some() || cull.failed.contains_key(&f) {
+    // The local previews of the frames with no picture yet, all of
+    // them ahead of any file: under an offline root they are all there
+    // is, and on a network mount they are up in milliseconds while a
+    // file's read may take seconds, or hang. A frame out of reach with
+    // no key to find a preview by is said so, and not asked for.
+    for &f in &frames {
+        if cull.cache.get(f).is_some() || cull.failed.contains_key(&f) || cull.no_local.contains(&f)
+        {
             continue;
         }
-        wants.push(cull::Want {
-            file: f,
-            path: st.files[f].clone(),
-            size,
-        });
+        match plan(f) {
+            cull::Plan {
+                preview: Some(key), ..
+            } => wants.push(cull::Want::local(f, files[f].clone(), size, key)),
+            cull::Plan {
+                preview: None,
+                file: false,
+            } => {
+                cull.failed.insert(f, cull::NO_LOCAL_PREVIEW.to_string());
+            }
+            _ => {}
+        }
+    }
+    // Then the files, for the frames whose view-size copy is not the
+    // camera's yet, and whose file has not already failed them.
+    for &f in &frames {
+        let had = cull.cache.get(f).is_some_and(|p| !p.local);
+        if had || !cull.wants_file(f) || !plan(f).file {
+            continue;
+        }
+        wants.push(cull::Want::for_loupe(f, files[f].clone(), size));
     }
     st.prefetch.want(wants);
+}
+
+/// Where the loupe takes frame `file`'s picture from, by its root:
+/// see [`cull::source_for`]. The key is the row's while the frame
+/// stands in from it; a frame read from disk has none.
+pub(crate) fn loupe_plan(
+    files: &[PathBuf],
+    from_row: &[crate::rows::FromRow],
+    library: &crate::roots::Library,
+    file: usize,
+) -> cull::Plan {
+    let Some(path) = files.get(file) else {
+        return cull::source_for(true, false, None);
+    };
+    let offline = library.offline.iter().any(|r| path.starts_with(r));
+    let remote = library.remote.iter().any(|(r, _)| path.starts_with(r));
+    let key = from_row.get(file).and_then(|r| r.key.clone());
+    cull::source_for(offline, remote, key)
 }
 
 /// A frame selected in the develop view: its camera JPEG asked for,
@@ -430,7 +494,8 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, file: usize) {
         drop_placeholder(st, app);
         return;
     }
-    st.prefetch.want(vec![cull::Want { file, path, size }]);
+    st.prefetch
+        .want(vec![cull::Want::of_file(file, path, size)]);
     // The frame before this one may have gone with the window — a
     // jump across the folder — and then there is nothing standing in
     // and the developed picture is what shows.
@@ -482,10 +547,10 @@ fn placeholder_arrived(st: &mut State, app: &App, file: usize) {
     }
     .plane_size(preview.source.0 as f32, preview.source.1 as f32);
     let shown = (plane.0.round() as u32, plane.1.round() as u32);
-    let small = preview.small();
+    let (small, local) = (preview.small(), preview.local);
     st.zoom = 0.0;
     st.image_size = (0, 0);
-    say_placeholder(app, shown, small);
+    say_placeholder(app, shown, small, local);
     show_overlays(st, app, true);
     app.window().request_redraw();
 }
@@ -500,8 +565,8 @@ fn placeholder_arrived(st: &mut State, app: &App, file: usize) {
 /// yet, so the word over the picture and the line under it would
 /// disagree for as long as it took the next frame to put them right.
 /// One property, set where the picture is, and they cannot.
-pub(crate) fn say_placeholder(app: &App, shown: (u32, u32), small: bool) {
-    let line = placeholder::status(shown, small);
+pub(crate) fn say_placeholder(app: &App, shown: (u32, u32), small: bool, local: bool) {
+    let line = placeholder::status(shown, small, local);
     if app.get_placeholder_status() != line.as_str() {
         app.set_placeholder_status(line.into());
     }
@@ -576,6 +641,8 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
         | cull::Loaded::Failed {
             file, path, size, ..
         } => (*file, path.clone(), *size),
+        // Never a full-size copy's size, so never taken for one below.
+        cull::Loaded::NoPreview { file, path } => (*file, path.clone(), u32::MAX),
     };
     // A preview of a list since replaced would land on a stranger's
     // slot: only its own file's.
@@ -584,6 +651,7 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
     }
     let current = st.current;
     let culling = st.cull.is_some();
+    let plan = loupe_plan(&st.files, &st.from_row, &st.library, file);
     let Some(cull) = st.cull.as_mut().or(st.hold.as_mut()) else {
         return;
     };
@@ -605,12 +673,51 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
             if preview.full && current != Some(file) {
                 return;
             }
+            if preview.local {
+                // The preview and the file are fetched on two threads,
+                // and a preview that lands after the camera's JPEG does
+                // not take its place.
+                let slot = if preview.full {
+                    cull.cache.full(file)
+                } else {
+                    cull.cache.get(file)
+                };
+                if slot.is_some_and(|p| !p.local) {
+                    return;
+                }
+                // The file failed before the preview landed: the
+                // preview is what shows, and the file is not asked for
+                // again, as when it fails after.
+                if cull.failed.remove(&file).is_some() {
+                    cull.file_failed.insert(file);
+                }
+            }
             cull.cache.insert(file, preview);
             true
+        }
+        // The local preview is up and stays up: the file's failure is
+        // for the log, and the file is not asked for again.
+        cull::Loaded::Failed { message, .. } if cull.cache.get(file).is_some_and(|p| p.local) => {
+            tracing::warn!(
+                "preview {}: {message}; the local preview stays",
+                file_name(&path)
+            );
+            cull.file_failed.insert(file);
+            false
         }
         cull::Loaded::Failed { message, .. } => {
             tracing::warn!("preview {}: {message}", file_name(&path));
             cull.failed.insert(file, message);
+            false
+        }
+        // No local preview kept: the file is what shows, where it can
+        // be read; where it cannot, there is nothing.
+        cull::Loaded::NoPreview { .. } => {
+            if plan.file {
+                cull.no_local.insert(file);
+            } else {
+                cull.failed.insert(file, cull::NO_LOCAL_PREVIEW.to_string());
+            }
             false
         }
     };
@@ -715,18 +822,17 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     // Asked once: the thread's own record of it is gone a moment
     // before the delivery reaches this thread, and a frame in that
     // moment would ask again.
+    // A frame out of reach has its local preview and nothing more.
     if !holding
         && st.zoom > 0.0
         && !cull.cache.has_own_size(c)
-        && !cull.failed.contains_key(&c)
+        && cull.wants_file(c)
         && cull.full_asked != Some(c)
+        && loupe_plan(&st.files, &st.from_row, &st.library, c).file
     {
         cull.full_asked = Some(c);
-        st.prefetch.push_front(cull::Want {
-            file: c,
-            path: st.files[c].clone(),
-            size: 0,
-        });
+        st.prefetch
+            .push_front(cull::Want::for_loupe(c, st.files[c].clone(), 0));
     }
     let mut tiles = Vec::new();
     let mut overlay = Vec::new();
@@ -814,12 +920,13 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
         // The size as shown, so the line follows the frame's turn as
         // the picture does; the JPEG's own pixels either way, since
         // the only geometry here is quarter turns and the mirror.
-        names.push((
+        names.push(Named {
             file,
-            (full.0.round() as u32, full.1.round() as u32),
-            preview.small(),
-            preview.own_size(),
-        ));
+            size: (full.0.round() as u32, full.1.round() as u32),
+            small: preview.small(),
+            own: preview.own_size(),
+            local: preview.local,
+        });
     }
     let drawn: Vec<render::Tile> = tiles
         .iter()
@@ -847,8 +954,8 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     // here as well as when it came in hand: the frame may have been
     // turned since, and then the size in the line is the other way
     // round.
-    if holding && let Some(&(_, size, small, _)) = names.iter().find(|n| n.0 == c) {
-        say_placeholder(app, size, small);
+    if holding && let Some(n) = names.iter().find(|n| n.file == c) {
+        say_placeholder(app, n.size, n.small, n.local);
     }
     // The frame that shows it is the one a timing hook measures to.
     if holding
@@ -1018,6 +1125,30 @@ pub(crate) fn thumb_turns_of(
     }
 }
 
+/// What a tile of the loupe shows, for the status line: the frame,
+/// its size as shown, whether the camera's preview is a small one,
+/// whether this copy is its every pixel, and whether it is the local
+/// preview rather than the camera's JPEG.
+pub(crate) struct Named {
+    pub(crate) file: usize,
+    pub(crate) size: (u32, u32),
+    pub(crate) small: bool,
+    pub(crate) own: bool,
+    pub(crate) local: bool,
+}
+
+/// The picture shown, in the status line's words: the camera's JPEG,
+/// a small camera preview, or the local preview kept in the cache.
+pub(crate) fn picture_words((w, h): (u32, u32), small: bool, local: bool) -> String {
+    if local {
+        format!("the local preview, {w} \u{d7} {h}")
+    } else if small {
+        format!("a small camera preview, {w} \u{d7} {h}")
+    } else {
+        format!("the camera JPEG, {w} \u{d7} {h}")
+    }
+}
+
 /// The culling loupe's status line: what mode the viewport is in,
 /// what is shown of the frame and at what, and what a small preview
 /// is.
@@ -1026,7 +1157,7 @@ pub(crate) fn cull_status(
     current: usize,
     zoom: f32,
     shown: bool,
-    names: &[(usize, (u32, u32), bool, bool)],
+    names: &[Named],
 ) -> String {
     let mode = if cull.compare > 1 {
         format!("culling, {} up", cull.compare)
@@ -1034,22 +1165,21 @@ pub(crate) fn cull_status(
         "culling".to_string()
     };
     if let Some(why) = cull.failed.get(&current) {
+        if why == cull::NO_LOCAL_PREVIEW {
+            return format!("{mode}: nothing to show; {why}");
+        }
         return format!("{mode}: no camera preview ({why}); Enter develops the frame");
     }
-    let Some(&(_, (w, h), small, full)) = names.iter().find(|n| n.0 == current) else {
+    let Some(named) = names.iter().find(|n| n.file == current) else {
         return format!("{mode}: decoding the camera JPEG...");
     };
     if !shown {
         return format!("{mode}: decoding the camera JPEG...");
     }
-    let what = if small {
-        format!("a small camera preview, {w} \u{d7} {h}")
-    } else {
-        format!("the camera JPEG, {w} \u{d7} {h}")
-    };
+    let what = picture_words(named.size, named.small, named.local);
     let at = if zoom <= 0.0 {
         "fitted".to_string()
-    } else if full {
+    } else if named.own {
         format!("{}% of its own pixels", (zoom * 100.0).round() as i32)
     } else {
         format!(
@@ -1313,7 +1443,7 @@ pub(crate) fn drop_files(
     if let Some(cull) = st.cull.as_mut() {
         cull.cache.clear();
         cull.textures.clear();
-        cull.failed.clear();
+        cull.clear_failures();
     }
     drop_placeholder(st, app);
     st.hold = None;
@@ -1760,6 +1890,97 @@ mod tests {
                 false,
             )),
         }
+    }
+
+    /// A frame's local preview and its file land in either order, on
+    /// two threads: a preview after the camera's JPEG does not replace
+    /// it, and a file failure before the preview leaves the preview up
+    /// with no failure said over it and the file not asked for again.
+    #[test]
+    fn a_late_local_preview_and_an_early_file_failure_leave_the_right_picture() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(1);
+            enter_cull(&mut st, &app, 1);
+        }
+        let local = |st: &State, file: usize| cull::Loaded::Ok {
+            file,
+            path: st.files[file].clone(),
+            size: 1024,
+            preview: Arc::new(cull::Preview::local(
+                greycard_library::thumbs::Thumb {
+                    width: 4,
+                    height: 2,
+                    rgb: vec![0; 24],
+                },
+                false,
+            )),
+        };
+        // The camera's JPEG first, then a late local preview.
+        let camera = camera_picture(&state.borrow(), 1, (8192, 5464));
+        deliver_preview(&app, camera);
+        let late = local(&state.borrow(), 1);
+        deliver_preview(&app, late);
+        {
+            let st = state.borrow();
+            let shown = st.cull.as_ref().unwrap().cache.get(1).unwrap();
+            assert!(!shown.local, "the camera's JPEG stays");
+        }
+        // The file's failure first, then the local preview.
+        let failed = cull::Loaded::Failed {
+            file: 2,
+            path: state.borrow().files[2].clone(),
+            size: 1024,
+            message: "the share did not answer".into(),
+        };
+        deliver_preview(&app, failed);
+        assert!(
+            state
+                .borrow()
+                .cull
+                .as_ref()
+                .unwrap()
+                .failed
+                .contains_key(&2)
+        );
+        let preview = local(&state.borrow(), 2);
+        deliver_preview(&app, preview);
+        let mut st = state.borrow_mut();
+        {
+            let cull = st.cull.as_ref().unwrap();
+            assert!(cull.cache.get(2).is_some_and(|p| p.local), "up");
+            assert!(!cull.failed.contains_key(&2), "no failure said over it");
+            assert!(cull.file_failed.contains(&2));
+        }
+        cull_refresh(&mut st);
+        assert!(!st.prefetch.asked().iter().any(|w| w.file == 2));
+    }
+
+    /// The frame's full-size copy held from 1:1 and no view-size one
+    /// (the compare view entered from 1:1 sets the fit and asks again
+    /// before the next frame lets the full copy go): the view-size copy
+    /// is asked for all the same, or its tile would stay blank.
+    #[test]
+    fn a_held_full_copy_does_not_stand_in_for_the_view_size_one() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        let mut st = state.borrow_mut();
+        st.current = Some(1);
+        enter_cull(&mut st, &app, 1);
+        let size = st.cull.as_ref().unwrap().size;
+        let full = Arc::new(cull::Preview::new(8, 6, vec![0; 192], (8192, 5464), true));
+        st.cull.as_mut().unwrap().cache.insert(1, full);
+        st.zoom = 0.0;
+        cull_refresh(&mut st);
+        let asked = st.prefetch.asked();
+        assert!(
+            asked
+                .iter()
+                .any(|w| w.file == 1 && w.size == size && w.from == cull::Source::File),
+            "{asked:?}"
+        );
     }
 
     /// A frame chosen in the develop view shows its camera JPEG at

@@ -487,6 +487,9 @@ pub struct Worker {
     /// The thumbnails' own threads, shared with the worker's thread,
     /// which holds them back while the first develop runs.
     pool: Arc<crate::thumbpool::Pool>,
+    /// The local previews the pool makes behind the thumbnails, in
+    /// the same cache.
+    previews: Arc<crate::previews::Previews>,
 }
 
 impl Worker {
@@ -508,20 +511,34 @@ impl Worker {
     fn build(deliver: Deliver, batched: bool) -> Self {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let thumbs: ThumbCache = Arc::new(Mutex::new(None));
+        let previews = Arc::new(crate::previews::Previews::new(thumbs.clone()));
         let make: crate::thumbpool::Make = {
-            let thumbs = thumbs.clone();
-            Arc::new(move |path, size| cached_thumbnail(&thumbs, path, size))
+            let (thumbs, previews) = (thumbs.clone(), previews.clone());
+            Arc::new(move |path, size| {
+                cached_thumbnail_noting(&thumbs, Some(&previews), path, size, thumbnail)
+            })
         };
         let lookup: crate::thumbpool::Lookup = {
-            let thumbs = thumbs.clone();
-            Arc::new(move |path, size| looked_up_thumbnail(&thumbs, path, size))
+            let (thumbs, previews) = (thumbs.clone(), previews.clone());
+            Arc::new(move |path, size| thumb_lookup(&thumbs, path, size, Some(&previews)).2)
+        };
+        let hooks = crate::thumbpool::PreviewHooks {
+            owes: {
+                let previews = previews.clone();
+                Arc::new(move |path| previews.owes(path))
+            },
+            make: {
+                let previews = previews.clone();
+                Arc::new(move |path| previews.make(path).map(drop))
+            },
         };
         let pool = crate::thumbpool::Pool::with_lookup(
             crate::thumbpool::default_threads(),
             lookup,
             make,
             deliver.clone(),
-        );
+        )
+        .with_previews(hooks);
         let pool = Arc::new(if batched { pool.batched() } else { pool });
         let (q, d, p) = (queue.clone(), deliver.clone(), pool.clone());
         let thread = std::thread::Builder::new()
@@ -534,7 +551,20 @@ impl Worker {
             thread: Mutex::new(Some(thread)),
             thumbs,
             pool,
+            previews,
         }
+    }
+
+    /// The local previews, for the culling loupe's decode threads,
+    /// which read them for a frame out of reach and make them from a
+    /// picture they decoded anyway.
+    pub(crate) fn previews(&self) -> Arc<crate::previews::Previews> {
+        self.previews.clone()
+    }
+
+    /// The roots whose frames get a local preview from now on.
+    pub(crate) fn set_preview_roots(&self, roots: Vec<PathBuf>) {
+        self.previews.set_roots(roots);
     }
 
     /// Look thumbnails up in `cache`, and keep the ones made, from
@@ -651,20 +681,32 @@ impl Worker {
             );
             rayon::spawn(move || {
                 let started = Instant::now();
-                let hit = thumbs
-                    .lock()
-                    .expect("thumbnail cache")
-                    .as_mut()
-                    .and_then(|c| {
-                        c.get(
-                            &hash,
-                            size,
-                            Tag {
-                                recipe: THUMB_RECIPE,
-                                stamp,
-                            },
-                        )
-                    });
+                // Caught here: a panic on rayon's pool with no handler
+                // takes the editor down with it.
+                let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    thumbs
+                        .lock()
+                        .expect("thumbnail cache")
+                        .as_mut()
+                        .and_then(|c| {
+                            c.get(
+                                &hash,
+                                size,
+                                Tag {
+                                    recipe: THUMB_RECIPE,
+                                    stamp,
+                                },
+                            )
+                        })
+                }))
+                .unwrap_or_else(|payload| {
+                    tracing::warn!(
+                        "thumbnail {}: the cache's lookup panicked: {}",
+                        path.display(),
+                        panic_message(payload.as_ref())
+                    );
+                    None
+                });
                 deliver(match hit {
                     Some(thumb) => Outcome::Thumbnail {
                         index,
@@ -2673,7 +2715,7 @@ pub fn count_thumb_cache(
 
 /// A file's length and modification time in nanoseconds, the two a
 /// change to it past its first 64 KB shows in.
-fn file_stat(path: &std::path::Path) -> Option<(u64, u64)> {
+pub(crate) fn file_stat(path: &std::path::Path) -> Option<(u64, u64)> {
     let meta = std::fs::metadata(path).ok()?;
     let mtime = meta
         .modified()
@@ -2695,7 +2737,7 @@ fn file_stat(path: &std::path::Path) -> Option<(u64, u64)> {
 /// three apart. A move or rename keeps it; the cost is one more making
 /// of each thumbnail after a copy that does not keep it (`cp` without
 /// `-p`, a drag to another disk on some desktops).
-fn thumb_tag(stat: (u64, u64)) -> Tag {
+pub(crate) fn thumb_tag(stat: (u64, u64)) -> Tag {
     Tag {
         recipe: THUMB_RECIPE,
         stamp: stat.1,
@@ -2711,34 +2753,19 @@ pub(crate) fn thumb_key(path: &std::path::Path) -> Option<(String, u64)> {
     Some((hash, thumb_tag(stat).stamp))
 }
 
-/// A file's thumbnail from the cache when it holds one for the file's
-/// content, else made by [`thumbnail`] and kept. The lookup costs a
-/// stat and the content hash, a read of the file's first 64 KB, and
-/// nothing else of the file; a cache that cannot be read or written is
-/// a miss and a thumbnail made, never an error of its own. Says
-/// whether it came from the cache.
-fn cached_thumbnail(
-    cache: &ThumbCache,
-    path: &std::path::Path,
-    size: u32,
-) -> anyhow::Result<(Thumb, bool)> {
-    cached_thumbnail_with(cache, path, size, thumbnail)
-}
-
-/// A file's thumbnail from the cache alone, `None` on a miss or with
-/// no cache: what the thumbnails' threads do while a develop holds
-/// them, since a hit costs a tenth of a millisecond.
-fn looked_up_thumbnail(cache: &ThumbCache, path: &std::path::Path, size: u32) -> Option<Thumb> {
-    thumb_lookup(cache, path, size).2
-}
-
 /// The file's stat and cache key, when the cache is on and the file
-/// hashes, and the entry kept under that key if any.
+/// hashes, and the entry kept under that key if any. What a lookup
+/// finds is noted with `previews`, which owes the file a local preview
+/// when none is kept under that key: the thumbnail's hash, so the
+/// preview reads no second head. A lookup alone, with no making after
+/// it, is what the thumbnails' threads do while a develop holds them,
+/// since a hit costs a tenth of a millisecond.
 #[allow(clippy::type_complexity)]
 fn thumb_lookup(
     cache: &ThumbCache,
     path: &std::path::Path,
     size: u32,
+    previews: Option<&crate::previews::Previews>,
 ) -> (Option<(u64, u64)>, Option<(String, Tag)>, Option<Thumb>) {
     let on = cache
         .lock()
@@ -2760,21 +2787,31 @@ fn thumb_lookup(
             .as_mut()
             .and_then(|c| c.get(hash, size, *tag))
     });
+    if let (Some(previews), Some(stat), Some((hash, _))) = (previews, before, key.as_ref()) {
+        previews.note(path, stat, hash);
+    }
     (before, key, hit)
 }
 
-/// [`cached_thumbnail`] with the making handed in, for the tests. The
-/// file is stat'd before it is hashed and again after the picture is
-/// made, and a picture made while the file was changing — its length
-/// or its time moved — is shown but not kept: it may be of a file
-/// half written, and kept under the key the finished file will have.
-fn cached_thumbnail_with(
+/// A file's thumbnail from the cache when it holds one for the file's
+/// content, else made by `make` (the pool's is [`thumbnail`]) and kept,
+/// the lookup noted with `previews`. The lookup costs a stat and the
+/// content hash, a read of the file's first 64 KB, and nothing else of
+/// the file; a cache that cannot be read or written is a miss and a
+/// thumbnail made, never an error of its own. Says whether it came
+/// from the cache. The file is stat'd before it is hashed and again
+/// after the picture is made, and a picture made while the file was
+/// changing — its length or its time moved — is shown but not kept: it
+/// may be of a file half written, and kept under the key the finished
+/// file will have.
+fn cached_thumbnail_noting(
     cache: &ThumbCache,
+    previews: Option<&crate::previews::Previews>,
     path: &std::path::Path,
     size: u32,
     make: impl FnOnce(&std::path::Path, u32) -> anyhow::Result<(u32, u32, Vec<u8>)>,
 ) -> anyhow::Result<(Thumb, bool)> {
-    let (before, key, hit) = thumb_lookup(cache, path, size);
+    let (before, key, hit) = thumb_lookup(cache, path, size, previews);
     if let Some(thumb) = hit {
         return Ok((thumb, true));
     }
@@ -2799,7 +2836,7 @@ fn cached_thumbnail_with(
 /// camera's own preview JPEG when the file has one, box downscaled
 /// and turned as the camera says; else a bilinear demosaic, box
 /// downscaled.
-fn thumbnail(path: &std::path::Path, size: u32) -> anyhow::Result<(u32, u32, Vec<u8>)> {
+pub(crate) fn thumbnail(path: &std::path::Path, size: u32) -> anyhow::Result<(u32, u32, Vec<u8>)> {
     let size = size.max(1) as usize;
     if is_picture_path(path) {
         // The picture itself, as the file encodes it: near enough to
@@ -3637,7 +3674,7 @@ mod tests {
         std::fs::write(&raw, vec![0x17u8; 90_000]).unwrap();
         let cache = cache_at(&dir);
         assert!(
-            cached_thumbnail(&cache, &raw, THUMB_WIDTH).is_err(),
+            cached_thumbnail_noting(&cache, None, &raw, THUMB_WIDTH, thumbnail).is_err(),
             "not a raw, and nothing cached"
         );
         let kept = Thumb {
@@ -3663,11 +3700,12 @@ mod tests {
         std::fs::create_dir_all(&moved_dir).unwrap();
         let moved = moved_dir.join("wedding-0001.CR3");
         std::fs::rename(&raw, &moved).unwrap();
-        let (thumb, cached) = cached_thumbnail(&cache, &moved, THUMB_WIDTH).unwrap();
+        let (thumb, cached) =
+            cached_thumbnail_noting(&cache, None, &moved, THUMB_WIDTH, thumbnail).unwrap();
         assert!(cached);
         assert_eq!((thumb.width, thumb.height), (3, 2));
         // Another size is not the same entry.
-        assert!(cached_thumbnail(&cache, &moved, 256).is_err());
+        assert!(cached_thumbnail_noting(&cache, None, &moved, 256, thumbnail).is_err());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -3745,9 +3783,9 @@ mod tests {
         };
         write(200);
         let cache = cache_at(&dir);
-        let (first, cached) = cached_thumbnail(&cache, &png, 16).unwrap();
+        let (first, cached) = cached_thumbnail_noting(&cache, None, &png, 16, thumbnail).unwrap();
         assert!(!cached);
-        let (again, cached) = cached_thumbnail(&cache, &png, 16).unwrap();
+        let (again, cached) = cached_thumbnail_noting(&cache, None, &png, 16, thumbnail).unwrap();
         assert!(cached);
         assert_eq!((again.width, again.height), (first.width, first.height));
         // Written again with another mtime.
@@ -3759,7 +3797,7 @@ mod tests {
             .unwrap()
             .set_modified(later)
             .unwrap();
-        let (fresh, cached) = cached_thumbnail(&cache, &png, 16).unwrap();
+        let (fresh, cached) = cached_thumbnail_noting(&cache, None, &png, 16, thumbnail).unwrap();
         assert!(!cached);
         assert!(
             fresh.rgb.iter().all(|v| *v < 60),
@@ -3802,7 +3840,8 @@ mod tests {
         half[..196_608].copy_from_slice(&whole[..196_608]);
         std::fs::write(&raw, &half).unwrap();
         let cache = cache_at(&dir);
-        let (grey, cached) = cached_thumbnail_with(&cache, &raw, 176, tail_picture).unwrap();
+        let (grey, cached) =
+            cached_thumbnail_noting(&cache, None, &raw, 176, tail_picture).unwrap();
         assert!(!cached);
         assert!(grey.rgb.iter().all(|v| *v == 0));
         // The same head and the same length: the same hash.
@@ -3810,7 +3849,8 @@ mod tests {
         std::fs::write(&raw, &whole).unwrap();
         set_time(&raw, 7);
         assert_eq!(greycard_library::hash_file(&raw).unwrap(), before);
-        let (done, cached) = cached_thumbnail_with(&cache, &raw, 176, tail_picture).unwrap();
+        let (done, cached) =
+            cached_thumbnail_noting(&cache, None, &raw, 176, tail_picture).unwrap();
         assert!(
             !cached,
             "the half-copied picture is not the finished file's"
@@ -3820,7 +3860,8 @@ mod tests {
         // its time and finds it.
         let renamed = dir.join("wedding-1981.NEF");
         std::fs::rename(&raw, &renamed).unwrap();
-        let (again, cached) = cached_thumbnail_with(&cache, &renamed, 176, tail_picture).unwrap();
+        let (again, cached) =
+            cached_thumbnail_noting(&cache, None, &renamed, 176, tail_picture).unwrap();
         assert!(cached);
         assert_eq!(again.rgb, done.rgb);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -3848,7 +3889,8 @@ mod tests {
             .into_iter()
             .enumerate()
         {
-            let (_, cached) = cached_thumbnail_with(&cache, path, 176, tail_picture).unwrap();
+            let (_, cached) =
+                cached_thumbnail_noting(&cache, None, path, 176, tail_picture).unwrap();
             assert_eq!(cached, round >= 2, "round {round}");
         }
         std::fs::remove_dir_all(&dir).unwrap();
@@ -3868,14 +3910,14 @@ mod tests {
             std::io::Write::write_all(&mut f, &[9u8; 1000]).unwrap();
             made
         };
-        let (_, cached) = cached_thumbnail_with(&cache, &raw, 176, grows).unwrap();
+        let (_, cached) = cached_thumbnail_noting(&cache, None, &raw, 176, grows).unwrap();
         assert!(!cached);
         let touched = |path: &std::path::Path, size: u32| {
             let made = tail_picture(path, size);
             set_time(path, 30);
             made
         };
-        let (_, cached) = cached_thumbnail_with(&cache, &raw, 176, touched).unwrap();
+        let (_, cached) = cached_thumbnail_noting(&cache, None, &raw, 176, touched).unwrap();
         assert!(!cached);
         assert_eq!(
             cache.lock().unwrap().as_ref().unwrap().usage().entries,
@@ -3883,9 +3925,9 @@ mod tests {
             "neither was kept"
         );
         // Left alone, it is made once and kept.
-        let (_, cached) = cached_thumbnail_with(&cache, &raw, 176, tail_picture).unwrap();
+        let (_, cached) = cached_thumbnail_noting(&cache, None, &raw, 176, tail_picture).unwrap();
         assert!(!cached);
-        let (_, cached) = cached_thumbnail_with(&cache, &raw, 176, tail_picture).unwrap();
+        let (_, cached) = cached_thumbnail_noting(&cache, None, &raw, 176, tail_picture).unwrap();
         assert!(cached);
         std::fs::remove_dir_all(&dir).unwrap();
     }
@@ -3901,7 +3943,7 @@ mod tests {
             .unwrap();
         let cache: ThumbCache = Arc::new(Mutex::new(Some(Thumbs::at(dir.join("thumbs"), 0))));
         for _ in 0..2 {
-            let (_, cached) = cached_thumbnail(&cache, &png, 8).unwrap();
+            let (_, cached) = cached_thumbnail_noting(&cache, None, &png, 8, thumbnail).unwrap();
             assert!(!cached);
         }
         assert!(!dir.join("thumbs").exists());
@@ -3949,7 +3991,7 @@ mod tests {
             .unwrap();
         let off: ThumbCache = Arc::new(Mutex::new(None));
         for _ in 0..2 {
-            let (_, cached) = cached_thumbnail(&off, &png, 8).unwrap();
+            let (_, cached) = cached_thumbnail_noting(&off, None, &png, 8, thumbnail).unwrap();
             assert!(!cached);
         }
         assert!(!dir.join("thumbs").exists());

@@ -191,37 +191,89 @@ impl Thumbs {
     /// A damaged entry is removed and answers `None`: the caller
     /// renders and puts, as for any miss.
     pub fn get(&mut self, hash: &str, size: u32, tag: Tag) -> Option<Thumb> {
+        let bytes = self.read(hash, size, tag)?;
+        let thumb = decode(&bytes, tag);
+        self.settle(hash, size, tag, thumb.is_some(), bytes.len() as u64);
+        thumb
+    }
+
+    /// The bytes of the entry for `hash` at `size` under `tag`, as
+    /// they are on disk, or `None`: the first half of
+    /// [`get`](Self::get), for a caller that decodes them with
+    /// [`decode`] outside whatever lock it holds on the cache, and
+    /// then says how that went with [`settle`](Self::settle).
+    pub fn read(&self, hash: &str, size: u32, tag: Tag) -> Option<Vec<u8>> {
+        std::fs::read(self.entry_path(hash, size, tag)).ok()
+    }
+
+    /// The entry read by [`read`](Self::read) decoded (`used`) or not:
+    /// a good one's recency is set to now, for the eviction, and a
+    /// damaged one of `len` bytes is removed and taken off the count.
+    pub fn settle(&mut self, hash: &str, size: u32, tag: Tag, used: bool, len: u64) {
         let path = self.entry_path(hash, size, tag);
-        let bytes = std::fs::read(&path).ok()?;
-        match decode_entry(&bytes, tag) {
-            Some(thumb) => {
-                // Its recency, for the eviction. A failure here costs
-                // an early eviction at worst.
-                if let Ok(f) = std::fs::File::options().write(true).open(&path) {
-                    let _ = f.set_modified(SystemTime::now());
-                }
-                Some(thumb)
+        if used {
+            // A failure here costs an early eviction at worst.
+            if let Ok(f) = std::fs::File::options().write(true).open(&path) {
+                let _ = f.set_modified(SystemTime::now());
             }
-            None => {
-                match std::fs::remove_file(&path) {
-                    Ok(()) => {
-                        log::debug!("thumbnail cache: {} unusable, removed", path.display());
-                        self.forget(bytes.len() as u64);
-                    }
-                    Err(e) => log::debug!(
-                        "thumbnail cache: {} unusable, not removed: {e}",
-                        path.display()
-                    ),
-                }
-                None
-            }
+            return;
         }
+        // A good entry renamed into place since the damaged one was read
+        // is not the one to remove: only a file of the length read is.
+        if std::fs::metadata(&path).map(|m| m.len()).ok() != Some(len) {
+            return;
+        }
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                log::debug!("thumbnail cache: {} unusable, removed", path.display());
+                self.forget(len);
+            }
+            Err(e) => log::debug!(
+                "thumbnail cache: {} unusable, not removed: {e}",
+                path.display()
+            ),
+        }
+    }
+
+    /// Whether an entry is kept for `hash` at `size` under `tag`: its
+    /// file is there. Nothing is read or decoded, so a damaged entry
+    /// answers yes until a [`get`](Self::get) finds it out and removes
+    /// it.
+    pub fn has(&self, hash: &str, size: u32, tag: Tag) -> bool {
+        self.entry_path(hash, size, tag).is_file()
     }
 
     /// Keep `thumb` for `hash` at `size` under `tag`, replacing what
     /// was there, and evict if that takes the cache past its cap.
     pub fn put(&mut self, hash: &str, size: u32, tag: Tag, thumb: &Thumb) -> std::io::Result<()> {
-        let bytes = encode_entry(thumb, tag)?;
+        self.put_at(hash, size, tag, thumb, QUALITY)
+    }
+
+    /// [`put`](Self::put) with the JPEG at `quality` rather than the
+    /// thumbnails' own: for a larger picture kept under the same key
+    /// scheme, where the bytes matter more.
+    pub fn put_at(
+        &mut self,
+        hash: &str,
+        size: u32,
+        tag: Tag,
+        thumb: &Thumb,
+        quality: u8,
+    ) -> std::io::Result<()> {
+        let bytes = encode(thumb, tag, quality)?;
+        self.put_bytes(hash, size, tag, &bytes)
+    }
+
+    /// Keep an entry already made by [`encode`] for `hash` at `size`
+    /// under `tag`: the write, the rename and the count, for a caller
+    /// that encodes outside whatever lock it holds on the cache.
+    pub fn put_bytes(
+        &mut self,
+        hash: &str,
+        size: u32,
+        tag: Tag,
+        bytes: &[u8],
+    ) -> std::io::Result<()> {
         let path = self.entry_path(hash, size, tag);
         let dir = path.parent().expect("an entry is under its fan-out folder");
         std::fs::create_dir_all(dir)?;
@@ -238,7 +290,7 @@ impl Thumbs {
         ));
         let written = (|| {
             let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(&bytes)?;
+            f.write_all(bytes)?;
             drop(f);
             std::fs::rename(&tmp, &path)
         })();
@@ -415,8 +467,9 @@ fn entries_at(root: &Path) -> Vec<(PathBuf, u64, SystemTime)> {
     out
 }
 
-/// An entry's bytes: the header and the JPEG.
-fn encode_entry(thumb: &Thumb, tag: Tag) -> std::io::Result<Vec<u8>> {
+/// An entry's bytes, the header and the JPEG at `quality`, for
+/// [`Thumbs::put_bytes`].
+pub fn encode(thumb: &Thumb, tag: Tag, quality: u8) -> std::io::Result<Vec<u8>> {
     let expected = thumb.width as usize * thumb.height as usize * 3;
     if thumb.width == 0 || thumb.height == 0 || thumb.rgb.len() != expected {
         return Err(std::io::Error::new(
@@ -430,7 +483,7 @@ fn encode_entry(thumb: &Thumb, tag: Tag) -> std::io::Result<Vec<u8>> {
         ));
     }
     let mut jpeg = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, QUALITY)
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, quality.clamp(1, 100))
         .encode(
             &thumb.rgb,
             thumb.width,
@@ -451,8 +504,9 @@ fn encode_entry(thumb: &Thumb, tag: Tag) -> std::io::Result<Vec<u8>> {
     Ok(out)
 }
 
-/// The picture in an entry's bytes, or `None` for anything amiss.
-fn decode_entry(bytes: &[u8], tag: Tag) -> Option<Thumb> {
+/// The picture in an entry's bytes as [`Thumbs::read`] gave them, or
+/// `None` for anything amiss.
+pub fn decode(bytes: &[u8], tag: Tag) -> Option<Thumb> {
     let head = bytes.get(..HEADER)?;
     let u16_at = |at: usize| u16::from_le_bytes(head[at..at + 2].try_into().unwrap());
     let u32_at = |at: usize| u32::from_le_bytes(head[at..at + 4].try_into().unwrap());
@@ -661,6 +715,35 @@ mod tests {
         assert!(cache.get(&other, 96, at(1, 7)).is_some());
         assert_eq!(cache.remove(&key, 7), 0);
         assert_eq!(cache.remove(&"ff".repeat(32), 7), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A larger picture kept at a quality of its own is an entry like
+    /// any other: named by its size, found by `has` without a read,
+    /// read back whole, and smaller for the lower quality.
+    #[test]
+    fn a_picture_kept_at_its_own_quality_is_an_entry_like_any_other() {
+        let dir = scratch("quality");
+        let mut cache = Thumbs::at(dir.join("thumbs"), DEFAULT_CAP);
+        let key = "9a".repeat(32);
+        let tag = Tag {
+            recipe: 1,
+            stamp: 42,
+        };
+        let big = picture(2048, 1365, 7);
+        assert!(!cache.has(&key, 2048, tag));
+        cache.put_at(&key, 2048, tag, &big, 60).unwrap();
+        let path = cache.entry_path(&key, 2048, tag);
+        assert!(path.ends_with(format!("{key}-2048-r1-42.thumb")));
+        assert!(cache.has(&key, 2048, tag));
+        assert!(!cache.has(&key, 170, tag), "another size is another entry");
+        let low = std::fs::metadata(&path).unwrap().len();
+        let got = cache.get(&key, 2048, tag).expect("a hit");
+        assert_eq!((got.width, got.height), (2048, 1365));
+        cache.put(&key, 2048, tag, &big).unwrap();
+        let high = std::fs::metadata(&path).unwrap().len();
+        assert!(low < high, "{low} at 60 against {high} at 90");
+        assert_eq!(cache.known_usage(), Some(cache.usage()));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

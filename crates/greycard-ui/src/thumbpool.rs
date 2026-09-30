@@ -16,6 +16,11 @@
 //! millisecond and takes nothing from the develop, so a warm folder's
 //! strip fills at once whatever is running.
 //!
+//! Behind the thumbnails, and only when no thumbnail is waiting to be
+//! begun, each frame whose thumbnail found no local preview kept has
+//! one made (`previews`): the lowest thing the pool does, never while
+//! it is held, and in the thumbnails' order, the frames shown first.
+//!
 //! What the threads finish goes to the window one call each, or
 //! through an [`Outbox`] ([`Pool::batched`], the editor's). A warm
 //! folder of twenty thousand is twenty thousand hits in a few
@@ -43,6 +48,18 @@ pub(crate) type MakeFn = dyn Fn(&Path, u32) -> anyhow::Result<(Thumb, bool)> + S
 /// the picture, or `None` for a miss.
 pub(crate) type Lookup = Arc<LookupFn>;
 pub(crate) type LookupFn = dyn Fn(&Path, u32) -> Option<Thumb> + Send + Sync;
+
+/// The local previews behind the thumbnails: whether a file whose
+/// thumbnail was just delivered is owed one (a question of memory,
+/// asked on every delivery), and the making of it.
+#[derive(Clone)]
+pub(crate) struct PreviewHooks {
+    pub(crate) owes: Arc<OwesFn>,
+    pub(crate) make: Arc<MakePreviewFn>,
+}
+
+pub(crate) type OwesFn = dyn Fn(&Path) -> bool + Send + Sync;
+pub(crate) type MakePreviewFn = dyn Fn(&Path) -> anyhow::Result<()> + Send + Sync;
 
 /// How many threads make thumbnails on a machine of `cores`: half of
 /// them, at least two and at most eight. The develop runs on rayon's
@@ -200,6 +217,12 @@ struct Pending {
     /// report where it stands as often as it likes. Cleared when one
     /// is pushed, since that is a new folder's list or a step up.
     wanted: Option<(usize, usize)>,
+    /// The local previews waiting to be made, in the order wanted:
+    /// begun only when no thumbnail can be.
+    previews: VecDeque<(usize, PathBuf)>,
+    /// The range the waiting previews are ordered for; cleared when
+    /// one is added.
+    previews_wanted: Option<(usize, usize)>,
     /// The long edge pictures are made at now; `THUMB_WIDTH` until
     /// the grid asks otherwise. Read as each is begun.
     size: Option<u32>,
@@ -241,6 +264,8 @@ pub(crate) struct Pool {
     /// Where the threads put what they finish, when the window takes
     /// it in batches.
     outbox: Option<Arc<Outbox>>,
+    /// The local previews made behind the thumbnails, if any.
+    previews: Option<PreviewHooks>,
 }
 
 impl Pool {
@@ -276,7 +301,15 @@ impl Pool {
             make,
             deliver,
             outbox: None,
+            previews: None,
         }
+    }
+
+    /// Make a local preview behind each thumbnail delivered whose file
+    /// `hooks` says is owed one. Before the first push.
+    pub(crate) fn with_previews(mut self, hooks: PreviewHooks) -> Self {
+        self.previews = Some(hooks);
+        self
     }
 
     /// Deliver through an outbox: one [`Outcome::Thumbnails`] for as
@@ -303,12 +336,13 @@ impl Pool {
         if !q.started {
             q.started = true;
             for n in 0..self.threads {
-                let (shared, lookup, make, deliver, outbox) = (
+                let (shared, lookup, make, deliver, outbox, previews) = (
                     self.shared.clone(),
                     self.lookup.clone(),
                     self.make.clone(),
                     self.deliver.clone(),
                     self.outbox.clone(),
+                    self.previews.clone(),
                 );
                 // Straight to the window, or into the outbox with the
                 // window told only when it is not already.
@@ -322,7 +356,9 @@ impl Pool {
                 };
                 let spawned = std::thread::Builder::new()
                     .name(format!("greycard thumbnails {n}"))
-                    .spawn(move || serve(&shared, lookup.as_deref(), &*make, &send));
+                    .spawn(move || {
+                        serve(&shared, lookup.as_deref(), &*make, previews.as_ref(), &send)
+                    });
                 if let Err(e) = spawned {
                     tracing::warn!("thumbnail thread {n} not started: {e}");
                 }
@@ -358,6 +394,10 @@ impl Pool {
             outbox.show(first, last);
         }
         let mut q = self.lock();
+        if q.previews.len() >= 2 && q.previews_wanted != Some((first, last)) {
+            q.previews_wanted = Some((first, last));
+            order_thumbnails(q.previews.make_contiguous(), first, last);
+        }
         if q.jobs.len() < 2 || q.wanted == Some((first, last)) {
             return;
         }
@@ -382,6 +422,8 @@ impl Pool {
         q.jobs.clear();
         q.missed.clear();
         q.wanted = None;
+        q.previews.clear();
+        q.previews_wanted = None;
         q.epoch += 1;
         drop(q);
         // Finished for the old list and not yet taken in: the window
@@ -437,9 +479,19 @@ impl Drop for Pool {
 /// the cache instead: a hit is delivered, a miss goes back to wait to
 /// be made. A panic in the making — rawler has a few on damaged files
 /// — costs that file its picture and nothing else.
-fn serve(shared: &Shared, lookup: Option<&LookupFn>, make: &MakeFn, deliver: &dyn Fn(Outcome)) {
+///
+/// With nothing of the thumbnails' to begin and room to make, a local
+/// preview owed is made instead; it is delivered to nobody, since it
+/// is for the cache.
+fn serve(
+    shared: &Shared,
+    lookup: Option<&LookupFn>,
+    make: &MakeFn,
+    previews: Option<&PreviewHooks>,
+    deliver: &dyn Fn(Outcome),
+) {
     loop {
-        let (index, path, size, epoch, full) = {
+        let (index, path, size, epoch, full, preview) = {
             let mut q = shared.pending.lock().expect("thumbnail pool");
             loop {
                 if q.stopping {
@@ -465,12 +517,55 @@ fn serve(shared: &Shared, lookup: Option<&LookupFn>, make: &MakeFn, deliver: &dy
                     };
                     q.making.push(path.clone());
                     let size = crate::grid::made_size(q.size.unwrap_or(THUMB_WIDTH));
-                    break (index, path, size, q.epoch, full);
+                    break (index, path, size, q.epoch, full, false);
+                }
+                // The lowest of all: a preview, only when no thumbnail
+                // can be begun and two more may be made, so one thread
+                // is always left for a thumbnail. A preview of a raw
+                // with no JPEG in it is a develop, and one on a slow
+                // share waits on the share: neither may take the whole
+                // pool from the next folder's thumbnails. A limit of
+                // one, then, never makes a preview.
+                let preview = !q.held && q.busy + 1 < q.limit && previews.is_some();
+                let at = preview
+                    .then(|| {
+                        let p = &*q;
+                        p.previews.iter().position(|(_, f)| !p.making.contains(f))
+                    })
+                    .flatten();
+                if let Some(at) = at {
+                    q.busy += 1;
+                    let (index, path) = q.previews.remove(at).expect("a preview at a found place");
+                    q.making.push(path.clone());
+                    break (index, path, 0, q.epoch, true, true);
                 }
                 q = shared.cv.wait(q).expect("thumbnail pool");
             }
         };
         let started = Instant::now();
+        if preview {
+            let hooks = previews.expect("a preview only with hooks");
+            let made =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hooks.make)(&path)));
+            {
+                let mut q = shared.pending.lock().expect("thumbnail pool");
+                if let Some(at) = q.making.iter().position(|f| *f == path) {
+                    q.making.swap_remove(at);
+                }
+                q.busy -= 1;
+                shared.cv.notify_all();
+            }
+            match made {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => tracing::debug!("preview {}: {e:#}", path.display()),
+                Err(payload) => tracing::warn!(
+                    "preview {}: the making panicked: {}",
+                    path.display(),
+                    panic_message(payload.as_ref())
+                ),
+            }
+            continue;
+        }
         let made = if full {
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| make(&path, size)))
         } else {
@@ -521,6 +616,19 @@ fn serve(shared: &Shared, lookup: Option<&LookupFn>, make: &MakeFn, deliver: &dy
         };
         if !current {
             continue;
+        }
+        // Delivered with a picture: a preview behind it, if the file is
+        // owed one, in this folder's numbering.
+        if let Some(hooks) = previews
+            && matches!(made, Ok(Ok(_)))
+            && (hooks.owes)(&path)
+        {
+            let mut q = shared.pending.lock().expect("thumbnail pool");
+            if q.epoch == epoch && !q.previews.iter().any(|(_, f)| *f == path) {
+                q.previews.push_back((index, path.clone()));
+                q.previews_wanted = None;
+                shared.cv.notify_one();
+            }
         }
         deliver(match made {
             Ok(Ok((thumb, cached))) => Outcome::Thumbnail {
@@ -685,6 +793,136 @@ mod tests {
         pool.hold(false);
         receive(&rx, 3);
         assert_eq!(*began.lock().unwrap(), vec![1, 3, 5]);
+    }
+
+    /// Preview hooks that owe every file but those in `kept`, and
+    /// record the previews made, in order, into `log` beside whatever
+    /// else is recorded there.
+    fn preview_hooks(log: Arc<Mutex<Vec<String>>>, kept: &'static [usize]) -> PreviewHooks {
+        PreviewHooks {
+            owes: Arc::new(move |path| !kept.contains(&index_of(path))),
+            make: Arc::new(move |path| {
+                log.lock().unwrap().push(format!("p{}", index_of(path)));
+                Ok(())
+            }),
+        }
+    }
+
+    /// Wait until `log` holds `n` entries.
+    fn until_logged(log: &Mutex<Vec<String>>, n: usize) -> Vec<String> {
+        let started = std::time::Instant::now();
+        while log.lock().unwrap().len() < n {
+            assert!(started.elapsed() < WAIT, "{:?}", log.lock().unwrap());
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        log.lock().unwrap().clone()
+    }
+
+    /// The local previews come after every thumbnail, and a file with
+    /// its preview kept is owed none.
+    #[test]
+    fn the_previews_are_made_after_the_thumbnails() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let seen = log.clone();
+        let make: Make = Arc::new(move |path, _| {
+            seen.lock().unwrap().push(format!("t{}", index_of(path)));
+            Ok((picture(), false))
+        });
+        let (deliver, rx) = collector();
+        let pool = Pool::new(2, make, deliver).with_previews(preview_hooks(log.clone(), &[3]));
+        pool.set_limit(0);
+        for i in 0..6 {
+            pool.push(i, file(i));
+        }
+        pool.want(2, 3);
+        pool.set_limit(2);
+        receive(&rx, 6);
+        let order = until_logged(&log, 11);
+        let (thumbs, previews) = order.split_at(6);
+        assert!(thumbs.iter().all(|e| e.starts_with('t')), "{order:?}");
+        let mut previews = previews.to_vec();
+        previews.sort();
+        assert_eq!(previews, ["p0", "p1", "p2", "p4", "p5"]);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(log.lock().unwrap().len(), 11, "one a file, none for 3");
+    }
+
+    /// The previews waiting are made in the thumbnails' order about the
+    /// range shown, one at a time on a pool of two.
+    #[test]
+    fn the_previews_of_the_frames_shown_are_made_first() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let lookup: Lookup = Arc::new(|_, _| Some(picture()));
+        let (deliver, rx) = collector();
+        let pool = Pool::with_lookup(2, lookup, instant(), deliver)
+            .with_previews(preview_hooks(log.clone(), &[3]));
+        pool.hold(true);
+        for i in 0..6 {
+            pool.push(i, file(i));
+        }
+        receive(&rx, 6);
+        pool.want(2, 3);
+        pool.hold(false);
+        assert_eq!(until_logged(&log, 5), ["p2", "p1", "p0", "p4", "p5"]);
+    }
+
+    /// A preview never takes the last thread: with one in hand on a
+    /// pool of two, the second waits, and a thumbnail asked for
+    /// meanwhile is made at once.
+    #[test]
+    fn a_preview_leaves_a_thread_for_the_thumbnails() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (gate_tx, gate) = mpsc::channel::<()>();
+        let gate = Mutex::new(gate);
+        let seen = log.clone();
+        let hooks = PreviewHooks {
+            owes: Arc::new(|_| true),
+            make: Arc::new(move |path| {
+                seen.lock().unwrap().push(format!("p{}", index_of(path)));
+                gate.lock().unwrap().recv_timeout(WAIT).expect("let go");
+                Ok(())
+            }),
+        };
+        let (deliver, rx) = collector();
+        let pool = Pool::new(2, instant(), deliver).with_previews(hooks);
+        pool.push(0, file(0));
+        pool.push(1, file(1));
+        receive(&rx, 2);
+        until_logged(&log, 1);
+        pool.push(5, file(5));
+        assert_eq!(receive(&rx, 1), [(5, true)], "made beside the preview");
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(log.lock().unwrap().len(), 1, "one preview at a time");
+        for _ in 0..3 {
+            gate_tx.send(()).unwrap();
+        }
+        until_logged(&log, 3);
+    }
+
+    /// Held, the cache's thumbnails are delivered and no preview is
+    /// begun; a folder change drops the previews waiting; let go, a
+    /// new folder's are made.
+    #[test]
+    fn held_no_preview_is_made_and_a_folder_change_drops_them() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let lookup: Lookup = Arc::new(|_, _| Some(picture()));
+        let (deliver, rx) = collector();
+        let pool = Pool::with_lookup(2, lookup, instant(), deliver)
+            .with_previews(preview_hooks(log.clone(), &[]));
+        pool.hold(true);
+        for i in 0..3 {
+            pool.push(i, file(i));
+        }
+        assert_eq!(receive(&rx, 3).len(), 3, "the hits, held");
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(log.lock().unwrap().is_empty(), "no preview while held");
+        pool.forget();
+        pool.hold(false);
+        std::thread::sleep(Duration::from_millis(100));
+        assert!(log.lock().unwrap().is_empty(), "dropped with the folder");
+        pool.push(7, file(7));
+        receive(&rx, 1);
+        assert_eq!(until_logged(&log, 1), ["p7"]);
     }
 
     /// A scroll while a picture is in hand re-orders what is left,

@@ -1246,7 +1246,7 @@ pub(crate) fn open_loaded(
     if let Some(cull) = st.cull.as_mut() {
         cull.cache.clear();
         cull.textures.clear();
-        cull.failed.clear();
+        cull.clear_failures();
         cull.anchor = 0;
     }
     // Another folder's files, and the pictures kept are keyed by the
@@ -1289,6 +1289,17 @@ pub(crate) fn open_loaded(
     // numbering is its list's.
     worker.forget_thumbnails();
     worker.set_thumb_size(worker::THUMB_WIDTH);
+    // A local preview is made for the frames under a root that is
+    // there now, for when it is not or is slow to read.
+    worker.set_preview_roots(
+        st.library
+            .roots
+            .list()
+            .iter()
+            .filter(|r| !st.library.offline.contains(*r))
+            .cloned()
+            .collect(),
+    );
     st.files = files.clone();
     // The new folder's rows as the index has them now, and a pass
     // over it on the indexer's thread to bring them up to date.

@@ -498,6 +498,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         }
         Err(e) => tracing::warn!("no thumbnail cache: {e}"),
     }
+    // The culling loupe reads the local previews the pool makes, and
+    // makes one from a camera picture it decoded anyway.
+    state.borrow().prefetch.set_previews(worker.previews());
     // The library index, on a thread of its own: the folder open is
     // indexed there, so the first frame never waits for a pass, and
     // the facets fill in as it goes.

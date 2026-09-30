@@ -2425,7 +2425,7 @@ pub(crate) fn merge(
         if let Some(cull) = st.cull.as_mut() {
             cull.cache.clear();
             cull.textures.clear();
-            cull.failed.clear();
+            cull.clear_failures();
             cull.full_asked = None;
         }
         drop_placeholder(st, app);
@@ -3719,6 +3719,221 @@ mod tests {
         assert!(!st.library.loading, "the folder's own load is done");
         drop(st);
         drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A frame under an offline root is culled from its local preview,
+    /// found by the key its row gives, and nothing of its file is read:
+    /// the loupe asks for the preview alone, the preview comes from the
+    /// cache, and it is marked as the local preview. A frame of the
+    /// same root with no preview kept says so and is not asked for; a
+    /// frame under a root on a network mount asks for the preview and
+    /// then its file; one on a local disk, its file.
+    #[test]
+    fn an_offline_frame_is_culled_from_its_local_preview_and_its_file_is_not_read() {
+        use crate::previews::{self, Previews};
+        let dir = scratch("offline-preview");
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        let x = frames(&a, &["x.tif"]).remove(0);
+        let zs = frames(&b, &["z.tif", "zz.tif"]);
+        let (z, zz) = (zs[0].clone(), zs[1].clone());
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&dir, &mut |_| {}).unwrap();
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.write_sidecars = true;
+            st.library.roots.add(&a).unwrap();
+            st.library.roots.add(&b).unwrap();
+            recount(&mut st);
+        }
+        let away = dir.join("b-away");
+        std::fs::rename(&b, &away).unwrap();
+        open_view(&state, &app, &worker, View::Roots(None));
+        assert_eq!(land_all(&state, &app, &worker), 1);
+        let (zi, zzi) = {
+            let st = state.borrow();
+            let at = |p: &PathBuf| st.files.iter().position(|f| f == p).unwrap();
+            (at(&z), at(&zz))
+        };
+        // z's preview, as the pool made it while the root was there,
+        // under the key its row gives.
+        let (hash, stamp) = state.borrow().from_row[zi]
+            .key
+            .clone()
+            .expect("the row's key");
+        let cache: crate::worker::ThumbCache = std::sync::Arc::new(std::sync::Mutex::new(Some(
+            greycard_library::Thumbs::at(dir.join("thumbs"), greycard_library::thumbs::DEFAULT_CAP),
+        )));
+        let kept = greycard_library::thumbs::Thumb {
+            width: 300,
+            height: 200,
+            rgb: vec![120; 300 * 200 * 3],
+        };
+        let cache_put = |hash: &str, stamp: u64| {
+            cache
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .put_at(
+                    hash,
+                    previews::SIZE,
+                    crate::worker::thumb_tag((0, stamp)),
+                    &kept,
+                    previews::QUALITY,
+                )
+                .unwrap()
+        };
+        cache_put(&hash, stamp);
+        let local = std::sync::Arc::new(Previews::new(cache.clone()));
+        // Culling on z.
+        {
+            let mut st = state.borrow_mut();
+            st.prefetch.set_previews(local.clone());
+            st.current = Some(zi);
+            crate::panel::cull::enter_cull(&mut st, &app, 1);
+            assert!(st.cull.is_some());
+        }
+        let asked = state.borrow().prefetch.asked();
+        let want = asked.iter().find(|w| w.file == zi).expect("z asked for");
+        assert_eq!(
+            want.from,
+            crate::cull::Source::Preview {
+                hash: hash.clone(),
+                stamp
+            },
+            "the preview alone"
+        );
+        let zz_want = asked.iter().find(|w| w.file == zzi).expect("zz asked for");
+        assert!(matches!(zz_want.from, crate::cull::Source::Preview { .. }));
+        let x_want = asked.iter().find(|w| w.path == x).expect("x asked for");
+        assert_eq!(
+            x_want.from,
+            crate::cull::Source::File,
+            "a local root's file"
+        );
+        // The decode thread's work, here: the preview from the cache,
+        // and for zz, which has none kept, the word that says so.
+        let fetched = |want: &crate::cull::Want| {
+            let got = std::cell::RefCell::new(Vec::new());
+            crate::cull::fetch(want, Some(&local), &|l| got.borrow_mut().push(l));
+            got.into_inner()
+        };
+        let got = fetched(want);
+        assert_eq!(got.len(), 1);
+        crate::panel::cull::deliver_preview(&app, got.into_iter().next().unwrap());
+        let got = fetched(zz_want);
+        assert!(matches!(&got[..], [crate::cull::Loaded::NoPreview { .. }]));
+        crate::panel::cull::deliver_preview(&app, got.into_iter().next().unwrap());
+        assert_eq!(
+            state
+                .borrow()
+                .cull
+                .as_ref()
+                .unwrap()
+                .failed
+                .get(&zzi)
+                .map(String::as_str),
+            Some(crate::cull::NO_LOCAL_PREVIEW)
+        );
+        {
+            let st = state.borrow();
+            let shown = st.cull.as_ref().unwrap().cache.get(zi).expect("up");
+            assert!(shown.local, "marked as the local preview");
+            assert_eq!((shown.width, shown.height), (300, 200));
+            assert!(!shown.small());
+        }
+        let read = |p: &Path| {
+            crate::cull::FILE_READS
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|r| r == p)
+        };
+        assert!(!read(&z), "nothing of z's file read");
+        assert!(!read(&zz), "nor of zz's");
+        assert_eq!(disk_reads_under(&away), 0);
+        // Its words on the status line.
+        let named = [crate::panel::cull::Named {
+            file: zi,
+            size: (300, 200),
+            small: false,
+            own: true,
+            local: true,
+        }];
+        let line = crate::panel::cull::cull_status(
+            state.borrow().cull.as_ref().unwrap(),
+            zi,
+            0.0,
+            true,
+            &named,
+        );
+        assert!(
+            line.starts_with("culling: the local preview, 300 \u{d7} 200, fitted"),
+            "{line}"
+        );
+        // The same view with a's root on a network mount: its frame
+        // asks for its local preview and its file, every preview of
+        // the window ahead of every file.
+        let xi = state.borrow().files.iter().position(|f| *f == x).unwrap();
+        {
+            let mut st = state.borrow_mut();
+            st.library.remote = vec![(a.clone(), "nfs".into())];
+            crate::panel::cull::cull_refresh(&mut st);
+        }
+        let asked = state.borrow().prefetch.asked();
+        let local_at = asked
+            .iter()
+            .position(|w| w.file == xi && matches!(w.from, crate::cull::Source::Preview { .. }))
+            .expect("x's local preview asked for");
+        let file_at = asked
+            .iter()
+            .position(|w| w.file == xi && w.from == crate::cull::Source::File)
+            .expect("x's file asked for");
+        let first_file = asked
+            .iter()
+            .position(|w| w.from == crate::cull::Source::File)
+            .unwrap();
+        assert!(local_at < first_file && first_file <= file_at, "{asked:?}");
+        // Its local preview up, then its file fails (the share has
+        // stopped answering): the preview stays, and the next step asks
+        // for neither again.
+        let (x_hash, x_stamp) = state.borrow().from_row[xi].key.clone().unwrap();
+        cache_put(&x_hash, x_stamp);
+        let x_local = asked[local_at].clone();
+        let got = fetched(&x_local);
+        crate::panel::cull::deliver_preview(&app, got.into_iter().next().unwrap());
+        crate::panel::cull::deliver_preview(
+            &app,
+            crate::cull::Loaded::Failed {
+                file: xi,
+                path: x.clone(),
+                size: asked[file_at].size,
+                message: "the share did not answer".into(),
+            },
+        );
+        {
+            let mut st = state.borrow_mut();
+            let cull = st.cull.as_ref().unwrap();
+            assert!(cull.cache.get(xi).is_some_and(|p| p.local), "stays up");
+            assert!(cull.file_failed.contains(&xi));
+            assert!(!cull.failed.contains_key(&xi), "no failure over it");
+            crate::panel::cull::cull_refresh(&mut st);
+        }
+        let asked = state.borrow().prefetch.asked();
+        assert!(
+            !asked.iter().any(|w| w.file == xi),
+            "not asked again: {asked:?}"
+        );
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
