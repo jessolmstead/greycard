@@ -190,3 +190,21 @@ pub(crate) fn type_text(app: &App, text: &str) {
         press(app, c.to_string());
     }
 }
+
+/// A folder renamed away, as a root unplugged: tried again for a
+/// while when the system refuses, since on Windows a folder cannot be
+/// renamed while any file under it is open, and the thumbnail pool may
+/// still be reading one for its thumbnail or its preview when the test
+/// gets here. The last refusal is the panic.
+pub(crate) fn rename_away(from: &std::path::Path, to: &std::path::Path) {
+    let start = std::time::Instant::now();
+    loop {
+        match std::fs::rename(from, to) {
+            Ok(()) => return,
+            Err(_) if start.elapsed() < std::time::Duration::from_secs(20) => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => panic!("{} could not be renamed away: {e}", from.display()),
+        }
+    }
+}

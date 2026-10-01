@@ -1305,7 +1305,7 @@ mod tests {
         let dir = scratch("offline");
         let (app, state, worker) = archive(&dir, None);
         let root = dir.join("archive");
-        std::fs::rename(&root, dir.join("away")).unwrap();
+        crate::testing::rename_away(&root, &dir.join("away"));
         // The tree built again with the root away.
         {
             let mut st = state.borrow_mut();
@@ -1638,7 +1638,7 @@ mod tests {
 
         // The root away: its tree and tiles from the index, dimmed, no
         // menu.
-        std::fs::rename(&root, dir.join("away")).unwrap();
+        crate::testing::rename_away(&root, &dir.join("away"));
         {
             let mut st = state.borrow_mut();
             st.tree.stale = true;

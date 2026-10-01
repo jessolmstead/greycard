@@ -3939,7 +3939,7 @@ mod tests {
             recount(&mut st);
         }
         let away = dir.join("b-away");
-        std::fs::rename(&b, &away).unwrap();
+        crate::testing::rename_away(&b, &away);
         open_view(&state, &app, &worker, View::Roots(None));
         assert_eq!(land_all(&state, &app, &worker), 1);
         let (zi, zzi) = {
@@ -4161,7 +4161,7 @@ mod tests {
         }
         // b unplugged: the folder gone from the disk.
         let away = dir.join("b-away");
-        std::fs::rename(&b, &away).unwrap();
+        crate::testing::rename_away(&b, &away);
         open_view(&state, &app, &worker, View::Roots(None));
         assert_eq!(land_all(&state, &app, &worker), 1);
         {
@@ -4491,7 +4491,7 @@ mod tests {
             let mut st = state.borrow_mut();
             st.current = st.files.iter().position(|f| *f == y);
         }
-        std::fs::rename(&b, dir.join("b-away")).unwrap();
+        crate::testing::rename_away(&b, &dir.join("b-away"));
         assert!(refresh_view(&state, &app, &worker));
         land_all(&state, &app, &worker);
         let st = state.borrow();
@@ -5619,7 +5619,7 @@ mod tests {
             st.library.roots.add(&b).unwrap();
         }
         let away = dir.join("b-away");
-        std::fs::rename(&b, &away).unwrap();
+        crate::testing::rename_away(&b, &away);
         open_view(&state, &app, &worker, View::Roots(None));
         assert_eq!(land_all(&state, &app, &worker), 1);
         {
