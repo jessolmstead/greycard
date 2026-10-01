@@ -189,14 +189,17 @@ pub(crate) fn shown_for(st: &State) -> Option<(&Path, &Path)> {
 }
 
 /// What the status line says for a folder of the tree opened empty:
-/// nothing under it at all. (A folder with nothing directly in it
-/// opens with those under it, so that case never lands empty.)
-pub(crate) fn nothing_in(folder: &Path) -> String {
+/// nothing directly in it, the switch off, or nothing under it at all.
+pub(crate) fn nothing_in(folder: &Path, deep: bool) -> String {
     let name = folder
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| folder.display().to_string());
-    format!("nothing under {name}")
+    if deep {
+        format!("nothing under {name}")
+    } else {
+        format!("nothing directly in {name}: turn on With subfolders to see the frames under it")
+    }
 }
 
 /// The root's count as the index last said, for knowing when the tree
@@ -731,7 +734,8 @@ mod tests {
     #[test]
     fn an_empty_folder_says_the_switch_only_when_it_is_off() {
         let day = Path::new("/r/2025");
-        assert_eq!(nothing_in(day), "nothing under 2025");
+        assert!(nothing_in(day, false).contains("turn on With subfolders"));
+        assert_eq!(nothing_in(day, true), "nothing under 2025");
     }
 
     /// A folder of this test's own, canonical, as the index keys
@@ -880,8 +884,7 @@ mod tests {
         assert_eq!(listed(&state), ["r.tif"]);
         assert_eq!(rows(&app)[0], ("archive".into(), 0, 1, true));
 
-        // A folder with nothing of its own opens with those under it,
-        // the switch off or not: nothing else can be meant.
+        // A folder with nothing of its own opens empty and says why.
         std::fs::remove_file(root.join("r.tif")).unwrap();
         state.borrow_mut().index_reader = None;
         greycard_library::Library::open(&dir.join("index").join("library.sqlite"))
@@ -894,21 +897,12 @@ mod tests {
         );
         pick(&app, "archive");
         land_sent(&state, &app, &worker);
-        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif"]);
+        assert!(listed(&state).is_empty());
         assert!(
-            !state.borrow().tree.subfolders,
-            "the switch itself is left off"
+            app.get_status().starts_with("nothing directly in archive"),
+            "{}",
+            app.get_status()
         );
-        // The switch on over it is the root's view; off again, with
-        // nothing of its own, it keeps the frames under it.
-        app.set_folder_tree_subfolders(true);
-        app.invoke_folder_tree_subfolders_changed();
-        land_sent(&state, &app, &worker);
-        assert_eq!(state.borrow().view, View::Roots(Some(root.clone())));
-        app.set_folder_tree_subfolders(false);
-        app.invoke_folder_tree_subfolders_changed();
-        land_sent(&state, &app, &worker);
-        assert_eq!(listed(&state), ["d1.tif", "d2.tif", "m.tif"]);
         state.borrow_mut().index_reader = None;
         drop(state);
         std::fs::remove_dir_all(&dir).unwrap();

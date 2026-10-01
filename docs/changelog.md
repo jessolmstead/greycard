@@ -10,9 +10,6 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
-- A folder of the tree with nothing directly in it, a client folder
-  whose frames sit one level down, opens with the frames under it
-  rather than as a blank grid (§209)
 - The grid keeps the left pane: Open folder, Recently opened, Import,
   the roots as rows with their counts and the folder tree, so the
   header drops from five rows to the selection line, the filter's

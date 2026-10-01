@@ -1677,11 +1677,12 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
                 fresh.len(),
                 from_disk
             );
-            // A folder of a root's tree with nothing under it at all
-            // (every frame gone since the tree was built) is open,
-            // empty, and says so: the tree marks it.
+            // A folder of a root's tree with no frame of its own (the
+            // year above the days) is open, empty, and says where its
+            // frames are: the tree marks it, and the switch is a press
+            // away. With the switch on, that there is nothing under it.
             let bare = match (&view, files.is_empty()) {
-                (View::Branch { folder, .. }, true) => Some(folder.clone()),
+                (View::Branch { folder, deep, .. }, true) => Some((folder.clone(), *deep)),
                 _ => None,
             };
             if files.is_empty() && bare.is_none() {
@@ -1703,8 +1704,8 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
             );
             crate::tree::want(&mut st, app);
             show(&st, app);
-            if let Some(folder) = bare {
-                app.set_status(crate::tree::nothing_in(&folder).into());
+            if let Some((folder, deep)) = bare {
+                app.set_status(crate::tree::nothing_in(&folder, deep).into());
             }
         }
         Purpose::Merge => {
@@ -1813,30 +1814,6 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         return;
     };
     let asked = Instant::now();
-    let (roots, _) = view.listed(st.library.roots.list());
-    // A folder of the tree with nothing directly in it opens with
-    // those under it whatever the switch says: its own frames would be
-    // an empty list, and only the frames under it can be meant by the
-    // click. Decided here from the index's counts, so a tree built
-    // before the folder emptied cannot leave the list blank.
-    let view = match &view {
-        View::Branch {
-            root,
-            folder,
-            deep: false,
-        } if count_listed(lib, &roots, true) == 0 && count_listed(lib, &roots, false) > 0 => {
-            tracing::info!(
-                "library: nothing directly in {}; opened with the frames under it",
-                folder.display()
-            );
-            View::Branch {
-                root: root.clone(),
-                folder: folder.clone(),
-                deep: true,
-            }
-        }
-        _ => view,
-    };
     let (roots, only) = view.listed(st.library.roots.list());
     // The rows are read off the window's thread, on a connection of the
     // read's own, when the window knows where the index is; here only
