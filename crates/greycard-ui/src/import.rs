@@ -526,7 +526,20 @@ pub fn hash_whole(path: &Path) -> std::io::Result<String> {
     hash_reader(&mut file).map(|(h, _)| h)
 }
 
+/// [`hash_whole`], calling `beat` at every chunk read, with how many
+/// bytes were read.
+pub(crate) fn hash_whole_beating(path: &Path, beat: &dyn Fn()) -> std::io::Result<(String, u64)> {
+    let mut file = std::fs::File::open(path)?;
+    hash_reader_beating(&mut file, beat)
+}
+
 fn hash_reader(r: &mut dyn Read) -> std::io::Result<(String, u64)> {
+    hash_reader_beating(r, &|| {})
+}
+
+/// [`hash_reader`], calling `beat` at every chunk read: a reader on a
+/// share is told from one that stopped answering by it.
+fn hash_reader_beating(r: &mut dyn Read, beat: &dyn Fn()) -> std::io::Result<(String, u64)> {
     let mut hasher = blake3::Hasher::new();
     let mut buf = vec![0u8; CHUNK];
     let mut n = 0u64;
@@ -536,6 +549,7 @@ fn hash_reader(r: &mut dyn Read) -> std::io::Result<(String, u64)> {
             Ok(k) => {
                 hasher.update(&buf[..k]);
                 n += k as u64;
+                beat();
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(e) => return Err(e),
@@ -550,23 +564,35 @@ const TEMPORARY: &str = ".greycard-import";
 /// A temporary name for a file on its way to `to`, beside it: hidden on
 /// Linux and macOS, never a camera's name, and this process's own
 /// (its id and a counter), so two imports never share one.
+#[cfg(test)]
 pub fn temporary(to: &Path) -> PathBuf {
+    temporary_ending(to, TEMPORARY)
+}
+
+/// [`temporary`] with an ending of the caller's: a backup's temporaries
+/// are its own, and its sweep never takes an import's.
+pub(crate) fn temporary_ending(to: &Path, ending: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
     let name = name_of(to);
-    to.with_file_name(format!(".{name}.{}-{n}{TEMPORARY}", std::process::id()))
+    to.with_file_name(format!(".{name}.{}-{n}{ending}", std::process::id()))
 }
 
 /// The process id a temporary's name carries, `.NAME.PID-N.greycard-import`.
 fn temporary_pid(name: &str) -> Option<u32> {
-    let rest = name.strip_suffix(TEMPORARY)?;
+    temporary_pid_ending(name, TEMPORARY)
+}
+
+/// [`temporary_pid`] for a temporary with `ending`.
+pub(crate) fn temporary_pid_ending(name: &str, ending: &str) -> Option<u32> {
+    let rest = name.strip_suffix(ending)?;
     let (_, last) = rest.rsplit_once('.')?;
     last.split_once('-')?.0.parse().ok()
 }
 
 /// Whether process `pid` is running. Unix asks with signal 0; elsewhere
 /// it cannot be told cheaply and a temporary is judged by its age alone.
-fn alive(pid: u32) -> bool {
+pub(crate) fn alive(pid: u32) -> bool {
     if pid == std::process::id() {
         return true;
     }
@@ -789,9 +815,54 @@ pub fn land_from(
     to: &Path,
     want: Option<&str>,
 ) -> Result<(String, u64)> {
+    land_with(src, modified, length, to, want, &Landing::default())
+}
+
+/// How [`land_with`] lands a file beyond the import's way.
+pub(crate) struct Landing<'a> {
+    /// The temporary's ending: [`TEMPORARY`] for an import.
+    pub(crate) ending: &'a str,
+    /// Go over a file already at the name (a backup's older sidecar);
+    /// otherwise one there is an error and left.
+    pub(crate) replace: bool,
+    /// Called at every chunk written or read back.
+    pub(crate) beat: &'a dyn Fn(),
+    /// Counts the bytes written, for a bar.
+    pub(crate) bytes: Option<&'a AtomicU64>,
+    /// A test's hand on the temporary once written, before it is read
+    /// back.
+    #[cfg(test)]
+    pub(crate) tamper: Option<&'a dyn Fn(&Path)>,
+}
+
+impl Default for Landing<'_> {
+    fn default() -> Self {
+        Landing {
+            ending: TEMPORARY,
+            replace: false,
+            beat: &|| {},
+            bytes: None,
+            #[cfg(test)]
+            tamper: None,
+        }
+    }
+}
+
+/// [`land_from`], the one copy the import and a backup share: a
+/// temporary beside `to`, the bytes hashed as they stream, the
+/// temporary read back past the cache and hashed again, and named `to`
+/// only when the two agree; `to` takes `modified`.
+pub(crate) fn land_with(
+    src: &mut dyn Read,
+    modified: Option<std::time::SystemTime>,
+    length: Option<u64>,
+    to: &Path,
+    want: Option<&str>,
+    how: &Landing<'_>,
+) -> Result<(String, u64)> {
     let folder = to.parent().context("no folder to write in")?;
     std::fs::create_dir_all(folder).with_context(|| format!("making {}", folder.display()))?;
-    let tmp = temporary(to);
+    let tmp = temporary_ending(to, how.ending);
     let mut made = false;
     let result = (|| -> Result<(String, u64)> {
         // Made new, so a file or a link already at the name is an
@@ -815,6 +886,10 @@ pub fn land_from(
             hasher.update(&buf[..k]);
             out.write_all(&buf[..k]).context("writing the copy")?;
             bytes += k as u64;
+            if let Some(counted) = how.bytes {
+                counted.fetch_add(k as u64, Ordering::Relaxed);
+            }
+            (how.beat)();
         }
         if let Some(length) = length
             && bytes != length
@@ -830,20 +905,28 @@ pub fn land_from(
         {
             bail!("the copy it was made from no longer matches the card");
         }
+        #[cfg(test)]
+        if let Some(tamper) = how.tamper {
+            tamper(&tmp);
+        }
         let (back, _) = open_uncached(&tmp)
-            .and_then(|mut f| hash_reader(&mut f))
+            .and_then(|mut f| hash_reader_beating(&mut f, how.beat))
             .context("reading the copy back")?;
         if back != hash {
             bail!("the copy does not read back the same");
         }
-        let how = rename_noreplace(&tmp, to).map_err(|e| {
-            if e.kind() == std::io::ErrorKind::AlreadyExists {
-                anyhow::anyhow!("{} appeared while it was copied", to.display())
-            } else {
-                anyhow::Error::new(e).context("naming the copy")
-            }
-        })?;
-        say_rename(how);
+        if how.replace {
+            std::fs::rename(&tmp, to).context("naming the copy")?;
+        } else {
+            let how = rename_noreplace(&tmp, to).map_err(|e| {
+                if e.kind() == std::io::ErrorKind::AlreadyExists {
+                    anyhow::anyhow!("{} appeared while it was copied", to.display())
+                } else {
+                    anyhow::Error::new(e).context("naming the copy")
+                }
+            })?;
+            say_rename(how);
+        }
         // The card's time, now that the file has its name: on the
         // temporary it would make a file being written look days old
         // to another import's sweep.

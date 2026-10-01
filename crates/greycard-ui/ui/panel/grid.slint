@@ -132,6 +132,13 @@ export component GridSheet inherits Rectangle {
     /// put away: the grid covers the status plate. Empty for none.
     in property <string> import-line;
     callback focus-keys();
+    /// The header's Back up or Bring back (§216): its words ("3 frames
+    /// not on Archive", "Back up...", "Bring back..."), empty for none;
+    /// the choices it offers, in full ("Back up to Archive..."), a menu
+    /// when more than one.
+    in property <string> archive-text;
+    in property <[string]> archive-choices;
+    callback archive-pressed(int);
     /// A view's sidecars being read, past the moment a fast one takes:
     /// its bar over the sheet, which holds the list before it until
     /// the new one lands.
@@ -200,6 +207,29 @@ export component GridSheet inherits Rectangle {
                         color: Theme.text-muted;
                         font-size: Theme.font-xs;
                         vertical-alignment: center;
+                    }
+                    if root.archive-text != "": archive-button := PanelButton {
+                        text: root.archive-text;
+                        icon: @image-url("../icons/cloud.svg");
+                        clicked => {
+                            root.focus-keys();
+                            if (root.archive-choices.length > 1) {
+                                archive-menu.show({ x: 0, y: self.height });
+                            } else {
+                                root.archive-pressed(0);
+                            }
+                        }
+                        archive-menu := ContextMenuArea {
+                            width: 0px;
+                            height: 0px;
+                            enabled: false;
+                            Menu {
+                                for name[i] in root.archive-choices: MenuItem {
+                                    title: name;
+                                    activated => { root.archive-pressed(i); }
+                                }
+                            }
+                        }
                     }
                     PanelButton {
                         text: root.culling ? "Culling" : "Cull";

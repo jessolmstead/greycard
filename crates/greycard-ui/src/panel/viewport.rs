@@ -558,6 +558,10 @@ pub(crate) enum Shown {
     /// The delete sheet over the selection, as the Delete key opens
     /// it. Never answered: a capture never deletes.
     Delete,
+    /// The archive sheet over the open folder, as the grid header's
+    /// Back up opens it, once its look is in. Never answered: a capture
+    /// never copies.
+    Archive,
     /// A meta key (a rating, a flag or a color label) pressed over the
     /// selection (`--press`), for a snapshot of what follows it.
     Key(char),
@@ -590,10 +594,11 @@ impl Shown {
             "matched" => Ok(Self::Matched),
             "root-name" => Ok(Self::RootName),
             "delete" => Ok(Self::Delete),
+            "archive" => Ok(Self::Archive),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, paste, pasted, import, imported, match, \
-                 matched, root-name or delete, not {name}"
+                 matched, root-name, delete or archive, not {name}"
             )),
         }
     }
@@ -672,6 +677,7 @@ impl Shown {
                 crate::panel::camera_match::fit_when_read(app, 100);
             }
             Self::Delete => app.invoke_delete_asked("selection".into()),
+            Self::Archive => app.invoke_archive_header_pressed(0),
             Self::RootName => {
                 if let Some(first) = app.get_library_roots().row_data(0) {
                     app.invoke_library_root_rename(first.path);

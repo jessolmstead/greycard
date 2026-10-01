@@ -1327,6 +1327,9 @@ pub(crate) fn open_loaded(
         tweak(&mut st, select);
     }
     rebuild_browser(&mut st, app);
+    // The header's count of frames not on the archive this source backs
+    // up to, taken again for the new list.
+    crate::panel::archive::want_count(&mut st, app);
     let listed = started.elapsed();
     // The file to open, as a row of the list; hidden by the filter,
     // the nearest one shown.

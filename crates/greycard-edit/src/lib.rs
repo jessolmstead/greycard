@@ -1529,6 +1529,22 @@ impl Sidecar {
         }
     }
 
+    /// Which of two copies of one frame's sidecar was saved later, by
+    /// the rule [`Self::find`] uses between the two places: the counter
+    /// when both carry one and they differ, the mtime otherwise.
+    /// `Greater` when `a` is the newer, `Equal` when neither rule can
+    /// tell them apart (equal counts or none, and the same mtime). For
+    /// two copies in different places altogether: a frame here and its
+    /// copy on an archive (notes §197, §216).
+    pub fn compare_copies(a: &Path, b: &Path) -> std::cmp::Ordering {
+        let (ac, bc) = (saved_count(a), saved_count(b));
+        if ac > 0 && bc > 0 && ac != bc {
+            return ac.cmp(&bc);
+        }
+        let modified = |p: &Path| p.metadata().and_then(|m| m.modified()).ok();
+        modified(a).cmp(&modified(b))
+    }
+
     /// The sidecar `raw` has, if there is one, wherever it is.
     pub fn load(raw: &Path) -> Result<Option<Self>> {
         let Some(path) = Self::find(raw) else {
@@ -2917,6 +2933,29 @@ mod tests {
         set_modified(&beside, 1_000_000_000);
         set_modified(&under, 2_000_000_000);
         assert_eq!(Sidecar::find(&raw), Some(beside));
+    }
+
+    /// Two copies in two places altogether, a frame's here and its
+    /// copy's on an archive, by the same rule.
+    #[test]
+    fn two_copies_compare_by_count_then_mtime() {
+        use std::cmp::Ordering;
+        let dir = scratch("compare-copies");
+        let (a, b) = (dir.join("a.gcd"), dir.join("b.gcd"));
+        std::fs::write(&a, r#"{"saved":5}"#).unwrap();
+        std::fs::write(&b, r#"{"saved":2}"#).unwrap();
+        set_modified(&a, 1_000_000_000);
+        set_modified(&b, 2_000_000_000);
+        assert_eq!(Sidecar::compare_copies(&a, &b), Ordering::Greater);
+        assert_eq!(Sidecar::compare_copies(&b, &a), Ordering::Less);
+        // One uncounted: the mtime decides.
+        std::fs::write(&a, r#"{}"#).unwrap();
+        set_modified(&a, 1_000_000_000);
+        assert_eq!(Sidecar::compare_copies(&a, &b), Ordering::Less);
+        // Equal counts and times: no telling them apart.
+        std::fs::write(&a, r#"{"saved":2}"#).unwrap();
+        set_modified(&a, 2_000_000_000);
+        assert_eq!(Sidecar::compare_copies(&a, &b), Ordering::Equal);
     }
 
     #[test]

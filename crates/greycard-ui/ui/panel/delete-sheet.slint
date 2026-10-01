@@ -49,6 +49,9 @@ export component DeleteSheet inherits Rectangle {
     in property <string> delete-title;
     in property <string> delete-text;
     in property <string> delete-note;
+    /// Whether the frames are on an archive (§216): a line, not a
+    /// refusal; empty with no archive.
+    in property <string> delete-archive;
     /// Offer the trash: the default, and Enter's.
     in property <bool> delete-trash;
     /// Offer the permanent delete: a click's only.
@@ -96,6 +99,12 @@ export component DeleteSheet inherits Rectangle {
                 }
                 Text {
                     text: root.delete-text;
+                    font-size: Theme.font-sm;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                if root.delete-archive != "": Text {
+                    text: root.delete-archive;
                     font-size: Theme.font-sm;
                     color: Theme.text-secondary;
                     wrap: word-wrap;

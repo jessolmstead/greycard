@@ -13,6 +13,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod ai;
+mod archive;
 mod camera_match;
 mod cells;
 mod clipboard;
@@ -907,6 +908,9 @@ pub(crate) struct State {
     /// The import sheet's folders and what the source holds, and the
     /// import running.
     pub(crate) import: panel::import::Sheet,
+    /// The archive roots: the sheet's question, a copy under way, the
+    /// header's count (`panel::archive`).
+    pub(crate) archive: panel::archive::Archive,
 }
 
 impl State {
@@ -1103,6 +1107,7 @@ impl State {
             batch: false,
             failed: false,
             import: panel::import::Sheet::default(),
+            archive: panel::archive::Archive::default(),
         }
     }
 }
@@ -1117,6 +1122,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     entry::install(app);
     panel::cull::install(app, &state, &worker);
     panel::delete::install(app, &state, &worker);
+    panel::archive::install(app, &state, &worker);
     panel::mask::install(app, &state, &worker);
     panel::browser::install(app, &state, &worker);
     panel::color::install(app, &state, &worker);

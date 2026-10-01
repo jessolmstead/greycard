@@ -296,6 +296,9 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
     app.set_delete_note(offer_note(offer).into());
     app.set_delete_trash(offer.trash);
     app.set_delete_permanent(offer.permanent);
+    // Whether they are safe somewhere: a line, filled in when the look
+    // at the archives lands.
+    crate::panel::archive::delete_line(st, app, &planned);
     st.delete_asked = Some(Asked {
         which,
         frames: planned,

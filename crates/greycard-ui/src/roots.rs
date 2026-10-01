@@ -817,6 +817,7 @@ pub(crate) fn show(st: &State, app: &App) {
             count: st.library.counts.get(i).copied().unwrap_or(0) as i32,
             on: on.as_ref() == Some(&Some(r.clone())),
             offline: st.library.offline.contains(r),
+            archive: st.library.roots.is_archive(r),
         })
         .collect();
     let model = &st.library.rows;
@@ -838,6 +839,8 @@ pub(crate) fn show(st: &State, app: &App) {
     crate::panel::recent::show(st, app);
     // The open root's folders, the one open marked.
     crate::tree::show(st, app);
+    // The header's Back up or Bring back, by where the view is now.
+    crate::panel::archive::show(st, app);
 }
 
 /// A root as its row names it: the name the user gave it, else the
@@ -849,7 +852,7 @@ pub(crate) fn root_name(roots: &Roots, root: &Path) -> String {
 
 /// A root as the status line says it: its path, after its name when
 /// it has one, so a root named alike to another is still told apart.
-fn said(roots: &Roots, root: &Path) -> String {
+pub(crate) fn said(roots: &Roots, root: &Path) -> String {
     match roots.name(root) {
         Some(name) => format!("{name} ({})", root.display()),
         None => root.display().to_string(),
@@ -884,7 +887,7 @@ fn open_folder_to_add(st: &State) -> Option<PathBuf> {
 /// Change the roots: through the file as it is on disk now when there
 /// is one, so a root another editor added or removed meanwhile is
 /// kept, else in memory alone.
-fn edit_roots<T>(
+pub(crate) fn edit_roots<T>(
     st: &mut State,
     change: impl FnOnce(&mut Roots) -> T,
 ) -> std::result::Result<T, String> {
@@ -1237,6 +1240,16 @@ fn roots_of(st: &State, view: &View) -> Vec<PathBuf> {
     }
 }
 
+/// The roots whose copies of local frames a view leaves out: the
+/// archives, in a view of every root (§216). A view of the archive
+/// alone shows all of it.
+fn hidden_under(st: &State, view: &View) -> Vec<PathBuf> {
+    match view {
+        View::Roots(None) => st.library.roots.archives().to_vec(),
+        _ => Vec::new(),
+    }
+}
+
 /// Every root, and the view's own if it is not among them: each is
 /// looked at off the window's thread, for its row.
 fn every_root(st: &State, view: &View) -> Vec<PathBuf> {
@@ -1336,11 +1349,14 @@ enum Source {
     /// too, on a connection of the read's own, unless the window has
     /// no path to the index and read them itself (the tests' windows).
     /// With `only`, `roots` is one folder of a root's tree, and its own
-    /// rows alone are listed.
+    /// rows alone are listed. The rows under `hide`, the archives in a
+    /// view of every root, are left out where their content key is also
+    /// under a local root (§216): one frame, shown once, from here.
     Roots {
         roots: Vec<PathBuf>,
         only: bool,
         rows: Option<Vec<(PathBuf, RowMeta)>>,
+        hide: Vec<PathBuf>,
     },
 }
 
@@ -1682,6 +1698,7 @@ impl Look {
                 roots,
                 only,
                 rows: listed,
+                hide,
             } => {
                 let listed = match listed {
                     Some(listed) => listed,
@@ -1698,6 +1715,7 @@ impl Look {
                         }
                     },
                 };
+                let listed = crate::archive::hide_local_copies(listed, &hide, |r| r.hash.as_str());
                 let mut seen: HashMap<PathBuf, bool> = HashMap::new();
                 let mut kept = Vec::with_capacity(listed.len());
                 let mut map = HashMap::with_capacity(listed.len());
@@ -2200,7 +2218,12 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         token: 0,
         epoch: st.library.readable_epoch,
         roots: every_root(&st, &view),
-        source: Source::Roots { roots, only, rows },
+        source: Source::Roots {
+            roots,
+            only,
+            rows,
+            hide: hidden_under(&st, &view),
+        },
         known: HashSet::new(),
         have: HashSet::new(),
         write: st.write_sidecars,
@@ -2449,7 +2472,12 @@ fn ask(st: &State) -> Option<Look> {
                 }
             };
             (
-                Source::Roots { roots, only, rows },
+                Source::Roots {
+                    roots,
+                    only,
+                    rows,
+                    hide: hidden_under(st, &st.view),
+                },
                 every_root(st, &st.view),
             )
         }
@@ -3603,6 +3631,7 @@ mod tests {
                 count: 3,
                 on: false,
                 offline: false,
+                archive: false,
             })
             .collect();
         app.set_library_all_count(3 * names.len() as i32);
@@ -3671,6 +3700,7 @@ mod tests {
                 count: 100,
                 on: i == 5,
                 offline: i == 0,
+                archive: false,
             })
             .collect();
         app.set_library_roots(ModelRc::new(VecModel::from(six)));

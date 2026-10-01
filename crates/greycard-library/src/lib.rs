@@ -87,7 +87,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 4;
+pub const SCHEMA_VERSION: i32 = 5;
 
 /// The steps a library is brought up by in place rather than rebuilt:
 /// from the version on the left to the next, the statements on the
@@ -99,7 +99,9 @@ pub const SCHEMA_VERSION: i32 = 4;
 /// turns its picture is shown at (`turns`), both read from the
 /// sidecar beside the meta; a schema 3 row's sidecar hash is cleared
 /// so the next pass over its folder reads the sidecar again and fills
-/// them, and nothing else of the file is read.
+/// them, and nothing else of the file is read. Schema 5 added the
+/// whole file's BLAKE3 (`whole_hash`, notes §216), which only a backup
+/// or a bring-back fills, so a schema 4 row simply has none.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -116,6 +118,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
          ALTER TABLE files ADD COLUMN turns INTEGER NOT NULL DEFAULT 0;
          UPDATE files SET sidecar_hash = NULL WHERE sidecar IS NOT NULL;",
     ),
+    (4, "ALTER TABLE files ADD COLUMN whole_hash TEXT;"),
 ];
 
 /// `PRAGMA application_id`: "GRCY", so a SQLite file that is not a
@@ -158,7 +161,8 @@ CREATE TABLE IF NOT EXISTS files (
     peripheral    INTEGER,
     style_read    INTEGER NOT NULL DEFAULT 0,
     edited        INTEGER NOT NULL DEFAULT 0,
-    turns         INTEGER NOT NULL DEFAULT 0
+    turns         INTEGER NOT NULL DEFAULT 0,
+    whole_hash    TEXT
 );
 CREATE INDEX IF NOT EXISTS files_folder ON files(folder);
 CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
@@ -601,6 +605,31 @@ impl Library {
         Self::prepare(conn, path.to_path_buf(), true)
     }
 
+    /// [`Library::open`] or [`Library::open_read_only`] with `handler`
+    /// as the connection's busy handler from the first statement, the
+    /// open's own reads among them: for a caller whose waits on the
+    /// library's lock have to be told from a disk that stopped
+    /// answering (notes §215, §216).
+    pub fn open_with_busy(
+        path: &Path,
+        read_only: bool,
+        handler: fn(i32) -> bool,
+    ) -> Result<Library> {
+        let conn = if read_only {
+            Connection::open_with_flags(
+                path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )?
+        } else {
+            if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+                std::fs::create_dir_all(dir)?;
+            }
+            Connection::open(path)?
+        };
+        conn.busy_handler(Some(handler))?;
+        Self::prepare(conn, path.to_path_buf(), read_only)
+    }
+
     /// A library that lives only as long as the process: for tests
     /// and for a listing nobody wants kept.
     pub fn open_in_memory() -> Result<Library> {
@@ -969,6 +998,51 @@ impl Library {
         let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(params![hash], entry)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The files with this content hash under any of `roots` (canonical,
+    /// as [`Roots`] keeps them), the missing left out: where a copy of a
+    /// frame is under an archive, or under the local roots, whatever
+    /// its path there. Nothing is asked of the disk; a caller confirms
+    /// each find there before it trusts it.
+    pub fn by_hash_under(&self, hash: &str, roots: &[PathBuf]) -> Result<Vec<Entry>> {
+        if roots.is_empty() {
+            return Ok(Vec::new());
+        }
+        let (clause, mut values) = under_roots_as(roots, false);
+        let sql = format!(
+            "SELECT {COLUMNS} FROM files WHERE hash = ? AND missing_since IS NULL \
+             AND ({clause}) ORDER BY files.path"
+        );
+        values.insert(0, rusqlite::types::Value::Text(hash.to_owned()));
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(values), entry)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Keep the whole file's BLAKE3 on its row, as a backup or a
+    /// bring-back took it, when the row is there and holds the size
+    /// the hash was taken at: a file changed since is not given a hash
+    /// that is no longer its own. True when a row took it.
+    pub fn set_whole_hash(&mut self, path: &Path, size: u64, whole: &str) -> Result<bool> {
+        let n = self.conn.execute(
+            "UPDATE files SET whole_hash = ? WHERE path = ? AND size = ?",
+            params![whole, path_bytes(&canonical_file(path)), size as i64],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// The whole file's BLAKE3 the row keeps, if a backup or a
+    /// bring-back took it and the file has not changed since.
+    pub fn whole_hash(&self, path: &Path) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .prepare_cached("SELECT whole_hash FROM files WHERE path = ?")?
+            .query_row(params![path_bytes(&canonical_file(path))], |r| {
+                r.get::<_, Option<String>>(0)
+            })
+            .optional()?
+            .flatten())
     }
 
     /// The file at this path, if the index holds it. The path is

@@ -36,6 +36,13 @@
 //! naming one never moves or changes it. The names sit in the file
 //! beside the list, under a key of their own, so the list reads as
 //! it did to a build that knows nothing of names.
+//!
+//! A root can also be marked as an archive (notes §197, §216): a NAS
+//! or a mounted cloud folder that shoots are backed up to. The marks
+//! are a list of paths under a key of their own, `archives`, and the
+//! folder each source is backed up to under an archive under another,
+//! `backups`, so a build that knows nothing of archives still reads
+//! the file as a list of ordinary roots.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
@@ -57,6 +64,12 @@ pub struct Roots {
     /// The names the user gave, by root; a root with none goes by its
     /// folder's name.
     names: HashMap<PathBuf, String>,
+    /// The roots marked as archives, in the order they were marked.
+    archives: Vec<PathBuf>,
+    /// Where each source is backed up to: by the source (a root, or a
+    /// folder backed up from outside any root), the folders under the
+    /// archives its frames went to, one an archive at most.
+    backups: HashMap<PathBuf, Vec<PathBuf>>,
 }
 
 /// What a roots file said.
@@ -168,6 +181,29 @@ impl Roots {
                 }
             }
         }
+        // The archives, the same way: a path that is not a root, or an
+        // item that is not text, is dropped and the rest kept.
+        if let Some(archives) = value.get("archives").and_then(|a| a.as_array()) {
+            for path in archives.iter().filter_map(|p| p.as_str()) {
+                roots.set_archive(Path::new(path), true);
+            }
+        }
+        // The pairings, kept whatever the archives are now: turning the
+        // mark off and on again finds the folder chosen before.
+        if let Some(backups) = value.get("backups").and_then(|b| b.as_object()) {
+            for (source, folders) in backups {
+                let folders: Vec<PathBuf> = folders
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|f| f.as_str())
+                    .map(PathBuf::from)
+                    .collect();
+                if !folders.is_empty() {
+                    roots.backups.insert(PathBuf::from(source), folders);
+                }
+            }
+        }
         Parsed::Roots(roots)
     }
 
@@ -200,6 +236,36 @@ impl Roots {
                 })
                 .collect();
             file["names"] = serde_json::Value::Object(names);
+        }
+        // The archives and the pairings likewise only when there are
+        // any, so a library with none keeps its file byte for byte.
+        if !self.archives.is_empty() {
+            file["archives"] = serde_json::Value::Array(
+                self.archives
+                    .iter()
+                    .map(|p| serde_json::Value::String(p.to_string_lossy().into_owned()))
+                    .collect(),
+            );
+        }
+        if !self.backups.is_empty() {
+            let backups: serde_json::Map<String, serde_json::Value> = self
+                .backups
+                .iter()
+                .map(|(source, folders)| {
+                    (
+                        source.to_string_lossy().into_owned(),
+                        serde_json::Value::Array(
+                            folders
+                                .iter()
+                                .map(|f| {
+                                    serde_json::Value::String(f.to_string_lossy().into_owned())
+                                })
+                                .collect(),
+                        ),
+                    )
+                })
+                .collect();
+            file["backups"] = serde_json::Value::Object(backups);
         }
         let text = serde_json::to_string_pretty(&file).map_err(std::io::Error::other)?;
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
@@ -270,6 +336,80 @@ impl Roots {
         true
     }
 
+    /// Whether this root is marked as an archive.
+    pub fn is_archive(&self, root: &Path) -> bool {
+        self.archives.iter().any(|a| a == root)
+    }
+
+    /// The roots marked as archives, in the order they were marked.
+    pub fn archives(&self) -> &[PathBuf] {
+        &self.archives
+    }
+
+    /// The roots that are not archives: the local side of a backup.
+    pub fn locals(&self) -> Vec<PathBuf> {
+        self.list
+            .iter()
+            .filter(|r| !self.is_archive(r))
+            .cloned()
+            .collect()
+    }
+
+    /// The archive `path` is under, the archive itself included.
+    pub fn archive_of(&self, path: &Path) -> Option<&Path> {
+        self.archives
+            .iter()
+            .find(|a| path.starts_with(a))
+            .map(PathBuf::as_path)
+    }
+
+    /// Mark a root as an archive, or take the mark away. Nothing on
+    /// disk changes either way, and the pairings stay. False when
+    /// `root` is not a root, as the list spells it.
+    pub fn set_archive(&mut self, root: &Path, archive: bool) -> bool {
+        if !self.list.iter().any(|r| r == root) {
+            return false;
+        }
+        if archive {
+            if !self.is_archive(root) {
+                self.archives.push(root.to_path_buf());
+            }
+        } else {
+            self.archives.retain(|a| a != root);
+        }
+        true
+    }
+
+    /// The folder under `archive` that `source` was last backed up to,
+    /// if it has been.
+    pub fn backup_folder(&self, source: &Path, archive: &Path) -> Option<&Path> {
+        self.backups
+            .get(source)?
+            .iter()
+            .find(|f| f.starts_with(archive))
+            .map(PathBuf::as_path)
+    }
+
+    /// Every pairing: each source and the folders it backs up to.
+    pub fn backups(&self) -> impl Iterator<Item = (&Path, &[PathBuf])> {
+        self.backups
+            .iter()
+            .map(|(s, f)| (s.as_path(), f.as_slice()))
+    }
+
+    /// Remember that `source` backs up to `folder`, under `archive`,
+    /// in place of the folder it had there. False when `folder` is not
+    /// under `archive`, or `archive` is not an archive.
+    pub fn set_backup_folder(&mut self, source: &Path, archive: &Path, folder: &Path) -> bool {
+        if !self.is_archive(archive) || !folder.starts_with(archive) {
+            return false;
+        }
+        let folders = self.backups.entry(source.to_path_buf()).or_default();
+        folders.retain(|f| !f.starts_with(archive));
+        folders.push(folder.to_path_buf());
+        true
+    }
+
     /// A list of these folders as they are, for a run that names its
     /// roots on the command line. Nothing is checked or made
     /// canonical here: [`Roots::add`] is for that.
@@ -320,6 +460,7 @@ impl Roots {
             .collect();
         self.list.retain(|r| !r.starts_with(&dir));
         self.names.retain(|r, _| !r.starts_with(&dir));
+        self.archives.retain(|r| !r.starts_with(&dir));
         self.list.push(dir.clone());
         Ok(if under.is_empty() {
             Added::New(dir)
@@ -344,6 +485,15 @@ impl Roots {
         let before = self.list.len();
         self.list.retain(|r| r != dir && *r != canonical);
         self.names.retain(|r, _| r != dir && *r != canonical);
+        self.archives.retain(|r| r != dir && *r != canonical);
+        // Its pairings go with it, as a source; folders under it that
+        // other sources backed up to go too, since it is no archive now.
+        let gone = |p: &Path| p.starts_with(dir) || p.starts_with(&canonical);
+        self.backups.retain(|s, _| !gone(s));
+        for folders in self.backups.values_mut() {
+            folders.retain(|f| !gone(f));
+        }
+        self.backups.retain(|_, f| !f.is_empty());
         self.list.len() != before
     }
 
@@ -1306,6 +1456,105 @@ mod tests {
             "handed on {:?} after the write",
             at.duration_since(wrote)
         );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The archive mark and the pairings round-trip under keys of their
+    /// own, the version stays 1, and the list reads as a plain list of
+    /// roots: what a build that knows nothing of archives sees.
+    #[test]
+    fn the_archives_and_their_pairings_round_trip_beside_the_list() {
+        let dir = scratch("roots-marks");
+        let (local, nas) = (dir.join("local"), dir.join("nas"));
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(nas.join("clients")).unwrap();
+        let path = Roots::path_beside(&dir.join("library.sqlite"));
+        let mut roots = Roots::default();
+        roots.add(&local).unwrap();
+        roots.add(&nas).unwrap();
+        // A library with no archive keeps the file it had.
+        roots.save(&path).unwrap();
+        let plain = std::fs::read_to_string(&path).unwrap();
+        assert!(!plain.contains("archives") && !plain.contains("backups"));
+
+        assert!(!roots.set_archive(&dir.join("elsewhere"), true));
+        assert!(
+            !roots.set_backup_folder(&local, &nas, &nas.join("clients")),
+            "no archive yet"
+        );
+        assert!(roots.set_archive(&nas, true));
+        assert!(roots.is_archive(&nas) && !roots.is_archive(&local));
+        assert_eq!(roots.locals(), std::slice::from_ref(&local));
+        assert_eq!(
+            roots.archive_of(&nas.join("x").join("a.CR3")),
+            Some(nas.as_path())
+        );
+        assert!(
+            !roots.set_backup_folder(&local, &nas, &dir.join("other")),
+            "a folder not under the archive"
+        );
+        assert!(roots.set_backup_folder(&local, &nas, &nas.join("photos")));
+        // Chosen again: the new folder takes the old one's place.
+        assert!(roots.set_backup_folder(&local, &nas, &nas.join("clients")));
+        assert_eq!(
+            roots.backup_folder(&local, &nas),
+            Some(nas.join("clients").as_path())
+        );
+        roots.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(value["version"], 1);
+        // The list itself as an older build reads it: plain strings.
+        let listed: Vec<&str> = value["roots"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(listed, [local.to_str().unwrap(), nas.to_str().unwrap()]);
+        assert_eq!(Roots::load(&path).unwrap(), roots);
+
+        // An older shape, with neither key, reads as no archives.
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"version": 1, "roots": [{:?}, {:?}]}}"#,
+                local.to_str().unwrap(),
+                nas.to_str().unwrap()
+            ),
+        )
+        .unwrap();
+        let old = Roots::load(&path).unwrap();
+        assert!(old.archives().is_empty());
+        assert_eq!(old.backup_folder(&local, &nas), None);
+        assert_eq!(old.list(), roots.list());
+
+        // An archive that is not a root, and an item that is not text,
+        // are dropped and the rest kept.
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"version": 1, "roots": [{:?}, {:?}], "archives": [{:?}, 7, "/not/a/root"]}}"#,
+                local.to_str().unwrap(),
+                nas.to_str().unwrap(),
+                nas.to_str().unwrap()
+            ),
+        )
+        .unwrap();
+        assert_eq!(
+            Roots::load(&path).unwrap().archives(),
+            std::slice::from_ref(&nas)
+        );
+
+        // The mark off keeps the pairing; the archive taken out of the
+        // library takes the mark and the folders under it.
+        assert!(roots.set_archive(&nas, false));
+        assert!(roots.archives().is_empty());
+        roots.set_archive(&nas, true);
+        assert!(roots.backup_folder(&local, &nas).is_some());
+        assert!(roots.remove(&nas));
+        assert!(roots.archives().is_empty());
+        assert_eq!(roots.backups().count(), 0);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

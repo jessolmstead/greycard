@@ -100,6 +100,9 @@ export struct RootChip {
     /// Not there now: a drive unplugged. Its files are left out of
     /// the view and its rows as they were.
     offline: bool,
+    /// Marked as an archive (§197): a mark on its row, and its menu's
+    /// toggle checked.
+    archive: bool,
 }
 
 /// A folder in Recently opened: how the list says it (its name, and

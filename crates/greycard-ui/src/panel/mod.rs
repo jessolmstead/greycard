@@ -1,3 +1,4 @@
+pub(crate) mod archive;
 pub(crate) mod assets;
 pub(crate) mod browser;
 pub(crate) mod camera_match;

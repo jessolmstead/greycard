@@ -28,6 +28,7 @@ import { PanelHead } from "panel/scopes.slint";
 import { ModelSheet } from "panel/model-sheet.slint";
 import { RejectsSheet } from "panel/rejects-sheet.slint";
 import { DeleteSheet } from "panel/delete-sheet.slint";
+import { ArchiveSheet, ArchiveCard } from "panel/archive-sheet.slint";
 import { MatchSheet } from "panel/match-sheet.slint";
 import { PresetSheet } from "panel/preset-sheet.slint";
 import { SyncSheet } from "panel/sync-sheet.slint";
@@ -434,6 +435,40 @@ export component App inherits Window {
     callback library-root-add-open();
     /// A root's menu asked to rename it, by its path.
     callback library-root-rename(string);
+    /// A root's menu turned its archive mark on or off, by its path.
+    callback library-root-archive(string);
+    // The archive roots (`panel::archive`, notes §197, §216).
+    /// The grid header's Back up or Bring back: its words, empty for
+    /// none, and its choices by name.
+    in property <string> archive-header: "";
+    in property <[string]> archive-choices: [];
+    /// The header's menu with more than one choice: each in full
+    /// ("Back up to nas (3 frames not on nas)..."), in the same order.
+    in property <[string]> archive-header-choices: [];
+    /// The header's button pressed, with the choice.
+    callback archive-header-pressed(int);
+    /// The frame menu's: "Back up", "Bring back" or nothing, and the
+    /// choice picked there.
+    in property <string> archive-verb: "";
+    callback archive-menu-picked(int);
+    /// The sheet: what a copy would do, before it does it.
+    in-out property <bool> archive-open: false;
+    in property <string> archive-title: "";
+    in property <string> archive-text: "";
+    in property <string> archive-named: "";
+    in-out property <string> archive-dest: "";
+    in property <string> archive-dest-note: "";
+    in property <int> archive-rejects: -1;
+    in-out property <bool> archive-include-rejects: false;
+    in property <string> archive-confirm: "";
+    in property <bool> archive-can-confirm: false;
+    callback archive-answered(bool);
+    callback archive-look-again();
+    /// A copy under way: its bar, by bytes, and its words.
+    in property <bool> archive-running: false;
+    in property <float> archive-fraction: 0;
+    in property <string> archive-line: "";
+    callback archive-cancel();
     /// The folder open, as the left pane names it under its Open
     /// folder button: its own name (or the root's, or "All roots"
     /// for a view of the roots), the root it is under, and its path
@@ -520,6 +555,8 @@ export component App inherits Window {
     in property <string> delete-note: "";
     in property <bool> delete-trash: true;
     in property <bool> delete-permanent: false;
+    /// Whether the frames to delete are on an archive: a line.
+    in property <string> delete-archive: "";
     callback delete-asked(string);
     callback delete-answered(int);
 
@@ -1400,7 +1437,7 @@ export component App inherits Window {
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
-            || root.delete-open
+            || root.delete-open || root.archive-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
             || root.root-sheet-open;
     }
@@ -1428,6 +1465,7 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
             if (e.text == Key.Escape && root.delete-open) { root.delete-answered(0); return accept; }
+            if (e.text == Key.Escape && root.archive-open) { root.archive-answered(false); return accept; }
             if (e.text == Key.Escape && root.match-open && !root.match-running) { root.match-close(); return accept; }
             if (e.text == Key.Escape && root.sync-open) { root.sync-open = false; return accept; }
             if (e.text == Key.Escape && (root.placing != "" || root.picking != "")) { root.stop-placing(); return accept; }
@@ -2406,6 +2444,9 @@ export component App inherits Window {
         loading-shown: root.loading-shown;
         loading-fraction: root.loading-fraction;
         loading-line: root.loading-line;
+        archive-text: root.archive-header;
+        archive-choices: root.archive-header-choices;
+        archive-pressed(i) => { root.archive-header-pressed(i); }
     }
 
     // The left pane: the folder open and Recently opened, then the
@@ -2506,6 +2547,7 @@ export component App inherits Window {
                     add => { root.library-root-add(); }
                     add-open => { root.library-root-add-open(); }
                     rename(p) => { root.library-root-rename(p); }
+                    archive-toggled(p) => { root.library-root-archive(p); }
                     focus-keys => { keys.focus(); }
                     menu-done => { root.menu-done(); }
                     menu-shown => { return root.menu-shown(); }
@@ -2656,10 +2698,38 @@ export component App inherits Window {
         delete-note: root.delete-note;
         delete-trash: root.delete-trash;
         delete-permanent: root.delete-permanent;
+        delete-archive: root.delete-archive;
         delete-answered(a) => {
             root.delete-answered(a);
             keys.focus();
         }
+    }
+
+    if root.archive-open: ArchiveSheet {
+        title: root.archive-title;
+        text: root.archive-text;
+        named: root.archive-named;
+        dest <=> root.archive-dest;
+        dest-note: root.archive-dest-note;
+        rejects: root.archive-rejects;
+        include-rejects <=> root.archive-include-rejects;
+        confirm: root.archive-confirm;
+        can-confirm: root.archive-can-confirm;
+        answered(yes) => {
+            root.archive-answered(yes);
+            keys.focus();
+        }
+        look-again => { root.archive-look-again(); }
+    }
+
+    // A backup or a bring-back under way, over the window's foot,
+    // whatever is open: its bar and its Cancel.
+    if root.archive-running: ArchiveCard {
+        x: (root.width - self.width) / 2;
+        y: root.height - self.height - 48px;
+        fraction: root.archive-fraction;
+        line: root.archive-line;
+        cancel => { root.archive-cancel(); }
     }
 
     // The camera match sheet: open until closed; while a fit runs it
@@ -2825,6 +2895,9 @@ export component App inherits Window {
         file: root.menu-file;
         can-meta: root.menu-can-meta;
         can-export: !root.export-open && !root.export-running && root.selected >= 0 && !root.culling;
+        archive-verb: root.archive-verb;
+        archive-choices: root.archive-choices;
+        archive(i) => { root.archive-menu-picked(i); root.menu-done(); }
         copy => { root.menu-copy(); root.menu-done(); }
         paste => { root.paste-asked(); root.menu-done(); }
         meta(k, v) => { root.menu-meta(k, v); root.menu-done(); }

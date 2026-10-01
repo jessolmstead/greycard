@@ -1114,7 +1114,8 @@ fn settle_same(
     Ok(())
 }
 
-/// A changed file's row: its new size, mtime, hash and EXIF.
+/// A changed file's row: its new size, mtime, hash and EXIF. The whole
+/// file's hash a backup took is the old file's, and goes.
 fn update_file(
     tx: &Transaction<'_>,
     id: i64,
@@ -1127,7 +1128,7 @@ fn update_file(
         "UPDATE files SET size = ?, mtime = ?, hash = ?, make = ?, model = ?, \
          camera = ?, lens = ?, iso = ?, focal = ?, aperture = ?, shutter = ?, \
          taken = ?, maker = ?, style = ?, style_fixed = ?, peripheral = ?, style_read = 1, \
-         missing_since = NULL WHERE id = ?",
+         missing_since = NULL, whole_hash = NULL WHERE id = ?",
     )?
     .execute(params![
         size as i64,
@@ -3612,6 +3613,7 @@ pub(crate) mod tests {
                      ALTER TABLE files DROP COLUMN style_read;
                      ALTER TABLE files DROP COLUMN edited;
                      ALTER TABLE files DROP COLUMN turns;
+                     ALTER TABLE files DROP COLUMN whole_hash;
                      PRAGMA user_version = 2;",
                 )
                 .unwrap();
@@ -3801,6 +3803,7 @@ pub(crate) mod tests {
                 .execute_batch(
                     "ALTER TABLE files DROP COLUMN edited;
                      ALTER TABLE files DROP COLUMN turns;
+                     ALTER TABLE files DROP COLUMN whole_hash;
                      PRAGMA user_version = 3;",
                 )
                 .unwrap();
@@ -3935,6 +3938,107 @@ pub(crate) mod tests {
         // The `.gcd` has no mark, so the XMP is taken over it, as the
         // editor would take it on opening.
         assert_eq!(row(&lib, &only).meta.rating, 5);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A copy of a frame under another root is found by its hash there,
+    /// whatever its path, the missing left out; and the whole file's
+    /// hash a backup took is kept on the row until the file changes.
+    #[test]
+    fn a_copy_is_found_by_hash_under_a_root_and_keeps_its_whole_hash() {
+        let dir = scratch("by-hash-under");
+        let (local, nas) = (dir.join("local"), dir.join("nas"));
+        std::fs::create_dir_all(local.join("shoot")).unwrap();
+        std::fs::create_dir_all(nas.join("elsewhere").join("deeper")).unwrap();
+        let (r5, r6, a7) = shoot(&local.join("shoot"));
+        let copy = nas.join("elsewhere").join("deeper").join("renamed.tif");
+        std::fs::copy(&r5, &copy).unwrap();
+        // A neighbor, so the folder is not left empty when the copy goes.
+        std::fs::copy(&r6, nas.join("elsewhere").join("deeper").join("r6.tif")).unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&local, &mut quiet()).unwrap();
+        lib.index_tree(&nas, &mut quiet()).unwrap();
+        let hash = lib.by_path(&r5).unwrap().unwrap().hash;
+        let under: Vec<PathBuf> = lib
+            .by_hash_under(&hash, std::slice::from_ref(&nas))
+            .unwrap()
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        assert_eq!(under, std::slice::from_ref(&copy));
+        assert_eq!(
+            lib.by_hash_under(&hash, std::slice::from_ref(&local))
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(lib.by_hash_under(&hash, &[]).unwrap().is_empty());
+        let a7_hash = lib.by_path(&a7).unwrap().unwrap().hash;
+        assert!(
+            lib.by_hash_under(&a7_hash, std::slice::from_ref(&nas))
+                .unwrap()
+                .is_empty()
+        );
+        // Gone from the archive: missing, and not found there.
+        std::fs::remove_file(&copy).unwrap();
+        lib.index_tree(&nas, &mut quiet()).unwrap();
+        assert!(
+            lib.by_hash_under(&hash, std::slice::from_ref(&nas))
+                .unwrap()
+                .is_empty()
+        );
+
+        // The whole hash: kept only at the size it was taken at, and
+        // gone when the file changes.
+        let size = std::fs::metadata(&r5).unwrap().len();
+        assert_eq!(lib.whole_hash(&r5).unwrap(), None);
+        assert!(!lib.set_whole_hash(&r5, size + 1, "x").unwrap());
+        assert!(lib.set_whole_hash(&r5, size, "abc").unwrap());
+        assert_eq!(lib.whole_hash(&r5).unwrap().as_deref(), Some("abc"));
+        lib.index_tree(&local, &mut quiet()).unwrap();
+        assert_eq!(
+            lib.whole_hash(&r5).unwrap().as_deref(),
+            Some("abc"),
+            "an unchanged file keeps it"
+        );
+        let mut bytes = std::fs::read(&r5).unwrap();
+        bytes.extend_from_slice(b"more");
+        std::fs::write(&r5, &bytes).unwrap();
+        lib.index_tree(&local, &mut quiet()).unwrap();
+        assert_eq!(lib.whole_hash(&r5).unwrap(), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A schema 4 library is brought up in place with the whole hash's
+    /// column, every row without one.
+    #[test]
+    fn a_schema_4_library_gains_the_whole_hash_column() {
+        let dir = scratch("migrate-4");
+        let db = dir.join("library.sqlite");
+        let shoot_dir = dir.join("shoot");
+        std::fs::create_dir_all(&shoot_dir).unwrap();
+        let (r5, _, _) = shoot(&shoot_dir);
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+            lib.conn_mut()
+                .execute_batch(
+                    "ALTER TABLE files DROP COLUMN whole_hash;
+                     PRAGMA user_version = 4;",
+                )
+                .unwrap();
+        }
+        let mut lib = Library::open(&db).unwrap();
+        let version: i32 = lib
+            .conn_mut()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, crate::SCHEMA_VERSION);
+        assert_eq!(lib.len().unwrap(), 3);
+        assert_eq!(lib.whole_hash(&r5).unwrap(), None);
+        let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
+        assert_eq!(report.unchanged, 3, "nothing read again: {report:?}");
+        drop(lib);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

@@ -26,6 +26,12 @@ export component FrameMenu inherits Rectangle {
     /// no export under way. A develop in progress does not gray it;
     /// the sheet waits for the develop instead.
     in property <bool> can-export;
+    /// "Back up" over the selection to an archive, or "Bring back" from
+    /// one to a local root; empty when neither is offered here. The
+    /// choices are the archives, or the local roots, by name.
+    in property <string> archive-verb;
+    in property <[string]> archive-choices;
+    callback archive(int);
     callback copy();
     callback paste();
     /// A rating, a flag or a label ("rating", "flag", "label") and its
@@ -110,6 +116,17 @@ export component FrameMenu inherits Rectangle {
                 title: root.count > 1 ? "Export " + root.count + " frames..." : "Export...";
                 enabled: root.can-export;
                 activated => { root.export(); }
+            }
+            if root.archive-verb != "" && root.archive-choices.length == 1: MenuItem {
+                title: root.archive-verb + " to " + root.archive-choices[0] + "...";
+                activated => { root.archive(0); }
+            }
+            if root.archive-verb != "" && root.archive-choices.length > 1: Menu {
+                title: root.archive-verb + " to";
+                for name[i] in root.archive-choices: MenuItem {
+                    title: name + "...";
+                    activated => { root.archive(i); }
+                }
             }
         }
     }

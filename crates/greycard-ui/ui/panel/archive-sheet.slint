@@ -1,0 +1,174 @@
+// The archive sheet (notes §197, §216): what a Back up or a Bring back
+// would copy, before anything is copied, with the folder it goes to
+// shown and editable and the rejects folder's checkbox; and the card
+// that says how far a copy has got, with its Cancel.
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { PanelButton, Toggle } from "../controls.slint";
+
+export component ArchiveSheet inherits Rectangle {
+    in property <string> title;
+    /// What would be copied, what is there already and what is left,
+    /// a line each.
+    in property <string> text;
+    /// The frames left out and why, named; empty for none.
+    in property <string> named;
+    /// The folder the frames go to, as typed.
+    in-out property <string> dest;
+    /// Under the folder: where it is, or why it will not do.
+    in property <string> dest-note;
+    /// How many frames the rejects folders held; -1 when the copy is
+    /// over a selection, with no rejects folder to ask about.
+    in property <int> rejects: -1;
+    in-out property <bool> include-rejects;
+    /// The confirm's words, and whether it can be pressed: not while a
+    /// look is out, nor with nothing to copy.
+    in property <string> confirm;
+    in property <bool> can-confirm;
+    /// Yes or no.
+    callback answered(bool);
+    /// The folder or the checkbox changed: look again.
+    callback look-again();
+
+    background: #000000a0;
+    TouchArea { clicked => { root.answered(false); } }
+    Rectangle {
+        width: 520px;
+        height: sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        // The field can hold the focus, and a key goes up from it and
+        // never reaches the window's keys: Escape is taken here, as the
+        // root sheet takes it.
+        FocusScope {
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.answered(false);
+                    return accept;
+                }
+                return reject;
+            }
+            sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                Text {
+                    text: root.title;
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.text;
+                    font-size: Theme.font-sm;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                if root.named != "": Text {
+                    text: root.named;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "To this folder:";
+                    font-size: Theme.font-xs;
+                    color: Theme.text-secondary;
+                }
+                LineEdit {
+                    text <=> root.dest;
+                    accepted(t) => { root.look-again(); }
+                }
+                if root.dest-note != "": Text {
+                    text: root.dest-note;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+                if root.rejects >= 0: Toggle {
+                    label: root.rejects == 1
+                        ? "Include the rejects folder (1 frame)"
+                        : "Include the rejects folder (" + root.rejects + " frames)";
+                    checked <=> root.include-rejects;
+                    toggled => { root.look-again(); }
+                }
+                Text {
+                    text: "Nothing on either side is deleted or written over, except an older sidecar replaced by the newer. Each copy is checked against the original before it takes its name.";
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: Theme.space-2; }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.answered(false); }
+                    }
+                    PanelButton {
+                        text: root.confirm;
+                        primary: root.can-confirm;
+                        enabled: root.can-confirm;
+                        clicked => { root.answered(true); }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// A copy under way: a bar filled by bytes, the words under it, and a
+// Cancel that takes effect between frames. Over the bottom of the
+// window, not a sheet: everything else goes on working.
+export component ArchiveCard inherits Rectangle {
+    in property <float> fraction;
+    in property <string> line;
+    callback cancel();
+
+    width: 360px;
+    height: 2 * Theme.space-3 + 3px + Theme.space-2 + Theme.control-height;
+    border-radius: Theme.radius-md;
+    background: #000000c8;
+    TouchArea { }
+    track := Rectangle {
+        x: Theme.space-3;
+        y: Theme.space-3;
+        width: parent.width - 2 * Theme.space-3;
+        height: 3px;
+        border-radius: 1.5px;
+        background: Theme.border-strong;
+        clip: true;
+        Rectangle {
+            x: 0;
+            width: parent.width * clamp(root.fraction, 0, 1);
+            height: 100%;
+            border-radius: 1.5px;
+            background: Theme.accent;
+        }
+    }
+    HorizontalLayout {
+        x: Theme.space-3;
+        y: track.y + track.height + Theme.space-2;
+        width: parent.width - 2 * Theme.space-3;
+        height: Theme.control-height;
+        spacing: Theme.space-2;
+        Text {
+            text: root.line;
+            color: Theme.text-secondary;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        PanelButton {
+            text: "Cancel";
+            clicked => { root.cancel(); }
+        }
+    }
+}
