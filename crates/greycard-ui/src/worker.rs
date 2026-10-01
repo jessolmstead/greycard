@@ -824,13 +824,17 @@ impl Worker {
 /// outward from the middle of that range: what a scroll asks for
 /// next is whichever end it is heading towards.
 pub(crate) fn order_thumbnails(pending: &mut [(usize, PathBuf)], first: usize, last: usize) {
+    // Ties broken by the frame's number, so two the same distance
+    // from the center come in the list's order whichever thread
+    // queued them first.
     let center = (first + last) / 2;
     pending.sort_by_key(|(i, _)| {
-        if (first..=last).contains(i) {
+        let away = if (first..=last).contains(i) {
             0
         } else {
             i.abs_diff(center)
-        }
+        };
+        (away, *i)
     });
 }
 
