@@ -186,3 +186,17 @@ tree comes from the index and its folder opens from the rows, dimmed.
   rebuild that touched only the folders a pass went over would be less,
   and at 20 ms for 1,000 folders off the window's thread was not worth
   it.
+
+---
+
+Changed the same day, at the desk. An archive's client folders hold
+their frames one level down, in a folder of the same name, and each
+opened as a blank grid: the status line that said "nothing directly in
+it: turn on With subfolders" is not shown over the grid, and
+a tester reads a blank grid as a folder that will not open. A folder
+with nothing directly in it now opens with the frames under it whatever
+the switch says, decided in `open_view` from the index's two counts, so
+a tree built before the folder emptied cannot leave the list blank. The
+switch itself is left as it was. Only a folder with nothing under it at
+all lands empty, and says "nothing under" it.
+
