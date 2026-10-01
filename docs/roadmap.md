@@ -32,17 +32,6 @@ is backed up to it and brought back by hash, and the last folders
 opened are a click away; a crop can be drawn, an export is a line in
 History, and the Masks tab reads at a glance.
 
-- [ ] The rest of the network reads off the window's thread, after
-      §187 and §188: the indexer's own passes wait on a root that answers
-      the 3 s look and then hangs mid-walk, and every root's reports stop
-      until it answers, so give its passes the look too and skip a root
-      that has not answered; a folder's own open still reads its sidecars
-      on the window's thread; `Roots::remove` on a path not in the list,
-      and "Add this folder" on a folder no read has seen, still make it
-      canonical there; a network mount below a local root (`~/Pictures`
-      with a share at `~/Pictures/NAS`) is still watched recursively, so
-      classify each mount under a root, not only the root's; and a field
-      for `network_poll_minutes` in the Settings sheet
 - [ ] Archive roots, part one (§197): a root marked as an archive in
       roots.json, never deleted from; Back up copies a shoot's or a
       selection's new frames and newer sidecars to it, mirrored under

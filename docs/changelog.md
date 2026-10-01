@@ -10,6 +10,16 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The rest of the network reads are off the window's thread: the
+  indexer's passes get the roots' look and a pass that goes quiet on a
+  share is set aside while the other roots' reports carry on, a batch
+  reads its sidecars before the index's write lock, a folder's open
+  and a root's add or remove are bounded and made canonical off the
+  window's thread, and a share mounted below a local root is left out
+  of its watch and polled, an automount mounted on purpose (§215)
+- The Settings sheet has the network roots' poll in minutes and a cap
+  of the local previews' own, 8 GB by default, so an archive's
+  previews no longer evict the thumbnails (§215)
 - The grid has a scroll bar: a thin bar at the sheet's right edge,
   shown while scrolling or hovered and faded at rest, draggable, a
   press in its track paging, on the same offset the wheel and the keys
