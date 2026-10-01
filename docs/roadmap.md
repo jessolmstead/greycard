@@ -29,32 +29,17 @@ is backed up to it and brought back by hash, and the last folders
 opened are a click away; a crop can be drawn, an export is a line in
 History, and the Masks tab reads at a glance.
 
-- [ ] Archive roots, part one (§197, §216): a root marked as an archive
-      in roots.json; Back up copies a shoot's or a selection's frames
-      not yet on the archive (by hash, wherever they sit there) and the
-      newer sidecars, to a folder under the archive shown in the sheet
-      and remembered per source root, the rejects folder skipped unless
-      its checkbox is ticked, each copy whole-file hash-verified under a
-      temporary name, on §215's lane with a bar and a Cancel; Bring back
-      is the inverse from the archive's chip view, sidecar only for a
-      frame already local; "N frames not on Archive" in a backed-up
-      folder's header and "all on Archive" on the Delete sheet; the
-      whole-file hash kept; nothing deleted under an archive except
-      behind its own sheet, so a frame's own Delete works there; the
-      archive's frames in All roots except those whose hash is also
-      under a local root
 - [ ] Archive roots, part two (§197, §216): Remove rejects finds the
       rejects folder's frames on the archive by hash, shows the list,
       and on confirm moves them into a rejects folder there (the
       default) or deletes them (a red second button, trash or
       permanent); a move confirmed while the archive is offline is
-      queued and run when it answers, a delete is refused. Waits on
-      part one
+      queued and run when it answers, a delete is refused
 - [ ] One frame in two places: a file whose hash is under two roots
       (the shoot and its archive copy) shown once, opened from the copy
       that is online and fastest, its sidecar written to both when both
       are there, so "back up, then delete local" removes nothing from the
-      library. Waits on archive roots, part one
+      library
 
 ## Tracks
 

@@ -10,6 +10,22 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A root can be marked as an archive from its chip's menu, and a shoot
+  backed up to it: Back up, on the grid's header and the frame menu,
+  copies the folder's or the selection's frames not yet on the archive
+  (found by hash wherever they sit there) and their newer sidecars,
+  judged a file at a time, to a folder under the archive the sheet
+  shows and remembers per root, the rejects folder left out unless its
+  checkbox is ticked; each copy lands under a temporary name, hashed as
+  it streams and read back before it is renamed in, and nothing on the
+  archive is ever written over or deleted; Bring back is the inverse
+  from the archive's view; the copy runs with the roots' look and a
+  beat so a share that hangs sets it aside, with a bar by bytes and a
+  Cancel; the header counts the frames not on the archive, the Delete
+  sheet says which of its frames are on one, and All roots hides an
+  archive's rows whose hash is also under a local root. A library
+  opened by this build is schema 5, which an older build refuses and
+  leaves untouched (§197, §216, §217)
 - The grid header's facets sit on two rows, Camera and Lens on the
   first and the short facets on the second, so the lens chips are no
   longer lost down a sideways line after the bodies (§211)

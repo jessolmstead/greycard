@@ -278,7 +278,10 @@ renaming, a preset and a verified backup; roots, folders the library
 watches, with a view of every file under them, the roots and their
 folders as a tree in the left pane from the index, over the grid as
 over the loupe, a share that stops answering never holding the window
-or the other roots, and the filter remembered between sessions; a library
+or the other roots, and the filter remembered between sessions; a root
+marked as an archive, a shoot backed up to it by hash with each copy
+read back before it counts, its newer sidecars along and nothing there
+ever written over, and brought back the same way; a library
 index that fills the grid's filter with chips for camera, lens, ISO,
 focal length, day and keyword, with a filter language behind the text
 field; a look fitted

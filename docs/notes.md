@@ -227,3 +227,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§214. A scroll bar on the grid](notes/214-a-scroll-bar-on-the-grid.md) (2026-09-30)
 - [§215. The rest of the network off the window's thread, and a cap for the previews](notes/215-the-rest-of-the-network-off-the-windows-thread.md) (2026-09-30)
 - [§216. Archive roots revised at the desk](notes/216-archive-roots-revised-at-the-desk.md) (2026-09-30)
+- [§217. Archive roots, part one: the mark, Back up and Bring back](notes/217-archive-roots-part-one-the-mark-back-up-and-bring-back.md) (2026-10-01)
