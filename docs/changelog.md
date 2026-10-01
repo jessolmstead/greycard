@@ -10,6 +10,11 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- An export queue: Add to queue on the export sheet keeps the set
+  with its edits, its preset and its destination in a list shown with
+  its count, kept across a restart, and Export the queue runs it all
+  later in order, each frame a line in History; frames, folders and
+  watermarks not there at run time leave their entry queued (§213)
 - A folder's folders show as tiles at the top of the grid, each with
   its count, a click opening it as the tree's row does, so a folder
   with nothing of its own is never a blank grid and an export folder's

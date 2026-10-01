@@ -373,12 +373,6 @@ clears or a tester asks for it.
       so exports match across machines (§157)
 - [ ] Geometry in a sync, mapped through each frame's aspect and turn
       as masks already are (§156)
-- [ ] An export queue: Add to queue on the export sheet puts the set
-      with its preset and destination in a list that waits, shown with
-      its count, and Export the queue runs it all later, in order, each
-      entry a line in History as an export is; the queue kept across a
-      restart, so a day's picks are queued as they are made and sent
-      out when the machine is free
 - [ ] The range masks' sample from before the Detail section, so dehaze
       stops moving a luminance window; needs a second full-size texture
       on the GPU (§158)

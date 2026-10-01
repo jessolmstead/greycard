@@ -223,3 +223,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§210. Local previews by content hash](notes/210-local-previews-by-content-hash.md) (2026-09-30)
 - [§211. The grid with the library on the left, and the filter on top](notes/211-the-grid-with-the-library-on-the-left.md) (2026-09-30)
 - [§212. A folder's folders as tiles in the grid](notes/212-a-folders-folders-as-tiles-in-the-grid.md) (2026-09-30)
+- [§213. An export queue](notes/213-an-export-queue.md) (2026-09-30)

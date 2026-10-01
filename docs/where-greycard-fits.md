@@ -266,7 +266,8 @@ expects, with the file types registered; and a Report a problem button
 that opens the bug form with the version, the OS and the GPU filled in
 and the log beside it; several frames at once, with the settings of
 one synced across them, a preset laid over all of them and an export
-of all of them; export presets and a watermark; masks by lightness and
+of all of them; export presets, a watermark and an export queue that
+waits for a quiet moment; masks by lightness and
 by color; the Subject mask on the GPU; a Sky mask that refuses a frame
 with no sky and takes its edge through hair and branches; a history
 that names a step by the preset, sync or snapshot that made it; a
