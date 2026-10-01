@@ -246,6 +246,14 @@ export component App inherits Window {
     property <length> grid-max:
         root.grid-max-scroll(root.grid-h, root.grid-cell, root.grid-cols, root.thumbs.length,
             root.grid-top);
+    /// The scroll bar's thumb, its length and its top on the sheet,
+    /// and the scroll a drag of it comes to: the same arithmetic.
+    pure callback grid-bar-length(length, length) -> length;
+    pure callback grid-bar-offset(length, length, length) -> length;
+    pure callback grid-bar-drag(length, length, length, length) -> length;
+    /// Whether the scroll bar is awake after a scroll: it fades once
+    /// the sheet has been still a moment. Out here for the tests.
+    in-out property <bool> grid-bar-awake;
     /// Move the selection a column along or a row down, told how many
     /// columns there are now.
     callback grid-step(int, int, int, bool);
@@ -288,6 +296,13 @@ export component App inherits Window {
         }
         root.grid-scroll = clamp(
             root.grid-scroll - by * (root.grid-row / 3 / 60px), 0px, root.grid-max);
+        root.grid-report();
+    }
+    /// Scroll the sheet to `to`, held to its range, as the scroll
+    /// bar's drag and its track do: the wheel's path, so the report
+    /// follows.
+    function grid-scroll-to(to: length) {
+        root.grid-scroll = clamp(to, 0px, root.grid-max);
         root.grid-report();
     }
     /// Put the sheet where the selection is visible, worked out from
@@ -2342,6 +2357,11 @@ export component App inherits Window {
         menu-done => { root.menu-done(); }
         grid-wheel(a, b) => { root.grid-wheel(a, b); }
         grid-relay => { root.grid-relay(); }
+        grid-scroll-to(a) => { root.grid-scroll-to(a); }
+        bar-length(a, b) => { return root.grid-bar-length(a, b); }
+        bar-offset(a, b, c) => { return root.grid-bar-offset(a, b, c); }
+        bar-drag(a, b, c, d) => { return root.grid-bar-drag(a, b, c, d); }
+        bar-awake <=> root.grid-bar-awake;
         culling <=> root.culling;
         cull-toggled => { root.cull-toggled(); }
         filter-stars <=> root.filter-stars;

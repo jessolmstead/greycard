@@ -75,6 +75,37 @@ export component GridSheet inherits Rectangle {
     }
     callback grid-wheel(length, bool);
     callback grid-relay();
+    /// The scroll bar: a drag of its thumb or a press in its track
+    /// scrolls to an offset, held to the range by the window as the
+    /// wheel's scroll is. The thumb's length and top, and where a drag
+    /// lands, are asked of the grid's arithmetic.
+    callback grid-scroll-to(length);
+    pure callback bar-length(length, length) -> length;
+    pure callback bar-offset(length, length, length) -> length;
+    pure callback bar-drag(length, length, length, length) -> length;
+    /// Shown at full strength while the sheet scrolls and a moment
+    /// after, then faded: every change of the scroll stamps it, and
+    /// the timer below lets it sleep once a tick has passed with no
+    /// new stamp. The timer runs only while it is awake, so a sheet
+    /// at rest asks for no frame.
+    in-out property <bool> bar-awake;
+    property <int> bar-stamp;
+    property <int> bar-seen;
+    function wake-bar() {
+        root.bar-stamp += 1;
+        root.bar-awake = true;
+    }
+    changed grid-scroll => { root.wake-bar(); }
+    Timer {
+        interval: 600ms;
+        running: root.bar-awake;
+        triggered => {
+            if (root.bar-seen == root.bar-stamp && !bar-band.pressed) {
+                root.bar-awake = false;
+            }
+            root.bar-seen = root.bar-stamp;
+        }
+    }
     in-out property <bool> culling;
     callback cull-toggled();
     in-out property <[FilterChip]> filter-stars;
@@ -456,6 +487,128 @@ export component GridSheet inherits Rectangle {
                         }
                         // The frame under the pointer, in the loupe.
                         double-clicked => { if (!self.menu) { root.grid-open = false; } }
+                    }
+                }
+            }
+            // The scroll bar, over the cells at the sheet's right edge
+            // in the band and the colors the pane's lists have from
+            // the fluent style: a thin thumb that widens on a track
+            // under the pointer. There whenever the sheet scrolls,
+            // faded at rest, so a hover over the band finds it; a
+            // press in the band is the bar's and never a cell's.
+            bar-band := TouchArea {
+                // While the thumb is held it follows the pointer at
+                // once, ahead of the sheet, which catches up at the
+                // next step below.
+                property <length> thumb-y: root.bar-offset(self.height, root.grid-max,
+                    self.dragging ? self.want : root.grid-scroll);
+                property <length> thumb-h: root.bar-length(self.height, root.grid-max);
+                property <bool> lit: self.has-hover || self.pressed;
+                property <bool> dragging;
+                property <length> from;
+                property <length> press-y;
+                property <bool> took;
+                /// Where the held thumb puts the sheet, and whether the
+                /// sheet has yet to be moved there. A fast mouse sends
+                /// several moves a frame, and each move that lands the
+                /// sheet more than a screen away re-makes every cell
+                /// and puts their pictures on again, 6 to 7 ms on a
+                /// 2,000-frame folder: the moves only note the scroll,
+                /// and the timer below applies the last of them, so the
+                /// sheet moves and reports at most once a frame.
+                property <length> want;
+                property <bool> pending;
+                function apply() {
+                    self.pending = false;
+                    root.grid-scroll-to(self.want);
+                }
+                x: parent.width - Theme.scrollbar-band;
+                width: Theme.scrollbar-band;
+                height: parent.height;
+                visible: root.grid-max > 0;
+                accessible-role: slider;
+                accessible-label: "Grid scroll";
+                accessible-value-minimum: 0;
+                accessible-value-maximum: root.grid-max / 1px;
+                accessible-value: round(root.grid-scroll / 1px);
+                // Lingers a moment after the pointer leaves, as after
+                // a scroll.
+                changed has-hover => {
+                    if (!self.has-hover) { root.wake-bar(); }
+                }
+                // A screen reader's step is a page, as a press in the
+                // track is.
+                accessible-action-increment => { root.grid-scroll-to(root.grid-scroll + self.height); }
+                accessible-action-decrement => { root.grid-scroll-to(root.grid-scroll - self.height); }
+                pointer-event(e) => {
+                    // A press that closes a menu is nothing more, and
+                    // leaves the focus to the menu's closing; any other
+                    // press in the band gives the keys theirs back, as
+                    // the pane's controls do.
+                    if (e.kind == PointerEventKind.down) {
+                        self.took = !root.menu-shown();
+                        if (self.took) { root.focus-keys(); }
+                    }
+                    if (e.button != PointerEventButton.left) { return; }
+                    if (e.kind == PointerEventKind.up) {
+                        if (self.pending) { self.apply(); }
+                        self.dragging = false;
+                        // Again at the release, after a drag: only a
+                        // release whose press was the bar's, so a
+                        // press that closed a menu is still nothing.
+                        if (self.took) { root.focus-keys(); }
+                        return;
+                    }
+                    if (e.kind != PointerEventKind.down) { return; }
+                    self.dragging = false;
+                    if (!self.took) { return; }
+                    // Above the thumb or below it, a page that way;
+                    // on it, the thumb taken.
+                    if (self.mouse-y < self.thumb-y) {
+                        root.grid-scroll-to(root.grid-scroll - self.height);
+                    } else if (self.mouse-y >= self.thumb-y + self.thumb-h) {
+                        root.grid-scroll-to(root.grid-scroll + self.height);
+                    } else {
+                        self.dragging = true;
+                        self.from = root.grid-scroll;
+                        self.want = root.grid-scroll;
+                        self.press-y = self.mouse-y;
+                    }
+                }
+                moved => {
+                    if (self.dragging && self.pressed) {
+                        self.want = root.bar-drag(self.height, root.grid-max, self.from,
+                            self.mouse-y - self.press-y);
+                        self.pending = true;
+                    }
+                }
+                // Runs only while a step waits, so a held thumb at rest
+                // asks for nothing.
+                Timer {
+                    interval: 16ms;
+                    running: bar-band.pending;
+                    triggered => { bar-band.apply(); }
+                }
+                // The wheel over the bar scrolls as anywhere.
+                scroll-event(e) => {
+                    if (e.delta-y != 0px) { root.grid-wheel(e.delta-y, e.modifiers.control); }
+                    return accept;
+                }
+                Rectangle {
+                    opacity: root.bar-awake || parent.lit ? 1 : 0;
+                    animate opacity { duration: 200ms; }
+                    border-radius: 7px;
+                    background: parent.lit ? Theme.scrollbar-track : transparent;
+                    Rectangle {
+                        // On whole device pixels, so a 2 px thumb is
+                        // crisp at a fractional scale.
+                        width: round((bar-band.lit ? 6px : 2px) / 1phx) * 1phx;
+                        x: round((parent.width - 4px) / 1phx) * 1phx - self.width;
+                        y: round(bar-band.thumb-y / 1phx) * 1phx;
+                        height: round(bar-band.thumb-h / 1phx) * 1phx;
+                        border-radius: self.width / 2;
+                        background: bar-band.lit ? Theme.scrollbar-thumb-hover : Theme.scrollbar-thumb;
+                        animate width { duration: 150ms; easing: ease-out; }
                     }
                 }
             }

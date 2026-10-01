@@ -31,6 +31,9 @@ pub(crate) fn window(count: usize) -> App {
     app.on_grid_max_scroll(grid::max_scroll);
     app.on_grid_reveal_to(grid::reveal);
     app.on_grid_tiles_top(grid::tiles_top);
+    app.on_grid_bar_length(grid::bar_length);
+    app.on_grid_bar_offset(grid::bar_offset);
+    app.on_grid_bar_drag(grid::bar_drag);
     app.show().expect("the window shows");
     app.window()
         .dispatch_event(WindowEvent::WindowActiveChanged(true));

@@ -2173,6 +2173,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     app.on_grid_max_scroll(grid::max_scroll);
     app.on_grid_reveal_to(grid::reveal);
     app.on_grid_tiles_top(grid::tiles_top);
+    app.on_grid_bar_length(grid::bar_length);
+    app.on_grid_bar_offset(grid::bar_offset);
+    app.on_grid_bar_drag(grid::bar_drag);
     // An arrow in the grid: along the row, or by a whole row, and
     // the frame it lands on is opened as a click on it would.
     {
@@ -3352,5 +3355,306 @@ mod tests {
                 files.len()
             );
         }
+    }
+    /// What the grid reported, in order: scroll, height, columns.
+    type Reports = Rc<RefCell<Vec<(f32, f32, i32)>>>;
+
+    /// The grid at 1500 by 950 over `count` frames, opened on the
+    /// first, with what it reports kept: the sheet is 837 tall beside
+    /// the pane, six columns.
+    fn grid_with_reports(count: usize) -> (App, Reports) {
+        let app = window(count);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let seen = cells_from_reports(&app);
+        app.set_selected(0);
+        press(&app, "g");
+        (app, seen)
+    }
+
+    /// The grid's reports kept, and its cells moved by them as the
+    /// browser moves them.
+    fn cells_from_reports(app: &App) -> Reports {
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let (reports, app_weak) = (seen.clone(), app.as_weak());
+        app.on_grid_range(move |scroll, height, cols, top| {
+            reports.borrow_mut().push((scroll, height, cols));
+            let app = app_weak.upgrade().unwrap();
+            let count = app.get_thumbs().row_count() as i32;
+            let (at, wanted) = grid::window(scroll, height, app.get_grid_cell(), cols, count, top);
+            cells::show(&app, cells::View::Grid, at, wanted);
+        });
+        seen
+    }
+
+    fn last_scroll(seen: &Reports) -> f32 {
+        seen.borrow().last().map(|r| r.0).expect("a report")
+    }
+
+    fn wheel(app: &App, x: f32, y: f32, by: f32) {
+        app.window().dispatch_event(WindowEvent::PointerScrolled {
+            position: slint::LogicalPosition::new(x, y),
+            delta_x: 0.0,
+            delta_y: by,
+        });
+    }
+
+    #[test]
+    fn the_scroll_bar_sits_at_the_sheets_edge_and_its_thumb_drags() {
+        let (app, seen) = grid_with_reports(120);
+        let max = grid::max_scroll(837.0, 176.0, 6, 120, 0.0);
+        let (at, size) = crate::testing::labeled(&app, "Grid scroll");
+        // The band down the sheet's right edge, under the header.
+        assert_eq!((at.x, size.width), (1500.0 - 14.0, 14.0));
+        assert_eq!((at.y, size.height), (950.0 - 837.0, 837.0));
+        // A drag of the thumb, taken 10 px into it, 150 px down in
+        // steps with no time between them, as a fast mouse sends them
+        // within a frame: the moves are gathered into one step, which
+        // the release applies, where the arithmetic puts it, and
+        // reports the range it shows, the cells following.
+        let top = at.y + grid::bar_offset(837.0, max, 0.0);
+        let x = at.x + 7.0;
+        let path: Vec<(f32, f32)> = (0..=15)
+            .map(|k| (x, top + 10.0 + 10.0 * k as f32))
+            .collect();
+        seen.borrow_mut().clear();
+        crate::testing::drag(&app, &path);
+        let to = grid::bar_drag(837.0, max, 0.0, 150.0);
+        assert!(to > 0.0 && to < max);
+        assert_eq!(seen.borrow().len(), 1, "{:?}", seen.borrow());
+        assert!((last_scroll(&seen) - to).abs() < 0.01);
+        // Moves a frame apart are a step each.
+        seen.borrow_mut().clear();
+        let button = slint::platform::PointerEventButton::Left;
+        let at_y = |y: f32| slint::LogicalPosition::new(x, y);
+        let grab = at.y + grid::bar_offset(837.0, max, to) + 10.0;
+        app.window().dispatch_event(WindowEvent::PointerPressed {
+            position: at_y(grab),
+            button,
+        });
+        for k in 1..=3 {
+            app.window().dispatch_event(WindowEvent::PointerMoved {
+                position: at_y(grab + 20.0 * k as f32),
+            });
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+            press(&app, Key::Shift);
+        }
+        app.window().dispatch_event(WindowEvent::PointerReleased {
+            position: at_y(grab + 60.0),
+            button,
+        });
+        assert_eq!(seen.borrow().len(), 3, "{:?}", seen.borrow());
+        let to = grid::bar_drag(837.0, max, to, 60.0);
+        assert!((last_scroll(&seen) - to).abs() < 0.01);
+        let (first, last) = grid::visible(to, 837.0, 176.0, 6, 120, 0.0).unwrap();
+        let held: Vec<i32> = app.get_grid_cells().iter().map(|c| c.row).collect();
+        assert!(
+            held.contains(&first) && held.contains(&last),
+            "{first}..{last} in {held:?}"
+        );
+        assert_eq!(app.get_selected(), 0);
+        // The keys kept their focus: G closes the grid.
+        press(&app, "g");
+        assert!(!app.get_grid_open());
+    }
+
+    #[test]
+    fn a_press_in_the_track_pages_and_the_wheel_over_the_bar_scrolls() {
+        let (app, seen) = grid_with_reports(120);
+        let max = grid::max_scroll(837.0, 176.0, 6, 120, 0.0);
+        let (at, _) = crate::testing::labeled(&app, "Grid scroll");
+        let x = at.x + 7.0;
+        // Below the thumb: a sheet's height down.
+        crate::testing::click(&app, x, 950.0 - 20.0);
+        assert_eq!(last_scroll(&seen), 837.0);
+        crate::testing::click(&app, x, 950.0 - 20.0);
+        assert_eq!(last_scroll(&seen), 2.0 * 837.0);
+        // Above it: a sheet's height back up, and no further than the
+        // top.
+        crate::testing::click(&app, x, at.y + 6.0);
+        assert_eq!(last_scroll(&seen), 837.0);
+        crate::testing::click(&app, x, at.y + 6.0);
+        crate::testing::click(&app, x, at.y + 6.0);
+        assert_eq!(last_scroll(&seen), 0.0);
+        // Down to the end and held there.
+        for _ in 0..6 {
+            crate::testing::click(&app, x, 950.0 - 6.0);
+        }
+        assert_eq!(last_scroll(&seen), max);
+        // The wheel over the bar is the sheet's wheel.
+        wheel(&app, x, 500.0, 120.0);
+        assert!(last_scroll(&seen) < max);
+        assert_eq!(app.get_selected(), 0);
+    }
+
+    #[test]
+    fn a_press_on_the_bar_never_reaches_the_cell_under_it() {
+        // A sheet exactly a row of eight wide, the pane put away: the
+        // last column's right edge lies 12 px in, under the band.
+        let clicks = Rc::new(RefCell::new(Vec::new()));
+        let menus = Rc::new(RefCell::new(Vec::new()));
+        let run = |count: usize| {
+            let app = window(count);
+            app.window()
+                .set_size(slint::LogicalSize::new(1488.0, 950.0));
+            cells_from_reports(&app);
+            app.set_selected(0);
+            press(&app, "g");
+            press(&app, Key::F7);
+            press(&app, Key::Shift);
+            assert_eq!(app.get_grid_w(), 1488.0);
+            let c = clicks.clone();
+            app.on_frame_clicked(move |row, _, _| c.borrow_mut().push(row));
+            let m = menus.clone();
+            app.on_frame_menu_asked(move |row| m.borrow_mut().push(row));
+            // In frame 7's cell, in the band.
+            let (x, y) = (1488.0 - 13.0, 950.0 - 837.0 + 100.0);
+            crate::testing::click(&app, x, y);
+            let position = slint::LogicalPosition::new(x, y);
+            let button = slint::platform::PointerEventButton::Right;
+            app.window()
+                .dispatch_event(WindowEvent::PointerPressed { position, button });
+            app.window()
+                .dispatch_event(WindowEvent::PointerReleased { position, button });
+            app
+        };
+        // A folder that fits has no bar, and the press is the cell's.
+        let app = run(8);
+        assert_eq!(*clicks.borrow(), vec![7]);
+        assert_eq!(*menus.borrow(), vec![7]);
+        drop(app);
+        clicks.borrow_mut().clear();
+        menus.borrow_mut().clear();
+        // One that scrolls has the bar there, and the press is its.
+        let _app = run(400);
+        assert!(clicks.borrow().is_empty(), "{:?}", clicks.borrow());
+        assert!(menus.borrow().is_empty(), "{:?}", menus.borrow());
+    }
+
+    #[test]
+    fn the_bar_wakes_with_a_scroll_and_sleeps_at_rest() {
+        let (app, seen) = grid_with_reports(120);
+        // Opened at the top, nothing has scrolled: asleep.
+        assert!(!app.get_grid_bar_awake());
+        wheel(&app, 700.0, 500.0, -120.0);
+        assert!(last_scroll(&seen) > 0.0);
+        press(&app, Key::Shift);
+        assert!(app.get_grid_bar_awake());
+        let tick = |ms: u64| {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(ms));
+            press(&app, Key::Shift);
+        };
+        // Awake while the scroll keeps coming.
+        for _ in 0..4 {
+            tick(400);
+            wheel(&app, 700.0, 500.0, -120.0);
+            press(&app, Key::Shift);
+            assert!(app.get_grid_bar_awake());
+        }
+        // A tick with no scroll since the last, and it sleeps: about a
+        // second at rest. The timer stops with it, and nothing changes
+        // after.
+        tick(700);
+        tick(700);
+        assert!(!app.get_grid_bar_awake());
+        let reports = seen.borrow().len();
+        for _ in 0..5 {
+            tick(1000);
+            assert!(!app.get_grid_bar_awake());
+        }
+        assert_eq!(seen.borrow().len(), reports);
+    }
+
+    #[test]
+    fn no_bar_when_the_folder_fits() {
+        let (app, seen) = grid_with_reports(12);
+        assert_eq!(grid::max_scroll(837.0, 176.0, 6, 12, 0.0), 0.0);
+        let visible = |app: &App| {
+            use i_slint_backend_testing::ElementHandle;
+            press(app, Key::Shift);
+            ElementHandle::find_by_accessible_label(app, "Grid scroll").count() > 0
+        };
+        assert!(!visible(&app));
+        // Neither a press nor the wheel down the band moves anything.
+        crate::testing::click(&app, 1493.0, 900.0);
+        wheel(&app, 1493.0, 500.0, -120.0);
+        assert!(seen.borrow().iter().all(|r| r.0 == 0.0));
+        // A longer folder brings it.
+        let more: Vec<Thumb> = (0..120)
+            .map(|i| Thumb {
+                name: format!("n{i:03}.CR3").into(),
+                image: slint::Image::default(),
+                ..Default::default()
+            })
+            .collect();
+        cells::set_rows(&app, more);
+        assert!(visible(&app));
+    }
+    #[test]
+    fn a_thumb_dragged_past_the_end_and_back_follows_without_a_jump() {
+        let (app, seen) = grid_with_reports(120);
+        let max = grid::max_scroll(837.0, 176.0, 6, 120, 0.0);
+        let (at, _) = crate::testing::labeled(&app, "Grid scroll");
+        let x = at.x + 7.0;
+        let grab = at.y + grid::bar_offset(837.0, max, 0.0) + 10.0;
+        let to = |y: f32| slint::LogicalPosition::new(x, y);
+        let button = slint::platform::PointerEventButton::Left;
+        let next_frame = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(20));
+            press(&app, Key::Shift);
+        };
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position: to(grab) });
+        app.window().dispatch_event(WindowEvent::PointerPressed {
+            position: to(grab),
+            button,
+        });
+        // Far past the window's foot: held at the end.
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: to(grab + 2000.0),
+        });
+        next_frame();
+        assert_eq!(last_scroll(&seen), max);
+        // Back to 50 px under the grab: where 50 px from the start
+        // puts it, not 50 px from where the end was reached.
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: to(grab + 50.0),
+        });
+        app.window().dispatch_event(WindowEvent::PointerReleased {
+            position: to(grab + 50.0),
+            button,
+        });
+        assert_eq!(last_scroll(&seen), grid::bar_drag(837.0, max, 0.0, 50.0));
+    }
+
+    #[test]
+    fn a_press_on_the_bar_with_a_menu_up_only_closes_the_menu() {
+        let (app, seen) = grid_with_reports(120);
+        let (at, _) = crate::testing::labeled(&app, "Grid scroll");
+        // The frame menu up over the first frame.
+        let position = slint::LogicalPosition::new(400.0, 250.0);
+        let button = slint::platform::PointerEventButton::Right;
+        app.window()
+            .dispatch_event(WindowEvent::PointerMoved { position });
+        app.window()
+            .dispatch_event(WindowEvent::PointerPressed { position, button });
+        app.window()
+            .dispatch_event(WindowEvent::PointerReleased { position, button });
+        assert!(app.get_menu_up(), "the frame menu");
+        let reports = seen.borrow().len();
+        // A press in the track below the thumb: the menu closes and
+        // the sheet does not page.
+        crate::testing::click(&app, at.x + 7.0, 950.0 - 20.0);
+        press(&app, Key::Shift);
+        assert!(!app.get_menu_up(), "the press closed the menu");
+        assert!(
+            seen.borrow()[reports..].iter().all(|r| r.0 == 0.0),
+            "{:?}",
+            seen.borrow()
+        );
+        assert_eq!(app.get_selected(), 0);
+        // The next press pages.
+        crate::testing::click(&app, at.x + 7.0, 950.0 - 20.0);
+        assert_eq!(last_scroll(&seen), 837.0);
     }
 }

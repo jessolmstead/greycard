@@ -252,6 +252,57 @@ pub fn max_scroll(height: f32, cell: f32, columns: i32, count: i32, top: f32) ->
     (2.0 * PAD + body - GAP - height).max(0.0)
 }
 
+/// The scroll bar's thumb keeps this far from the ends of its band,
+/// logical pixels.
+pub const BAR_INSET: f32 = 4.0;
+/// The shortest the thumb gets, however long the folder: still
+/// something to take hold of.
+pub const BAR_MIN: f32 = 24.0;
+
+/// The room the scroll bar's thumb travels in, on a sheet `height`
+/// tall.
+fn bar_track(height: f32) -> f32 {
+    (height - 2.0 * BAR_INSET).max(0.0)
+}
+
+/// The scroll bar's thumb length on a sheet `height` tall that
+/// scrolls `max` further: the track in the share of the whole sheet
+/// that is on screen, no shorter than [`BAR_MIN`] where the track
+/// has room for it. Nothing when nothing scrolls.
+pub fn bar_length(height: f32, max: f32) -> f32 {
+    if max <= 0.0 || height <= 0.0 || !max.is_finite() {
+        return 0.0;
+    }
+    let track = bar_track(height);
+    (track * height / (height + max)).max(BAR_MIN.min(track))
+}
+
+/// The thumb's top, from the top of the sheet, at a scroll of
+/// `scroll` out of `max`: at the inset at the top, the thumb's
+/// length short of the far inset at the foot.
+pub fn bar_offset(height: f32, max: f32, scroll: f32) -> f32 {
+    if max <= 0.0 || !max.is_finite() {
+        return BAR_INSET;
+    }
+    let room = bar_track(height) - bar_length(height, max);
+    BAR_INSET + room.max(0.0) * (scroll / max).clamp(0.0, 1.0)
+}
+
+/// The scroll a thumb taken at a scroll of `from` and moved `by`
+/// along the bar comes to: the thumb follows the pointer, so a move
+/// down the whole of the thumb's room is the whole of `max`. Held to
+/// the range.
+pub fn bar_drag(height: f32, max: f32, from: f32, by: f32) -> f32 {
+    if max <= 0.0 || !max.is_finite() {
+        return 0.0;
+    }
+    let room = bar_track(height) - bar_length(height, max);
+    if room <= 0.0 {
+        return from.clamp(0.0, max);
+    }
+    (from + by * max / room).clamp(0.0, max)
+}
+
 /// The next cell size up (`by` positive) or down the steps, from
 /// whichever step the cell is nearest.
 pub fn zoom(cell: f32, by: i32) -> f32 {
@@ -534,5 +585,63 @@ mod tests {
             assert!(!wants_bigger(made, asked));
         }
         assert_eq!(made_size(600), 600);
+    }
+    #[test]
+    fn the_bar_thumb_is_the_share_of_the_sheet_on_screen() {
+        // An 837 px sheet that scrolls as far again: the thumb is half
+        // the track, at the top inset at 0 and at the foot at the end.
+        let (h, max) = (837.0, 837.0);
+        let track = h - 2.0 * BAR_INSET;
+        assert_eq!(bar_length(h, max), track / 2.0);
+        assert_eq!(bar_offset(h, max, 0.0), BAR_INSET);
+        assert_eq!(bar_offset(h, max, max), BAR_INSET + track / 2.0);
+        assert_eq!(bar_offset(h, max, max / 2.0), BAR_INSET + track / 4.0);
+        // Out of range is held to the ends.
+        assert_eq!(bar_offset(h, max, -50.0), BAR_INSET);
+        assert_eq!(bar_offset(h, max, 2.0 * max), BAR_INSET + track / 2.0);
+        // A folder of thousands keeps a thumb to hold.
+        assert_eq!(bar_length(h, 1.0e6), BAR_MIN);
+        let end = bar_offset(h, 1.0e6, 1.0e6) + BAR_MIN;
+        assert_eq!(end, h - BAR_INSET);
+        // Nothing to scroll, no thumb; a sheet too short for the
+        // least thumb gets the track.
+        assert_eq!(bar_length(h, 0.0), 0.0);
+        assert_eq!(bar_length(20.0, 500.0), 12.0);
+    }
+
+    #[test]
+    fn a_thumb_dragged_follows_the_pointer_and_stays_in_range() {
+        let (h, max) = (837.0, 837.0);
+        let room = h - 2.0 * BAR_INSET - bar_length(h, max);
+        // Down the whole room is the whole range; halfway, half.
+        assert_eq!(bar_drag(h, max, 0.0, room), max);
+        assert_eq!(bar_drag(h, max, 0.0, room / 2.0), max / 2.0);
+        assert_eq!(bar_drag(h, max, max, -room / 2.0), max / 2.0);
+        // Past either end is the end.
+        assert_eq!(bar_drag(h, max, 100.0, -5000.0), 0.0);
+        assert_eq!(bar_drag(h, max, 100.0, 5000.0), max);
+        // And the thumb lands under the pointer that moved it.
+        let to = bar_drag(h, max, 0.0, 100.0);
+        assert!((bar_offset(h, max, to) - (BAR_INSET + 100.0)).abs() < 1e-3);
+        assert_eq!(bar_drag(h, 0.0, 10.0, 50.0), 0.0);
+    }
+
+    #[test]
+    fn a_least_thumb_still_drags_the_whole_range_under_the_pointer() {
+        // A million pixels of scroll: the thumb is held at the least,
+        // and its room is the track less that.
+        let (h, max) = (837.0, 1.0e6);
+        assert_eq!(bar_length(h, max), BAR_MIN);
+        let room = h - 2.0 * BAR_INSET - BAR_MIN;
+        assert_eq!(bar_drag(h, max, 0.0, room), max);
+        assert_eq!(bar_drag(h, max, max, -room), 0.0);
+        // A drag partway puts the thumb under the pointer.
+        for by in [1.0, 37.5, room / 3.0, room - 1.0] {
+            let to = bar_drag(h, max, 0.0, by);
+            assert!(
+                (bar_offset(h, max, to) - (BAR_INSET + by)).abs() < 1e-2,
+                "{by}: {to}"
+            );
+        }
     }
 }
