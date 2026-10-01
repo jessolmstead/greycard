@@ -10,6 +10,11 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A folder's folders show as tiles at the top of the grid, each with
+  its count, a click opening it as the tree's row does, so a folder
+  with nothing of its own is never a blank grid and an export folder's
+  files never join the raws; Reveal on a tile opens the folder itself
+  (§212)
 - The grid keeps the left pane: Open folder, Recently opened, Import,
   the roots as rows with their counts and the folder tree, so the
   header drops from five rows to the selection line, the filter's

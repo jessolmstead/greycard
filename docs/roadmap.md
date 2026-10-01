@@ -29,10 +29,6 @@ is backed up to it and brought back by hash, and the last folders
 opened are a click away; a crop can be drawn, an export is a line in
 History, and the Masks tab reads at a glance.
 
-- [ ] A folder's folders as tiles at the top of the grid (§212), each
-      with its count, a click opening it as the tree's row does, so a
-      folder with nothing of its own is never a blank grid and an
-      export folder's files never join the raws
 - [ ] The rest of the network reads off the window's thread, after
       §187 and §188: the indexer's own passes wait on a root that answers
       the 3 s look and then hangs mid-walk, and every root's reports stop
