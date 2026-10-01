@@ -32,11 +32,6 @@ is backed up to it and brought back by hash, and the last folders
 opened are a click away; a crop can be drawn, an export is a line in
 History, and the Masks tab reads at a glance.
 
-- [ ] A scroll bar on the grid: a thin bar at the sheet's right edge
-      sized and placed from the scroll, its maximum and the sheet's
-      height, shown while scrolling or hovered and faded at rest,
-      draggable, and a click in its track paging; the same offset the
-      wheel and the keys drive, so §202's cells stay the screen's alone
 - [ ] The rest of the network reads off the window's thread, after
       §187 and §188: the indexer's own passes wait on a root that answers
       the 3 s look and then hangs mid-walk, and every root's reports stop

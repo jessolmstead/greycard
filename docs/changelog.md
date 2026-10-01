@@ -10,6 +10,10 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The grid has a scroll bar: a thin bar at the sheet's right edge,
+  shown while scrolling or hovered and faded at rest, draggable, a
+  press in its track paging, on the same offset the wheel and the keys
+  drive (§214)
 - An export queue: Add to queue on the export sheet keeps the set
   with its edits, its preset and its destination in a list shown with
   its count, kept across a restart, and Export the queue runs it all
