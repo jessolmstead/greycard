@@ -245,6 +245,11 @@ pub(crate) type EachFile = Arc<dyn Fn(&Path) + Send + Sync>;
 /// passes no longer wait for it.
 const PASS_WAIT: Duration = crate::roots::ROOT_WAIT;
 
+/// How long the indexer waits on the way out for a lane that is not set
+/// aside to leave: the pass in hand was moving a moment ago, so this is
+/// its last file and its last batch.
+const LANE_LEAVE: Duration = Duration::from_secs(5);
+
 impl Default for Guard {
     fn default() -> Self {
         Guard {
@@ -504,6 +509,7 @@ fn lane_busy(tries: i32) -> bool {
 /// unless it went quiet inside a batch's write, where a sidecar is read.
 struct Lane {
     jobs: mpsc::Sender<LaneJob>,
+    thread: std::thread::JoinHandle<()>,
 }
 
 impl Lane {
@@ -531,11 +537,31 @@ impl Lane {
                 }
             });
         match spawned {
-            Ok(_) => Some(Lane { jobs }),
+            Ok(thread) => Some(Lane { jobs, thread }),
             Err(e) => {
                 tracing::warn!("index: no thread for the passes: {e}");
                 None
             }
+        }
+    }
+
+    /// The lane ended and waited for, up to `within`: its jobs' end
+    /// dropped, its thread joined once it has left. Only for a lane
+    /// still in the indexer's slot on the way out, which is idle or on
+    /// a pass that is moving; one set aside is out of the slot and is
+    /// never waited on. Without the wait the lane's connection outlives
+    /// the indexer's `stop`, and a test on Windows that then removes its
+    /// library finds the file still open.
+    fn finish(self, within: Duration) {
+        drop(self.jobs);
+        let asked = Instant::now();
+        while !self.thread.is_finished() && asked.elapsed() < within {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if self.thread.is_finished() {
+            let _ = self.thread.join();
+        } else {
+            tracing::warn!("index: the passes' lane is still busy on the way out; leaving it");
         }
     }
 }
@@ -745,6 +771,9 @@ fn serve(
     let mut left_out: Vec<PathBuf> = Vec::new();
     loop {
         if leaving() {
+            if let Some(lane) = lane.take() {
+                lane.finish(LANE_LEAVE);
+            }
             return;
         }
         // The passes set aside that have come back since, or said

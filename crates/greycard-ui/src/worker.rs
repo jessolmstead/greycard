@@ -3145,12 +3145,29 @@ mod tests {
             generation: 7,
             turn: 0,
         };
-        // The panics here are on purpose; the hook has nothing to say.
+        // The panics here are on purpose; the hook has nothing to say
+        // about them. The hook is the process's, and the other tests
+        // run beside this one: theirs still print, or a failure
+        // elsewhere in the run would be a bare FAILED with no words.
         let hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(|_| {}));
+        let mine = std::thread::current().id();
+        let hushed: std::sync::Arc<std::sync::Mutex<Option<_>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Some(hook)));
+        let shared = hushed.clone();
+        std::panic::set_hook(Box::new(move |info| {
+            if std::thread::current().id() != mine
+                && let Ok(guard) = shared.lock()
+                && let Some(hook) = guard.as_ref()
+            {
+                hook(info);
+            }
+        }));
         let payload = std::panic::catch_unwind(|| panic!("on purpose {}", 1)).unwrap_err();
         let plain = std::panic::catch_unwind(|| panic!("plain")).unwrap_err();
-        std::panic::set_hook(hook);
+        let _ = std::panic::take_hook();
+        if let Some(hook) = hushed.lock().unwrap().take() {
+            std::panic::set_hook(hook);
+        }
         let message = panic_message(payload.as_ref());
         assert_eq!(message, "on purpose 1");
         match Blame::of(&develop).outcome(message) {
