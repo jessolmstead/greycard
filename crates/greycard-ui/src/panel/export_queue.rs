@@ -1083,13 +1083,28 @@ mod tests {
     #[test]
     fn a_relative_name_is_kept_whole_and_sent_as_the_list_has_it() {
         let (dir, files) = shoot("relative", 1);
+        // The file by a path relative to the working directory: up
+        // to what the two share, then down to the file. On Windows
+        // the two may sit on different drives, which no relative
+        // path can join; then there is nothing to test.
         let cwd = std::env::current_dir().unwrap();
+        let shared = cwd
+            .components()
+            .zip(files[0].components())
+            .take_while(|(a, b)| a == b)
+            .count();
+        if shared == 0 {
+            std::fs::remove_dir_all(&dir).unwrap();
+            return;
+        }
         let mut rel = PathBuf::new();
-        for _ in cwd.components().skip(1) {
+        for _ in cwd.components().skip(shared) {
             rel.push("..");
         }
-        let rel = rel.join(files[0].strip_prefix("/").unwrap());
-        assert!(rel.is_relative() && rel.is_file());
+        for c in files[0].components().skip(shared) {
+            rel.push(c);
+        }
+        assert!(rel.is_relative() && rel.is_file(), "{}", rel.display());
         let app = crate::testing::window(1);
         let (state, _worker) = crate::testing::state_for(&app, vec![rel.clone()]);
         {
