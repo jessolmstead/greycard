@@ -463,6 +463,17 @@ release when the wait clears.
 - [ ] HDR output. The same wait; check each Slint release (§5, §17)
 - [ ] Wide-gamut output: a profile away once the compositor says which
       monitor (§17)
+- [ ] Self-updating: when the check (§186) finds a newer release, an
+      Update button on the Settings sheet downloads the build for this
+      platform from the release, verifies it against the release's
+      checksum, swaps it in beside the running binary and relaunches,
+      so nobody downloads and unpacks by hand again; opt-in, with the
+      release page a click away as it is now. Waits on signed builds
+      (notarization on the Mac, Authenticode on Windows) so a swapped
+      binary is not refused by the gate, and on each platform's way of
+      replacing a running binary (rename and relaunch on Windows, the
+      bundle swapped on the Mac, the tarball's folder on Linux); §186's
+      reasons against it stand until those are in hand
 
 #### Upstream
 
