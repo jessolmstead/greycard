@@ -413,6 +413,10 @@ export component App inherits Window {
     /// The EXIF facets the library index counts for the folder, a
     /// row a facet, and what to say while there are none.
     in property <[FacetRow]> filter-facets: [];
+    /// The same rows split for the grid's header: camera and lens, then
+    /// the others.
+    in property <[FacetRow]> filter-facets-long: [];
+    in property <[FacetRow]> filter-facets-short: [];
     in property <string> filter-facet-note: "";
     callback filter-facet-toggled(int, string);
     /// The library's roots, in the left pane with the grid: each with
@@ -2385,7 +2389,8 @@ export component App inherits Window {
         filter-total <=> root.filter-total;
         filter-on <=> root.filter-on;
         filter-focus <=> root.filter-focus;
-        filter-facets: root.filter-facets;
+        filter-facets-long: root.filter-facets-long;
+        filter-facets-short: root.filter-facets-short;
         filter-facet-note: root.filter-facet-note;
         filter-facet-toggled(a, b) => { root.filter-facet-toggled(a, b); }
         filter-star-picked(a) => { root.filter-star-picked(a); }

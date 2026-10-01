@@ -152,6 +152,11 @@ export component FilterBar inherits Rectangle {
     /// them. Empty until the index has rows for the folder, when
     /// `facet-note` says why.
     in property <[FacetRow]> facets;
+    /// The header's two rows of them, split by the window: camera and
+    /// lens, whose chips run long, then the rest. The stacked bar takes
+    /// `facets` as one column.
+    in property <[FacetRow]> facets-long;
+    in property <[FacetRow]> facets-short;
     in property <string> facet-note;
     in property <bool> exact;
     in property <int> shown;
@@ -373,9 +378,15 @@ export component FilterBar inherits Rectangle {
                 clicked => { root.cleared(); root.released(); }
             }
         }
-        if !root.stacked: FacetChips {
-            facets: root.facets;
+        // The first row also carries the note while the index has
+        // nothing; the second is there only when it has something.
+        if !root.stacked && (root.facets-long.length > 0 || root.facets-short.length == 0): FacetChips {
+            facets: root.facets-long;
             note: root.facet-note;
+            toggled(code, key) => { root.facet-toggled(code, key); }
+        }
+        if !root.stacked && root.facets-short.length > 0: FacetChips {
+            facets: root.facets-short;
             toggled(code, key) => { root.facet-toggled(code, key); }
         }
     }

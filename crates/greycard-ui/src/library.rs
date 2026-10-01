@@ -1696,6 +1696,20 @@ pub(crate) fn facet_rows(st: &State) -> Vec<FacetRow> {
         .collect()
 }
 
+/// The rows split for the grid's header, which has two: camera and
+/// lens, whose chips are long, then the rest, which are short.
+pub(crate) fn split_facet_rows(rows: &[FacetRow]) -> (Vec<FacetRow>, Vec<FacetRow>) {
+    let long = |row: &FacetRow| {
+        [Facet::Camera, Facet::Lens]
+            .iter()
+            .any(|f| filter::facet_slot(*f) as i32 == row.code)
+    };
+    (
+        rows.iter().filter(|r| long(r)).cloned().collect(),
+        rows.iter().filter(|r| !long(r)).cloned().collect(),
+    )
+}
+
 /// What the facets' row says while it has no chips.
 pub(crate) fn facet_note(st: &State) -> String {
     if let Some(e) = &st.index_error {
@@ -2358,6 +2372,43 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// The grid's header has two facet rows: camera and lens on the
+    /// first, whatever else the index counts on the second.
+    #[test]
+    fn the_headers_facets_split_into_camera_and_lens_then_the_rest() {
+        use crate::testing::{state_for, window};
+        let dir = scratch("rows");
+        let app = window(0);
+        let (files, sidecars, reader) = folder(&dir);
+        let (state, _worker) = state_for(&app, files);
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars = sidecars;
+            st.index_reader = Some(reader);
+            refresh_ids(&mut st);
+            crate::panel::browser::rebuild_browser(&mut st, &app);
+        }
+        let names = |rows: slint::ModelRc<FacetRow>| -> Vec<String> {
+            rows.iter().map(|r| r.name.to_string()).collect()
+        };
+        let long = names(app.get_filter_facets_long());
+        let short = names(app.get_filter_facets_short());
+        assert_eq!(long, ["Camera", "Lens"]);
+        assert!(!short.is_empty(), "{short:?}");
+        assert!(
+            short.iter().all(|n| n != "Camera" && n != "Lens"),
+            "{short:?}"
+        );
+        // Together they are the rows the stacked bar shows.
+        assert_eq!(
+            long.len() + short.len(),
+            app.get_filter_facets().row_count()
+        );
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A facet row longer than the header scrolls sideways under a
     /// plain wheel, which is the only wheel most mice have.
     #[test]
@@ -2374,7 +2425,7 @@ mod tests {
                 on: false,
             })
             .collect();
-        app.set_filter_facets(ModelRc::new(VecModel::from(vec![FacetRow {
+        app.set_filter_facets_short(ModelRc::new(VecModel::from(vec![FacetRow {
             name: "ISO".into(),
             code: 2,
             chips: ModelRc::new(VecModel::from(chips)),
@@ -2382,7 +2433,8 @@ mod tests {
         let pressed = Rc::new(RefCell::new(Vec::new()));
         let seen = pressed.clone();
         app.on_filter_facet_toggled(move |_, key| seen.borrow_mut().push(key.to_string()));
-        // The facet row is the header's third, under the selection's
+        // With no camera or lens row, the short facets take the
+        // first row's place: the header's third, under the selection's
         // line and the meta chips with the words; the sheet starts at
         // the left pane's edge, 240 in.
         let (x, y) = (440.0, 92.0);

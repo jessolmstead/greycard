@@ -117,7 +117,8 @@ export component GridSheet inherits Rectangle {
     in-out property <int> filter-total;
     in-out property <bool> filter-on;
     in-out property <bool> filter-focus;
-    in property <[FacetRow]> filter-facets;
+    in property <[FacetRow]> filter-facets-long;
+    in property <[FacetRow]> filter-facets-short;
     in property <string> filter-facet-note;
     callback filter-facet-toggled(int, string);
     callback filter-star-picked(int);
@@ -151,16 +152,18 @@ export component GridSheet inherits Rectangle {
         // roots, the tree) is the left pane's; what is looked for
         // among them is here, over the sheet it narrows.
         Rectangle {
-            // Two rows of controls and one of chips: the selection's
+            // Two rows of controls and two of chips: the selection's
             // line, the filter's meta chips with its words, and its
-            // facets. Spelled out rather than asked of the layout: a
+            // facets on two rows, camera and lens first, the rest under
+            // them. Spelled out rather than asked of the layout: a
             // header whose height settles a frame late re-flows the
             // sheet twice on the way in, and the second re-flow is a
             // folder's worth of thumbnails asked for again. The
-            // facets' row is there before the index has anything to
-            // put in it for the same reason.
-            height: 2 * Theme.control-height + (Theme.control-height - 4px)
-                + 4 * Theme.space-2 + 1px;
+            // facets' rows are there before the index has anything to
+            // put in them for the same reason, and a row the folder
+            // has no facet for leaves its room empty.
+            height: 2 * Theme.control-height + 2 * (Theme.control-height - 4px)
+                + 5 * Theme.space-2 + 1px;
             background: Theme.surface;
             Rectangle { y: parent.height - 1px; height: 1px; width: 100%; background: Theme.border; }
             header := VerticalLayout {
@@ -216,7 +219,8 @@ export component GridSheet inherits Rectangle {
                     stars: root.filter-stars;
                     flags: root.filter-flags;
                     labels: root.filter-labels;
-                    facets: root.filter-facets;
+                    facets-long: root.filter-facets-long;
+                    facets-short: root.filter-facets-short;
                     facet-note: root.filter-facet-note;
                     facet-toggled(c, k) => { root.filter-facet-toggled(c, k); }
                     exact: root.filter-exact;
