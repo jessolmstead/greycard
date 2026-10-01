@@ -29,26 +29,27 @@ is backed up to it and brought back by hash, and the last folders
 opened are a click away; a crop can be drawn, an export is a line in
 History, and the Masks tab reads at a glance.
 
-- [ ] Archive roots, part one (§197): a root marked as an archive in
-      roots.json, never deleted from; Back up copies a shoot's or a
-      selection's new frames and newer sidecars to it, mirrored under
-      the root's label, whole-file hash-verified, off the window's
-      thread with a bar and a Cancel; Bring back is the inverse from
-      the archive's chip view, skipping frames already under a local
-      root; an archive left out of All roots until one frame in two
-      places lands. To revisit once it is in use: whether a frame's
-      own Delete, with the sheet naming the archive and saying trash
-      or permanent, should work there too; the rule today sends that
-      through Remove rejects from the shoot's side and the archive's
-      Delete rejects folder, which leaves a frame that exists only on
-      the archive with no route at all
-  - Should there be a "write-through" mode that just continuously keeps
-    the archive up-to-date but without deleting?
-- [ ] Archive roots, part two (§197): Remove rejects finds the rejects
-      folder's frames on the archive by hash, shows the list, and on
-      confirm moves them into a rejects folder there as culling does
-      here; a removal confirmed while the archive is offline is queued
-      and run when it answers. Waits on part one
+- [ ] Archive roots, part one (§197, §216): a root marked as an archive
+      in roots.json; Back up copies a shoot's or a selection's frames
+      not yet on the archive (by hash, wherever they sit there) and the
+      newer sidecars, to a folder under the archive shown in the sheet
+      and remembered per source root, the rejects folder skipped unless
+      its checkbox is ticked, each copy whole-file hash-verified under a
+      temporary name, on §215's lane with a bar and a Cancel; Bring back
+      is the inverse from the archive's chip view, sidecar only for a
+      frame already local; "N frames not on Archive" in a backed-up
+      folder's header and "all on Archive" on the Delete sheet; the
+      whole-file hash kept; nothing deleted under an archive except
+      behind its own sheet, so a frame's own Delete works there; the
+      archive's frames in All roots except those whose hash is also
+      under a local root
+- [ ] Archive roots, part two (§197, §216): Remove rejects finds the
+      rejects folder's frames on the archive by hash, shows the list,
+      and on confirm moves them into a rejects folder there (the
+      default) or deletes them (a red second button, trash or
+      permanent); a move confirmed while the archive is offline is
+      queued and run when it answers, a delete is refused. Waits on
+      part one
 - [ ] One frame in two places: a file whose hash is under two roots
       (the shoot and its archive copy) shown once, opened from the copy
       that is online and fastest, its sidecar written to both when both
