@@ -614,7 +614,15 @@ impl Watcher {
                         let _ = w.watch(&folder, notify::RecursiveMode::NonRecursive);
                     }
                 };
-                debounce(&roots_seen, &events, quiet, longest, &add, &changed)
+                debounce(
+                    &roots_seen,
+                    &left_out,
+                    &events,
+                    quiet,
+                    longest,
+                    &add,
+                    &changed,
+                )
             });
         if let Err(e) = spawned {
             let why = e.to_string();
@@ -654,10 +662,14 @@ fn is_change(kind: &notify::EventKind) -> bool {
 /// disk has been quiet for `quiet`, or `longest` has passed since the
 /// first, then handed on. Only an event that is a change counts
 /// towards the quiet: the reads of a pass or of the thumbnails under
-/// a root being worked on do not hold a batch back. `add` is told of
+/// a root being worked on do not hold a batch back. A change at or
+/// under a folder of `except` is dropped: a root watched folder by
+/// folder still hears the left-out folder's own entry change (Windows
+/// reports a write inside it as a modify of it). `add` is told of
 /// each folder that appears. It ends when the watcher is dropped.
 fn debounce(
     roots: &[PathBuf],
+    except: &[PathBuf],
     events: &mpsc::Receiver<notify::Result<notify::Event>>,
     quiet: Duration,
     longest: Duration,
@@ -688,7 +700,12 @@ fn debounce(
                     // overflowed): every root walked again.
                     batch.extend(roots.iter().cloned().map(Change::Tree));
                 } else if is_change(&event.kind) {
-                    for change in event.paths.iter().filter_map(|p| change_for(roots, p)) {
+                    let changes = event
+                        .paths
+                        .iter()
+                        .filter_map(|p| change_for(roots, p))
+                        .filter(|c| !except.iter().any(|e| c.path().starts_with(e)));
+                    for change in changes {
                         if let Change::Tree(dir) = &change
                             && dir.is_dir()
                         {
