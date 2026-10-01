@@ -287,7 +287,9 @@ comes across with its ratings and collections.
   from the edit at a larger size
 - [ ] Collections and smart collections in one file under
   `~/.local/share/greycard/`, referencing files by hash with the
-  path as a hint
+  path as a hint. To settle first: two identical files sharing a
+  hash, a file whose hash changes when another tool rewrites it, and
+  whether a collection keeps an order of its own
 - [ ] Virtual copies: named versions in the same sidecar, each with
   its own edit and history; a collection references hash plus
   version. Waits on collections
@@ -299,9 +301,12 @@ comes across with its ratings and collections.
   flags, labels, keywords and captions to the meta section exactly,
   collections and translatable smart collections to the collections
   file, develop settings through the XMP mapper as a named first
-  history state, roots remapped by asking; a command with a dry-run
-  report first, then a sheet (§79). Waits on collections; the
-  capstone, its own release if it grows
+  history state, roots remapped by asking; the older process
+  versions (PV2003, PV2010), whose keys and slider meanings differ
+  from the 2012 ones the mapper reads, mapped or reported as
+  approximate, their keys checked against a real old catalog; a
+  command with a dry-run report first, then a sheet (§79). Waits on
+  collections; the capstone, its own release if it grows
 - [ ] A map: the frames' EXIF GPS on tiles, a click to select them, a
   position given to a frame by hand. Low priority
 
