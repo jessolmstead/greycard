@@ -51,7 +51,12 @@ History, and the Masks tab reads at a glance.
       thread with a bar and a Cancel; Bring back is the inverse from
       the archive's chip view, skipping frames already under a local
       root; an archive left out of All roots until one frame in two
-      places lands
+      places lands. To revisit once it is in use: whether a frame's
+      own Delete, with the sheet naming the archive and saying trash
+      or permanent, should work there too; the rule today sends that
+      through Remove rejects from the shoot's side and the archive's
+      Delete rejects folder, which leaves a frame that exists only on
+      the archive with no route at all
 - [ ] Archive roots, part two (§197): Remove rejects finds the rejects
       folder's frames on the archive by hash, shows the list, and on
       confirm moves them into a rejects folder there as culling does
