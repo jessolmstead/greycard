@@ -3168,6 +3168,7 @@ mod tests {
 
     /// The looks queued while held, run and landed, as the thread and
     /// the event loop would; how many.
+    #[cfg(unix)]
     fn run_checks(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
         let queued: Vec<(PathBuf, Check)> =
             CHECKS_SENT.with(|c| c.borrow_mut().drain(..).collect());

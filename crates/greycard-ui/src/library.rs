@@ -2034,7 +2034,10 @@ mod tests {
                 .as_nanos()
         ));
         std::fs::create_dir_all(&dir).unwrap();
-        dir
+        // Canonical, as the indexer makes a root before it walks it:
+        // on macOS the temp dir is a symlink, and a hang hook's prefix
+        // check on the uncanonical path would never match.
+        dunce::canonicalize(&dir).unwrap()
     }
 
     /// A folder of five frames on a library of the test's own: two
