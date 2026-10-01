@@ -153,6 +153,10 @@ pub struct TreeWalk {
     /// Folders found empty with rows under them, or unreadable:
     /// nothing under them is marked.
     shielded: Vec<Vec<u8>>,
+    /// Folders under the root walked by a pass of their own (a network
+    /// mount below a local root): not gone into, and nothing in or
+    /// under them marked or asked of the disk.
+    left_out: Vec<PathBuf>,
     report: Report,
     /// What a pass over the folder on top of `dirs` did before it
     /// stopped partway, to be counted with the pass that finishes it.
@@ -165,6 +169,36 @@ impl TreeWalk {
         &self.root
     }
 
+    /// The walk with each of `folders` strictly under its root left out:
+    /// not gone into, and nothing in or under them marked missing or
+    /// looked for on disk. For a network mount below a local root, which
+    /// is passed over as its own.
+    pub fn leaving_out(mut self, folders: &[PathBuf]) -> TreeWalk {
+        self.left_out = folders
+            .iter()
+            .filter(|f| f.starts_with(&self.root) && **f != self.root)
+            .cloned()
+            .collect();
+        // Taken up again: the folders already queued under one are not
+        // gone into either.
+        let left_out = std::mem::take(&mut self.left_out);
+        let out = |d: &PathBuf| left_out.iter().any(|l| d.starts_with(l));
+        // The folder it stopped inside, left out now: what it did there
+        // is kept with the walk's report, not counted with another's.
+        if self.dirs.last().is_some_and(out)
+            && let Some(partial) = self.partial.take()
+        {
+            self.report.add(partial);
+        }
+        self.dirs.retain(|d| !out(d));
+        self.left_out = left_out;
+        self
+    }
+
+    fn leaves_out(&self, dir: &Path) -> bool {
+        self.left_out.iter().any(|l| dir.starts_with(l))
+    }
+
     fn stopped(&self) -> Report {
         Report {
             stopped: true,
@@ -174,6 +208,7 @@ impl TreeWalk {
 }
 
 /// A folder's row as the pass needs it.
+#[derive(Clone)]
 struct Row {
     id: i64,
     size: u64,
@@ -374,6 +409,7 @@ impl Library {
             exists,
             visited: HashSet::new(),
             shielded: Vec::new(),
+            left_out: Vec::new(),
             report: Report::default(),
             partial: None,
         })
@@ -462,7 +498,7 @@ impl Library {
                 }
                 if kind.is_symlink() && entry.path().is_dir() {
                     walk.report.skipped.push(entry.path());
-                } else if kind.is_dir() {
+                } else if kind.is_dir() && !walk.leaves_out(&entry.path()) {
                     under.push(entry.path());
                 }
             }
@@ -486,9 +522,12 @@ impl Library {
         };
         let now = now_secs();
         for folder in gone {
+            // The cheap questions first: a left-out folder (a share below
+            // the root) is not asked of the disk at all.
             if walk.visited.contains(&folder)
-                || path_from_bytes(&folder).is_dir()
+                || walk.leaves_out(&path_from_bytes(&folder))
                 || walk.shielded.iter().any(|s| folder.starts_with(s))
+                || path_from_bytes(&folder).is_dir()
             {
                 continue;
             }
@@ -591,6 +630,7 @@ struct SidecarNow {
 /// and folded into the hash, so a rating given in another tool is
 /// seen by the next pass as a save here is.
 fn sidecar_of(raw: &Path) -> Option<SidecarNow> {
+    disk_call();
     let path = Sidecar::find(raw);
     let xmp = greycard_edit::xmp::path_of(raw);
     if path.is_none() && xmp.is_none() {
@@ -662,16 +702,58 @@ enum Plan {
     Fresh { hash: String, exif: Option<Exif> },
 }
 
-/// One file looked at, with what the disk had to say of the file
-/// itself. Its sidecar is not read here: that is read under the lock
-/// in the second phase, so that a save made between the phases is
-/// what gets written.
+/// One file looked at, with everything the disk had to say of it:
+/// the file itself, its sidecar and XMP as they were then and what the
+/// row mirrors of them, and for a file new to the folder the gone row
+/// it most likely moved from. The second phase asks the disk nothing
+/// more, so a share that stops answering mid-pass stops it in the first
+/// phase, holding no lock. A save made between the phases has already
+/// written its own row (`index_file`), and the second phase leaves that
+/// row's meta as the save wrote it; a save after the commit writes it
+/// itself.
 struct Looked<'a> {
     path: &'a Path,
     key: Vec<u8>,
     size: u64,
     mtime: i64,
     plan: Plan,
+    sidecar: Option<SidecarNow>,
+    summary: Summary,
+    /// A row with this file's hash whose file is gone from a folder
+    /// still in use: the move's other end, as the first phase found it.
+    moved: Option<(i64, Vec<u8>)>,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// While set, the second phase of a batch is under way and holds
+    /// the write lock: a disk call counted then is one made under it.
+    static UNDER_LOCK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// Disk calls made by a pass on this thread: all of them, and
+    /// those under the write lock.
+    static DISK_CALLS: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+    /// While set, `probe` is under way: its disk calls are the one kind
+    /// the second phase may make.
+    static IN_PROBE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// A test's count of a disk call the pass makes. Under the write lock
+/// one outside `probe` is a panic, so a disk call added to the second
+/// phase later fails the tests rather than slipping past the count.
+#[inline]
+fn disk_call() {
+    #[cfg(test)]
+    {
+        let locked = UNDER_LOCK.with(|u| u.get());
+        assert!(
+            !locked || IN_PROBE.with(|p| p.get()),
+            "a disk call under the write lock outside probe"
+        );
+        DISK_CALLS.with(|c| {
+            let (all, under) = c.get();
+            c.set((all + 1, under + usize::from(locked)));
+        });
+    }
 }
 
 /// The pass over `files`, which are all in `folder`, against
@@ -721,6 +803,7 @@ fn index_paths(
                 + report.styled,
         });
         let key = path_bytes(path);
+        disk_call();
         let stat = match std::fs::metadata(path) {
             Ok(m) => m,
             Err(e) => {
@@ -729,13 +812,17 @@ fn index_paths(
             }
         };
         let (size, mtime) = (stat.len(), mtime_of(&stat));
-        let hashed = |report: &mut Report| match hash::hash_file(path) {
-            Ok(h) => Some(h),
-            Err(e) => {
-                report.errors.push((path.clone(), e.to_string()));
-                None
+        let hashed = |report: &mut Report| {
+            disk_call();
+            match hash::hash_file(path) {
+                Ok(h) => Some(h),
+                Err(e) => {
+                    report.errors.push((path.clone(), e.to_string()));
+                    None
+                }
             }
         };
+        let mut moved = None;
         let plan = match existing.remove(&key) {
             Some(row) if row.size == size && row.mtime == mtime => {
                 let style = (!row.style_read).then(|| read_style(path));
@@ -752,20 +839,27 @@ fn index_paths(
                 let Some(hash) = hashed(&mut report) else {
                     continue;
                 };
-                let exif = if gone_by_hash(conn, &hash, &mut disk)?.is_some() {
+                let found = gone_by_hash(conn, &hash, &mut disk)?;
+                let exif = if found.is_some() {
                     None
                 } else {
                     Some(probe(path, &mut report))
                 };
+                moved = found;
                 Plan::Fresh { hash, exif }
             }
         };
+        let sidecar = sidecar_of(path);
+        let summary = summary_of(sidecar.as_ref(), path);
         looked.push(Looked {
             path,
             key,
             size,
             mtime,
             plan,
+            sidecar,
+            summary,
+            moved,
         });
         if looked.len() >= BATCH || since.elapsed() >= BATCH_TIME {
             write_batch(
@@ -774,7 +868,6 @@ fn index_paths(
                 &folder_text,
                 &mut looked,
                 &mut existing,
-                &mut disk,
                 &mut report,
             )?;
             since = Instant::now();
@@ -790,7 +883,6 @@ fn index_paths(
         &folder_text,
         &mut looked,
         &mut existing,
-        &mut disk,
         &mut report,
     )?;
     // What was not on disk. By id and path both: another writer may
@@ -818,61 +910,97 @@ fn write_batch(
     folder_text: &str,
     looked: &mut Vec<Looked<'_>>,
     existing: &mut HashMap<Vec<u8>, Row>,
-    disk: &mut Disk<'_>,
     report: &mut Report,
 ) -> Result<()> {
     if looked.is_empty() {
         return Ok(());
     }
     let tx = begin(conn)?;
+    #[cfg(test)]
+    UNDER_LOCK.with(|u| u.set(true));
+    let wrote = write_looked(&tx, folder_bytes, folder_text, looked, existing, report);
+    #[cfg(test)]
+    UNDER_LOCK.with(|u| u.set(false));
+    wrote?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// The second phase's writes, under the lock, from what the first phase
+/// found. The disk is asked nothing here but a probe, in two places, both
+/// for a new file the first phase took for a move's other end and so did
+/// not probe (a move keeps its EXIF), when another writer changed things
+/// between the phases: a row it added at this path for a file of another
+/// size or time, or the move's row it took (`still_gone` fails), leaving
+/// the file a new one. Any other disk call under the lock fails the
+/// tests (`disk_call`).
+fn write_looked(
+    tx: &Transaction<'_>,
+    folder_bytes: &[u8],
+    folder_text: &str,
+    looked: &mut Vec<Looked<'_>>,
+    existing: &mut HashMap<Vec<u8>, Row>,
+    report: &mut Report,
+) -> Result<()> {
     for Looked {
         path,
         key,
         size,
         mtime,
         plan,
+        sidecar,
+        summary,
+        moved,
     } in looked.drain(..)
     {
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned());
-        // The sidecar as it is now, under the lock: a save made since
-        // the first phase, or since another writer's pass, is what
-        // the row is held to.
-        let sidecar = sidecar_of(path);
+        let seen = Seen {
+            sidecar: sidecar.as_ref(),
+            summary: &summary,
+        };
         match plan {
             Plan::Same(row, style) => {
-                let row = current(&tx, &key, row)?;
+                let snapshot = row.clone();
+                let row = current(tx, &key, row)?;
                 if let Some(style) = style.filter(|_| !row.style_read) {
-                    write_style(&tx, row.id, &style)?;
+                    write_style(tx, row.id, &style)?;
                     report.styled += 1;
                 }
-                settle_same(&tx, row, path, sidecar.as_ref(), report)?;
+                settle_same(tx, &snapshot, row, seen, report)?;
             }
             Plan::Changed { row, hash, exif } => {
-                let row = current(&tx, &key, row)?;
-                update_file(&tx, row.id, size, mtime, &hash, &exif)?;
-                if !row.same_sidecar(sidecar.as_ref()) {
-                    write_meta(&tx, row.id, path, sidecar.as_ref())?;
+                let snapshot = row.clone();
+                let row = current(tx, &key, row)?;
+                update_file(tx, row.id, size, mtime, &hash, &exif)?;
+                if !wrote_since(&snapshot, &row) && !row.same_sidecar(seen.sidecar) {
+                    write_meta(tx, row.id, seen)?;
                 }
                 report.changed += 1;
                 report.changed_files.push(path.to_path_buf());
             }
             Plan::Fresh { hash, exif } => {
-                if let Some(row) = row_at(&tx, &key)? {
+                if let Some(row) = row_at(tx, &key)? {
                     // Added by another writer since the folder's rows
-                    // were read; this row is current, and the sidecar
-                    // it knows may be newer than the one read.
+                    // were read: its row is current, its meta included,
+                    // as newer than the sidecar the first phase read.
                     if row.size == size && row.mtime == mtime {
-                        settle_same(&tx, row, path, sidecar.as_ref(), report)?;
+                        if row.missing {
+                            tx.prepare_cached(
+                                "UPDATE files SET missing_since = NULL WHERE id = ?",
+                            )?
+                            .execute(params![row.id])?;
+                            report.returned += 1;
+                        }
+                        report.unchanged += 1;
                     } else {
                         let exif = exif.unwrap_or_else(|| probe(path, report));
-                        update_file(&tx, row.id, size, mtime, &hash, &exif)?;
-                        if !row.same_sidecar(sidecar.as_ref()) {
-                            write_meta(&tx, row.id, path, sidecar.as_ref())?;
-                        }
+                        update_file(tx, row.id, size, mtime, &hash, &exif)?;
                         report.changed += 1;
                         report.changed_files.push(path.to_path_buf());
                     }
-                } else if let Some((id, old_path)) = gone_by_hash(&tx, &hash, disk)? {
+                } else if let Some((id, old_path)) =
+                    moved.filter(|(id, old)| still_gone(tx, *id, old, &hash).unwrap_or(false))
+                {
                     tx.prepare_cached(
                         "UPDATE files SET path = ?, folder = ?, folder_text = ?, name = ?, \
                          size = ?, mtime = ?, missing_since = NULL WHERE id = ?",
@@ -886,7 +1014,7 @@ fn write_batch(
                         mtime,
                         id
                     ])?;
-                    write_meta(&tx, id, path, sidecar.as_ref())?;
+                    write_meta(tx, id, seen)?;
                     // A rename within the folder: the old row is this
                     // one, and is not to be marked missing.
                     existing.remove(&old_path);
@@ -927,23 +1055,49 @@ fn write_batch(
                         exif.style.peripheral,
                     ])?;
                     let id = tx.last_insert_rowid();
-                    write_meta(&tx, id, path, sidecar.as_ref())?;
+                    write_meta(tx, id, seen)?;
                     report.added += 1;
                 }
             }
         }
     }
-    tx.commit()?;
     Ok(())
+}
+
+/// The sidecar as the first phase read it, and what the row mirrors of
+/// it.
+#[derive(Clone, Copy)]
+struct Seen<'a> {
+    sidecar: Option<&'a SidecarNow>,
+    summary: &'a Summary,
+}
+
+/// Whether another writer (a save's `index_file`) wrote the row's meta
+/// since the folder's rows were read: its sidecar is not the snapshot's.
+/// Its meta is newer than what the first phase read, and stays.
+fn wrote_since(snapshot: &Row, now: &Row) -> bool {
+    snapshot.sidecar != now.sidecar || snapshot.sidecar_hash != now.sidecar_hash
+}
+
+/// Whether the row the first phase took for a move's other end is still
+/// that: the same hash, at the old path, and not taken by another
+/// writer since. Asks the index alone.
+fn still_gone(tx: &Transaction<'_>, id: i64, old: &[u8], hash: &str) -> Result<bool> {
+    use rusqlite::OptionalExtension;
+    Ok(tx
+        .prepare_cached("SELECT 1 FROM files WHERE id = ? AND path = ? AND hash = ?")?
+        .query_row(params![id, old, hash], |_| Ok(()))
+        .optional()?
+        .is_some())
 }
 
 /// A row whose file is as it was: back if it was missing, and its
 /// meta refreshed if its sidecar is not the one it knew.
 fn settle_same(
     tx: &Transaction<'_>,
+    snapshot: &Row,
     row: Row,
-    raw: &Path,
-    sidecar: Option<&SidecarNow>,
+    seen: Seen<'_>,
     report: &mut Report,
 ) -> Result<()> {
     if row.missing {
@@ -951,10 +1105,10 @@ fn settle_same(
             .execute(params![row.id])?;
         report.returned += 1;
     }
-    if row.same_sidecar(sidecar) {
+    if wrote_since(snapshot, &row) || row.same_sidecar(seen.sidecar) {
         report.unchanged += 1;
     } else {
-        write_meta(tx, row.id, raw, sidecar)?;
+        write_meta(tx, row.id, seen)?;
         report.meta_refreshed += 1;
     }
     Ok(())
@@ -1032,7 +1186,10 @@ impl Disk<'_> {
     fn has(&self, row_folder: &[u8], row_path: &[u8]) -> bool {
         match &self.listed {
             Some(listed) if row_folder == self.folder => listed.contains(row_path),
-            _ => path_from_bytes(row_path).exists(),
+            _ => {
+                disk_call();
+                path_from_bytes(row_path).exists()
+            }
         }
     }
 
@@ -1042,6 +1199,7 @@ impl Disk<'_> {
         if let Some(&known) = self.in_use.get(folder) {
             return known;
         }
+        disk_call();
         let dir = path_from_bytes(folder);
         let in_use = dir.is_dir() && !is_empty_dir(&dir).unwrap_or(true);
         self.in_use.insert(folder.to_vec(), in_use);
@@ -1086,8 +1244,8 @@ fn gone_by_hash(
 /// The row as it is now under the lock, rather than as the folder's
 /// rows were read before the pass: another writer — the editor
 /// saving a rating and calling `index_file` between the phases — may
-/// have written it since, and the row is settled against what it
-/// wrote and the sidecar as it is now. A row gone meanwhile (a prune)
+/// have written it since, and the row keeps the meta it wrote, which
+/// is newer than the sidecar the first phase read. A row gone meanwhile (a prune)
 /// is settled as the snapshot, and its updates by id touch nothing.
 fn current(tx: &Transaction<'_>, key: &[u8], snapshot: Row) -> Result<Row> {
     Ok(row_at(tx, key)?.unwrap_or(snapshot))
@@ -1098,6 +1256,16 @@ fn current(tx: &Transaction<'_>, key: &[u8], snapshot: Row) -> Result<Row> {
 /// line in the report. A decoder that panics on the file's data is
 /// the same case, caught here so one file never ends the folder.
 fn probe(path: &Path, report: &mut Report) -> Exif {
+    #[cfg(test)]
+    let was = IN_PROBE.with(|p| p.replace(true));
+    let exif = probe_now(path, report);
+    #[cfg(test)]
+    IN_PROBE.with(|p| p.set(was));
+    exif
+}
+
+fn probe_now(path: &Path, report: &mut Report) -> Exif {
+    disk_call();
     let probed = std::panic::catch_unwind(|| {
         if greycard_core::picture::is_picture_path(path) {
             greycard_core::picture::probe_path(path)
@@ -1133,6 +1301,7 @@ fn probe(path: &Path, report: &mut Report) -> Exif {
 /// in the report: a file whose tags will not read still indexes, and
 /// is not read again until it changes.
 fn read_style(path: &Path) -> StyleTags {
+    disk_call();
     if !greycard_core::decode::is_raw_path(path) {
         return StyleTags::default();
     }
@@ -1292,6 +1461,7 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
         // The camera's tag is asked for only when the packet says
         // something about the orientation, as the editor asks.
         greycard_edit::xmp::adopt(raw, &mut sidecar, || {
+            disk_call();
             greycard_core::decode::orientation_path(raw)
                 .inspect_err(|e| log::warn!("{}: orientation: {e}", raw.display()))
                 .ok()
@@ -1320,16 +1490,11 @@ pub(crate) fn summary_from_json(json: &[u8], sidecar: &Path, raw: Option<&Path>)
     summary_of(Some(&now), raw.unwrap_or(Path::new("frame.cr3")))
 }
 
-/// The row's meta from its sidecar, or the empty meta when it has
-/// none, and the sidecar's hash so the next pass can tell. `raw` is
-/// the frame, whose kind says what the default edit is.
-fn write_meta(
-    tx: &Transaction<'_>,
-    id: i64,
-    raw: &Path,
-    sidecar: Option<&SidecarNow>,
-) -> Result<()> {
-    let summary = summary_of(sidecar, raw);
+/// The row's meta from its sidecar as the first phase summed it up, or
+/// the empty meta when it has none, and the sidecar's hash so the next
+/// pass can tell.
+fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
+    let (sidecar, summary) = (seen.sidecar, seen.summary);
     let meta = &summary.meta;
     tx.prepare_cached(
         "UPDATE files SET sidecar = ?, sidecar_hash = ?, sidecar_mtime = ?, rating = ?, \
@@ -2192,6 +2357,120 @@ pub(crate) mod tests {
         let e = lib.by_path(&bad).unwrap().unwrap();
         assert_eq!(e.exif, Exif::default());
         assert_eq!(e.hash, hash::hash_file(&bad).unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A walk leaving out a folder below its root (a share mounted there,
+    /// passed over as its own) neither goes into it nor marks its rows,
+    /// and walks the rest.
+    #[test]
+    fn a_walk_leaves_out_the_folders_it_is_told() {
+        let dir = scratch("left-out");
+        let (day, nas) = (dir.join("day"), dir.join("nas"));
+        std::fs::create_dir_all(nas.join("2026")).unwrap();
+        std::fs::create_dir_all(&day).unwrap();
+        write_frame(&day.join("a.tif"), &R5, 1);
+        write_frame(&nas.join("b.tif"), &R6, 2);
+        write_frame(&nas.join("2026").join("c.tif"), &A7, 3);
+        let mut lib = Library::open_in_memory().unwrap();
+        // Indexed whole once, as before the share was found below it.
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!(lib.len().unwrap(), 3);
+        // Then the share's folders are not there to be read (the share
+        // gone): a walk told to leave them out marks nothing, and finds
+        // a new file outside them.
+        // Out of the root altogether, so no walk finds it elsewhere.
+        let gone = dir.with_extension("gone-nas");
+        std::fs::rename(&nas, &gone).unwrap();
+        std::fs::create_dir_all(&nas).unwrap();
+        write_frame(&day.join("d.tif"), &R5, 4);
+        let mut walk = lib
+            .tree_walk(&dir)
+            .unwrap()
+            .leaving_out(std::slice::from_ref(&nas));
+        let report = lib.walk_until(&mut walk, &mut quiet(), &|| false).unwrap();
+        assert_eq!(report.added, 1, "{report:?}");
+        assert_eq!(
+            report.missing, 0,
+            "the share's rows left as they were: {report:?}"
+        );
+        let rows = lib.query(&Filter::parse("").unwrap()).unwrap();
+        assert_eq!(rows.iter().filter(|e| !e.missing).count(), 4);
+        // Without it, and the mount point gone too, the same walk marks
+        // the share's two missing.
+        std::fs::remove_dir(&nas).unwrap();
+        let mut walk = lib.tree_walk(&dir).unwrap();
+        let report = lib.walk_until(&mut walk, &mut quiet(), &|| false).unwrap();
+        assert_eq!(report.missing, 2, "{report:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::remove_dir_all(&gone).unwrap();
+    }
+
+    /// A walk stopped partway and taken up again with a folder now left
+    /// out (a share found below the root meanwhile) does not go into it.
+    #[test]
+    fn a_walk_taken_up_again_leaves_out_what_is_left_out_now() {
+        let dir = scratch("left-out-resumed");
+        let (day, nas) = (dir.join("a-day"), dir.join("z-nas"));
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::create_dir_all(&nas).unwrap();
+        write_frame(&day.join("a.tif"), &R5, 1);
+        write_frame(&nas.join("b.tif"), &R6, 2);
+        let mut lib = Library::open_in_memory().unwrap();
+        let mut walk = lib.tree_walk(&dir).unwrap();
+        // Stopped at the first chance, after the root's own folder.
+        let report = lib.walk_until(&mut walk, &mut quiet(), &|| true).unwrap();
+        assert!(report.stopped);
+        let mut walk = walk.leaving_out(std::slice::from_ref(&nas));
+        let report = lib.walk_until(&mut walk, &mut quiet(), &|| false).unwrap();
+        assert!(!report.stopped);
+        assert_eq!(report.added, 1, "{report:?}");
+        assert!(lib.by_path(&nas.join("b.tif")).unwrap().is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A pass asks the disk everything in its first phase and nothing
+    /// under the write lock: over files whose rows are current (the
+    /// common case, a re-poll of an indexed archive), with a sidecar
+    /// changed, an XMP appearing, a file new and a file renamed. So a
+    /// share that stops answering mid-pass stops it holding no lock.
+    #[test]
+    fn a_batch_asks_the_disk_nothing_under_the_lock() {
+        use greycard_edit::xmp;
+        let dir = scratch("under-lock");
+        let (r5, r6, a7) = shoot(&dir);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        // All as indexed: every row current.
+        DISK_CALLS.with(|c| c.set((0, 0)));
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.unchanged, 3, "{report:?}");
+        let (all, locked) = DISK_CALLS.with(|c| c.get());
+        assert!(
+            all >= 6,
+            "the stats and the sidecars, in the first phase: {all}"
+        );
+        assert_eq!(locked, 0, "nothing asked of the disk under the lock");
+        // A sidecar changed, an XMP beside another, a file new and a
+        // file renamed.
+        let mut s = Sidecar::load(&r5).unwrap().unwrap();
+        s.meta.rating = 1;
+        s.save(&r5).unwrap();
+        let three = Meta {
+            rating: 3,
+            ..Meta::default()
+        };
+        std::fs::write(xmp::short_path(&a7), xmp::fresh(&three, None)).unwrap();
+        write_frame(&dir.join("new.tif"), &R5, 77);
+        std::fs::rename(&r6, dir.join("renamed.tif")).unwrap();
+        DISK_CALLS.with(|c| c.set((0, 0)));
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.meta_refreshed, 2, "{report:?}");
+        assert_eq!(report.added, 1, "{report:?}");
+        assert_eq!(report.moved, 1, "{report:?}");
+        assert_eq!(DISK_CALLS.with(|c| c.get()).1, 0);
+        assert_eq!(lib.by_path(&r5).unwrap().unwrap().meta.rating, 1);
+        assert_eq!(lib.by_path(&a7).unwrap().unwrap().meta.rating, 3);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

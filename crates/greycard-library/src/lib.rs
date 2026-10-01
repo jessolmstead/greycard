@@ -763,6 +763,16 @@ impl Library {
         Ok(())
     }
 
+    /// In place of the busy timeout, `handler` asked each time a query
+    /// finds the lock held, with how many times it has been asked for
+    /// this wait; it sleeps as long as it likes and answers whether to
+    /// try again. For a caller that wants to hear, while it waits, that
+    /// the wait is a lock's and not the disk's.
+    pub fn set_busy_handler(&self, handler: fn(i32) -> bool) -> Result<()> {
+        self.conn.busy_handler(Some(handler))?;
+        Ok(())
+    }
+
     /// How many files the index holds, the missing among them.
     pub fn len(&self) -> Result<usize> {
         let n: i64 = self

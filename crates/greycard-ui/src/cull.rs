@@ -1128,8 +1128,12 @@ mod tests {
         .save(&file)
         .unwrap();
         let mut thumbs =
-            greycard_library::Thumbs::at(dir.join("thumbs"), greycard_library::thumbs::DEFAULT_CAP);
-        thumbs.seed_usage(Default::default());
+            greycard_library::Thumbs::at(dir.join("thumbs"), greycard_library::thumbs::DEFAULT_CAP)
+                .with_previews(
+                    crate::previews::SIZE,
+                    greycard_library::thumbs::DEFAULT_PREVIEW_CAP,
+                );
+        thumbs.seed_split(Default::default());
         let cache: crate::worker::ThumbCache = Arc::new(Mutex::new(Some(thumbs)));
         let previews = Arc::new(crate::previews::Previews::new(cache));
         previews.set_roots(vec![dir.clone()]);

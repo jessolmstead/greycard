@@ -35,6 +35,15 @@ export component SettingsSheet inherits Rectangle {
     in-out property <string> thumb-cache-cap;
     callback thumb-cache-clear();
     callback thumb-cache-cap-changed();
+    /// The local previews' own cap in megabytes as typed; taken on
+    /// Enter or Done.
+    in-out property <string> preview-cache-cap;
+    callback preview-cache-cap-changed();
+    /// How often a library root on a network mount, which is not
+    /// watched, is passed over, in minutes as typed; taken on Enter or
+    /// Done. Zero for never.
+    in-out property <string> network-poll-minutes;
+    callback network-poll-changed();
     /// How many of the shipped presets the store is without,
     /// and which, in words; and the button that puts them back.
     in property <int> presets-missing;
@@ -214,8 +223,45 @@ export component SettingsSheet inherits Rectangle {
                         }
                         Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
                     }
+                    if root.thumb-cache-on: HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Previews up to"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        LineEdit {
+                            width: 96px;
+                            text <=> root.preview-cache-cap;
+                            placeholder-text: "8192";
+                            input-type: number;
+                            accepted => { root.preview-cache-cap-changed(); }
+                        }
+                        Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
                     Text {
-                        text: "Kept by content, so a folder moved or renamed opens without making them again. A lower cap drops the thumbnails used longest ago at once.";
+                        text: "Kept by content, so a folder moved or renamed opens without making them again. A lower cap drops the thumbnails used longest ago at once. The previews are culling's pictures of the frames under the library's folders, so a shoot on a share or an unplugged drive is culled without its files; about half a megabyte a frame.";
+                        font-size: Theme.font-xs;
+                        color: Theme.text-muted;
+                        wrap: word-wrap;
+                    }
+                    Rectangle { height: Theme.space-1; }
+                    Text {
+                        text: "NETWORK FOLDERS";
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-medium;
+                        color: Theme.text-secondary;
+                    }
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Look every"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        LineEdit {
+                            width: 96px;
+                            text <=> root.network-poll-minutes;
+                            placeholder-text: "10";
+                            input-type: number;
+                            accepted => { root.network-poll-changed(); }
+                        }
+                        Text { text: "minutes, 0 for never"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
+                    }
+                    Text {
+                        text: "A library folder on a network share (NFS, SMB, sshfs) is not watched, since the share never says what changed on it; it is looked over at launch and this often. Each look lists every folder on it.";
                         font-size: Theme.font-xs;
                         color: Theme.text-muted;
                         wrap: word-wrap;

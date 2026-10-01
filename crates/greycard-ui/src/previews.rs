@@ -46,12 +46,13 @@ const _: () = assert!(SIZE > crate::grid::MAX_RENDER);
 /// culling for focus and expression can see the difference.
 pub const QUALITY: u8 = 88;
 
-/// The share of the cache's cap a preview may be made into: past it,
-/// none is made, so the previews never evict one another round and
-/// round, nor the thumbnails, to make room for themselves. A cache of
-/// the default 300 MB holds about 225 MB of previews, some 480 frames
-/// at the 472 KB a frame measured on the samples; the rest of a
-/// library larger than that culls from its files as before.
+/// The share of the previews' own cap (`preview_cache_mb`, apart from
+/// the thumbnails') a preview may be made into: past it, none is made,
+/// so the previews never evict one another round and round to make room
+/// for themselves at every open of the roots' view. At the default 8 GB
+/// that is 6 GB of previews, some 13,000 frames at the 472 KB a frame
+/// measured on the samples; the rest of a library larger than that
+/// culls from its files as before.
 pub const ROOM: f64 = 0.75;
 
 /// How many previews made from a picture the loupe decoded may be in
@@ -165,7 +166,7 @@ impl Previews {
             .lock()
             .expect("thumbnail cache")
             .as_ref()
-            .is_none_or(|c| c.cap() == 0 || c.has(hash, SIZE, tag));
+            .is_none_or(|c| c.cap() == 0 || c.preview_cap() == 0 || c.has(hash, SIZE, tag));
         let mut owed = self.owed.lock().expect("previews owed");
         if kept {
             owed.remove(path);
@@ -202,8 +203,9 @@ impl Previews {
             .as_ref()
             .is_some_and(|c| {
                 c.cap() > 0
-                    && c.known_usage()
-                        .is_some_and(|u| (u.bytes as f64) < c.cap() as f64 * ROOM)
+                    && c.preview_cap() > 0
+                    && c.known_split()
+                        .is_some_and(|u| (u.previews.bytes as f64) < c.preview_cap() as f64 * ROOM)
             });
         if !room {
             tracing::debug!(
@@ -409,8 +411,8 @@ mod tests {
     /// Previews over a cache of the test's own, its count seeded as the
     /// editor's startup seeds it.
     fn previews_at(dir: &Path, cap: u64) -> Previews {
-        let mut thumbs = Thumbs::at(dir.join("thumbs"), cap);
-        thumbs.seed_usage(greycard_library::thumbs::usage_at(thumbs.root()));
+        let mut thumbs = Thumbs::at(dir.join("thumbs"), cap).with_previews(SIZE, cap);
+        thumbs.seed_split(greycard_library::thumbs::split_at(thumbs.root(), SIZE));
         let cache: ThumbCache = Arc::new(Mutex::new(Some(thumbs)));
         Previews::new(cache)
     }
@@ -604,10 +606,9 @@ mod tests {
         // write walks the cache under its lock; and one past its share
         // of the cap: owed, and not made.
         let unknown = |cap: u64| {
-            let cache: ThumbCache = Arc::new(Mutex::new(Some(Thumbs::at(
-                dir.join(format!("fresh-{cap}")),
-                cap,
-            ))));
+            let cache: ThumbCache = Arc::new(Mutex::new(Some(
+                Thumbs::at(dir.join(format!("fresh-{cap}")), cap).with_previews(SIZE, cap),
+            )));
             let previews = Previews::new(cache);
             previews.set_roots(vec![root.clone()]);
             previews
@@ -623,13 +624,48 @@ mod tests {
             .unwrap()
             .as_mut()
             .unwrap()
-            .seed_usage(greycard_library::thumbs::Usage {
-                bytes: 3,
-                entries: 1,
+            .seed_split(greycard_library::thumbs::Split {
+                previews: greycard_library::thumbs::Usage {
+                    bytes: 3,
+                    entries: 1,
+                },
+                ..Default::default()
             });
         tiny.note(&inside, file_stat(&inside).unwrap(), &hash);
         assert!(tiny.owes(&inside));
         assert_eq!(tiny.make(&inside).unwrap(), None, "no room");
+        // The previews' room is their own cap's: thumbnails filling the
+        // thumbnails' cap leave it, and previews filling theirs take it,
+        // whatever the thumbnails hold.
+        let own = |thumbs_mb: u64, previews_mb: u64, thumbs_held: u64, previews_held: u64| {
+            let mb = 1024 * 1024;
+            let mut cache = Thumbs::at(
+                dir.join(format!("own-{thumbs_mb}-{previews_mb}")),
+                thumbs_mb * mb,
+            )
+            .with_previews(SIZE, previews_mb * mb);
+            cache.seed_split(greycard_library::thumbs::Split {
+                thumbs: greycard_library::thumbs::Usage {
+                    bytes: thumbs_held * mb,
+                    entries: 1,
+                },
+                previews: greycard_library::thumbs::Usage {
+                    bytes: previews_held * mb,
+                    entries: 1,
+                },
+            });
+            let previews = Previews::new(Arc::new(Mutex::new(Some(cache))));
+            previews.set_roots(vec![root.clone()]);
+            previews.note(&inside, file_stat(&inside).unwrap(), &hash);
+            previews.take(&inside).is_some()
+        };
+        assert!(
+            own(300, 8192, 299, 0),
+            "a full thumbnail cap leaves the previews room"
+        );
+        assert!(own(300, 8192, 0, 6000), "under three quarters of their own");
+        assert!(!own(300, 8192, 0, 6200), "past three quarters of their own");
+        assert!(!own(300, 0, 0, 0), "a previews' cap of nothing keeps none");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

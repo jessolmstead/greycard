@@ -15,6 +15,18 @@
 //! reader waits only while the log is recovered or checkpointed, and
 //! the window keeps its last answer then rather than wait.
 //!
+//! The passes themselves run on a lane of their own, a thread with a
+//! third connection, which the indexer's thread waits on. A root is
+//! looked at before a pass over it begins, with the roots' 3 s look,
+//! and one that does not answer is skipped; a pass that goes quiet in
+//! the middle (a share that answered the look and then stopped) is set
+//! aside on its lane after [`PASS_WAIT`], the same 3 s, and its root
+//! is skipped until it is back, when its report lands as any other. So
+//! a hung root holds the other roots' passes and their reports for that
+//! once at most. The rows of the window's own saves (`index_file`) and
+//! deletes (`forget`) are still written on the indexer's thread itself,
+//! unguarded: one for a frame on a share that hangs holds it there.
+//!
 //! The keyword's chips are counted from the sidecars in hand, as the
 //! meta rows are: the keyword is the sidecar's, the window has it
 //! before any row does, and under `--no-sidecars` the rows say what
@@ -72,14 +84,24 @@ enum Ask {
     /// Forget these files' rows: the window deleted the files.
     Forget(Vec<PathBuf>),
     /// The launch pass: each root's tree, one after another, in the
-    /// background of everything else.
-    Roots(Vec<PathBuf>),
+    /// background of everything else; with the network mounts below
+    /// them that their walks leave out, as the same look found them, so
+    /// the two never arrive apart.
+    Roots {
+        roots: Vec<PathBuf>,
+        left_out: Vec<PathBuf>,
+    },
     /// What the watcher saw change under the roots, in the
     /// background too, but ahead of the launch pass.
     Changes(Vec<Change>),
     /// The timer's tick over the roots on a network mount: a tree pass
     /// over each, behind everything else ([`queue_poll`]).
     Poll(Vec<PathBuf>),
+    /// The network mounts below the local roots, all of them as the
+    /// last watcher's build found them: a local root's walk leaves them
+    /// out, since each is passed over as its own root, so a share there
+    /// that hangs holds its own pass and not the local root's.
+    LeftOut(Vec<PathBuf>),
     /// The editor is leaving: wakes a thread waiting on the next
     /// ask, which the watcher's end of the channel would otherwise
     /// keep waiting.
@@ -145,6 +167,20 @@ pub(crate) enum Told {
     /// A pass in the background has got further under `path`, and
     /// has written what it found so far.
     BackgroundProgress { path: PathBuf },
+    /// A pass over `path` was not made, or was left partway: `root`
+    /// did not answer the look before it, or stopped answering in the
+    /// middle of it. Its rows are as they were, and the next pass over
+    /// it (the next tick, the next change) tries again. `first` when
+    /// this is the first word of it since the root last answered, so
+    /// the window says it once. `generation` for the window's own
+    /// folder pass, none for one in the background.
+    Skipped {
+        path: PathBuf,
+        root: PathBuf,
+        launch: bool,
+        generation: Option<u64>,
+        first: bool,
+    },
 }
 
 /// The indexer's thread, and the way to ask it things.
@@ -179,12 +215,62 @@ impl Asker {
     }
 }
 
+/// How the indexer keeps a root that does not answer from holding the
+/// rest: the look at a root before a pass over it, and how long a pass
+/// may go without a word before it is set aside.
+pub(crate) struct Guard {
+    /// Whether a root answers, within whatever wait the look keeps.
+    /// The editor's is the roots' 3 s look, one thread a root at most.
+    pub(crate) answers: Box<dyn Fn(&Path) -> bool + Send>,
+    /// A pass that has said nothing (not a file begun, not a folder
+    /// left) for this long is set aside on its lane, where it goes on
+    /// alone and lands if it ever comes back, and the indexer takes up
+    /// the next pass on a fresh lane.
+    pub(crate) wait: Duration,
+    /// A test's hand in the pass: called before each file a pass in
+    /// the background looks at, on the pass's thread.
+    #[cfg(test)]
+    pub(crate) each_file: Option<EachFile>,
+}
+
+/// A test's hand in each file a pass looks at.
+#[cfg(test)]
+pub(crate) type EachFile = Arc<dyn Fn(&Path) + Send + Sync>;
+
+/// How long a pass may go without a word before it is set aside: the
+/// roots' own wait (3 s). A word is a file begun, a batch written or a
+/// folder left, each a few round trips. A share's disks waking from
+/// sleep can take longer, which costs nothing here: the pass set aside
+/// goes on, and its report lands when it is done; only the other roots'
+/// passes no longer wait for it.
+const PASS_WAIT: Duration = crate::roots::ROOT_WAIT;
+
+impl Default for Guard {
+    fn default() -> Self {
+        Guard {
+            answers: Box::new(|root: &Path| crate::roots::answers(root)),
+            wait: PASS_WAIT,
+            #[cfg(test)]
+            each_file: None,
+        }
+    }
+}
+
 impl Indexer {
     /// Open the library at `path` on a thread of its own and wait
     /// there for folders and files. `told` is called on that thread.
     pub(crate) fn start(
         path: PathBuf,
         told: impl Fn(Told) + Send + 'static,
+    ) -> std::io::Result<Indexer> {
+        Self::start_with(path, told, Guard::default())
+    }
+
+    /// [`Indexer::start`] with the looks and the stall of `guard`.
+    pub(crate) fn start_with(
+        path: PathBuf,
+        told: impl Fn(Told) + Send + 'static,
+        guard: Guard,
     ) -> std::io::Result<Indexer> {
         let (asks, waiting) = mpsc::channel();
         let wanted = Arc::new(AtomicU64::new(0));
@@ -197,7 +283,7 @@ impl Indexer {
         };
         let thread = std::thread::Builder::new()
             .name("greycard index".into())
-            .spawn(move || run(path, waiting, told, waits))?;
+            .spawn(move || run(path, waiting, told, waits, guard))?;
         Ok(Indexer {
             asks,
             wanted,
@@ -216,7 +302,19 @@ impl Indexer {
     /// The launch pass over the roots, in this order, behind every
     /// folder the window asks for and every save.
     pub(crate) fn roots(&self, roots: Vec<PathBuf>) {
-        let _ = self.asks.send(Ask::Roots(roots));
+        self.launch(roots, Vec::new());
+    }
+
+    /// [`Indexer::roots`], with the network mounts below them that their
+    /// walks leave out, in the one ask.
+    pub(crate) fn launch(&self, roots: Vec<PathBuf>, left_out: Vec<PathBuf>) {
+        let _ = self.asks.send(Ask::Roots { roots, left_out });
+    }
+
+    /// The network mounts below the local roots, which their walks
+    /// leave out ([`Ask::LeftOut`]).
+    pub(crate) fn left_out(&self, points: Vec<PathBuf>) {
+        let _ = self.asks.send(Ask::LeftOut(points));
     }
 
     pub(crate) fn asker(&self) -> Asker {
@@ -269,6 +367,7 @@ impl Indexer {
 }
 
 /// What the window has asked for that a pass in hand gives way to.
+#[derive(Clone)]
 struct Waits {
     /// The folder pass the window wants.
     wanted: Arc<AtomicU64>,
@@ -282,10 +381,16 @@ struct Waits {
 /// leaving it waiting on a pass that will never end. The probe
 /// catches a decoder's panic at the file already; this is for
 /// everything else.
-fn run(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: impl Fn(Told), waits: Waits) {
+fn run(
+    path: PathBuf,
+    waiting: mpsc::Receiver<Ask>,
+    told: impl Fn(Told),
+    waits: Waits,
+    guard: Guard,
+) {
     let told = &told;
     let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        serve(path, waiting, told, &waits)
+        serve(path, waiting, told, &waits, &guard)
     }));
     if let Err(payload) = held {
         told(Told::Failed(format!(
@@ -332,9 +437,11 @@ fn queue(background: &mut VecDeque<Background>, job: Background) {
 /// launch walk is never finished by a tick and then walked again. True
 /// when it was queued.
 fn queue_poll(background: &mut VecDeque<Background>, root: PathBuf) -> bool {
+    // A pass over a tree above it covers it as well: a network mount
+    // below a local root is walked by that root's launch pass.
     let whole = |b: &Background| match b {
         Background::Root(r) | Background::Poll(r) | Background::Change(Change::Tree(r)) => {
-            *r == root
+            root.starts_with(r)
         }
         Background::Change(Change::Folder(_)) => false,
     };
@@ -345,7 +452,274 @@ fn queue_poll(background: &mut VecDeque<Background>, root: PathBuf) -> bool {
     true
 }
 
-fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits: &Waits) {
+/// A word from a pass on the lane: that it is still moving, or one for
+/// the window, handed on by the indexer's thread.
+enum Word {
+    Beat,
+    Told(Box<Told>),
+}
+
+/// What the lane sends back while a pass runs.
+enum Back<R> {
+    Word(Word),
+    Done(R),
+    Panicked(Box<dyn std::any::Any + Send>),
+}
+
+type LaneJob = Box<dyn FnOnce(&mut Library) + Send>;
+
+thread_local! {
+    /// The pass in hand's word that it is still moving, for the lane's
+    /// busy handler: a wait on the library's lock is the library's, not
+    /// a share's that stopped answering.
+    static LANE_BEAT: std::cell::RefCell<Option<Box<dyn Fn()>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// How many times the lane's busy handler waits on a held lock before
+/// the query answers busy: 10 ms each, so the five seconds of
+/// rusqlite's own timeout.
+const LANE_BUSY_TRIES: i32 = 500;
+
+/// The lane's connection's busy handler: says the pass is moving, and
+/// waits a moment, up to [`LANE_BUSY_TRIES`] times.
+fn lane_busy(tries: i32) -> bool {
+    LANE_BEAT.with(|b| {
+        if let Some(beat) = &*b.borrow() {
+            beat();
+        }
+    });
+    if tries >= LANE_BUSY_TRIES {
+        return false;
+    }
+    std::thread::sleep(Duration::from_millis(10));
+    true
+}
+
+/// The thread the passes run on, with a connection of its own to the
+/// library, so a pass gone quiet on a root that stopped answering can be
+/// set aside there while the indexer goes on with the other roots on a
+/// fresh lane. The pass's disk reads are made with no transaction open
+/// (`index.rs`), so one set aside holds no lock the next pass wants,
+/// unless it went quiet inside a batch's write, where a sidecar is read.
+struct Lane {
+    jobs: mpsc::Sender<LaneJob>,
+}
+
+impl Lane {
+    fn start(path: &Path) -> Option<Lane> {
+        let (jobs, taken) = mpsc::channel::<LaneJob>();
+        let path = path.to_path_buf();
+        let spawned = std::thread::Builder::new()
+            .name("greycard index pass".into())
+            .spawn(move || {
+                let mut lib = match Library::open(&path) {
+                    Ok(lib) => lib,
+                    Err(e) => {
+                        // Each job dropped untouched: the indexer hears
+                        // its end of the reply go.
+                        tracing::warn!("index: no connection for the passes: {e}");
+                        return;
+                    }
+                };
+                if let Err(e) = lib.set_busy_handler(lane_busy) {
+                    tracing::debug!("index: the passes' busy handler: {e}");
+                }
+                // Ends when the lane is dropped: set aside, its pass done.
+                for job in taken {
+                    job(&mut lib);
+                }
+            });
+        match spawned {
+            Ok(_) => Some(Lane { jobs }),
+            Err(e) => {
+                tracing::warn!("index: no thread for the passes: {e}");
+                None
+            }
+        }
+    }
+}
+
+/// A pass set aside on its lane: what it will say, and when it is done.
+struct Aside<R> {
+    answers: mpsc::Receiver<Back<R>>,
+}
+
+/// How a pass on the lane went.
+enum Ran<R> {
+    Done(R),
+    /// It said nothing for the guard's wait, and was set aside on its
+    /// lane, which goes on with it alone.
+    Aside(Aside<R>),
+    /// The lane went (its connection would not open, or no thread).
+    Lost,
+}
+
+/// One word or the end from a pass, handled on the indexer's thread:
+/// a word for the window is handed on, a panic is the indexer's own.
+/// The result when it is done.
+fn heard<R>(back: Back<R>, told: &dyn Fn(Told)) -> Option<R> {
+    match back {
+        Back::Word(Word::Beat) => None,
+        Back::Word(Word::Told(t)) => {
+            told(*t);
+            None
+        }
+        Back::Done(r) => Some(r),
+        // Said to the window as the indexer's own, as it was when the
+        // passes ran on its thread.
+        Back::Panicked(p) => std::panic::resume_unwind(p),
+    }
+}
+
+/// Run `job` on the lane, started if there is none, and wait for it
+/// here, handing on its words to the window and taking each as a sign
+/// it is moving. One that goes quiet for `wait` (or while the editor
+/// leaves) is set aside with its lane, and the next pass gets a fresh
+/// one: a share that answered its look and then stopped holds its own
+/// pass and no other.
+fn on_lane<R: Send + 'static>(
+    lane: &mut Option<Lane>,
+    path: &Path,
+    wait: Duration,
+    told: &dyn Fn(Told),
+    leaving: &dyn Fn() -> bool,
+    job: impl FnOnce(&mut Library, &dyn Fn(Word)) -> R + Send + 'static,
+) -> Ran<R> {
+    if lane.is_none() {
+        *lane = Lane::start(path);
+    }
+    let Some(running) = lane.as_ref() else {
+        return Ran::Lost;
+    };
+    let (back, answers) = mpsc::channel::<Back<R>>();
+    let boxed: LaneJob = Box::new(move |lib| {
+        let word = |w: Word| {
+            let _ = back.send(Back::Word(w));
+        };
+        let beat = back.clone();
+        LANE_BEAT.with(|b| {
+            *b.borrow_mut() = Some(Box::new(move || {
+                let _ = beat.send(Back::Word(Word::Beat));
+            }))
+        });
+        let out = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| job(lib, &word)));
+        LANE_BEAT.with(|b| *b.borrow_mut() = None);
+        let _ = back.send(match out {
+            Ok(r) => Back::Done(r),
+            Err(p) => Back::Panicked(p),
+        });
+    });
+    if running.jobs.send(boxed).is_err() {
+        *lane = None;
+        return Ran::Lost;
+    }
+    let tick = wait.min(Duration::from_millis(200));
+    let mut last = Instant::now();
+    loop {
+        match answers.recv_timeout(tick) {
+            Ok(back) => {
+                last = Instant::now();
+                if let Some(r) = heard(back, told) {
+                    return Ran::Done(r);
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                if last.elapsed() >= wait || leaving() {
+                    *lane = None;
+                    return Ran::Aside(Aside { answers });
+                }
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                *lane = None;
+                return Ran::Lost;
+            }
+        }
+    }
+}
+
+/// The root a pass's path is under, of the roots the indexer has been
+/// asked to pass over: what its look is at, and what a pass set aside
+/// is kept against.
+fn root_for(known: &[PathBuf], path: &Path) -> Option<PathBuf> {
+    known
+        .iter()
+        .filter(|r| path.starts_with(r))
+        .max_by_key(|r| r.as_os_str().len())
+        .cloned()
+}
+
+/// What a pass in the background brings back: the pass's report, and
+/// the walk to take up again when it stopped partway.
+type Passed = (
+    greycard_library::Result<Report>,
+    Option<greycard_library::TreeWalk>,
+);
+
+/// A pass in the background set aside on its lane.
+struct AsideJob {
+    job: Background,
+    tree: Option<PathBuf>,
+    key: PathBuf,
+    started: Instant,
+    aside: Aside<Passed>,
+}
+
+/// The window's folder pass set aside on its lane.
+struct AsideFolder {
+    key: PathBuf,
+    aside: Aside<Option<Pass>>,
+}
+
+/// The passes set aside, and the roots said to the window as not
+/// answering since they last did.
+#[derive(Default)]
+struct Hung {
+    jobs: Vec<AsideJob>,
+    folders: Vec<AsideFolder>,
+    said: HashSet<PathBuf>,
+}
+
+impl Hung {
+    /// Whether a pass over `path` would meet a pass still set aside: it
+    /// is in a tree set aside, or, for a pass over a whole tree (`tree`),
+    /// one set aside is in it, unless that one is a mount the tree's walk
+    /// leaves out (`left_out`). Such a pass is skipped, with no look,
+    /// until the one set aside is back, so no two passes walk one tree.
+    fn out(&self, path: &Path, tree: bool, left_out: &[PathBuf]) -> bool {
+        let meets = |key: &PathBuf| {
+            path.starts_with(key) || (tree && key.starts_with(path) && !left_out.contains(key))
+        };
+        self.jobs.iter().any(|a| meets(&a.key)) || self.folders.iter().any(|a| meets(&a.key))
+    }
+
+    /// `root` did not answer: true the first time since it last did.
+    fn first(&mut self, root: &Path) -> bool {
+        self.said.insert(root.to_path_buf())
+    }
+
+    /// `root` answered: the next time it does not is said again.
+    fn answered(&mut self, root: &Path) {
+        self.said.remove(root);
+    }
+}
+
+/// What the indexer's thread holds for the passes it hands the lane.
+struct Held<'a> {
+    lane: &'a mut Option<Lane>,
+    path: &'a Path,
+    hung: &'a mut Hung,
+    known: &'a [PathBuf],
+    left_out: &'a [PathBuf],
+}
+
+fn serve(
+    path: PathBuf,
+    waiting: mpsc::Receiver<Ask>,
+    told: &dyn Fn(Told),
+    waits: &Waits,
+    guard: &Guard,
+) {
     let mut lib = match Library::open(&path) {
         Ok(lib) => lib,
         Err(e) => {
@@ -353,21 +727,85 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
             return;
         }
     };
-    told(Told::Opened(path));
+    told(Told::Opened(path.clone()));
     let wanted = &*waits.wanted;
     let files_waiting = &*waits.files;
+    let leaving = || wanted.load(Ordering::SeqCst) == LEAVING;
     let mut pending: Option<Pass> = None;
     let mut background: VecDeque<Background> = VecDeque::new();
     // The tree passes stopped partway, by their folder.
     let mut walks: HashMap<PathBuf, greycard_library::TreeWalk> = HashMap::new();
+    // The passes run on a lane of their own, so one gone quiet on a root
+    // that stopped answering is set aside there and the rest go on.
+    let mut lane: Option<Lane> = None;
+    let mut hung = Hung::default();
+    // The roots asked to be passed over, for each pass's look.
+    let mut known: Vec<PathBuf> = Vec::new();
+    // The network mounts below local roots, left out of their walks.
+    let mut left_out: Vec<PathBuf> = Vec::new();
     loop {
-        if wanted.load(Ordering::SeqCst) == LEAVING {
+        if leaving() {
             return;
         }
-        // With a pass to take up again, only what is already
-        // waiting; with none, wait for the next ask.
+        // The passes set aside that have come back since, or said
+        // something: landed as if they had never been set aside.
+        let mut index = 0;
+        while index < hung.jobs.len() {
+            match hung.jobs[index].aside.answers.try_recv() {
+                Ok(back) => {
+                    if let Some(passed) = heard(back, told) {
+                        let a = hung.jobs.remove(index);
+                        tracing::info!("index: the pass over {} came back", a.job.path().display());
+                        hung.answered(&a.key);
+                        if let Some(job) =
+                            background_done(a.job, a.tree, a.started, passed, &mut walks, told)
+                        {
+                            background.push_front(job);
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => index += 1,
+                // The lane died with it (it panicked past its catch):
+                // nothing more will come, and the root is free again.
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    hung.jobs.remove(index);
+                }
+            }
+        }
+        let mut index = 0;
+        while index < hung.folders.len() {
+            match hung.folders[index].aside.answers.try_recv() {
+                Ok(back) => {
+                    if let Some(left) = heard(back, told) {
+                        let a = hung.folders.remove(index);
+                        hung.answered(&a.key);
+                        // Stopped for a save meanwhile: taken up again
+                        // when it is still the folder the window wants.
+                        if let Some(pass) = left
+                            && pending.is_none()
+                            && wanted.load(Ordering::SeqCst) == pass.generation
+                        {
+                            pending = Some(pass);
+                        }
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => index += 1,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    hung.folders.remove(index);
+                }
+            }
+        }
+        // With a pass to take up again, only what is already waiting;
+        // with passes set aside, the next ask or a moment, to look at
+        // them again; with neither, wait for the next ask.
         let first = if pending.is_some() || !background.is_empty() {
             waiting.try_recv().ok()
+        } else if !hung.jobs.is_empty() || !hung.folders.is_empty() {
+            match waiting.recv_timeout(Duration::from_millis(200)) {
+                Ok(ask) => Some(ask),
+                Err(mpsc::RecvTimeoutError::Timeout) => None,
+                Err(mpsc::RecvTimeoutError::Disconnected) => return,
+            }
         } else {
             match waiting.recv() {
                 Ok(ask) => Some(ask),
@@ -399,8 +837,26 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
                         started: Instant::now(),
                     });
                 }
-                Ask::Roots(roots) => {
+                Ask::Roots {
+                    roots,
+                    left_out: more,
+                } => {
+                    // Added to what is left out, not put in its place: a
+                    // launch's look from a build since overtaken knows
+                    // less than the newer build's `LeftOut`, never more
+                    // that is wrong to leave out.
+                    for point in more {
+                        if !known.contains(&point) {
+                            known.push(point.clone());
+                        }
+                        if !left_out.contains(&point) {
+                            left_out.push(point);
+                        }
+                    }
                     for root in roots {
+                        if !known.contains(&root) {
+                            known.push(root.clone());
+                        }
                         queue(&mut background, Background::Root(root));
                     }
                 }
@@ -411,6 +867,9 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
                 }
                 Ask::Poll(roots) => {
                     for root in roots {
+                        if !known.contains(&root) {
+                            known.push(root.clone());
+                        }
                         if !queue_poll(&mut background, root.clone()) {
                             tracing::debug!(
                                 "index: {} is still to be passed over; the timer's tick skipped",
@@ -418,6 +877,14 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
                             );
                         }
                     }
+                }
+                Ask::LeftOut(points) => {
+                    for point in &points {
+                        if !known.contains(point) {
+                            known.push(point.clone());
+                        }
+                    }
+                    left_out = points;
                 }
                 Ask::Leave => return,
             }
@@ -439,44 +906,18 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
             }
         }
         if let Some(pass) = pending.take() {
-            pending = window_pass(&mut lib, pass, told, waits);
+            let mut held = Held {
+                lane: &mut lane,
+                path: &path,
+                hung: &mut hung,
+                known: &known,
+                left_out: &left_out,
+            };
+            pending = window_pass_guarded(&mut held, pass, told, waits, guard);
             continue;
         }
         let Some(job) = background.pop_front() else {
             continue;
-        };
-        // In the background: anything the window asks for comes
-        // first, and this pass takes up again after it, from where it
-        // stopped (a tree's walk is kept for that).
-        let stop = || {
-            wanted.load(Ordering::SeqCst) == LEAVING
-                || files_waiting.load(Ordering::SeqCst) > 0
-                || waits.folders.load(Ordering::SeqCst)
-        };
-        let started = Instant::now();
-        // A long pass says now and then that it has written rows, so
-        // a view of the roots fills in while a large root is walked
-        // for the first time rather than all at once at the end; and
-        // says nothing while it finds nothing new.
-        let mut last = Instant::now();
-        let mut written: (PathBuf, usize) = (PathBuf::new(), 0);
-        let mut unsaid = false;
-        let mut progress = |p: greycard_library::Progress<'_>| {
-            let folder = p.path.parent().unwrap_or(Path::new(""));
-            if folder != written.0 {
-                written = (folder.to_path_buf(), 0);
-            }
-            if p.written > written.1 {
-                written.1 = p.written;
-                unsaid = true;
-            }
-            if unsaid && last.elapsed() >= BACKGROUND_EVERY {
-                last = Instant::now();
-                unsaid = false;
-                told(Told::BackgroundProgress {
-                    path: job.path().to_path_buf(),
-                });
-            }
         };
         let tree = match &job {
             Background::Root(dir)
@@ -484,60 +925,321 @@ fn serve(path: PathBuf, waiting: mpsc::Receiver<Ask>, told: &dyn Fn(Told), waits
             | Background::Change(Change::Tree(dir)) => Some(dir.clone()),
             Background::Change(Change::Folder(_)) => None,
         };
-        let passed = match (&job, &tree) {
-            (_, Some(dir)) => {
-                let walk = match walks.remove(dir) {
-                    Some(w) => Ok(w),
-                    None => lib.tree_walk(dir),
-                };
-                walk.and_then(|mut w| {
-                    let r = lib.walk_until(&mut w, &mut progress, &stop);
-                    if r.as_ref().is_ok_and(|r| r.stopped) {
-                        walks.insert(dir.clone(), w);
-                    }
-                    r
-                })
-            }
-            (Background::Change(Change::Folder(dir)), None) => {
-                lib.index_folder_until(dir, &mut progress, &stop)
-            }
-            _ => unreachable!("a tree job has its folder"),
+        // The root the pass is under, looked at before a pass is begun
+        // (not when one stopped partway is taken up again): a root that
+        // does not answer is skipped, its rows left as they are, and the
+        // other roots' passes go on. One whose last pass was set aside
+        // is skipped without a look until that pass is back.
+        let root = root_for(&known, job.path());
+        let key = root.clone().unwrap_or_else(|| job.path().to_path_buf());
+        let resumed = tree.as_ref().is_some_and(|d| walks.contains_key(d));
+        let skip = if hung.out(job.path(), tree.is_some(), &left_out) {
+            true
+        } else if let (Some(root), false) = (&root, resumed) {
+            !(guard.answers)(root)
+        } else {
+            false
         };
-        let (report, error) = match passed {
-            Ok(r) if r.stopped => {
-                background.push_front(job);
+        if skip {
+            if let Some(dir) = &tree {
+                walks.remove(dir);
+            }
+            let first = hung.first(&key);
+            if first {
+                tracing::warn!(
+                    "index: {} does not answer; its pass is skipped and its rows kept as they are",
+                    key.display()
+                );
+            }
+            told(Told::Skipped {
+                path: job.path().to_path_buf(),
+                root: key,
+                launch: matches!(job, Background::Root(_)),
+                generation: None,
+                first,
+            });
+            continue;
+        }
+        let started = Instant::now();
+        let walk = tree.as_ref().and_then(|d| walks.remove(d));
+        let job_on_lane = job.clone();
+        let tree_on_lane = tree.clone();
+        let waits_on_lane = waits.clone();
+        let leave_out = left_out.clone();
+        #[cfg(test)]
+        let each_file = guard.each_file.clone();
+        let ran = on_lane(
+            &mut lane,
+            &path,
+            guard.wait,
+            told,
+            &leaving,
+            move |lib, word| -> Passed {
+                let job = job_on_lane;
+                let waits = waits_on_lane;
+                // In the background: anything the window asks for comes
+                // first, and this pass takes up again after it, from
+                // where it stopped (a tree's walk is kept for that).
+                let stop = || {
+                    word(Word::Beat);
+                    waits.wanted.load(Ordering::SeqCst) == LEAVING
+                        || waits.files.load(Ordering::SeqCst) > 0
+                        || waits.folders.load(Ordering::SeqCst)
+                };
+                // A long pass says now and then that it has written rows,
+                // so a view of the roots fills in while a large root is
+                // walked for the first time rather than all at once at
+                // the end; and says nothing while it finds nothing new.
+                let mut last = Instant::now();
+                let mut written: (PathBuf, usize) = (PathBuf::new(), 0);
+                let mut unsaid = false;
+                let mut progress = |p: greycard_library::Progress<'_>| {
+                    word(Word::Beat);
+                    #[cfg(test)]
+                    if let Some(hold) = &each_file {
+                        hold(p.path);
+                    }
+                    let folder = p.path.parent().unwrap_or(Path::new(""));
+                    if folder != written.0 {
+                        written = (folder.to_path_buf(), 0);
+                    }
+                    if p.written > written.1 {
+                        written.1 = p.written;
+                        unsaid = true;
+                    }
+                    if unsaid && last.elapsed() >= BACKGROUND_EVERY {
+                        last = Instant::now();
+                        unsaid = false;
+                        word(Word::Told(Box::new(Told::BackgroundProgress {
+                            path: job.path().to_path_buf(),
+                        })));
+                    }
+                };
+                match (&job, tree_on_lane) {
+                    (_, Some(dir)) => {
+                        // A walk taken up again leaves out what is left out
+                        // now: a mount found since it began (the roots
+                        // changed) is not walked into by it.
+                        let walk = match walk {
+                            Some(w) => Ok(w),
+                            None => lib.tree_walk(&dir),
+                        }
+                        .map(|w| w.leaving_out(&leave_out));
+                        match walk {
+                            Ok(mut w) => {
+                                let r = lib.walk_until(&mut w, &mut progress, &stop);
+                                let keep = r.as_ref().is_ok_and(|r| r.stopped).then_some(w);
+                                (r, keep)
+                            }
+                            Err(e) => (Err(e), None),
+                        }
+                    }
+                    (Background::Change(Change::Folder(dir)), None) => {
+                        (lib.index_folder_until(dir, &mut progress, &stop), None)
+                    }
+                    _ => unreachable!("a tree job has its folder"),
+                }
+            },
+        );
+        let passed = match ran {
+            Ran::Done(passed) => {
+                hung.answered(&key);
+                passed
+            }
+            Ran::Aside(aside) => {
+                if leaving() {
+                    return;
+                }
+                let first = hung.first(&key);
+                tracing::warn!(
+                    "index: the pass over {} has said nothing for {} s; set aside, and {} \
+                     skipped until it is back",
+                    job.path().display(),
+                    guard.wait.as_secs_f64(),
+                    key.display()
+                );
+                told(Told::Skipped {
+                    path: job.path().to_path_buf(),
+                    root: key.clone(),
+                    launch: matches!(job, Background::Root(_)),
+                    generation: None,
+                    first,
+                });
+                // A launch pass is counted done by the word above: when it
+                // lands, or is taken up again after stopping for a save,
+                // it is a pass over the root and no longer the launch's,
+                // so the window does not count it a second time.
+                let job = match job {
+                    Background::Root(dir) => Background::Poll(dir),
+                    other => other,
+                };
+                hung.jobs.push(AsideJob {
+                    job,
+                    tree,
+                    key,
+                    started,
+                    aside,
+                });
                 continue;
             }
-            Ok(r) => (r, None),
-            Err(e) => {
-                // A folder the watcher named that went again before
-                // it was reached, most likely: the pass over its
-                // parent, which the same event brings, says it.
-                tracing::debug!("index: {}: {e}", job.path().display());
-                (Report::default(), Some(e.to_string()))
-            }
+            Ran::Lost => (
+                Err(greycard_library::Error::Io(std::io::Error::other(
+                    "the passes' connection to the library could not be had",
+                ))),
+                None,
+            ),
         };
-        told(Told::Background {
-            path: job.path().to_path_buf(),
-            launch: matches!(job, Background::Root(_)),
-            report,
-            seconds: started.elapsed().as_secs_f64(),
-            error,
+        if let Some(job) = background_done(job, tree, started, passed, &mut walks, told) {
+            background.push_front(job);
+        }
+    }
+}
+
+/// A pass in the background done, on the lane or after being set aside:
+/// a walk stopped partway kept, and the job handed back to go to the
+/// front of the queue again; else its report told to the window.
+fn background_done(
+    job: Background,
+    tree: Option<PathBuf>,
+    started: Instant,
+    (passed, keep): Passed,
+    walks: &mut HashMap<PathBuf, greycard_library::TreeWalk>,
+    told: &dyn Fn(Told),
+) -> Option<Background> {
+    if let (Some(dir), Some(w)) = (&tree, keep) {
+        walks.insert(dir.clone(), w);
+    }
+    let (report, error) = match passed {
+        Ok(r) if r.stopped => return Some(job),
+        Ok(r) => (r, None),
+        Err(e) => {
+            // A folder the watcher named that went again before it was
+            // reached, most likely: the pass over its parent, which the
+            // same event brings, says it.
+            tracing::debug!("index: {}: {e}", job.path().display());
+            (Report::default(), Some(e.to_string()))
+        }
+    };
+    told(Told::Background {
+        path: job.path().to_path_buf(),
+        launch: matches!(job, Background::Root(_)),
+        report,
+        seconds: started.elapsed().as_secs_f64(),
+        error,
+    });
+    None
+}
+
+/// The window's folder pass on the lane, under the same guard as the
+/// passes in the background: a folder on a share that stops answering
+/// in the middle of it is set aside, said, and the indexer goes on; it
+/// says its report if it comes back. What is left of the pass to take
+/// up again, if anything.
+fn window_pass_guarded(
+    held: &mut Held<'_>,
+    pass: Pass,
+    told: &dyn Fn(Told),
+    waits: &Waits,
+    guard: &Guard,
+) -> Option<Pass> {
+    if waits.wanted.load(Ordering::SeqCst) != pass.generation {
+        return None;
+    }
+    let generation = pass.generation;
+    let first_dir = pass.dirs.first().cloned().unwrap_or_default();
+    let key = root_for(held.known, &first_dir).unwrap_or_else(|| first_dir.clone());
+    let skipped = |hung: &mut Hung, key: PathBuf| {
+        let first = hung.first(&key);
+        told(Told::Skipped {
+            path: first_dir.clone(),
+            root: key,
+            launch: false,
+            generation: Some(generation),
+            first,
         });
+    };
+    // A folder's pass reads its folders alone, not the trees under them.
+    if pass
+        .dirs
+        .iter()
+        .any(|d| held.hung.out(d, false, held.left_out))
+    {
+        skipped(held.hung, key);
+        return None;
+    }
+    let waits_on_lane = waits.clone();
+    let leaving = || waits.wanted.load(Ordering::SeqCst) == LEAVING;
+    #[cfg(test)]
+    let each_file = guard.each_file.clone();
+    let ran = on_lane(
+        held.lane,
+        held.path,
+        guard.wait,
+        told,
+        &leaving,
+        move |lib, word| {
+            let beat = |_file: Option<&Path>| {
+                word(Word::Beat);
+                #[cfg(test)]
+                if let (Some(hold), Some(file)) = (&each_file, _file) {
+                    hold(file);
+                }
+            };
+            window_pass(
+                lib,
+                pass,
+                &|t| word(Word::Told(Box::new(t))),
+                &beat,
+                &waits_on_lane,
+            )
+        },
+    );
+    match ran {
+        Ran::Done(left) => {
+            held.hung.answered(&key);
+            left
+        }
+        Ran::Aside(aside) => {
+            tracing::warn!(
+                "index: the pass over {} has said nothing for {} s; set aside",
+                first_dir.display(),
+                guard.wait.as_secs_f64()
+            );
+            skipped(held.hung, key.clone());
+            held.hung.folders.push(AsideFolder { key, aside });
+            None
+        }
+        Ran::Lost => {
+            told(Told::Indexed {
+                generation,
+                report: Report::default(),
+                seconds: 0.0,
+                error: Some("the passes' connection to the library could not be had".into()),
+            });
+            None
+        }
     }
 }
 
 /// The window's folder pass, stopped for a save or for a folder
 /// since opened: what is left of it to take up again, if anything.
-fn window_pass(lib: &mut Library, pass: Pass, told: &dyn Fn(Told), waits: &Waits) -> Option<Pass> {
+fn window_pass(
+    lib: &mut Library,
+    pass: Pass,
+    told: &dyn Fn(Told),
+    beat: &dyn Fn(Option<&Path>),
+    waits: &Waits,
+) -> Option<Pass> {
     let wanted = &*waits.wanted;
     let files_waiting = &*waits.files;
     let generation = pass.generation;
     if wanted.load(Ordering::SeqCst) != generation {
         return None;
     }
-    let stop =
-        || wanted.load(Ordering::SeqCst) != generation || files_waiting.load(Ordering::SeqCst) > 0;
+    let stop = || {
+        beat(None);
+        wanted.load(Ordering::SeqCst) != generation || files_waiting.load(Ordering::SeqCst) > 0
+    };
     let mut report = Report::default();
     let mut error = None;
     let mut last = Instant::now();
@@ -546,6 +1248,7 @@ fn window_pass(lib: &mut Library, pass: Pass, told: &dyn Fn(Told), waits: &Waits
         let passed = lib.index_folder_until(
             dir,
             &mut |p| {
+                beat(Some(p.path));
                 if last.elapsed() >= PROGRESS_EVERY {
                     last = Instant::now();
                     told(Told::Progress {
@@ -623,17 +1326,11 @@ pub(crate) fn folders_of(files: &[PathBuf]) -> Vec<PathBuf> {
 pub(crate) fn index_open_folder(st: &mut State, ids: Option<Vec<Option<i64>>>) {
     match ids {
         Some(ids) if ids.len() == st.files.len() => st.index_ids = ids,
+        // Each folder's canonical form as the read that brought the
+        // list made it, off the window's thread: a folder opened by
+        // hand is made canonical again by every read of it, so a link
+        // pointed elsewhere since is followed there and not here.
         _ => {
-            // A folder opened by hand is made canonical again as it
-            // opens: a link to it may point elsewhere now. The
-            // all-roots view's folders are the index's own, canonical
-            // already, and a read off the window's thread has made
-            // its folders canonical too.
-            if st.view == crate::roots::View::Folder {
-                for dir in folders_of(&st.files) {
-                    st.library.canonical.remove(&dir);
-                }
-            }
             refresh_ids(st);
         }
     }
@@ -1137,6 +1834,47 @@ pub(crate) fn told(app: &App, told: Told) {
                 reread(&state, app, false);
             }
         }
+        Told::Skipped {
+            path,
+            root,
+            launch,
+            generation,
+            first,
+        } => {
+            let words = skipped_words(&state.borrow().library.roots, &root);
+            if first {
+                app.set_status(words.clone().into());
+            }
+            match generation {
+                // The window's own folder: its pass is over, said in the
+                // filter's line, and the rows the window has are kept.
+                Some(generation) => {
+                    let mut st = state.borrow_mut();
+                    if generation != st.index_generation {
+                        return;
+                    }
+                    st.index_progress = None;
+                    st.awaiting_index = false;
+                    st.index_error = Some(words);
+                    crate::panel::cull::show_filter(&st, app);
+                }
+                // A pass in the background: as one that found nothing,
+                // so a launch pass skipped still counts as done and a
+                // capture waiting on the roots is let go. Nothing in the
+                // index moved, so its rows and facets are not read again
+                // (a dead share is skipped at every tick).
+                None => {
+                    crate::roots::background_done(
+                        &state,
+                        app,
+                        &path,
+                        &Report::default(),
+                        launch,
+                        false,
+                    );
+                }
+            }
+        }
         Told::Failed(message) => {
             tracing::warn!("no library index: {message}");
             let mut st = state.borrow_mut();
@@ -1234,6 +1972,19 @@ pub(crate) fn told(app: &App, told: Told) {
             reread(&state, app, false);
         }
     }
+}
+
+/// What the window says of a root whose pass was skipped, or left
+/// partway, because it did not answer.
+pub(crate) fn skipped_words(roots: &greycard_library::Roots, root: &Path) -> String {
+    let name = if roots.list().iter().any(|r| r == root) {
+        roots.label(root)
+    } else {
+        root.display().to_string()
+    };
+    format!(
+        "{name} is not answering: its frames are kept as the index has them, and it is passed over again later"
+    )
 }
 
 /// The index moved under the window: the rows read again, and the
@@ -1706,6 +2457,515 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// Two roots of two frames each under `dir`, `a` and `b`, and an
+    /// indexer on a library there with `guard`; what it tells, on a
+    /// channel.
+    fn two_roots(dir: &Path, guard: Guard) -> (PathBuf, PathBuf, Indexer, mpsc::Receiver<Told>) {
+        let (a, b) = (dir.join("a"), dir.join("b"));
+        for (root, seed) in [(&a, 1), (&b, 3)] {
+            std::fs::create_dir_all(root.join("day")).unwrap();
+            write_frame(&root.join("day").join("x.tif"), &R6, seed);
+            write_frame(&root.join("day").join("y.tif"), &R5, seed + 1);
+        }
+        let (tx, rx) = mpsc::channel();
+        let indexer = Indexer::start_with(
+            dir.join("data").join("library.sqlite"),
+            move |told| {
+                let _ = tx.send(told);
+            },
+            guard,
+        )
+        .expect("the indexer starts");
+        (a, b, indexer, rx)
+    }
+
+    fn wait_for(rx: &mpsc::Receiver<Told>, want: &dyn Fn(&Told) -> bool) -> Told {
+        loop {
+            let told = rx
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the indexer answers");
+            if want(&told) {
+                return told;
+            }
+        }
+    }
+
+    /// A root that does not answer the look before its pass is skipped,
+    /// said once, its rows left as they are, and the other root's pass
+    /// and report come all the same.
+    #[test]
+    fn a_pass_over_a_root_that_does_not_answer_is_skipped_and_the_next_lands() {
+        let dir = scratch("skipped");
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counted = asked.clone();
+        let guard = Guard {
+            answers: Box::new(move |root| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                !root.ends_with("a")
+            }),
+            ..Guard::default()
+        };
+        let (a, b, indexer, rx) = two_roots(&dir, guard);
+        wait_for(&rx, &|t| matches!(t, Told::Opened(_)));
+        indexer.roots(vec![a.clone(), b.clone()]);
+        match wait_for(&rx, &|t| {
+            matches!(t, Told::Skipped { .. } | Told::Background { .. })
+        }) {
+            Told::Skipped {
+                path,
+                root,
+                launch,
+                generation,
+                first,
+            } => {
+                assert_eq!((path, root), (a.clone(), a.clone()));
+                assert!(launch && first);
+                assert_eq!(generation, None);
+            }
+            other => panic!("the root that did not answer comes first: {other:?}"),
+        }
+        match wait_for(&rx, &|t| matches!(t, Told::Background { .. })) {
+            Told::Background {
+                path,
+                report,
+                error,
+                ..
+            } => {
+                assert_eq!(path, b);
+                assert_eq!(error, None);
+                assert_eq!(report.added, 2, "{report:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        // Asked again: skipped again, and not said again.
+        indexer.asker().poll(vec![a.clone()]);
+        match wait_for(&rx, &|t| matches!(t, Told::Skipped { .. })) {
+            Told::Skipped { first, launch, .. } => assert!(!first && !launch),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(asked.load(Ordering::SeqCst), 3, "one look a pass begun");
+        let reader = Library::open_read_only(&dir.join("data").join("library.sqlite")).unwrap();
+        assert_eq!(
+            reader.count_under(&a).unwrap(),
+            0,
+            "nothing indexed under a"
+        );
+        assert_eq!(reader.count_under(&b).unwrap(), 2);
+        drop(reader);
+        indexer.stop(Duration::from_secs(20));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A root that answers the look and then hangs in the middle of its
+    /// walk: the pass is set aside once it has said nothing for the
+    /// wait, said, and the other root's pass and report come while it
+    /// is still stuck. The stuck root is skipped without a look while
+    /// its pass is out; let go, that pass finishes and its report lands
+    /// as any other.
+    #[test]
+    fn a_root_that_hangs_mid_walk_never_stops_the_other_roots_reports() {
+        let dir = scratch("hangs");
+        let released = Arc::new(AtomicBool::new(false));
+        let let_go = released.clone();
+        let hang_under = dir.join("a");
+        let asked = Arc::new(AtomicUsize::new(0));
+        let counted = asked.clone();
+        let guard = Guard {
+            answers: Box::new(move |_| {
+                counted.fetch_add(1, Ordering::SeqCst);
+                true
+            }),
+            wait: Duration::from_millis(300),
+            each_file: Some(Arc::new(move |file: &Path| {
+                while file.starts_with(&hang_under) && !let_go.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            })),
+        };
+        let (a, b, indexer, rx) = two_roots(&dir, guard);
+        wait_for(&rx, &|t| matches!(t, Told::Opened(_)));
+        let begun = Instant::now();
+        indexer.roots(vec![a.clone(), b.clone()]);
+        match wait_for(&rx, &|t| {
+            matches!(t, Told::Skipped { .. } | Told::Background { .. })
+        }) {
+            Told::Skipped {
+                root,
+                launch,
+                first,
+                ..
+            } => {
+                assert_eq!(root, a);
+                assert!(launch && first);
+            }
+            other => panic!("{other:?}"),
+        }
+        match wait_for(&rx, &|t| matches!(t, Told::Background { .. })) {
+            Told::Background { path, report, .. } => {
+                assert_eq!(path, b);
+                assert_eq!(report.added, 2, "{report:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(
+            !released.load(Ordering::SeqCst),
+            "b's report came while a's walk was still stuck"
+        );
+        assert!(begun.elapsed() < Duration::from_secs(10));
+        // While its thread is out: skipped at once, with no look.
+        let looks = asked.load(Ordering::SeqCst);
+        indexer.asker().poll(vec![a.clone()]);
+        match wait_for(&rx, &|t| matches!(t, Told::Skipped { .. })) {
+            Told::Skipped { first, .. } => assert!(!first),
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(asked.load(Ordering::SeqCst), looks);
+        // Let go: the pass set aside finishes, and its report lands.
+        released.store(true, Ordering::SeqCst);
+        match wait_for(&rx, &|t| matches!(t, Told::Background { .. })) {
+            Told::Background {
+                path,
+                launch,
+                report,
+                error,
+                ..
+            } => {
+                assert_eq!(path, a);
+                assert!(!launch, "counted when it was set aside");
+                assert_eq!(error, None);
+                assert_eq!(report.added, 2, "{report:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        // And the root is passed over again at the next tick, looked at.
+        indexer.asker().poll(vec![a.clone()]);
+        match wait_for(&rx, &|t| {
+            matches!(t, Told::Skipped { .. } | Told::Background { .. })
+        }) {
+            Told::Background { path, report, .. } => {
+                assert_eq!(path, a);
+                assert_eq!(report.unchanged, 2, "{report:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert_eq!(asked.load(Ordering::SeqCst), looks + 1);
+        let reader = Library::open_read_only(&dir.join("data").join("library.sqlite")).unwrap();
+        assert_eq!(reader.count_under(&a).unwrap(), 2);
+        drop(reader);
+        indexer.stop(Duration::from_secs(20));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The window hears a skipped pass: said on the status line once, a
+    /// launch pass skipped counts as done for a capture waiting on the
+    /// roots, and its own folder's pass skipped is said in the filter's
+    /// line, its wait over.
+    #[test]
+    fn the_window_says_a_skipped_root_once_and_counts_its_launch_pass() {
+        use crate::testing::{state_for, window};
+        let dir = scratch("skipped-said");
+        let root = dir.join("archive");
+        std::fs::create_dir_all(&root).unwrap();
+        let app = window(0);
+        let (state, _worker) = state_for(&app, Vec::new());
+        let root = {
+            let mut st = state.borrow_mut();
+            st.library.roots.add(&root).unwrap();
+            let root = st.library.roots.list()[0].clone();
+            st.library.roots.set_name(&root, "Archive");
+            st.library.launch_left = 1;
+            st.library.awaiting = true;
+            root
+        };
+        let skipped = |first: bool, launch: bool, generation: Option<u64>| Told::Skipped {
+            path: root.clone(),
+            root: root.clone(),
+            launch,
+            generation,
+            first,
+        };
+        told(&app, skipped(true, true, None));
+        assert!(
+            app.get_status().starts_with("Archive is not answering"),
+            "{}",
+            app.get_status()
+        );
+        assert_eq!(state.borrow().library.launch_left, 0);
+        assert!(!state.borrow().library.awaiting);
+        app.set_status("something else".into());
+        told(&app, skipped(false, false, None));
+        assert_eq!(app.get_status(), "something else", "said once");
+        {
+            let mut st = state.borrow_mut();
+            st.index_generation = 9;
+            st.awaiting_index = true;
+            st.index_progress = Some((0, 3));
+        }
+        told(&app, skipped(false, false, Some(9)));
+        let st = state.borrow();
+        assert!(!st.awaiting_index);
+        assert_eq!(st.index_progress, None);
+        assert!(
+            st.index_error
+                .as_deref()
+                .is_some_and(|e| e.starts_with("Archive is not answering"))
+        );
+        drop(st);
+        drop(state);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A share mounted below a local root that hangs holds its own pass
+    /// and not the local root's: the local root's walk leaves it out, its
+    /// changes are passed over, and only the share's tick is set aside.
+    #[test]
+    fn a_hung_share_below_a_local_root_holds_only_its_own_pass() {
+        let dir = scratch("below-hangs");
+        let hang_under = dir.join("a").join("nas");
+        let held = hang_under.clone();
+        let released = Arc::new(AtomicBool::new(false));
+        let let_go = released.clone();
+        let guard = Guard {
+            answers: Box::new(|_| true),
+            wait: Duration::from_millis(300),
+            each_file: Some(Arc::new(move |file: &Path| {
+                while file.starts_with(&held) && !let_go.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            })),
+        };
+        let (a, b, indexer, rx) = two_roots(&dir, guard);
+        std::fs::create_dir_all(&hang_under).unwrap();
+        write_frame(&hang_under.join("n.tif"), &A7, 7);
+        let nas = hang_under;
+        wait_for(&rx, &|t| matches!(t, Told::Opened(_)));
+        // The mounts left out come in the launch's own ask.
+        indexer.launch(vec![a.clone(), b.clone()], vec![nas.clone()]);
+        for root in [&a, &b] {
+            match wait_for(&rx, &|t| {
+                matches!(t, Told::Skipped { .. } | Told::Background { .. })
+            }) {
+                Told::Background { path, report, .. } => {
+                    assert_eq!(&path, root);
+                    assert_eq!(report.added, 2, "the share left out: {report:?}");
+                }
+                other => panic!("nothing set aside: {other:?}"),
+            }
+        }
+        // The share's tick hangs, and is set aside alone.
+        indexer.asker().poll(vec![nas.clone()]);
+        match wait_for(&rx, &|t| {
+            matches!(t, Told::Skipped { .. } | Told::Background { .. })
+        }) {
+            Told::Skipped { root, .. } => assert_eq!(root, nas),
+            other => panic!("{other:?}"),
+        }
+        // A change in the local root, and the root's own tree, still pass.
+        write_frame(&a.join("day").join("w.tif"), &R6, 8);
+        indexer
+            .asker()
+            .changes(vec![Change::Folder(a.join("day")), Change::Tree(a.clone())]);
+        for want in [a.join("day"), a.clone()] {
+            match wait_for(&rx, &|t| {
+                matches!(t, Told::Skipped { .. } | Told::Background { .. })
+            }) {
+                Told::Background { path, error, .. } => {
+                    assert_eq!(path, want);
+                    assert_eq!(error, None);
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+        released.store(true, Ordering::SeqCst);
+        match wait_for(&rx, &|t| matches!(t, Told::Background { .. })) {
+            Told::Background { path, report, .. } => {
+                assert_eq!(path, nas);
+                assert_eq!(report.added, 1, "{report:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        indexer.stop(Duration::from_secs(20));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A pass set aside on a tree below a root (a share's tick, the share
+    /// not known to be left out of the root's walk) keeps a pass over the
+    /// root from walking into it: that pass is skipped until the share's
+    /// is back, and then made.
+    #[test]
+    fn a_pass_over_a_tree_with_one_set_aside_in_it_waits() {
+        let dir = scratch("tree-aside");
+        let nas = dir.join("a").join("nas");
+        let held = nas.clone();
+        let released = Arc::new(AtomicBool::new(false));
+        let let_go = released.clone();
+        let guard = Guard {
+            answers: Box::new(|_| true),
+            wait: Duration::from_millis(300),
+            each_file: Some(Arc::new(move |file: &Path| {
+                while file.starts_with(&held) && !let_go.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            })),
+        };
+        let (a, _b, indexer, rx) = two_roots(&dir, guard);
+        std::fs::create_dir_all(&nas).unwrap();
+        write_frame(&nas.join("n.tif"), &A7, 7);
+        wait_for(&rx, &|t| matches!(t, Told::Opened(_)));
+        indexer.asker().poll(vec![nas.clone()]);
+        match wait_for(&rx, &|t| {
+            matches!(t, Told::Skipped { .. } | Told::Background { .. })
+        }) {
+            Told::Skipped { root, .. } => assert_eq!(root, nas),
+            other => panic!("{other:?}"),
+        }
+        indexer.roots(vec![a.clone()]);
+        match wait_for(&rx, &|t| {
+            matches!(t, Told::Skipped { .. } | Told::Background { .. })
+        }) {
+            Told::Skipped { path, .. } => assert_eq!(path, a, "not walked into the share"),
+            other => panic!("{other:?}"),
+        }
+        released.store(true, Ordering::SeqCst);
+        match wait_for(&rx, &|t| matches!(t, Told::Background { .. })) {
+            Told::Background { path, .. } => assert_eq!(path, nas),
+            other => panic!("{other:?}"),
+        }
+        indexer.roots(vec![a.clone()]);
+        match wait_for(&rx, &|t| {
+            matches!(t, Told::Skipped { .. } | Told::Background { .. })
+        }) {
+            Told::Background { path, report, .. } => {
+                assert_eq!(path, a);
+                assert_eq!(report.added, 2, "{report:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        indexer.stop(Duration::from_secs(20));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A launch pass set aside is counted once: the word that it was set
+    /// aside says launch, and when it lands it does not, so three roots,
+    /// the first set aside, are three launch passes done and no more.
+    #[test]
+    fn a_launch_pass_set_aside_is_counted_once() {
+        let dir = scratch("launch-once");
+        let released = Arc::new(AtomicBool::new(false));
+        let let_go = released.clone();
+        let hang_under = dir.join("a");
+        let guard = Guard {
+            answers: Box::new(|_| true),
+            wait: Duration::from_millis(300),
+            each_file: Some(Arc::new(move |file: &Path| {
+                while file.starts_with(&hang_under) && !let_go.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            })),
+        };
+        let (a, b, indexer, rx) = two_roots(&dir, guard);
+        let c = dir.join("c");
+        std::fs::create_dir_all(&c).unwrap();
+        write_frame(&c.join("z.tif"), &R6, 9);
+        wait_for(&rx, &|t| matches!(t, Told::Opened(_)));
+        indexer.roots(vec![a.clone(), b.clone(), c.clone()]);
+        let mut launches = Vec::new();
+        let mut a_landed = None;
+        while a_landed.is_none() {
+            match wait_for(&rx, &|t| {
+                matches!(t, Told::Skipped { .. } | Told::Background { .. })
+            }) {
+                Told::Skipped { path, launch, .. } => {
+                    if launch {
+                        launches.push(path.clone());
+                    }
+                }
+                Told::Background { path, launch, .. } => {
+                    if launch {
+                        launches.push(path.clone());
+                    }
+                    if path == a {
+                        a_landed = Some(launch);
+                    } else if path == c {
+                        // Every other root done: let a go.
+                        released.store(true, Ordering::SeqCst);
+                    }
+                }
+                _ => {}
+            }
+        }
+        assert_eq!(a_landed, Some(false), "a's pass lands as no launch pass");
+        assert_eq!(launches, vec![a.clone(), b, c], "each root counted once");
+        indexer.stop(Duration::from_secs(20));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The window's own folder pass, stuck the same way, is said to the
+    /// window with its generation, and the indexer goes on with the
+    /// passes in the background.
+    #[test]
+    fn a_folder_pass_that_hangs_is_said_and_the_indexer_goes_on() {
+        let dir = scratch("folder-hangs");
+        let released = Arc::new(AtomicBool::new(false));
+        let let_go = released.clone();
+        let hang_under = dir.join("a");
+        let guard = Guard {
+            answers: Box::new(|_| true),
+            wait: Duration::from_millis(300),
+            each_file: Some(Arc::new(move |file: &Path| {
+                while file.starts_with(&hang_under) && !let_go.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            })),
+        };
+        let (a, b, indexer, rx) = two_roots(&dir, guard);
+        wait_for(&rx, &|t| matches!(t, Told::Opened(_)));
+        indexer.folders(vec![a.join("day")], 3);
+        match wait_for(&rx, &|t| {
+            matches!(t, Told::Skipped { .. } | Told::Indexed { .. })
+        }) {
+            Told::Skipped {
+                path,
+                generation,
+                first,
+                launch,
+                ..
+            } => {
+                assert_eq!(path, a.join("day"));
+                assert_eq!(generation, Some(3));
+                assert!(first && !launch);
+            }
+            other => panic!("{other:?}"),
+        }
+        indexer.roots(vec![b.clone()]);
+        match wait_for(&rx, &|t| matches!(t, Told::Background { .. })) {
+            Told::Background { path, report, .. } => {
+                assert_eq!(path, b);
+                assert_eq!(report.added, 2, "{report:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!released.load(Ordering::SeqCst));
+        // Let go: the folder's pass set aside finishes, and says so with
+        // its own generation.
+        released.store(true, Ordering::SeqCst);
+        match wait_for(&rx, &|t| matches!(t, Told::Indexed { .. })) {
+            Told::Indexed {
+                generation,
+                report,
+                error,
+                ..
+            } => {
+                assert_eq!(generation, 3);
+                assert_eq!(error, None);
+                assert_eq!(report.added, 2, "{report:?}");
+            }
+            other => panic!("{other:?}"),
+        }
+        indexer.stop(Duration::from_secs(20));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn a_facet_row_keeps_its_chips_on_and_caps_the_rest() {
         let counts: Vec<FacetCount> = (0..20)
@@ -1817,5 +3077,14 @@ mod tests {
         // A watcher's change still goes ahead of the tick.
         queue(&mut q, Background::Change(Change::Folder(local.join("x"))));
         assert_eq!(q.back(), Some(&Background::Poll(share)));
+        // A share mounted below a local root: its tick is skipped while
+        // the local root's launch pass, which walks it, is queued.
+        q.clear();
+        let below = local.join("NAS");
+        queue(&mut q, Background::Root(local.clone()));
+        assert!(!queue_poll(&mut q, below.clone()));
+        q.clear();
+        assert!(queue_poll(&mut q, below.clone()));
+        assert_eq!(Vec::from(q), vec![Background::Poll(below)]);
     }
 }

@@ -498,11 +498,21 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     match greycard_library::Thumbs::user(crate::panel::prefs::cap_bytes(remembered.thumb_cache_mb))
     {
         Ok(cache) => {
+            // The local previews beside the thumbnails, under a cap of
+            // their own.
+            let cache = cache.with_previews(
+                crate::previews::SIZE,
+                crate::panel::prefs::cap_bytes(remembered.preview_cache_mb),
+            );
             tracing::info!(
-                "thumbnail cache {} ({})",
+                "thumbnail cache {} ({}; previews {})",
                 cache.root().display(),
                 match remembered.thumb_cache_mb {
                     0 => "off".to_string(),
+                    mb => format!("cap {mb} MB"),
+                },
+                match remembered.preview_cache_mb {
+                    0 => "none".to_string(),
                     mb => format!("cap {mb} MB"),
                 }
             );
@@ -524,9 +534,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // beside the library.
     {
         let mut st = state.borrow_mut();
-        st.library.poll_every = (remembered.network_poll_minutes > 0).then(|| {
-            std::time::Duration::from_secs(remembered.network_poll_minutes.saturating_mul(60))
-        });
+        st.library.poll_every = crate::roots::poll_every(remembered.network_poll_minutes);
         if cli.roots.is_empty() {
             if let Some(path) = &library_path {
                 let file = greycard_library::Roots::path_beside(path);
@@ -1390,6 +1398,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.cull_move_on = kept.cull_move_on;
         settings.lenses_declined = kept.lenses_declined;
         settings.thumb_cache_mb = kept.thumb_cache_mb;
+        settings.preview_cache_mb = kept.preview_cache_mb;
         settings.network_poll_minutes = kept.network_poll_minutes;
         settings.import = kept.import;
         settings.update = kept.update;
@@ -1723,6 +1732,7 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         folder_tree_subfolders: false,
         // Not the panel's either: the settings file is where it is set.
         thumb_cache_mb: 0,
+        preview_cache_mb: 0,
         network_poll_minutes: 0,
         // Written as an import starts.
         import: settings::ImportChoices::default(),

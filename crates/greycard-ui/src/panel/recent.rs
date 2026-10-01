@@ -28,13 +28,21 @@ pub(crate) struct Recent {
 }
 
 /// The one folder `files` are all in: a folder opened, or a file
-/// opened on its own, which is its folder's.
-fn folder_of(files: &[PathBuf]) -> Option<PathBuf> {
+/// opened on its own, which is its folder's. Canonical as the read that
+/// brought the list made it (`canonical`, off the window's thread), or
+/// as it is when no read has: the disk is not asked here, on the
+/// window's thread.
+fn folder_of(files: &[PathBuf], canonical: &HashMap<PathBuf, PathBuf>) -> Option<PathBuf> {
     let first = files.first()?.parent()?;
     if first.as_os_str().is_empty() || !files.iter().all(|f| f.parent() == Some(first)) {
         return None;
     }
-    dunce::canonicalize(first).ok()
+    Some(
+        canonical
+            .get(first)
+            .cloned()
+            .unwrap_or_else(|| first.to_path_buf()),
+    )
 }
 
 /// The list the browser now holds is open: the folder it is, if it is
@@ -43,7 +51,7 @@ fn folder_of(files: &[PathBuf]) -> Option<PathBuf> {
 /// a test) keeps the list in the window only.
 pub(crate) fn opened(st: &mut State, app: &App) {
     st.recent.open = match &st.view {
-        crate::roots::View::Folder => folder_of(&st.files),
+        crate::roots::View::Folder => folder_of(&st.files, &st.library.canonical),
         // A folder of a root's tree is a folder opened, with or without
         // the folders under it; the index's spelling is canonical, and
         // an offline root's folder is recorded without a look at it.
@@ -159,7 +167,9 @@ fn chosen(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Worker>, path: &st
     let spawned = std::thread::Builder::new()
         .name("greycard recent check".into())
         .spawn(move || {
-            let there = dir.is_dir();
+            // The roots' look, with its wait: a share gone away does
+            // not answer, and is said to after 3 s rather than never.
+            let there = crate::roots::answer_of(&dir, crate::roots::ROOT_WAIT);
             let _ = slint::invoke_from_event_loop(move || {
                 let (Some(app), Some(state), Some(worker)) = (
                     app_weak.upgrade(),
@@ -201,13 +211,47 @@ fn still_wanted(st: &State, generation: u64) -> bool {
 #[cfg(test)]
 fn chosen(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, path: &str) {
     let dir = Path::new(path);
-    checked(state, app, worker, dir, dir.is_dir());
+    checked(
+        state,
+        app,
+        worker,
+        dir,
+        crate::roots::answer_of(dir, crate::roots::ROOT_WAIT),
+    );
+}
+
+/// A folder chosen from the list, for another module's test.
+#[cfg(test)]
+pub(crate) fn choose_for_test(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+    dir: &Path,
+) {
+    chosen(state, app, worker, &dir.to_string_lossy());
 }
 
 /// A folder chosen, looked at: opened, or, no longer on the disk (a
 /// card taken out, a drive unplugged, a folder moved), said to be
 /// gone. It stays listed either way: it may be back when the drive is.
-fn checked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir: &Path, there: bool) {
+fn checked(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+    dir: &Path,
+    there: Option<bool>,
+) {
+    let Some(there) = there else {
+        tracing::warn!("recently opened: {} is not answering", dir.display());
+        // Not "in 3 s": a look still out from before answers no at once.
+        let said = format!(
+            "{} is not answering; is its drive or share there?",
+            tilde(dir)
+        );
+        app.set_status(said.as_str().into());
+        app.set_open_folder_note(said.into());
+        return;
+    };
     if !there {
         tracing::warn!("recently opened: {} is not there", dir.display());
         let said = format!("{} is not there any more", tilde(dir));
@@ -498,9 +542,14 @@ mod tests {
     fn files_from_several_folders_are_no_folder() {
         let dir = scratch("several");
         let (a, b) = (shoot(&dir.join("a")), shoot(&dir.join("b")));
-        assert_eq!(folder_of(&[a.join("x.tif")]), Some(a.clone()));
-        assert_eq!(folder_of(&[a.join("x.tif"), b.join("x.tif")]), None);
-        assert_eq!(folder_of(&[]), None);
+        let none = HashMap::new();
+        assert_eq!(folder_of(&[a.join("x.tif")], &none), Some(a.clone()));
+        assert_eq!(folder_of(&[a.join("x.tif"), b.join("x.tif")], &none), None);
+        assert_eq!(folder_of(&[], &none), None);
+        // As a read made it canonical: through a link, the target.
+        let link = dir.join("link");
+        let known: HashMap<PathBuf, PathBuf> = [(link.clone(), a.clone())].into_iter().collect();
+        assert_eq!(folder_of(&[link.join("x.tif")], &known), Some(a.clone()));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

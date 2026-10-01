@@ -1241,7 +1241,11 @@ export component App inherits Window {
     // cap typed and not yet entered is taken; Rust ignores one that
     // did not change.
     changed settings-open => {
-        if (!root.settings-open) { root.thumb-cache-cap-changed(); }
+        if (!root.settings-open) {
+            root.thumb-cache-cap-changed();
+            root.preview-cache-cap-changed();
+            root.network-poll-changed();
+        }
     }
     in-out property <string> sidecar-placement: "Beside the raw";
     in-out property <bool> xmp-sidecars: false;
@@ -1265,6 +1269,14 @@ export component App inherits Window {
     in-out property <string> thumb-cache-cap: "";
     callback thumb-cache-clear();
     callback thumb-cache-cap-changed();
+    /// The local previews' own cap, in megabytes as the field has it,
+    /// and its change.
+    in-out property <string> preview-cache-cap: "";
+    callback preview-cache-cap-changed();
+    /// How often a root on a network mount is passed over, in minutes
+    /// as the field has it, and its change.
+    in-out property <string> network-poll-minutes: "";
+    callback network-poll-changed();
     /// The shipped presets the store is without, as a count and in
     /// words, and the settings' Restore that puts them back.
     in property <int> presets-missing: 0;
@@ -2780,6 +2792,10 @@ export component App inherits Window {
         thumb-cache-cap <=> root.thumb-cache-cap;
         thumb-cache-clear => { root.thumb-cache-clear(); }
         thumb-cache-cap-changed => { root.thumb-cache-cap-changed(); }
+        preview-cache-cap <=> root.preview-cache-cap;
+        preview-cache-cap-changed => { root.preview-cache-cap-changed(); }
+        network-poll-minutes <=> root.network-poll-minutes;
+        network-poll-changed => { root.network-poll-changed(); }
         presets-missing: root.presets-missing;
         presets-missing-words: root.presets-missing-words;
         presets-restore => { root.presets-restore(); }

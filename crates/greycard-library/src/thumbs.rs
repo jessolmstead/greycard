@@ -52,6 +52,14 @@
 //! that is not drawing a window — and kept up to date after that by
 //! each write, eviction and clear; [`Thumbs::known_usage`] answers
 //! from that count without touching the disk.
+//!
+//! The larger pictures a caller keeps beside the thumbnails (the
+//! editor's local previews, at a long edge of 2048) can be given a cap
+//! of their own ([`Thumbs::with_previews`]): an entry whose size is at
+//! or past the previews' size is a preview, counted, capped and evicted
+//! apart from the thumbnails, which keep theirs. They stay one store:
+//! one directory, one key, one lock, one count, and a removal or a
+//! clear takes both.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -66,6 +74,11 @@ pub const FORMAT: u16 = 1;
 /// frames at one strip-sized picture each; the grid's larger sizes are
 /// entries of their own and take more.
 pub const DEFAULT_CAP: u64 = 300 * 1024 * 1024;
+
+/// The previews' cap when the settings name none: 8 GB, some 17,000
+/// frames at the editor's measured 472 KB a preview, which covers a NAS
+/// archive of 12,000.
+pub const DEFAULT_PREVIEW_CAP: u64 = 8192 * 1024 * 1024;
 
 /// What the entries are cut down to when they pass the cap, as a
 /// fraction of it, so a cache at its cap does not evict on every
@@ -105,14 +118,70 @@ pub struct Usage {
     pub entries: usize,
 }
 
-/// The cache under one directory, with a cap on its size.
+impl Usage {
+    fn add(&mut self, len: u64) {
+        self.bytes += len;
+        self.entries += 1;
+    }
+
+    fn take(&mut self, len: u64) {
+        self.bytes = self.bytes.saturating_sub(len);
+        self.entries = self.entries.saturating_sub(1);
+    }
+}
+
+/// How much the cache holds, the thumbnails and the previews apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Split {
+    pub thumbs: Usage,
+    pub previews: Usage,
+}
+
+impl Split {
+    /// Both together: what the cache holds on disk.
+    pub fn total(&self) -> Usage {
+        Usage {
+            bytes: self.thumbs.bytes + self.previews.bytes,
+            entries: self.thumbs.entries + self.previews.entries,
+        }
+    }
+
+    fn of(&mut self, class: Class) -> &mut Usage {
+        match class {
+            Class::Thumb => &mut self.thumbs,
+            Class::Preview => &mut self.previews,
+        }
+    }
+
+    fn get(&self, class: Class) -> Usage {
+        match class {
+            Class::Thumb => self.thumbs,
+            Class::Preview => self.previews,
+        }
+    }
+}
+
+/// Which cap an entry counts against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Class {
+    Thumb,
+    Preview,
+}
+
+/// The cache under one directory, with a cap on its size, and one of
+/// their own on the previews when it has them.
 #[derive(Debug)]
 pub struct Thumbs {
     root: PathBuf,
     cap: u64,
+    /// The long edge from which an entry is a preview, counted against
+    /// `preview_cap` rather than `cap`; none counts so until
+    /// [`Thumbs::with_previews`] says.
+    previews_from: u32,
+    preview_cap: u64,
     /// What the entries hold, counted on disk once and kept up after
     /// that; `None` until it has been counted.
-    used: Option<Usage>,
+    used: Option<Split>,
 }
 
 impl Thumbs {
@@ -130,12 +199,59 @@ impl Thumbs {
         Ok(Self::at(base.join("greycard").join("thumbs"), cap))
     }
 
-    /// The cache under `root`, which is made on the first write.
+    /// The cache under `root`, which is made on the first write. Every
+    /// entry is a thumbnail under `cap`, until previews are given a cap
+    /// of their own.
     pub fn at(root: impl Into<PathBuf>, cap: u64) -> Self {
         Self {
             root: root.into(),
             cap,
+            previews_from: u32::MAX,
+            preview_cap: 0,
             used: None,
+        }
+    }
+
+    /// The entries of a long edge of `from` or more taken for previews,
+    /// under a cap of their own, `cap`; zero keeps none. Set before the
+    /// count, which is made by the same rule.
+    pub fn with_previews(mut self, from: u32, cap: u64) -> Self {
+        self.previews_from = from;
+        self.preview_cap = cap;
+        self
+    }
+
+    /// The long edge from which an entry is a preview.
+    pub fn previews_from(&self) -> u32 {
+        self.previews_from
+    }
+
+    /// The previews' cap; zero when they have none (no previews kept).
+    pub fn preview_cap(&self) -> u64 {
+        self.preview_cap
+    }
+
+    /// A new cap for the previews, and the previews evicted to it at
+    /// once when they are known to be past it. Zero empties them.
+    pub fn set_preview_cap(&mut self, cap: u64) {
+        self.preview_cap = cap;
+        if self.used.is_some_and(|u| u.previews.bytes > cap) {
+            self.evict(Class::Preview);
+        }
+    }
+
+    fn class_of(&self, size: u32) -> Class {
+        if size >= self.previews_from {
+            Class::Preview
+        } else {
+            Class::Thumb
+        }
+    }
+
+    fn cap_of(&self, class: Class) -> u64 {
+        match class {
+            Class::Thumb => self.cap,
+            Class::Preview => self.preview_cap,
         }
     }
 
@@ -152,14 +268,21 @@ impl Thumbs {
     /// here: the count, when it is seeded, evicts to the cap then.
     pub fn set_cap(&mut self, cap: u64) {
         self.cap = cap;
-        if self.used.is_some_and(|u| u.bytes > cap) {
-            self.evict();
+        if self.used.is_some_and(|u| u.thumbs.bytes > cap) {
+            self.evict(Class::Thumb);
         }
     }
 
-    /// What the cache holds as last counted and kept up since, or
-    /// `None` when it has not been counted yet. Touches no disk.
+    /// What the cache holds as last counted and kept up since, the
+    /// thumbnails and the previews together, or `None` when it has not
+    /// been counted yet. Touches no disk.
     pub fn known_usage(&self) -> Option<Usage> {
+        self.used.map(|u| u.total())
+    }
+
+    /// [`known_usage`](Self::known_usage), the thumbnails and the
+    /// previews apart.
+    pub fn known_split(&self) -> Option<Split> {
         self.used
     }
 
@@ -171,10 +294,23 @@ impl Thumbs {
     /// count does not empty it: what an earlier run left is the
     /// user's to clear.
     pub fn seed_usage(&mut self, usage: Usage) {
+        self.seed_split(Split {
+            thumbs: usage,
+            previews: Usage::default(),
+        });
+    }
+
+    /// [`seed_usage`](Self::seed_usage) with the thumbnails and the
+    /// previews apart, as [`split_at`] counts them; each past its own
+    /// cap is evicted to it.
+    pub fn seed_split(&mut self, split: Split) {
         if self.used.is_none() {
-            self.used = Some(usage);
-            if self.cap > 0 && usage.bytes > self.cap {
-                self.evict();
+            self.used = Some(split);
+            for class in [Class::Thumb, Class::Preview] {
+                let cap = self.cap_of(class);
+                if cap > 0 && split.get(class).bytes > cap {
+                    self.evict(class);
+                }
             }
         }
     }
@@ -226,7 +362,7 @@ impl Thumbs {
         match std::fs::remove_file(&path) {
             Ok(()) => {
                 log::debug!("thumbnail cache: {} unusable, removed", path.display());
-                self.forget(len);
+                self.forget(len, self.class_of(size));
             }
             Err(e) => log::debug!(
                 "thumbnail cache: {} unusable, not removed: {e}",
@@ -298,23 +434,26 @@ impl Thumbs {
             let _ = std::fs::remove_file(&tmp);
             return Err(e);
         }
+        let class = self.class_of(size);
         let used = match self.used {
-            Some(u) => Usage {
-                bytes: u.bytes.saturating_sub(before.unwrap_or(0)) + bytes.len() as u64,
-                entries: u.entries + usize::from(before.is_none()),
-            },
+            Some(mut u) => {
+                let c = u.of(class);
+                c.bytes = c.bytes.saturating_sub(before.unwrap_or(0)) + bytes.len() as u64;
+                c.entries += usize::from(before.is_none());
+                u
+            }
             // A write before any count is known counts the cache
             // here, on the caller's thread and under whatever lock the
             // caller holds on this cache: in the editor a thumbnail
             // thread's, under the cache's mutex, so the other threads'
             // lookups wait for the walk. The editor seeds the count
-            // from a thread of its own at startup (`seed_usage`), so
+            // from a thread of its own at startup (`seed_split`), so
             // this is only a write that beats that count.
-            None => self.usage(),
+            None => self.split(),
         };
         self.used = Some(used);
-        if used.bytes > self.cap {
-            self.evict();
+        if used.get(class).bytes > self.cap_of(class) {
+            self.evict(class);
         }
         Ok(())
     }
@@ -324,18 +463,22 @@ impl Thumbs {
         usage_at(&self.root)
     }
 
+    /// [`usage`](Self::usage), the thumbnails and the previews apart.
+    pub fn split(&self) -> Split {
+        split_at(&self.root, self.previews_from)
+    }
+
     /// Remove every entry, and any temporary file a writer that died
     /// left behind. Answers what was removed.
     pub fn clear(&mut self) -> Usage {
         let mut gone = Usage::default();
-        for (path, len, _) in entries_at(&self.root) {
+        for (path, len, _, _) in entries_at(&self.root) {
             if std::fs::remove_file(&path).is_ok() {
-                gone.bytes += len;
-                gone.entries += 1;
+                gone.add(len);
             }
         }
         self.remove_empty_folders();
-        self.used = Some(self.usage());
+        self.used = Some(self.split());
         gone
     }
 
@@ -360,8 +503,9 @@ impl Thumbs {
                 continue;
             }
             let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            let class = self.class_of(size_in_name(name).unwrap_or(0));
             if std::fs::remove_file(entry.path()).is_ok() {
-                self.forget(len);
+                self.forget(len, class);
                 removed += 1;
             }
         }
@@ -370,32 +514,37 @@ impl Thumbs {
         removed
     }
 
-    /// One entry of `len` bytes gone from the count.
-    fn forget(&mut self, len: u64) {
+    /// One entry of `len` bytes, of `class`, gone from the count.
+    fn forget(&mut self, len: u64, class: Class) {
         if let Some(u) = self.used.as_mut() {
-            u.bytes = u.bytes.saturating_sub(len);
-            u.entries = u.entries.saturating_sub(1);
+            u.of(class).take(len);
         }
     }
 
-    /// Remove the least recently used entries until the cache is
-    /// under nine tenths of its cap.
-    fn evict(&mut self) {
-        let mut entries = entries_at(&self.root);
-        let mut used = Usage {
-            bytes: entries.iter().map(|(_, len, _)| len).sum(),
-            entries: entries.len(),
-        };
-        let target = (self.cap as f64 * LOW_WATER) as u64;
+    /// Remove the least recently used entries of `class` until they are
+    /// under nine tenths of that class's cap. The other class's are
+    /// counted again on the way, and left.
+    fn evict(&mut self, class: Class) {
+        let all = entries_at(&self.root);
+        let mut used = Split::default();
+        let mut entries = Vec::new();
+        for (path, len, when, size) in all {
+            let c = self.class_of(size.unwrap_or(0));
+            used.of(c).add(len);
+            if c == class {
+                entries.push((path, len, when));
+            }
+        }
+        let cap = self.cap_of(class);
+        let target = (cap as f64 * LOW_WATER) as u64;
         entries.sort_by_key(|(_, _, when)| *when);
         let mut removed = 0usize;
         for (path, len, _) in &entries {
-            if used.bytes <= target {
+            if used.get(class).bytes <= target {
                 break;
             }
             if std::fs::remove_file(path).is_ok() {
-                used.bytes = used.bytes.saturating_sub(*len);
-                used.entries -= 1;
+                used.of(class).take(*len);
                 removed += 1;
             }
         }
@@ -403,9 +552,13 @@ impl Thumbs {
             self.remove_empty_folders();
         }
         log::info!(
-            "thumbnail cache: evicted {removed} entries, {} MB kept of a {} MB cap",
-            used.bytes / (1024 * 1024),
-            self.cap / (1024 * 1024)
+            "thumbnail cache: evicted {removed} {}, {} MB kept of a {} MB cap",
+            match class {
+                Class::Thumb => "thumbnails",
+                Class::Preview => "previews",
+            },
+            used.get(class).bytes / (1024 * 1024),
+            cap / (1024 * 1024)
         );
         self.used = Some(used);
     }
@@ -425,19 +578,39 @@ impl Thumbs {
 /// that does not hold the cache's lock, whose answer goes to
 /// [`Thumbs::seed_usage`].
 pub fn usage_at(root: &Path) -> Usage {
-    let mut usage = Usage::default();
-    for (_, len, _) in entries_at(root) {
-        usage.bytes += len;
-        usage.entries += 1;
+    split_at(root, u32::MAX).total()
+}
+
+/// [`usage_at`], the entries of a long edge of `previews_from` or more
+/// counted as previews: for [`Thumbs::seed_split`].
+pub fn split_at(root: &Path, previews_from: u32) -> Split {
+    let mut split = Split::default();
+    for (_, len, _, size) in entries_at(root) {
+        if size.unwrap_or(0) >= previews_from {
+            split.previews.add(len);
+        } else {
+            split.thumbs.add(len);
+        }
     }
-    usage
+    split
+}
+
+/// The long edge an entry's file name says, a temporary file's too:
+/// `<hash>-<size>-r<recipe>-<stamp>.thumb`, `.<hash>-<size>.<pid>.<t>.tmp`.
+fn size_in_name(name: &str) -> Option<u32> {
+    let rest = name.strip_prefix('.').unwrap_or(name);
+    let (_, after) = rest.split_once('-')?;
+    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 /// Every entry under `root`, and every temporary file: its path, its
-/// length and when it was last used or written. A temporary file of a
-/// write in progress is the newest thing in the cache and the last to
-/// be evicted; one left by a writer that died is as old as the death.
-fn entries_at(root: &Path) -> Vec<(PathBuf, u64, SystemTime)> {
+/// length, when it was last used or written, and the long edge its name
+/// says. A temporary file of a write in progress is the newest thing in
+/// the cache and the last to be evicted; one left by a writer that died
+/// is as old as the death.
+#[allow(clippy::type_complexity)]
+fn entries_at(root: &Path) -> Vec<(PathBuf, u64, SystemTime, Option<u32>)> {
     let mut out = Vec::new();
     let Ok(fans) = std::fs::read_dir(root) else {
         return out;
@@ -461,7 +634,8 @@ fn entries_at(root: &Path) -> Vec<(PathBuf, u64, SystemTime)> {
                 continue;
             }
             let when = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
-            out.push((path, meta.len(), when));
+            let size = file.file_name().to_str().and_then(size_in_name);
+            out.push((path, meta.len(), when, size));
         }
     }
     out
@@ -832,6 +1006,133 @@ mod tests {
         assert_eq!(gone.entries, usage.entries);
         assert_eq!(cache.usage(), Usage::default());
         assert!(cache.get(&keys[0], 128, Tag::default()).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// With a cap of their own, the previews (entries of the previews'
+    /// size or more) are evicted against it and the thumbnails against
+    /// theirs: filling either never takes the other's. A removal takes
+    /// both sizes of a hash, the count follows each, and a clear and the
+    /// count on disk cover both.
+    #[test]
+    fn previews_and_thumbnails_are_each_capped_by_their_own() {
+        let dir = scratch("split");
+        // Previews from 200 px here, so the test's pictures stay small.
+        const FROM: u32 = 200;
+        let mut probe = Thumbs::at(dir.join("probe"), DEFAULT_CAP).with_previews(FROM, DEFAULT_CAP);
+        probe
+            .put(&"00".repeat(32), 128, Tag::default(), &picture(128, 96, 0))
+            .unwrap();
+        probe
+            .put(
+                &"00".repeat(32),
+                FROM,
+                Tag::default(),
+                &picture(200, 150, 0),
+            )
+            .unwrap();
+        let split = probe.split();
+        assert_eq!(split.thumbs.entries, 1);
+        assert_eq!(split.previews.entries, 1);
+        assert_eq!(probe.known_split(), Some(split));
+        let (thumb, preview) = (split.thumbs.bytes, split.previews.bytes);
+        let mut cache = Thumbs::at(dir.join("thumbs"), thumb * 10).with_previews(FROM, preview * 5);
+        cache.seed_split(Split::default());
+        let keys: Vec<String> = (0..30u8).map(|i| format!("{i:02x}").repeat(32)).collect();
+        // Previews past their cap: evicted down to it, and no thumbnail
+        // touched.
+        for (i, key) in keys.iter().take(5).enumerate() {
+            cache
+                .put(key, 128, Tag::default(), &picture(128, 96, i as u8))
+                .unwrap();
+        }
+        for (i, key) in keys.iter().enumerate() {
+            cache
+                .put_at(key, FROM, Tag::default(), &picture(200, 150, i as u8), 90)
+                .unwrap();
+            let known = cache.known_split().unwrap();
+            assert!(known.previews.bytes <= preview * 5, "previews over at {i}");
+            assert_eq!(known.thumbs.entries, 5, "no thumbnail evicted at {i}");
+        }
+        assert_eq!(
+            cache.split(),
+            cache.known_split().unwrap(),
+            "the count follows the disk"
+        );
+        let previews_kept = cache.split().previews.entries;
+        assert!((3..=5).contains(&previews_kept), "{previews_kept}");
+        // Thumbnails past theirs: evicted down to it, the previews kept.
+        for (i, key) in keys.iter().enumerate() {
+            cache
+                .put(key, 128, Tag::default(), &picture(128, 96, i as u8))
+                .unwrap();
+            let known = cache.known_split().unwrap();
+            assert!(known.thumbs.bytes <= thumb * 10, "thumbnails over at {i}");
+            assert_eq!(
+                known.previews.entries, previews_kept,
+                "no preview evicted at {i}"
+            );
+        }
+        // The newest of each kept.
+        assert!(cache.has(&keys[29], 128, Tag::default()));
+        assert!(cache.has(&keys[29], FROM, Tag::default()));
+        // A removal takes both sizes, and the count follows each.
+        let before = cache.known_split().unwrap();
+        assert_eq!(cache.remove(&keys[29], 0), 2);
+        let after = cache.known_split().unwrap();
+        assert_eq!(after.thumbs.entries, before.thumbs.entries - 1);
+        assert_eq!(after.previews.entries, before.previews.entries - 1);
+        assert_eq!(cache.split(), after);
+        // The total is both; a clear empties both.
+        assert_eq!(cache.known_usage(), Some(after.total()));
+        let gone = cache.clear();
+        assert_eq!(gone, after.total());
+        assert_eq!(cache.known_split(), Some(Split::default()));
+        // The previews' cap lowered to nothing empties them, and them
+        // alone.
+        cache
+            .put(&keys[0], 128, Tag::default(), &picture(128, 96, 0))
+            .unwrap();
+        cache
+            .put(&keys[0], FROM, Tag::default(), &picture(200, 150, 0))
+            .unwrap();
+        cache.set_preview_cap(0);
+        assert_eq!(cache.split().previews, Usage::default());
+        assert_eq!(cache.split().thumbs.entries, 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A count made on disk puts each entry in its class by its name, a
+    /// temporary file's too, and a seed past either cap evicts that
+    /// class alone.
+    #[test]
+    fn the_count_splits_by_size_and_evicts_each_past_its_cap() {
+        assert_eq!(size_in_name("abcd-2048-r3-17.thumb"), Some(2048));
+        assert_eq!(size_in_name(".abcd-176.4242.99.tmp"), Some(176));
+        assert_eq!(size_in_name("nonsense.thumb"), None);
+        let dir = scratch("split-count");
+        let root = dir.join("thumbs");
+        let mut writer = Thumbs::at(&root, DEFAULT_CAP);
+        for i in 0..4u8 {
+            let key = format!("{i:02x}").repeat(32);
+            writer
+                .put(&key, 128, Tag::default(), &picture(128, 96, i))
+                .unwrap();
+            writer
+                .put(&key, 300, Tag::default(), &picture(200, 150, i))
+                .unwrap();
+        }
+        let split = split_at(&root, 300);
+        assert_eq!((split.thumbs.entries, split.previews.entries), (4, 4));
+        assert_eq!(split.total(), usage_at(&root));
+        // Seeded past the previews' cap alone: the previews evicted, the
+        // thumbnails left.
+        let mut cache = Thumbs::at(&root, DEFAULT_CAP).with_previews(300, split.previews.bytes / 2);
+        cache.seed_split(split);
+        let now = cache.split();
+        assert_eq!(now.thumbs, split.thumbs);
+        assert!(now.previews.entries < 4);
+        assert!(now.previews.bytes <= split.previews.bytes / 2);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

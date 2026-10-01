@@ -463,6 +463,9 @@ pub struct Watcher {
     /// The roots it watches, whole or in part: every root asked for
     /// less the ones it could not watch at all.
     pub watched: Vec<PathBuf>,
+    /// The folders under them left unwatched, with everything under
+    /// each, as asked: a network mount below a local root.
+    pub except: Vec<PathBuf>,
 }
 
 /// How long the disk has to be quiet before a batch is handed on,
@@ -474,19 +477,27 @@ pub const QUIET: Duration = Duration::from_millis(400);
 pub const LONGEST: Duration = Duration::from_secs(5);
 
 /// The folders under `dir` a watch can take, `dir` among them: not
-/// hidden, not a link, and readable. Those that cannot be read come
-/// back beside, with the reason.
+/// hidden, not a link, readable, and not at or under one of `except`,
+/// which is not gone into at all. Those that cannot be read come back
+/// beside, with the reason.
 #[allow(clippy::type_complexity)]
-fn folders_under(dir: &Path) -> (Vec<PathBuf>, Vec<(PathBuf, String)>) {
+fn folders_under(dir: &Path, except: &[PathBuf]) -> (Vec<PathBuf>, Vec<(PathBuf, String)>) {
     let mut found = Vec::new();
     let mut unreadable = Vec::new();
+    let left_out = |d: &Path| except.iter().any(|e| d.starts_with(e));
+    if left_out(dir) {
+        return (found, unreadable);
+    }
     let mut stack = vec![dir.to_path_buf()];
     while let Some(d) = stack.pop() {
         match std::fs::read_dir(&d) {
             Ok(entries) => {
                 for entry in entries.flatten() {
                     let hidden = entry.file_name().to_string_lossy().starts_with('.');
-                    if !hidden && entry.file_type().is_ok_and(|t| t.is_dir()) {
+                    if !hidden
+                        && entry.file_type().is_ok_and(|t| t.is_dir())
+                        && !left_out(&entry.path())
+                    {
                         stack.push(entry.path());
                     }
                 }
@@ -514,6 +525,23 @@ impl Watcher {
         longest: Duration,
         changed: impl Fn(Vec<Change>) + Send + 'static,
     ) -> (Option<Watcher>, Vec<(PathBuf, String)>) {
+        Self::start_except(roots, &[], quiet, longest, changed)
+    }
+
+    /// [`Watcher::start`], leaving each folder of `except` under a root
+    /// unwatched, everything under it with it: a root with one in it is
+    /// watched folder by folder, and the left-out folders are never
+    /// gone into, not even to be listed. A network mount below a local
+    /// root is one: a recursive watch would walk the share a round trip
+    /// a folder, and see only this machine's changes there.
+    #[allow(clippy::type_complexity)]
+    pub fn start_except(
+        roots: &[PathBuf],
+        except: &[PathBuf],
+        quiet: Duration,
+        longest: Duration,
+        changed: impl Fn(Vec<Change>) + Send + 'static,
+    ) -> (Option<Watcher>, Vec<(PathBuf, String)>) {
         use notify::Watcher as _;
         let (send, events) = mpsc::channel::<notify::Result<notify::Event>>();
         let mut watcher = match notify::recommended_watcher(send) {
@@ -529,18 +557,27 @@ impl Watcher {
         let mut watched = Vec::new();
         let mut by_folder = Vec::new();
         let mut failed = Vec::new();
+        let except: Vec<PathBuf> = except
+            .iter()
+            .filter(|e| roots.iter().any(|r| e.starts_with(r) && *e != r))
+            .cloned()
+            .collect();
         for root in roots {
-            if watcher
-                .watch(root, notify::RecursiveMode::Recursive)
-                .is_ok()
+            let leaves_out = except.iter().any(|e| e.starts_with(root));
+            if !leaves_out
+                && watcher
+                    .watch(root, notify::RecursiveMode::Recursive)
+                    .is_ok()
             {
                 watched.push(root.clone());
                 continue;
             }
             // Taken back, whatever part of it the recursive watch
             // managed before it failed, and done a folder at a time.
-            let _ = watcher.unwatch(root);
-            let (folders, unreadable) = folders_under(root);
+            if !leaves_out {
+                let _ = watcher.unwatch(root);
+            }
+            let (folders, unreadable) = folders_under(root, &except);
             let mut any = false;
             for folder in &folders {
                 match watcher.watch(folder, notify::RecursiveMode::NonRecursive) {
@@ -557,6 +594,7 @@ impl Watcher {
         let shared = Arc::new(Mutex::new(watcher));
         let weak = Arc::downgrade(&shared);
         let roots_seen = watched.clone();
+        let left_out = except.clone();
         let spawned = std::thread::Builder::new()
             .name("greycard watch".into())
             .spawn(move || {
@@ -572,7 +610,7 @@ impl Watcher {
                     let Ok(mut w) = w.lock() else {
                         return;
                     };
-                    for folder in folders_under(dir).0 {
+                    for folder in folders_under(dir, &left_out).0 {
                         let _ = w.watch(&folder, notify::RecursiveMode::NonRecursive);
                     }
                 };
@@ -589,6 +627,7 @@ impl Watcher {
             Some(Watcher {
                 _watcher: shared,
                 watched,
+                except,
             }),
             failed,
         )
@@ -1139,6 +1178,73 @@ mod tests {
         wait(&reaches(&later), &later);
         drop(watcher);
         std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A folder left out under a root (a network mount below a local
+    /// root) is not watched, nor anything under it, nor a folder made
+    /// in it later; the rest of the root is, its new folders too.
+    #[test]
+    fn a_folder_left_out_under_a_root_is_not_watched() {
+        let dir = scratch("roots-watch-except");
+        let root = dir.join("root");
+        let (day, nas) = (root.join("day"), root.join("nas"));
+        std::fs::create_dir_all(&day).unwrap();
+        std::fs::create_dir_all(nas.join("2026")).unwrap();
+        let (send, got) = mpsc::channel();
+        let (watcher, failed) = Watcher::start_except(
+            std::slice::from_ref(&root),
+            std::slice::from_ref(&nas),
+            Duration::from_millis(100),
+            Duration::from_secs(2),
+            move |changes| {
+                let _ = send.send(changes);
+            },
+        );
+        let watcher = watcher.expect("a watcher");
+        assert!(failed.is_empty(), "{failed:?}");
+        assert_eq!(watcher.watched, std::slice::from_ref(&root));
+        assert_eq!(watcher.except, std::slice::from_ref(&nas));
+        let gather = |for_: Duration| {
+            let until = Instant::now() + for_;
+            let mut all = Vec::new();
+            while Instant::now() < until {
+                if let Ok(batch) = got.recv_timeout(Duration::from_millis(50)) {
+                    all.extend(batch);
+                }
+            }
+            all
+        };
+        // Under the left-out folder: nothing, however deep, and not in a
+        // folder made there after the watch began.
+        std::fs::write(nas.join("a.CR3"), b"x").unwrap();
+        std::fs::write(nas.join("2026").join("b.CR3"), b"x").unwrap();
+        std::fs::create_dir_all(nas.join("later")).unwrap();
+        std::thread::sleep(Duration::from_millis(200));
+        std::fs::write(nas.join("later").join("c.CR3"), b"x").unwrap();
+        let seen = gather(Duration::from_millis(800));
+        assert!(
+            seen.iter().all(|c| !c.path().starts_with(&nas)),
+            "nothing under the left-out folder: {seen:?}"
+        );
+        // The rest of the root: seen, a new folder's files too.
+        std::fs::write(day.join("d.CR3"), b"x").unwrap();
+        let seen = gather(Duration::from_millis(800));
+        assert!(
+            seen.iter().any(|c| day.starts_with(c.path())),
+            "the rest is watched: {seen:?}"
+        );
+        let later = root.join("later");
+        std::fs::create_dir_all(&later).unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+        gather(Duration::from_millis(300));
+        std::fs::write(later.join("e.CR3"), b"x").unwrap();
+        let seen = gather(Duration::from_millis(800));
+        assert!(
+            seen.iter().any(|c| later.starts_with(c.path())),
+            "a new folder outside it is watched: {seen:?}"
+        );
+        drop(watcher);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

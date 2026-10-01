@@ -162,22 +162,37 @@ pub(crate) enum CacheShown {
     /// Not counted yet, or busy: the count is on its way.
     Counting,
     Known {
-        usage: greycard_library::thumbs::Usage,
+        usage: greycard_library::thumbs::Split,
         cap: u64,
+        preview_cap: u64,
     },
 }
 
 impl CacheShown {
+    /// Every entry, thumbnails and previews: what Clear takes.
     fn entries(self) -> usize {
         match self {
-            CacheShown::Known { usage, .. } => usage.entries,
+            CacheShown::Known { usage, .. } => usage.total().entries,
             _ => 0,
+        }
+    }
+
+    /// The cache's line as it holds now, from the count it keeps.
+    fn of(c: &greycard_library::Thumbs) -> CacheShown {
+        match c.known_split() {
+            Some(usage) => CacheShown::Known {
+                usage,
+                cap: c.cap(),
+                preview_cap: c.preview_cap(),
+            },
+            None => CacheShown::Counting,
         }
     }
 }
 
 /// The sheet's line about the thumbnail cache: what it holds against
-/// its cap, or that it is off, or that there is none.
+/// its cap, the previews against theirs, or that it is off, or that
+/// there is none.
 pub(crate) fn thumb_cache_words(shown: CacheShown) -> String {
     let mb = |b: u64| b as f64 / (1024.0 * 1024.0);
     let plural = |n: usize| if n == 1 { "" } else { "s" };
@@ -186,22 +201,45 @@ pub(crate) fn thumb_cache_words(shown: CacheShown) -> String {
             "No cache folder on this machine: thumbnails are made each time.".into()
         }
         CacheShown::Counting => "Counting…".into(),
-        CacheShown::Known { usage, cap: 0 } if usage.entries == 0 => {
+        CacheShown::Known { usage, cap: 0, .. } if usage.total().entries == 0 => {
             "Off: thumbnails are made each time a folder opens.".into()
         }
-        CacheShown::Known { usage, cap: 0 } => format!(
-            "Off. {} thumbnail{} from before, {:.1} MB.",
-            usage.entries,
-            plural(usage.entries),
-            mb(usage.bytes)
-        ),
-        CacheShown::Known { usage, cap } => format!(
-            "{} thumbnail{} kept, {:.1} MB of {:.0} MB.",
-            usage.entries,
-            plural(usage.entries),
-            mb(usage.bytes),
-            mb(cap)
-        ),
+        CacheShown::Known { usage, cap: 0, .. } => {
+            let all = usage.total();
+            format!(
+                "Off. {} picture{} from before, {:.1} MB.",
+                all.entries,
+                plural(all.entries),
+                mb(all.bytes)
+            )
+        }
+        CacheShown::Known {
+            usage,
+            cap,
+            preview_cap,
+        } => {
+            let thumbs = format!(
+                "{} thumbnail{} kept, {:.1} MB of {:.0} MB.",
+                usage.thumbs.entries,
+                plural(usage.thumbs.entries),
+                mb(usage.thumbs.bytes),
+                mb(cap)
+            );
+            match (preview_cap, usage.previews.entries) {
+                (0, 0) => thumbs,
+                (0, n) => format!(
+                    "{thumbs} {n} preview{} from before, {:.1} MB.",
+                    plural(n),
+                    mb(usage.previews.bytes)
+                ),
+                (pcap, n) => format!(
+                    "{thumbs} {n} local preview{}, {:.1} MB of {:.0} MB.",
+                    plural(n),
+                    mb(usage.previews.bytes),
+                    mb(pcap)
+                ),
+            }
+        }
     }
 }
 
@@ -220,13 +258,7 @@ fn show_thumb_cache(app: &App, worker: &Worker) {
     let shown = match cache.try_lock() {
         Ok(held) => match held.as_ref() {
             None => CacheShown::Missing,
-            Some(c) => match c.known_usage() {
-                Some(usage) => CacheShown::Known {
-                    usage,
-                    cap: c.cap(),
-                },
-                None => CacheShown::Counting,
-            },
+            Some(c) => CacheShown::of(c),
         },
         Err(std::sync::TryLockError::WouldBlock) => CacheShown::Counting,
         Err(std::sync::TryLockError::Poisoned(_)) => CacheShown::Missing,
@@ -263,13 +295,7 @@ fn on_the_cache(
                             if let Some(work) = work.take() {
                                 work(c);
                             }
-                            match c.known_usage() {
-                                Some(usage) => CacheShown::Known {
-                                    usage,
-                                    cap: c.cap(),
-                                },
-                                None => CacheShown::Counting,
-                            }
+                            CacheShown::of(c)
                         }
                     },
                     Err(_) => CacheShown::Missing,
@@ -297,6 +323,52 @@ fn on_the_cache(
 /// around it, or `None`.
 pub(crate) fn cap_typed(text: &str) -> Option<u64> {
     text.trim().parse().ok()
+}
+
+/// The previews' cap in megabytes as the cache has it, else as the
+/// settings keep it.
+fn preview_cap_mb(worker: &Worker) -> u64 {
+    worker
+        .thumb_cache()
+        .try_lock()
+        .ok()
+        .and_then(|c| c.as_ref().map(|c| c.preview_cap() / (1024 * 1024)))
+        .unwrap_or_else(|| settings::Settings::load().preview_cache_mb)
+}
+
+/// The minutes between the passes over the network roots, as the
+/// window runs them now: zero for never.
+fn poll_minutes(st: &State) -> u64 {
+    st.library
+        .poll_every
+        .map_or(0, |every| every.as_secs().div_ceil(60))
+}
+
+/// The network roots' minutes as typed in the sheet: kept and put to
+/// work when they are a whole number and changed, the field put back
+/// when they are not a number.
+pub(crate) fn network_poll_changed(st: &mut State, app: &App) {
+    let kept = poll_minutes(st);
+    let Some(minutes) = cap_typed(&app.get_network_poll_minutes()) else {
+        app.set_network_poll_minutes(kept.to_string().into());
+        return;
+    };
+    // The sheet closing asks too, changed or not.
+    if minutes == kept {
+        app.set_network_poll_minutes(kept.to_string().into());
+        return;
+    }
+    app.set_network_poll_minutes(minutes.to_string().into());
+    keep(st, |s| s.network_poll_minutes = minutes);
+    st.library.poll_every = crate::roots::poll_every(minutes);
+    tracing::info!(
+        "library: network roots passed over {}",
+        match minutes {
+            0 => "at launch only".to_string(),
+            m => format!("every {m} min"),
+        }
+    );
+    crate::roots::restart_poll(st);
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
@@ -351,6 +423,43 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             on_the_cache(&app, &worker, move |c| c.set_cap(cap_bytes(mb)));
         });
     }
+    // How often the roots on a network mount are passed over: kept in
+    // the settings, and the timer started again on it now. Zero is
+    // never; anything but a whole number puts the field back.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_network_poll_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            network_poll_changed(&mut state.borrow_mut(), &app);
+        });
+    }
+    // A new cap for the local previews, apart from the thumbnails':
+    // kept in the settings, and the previews evicted to it now. Zero
+    // keeps none, and empties them.
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_preview_cache_cap_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let kept = preview_cap_mb(&worker);
+            let Some(mb) = cap_typed(&app.get_preview_cache_cap()) else {
+                app.set_preview_cache_cap(kept.to_string().into());
+                return;
+            };
+            if mb == kept {
+                app.set_preview_cache_cap(kept.to_string().into());
+                return;
+            }
+            app.set_preview_cache_cap(mb.to_string().into());
+            keep(&state.borrow(), |s| s.preview_cache_mb = mb);
+            tracing::info!("local previews' cap {mb} MB");
+            apply_thumb_cache(&app, CacheShown::Counting);
+            on_the_cache(&app, &worker, move |c| c.set_preview_cap(cap_bytes(mb)));
+        });
+    }
     // Ctrl+, or the gear: the count first, then the sheet.
     {
         let (state, app_weak, worker) = (state.clone(), app.as_weak(), worker.clone());
@@ -366,7 +475,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 .and_then(|c| c.as_ref().map(|c| c.cap() / (1024 * 1024)))
                 .unwrap_or_else(|| settings::Settings::load().thumb_cache_mb);
             app.set_thumb_cache_cap(mb.to_string().into());
+            app.set_preview_cache_cap(preview_cap_mb(&worker).to_string().into());
             let st = state.borrow();
+            app.set_network_poll_minutes(poll_minutes(&st).to_string().into());
             app.set_sidecar_placement(placement_name(st.placement).into());
             app.set_xmp_sidecars(st.xmp_sidecars);
             app.set_settings_note("".into());
@@ -650,11 +761,15 @@ mod tests {
 
     #[test]
     fn the_thumbnail_cache_is_said_in_megabytes() {
-        use greycard_library::thumbs::Usage;
+        use greycard_library::thumbs::{Split, Usage};
         let mb = 1024 * 1024;
         let known = |bytes, entries, cap| CacheShown::Known {
-            usage: Usage { bytes, entries },
+            usage: Split {
+                thumbs: Usage { bytes, entries },
+                previews: Usage::default(),
+            },
             cap,
+            preview_cap: 0,
         };
         assert_eq!(
             thumb_cache_words(known(5 * mb / 2, 312, 300 * mb)),
@@ -669,12 +784,115 @@ mod tests {
         assert!(thumb_cache_words(known(0, 0, 0)).starts_with("Off:"));
         assert_eq!(
             thumb_cache_words(known(3 * mb, 40, 0)),
-            "Off. 40 thumbnails from before, 3.0 MB."
+            "Off. 40 pictures from before, 3.0 MB."
         );
         assert_eq!(known(3 * mb, 40, 0).entries(), 40);
+        // The previews against their own cap, counted in what Clear
+        // takes.
+        let both = CacheShown::Known {
+            usage: Split {
+                thumbs: Usage {
+                    bytes: 5 * mb / 2,
+                    entries: 312,
+                },
+                previews: Usage {
+                    bytes: 18 * mb,
+                    entries: 40,
+                },
+            },
+            cap: 300 * mb,
+            preview_cap: 8192 * mb,
+        };
+        assert_eq!(
+            thumb_cache_words(both),
+            "312 thumbnails kept, 2.5 MB of 300 MB. 40 local previews, 18.0 MB of 8192 MB."
+        );
+        assert_eq!(both.entries(), 352);
         assert_eq!(CacheShown::Counting.entries(), 0);
         assert_eq!(thumb_cache_words(CacheShown::Counting), "Counting…");
         assert!(thumb_cache_words(CacheShown::Missing).starts_with("No cache"));
+    }
+
+    /// The network roots' minutes: shown as the window runs them, taken
+    /// when a whole number and changed (the timer's every with it), and
+    /// put back when not a number; zero is never.
+    #[test]
+    fn the_network_poll_field_takes_whole_minutes() {
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        state.borrow_mut().library.poll_every = crate::roots::poll_every(10);
+        app.invoke_settings_asked();
+        assert_eq!(app.get_network_poll_minutes(), "10");
+        app.set_network_poll_minutes(" 25 ".into());
+        app.invoke_network_poll_changed();
+        assert_eq!(app.get_network_poll_minutes(), "25");
+        assert_eq!(
+            state.borrow().library.poll_every,
+            Some(std::time::Duration::from_secs(25 * 60))
+        );
+        for bad in ["soon", "2.5", "-1", ""] {
+            app.set_network_poll_minutes(bad.into());
+            app.invoke_network_poll_changed();
+            assert_eq!(app.get_network_poll_minutes(), "25", "{bad:?} put back");
+            assert_eq!(
+                state.borrow().library.poll_every,
+                Some(std::time::Duration::from_secs(25 * 60))
+            );
+        }
+        app.set_network_poll_minutes("0".into());
+        app.invoke_network_poll_changed();
+        assert_eq!(state.borrow().library.poll_every, None, "zero is never");
+        app.invoke_settings_asked();
+        assert_eq!(app.get_network_poll_minutes(), "0");
+        // Past what a clock holds: saturates, as the launch's does.
+        app.set_network_poll_minutes(u64::MAX.to_string().into());
+        app.invoke_network_poll_changed();
+        assert!(state.borrow().library.poll_every.is_some());
+    }
+
+    /// The previews' cap field: shown as the cache has it, taken when a
+    /// whole number and changed (the cache's previews capped by it, the
+    /// thumbnails' cap left), and put back when not a number.
+    #[test]
+    fn the_previews_cap_field_takes_whole_megabytes() {
+        let dir = scratch("preview-cap");
+        let app = crate::testing::window(0);
+        let (_state, worker) = crate::testing::state_for(&app, Vec::new());
+        let mb = 1024 * 1024;
+        let mut cache = greycard_library::Thumbs::at(dir.join("thumbs"), 300 * mb)
+            .with_previews(crate::previews::SIZE, 8192 * mb);
+        cache.seed_split(Default::default());
+        worker.set_thumb_cache(Some(cache));
+        app.invoke_settings_asked();
+        assert_eq!(app.get_preview_cache_cap(), "8192");
+        assert_eq!(app.get_thumb_cache_cap(), "300");
+        let caps = || {
+            let held = worker.thumb_cache();
+            let held = held.lock().unwrap();
+            let c = held.as_ref().unwrap();
+            (c.cap() / mb, c.preview_cap() / mb)
+        };
+        let until = |want: (u64, u64)| {
+            let start = std::time::Instant::now();
+            while caps() != want {
+                assert!(start.elapsed().as_secs() < 10, "{:?} for {want:?}", caps());
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        app.set_preview_cache_cap(" 2048 ".into());
+        app.invoke_preview_cache_cap_changed();
+        assert_eq!(app.get_preview_cache_cap(), "2048");
+        until((300, 2048));
+        for bad in ["lots", "1.5", "-3", ""] {
+            app.set_preview_cache_cap(bad.into());
+            app.invoke_preview_cache_cap_changed();
+            assert_eq!(app.get_preview_cache_cap(), "2048", "{bad:?} put back");
+        }
+        assert_eq!(caps(), (300, 2048));
+        app.set_preview_cache_cap("0".into());
+        app.invoke_preview_cache_cap_changed();
+        until((300, 0));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

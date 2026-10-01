@@ -2697,17 +2697,18 @@ pub fn count_thumb_cache(
                 .lock()
                 .expect("thumbnail cache")
                 .as_ref()
-                .map(|c| c.root().to_path_buf());
-            let Some(root) = root else {
+                .map(|c| (c.root().to_path_buf(), c.previews_from()));
+            let Some((root, previews_from)) = root else {
                 return then(None);
             };
-            let counted = greycard_library::thumbs::usage_at(&root);
+            // The thumbnails and the previews apart, each under its cap.
+            let counted = greycard_library::thumbs::split_at(&root, previews_from);
             let known = cache
                 .lock()
                 .expect("thumbnail cache")
                 .as_mut()
                 .and_then(|c| {
-                    c.seed_usage(counted);
+                    c.seed_split(counted);
                     c.known_usage()
                 });
             then(known);

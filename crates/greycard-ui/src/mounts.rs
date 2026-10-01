@@ -16,6 +16,11 @@
 //! macOS `statfs` says, by `MNT_LOCAL` and the type's name. On Windows
 //! a UNC path is remote, and a drive letter is asked of
 //! `GetDriveTypeW`.
+//!
+//! A share can also be mounted below a local root (`~/Pictures/NAS`
+//! under `~/Pictures`). On Linux every mount point under a root is
+//! classified the same way ([`remote_under`]), and a network one is
+//! left out of the root's watch and passed over on the timer.
 
 use std::path::{Path, PathBuf};
 
@@ -124,6 +129,70 @@ pub(crate) fn mount_of(table: &str, path: &Path) -> Option<(PathBuf, String)> {
         }
     }
     best
+}
+
+/// The network mounts below `root`, by a mount table in
+/// `/proc/self/mounts`'s format: each mount point under the root (not
+/// the root's own), with the type that is mounted there as [`mount_of`]
+/// reads it (the later of two at one point), when that type is a
+/// network one, and with none when only an automount is there so far
+/// (`autofs`, a systemd `x-systemd.automount` before its first use):
+/// what it will mount is not known until a look into it mounts it, which
+/// the watcher's build does on purpose (`roots::mount_on_purpose`) and
+/// then reads the table again. Only the outermost: a
+/// mount inside one already found is under it, and goes with it. A
+/// local disk mounted inside a share is inside the share's subtree, and
+/// goes with it too.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub(crate) fn remote_under_in(table: &str, root: &Path) -> Vec<(PathBuf, Option<String>)> {
+    let mut points: Vec<PathBuf> = Vec::new();
+    for line in table.lines() {
+        let mut fields = line.split_whitespace();
+        let (Some(_device), Some(point)) = (fields.next(), fields.next()) else {
+            continue;
+        };
+        let point = PathBuf::from(unescape(point));
+        if point != root && point.starts_with(root) && !points.contains(&point) {
+            points.push(point);
+        }
+    }
+    // Outermost first, so a mount inside a share found is passed over.
+    points.sort_by_key(|p| p.components().count());
+    let mut found: Vec<(PathBuf, Option<String>)> = Vec::new();
+    for point in points {
+        if found.iter().any(|(f, _)| point.starts_with(f)) {
+            continue;
+        }
+        match mount_of(table, &point) {
+            Some((at, fs)) if at == point && network(&fs) => found.push((point, Some(fs))),
+            Some((at, fs)) if at == point && fs == "autofs" => found.push((point, None)),
+            _ => {}
+        }
+    }
+    found
+}
+
+/// The network mounts below `root` (canonical, as the roots are): on
+/// Linux from the mount table, as [`remote_under_in`] reads it. Elsewhere
+/// none is found: macOS mounts its shares under `/Volumes`, and Windows
+/// watches a share as any folder. The tests swap it out
+/// (`roots::remote_under_fs`).
+#[cfg_attr(test, allow(dead_code))]
+pub(crate) fn remote_under(root: &Path) -> Vec<(PathBuf, Option<String>)> {
+    #[cfg(target_os = "linux")]
+    {
+        let Ok(table) = std::fs::read_to_string("/proc/self/mounts")
+            .or_else(|_| std::fs::read_to_string("/proc/mounts"))
+        else {
+            return Vec::new();
+        };
+        remote_under_in(&table, root)
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = root;
+        Vec::new()
+    }
 }
 
 /// The type of the network filesystem `root` is on, or none when it is
@@ -317,6 +386,87 @@ nas:/share /mnt/share\\040two nfs rw 0 0
         // Not an escape: left as it is.
         assert_eq!(unescape(r"a\9b\04"), r"a\9b\04");
         assert_eq!(unescape(r"a\477b"), r"a\477b");
+    }
+
+    /// A share mounted below a local root is found, by its own point,
+    /// the outermost only; a local disk below a root is not, nor the
+    /// root's own mount, nor an automount not mounted yet.
+    #[test]
+    fn the_network_mounts_below_a_root() {
+        let table = "\
+/dev/nvme0n1p2 / btrfs rw 0 0
+/dev/nvme0n1p2 /home btrfs rw 0 0
+//nas/photos /home/p/Pictures/NAS cifs rw 0 0
+/dev/sdb1 /home/p/Pictures/NAS/local ext4 rw 0 0
+nas:/more /home/p/Pictures/NAS/more nfs4 rw 0 0
+/dev/sdc1 /home/p/Pictures/Card exfat rw 0 0
+systemd-1 /home/p/Pictures/Archive autofs rw 0 0
+nas:/archive /home/p/Pictures/Archive nfs4 rw 0 0
+systemd-1 /home/p/Pictures/Later autofs rw 0 0
+host:/srv /home/p/Pictures/My\\040Share fuse.sshfs rw 0 0
+//nas/elsewhere /home/p/Music cifs rw 0 0
+";
+        let found = remote_under_in(table, Path::new("/home/p/Pictures"));
+        assert_eq!(
+            found,
+            vec![
+                (
+                    PathBuf::from("/home/p/Pictures/NAS"),
+                    Some("cifs".to_string())
+                ),
+                (
+                    PathBuf::from("/home/p/Pictures/Archive"),
+                    Some("nfs4".to_string())
+                ),
+                // An automount not mounted yet: left out, its type not
+                // known.
+                (PathBuf::from("/home/p/Pictures/Later"), None),
+                (
+                    PathBuf::from("/home/p/Pictures/My Share"),
+                    Some("fuse.sshfs".to_string())
+                ),
+            ]
+        );
+        // A root on a share has no mount below it in the table here, and
+        // a root with none below it finds none.
+        assert!(remote_under_in(table, Path::new("/home/p/Pictures/NAS/local/x")).is_empty());
+        assert!(remote_under_in(table, Path::new("/home/p/Documents")).is_empty());
+        // A root's own mount is not below it.
+        assert!(remote_under_in(table, Path::new("/home/p/Music")).is_empty());
+        // By component: `/home/p/Pictures2` is not under the root.
+        let table = "//nas/x /home/p/Pictures2 cifs rw 0 0\n";
+        assert!(remote_under_in(table, Path::new("/home/p/Pictures")).is_empty());
+    }
+
+    /// An automount below a root, before its first use and after: the
+    /// table read again once it is looked into says what it mounted.
+    #[test]
+    fn an_automount_below_a_root_resolves_when_the_table_is_read_again() {
+        let before = "\
+/dev/nvme0n1p2 / btrfs rw 0 0
+systemd-1 /home/p/Pictures/Archive autofs rw 0 0
+systemd-1 /home/p/Pictures/Card autofs rw 0 0
+";
+        let root = Path::new("/home/p/Pictures");
+        assert_eq!(
+            remote_under_in(before, root),
+            vec![
+                (PathBuf::from("/home/p/Pictures/Archive"), None),
+                (PathBuf::from("/home/p/Pictures/Card"), None),
+            ]
+        );
+        let after = format!(
+            "{before}nas:/archive /home/p/Pictures/Archive nfs4 rw 0 0\n\
+             /dev/sdc1 /home/p/Pictures/Card exfat rw 0 0\n"
+        );
+        // The share by its type; the local disk no longer among them.
+        assert_eq!(
+            remote_under_in(&after, root),
+            vec![(
+                PathBuf::from("/home/p/Pictures/Archive"),
+                Some("nfs4".to_string())
+            )]
+        );
     }
 
     #[test]

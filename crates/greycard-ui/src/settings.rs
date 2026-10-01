@@ -103,6 +103,11 @@ pub struct Settings {
     /// may hold, in megabytes; past it the least recently used
     /// pictures go. Zero turns the cache off.
     pub thumb_cache_mb: u64,
+    /// The most the local previews (the culling loupe's pictures of the
+    /// frames under the roots, kept beside the thumbnails) may hold, in
+    /// megabytes, apart from the thumbnails' cap; past it the least
+    /// recently used go. Zero keeps none.
+    pub preview_cache_mb: u64,
     /// How often, in minutes, a library root on a network mount (NFS,
     /// SMB, sshfs), which is not watched, is passed over for what
     /// changed on it. Zero for never: the pass at launch and the list's
@@ -178,6 +183,7 @@ impl Default for Settings {
             recent_folders: Vec::new(),
             folder_tree_subfolders: false,
             thumb_cache_mb: greycard_library::thumbs::DEFAULT_CAP / (1024 * 1024),
+            preview_cache_mb: greycard_library::thumbs::DEFAULT_PREVIEW_CAP / (1024 * 1024),
             network_poll_minutes: 10,
             import: ImportChoices::default(),
             filter: crate::filter::Saved::default(),
@@ -323,6 +329,7 @@ mod tests {
             recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
             folder_tree_subfolders: true,
             thumb_cache_mb: 1024,
+            preview_cache_mb: 20000,
             network_poll_minutes: 30,
             import: ImportChoices {
                 destination: "/home/x/Pictures".into(),
@@ -369,6 +376,11 @@ mod tests {
         assert!(read.recent_folders.is_empty());
         // And from before the folder tree, a folder's own frames.
         assert!(!read.folder_tree_subfolders);
+        // And from before the previews' own cap, 8 GB of them.
+        assert_eq!(read.preview_cache_mb, 8192);
+        assert_eq!(read.thumb_cache_mb, 300);
+        // And from before the network roots' timer, every ten minutes.
+        assert_eq!(read.network_poll_minutes, 10);
         // A file from before the update check has it on.
         assert!(read.update.check);
         assert_eq!(read.update.checked_at, 0);
