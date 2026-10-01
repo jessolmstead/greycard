@@ -10,6 +10,9 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The grid header's facets sit on two rows, Camera and Lens on the
+  first and the short facets on the second, so the lens chips are no
+  longer lost down a sideways line after the bodies (§211)
 - The rest of the network reads are off the window's thread: the
   indexer's passes get the roots' look and a pass that goes quiet on a
   share is set aside while the other roots' reports carry on, a batch

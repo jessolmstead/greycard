@@ -19,10 +19,7 @@ None open.
 
 ## Tweaks
 
-- [ ] The grid header's facets on two fixed rows, Camera and Lens on
-      the first and Style, ISO, Focal and Day on the second, so the
-      lens chips are not lost down a sideways-scrolling line after the
-      bodies; the header one row taller, still spelled out (§211)
+None open.
 
 ## Next: 0.4.0
 

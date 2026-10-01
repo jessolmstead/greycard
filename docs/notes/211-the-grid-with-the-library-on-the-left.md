@@ -235,3 +235,26 @@ not found by label (in the editor it is there).
 - Over the grid, F6 and F8 still do nothing; Tab is the pane's alone.
 - The header's placeholder is cut at 200 px when the field gives way to
   the chips.
+
+---
+
+Built later the same day: the header's facets are on two fixed rows
+in place of one, Camera and Lens on the first and Style, ISO, Focal
+and Day (and any facet the index adds later) on the second, so the
+lens chips are no longer lost down a sideways-scrolling line after
+the bodies. The long chips are the reason: a body's or a lens's name
+is most of a row's width, and the short facets are what scrolled the
+lens off the screen. The window splits the rows, not Slint:
+`library::split_facet_rows` sorts the index's rows by facet slot and
+the window sets a long and a short model beside the one the culling
+panel still takes, so the Slint stays a plain repeater, and the
+stacked bar is unchanged, one column. Each row keeps its caption, its
+chips and its sideways scroll only when it must. The first row carries
+the note while the index has nothing, and the second takes no height
+until it has a facet. The header is still a fixed height, spelled
+out, one facet row and one gap taller: 145 px in place of 113, so at
+the default 1500 by 950 window the sheet is 805 px tall in place of
+837 and shows three rows and most of a fourth. The cost is part of a
+row of thumbnails at the top of the grid, which the second facet row
+buys back in what a tester can read at a glance.
+
