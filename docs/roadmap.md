@@ -29,12 +29,6 @@ is backed up to it and brought back by hash, and the last folders
 opened are a click away; a crop can be drawn, an export is a line in
 History, and the Masks tab reads at a glance.
 
-- [ ] Archive roots, part two (§197, §216): Remove rejects finds the
-      rejects folder's frames on the archive by hash, shows the list,
-      and on confirm moves them into a rejects folder there (the
-      default) or deletes them (a red second button, trash or
-      permanent); a move confirmed while the archive is offline is
-      queued and run when it answers, a delete is refused
 - [ ] One frame in two places: a file whose hash is under two roots
       (the shoot and its archive copy) shown once, opened from the copy
       that is online and fastest, its sidecar written to both when both

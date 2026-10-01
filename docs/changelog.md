@@ -10,6 +10,16 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- Remove rejects from <archive>, under Delete rejects folder in the
+  CULLING section, one entry an archive: the open folder's rejects are
+  found on the archive by content hash and confirmed on disk, the
+  pairs shown, and the default button moves each copy into a rejects
+  folder beside it with its sidecars, as Move rejects does here, while
+  a red click-only button deletes them, trash or permanent; both act
+  on the copies the sheet listed and nothing else. A move confirmed
+  while the archive does not answer is queued beside roots.json and
+  run when it answers again; a delete is never queued (§197, §216,
+  §218)
 - A root can be marked as an archive from its chip's menu, and a shoot
   backed up to it: Back up, on the grid's header and the frame menu,
   copies the folder's or the selection's frames not yet on the archive

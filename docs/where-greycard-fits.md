@@ -281,7 +281,8 @@ over the loupe, a share that stops answering never holding the window
 or the other roots, and the filter remembered between sessions; a root
 marked as an archive, a shoot backed up to it by hash with each copy
 read back before it counts, its newer sidecars along and nothing there
-ever written over, and brought back the same way; a library
+ever written over, brought back the same way, and its copies of the
+culled rejects moved aside or deleted from the shoot's side; a library
 index that fills the grid's filter with chips for camera, lens, ISO,
 focal length, day and keyword, with a filter language behind the text
 field; a look fitted
