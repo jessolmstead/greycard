@@ -1865,6 +1865,13 @@ pub(crate) fn told(app: &App, told: Told) {
             {
                 reread(&state, app, false);
             }
+            // A pass over an archive is its answer: its queued moves run.
+            if error.is_none() {
+                let mut st = state.borrow_mut();
+                if let Some(archive) = st.library.roots.archive_of(&path).map(Path::to_path_buf) {
+                    crate::panel::archive::rejects::heard_from(&mut st, app, &archive, true);
+                }
+            }
         }
         Told::BackgroundProgress { path } => {
             // Rows written since the last word: read as a pass that
@@ -1884,6 +1891,7 @@ pub(crate) fn told(app: &App, told: Told) {
             generation,
             first,
         } => {
+            crate::panel::archive::rejects::heard_from(&mut state.borrow_mut(), app, &root, false);
             let words = skipped_words(&state.borrow().library.roots, &root);
             if first {
                 app.set_status(words.clone().into());

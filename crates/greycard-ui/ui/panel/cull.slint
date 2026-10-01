@@ -36,6 +36,9 @@ export component CullSection inherits Section {
     in property <int> reject-count;
     callback rejects-asked();
     callback delete-asked(string);
+    /// "Remove rejects from Archive...", one an archive (§216).
+    in property <[string]> archive-rejects-choices;
+    callback archive-rejects-asked(int);
     callback focus-keys();
 
     title: "CULLING";
@@ -138,6 +141,13 @@ export component CullSection inherits Section {
         text: "Delete rejects folder...";
         icon: @image-url("../icons/trash-2.svg");
         clicked => { root.delete-asked("rejects"); }
+    }
+    // The rejects' copies on an archive, found by hash: moved into a
+    // rejects folder there, or deleted from it, behind a sheet.
+    for choice[i] in root.archive-rejects-choices: PanelButton {
+        text: choice;
+        icon: @image-url("../icons/folder-open.svg");
+        clicked => { root.archive-rejects-asked(i); }
     }
     PanelButton {
         text: "Develop";

@@ -562,6 +562,10 @@ pub(crate) enum Shown {
     /// Back up opens it, once its look is in. Never answered: a capture
     /// never copies.
     Archive,
+    /// The Remove rejects sheet for the first archive, over the open
+    /// folder's rejects folder, once its look is in. Never answered: a
+    /// capture never moves or deletes.
+    ArchiveRejects,
     /// A meta key (a rating, a flag or a color label) pressed over the
     /// selection (`--press`), for a snapshot of what follows it.
     Key(char),
@@ -595,10 +599,11 @@ impl Shown {
             "root-name" => Ok(Self::RootName),
             "delete" => Ok(Self::Delete),
             "archive" => Ok(Self::Archive),
+            "archive-rejects" => Ok(Self::ArchiveRejects),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, paste, pasted, import, imported, match, \
-                 matched, root-name, delete or archive, not {name}"
+                 matched, root-name, delete, archive or archive-rejects, not {name}"
             )),
         }
     }
@@ -678,6 +683,7 @@ impl Shown {
             }
             Self::Delete => app.invoke_delete_asked("selection".into()),
             Self::Archive => app.invoke_archive_header_pressed(0),
+            Self::ArchiveRejects => app.invoke_archive_rejects_asked(0),
             Self::RootName => {
                 if let Some(first) = app.get_library_roots().row_data(0) {
                     app.invoke_library_root_rename(first.path);

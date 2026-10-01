@@ -565,6 +565,10 @@ fn take_launch(st: &mut State, launch: Launch) {
     // roots is not put back by an older one's.
     if token == st.library.watch_token {
         st.library.offline = offline;
+        // An archive that answered runs its queued moves once there is
+        // a window to run them on (`send_build`).
+        let offline = st.library.offline.clone();
+        crate::panel::archive::rejects::heard_at_launch(st, &offline);
     }
     // A root taken out meanwhile is not passed over; one added
     // meanwhile asked for its own pass.
@@ -687,6 +691,7 @@ fn send_build(app: &App, plan: Plan) -> bool {
                     let mut st = state.borrow_mut();
                     f(&mut st);
                     show(&st, &app);
+                    crate::panel::archive::rejects::run_due(&mut st, &app);
                 });
             };
             let built = plan.build(|launch| on_window(Box::new(move |st| take_launch(st, launch))));
@@ -1989,6 +1994,10 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
                     lib.readable.insert(dir);
                 }
             }
+        }
+        // An archive that answered this look runs its queued moves.
+        if let Some(offline) = &offline {
+            crate::panel::archive::rejects::heard_over(&mut st, app, offline);
         }
         if let Some(offline) = offline
             && st.library.offline != offline

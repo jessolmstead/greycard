@@ -17,6 +17,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use greycard_library::Change;
 
 use crate::archive::{self, Ask, Beat, Direction, Frames, Heard, Plan, Report};
+
+pub(crate) mod rejects;
 use crate::panel::browser::{chosen_frames, file_name};
 use crate::roots::{ROOT_WAIT, View};
 use crate::*;
@@ -54,6 +56,8 @@ pub(crate) struct Archive {
     count_stop: Option<Arc<AtomicBool>>,
     /// Numbers the Delete sheet's looks.
     delete_token: u64,
+    /// Remove rejects from an archive: its sheet and its queue.
+    pub(crate) rejects: rejects::Rejects,
 }
 
 /// The header's counts: the view's generation they were taken over,
@@ -79,12 +83,19 @@ struct Asked {
     archive: PathBuf,
 }
 
-/// A copy under way.
+/// A job on an archive under way: a copy, or the rejects' move or
+/// delete there.
 struct Running {
     cancel: Arc<AtomicBool>,
+    /// Bytes copied so far, or frames done for the rejects.
     bytes: Arc<AtomicU64>,
     total: u64,
-    direction: Direction,
+    /// What the card says it is doing: "backing up to", "moving the
+    /// rejects on".
+    doing: &'static str,
+    /// The bar is by frames, not bytes: the rejects' moves are renames,
+    /// over in no time whatever the size.
+    by_files: bool,
     label: String,
     token: u64,
     archive: PathBuf,
@@ -286,6 +297,7 @@ pub(crate) fn show(st: &State, app: &App) {
     app.set_archive_choices(labels(st, &choices));
     let items: Vec<slint::SharedString> = items.into_iter().map(Into::into).collect();
     app.set_archive_header_choices(ModelRc::new(VecModel::from(items)));
+    rejects::show(st, app);
 }
 
 /// The header's words for an archive: how many frames are not on it, and
@@ -601,6 +613,7 @@ fn close(st: &mut State, app: &App) {
     st.archive.asked = None;
     st.archive.plan = None;
     app.set_archive_open(false);
+    rejects::run_due(st, app);
 }
 
 /// A few names, and how many more.
@@ -788,6 +801,13 @@ pub(crate) fn answered(state: &Rc<RefCell<State>>, app: &App, yes: bool) {
     if !plan.has_work() {
         return;
     }
+    if st.archive.running.is_some() || st.archive.aside.iter().any(|(_, a)| *a == asked.archive) {
+        app.set_status(
+            "not copied: another job on an archive started meanwhile; ask again once it is done"
+                .into(),
+        );
+        return;
+    }
     if !st.deletes_allowed {
         let why = "not copied: a capture, an export or a timing run never copies";
         tracing::info!("{why}");
@@ -817,7 +837,11 @@ fn start(st: &mut State, app: &App, asked: Asked, plan: Plan) {
         cancel: cancel.clone(),
         bytes: bytes.clone(),
         total,
-        direction: asked.ask.direction,
+        doing: match asked.ask.direction {
+            Direction::BackUp => "backing up to",
+            Direction::BringBack => "bringing back to",
+        },
+        by_files: false,
         label: asked.label.clone(),
         token,
         archive: asked.archive.clone(),
@@ -861,6 +885,11 @@ fn start(st: &mut State, app: &App, asked: Asked, plan: Plan) {
         app.set_status("the copy could not be started; nothing was copied".into());
         return;
     }
+    start_timer(st, app);
+}
+
+/// The card's bar filled from the job's count, five times a second.
+fn start_timer(st: &State, app: &App) {
     let app_weak = app.as_weak();
     st.archive.timer.start(
         slint::TimerMode::Repeated,
@@ -889,10 +918,7 @@ fn tick(st: &State, app: &App) {
         done as f32 / r.total as f32
     };
     app.set_archive_fraction(fraction);
-    let doing = match r.direction {
-        Direction::BackUp => "backing up to",
-        Direction::BringBack => "bringing back to",
-    };
+    let doing = r.doing;
     let canceling = if r.cancel.load(Ordering::Relaxed) {
         "; stopping after this frame"
     } else {
@@ -902,8 +928,16 @@ fn tick(st: &State, app: &App) {
         format!(
             "{doing} {}: {} of {}{canceling}",
             r.label,
-            archive::size_words(done),
-            archive::size_words(r.total)
+            if r.by_files {
+                done.to_string()
+            } else {
+                archive::size_words(done)
+            },
+            if r.by_files {
+                frames_word(r.total as usize)
+            } else {
+                archive::size_words(r.total)
+            }
         )
         .into(),
     );
@@ -978,6 +1012,7 @@ fn land_run(
                  (the log has why)"
                     .into(),
             );
+            rejects::run_due(&mut st, app);
         }
         Heard::Done { result, late } => {
             if ours {
@@ -1010,6 +1045,8 @@ fn land_run(
                     .changes(report.folders.iter().cloned().map(Change::Folder).collect());
             }
             want_count(&mut st, app);
+            // A queue heard due while the card was this copy's.
+            rejects::run_due(&mut st, app);
         }
     }
 }
@@ -1493,6 +1530,7 @@ fn send<R: Send + 'static>(
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+    rejects::install(app, state);
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_library_root_archive(move |path| {

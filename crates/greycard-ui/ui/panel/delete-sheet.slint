@@ -10,9 +10,14 @@ import { PanelButton } from "../controls.slint";
 // A button that only a click presses: no focus to take, so no key
 // reaches it. Red, for the one thing on this sheet that cannot be
 // undone.
-component DangerButton inherits Rectangle {
+export component DangerButton inherits Rectangle {
     in property <string> text;
     callback clicked();
+    // Known by its words to a screen reader, and to the tests' clicks;
+    // still no focus and no default action, so nothing but a click
+    // presses it.
+    accessible-role: button;
+    accessible-label: root.text;
     height: Theme.control-height;
     border-radius: Theme.radius-md;
     border-width: 1px;

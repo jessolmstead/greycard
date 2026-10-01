@@ -42,6 +42,8 @@ use std::time::{Duration, Instant, SystemTime};
 use greycard_edit::{SIDECAR_FOLDER, Sidecar};
 use greycard_library::Library;
 
+pub(crate) mod rejects;
+
 /// The ending of a copy's temporary name, which a later run removes.
 pub(crate) const TEMPORARY: &str = ".greycard-backup";
 

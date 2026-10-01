@@ -29,6 +29,7 @@ import { ModelSheet } from "panel/model-sheet.slint";
 import { RejectsSheet } from "panel/rejects-sheet.slint";
 import { DeleteSheet } from "panel/delete-sheet.slint";
 import { ArchiveSheet, ArchiveCard } from "panel/archive-sheet.slint";
+import { ArchiveRejectsSheet } from "panel/archive-rejects-sheet.slint";
 import { MatchSheet } from "panel/match-sheet.slint";
 import { PresetSheet } from "panel/preset-sheet.slint";
 import { SyncSheet } from "panel/sync-sheet.slint";
@@ -469,6 +470,20 @@ export component App inherits Window {
     in property <float> archive-fraction: 0;
     in property <string> archive-line: "";
     callback archive-cancel();
+    /// Remove rejects from an archive: the CULLING section's entries,
+    /// one an archive, and the sheet, answered 0 no, 1 move, 2 delete
+    /// to the trash, 3 delete permanently.
+    in property <[string]> archive-rejects-choices: [];
+    callback archive-rejects-asked(int);
+    in-out property <bool> archive-rejects-open: false;
+    in property <string> archive-rejects-title: "";
+    in property <string> archive-rejects-text: "";
+    in property <string> archive-rejects-named: "";
+    in property <string> archive-rejects-note: "";
+    in property <string> archive-rejects-move: "";
+    in property <string> archive-rejects-trash: "";
+    in property <string> archive-rejects-permanent: "";
+    callback archive-rejects-answered(int);
     /// The folder open, as the left pane names it under its Open
     /// folder button: its own name (or the root's, or "All roots"
     /// for a view of the roots), the root it is under, and its path
@@ -1437,7 +1452,7 @@ export component App inherits Window {
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
-            || root.delete-open || root.archive-open
+            || root.delete-open || root.archive-open || root.archive-rejects-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
             || root.root-sheet-open;
     }
@@ -1466,6 +1481,7 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
             if (e.text == Key.Escape && root.delete-open) { root.delete-answered(0); return accept; }
             if (e.text == Key.Escape && root.archive-open) { root.archive-answered(false); return accept; }
+            if (e.text == Key.Escape && root.archive-rejects-open) { root.archive-rejects-answered(0); return accept; }
             if (e.text == Key.Escape && root.match-open && !root.match-running) { root.match-close(); return accept; }
             if (e.text == Key.Escape && root.sync-open) { root.sync-open = false; return accept; }
             if (e.text == Key.Escape && (root.placing != "" || root.picking != "")) { root.stop-placing(); return accept; }
@@ -1892,6 +1908,8 @@ export component App inherits Window {
                             reject-count: root.reject-count;
                             rejects-asked => { root.rejects-asked(); }
                             delete-asked(w) => { root.delete-asked(w); }
+                            archive-rejects-choices: root.archive-rejects-choices;
+                            archive-rejects-asked(i) => { root.archive-rejects-asked(i); }
                             focus-keys => { keys.focus(); }
                         }
                         if root.panel-tab == "Masks": AdjustmentsSection {
@@ -2720,6 +2738,22 @@ export component App inherits Window {
             keys.focus();
         }
         look-again => { root.archive-look-again(); }
+    }
+
+    // Remove rejects from an archive: the list, the move (Enter's) and
+    // the delete (a click's alone).
+    if root.archive-rejects-open: ArchiveRejectsSheet {
+        title: root.archive-rejects-title;
+        text: root.archive-rejects-text;
+        named: root.archive-rejects-named;
+        note: root.archive-rejects-note;
+        move-text: root.archive-rejects-move;
+        trash-text: root.archive-rejects-trash;
+        permanent-text: root.archive-rejects-permanent;
+        answered(a) => {
+            root.archive-rejects-answered(a);
+            keys.focus();
+        }
     }
 
     // A backup or a bring-back under way, over the window's foot,

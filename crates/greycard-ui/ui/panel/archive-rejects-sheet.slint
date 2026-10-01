@@ -1,0 +1,110 @@
+// Remove rejects from an archive (notes §197, §216): the rejects here
+// and their copies on the archive, until answered. Moving the copies
+// into a rejects folder beside each, on the archive, is the default
+// and Enter's; deleting them from the archive is red, never the
+// default, cannot take the focus, and so is reached by a click alone,
+// as the delete sheet's permanent delete is. Tab moves nothing here:
+// the sheet takes every key.
+
+import { Theme } from "../theme.slint";
+import { PanelButton } from "../controls.slint";
+import { DangerButton } from "delete-sheet.slint";
+
+export component ArchiveRejectsSheet inherits Rectangle {
+    in property <string> title;
+    /// The rejects here with their copies there, a line each.
+    in property <string> text;
+    /// The rejects with no copy found, not known, or unreadable.
+    in property <string> named;
+    /// What each button does, and the trash or permanent wording.
+    in property <string> note;
+    /// The move's words; empty when there is nothing to move.
+    in property <string> move-text;
+    /// The delete's words to the trash, and permanently; empty for one
+    /// the sheet does not offer.
+    in property <string> trash-text;
+    in property <string> permanent-text;
+    /// 0 no, 1 move, 2 delete to the trash, 3 delete permanently.
+    callback answered(int);
+
+    background: #000000a0;
+    TouchArea { clicked => { root.answered(0); } }
+    Rectangle {
+        width: 560px;
+        height: sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        // Escape is its no, Enter the move and never a delete; every
+        // other key stops here, Tab with them.
+        keys := FocusScope {
+            init => { self.focus(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.answered(0);
+                    return accept;
+                }
+                if (e.text == Key.Return && !e.repeat) {
+                    if (root.move-text != "") { root.answered(1); }
+                    return accept;
+                }
+                return accept;
+            }
+            sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                Text {
+                    text: root.title;
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.text;
+                    font-size: Theme.font-sm;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                if root.named != "": Text {
+                    text: root.named;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.note;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: Theme.space-2; }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.answered(0); }
+                    }
+                    if root.trash-text != "": DangerButton {
+                        text: root.trash-text;
+                        clicked => { root.answered(2); }
+                    }
+                    if root.permanent-text != "": DangerButton {
+                        text: root.permanent-text;
+                        clicked => { root.answered(3); }
+                    }
+                    if root.move-text != "": PanelButton {
+                        text: root.move-text;
+                        icon: @image-url("../icons/folder-open.svg");
+                        primary: true;
+                        clicked => { root.answered(1); }
+                    }
+                }
+            }
+        }
+    }
+}
