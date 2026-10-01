@@ -4023,15 +4023,21 @@ mod tests {
             let _ = tx.send(told);
         })
         .expect("the indexer starts");
+        // Each word printed as it comes: the test has failed on the
+        // Windows runner with no panic text in the log, and the capture
+        // is shown on a failure.
         let wait = |want: &dyn Fn(&Told) -> bool| loop {
-            let told = rx
-                .recv_timeout(Duration::from_secs(20))
-                .expect("the indexer answers");
+            let told = match rx.recv_timeout(Duration::from_secs(20)) {
+                Ok(told) => told,
+                Err(e) => panic!("the indexer answers: {e}"),
+            };
+            eprintln!("told: {told:?}");
             if want(&told) {
                 return told;
             }
         };
         wait(&|t| matches!(t, Told::Opened(_)));
+        eprintln!("root: {}", root.display());
         indexer.roots(vec![root.clone()]);
         match wait(&|t| matches!(t, Told::Background { .. })) {
             Told::Background {
@@ -4068,11 +4074,15 @@ mod tests {
         let reader = greycard_library::Library::open_read_only(&db).unwrap();
         assert_eq!(reader.count_under(&root).unwrap(), 4);
         drop(reader);
+        eprintln!("counted");
         // An asker still held, as the watcher holds one, does not keep
         // the thread from leaving.
         let _held = indexer.asker();
         indexer.stop(Duration::from_secs(20));
-        std::fs::remove_dir_all(&dir).unwrap();
+        eprintln!("stopped");
+        if let Err(e) = std::fs::remove_dir_all(&dir) {
+            panic!("the test's folder could not be removed: {e}");
+        }
     }
 
     /// The first pixel of a row's picture on the window.
