@@ -2172,6 +2172,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     app.on_grid_slack(grid::slack);
     app.on_grid_max_scroll(grid::max_scroll);
     app.on_grid_reveal_to(grid::reveal);
+    app.on_grid_tiles_top(grid::tiles_top);
     // An arrow in the grid: along the row, or by a whole row, and
     // the frame it lands on is opened as a click on it would.
     {
@@ -2211,7 +2212,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     // for asks for those on screen again at the larger size.
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
-        app.on_grid_range(move |scroll, height, columns| {
+        app.on_grid_range(move |scroll, height, columns, top| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -2221,11 +2222,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let mut st = state.borrow_mut();
             let count = st.shown.len() as i32;
             // The grid's cells follow, and the pictures with them.
-            let (at, wanted) = grid::window(scroll, height, cell, columns, count);
+            let (at, wanted) = grid::window(scroll, height, cell, columns, count, top);
             if cells::show(&app, cells::View::Grid, at, wanted) {
                 settle_pictures(&mut st, &app);
             }
-            let Some((first, last)) = grid::visible(scroll, height, cell, columns, count) else {
+            let Some((first, last)) = grid::visible(scroll, height, cell, columns, count, top)
+            else {
                 return;
             };
             st.grid_shown = Some((first, last));
@@ -2484,7 +2486,7 @@ mod tests {
         let files = crate::testing::folder(3);
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         app.set_grid_open(true);
-        app.invoke_grid_range(0.0, 773.0, 8);
+        app.invoke_grid_range(0.0, 773.0, 8, 0.0);
         assert_eq!(state.borrow().grid_shown, Some((0, 2)));
         let failed = |row: usize| app.get_thumbs().row_data(row).unwrap().failed;
         deliver(&app, picture_for(&files, 0));
@@ -2549,7 +2551,7 @@ mod tests {
         app.set_grid_open(true);
         // Eight columns, four rows and a part on screen: cells for
         // rows 0 to 6, frames 0 to 55.
-        app.invoke_grid_range(0.0, 773.0, 8);
+        app.invoke_grid_range(0.0, 773.0, 8, 0.0);
         assert_eq!(cells::window(&app, cells::View::Grid), (0, 56));
         deliver(
             &app,
@@ -2565,7 +2567,7 @@ mod tests {
         assert_eq!(pictured(300), 0, "no cell: kept for later");
         assert_eq!(pictured(900), 0);
         // The grid scrolled to 900's screenful: on, and 5 off.
-        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8);
+        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8, 0.0);
         assert_eq!(pictured(900), 2);
         assert_eq!(pictured(5), 0);
         assert!(state.borrow().thumb_shown[5].is_none());
@@ -2575,7 +2577,7 @@ mod tests {
         app.invoke_strip_range(295, 305);
         assert_eq!(pictured(300), 2);
         // Back to the top: 5 on again, 900 off, 300 kept by the strip.
-        app.invoke_grid_range(0.0, 773.0, 8);
+        app.invoke_grid_range(0.0, 773.0, 8, 0.0);
         assert_eq!((pictured(5), pictured(900), pictured(300)), (2, 0, 2));
         // A larger picture for a row without a cell waits in hand, and
         // is the one put on when the grid comes back to it.
@@ -2593,7 +2595,7 @@ mod tests {
             },
         );
         assert_eq!(pictured(900), 0);
-        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8);
+        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8, 0.0);
         assert_eq!(pictured(900), 4);
     }
 
@@ -2617,7 +2619,7 @@ mod tests {
             assert_eq!(st.shown.len(), 500);
         }
         app.set_grid_open(true);
-        app.invoke_grid_range(0.0, 773.0, 8);
+        app.invoke_grid_range(0.0, 773.0, 8, 0.0);
         deliver(&app, picture_for(&files, 5));
         deliver(&app, picture_for(&files, 900));
         let pictured = |row: usize| app.get_thumbs().row_data(row).unwrap().image.size().width;
@@ -2629,7 +2631,7 @@ mod tests {
         }
         assert_eq!(pictured(5), 2, "a cell: made again on its row");
         assert_eq!(pictured(900), 0, "no cell: kept for later");
-        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8);
+        app.invoke_grid_range(grid::PAD + 111.0 * 206.0, 773.0, 8, 0.0);
         assert_eq!(pictured(900), 2);
     }
 
@@ -2642,7 +2644,7 @@ mod tests {
         let files = crate::testing::folder(100);
         let (state, _worker) = crate::testing::state_for(&app, files.clone());
         // A sheet tall enough for a cell for every frame.
-        app.invoke_grid_range(0.0, 3000.0, 8);
+        app.invoke_grid_range(0.0, 3000.0, 8, 0.0);
         let batch = crate::thumbpool::Batch::of((0..100).map(|i| picture_for(&files, i)).collect());
         take_thumbnails(&app, &state, batch, std::time::Duration::ZERO);
         let taken = |st: &State| st.thumb_base.iter().filter(|b| b.is_some()).count();
@@ -3010,7 +3012,7 @@ mod tests {
             .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let seen = Rc::new(RefCell::new(Vec::new()));
         let reports = seen.clone();
-        app.on_grid_range(move |scroll, height, cols| {
+        app.on_grid_range(move |scroll, height, cols, _top| {
             reports.borrow_mut().push((scroll, height, cols));
         });
         app.set_selected(0);
@@ -3039,7 +3041,7 @@ mod tests {
             .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let seen = Rc::new(RefCell::new(Vec::new()));
         let reports = seen.clone();
-        app.on_grid_range(move |scroll, height, cols| {
+        app.on_grid_range(move |scroll, height, cols, _top| {
             reports.borrow_mut().push((scroll, height, cols));
         });
         let steps = Rc::new(RefCell::new(0));
@@ -3056,7 +3058,7 @@ mod tests {
         // told to make first.
         assert_eq!(*steps.borrow(), 6);
         assert_eq!(*seen.borrow(), vec![(0.0, 837.0, 6)]);
-        assert_eq!(grid::visible(0.0, 837.0, 176.0, 6, 120), Some((0, 29)));
+        assert_eq!(grid::visible(0.0, 837.0, 176.0, 6, 120, 0.0), Some((0, 29)));
         // A frame at the foot of the sheet scrolls it there, and what
         // it says it shows follows the scroll.
         seen.borrow_mut().clear();
@@ -3064,11 +3066,11 @@ mod tests {
         // Slint runs the changed handlers with the next event, which
         // in a window is the next frame.
         press(&app, Key::Shift);
-        let scrolled = grid::reveal(0.0, 837.0, 176.0, 6, 120, 119);
-        assert_eq!(scrolled, grid::max_scroll(837.0, 176.0, 6, 120));
+        let scrolled = grid::reveal(0.0, 837.0, 176.0, 6, 120, 119, 0.0);
+        assert_eq!(scrolled, grid::max_scroll(837.0, 176.0, 6, 120, 0.0));
         assert_eq!(*seen.borrow(), vec![(scrolled, 837.0, 6)]);
         assert_eq!(
-            grid::visible(scrolled, 837.0, 176.0, 6, 120),
+            grid::visible(scrolled, 837.0, 176.0, 6, 120, 0.0),
             Some((90, 119))
         );
         // The pane put away, by F7 as in the loupe: the sheet takes
@@ -3108,7 +3110,7 @@ mod tests {
         press(&app, "g");
         let seen = Rc::new(RefCell::new(Vec::new()));
         let reports = seen.clone();
-        app.on_grid_range(move |scroll, _, cols| reports.borrow_mut().push((scroll, cols)));
+        app.on_grid_range(move |scroll, _, cols, _| reports.borrow_mut().push((scroll, cols)));
         let twelve: Vec<Thumb> = (0..12)
             .map(|i| Thumb {
                 name: format!("n{i:02}.CR3").into(),

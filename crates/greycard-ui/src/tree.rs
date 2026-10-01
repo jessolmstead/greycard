@@ -16,6 +16,11 @@
 //! it too, each frame standing in from its row until something needs
 //! its sidecar, and the root's row staying lit. Recently opened records
 //! it as the folder it is, through the browser's open as every list.
+//!
+//! The folders under the one open are shown in the grid too, as tiles
+//! above its cells, each with the frames under it: a click on one opens
+//! it exactly as its row does. With the switch on there are none, since
+//! the list already holds everything under the folder.
 
 use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsString;
@@ -72,6 +77,11 @@ pub(crate) struct Tree {
     /// the row's number and is looked up here, since a path through
     /// the window's strings would lose a name that is not UTF-8.
     shown: RefCell<Vec<PathBuf>>,
+    /// The grid's folder tiles: one model for the session, as the rows,
+    /// and each tile's folder in its order, looked up by number as a
+    /// row's is.
+    tiles: Rc<VecModel<FolderTile>>,
+    tile_folders: RefCell<Vec<PathBuf>>,
 }
 
 /// The tree of `root`'s folders from the index's counts of the frames
@@ -152,6 +162,63 @@ pub(crate) fn count_shown(n: &Node, expanded: bool) -> Option<usize> {
         (n.direct > 0).then_some(n.direct)
     } else {
         Some(n.total)
+    }
+}
+
+/// The folders directly under `folder`, as the tree has them: none for
+/// a folder that is not in it.
+fn children<'a>(nodes: &'a [Node], folder: &Path) -> Vec<&'a Node> {
+    let Some(at) = nodes.iter().position(|n| n.path == folder) else {
+        return Vec::new();
+    };
+    let depth = nodes[at].depth;
+    nodes[at + 1..]
+        .iter()
+        .take_while(|n| n.depth > depth)
+        .filter(|n| n.depth == depth + 1)
+        .collect()
+}
+
+/// The folders the grid shows as tiles over the view: those directly
+/// under the folder the tree marks, while the list is that folder's own
+/// frames. None with the switch on (a folder's view with those under
+/// it, or the root's own view, which is everything under the root), for
+/// a view with no tree, or before the tree for its root has landed.
+pub(crate) fn tiles_for(st: &State) -> Vec<&Node> {
+    let Some((root, folder)) = shown_for(st) else {
+        return Vec::new();
+    };
+    if st.tree.root.as_deref() != Some(root) {
+        return Vec::new();
+    }
+    let deep = match &st.view {
+        View::Branch { deep, .. } => *deep,
+        View::Roots(_) => st.tree.subfolders,
+        View::Folder => false,
+    };
+    if deep {
+        return Vec::new();
+    }
+    children(&st.tree.nodes, folder)
+}
+
+/// The grid's tiles as the state has them, replaced only when they
+/// change.
+fn show_tiles(st: &State) {
+    let nodes = tiles_for(st);
+    let offline = shown_for(st).is_some_and(|(r, _)| st.library.offline.contains(r));
+    *st.tree.tile_folders.borrow_mut() = nodes.iter().map(|n| n.path.clone()).collect();
+    let tiles: Vec<FolderTile> = nodes
+        .into_iter()
+        .map(|n| FolderTile {
+            name: n.name.clone().into(),
+            count: n.total as i32,
+            offline,
+        })
+        .collect();
+    let model = &st.tree.tiles;
+    if !model.iter().eq(tiles.iter().cloned()) {
+        model.set_vec(tiles);
     }
 }
 
@@ -485,6 +552,7 @@ pub(crate) fn show(st: &State, app: &App) {
     if !model.iter().eq(rows.iter().cloned()) {
         model.set_vec(rows);
     }
+    show_tiles(st);
 }
 
 /// The folder of the row shown at `row`.
@@ -493,25 +561,70 @@ fn row_folder(st: &State, row: i32) -> Option<PathBuf> {
     st.tree.shown.borrow().get(row).cloned()
 }
 
-/// A folder of the tree chosen, by its row: its frames opened from the
-/// index, its own or with those under it as the switch says.
+/// The folder of the grid's tile at `tile`.
+fn tile_folder(st: &State, tile: i32) -> Option<PathBuf> {
+    let tile = usize::try_from(tile).ok()?;
+    st.tree.tile_folders.borrow().get(tile).cloned()
+}
+
+/// A folder of the tree chosen, by its row: opened as [`open`] has it.
 fn picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, row: i32) {
+    let Some(folder) = row_folder(&state.borrow(), row) else {
+        return;
+    };
+    open(state, app, worker, &folder, "the tree");
+}
+
+/// A folder's tile in the grid clicked: opened as its row in the tree
+/// opens it.
+fn tile_picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, tile: i32) {
+    let Some(folder) = tile_folder(&state.borrow(), tile) else {
+        return;
+    };
+    open(state, app, worker, &folder, "its tile");
+}
+
+/// A folder of the tree opened, from its row or its tile: its frames
+/// from the index, its own or with those under it as the switch says.
+/// The tree marks it and Recently opened records it once the view
+/// lands, as for any view.
+fn open(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, folder: &Path, from: &str) {
     let view = {
         let st = state.borrow();
-        let Some(folder) = row_folder(&st, row) else {
-            return;
-        };
-        let folder = folder.as_path();
         let Some(root) = st.tree.root.clone() else {
             return;
         };
         if !folder.starts_with(&root) {
             return;
         }
-        tracing::info!("library: {} opened from the tree", folder.display());
+        tracing::info!("library: {} opened from {from}", folder.display());
         view_for(&root, folder, st.tree.subfolders)
     };
     crate::roots::open_view(state, app, worker, view);
+}
+
+/// The folder a tile's Reveal shows: the tile's, while its root is
+/// online; none while it is offline, or for no such tile.
+fn reveal_target(st: &State, tile: i32) -> Option<PathBuf> {
+    if shown_for(st).is_some_and(|(r, _)| st.library.offline.contains(r)) {
+        return None;
+    }
+    tile_folder(st, tile)
+}
+
+/// A tile's Reveal: its folder in the file manager, while its root is
+/// online.
+fn tile_reveal(st: &State, app: &App, tile: i32) {
+    let Some(folder) = reveal_target(st, tile) else {
+        return;
+    };
+    if let Err(e) = crate::panel::menu::reveal_folder(&folder) {
+        tracing::warn!(
+            "reveal {}: could not start the file manager: {e}",
+            folder.display()
+        );
+        app.set_status(format!("could not show {}: {e}", folder.display()).into());
+    }
 }
 
 /// A folder's triangle pressed: its folders shown, or put away.
@@ -561,12 +674,29 @@ impl Tree {
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
     app.set_folder_tree(ModelRc::from(state.borrow().tree.rows.clone()));
+    app.set_grid_tiles(ModelRc::from(state.borrow().tree.tiles.clone()));
     app.set_folder_tree_subfolders(state.borrow().tree.subfolders);
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_folder_tree_picked(move |row| {
             if let Some(app) = app_weak.upgrade() {
                 picked(&state, &app, &worker, row);
+            }
+        });
+    }
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_grid_tile_picked(move |tile| {
+            if let Some(app) = app_weak.upgrade() {
+                tile_picked(&state, &app, &worker, tile);
+            }
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_grid_tile_reveal(move |tile| {
+            if let Some(app) = app_weak.upgrade() {
+                tile_reveal(&state.borrow(), &app, tile);
             }
         });
     }
@@ -774,6 +904,17 @@ mod tests {
         frames(&root, &["r.tif"]);
         frames(&root.join("day"), &["d1.tif", "d2.tif"]);
         frames(&root.join("day").join("more"), &["m.tif"]);
+        open_root(dir, &root, window_px)
+    }
+
+    /// `root` indexed into `dir`'s index, and a window on it with the
+    /// root in its library and the root's view open, its tree landed.
+    fn open_root(
+        dir: &Path,
+        root: &Path,
+        window_px: Option<(f32, f32)>,
+    ) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+        let root = root.to_path_buf();
         let db = dir.join("index").join("library.sqlite");
         greycard_library::Library::open(&db)
             .unwrap()
@@ -1181,5 +1322,350 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The two ways an archive lays out a client: `cedar` with its raws
+    /// in it and an export folder beside them, and `birch` with nothing
+    /// of its own, a same-named folder of raws under it and an export
+    /// folder beside that. Under a root `studio`, in a 1500 by 950
+    /// window.
+    fn studio(dir: &Path) -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+        let root = dir.join("studio");
+        frames(&root.join("cedar"), &["c1.tif", "c2.tif", "c3.tif"]);
+        frames(&root.join("cedar").join("export"), &["ce1.tif", "ce2.tif"]);
+        frames(&root.join("birch").join("birch"), &["b1.tif", "b2.tif"]);
+        frames(&root.join("birch").join("export"), &["be1.tif"]);
+        open_root(dir, &root, Some((1500.0, 950.0)))
+    }
+
+    /// The grid's tiles: each one's name and count.
+    fn tiles(app: &App) -> Vec<(String, i32)> {
+        app.get_grid_tiles()
+            .iter()
+            .map(|t| (t.name.to_string(), t.count))
+            .collect()
+    }
+
+    fn done(dir: &Path, state: Rc<RefCell<State>>) {
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    /// A folder with folders under it has a tile for each, counted as
+    /// the tree counts them, under it in all; one with none has none.
+    /// The root's own view has its first-level folders.
+    #[test]
+    fn a_folder_with_folders_has_their_tiles_and_one_without_none() {
+        let dir = scratch("tiles");
+        let (app, state, worker) = archive(&dir, None);
+        assert_eq!(tiles(&app), [("day".into(), 3)], "the root's own view");
+        pick(&app, "day");
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
+        assert_eq!(tiles(&app), [("more".into(), 1)]);
+        let row = rows(&app).iter().position(|r| r.0 == "day").unwrap();
+        app.invoke_folder_tree_folded(row as i32);
+        assert_eq!(rows(&app).len(), 3, "the day unfolded");
+        assert_eq!(tiles(&app), [("more".into(), 1)], "a fold is the tree's");
+        pick(&app, "more");
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["m.tif"]);
+        assert!(tiles(&app).is_empty());
+
+        // The client layouts: the frames and the export folder, never
+        // mixed; the root's view has both clients.
+        let dir2 = scratch("tiles-studio");
+        let (app2, state2, worker2) = studio(&dir2);
+        assert_eq!(tiles(&app2), [("birch".into(), 3), ("cedar".into(), 5)]);
+        pick(&app2, "cedar");
+        land_sent(&state2, &app2, &worker2);
+        assert_eq!(listed(&state2), ["c1.tif", "c2.tif", "c3.tif"]);
+        assert_eq!(tiles(&app2), [("export".into(), 2)]);
+        done(&dir2, state2);
+
+        // A folder from the disk under the root takes the root's tree,
+        // and its tiles with it.
+        crate::panel::browser::open_folder(&state, &app, &worker, &dir.join("archive").join("day"));
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(tiles(&app), [("more".into(), 1)]);
+        // A folder under no root: no tree, no tiles.
+        let elsewhere = dir.join("elsewhere");
+        frames(&elsewhere, &["e.tif"]);
+        frames(&elsewhere.join("sub"), &["s.tif"]);
+        crate::panel::browser::open_folder(&state, &app, &worker, &elsewhere);
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["e.tif"]);
+        assert!(tiles(&app).is_empty());
+        done(&dir, state);
+    }
+
+    /// A folder with nothing of its own opens to its tiles alone, the
+    /// status line saying why as it did; a tile clicked in the grid
+    /// opens that folder exactly as its row in the tree does: the same
+    /// view, the tree marked at it, Recently opened told.
+    #[test]
+    fn a_bare_folder_opens_to_its_tiles_and_a_tile_opens_as_the_row_does() {
+        let dir = scratch("bare");
+        let (app, state, worker) = studio(&dir);
+        let birch = dir.join("studio").join("birch");
+        pick(&app, "birch");
+        land_sent(&state, &app, &worker);
+        assert!(listed(&state).is_empty());
+        assert_eq!(tiles(&app), [("birch".into(), 2), ("export".into(), 1)]);
+        assert!(
+            app.get_status().starts_with("nothing directly in birch"),
+            "{}",
+            app.get_status()
+        );
+
+        app.set_grid_open(true);
+        slint::platform::update_timers_and_animations();
+        let found = crate::testing::buttons(&app, "Folder birch");
+        assert_eq!(found.len(), 1, "one tile; the tree's row is named birch");
+        let (at, size) = found[0];
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        land_sent(&state, &app, &worker);
+        let inner = birch.join("birch");
+        let by_tile = state.borrow().view.clone();
+        assert_eq!(
+            by_tile,
+            View::Branch {
+                root: dir.join("studio"),
+                folder: inner.clone(),
+                deep: false
+            }
+        );
+        assert_eq!(listed(&state), ["b1.tif", "b2.tif"]);
+        assert!(tiles(&app).is_empty());
+        assert_eq!(state.borrow().recent.open.as_deref(), Some(inner.as_path()));
+        assert_eq!(
+            state.borrow().recent.folders.first().map(String::as_str),
+            inner.to_str()
+        );
+        let marked: Vec<String> = rows(&app)
+            .into_iter()
+            .filter(|r| r.3)
+            .map(|r| format!("{}:{}", r.0, r.1))
+            .collect();
+        assert_eq!(marked, ["birch:2"], "the inner birch marked, two deep");
+
+        // The same folder by its row in the tree: the same view.
+        pick(&app, "studio");
+        land_sent(&state, &app, &worker);
+        pick(&app, "birch");
+        land_sent(&state, &app, &worker);
+        let row = rows(&app)
+            .iter()
+            .position(|r| r.0 == "birch" && r.1 == 2)
+            .unwrap();
+        app.invoke_folder_tree_picked(row as i32);
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().view, by_tile);
+        done(&dir, state);
+    }
+
+    /// With the switch on there are no tiles: a folder's view holds
+    /// everything under it, and so does the root's.
+    #[test]
+    fn the_switch_on_takes_the_tiles_away() {
+        let dir = scratch("tiles-switch");
+        let (app, state, worker) = studio(&dir);
+        pick(&app, "cedar");
+        land_sent(&state, &app, &worker);
+        assert_eq!(tiles(&app).len(), 1);
+        app.set_folder_tree_subfolders(true);
+        app.invoke_folder_tree_subfolders_changed();
+        land_sent(&state, &app, &worker);
+        assert_eq!(
+            listed(&state).len(),
+            5,
+            "the export's frames with the switch"
+        );
+        assert!(tiles(&app).is_empty());
+        pick(&app, "studio");
+        land_sent(&state, &app, &worker);
+        assert!(matches!(state.borrow().view, View::Roots(Some(_))));
+        assert!(tiles(&app).is_empty());
+        // Off again over the root: its first-level folders.
+        app.set_folder_tree_subfolders(false);
+        app.invoke_folder_tree_subfolders_changed();
+        land_sent(&state, &app, &worker);
+        assert_eq!(tiles(&app).len(), 2);
+        done(&dir, state);
+    }
+
+    /// The tiles push the cells down by their row: the grid reports the
+    /// tiles' height with its range, a tile is where the first cell was
+    /// and a click there opens the folder, the cells sit a tile row
+    /// lower, and the arrows move through the frames alone.
+    #[test]
+    fn the_tiles_shift_the_cells_and_the_keys_skip_them() {
+        let dir = scratch("tiles-layout");
+        let (app, state, worker) = studio(&dir);
+        pick(&app, "cedar");
+        land_sent(&state, &app, &worker);
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        {
+            // Heard here, and the cells moved as the browser's own
+            // report moves them.
+            let (seen, app_weak) = (seen.clone(), app.as_weak());
+            app.on_grid_range(move |scroll, height, cols, top| {
+                seen.borrow_mut().push((scroll, height, cols, top));
+                if let Some(app) = app_weak.upgrade() {
+                    let (at, n) = crate::grid::window(
+                        scroll,
+                        height,
+                        app.get_grid_cell(),
+                        cols,
+                        app.get_thumbs().row_count() as i32,
+                        top,
+                    );
+                    crate::cells::show(&app, crate::cells::View::Grid, at, n);
+                }
+            });
+        }
+        app.invoke_select(0);
+        app.set_grid_open(true);
+        slint::platform::update_timers_and_animations();
+        crate::testing::press(&app, slint::platform::Key::Shift);
+        // Six columns beside the pane; one tile row, 88 and its gap.
+        let top = crate::grid::tiles_top(1, 176.0, 6);
+        assert_eq!(top, 96.0);
+        assert_eq!(seen.borrow().last().map(|r| (r.2, r.3)), Some((6, top)));
+        // The tile at the sheet's first place: under the header (113)
+        // and the padding, at the pane's edge (240), the padding and
+        // the slack beside six cells in 1,260.
+        let slack = crate::grid::slack(1260.0, 176.0, 6);
+        let (x0, y0) = (240.0 + crate::grid::PAD + slack, 113.0 + crate::grid::PAD);
+        let (at, size) = crate::testing::buttons(&app, "Folder export")[0];
+        assert_eq!((at.x, at.y), (x0, y0));
+        assert_eq!((size.width, size.height), (176.0, 88.0));
+        // A frame's cell, a tile row lower: a click on the third opens
+        // it.
+        let cell = |i: f32| (x0 + i * 184.0 + 88.0, y0 + top + 88.0);
+        let (x, y) = cell(2.0);
+        click(&app, x, y);
+        assert_eq!(app.get_selected(), 2);
+        // The arrows: up from the first row stays on the frames, left
+        // and right walk them; no tile is ever the selection.
+        crate::testing::press(&app, slint::platform::Key::UpArrow);
+        assert_eq!(app.get_selected(), 2);
+        crate::testing::press(&app, slint::platform::Key::LeftArrow);
+        crate::testing::press(&app, slint::platform::Key::LeftArrow);
+        crate::testing::press(&app, slint::platform::Key::LeftArrow);
+        assert_eq!(app.get_selected(), 0);
+        crate::testing::press(&app, slint::platform::Key::UpArrow);
+        assert_eq!(app.get_selected(), 0);
+        assert_eq!(
+            listed(&state),
+            ["c1.tif", "c2.tif", "c3.tif"],
+            "nothing opened"
+        );
+        // And the tile, where the first cell was without it, opens the
+        // export folder.
+        click(&app, x0 + 88.0, y0 + 44.0);
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["ce1.tif", "ce2.tif"]);
+        assert!(tiles(&app).is_empty());
+        crate::testing::press(&app, slint::platform::Key::Shift);
+        assert_eq!(
+            seen.borrow().last().map(|r| r.3),
+            Some(0.0),
+            "no tiles, no shift"
+        );
+        done(&dir, state);
+    }
+
+    /// A tile's right-click offers Reveal while the root is online, and
+    /// nothing while it is offline; over an offline root the tiles come
+    /// from the index all the same.
+    #[test]
+    fn an_offline_roots_tiles_come_from_the_index_with_no_reveal() {
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let dir = scratch("tiles-offline");
+        let (app, state, worker) = studio(&dir);
+        app.set_grid_open(true);
+        slint::platform::update_timers_and_animations();
+        let right = |app: &App, label: &str| {
+            let (at, size) = crate::testing::buttons(app, label)[0];
+            let position =
+                slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0);
+            for event in [
+                WindowEvent::PointerMoved { position },
+                WindowEvent::PointerPressed {
+                    position,
+                    button: PointerEventButton::Right,
+                },
+                WindowEvent::PointerReleased {
+                    position,
+                    button: PointerEventButton::Right,
+                },
+            ] {
+                app.window().dispatch_event(event);
+            }
+        };
+        right(&app, "Folder cedar");
+        assert!(app.get_menu_up(), "the tile's menu, online");
+        assert_eq!(listed(&state).len(), 8, "the root's view: all under it");
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_menu_up());
+        // The press that closes the menu is not a click on a tile: the
+        // menu up again over cedar, and a left press on birch.
+        right(&app, "Folder cedar");
+        assert!(app.get_menu_up());
+        let (at, size) = crate::testing::buttons(&app, "Folder birch")[0];
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        land_sent(&state, &app, &worker);
+        assert!(!app.get_menu_up(), "the press closed the menu");
+        assert!(
+            matches!(state.borrow().view, View::Roots(Some(_))),
+            "and opened nothing"
+        );
+        // What the menu's Reveal shows: each tile's own folder, online.
+        let root = dir.join("studio");
+        {
+            let st = state.borrow();
+            assert_eq!(tile_folder(&st, 0), Some(root.join("birch")));
+            assert_eq!(reveal_target(&st, 0), Some(root.join("birch")));
+            assert_eq!(reveal_target(&st, 1), Some(root.join("cedar")));
+            assert_eq!(reveal_target(&st, 2), None, "no third tile");
+            assert_eq!(reveal_target(&st, -1), None);
+        }
+        app.invoke_grid_tile_reveal(0);
+        assert!(matches!(state.borrow().view, View::Roots(Some(_))));
+
+        // The root away: its tree and tiles from the index, dimmed, no
+        // menu.
+        std::fs::rename(&root, dir.join("away")).unwrap();
+        {
+            let mut st = state.borrow_mut();
+            st.tree.stale = true;
+            want(&mut st, &app);
+        }
+        land_sent(&state, &app, &worker);
+        pick(&app, "birch");
+        land_sent(&state, &app, &worker);
+        assert!(state.borrow().library.offline.contains(&root));
+        assert_eq!(tiles(&app), [("birch".into(), 2), ("export".into(), 1)]);
+        assert!(app.get_grid_tiles().iter().all(|t| t.offline));
+        right(&app, "Folder export");
+        assert!(!app.get_menu_up(), "no reveal for an offline root");
+        assert_eq!(
+            tile_folder(&state.borrow(), 1),
+            Some(root.join("birch").join("export"))
+        );
+        assert_eq!(
+            reveal_target(&state.borrow(), 1),
+            None,
+            "offline: nothing to show"
+        );
+        // A click still opens it, from the index.
+        let (at, size) = crate::testing::buttons(&app, "Folder birch")[0];
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["b1.tif", "b2.tif"]);
+        done(&dir, state);
     }
 }

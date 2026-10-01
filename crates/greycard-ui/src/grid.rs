@@ -65,6 +65,20 @@ pub fn row_pitch(cell: f32) -> f32 {
     cell + LABEL + GAP
 }
 
+/// A folder tile's height: half a cell's picture, whatever the cell.
+/// Its width is the cell's.
+pub fn tile_height(cell: f32) -> f32 {
+    cell / 2.0
+}
+
+/// How far the folder tiles push the cells down: their rows, each a
+/// tile's height and the gap below it, in the grid's columns. Nothing
+/// when there are no tiles. Every offset below takes it as `top`, the
+/// cells starting at the padding and this.
+pub fn tiles_top(tiles: i32, cell: f32, columns: i32) -> f32 {
+    rows(tiles, columns) as f32 * (tile_height(cell) + GAP)
+}
+
 /// How many cells fit across `width`; at least one, however narrow
 /// the window or however large the cell.
 pub fn columns(width: f32, cell: f32) -> i32 {
@@ -130,6 +144,7 @@ pub fn visible(
     cell: f32,
     columns: i32,
     count: i32,
+    top: f32,
 ) -> Option<(i32, i32)> {
     let rows = rows(count, columns);
     if rows == 0 || height <= 0.0 {
@@ -139,7 +154,11 @@ pub fn visible(
     if pitch <= 0.0 || !pitch.is_finite() {
         return None;
     }
-    let row_at = |y: f32| ((y - PAD) / pitch).floor().clamp(0.0, (rows - 1) as f32) as i32;
+    let row_at = |y: f32| {
+        ((y - PAD - top) / pitch)
+            .floor()
+            .clamp(0.0, (rows - 1) as f32) as i32
+    };
     let first = row_at(offset);
     let last = row_at(offset + height).max(first);
     Some((
@@ -159,36 +178,59 @@ pub const MARGIN_ROWS: i32 = 1;
 /// sheet's height and the cell alone, not the offset, so a scroll
 /// moves the window without changing its size. What is past the last
 /// frame is the caller's to hold it to.
-pub fn window(offset: f32, height: f32, cell: f32, columns: i32, count: i32) -> (usize, usize) {
+pub fn window(
+    offset: f32,
+    height: f32,
+    cell: f32,
+    columns: i32,
+    count: i32,
+    top: f32,
+) -> (usize, usize) {
     let pitch = row_pitch(cell);
     if count <= 0 || columns <= 0 || height <= 0.0 || pitch <= 0.0 || !pitch.is_finite() {
         return (0, 0);
     }
-    let first_row = (((offset - PAD) / pitch).floor() as i32 - MARGIN_ROWS).max(0);
+    let first_row = (((offset - PAD - top) / pitch).floor() as i32 - MARGIN_ROWS).max(0);
     let rows = (height / pitch).ceil() as i32 + 1 + 2 * MARGIN_ROWS;
     ((first_row * columns) as usize, (rows * columns) as usize)
 }
 
 /// The scroll that shows the selected cell with the least movement,
 /// its padding beside it, or what we have when it is already on
-/// screen. Everything past the ends is clamped away.
-pub fn reveal(offset: f32, height: f32, cell: f32, columns: i32, count: i32, selected: i32) -> f32 {
+/// screen. A cell of the first row brings the folder tiles above it
+/// with it, when the two fit on the sheet together; when the tiles
+/// are taller than that, the cell is shown as any other. Everything
+/// past the ends is clamped away.
+pub fn reveal(
+    offset: f32,
+    height: f32,
+    cell: f32,
+    columns: i32,
+    count: i32,
+    selected: i32,
+    top: f32,
+) -> f32 {
     let rows = rows(count, columns);
     if rows == 0 || selected < 0 || height <= 0.0 {
         return 0.0;
     }
     let pitch = row_pitch(cell);
     let row = selected.clamp(0, count - 1) / columns;
-    let top = PAD + row as f32 * pitch;
-    let bottom = top + cell + LABEL;
-    let wanted = if top - PAD < offset {
-        top - PAD
+    let y = PAD + top + row as f32 * pitch;
+    let bottom = y + cell + LABEL;
+    let lead = if row == 0 && PAD + top + cell + LABEL + PAD <= height {
+        0.0
+    } else {
+        y - PAD
+    };
+    let wanted = if lead < offset {
+        lead
     } else if bottom + PAD > offset + height {
         bottom + PAD - height
     } else {
         offset
     };
-    wanted.clamp(0.0, max_scroll(height, cell, columns, count))
+    wanted.clamp(0.0, max_scroll(height, cell, columns, count, top))
 }
 
 /// The empty half-width beside a full row, so the cells sit in the
@@ -199,14 +241,15 @@ pub fn slack(width: f32, cell: f32, columns: i32) -> f32 {
     ((width - row) / 2.0).max(0.0)
 }
 
-/// How far the grid can be scrolled: the whole sheet less what is on
-/// screen, never below nothing.
-pub fn max_scroll(height: f32, cell: f32, columns: i32, count: i32) -> f32 {
-    let rows = rows(count, columns);
-    if rows == 0 {
+/// How far the grid can be scrolled: the whole sheet, the folder
+/// tiles' rows and the cells', less what is on screen, never below
+/// nothing.
+pub fn max_scroll(height: f32, cell: f32, columns: i32, count: i32, top: f32) -> f32 {
+    let body = top + rows(count, columns) as f32 * row_pitch(cell);
+    if body <= 0.0 {
         return 0.0;
     }
-    (2.0 * PAD + rows as f32 * row_pitch(cell) - GAP - height).max(0.0)
+    (2.0 * PAD + body - GAP - height).max(0.0)
 }
 
 /// The next cell size up (`by` positive) or down the steps, from
@@ -303,16 +346,19 @@ mod tests {
         let (cols, count, cell) = (4, 11, 176.0);
         assert_eq!(row_pitch(cell), 206.0);
         // At the top, a 500 tall sheet shows rows 0 to 2.
-        assert_eq!(visible(0.0, 500.0, cell, cols, count), Some((0, 10)));
+        assert_eq!(visible(0.0, 500.0, cell, cols, count, 0.0), Some((0, 10)));
         // Half a row down still shows the first row's top edge.
-        assert_eq!(visible(100.0, 206.0, cell, cols, count), Some((0, 7)));
+        assert_eq!(visible(100.0, 206.0, cell, cols, count, 0.0), Some((0, 7)));
         // Scrolled past the first row exactly: the second row alone,
         // with the third's top edge.
-        assert_eq!(visible(218.0, 206.0, cell, cols, count), Some((4, 10)));
+        assert_eq!(visible(218.0, 206.0, cell, cols, count, 0.0), Some((4, 10)));
         // Over-scrolled: the last row, not an index past the end.
-        assert_eq!(visible(9000.0, 206.0, cell, cols, count), Some((8, 10)));
-        assert_eq!(visible(0.0, 0.0, cell, cols, count), None);
-        assert_eq!(visible(0.0, 500.0, cell, cols, 0), None);
+        assert_eq!(
+            visible(9000.0, 206.0, cell, cols, count, 0.0),
+            Some((8, 10))
+        );
+        assert_eq!(visible(0.0, 0.0, cell, cols, count, 0.0), None);
+        assert_eq!(visible(0.0, 500.0, cell, cols, 0, 0.0), None);
     }
 
     #[test]
@@ -322,43 +368,115 @@ mod tests {
         // part-row as it scrolls: seven with a row either side, at any
         // offset.
         for offset in [0.0, 5.0, 100.0, 206.0, 1000.0, 123_456.0] {
-            let (first, n) = window(offset, height, cell, cols, count);
+            let (first, n) = window(offset, height, cell, cols, count, 0.0);
             assert_eq!(n, 7 * 8, "{offset}");
-            let (a, b) = visible(offset, height, cell, cols, count).unwrap();
+            let (a, b) = visible(offset, height, cell, cols, count, 0.0).unwrap();
             assert!(first <= a as usize && (b as usize) < first + n, "{offset}");
             assert_eq!(first % 8, 0);
         }
         // At the top there is no row above: the window starts at 0.
-        assert_eq!(window(0.0, height, cell, cols, count).0, 0);
+        assert_eq!(window(0.0, height, cell, cols, count, 0.0).0, 0);
         // Scrolled three rows down, the window starts a row above.
         assert_eq!(
-            window(PAD + 3.0 * 206.0, height, cell, cols, count).0,
+            window(PAD + 3.0 * 206.0, height, cell, cols, count, 0.0).0,
             2 * 8
         );
-        assert_eq!(window(0.0, 0.0, cell, cols, count), (0, 0));
-        assert_eq!(window(0.0, height, cell, cols, 0), (0, 0));
+        assert_eq!(window(0.0, 0.0, cell, cols, count, 0.0), (0, 0));
+        assert_eq!(window(0.0, height, cell, cols, 0, 0.0), (0, 0));
     }
 
     #[test]
     fn the_reveal_is_the_least_scroll_that_shows_the_cell() {
         let (cols, count, cell, height) = (4, 40, 176.0, 500.0);
         // The first row needs no scroll.
-        assert_eq!(reveal(0.0, height, cell, cols, count, 1), 0.0);
+        assert_eq!(reveal(0.0, height, cell, cols, count, 1, 0.0), 0.0);
         // A frame below the fold comes up against the bottom edge
         // with its padding: row 2 ends at 12 + 2*206 + 198 = 622.
         assert_eq!(
-            reveal(0.0, height, cell, cols, count, 9),
+            reveal(0.0, height, cell, cols, count, 9, 0.0),
             622.0 + PAD - height
         );
         // One already on screen is left where it is.
-        let shown = reveal(0.0, height, cell, cols, count, 9);
-        assert_eq!(reveal(shown, height, cell, cols, count, 5), shown);
+        let shown = reveal(0.0, height, cell, cols, count, 9, 0.0);
+        assert_eq!(reveal(shown, height, cell, cols, count, 5, 0.0), shown);
         // Going back up puts its top edge, and its padding, at the top.
-        assert_eq!(reveal(shown, height, cell, cols, count, 0), 0.0);
+        assert_eq!(reveal(shown, height, cell, cols, count, 0, 0.0), 0.0);
         // Never past the end of the sheet.
         assert!(
-            reveal(0.0, height, cell, cols, count, 39) <= max_scroll(height, cell, cols, count)
+            reveal(0.0, height, cell, cols, count, 39, 0.0)
+                <= max_scroll(height, cell, cols, count, 0.0)
         );
+    }
+
+    /// The folder tiles above the cells: a row of them per row of the
+    /// grid's columns, half a cell tall and a gap below each, shift the
+    /// cells down by as much and lengthen the sheet by as much.
+    #[test]
+    fn the_folder_tiles_push_the_cells_down_by_their_rows() {
+        let (cols, count, cell, height) = (4, 40, 176.0, 500.0);
+        assert_eq!(tile_height(cell), 88.0);
+        assert_eq!(tiles_top(0, cell, cols), 0.0);
+        // One tile to four: one row of 88 and its gap; a fifth wraps.
+        assert_eq!(tiles_top(1, cell, cols), 96.0);
+        assert_eq!(tiles_top(4, cell, cols), 96.0);
+        assert_eq!(tiles_top(5, cell, cols), 192.0);
+        // At the smallest cell the row is 48 and its gap.
+        assert_eq!(tiles_top(3, STEPS[0], cols), 56.0);
+        let top = tiles_top(2, cell, cols);
+        // The scroll range grows by exactly the tiles' rows.
+        assert_eq!(
+            max_scroll(height, cell, cols, count, top),
+            max_scroll(height, cell, cols, count, 0.0) + top
+        );
+        // Tiles alone, no frames: the sheet is the padding and a row.
+        assert_eq!(
+            max_scroll(50.0, cell, cols, 0, top),
+            2.0 * PAD + 88.0 - 50.0
+        );
+        assert_eq!(max_scroll(height, cell, cols, 0, top), 0.0);
+        // What is on screen, and the cells made, move down a tile row:
+        // scrolled by the tiles' height, the cells are where they were
+        // at the top without them.
+        assert_eq!(
+            visible(top, height, cell, cols, count, top),
+            visible(0.0, height, cell, cols, count, 0.0)
+        );
+        assert_eq!(
+            window(top + PAD + 3.0 * 206.0, height, cell, cols, count, top).0,
+            2 * 4
+        );
+        // At the top, the tiles take room the cells had: 300 tall
+        // shows the second row's top edge without them and not with.
+        assert_eq!(visible(0.0, 300.0, cell, cols, count, 0.0), Some((0, 7)));
+        assert_eq!(visible(0.0, 300.0, cell, cols, count, top), Some((0, 3)));
+        // A frame of the first row brings the tiles back into view; one
+        // further down comes up against the foot by the tiles' height
+        // more.
+        assert_eq!(reveal(300.0, height, cell, cols, count, 2, top), 0.0);
+        assert_eq!(
+            reveal(0.0, height, cell, cols, count, 9, top),
+            622.0 + top + PAD - height
+        );
+        // And back up to the second row: its top at the sheet's top
+        // with the padding, the tiles above it scrolled away.
+        let down = reveal(0.0, height, cell, cols, count, 39, top);
+        assert_eq!(reveal(down, height, cell, cols, count, 4, top), top + 206.0);
+
+        // Tiles taller than the sheet: six columns, 837 px, and 54
+        // folders make nine tile rows, 864 px. Scrolled past them, a
+        // frame of the first row is shown where it is, not under the
+        // tiles at the top.
+        let (cols, height) = (6, 837.0);
+        let top = tiles_top(54, cell, cols);
+        assert_eq!(top, 864.0);
+        let first_row_y = PAD + top;
+        let at = reveal(first_row_y - PAD, height, cell, cols, count, 2, top);
+        assert_eq!(at, first_row_y - PAD);
+        assert!(at <= first_row_y && first_row_y + cell + LABEL <= at + height);
+        // And from the top, it comes up against the foot.
+        let up = reveal(0.0, height, cell, cols, count, 2, top);
+        assert_eq!(up, first_row_y + cell + LABEL + PAD - height);
+        assert!(up <= first_row_y && first_row_y + cell + LABEL <= up + height);
     }
 
     #[test]

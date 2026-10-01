@@ -1,8 +1,9 @@
 // The grid: the folder as a contact sheet over the window, its header
-// with the filter, and the cells riding on one scrolled offset.
+// with the filter, and the cells riding on one scrolled offset, under
+// a row of tiles for the folders in the folder open.
 
 import { Theme } from "../theme.slint";
-import { Thumb, ThumbCell, FilterChip, FacetRow } from "../structs.slint";
+import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile } from "../structs.slint";
 import { PanelButton, ThumbBadges } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 import { LoadingCard } from "loading.slint";
@@ -31,7 +32,7 @@ export component GridSheet inherits Rectangle {
             self.frame-menu(self.menu-at,
                 grid-sheet.absolute-position.x + self.grid-left
                     + mod(self.menu-at, self.grid-cols) * self.grid-pitch + self.grid-cell / 2,
-                grid-sheet.absolute-position.y - self.grid-scroll + self.grid-pad
+                grid-sheet.absolute-position.y - self.grid-scroll + self.grid-pad + self.grid-top
                     + floor(self.menu-at / self.grid-cols) * self.grid-row + self.grid-cell / 2);
         }
     }
@@ -53,6 +54,25 @@ export component GridSheet inherits Rectangle {
         root.grid-pad + root.grid-slack(root.grid-w, root.grid-cell, root.grid-cols);
     in property <int> grid-cols;
     in property <length> grid-max;
+    /// The folders in the folder open, as tiles above the cells, which
+    /// they push down by `grid-top`: a row of them for each row of the
+    /// grid's columns, half a cell tall. Not frames: no selection, no
+    /// rating, no frame menu. A click opens the folder as its row in
+    /// the tree does; a right-click offers Reveal while the root is
+    /// online.
+    in property <[FolderTile]> tiles;
+    in property <length> grid-top;
+    callback tile-picked(int);
+    callback tile-reveal(int);
+    /// After a pick from the tiles' menu: the keys take the focus back.
+    callback menu-done();
+    /// The tile the menu is about.
+    property <int> menu-tile: -1;
+    function open-tile-menu(i: int, x: length, y: length) {
+        root.focus-keys();
+        root.menu-tile = i;
+        tile-menu.show({ x: x - tile-menu.absolute-position.x, y: y - tile-menu.absolute-position.y });
+    }
     callback grid-wheel(length, bool);
     callback grid-relay();
     in-out property <bool> culling;
@@ -212,6 +232,74 @@ export component GridSheet inherits Rectangle {
                     root.grid-wheel(e.delta-y, e.modifiers.control);
                     return accept;
                 }
+                for t[k] in root.tiles: Rectangle {
+                    x: root.grid-left + mod(k, root.grid-cols) * root.grid-pitch;
+                    y: root.grid-pad + floor(k / root.grid-cols) * (root.grid-cell / 2 + root.grid-gap);
+                    width: root.grid-cell;
+                    height: root.grid-cell / 2;
+                    border-radius: Theme.radius-md;
+                    background: tile-ta.has-hover ? Theme.hover : Theme.surface;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    accessible-role: button;
+                    accessible-label: "Folder " + t.name;
+                    accessible-value: t.count;
+                    accessible-action-default => { root.tile-picked(k); }
+                    animate background { duration: Theme.quick; }
+                    // As a cell's: a left press that closes a menu is
+                    // nothing more, and a right-click (a Mac's
+                    // Control+click) asks for the tile's menu, which
+                    // has an item only while the root is online.
+                    tile-ta := TouchArea {
+                        property <bool> skip;
+                        mouse-cursor: MouseCursor.pointer;
+                        pointer-event(e) => {
+                            if (e.kind != PointerEventKind.down) { return; }
+                            let closing = root.menu-shown();
+                            let ctrl-menu = root.ctrl-click-menu && e.button == PointerEventButton.left
+                                && e.modifiers.meta;
+                            let asks = e.button == PointerEventButton.right || ctrl-menu;
+                            self.skip = closing || asks || e.button != PointerEventButton.left;
+                            if (asks && !t.offline) {
+                                root.open-tile-menu(k, self.absolute-position.x + self.mouse-x,
+                                    self.absolute-position.y + self.mouse-y);
+                            }
+                        }
+                        clicked => {
+                            if (self.skip) { return; }
+                            root.focus-keys();
+                            root.tile-picked(k);
+                        }
+                    }
+                    HorizontalLayout {
+                        padding-left: Theme.space-2;
+                        padding-right: Theme.space-2;
+                        spacing: Theme.space-2;
+                        opacity: t.offline ? 0.55 : 1;
+                        Image {
+                            source: @image-url("../icons/folder-open.svg");
+                            colorize: Theme.text-secondary;
+                            width: 16px;
+                            height: 16px;
+                            y: (parent.height - self.height) / 2;
+                        }
+                        VerticalLayout {
+                            alignment: center;
+                            Text {
+                                text: t.name;
+                                color: tile-ta.has-hover ? Theme.text : Theme.text-secondary;
+                                font-size: Theme.font-xs;
+                                overflow: elide;
+                            }
+                            Text {
+                                text: t.count;
+                                color: Theme.text-muted;
+                                font-size: Theme.font-xs;
+                                overflow: elide;
+                            }
+                        }
+                    }
+                }
                 for c in root.cells: cell := Rectangle {
                     property <int> i: c.row;
                     property <Thumb> t: c.thumb;
@@ -220,7 +308,7 @@ export component GridSheet inherits Rectangle {
                     property <bool> on: i == root.selected;
                     property <bool> in-set: on || t.chosen;
                     x: root.grid-left + mod(i, root.grid-cols) * root.grid-pitch;
-                    y: root.grid-pad + floor(i / root.grid-cols) * root.grid-row;
+                    y: root.grid-pad + root.grid-top + floor(i / root.grid-cols) * root.grid-row;
                     width: root.grid-cell;
                     height: root.grid-cell + root.grid-label;
                     border-radius: Theme.radius-md;
@@ -368,6 +456,20 @@ export component GridSheet inherits Rectangle {
                         }
                         // The frame under the pointer, in the loupe.
                         double-clicked => { if (!self.menu) { root.grid-open = false; } }
+                    }
+                }
+            }
+            // One menu for the tiles, placed where the right-click was,
+            // as the frame menu is one for the window. Zero-sized and
+            // never enabled itself, so it takes no click of its own.
+            tile-menu := ContextMenuArea {
+                width: 0px;
+                height: 0px;
+                enabled: false;
+                Menu {
+                    MenuItem {
+                        title: "Reveal in file manager";
+                        activated => { root.tile-reveal(root.menu-tile); root.menu-done(); }
                     }
                 }
             }

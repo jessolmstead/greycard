@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, HistoryRow } from "structs.slint";
+import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, FolderTile, HistoryRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -236,11 +236,16 @@ export component App inherits Window {
     /// How far the sheet can be scrolled, and the scroll that brings
     /// the selected cell into view: asked of the same arithmetic the
     /// Rust side tests, rather than written out again here.
-    pure callback grid-max-scroll(length, length, int, int) -> length;
-    pure callback grid-reveal-to(length, length, length, int, int, int) -> length;
+    pure callback grid-max-scroll(length, length, int, int, length) -> length;
+    pure callback grid-reveal-to(length, length, length, int, int, int, length) -> length;
     property <int> grid-cols: root.grid-columns(root.grid-w, root.grid-cell);
+    /// How far the folder tiles push the cells down: none without
+    /// tiles.
+    pure callback grid-tiles-top(int, length, int) -> length;
+    property <length> grid-top: root.grid-tiles-top(root.grid-tiles.length, root.grid-cell, root.grid-cols);
     property <length> grid-max:
-        root.grid-max-scroll(root.grid-h, root.grid-cell, root.grid-cols, root.thumbs.length);
+        root.grid-max-scroll(root.grid-h, root.grid-cell, root.grid-cols, root.thumbs.length,
+            root.grid-top);
     /// Move the selection a column along or a row down, told how many
     /// columns there are now.
     callback grid-step(int, int, int, bool);
@@ -248,7 +253,7 @@ export component App inherits Window {
     callback grid-zoom(int);
     /// The frames the grid shows now, from its scroll and its height:
     /// the same queue ordering the strip's range drives.
-    callback grid-range(length, length, int);
+    callback grid-range(length, length, int, length);
     changed grid-open => {
         // A name under the pointer that goes with the grid or the pane
         // hears nothing of the pointer leaving: its hover text goes
@@ -270,6 +275,8 @@ export component App inherits Window {
     // Another folder's frames: the sheet re-flows and reports afresh,
     // as the strip does from its content width.
     changed thumbs => { root.grid-relay(); }
+    // The tiles come or go with the view, and move the cells.
+    changed grid-top => { root.grid-relay(); }
     /// Scroll the sheet, or size the cells when Ctrl is held. A
     /// notch is a third of a row, whatever the row is: 60 logical
     /// pixels against a 542 px row at the largest cell would be a
@@ -301,14 +308,14 @@ export component App inherits Window {
         if (root.selected >= 0) {
             root.grid-scroll = root.grid-reveal-to(
                 root.grid-scroll, root.grid-h, root.grid-cell,
-                root.grid-cols, root.thumbs.length, root.selected);
+                root.grid-cols, root.thumbs.length, root.selected, root.grid-top);
         }
         root.grid-report();
     }
     /// Tell Rust which frames the grid shows, as the strip does.
     function grid-report() {
         if (!root.grid-open || root.thumbs.length == 0 || root.grid-h <= 0px) { return; }
-        root.grid-range(root.grid-scroll, root.grid-h, root.grid-cols);
+        root.grid-range(root.grid-scroll, root.grid-h, root.grid-cols, root.grid-top);
     }
     /// For `--time-scroll`: move the grid, or the strip when the grid
     /// is closed, `by` further along, as a wheel does. Says whether
@@ -434,6 +441,14 @@ export component App inherits Window {
     callback folder-tree-picked(int);
     callback folder-tree-folded(int);
     callback folder-tree-subfolders-changed();
+    /// The folders under the one open, as tiles at the top of the
+    /// grid; empty with the switch on, or for a view with no tree. A
+    /// tile clicked opens its folder as its row in the tree does, and
+    /// its menu's Reveal shows it in the file manager; both by the
+    /// tile's number.
+    in property <[FolderTile]> grid-tiles: [];
+    callback grid-tile-picked(int);
+    callback grid-tile-reveal(int);
     /// The hover text over everything, and where; empty for none.
     out property <string> tip-text;
     property <length> tip-x;
@@ -2312,6 +2327,11 @@ export component App inherits Window {
         grid-slack(a, b, c) => { return root.grid-slack(a, b, c); }
         grid-cols: root.grid-cols;
         grid-max: root.grid-max;
+        grid-top: root.grid-top;
+        tiles: root.grid-tiles;
+        tile-picked(i) => { root.grid-tile-picked(i); }
+        tile-reveal(i) => { root.grid-tile-reveal(i); }
+        menu-done => { root.menu-done(); }
         grid-wheel(a, b) => { root.grid-wheel(a, b); }
         grid-relay => { root.grid-relay(); }
         culling <=> root.culling;

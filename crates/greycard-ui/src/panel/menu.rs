@@ -93,13 +93,38 @@ pub(crate) fn reveal_command(path: &Path) -> std::process::Command {
     cmd
 }
 
+/// The command that shows the folder `path` in the file manager: as
+/// [`reveal_command`] has it on a Mac and on Windows, the folder chosen
+/// in its own; elsewhere the folder itself opened, since `xdg-open`
+/// can choose nothing and its parent is usually the folder on screen.
+#[cfg(any(target_os = "macos", windows))]
+pub(crate) fn reveal_folder_command(path: &Path) -> std::process::Command {
+    reveal_command(path)
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+pub(crate) fn reveal_folder_command(path: &Path) -> std::process::Command {
+    let mut cmd = std::process::Command::new("xdg-open");
+    cmd.arg(absolute(path));
+    cmd
+}
+
 /// Show `path` in the file manager, without waiting on it.
-fn reveal(path: &Path) -> std::io::Result<()> {
+pub(crate) fn reveal(path: &Path) -> std::io::Result<()> {
+    spawn_reveal(path, reveal_command(path))
+}
+
+/// Show the folder `path` in the file manager, without waiting on it.
+pub(crate) fn reveal_folder(path: &Path) -> std::io::Result<()> {
+    spawn_reveal(path, reveal_folder_command(path))
+}
+
+fn spawn_reveal(path: &Path, mut cmd: std::process::Command) -> std::io::Result<()> {
     if cfg!(test) {
         return Ok(());
     }
     let path = path.to_path_buf();
-    let mut child = reveal_command(&path).spawn()?;
+    let mut child = cmd.spawn()?;
     // Reaped on a thread of its own, so it is not left a zombie and
     // the window never waits on the file manager; a failure is logged.
     std::thread::spawn(move || match child.wait() {
@@ -253,6 +278,15 @@ mod tests {
     #[test]
     fn reveal_opens_the_folder() {
         let cmd = reveal_command(Path::new("/shoot/day one/IMG_0001.CR3"));
+        assert_eq!(cmd.get_program(), "xdg-open");
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(args, [std::ffi::OsStr::new("/shoot/day one")]);
+    }
+
+    #[cfg(not(any(target_os = "macos", windows)))]
+    #[test]
+    fn a_folders_reveal_opens_the_folder_itself() {
+        let cmd = reveal_folder_command(Path::new("/shoot/day one"));
         assert_eq!(cmd.get_program(), "xdg-open");
         let args: Vec<_> = cmd.get_args().collect();
         assert_eq!(args, [std::ffi::OsStr::new("/shoot/day one")]);

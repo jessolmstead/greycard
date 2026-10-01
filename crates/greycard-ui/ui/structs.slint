@@ -126,6 +126,15 @@ export struct FolderRow {
     open: bool,
 }
 
+/// A folder under the one open, as a tile at the top of the grid: its
+/// name, the frames under it as the tree counts them, and whether its
+/// root is offline (dimmed, and no reveal).
+export struct FolderTile {
+    name: string,
+    count: int,
+    offline: bool,
+}
+
 /// A facet's row of chips: its caption, which facet it is (its place
 /// in `greycard_library::Facet::ALL`), and the chips.
 export struct FacetRow {
