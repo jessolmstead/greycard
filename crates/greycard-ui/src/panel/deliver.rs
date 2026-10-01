@@ -901,6 +901,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             done,
         } => {
             let at = format!("{} of {}", index + 1, set.total);
+            let ran = !matches!(done, queue::Done::Canceled);
             match done {
                 queue::Done::Exported {
                     path,
@@ -929,6 +930,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 }
                 queue::Done::Canceled => {}
             }
+            crate::panel::export_queue::frame_done(&mut state.borrow_mut(), &set, index, ran);
         }
         Outcome::SetDone { set, tally } => {
             let mut st = state.borrow_mut();
@@ -948,8 +950,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 st.exporting = None;
                 app.set_export_running(false);
                 app.set_export_stopping(false);
-                app.set_status(line.into());
+                app.set_status(line.clone().into());
             }
+            // The queue's entry: what is left of it kept, and the next
+            // begun unless the set was stopped.
+            crate::panel::export_queue::set_done(&mut st, app, &set, &line);
             // `--export DIR` is done: a frame that failed is a failure
             // a script can see.
             if st.batch && st.export_into_folder {
@@ -980,7 +985,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
 /// its own edit, its turn and whether its blend is still to be seeded;
 /// the frame on screen under the panel's edit. One frame when the
 /// selection is one frame.
-pub(crate) fn set_frames(st: &mut State, app: &App) -> Vec<(PathBuf, Edit, u8, bool)> {
+pub(crate) fn set_frames(st: &mut State, app: &App) -> SetFrames {
     let chosen = chosen_frames(st);
     set_frames_of(st, app, &chosen)
 }
@@ -988,11 +993,7 @@ pub(crate) fn set_frames(st: &mut State, app: &App) -> Vec<(PathBuf, Edit, u8, b
 /// [`set_frames`] over `frames` rather than the selection: what an
 /// export pressed on a selection whose sidecars were still to be read
 /// takes when they are in.
-pub(crate) fn set_frames_of(
-    st: &mut State,
-    app: &App,
-    frames: &[usize],
-) -> Vec<(PathBuf, Edit, u8, bool)> {
+pub(crate) fn set_frames_of(st: &mut State, app: &App, frames: &[usize]) -> SetFrames {
     // Each frame's whole sidecar first, read where it stands in from
     // its row; a frame under a root that is offline cannot be decoded
     // either, and is left out with a word in the status line.
@@ -1033,16 +1034,17 @@ fn exporting(st: &State, set: &Arc<queue::Set>) -> bool {
 }
 
 /// Send `frames` to the worker as a set, into `folder` or beside each
-/// file, and hold the set to cancel it.
+/// file, and hold the set to cancel it. The set started, or none when
+/// there was nothing to send.
 pub(crate) fn start_set(
     st: &mut State,
     app: &App,
-    frames: Vec<(PathBuf, Edit, u8, bool)>,
+    frames: SetFrames,
     folder: Option<PathBuf>,
     settings: export::Settings,
     on_exists: export::OnExists,
     preset: Option<String>,
-) {
+) -> Option<Arc<queue::Set>> {
     st.export_choosing = false;
     // Nothing to write would never be said done: the spinner would run
     // and a batch run would wait for ever.
@@ -1052,7 +1054,7 @@ pub(crate) fn start_set(
             st.failed = true;
             let _ = slint::quit_event_loop();
         }
-        return;
+        return None;
     }
     let sources: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
     let outs = queue::names(&sources, folder.as_deref(), settings.format);
@@ -1084,9 +1086,13 @@ pub(crate) fn start_set(
     st.exporting = Some(set.clone());
     WORKER.with(|w| {
         if let Some(w) = &*w.borrow() {
-            w.send(Job::ExportSet { set, frames });
+            w.send(Job::ExportSet {
+                set: set.clone(),
+                frames,
+            });
         }
     });
+    Some(set)
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
@@ -1260,17 +1266,38 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 /// read) is exported under its own sidecar's edit, never the panel's,
 /// and as a set of one: the worker's open picture is another frame's.
 fn export_frames(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: &[usize]) {
-    let (raw, edit, frames, on_screen) = {
-        let mut st = state.borrow_mut();
+    {
+        let st = state.borrow();
         // One set at a time, and one chooser for it: a second
         // would start a set the first could not be told from.
         if st.exporting.is_some() || st.export_choosing {
             return;
         }
+    }
+    let Some((raw, edit, frames, on_screen)) = pressed_frames(state, app, pressed, frames) else {
+        return;
+    };
+    export_gathered(state, app, raw, edit, frames, on_screen);
+}
+
+/// The frames of a set, each as `set_frames` gives it.
+pub(crate) type SetFrames = Vec<(PathBuf, Edit, u8, bool)>;
+
+/// What an export pressed on `pressed` takes, the set's sidecars in
+/// hand: the pressed frame's file and edit, the frames of the set with
+/// theirs, and whether the pressed frame is the one on screen. The
+/// panel's edit is made a state first when it is. None when there is
+/// nothing to take, the reason on the status line.
+pub(crate) fn pressed_frames(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    pressed: &Path,
+    frames: &[usize],
+) -> Option<(PathBuf, Edit, SetFrames, bool)> {
+    {
+        let mut st = state.borrow_mut();
         // Gone from the list: the request says so.
-        let Some(p) = st.files.iter().position(|f| f == pressed) else {
-            return;
-        };
+        let p = st.files.iter().position(|f| f == pressed)?;
         let on_screen = st.current == Some(p);
         // The frame on screen with a panel that is not its own (its
         // root offline, its sidecar not read): nothing to export, and
@@ -1280,7 +1307,7 @@ fn export_frames(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: 
             && let Some(why) = crate::rows::refused(&st, p, "nothing is exported")
         {
             app.set_status(why.into());
-            return;
+            return None;
         }
         let edit = if on_screen {
             let edit = read_edit(app, &st.edit, st.target);
@@ -1296,7 +1323,7 @@ fn export_frames(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: 
             edit
         } else {
             if !crate::rows::load_frame(&mut st, app, p) {
-                return;
+                return None;
             }
             st.sidecars[p].current.clone()
         };
@@ -1310,8 +1337,20 @@ fn export_frames(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: 
                 st.seed_blend.get(p).copied().unwrap_or(false),
             )];
         }
-        (st.files[p].clone(), edit, frames, on_screen)
-    };
+        Some((st.files[p].clone(), edit, frames, on_screen))
+    }
+}
+
+/// The export of what [`pressed_frames`] took: one frame on screen to a
+/// file the desktop's chooser names, else the set into a folder.
+fn export_gathered(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    raw: PathBuf,
+    edit: Edit,
+    frames: SetFrames,
+    on_screen: bool,
+) {
     let preset = preset_in_use(app);
     let settings = read_export_settings(app);
     // A mark asked for with nothing to draw: say so and keep

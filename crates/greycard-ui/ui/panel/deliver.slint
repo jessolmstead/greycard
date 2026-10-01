@@ -44,6 +44,19 @@ export component ExportSheet inherits Rectangle {
     /// folder, each under its own edit.
     in property <int> set-count: 1;
     callback export();
+    /// A set is being exported: the queue waits for it.
+    in property <bool> exporting;
+    /// The export queue: how many sets wait, the line that counts them,
+    /// and whether it is being run.
+    in property <int> queue-sets;
+    in property <string> queue-line;
+    in property <bool> queue-running;
+    /// Add to queue: what Export would send, kept for later.
+    callback queue-add();
+    callback queue-run();
+    callback queue-clear();
+    /// Clear was pressed and not yet confirmed.
+    property <bool> confirm-clear: false;
     in-out property <bool> export-open;
     in-out property <string> export-format;
     in-out property <float> export-quality;
@@ -348,19 +361,69 @@ export component ExportSheet inherits Rectangle {
                 }
             }
             Rectangle { height: 1px; background: Theme.border; }
-            footer := HorizontalLayout {
+            footer := VerticalLayout {
                 padding: Theme.space-5;
                 padding-top: Theme.space-3;
-                spacing: Theme.space-2;
-                PanelButton {
-                    text: "Cancel";
-                    clicked => { root.export-open = false; }
+                spacing: Theme.space-3;
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.export-open = false; }
+                    }
+                    // What Export would send, kept to be sent later.
+                    PanelButton {
+                        text: "Add to queue...";
+                        clicked => { root.export-open = false; root.queue-add(); }
+                    }
+                    PanelButton {
+                        text: root.set-count > 1 ? "Export " + root.set-count + " frames..." : "Choose file...";
+                        icon: @image-url("../icons/image-down.svg");
+                        primary: true;
+                        clicked => { root.export-open = false; root.export(); }
+                    }
                 }
-                PanelButton {
-                    text: root.set-count > 1 ? "Export " + root.set-count + " frames..." : "Choose file...";
-                    icon: @image-url("../icons/image-down.svg");
-                    primary: true;
-                    clicked => { root.export-open = false; root.export(); }
+                // The queue: its count, run it, or clear it after asking.
+                if root.queue-sets > 0 && !root.confirm-clear: HorizontalLayout {
+                    spacing: Theme.space-2;
+                    Text {
+                        text: root.queue-running ? root.queue-line + ", running" : root.queue-line;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    PanelButton {
+                        text: "Export the queue";
+                        enabled: !root.exporting;
+                        clicked => { root.export-open = false; root.queue-run(); }
+                    }
+                    PanelButton {
+                        text: "Clear";
+                        enabled: !root.queue-running;
+                        clicked => { root.confirm-clear = true; }
+                    }
+                }
+                if root.queue-sets > 0 && root.confirm-clear: HorizontalLayout {
+                    spacing: Theme.space-2;
+                    Text {
+                        text: "Clear the queue of " + root.queue-sets + (root.queue-sets == 1 ? " set?" : " sets?");
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        wrap: word-wrap;
+                    }
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.confirm-clear = false; }
+                    }
+                    PanelButton {
+                        text: "Clear";
+                        primary: true;
+                        clicked => { root.confirm-clear = false; root.queue-clear(); }
+                    }
                 }
             }
         }

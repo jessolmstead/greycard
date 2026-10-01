@@ -8,6 +8,7 @@ pub(crate) mod curve;
 pub(crate) mod delete;
 pub(crate) mod deliver;
 pub(crate) mod edit;
+pub(crate) mod export_queue;
 pub(crate) mod history;
 pub(crate) mod import;
 pub(crate) mod mask;

@@ -21,6 +21,7 @@ mod delete;
 mod display;
 mod entry;
 mod export;
+mod export_queue;
 mod files;
 mod filter;
 mod finder;
@@ -835,6 +836,16 @@ pub(crate) struct State {
     pub(crate) exporting: Option<Arc<queue::Set>>,
     /// The folder chooser for a set is up: Export waits for its answer.
     pub(crate) export_choosing: bool,
+    /// The sets waiting to be exported, oldest first, as
+    /// `export-queue.json` keeps them.
+    pub(crate) export_queue: Vec<export_queue::Entry>,
+    /// Where the queue is written whenever it changes; none for a
+    /// snapshot or a batch run, which leave the user's files alone.
+    pub(crate) export_queue_file: Option<PathBuf>,
+    /// The queue's head entry being exported, while the queue runs.
+    pub(crate) queue_run: Option<crate::panel::export_queue::Run>,
+    /// How many looks for an entry's files the queue has begun.
+    pub(crate) queue_probes: u64,
     /// The export presets, as the settings file keeps them.
     pub(crate) export_presets: Vec<sheet::ExportPreset>,
     /// Where a preset saved, chosen or deleted is written at once;
@@ -1067,6 +1078,10 @@ impl State {
             export_into_folder: false,
             exporting: None,
             export_choosing: false,
+            export_queue: Vec::new(),
+            export_queue_file: None,
+            queue_run: None,
+            queue_probes: 0,
             export_presets: Vec::new(),
             settings_file: None,
             presets: Vec::new(),
@@ -1107,6 +1122,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::color::install(app, &state, &worker);
     panel::viewport::install(app, &state, &worker);
     panel::deliver::install(app, &state, &worker);
+    panel::export_queue::install(app, &state, &worker);
     panel::edit::install(app, &state, &worker);
     panel::assets::install(app, &state, &worker);
     panel::crop::install(app, &state, &worker);

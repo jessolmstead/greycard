@@ -1080,6 +1080,14 @@ export component App inherits Window {
     /// The set was told to stop and is finishing the frame in hand.
     in property <bool> export-stopping: false;
     callback export-stop();
+    /// The export queue: sets waiting to be exported later, counted at
+    /// the export sheet's foot, run in order by Export the queue.
+    in property <int> export-queue-sets: 0;
+    in property <string> export-queue-line: "";
+    in property <bool> export-queue-running: false;
+    callback export-queue-add();
+    callback export-queue-run();
+    callback export-queue-clear();
     // Retouching: the tool in hand ("", "Heal" or "Clone"), the next
     // or chosen patch's size (of the picture's width), feather and
     // opacity, the patches by name, the chosen one, and its pins on the
@@ -2675,6 +2683,13 @@ export component App inherits Window {
         file-name: root.file-name;
         set-count: root.set-count;
         export => { root.export(); }
+        exporting: root.export-running;
+        queue-sets: root.export-queue-sets;
+        queue-line: root.export-queue-line;
+        queue-running: root.export-queue-running;
+        queue-add => { root.export-queue-add(); }
+        queue-run => { root.export-queue-run(); }
+        queue-clear => { root.export-queue-clear(); }
         export-open <=> root.export-open;
         export-format <=> root.export-format;
         export-quality <=> root.export-quality;

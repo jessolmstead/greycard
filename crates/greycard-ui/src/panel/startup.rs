@@ -420,6 +420,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         ..State::empty(Vec::new(), &app)
     }));
     app.set_compare_tiles(ModelRc::from(state.borrow().compare_tiles.clone()));
+    // The export queue the last session left: shown, never run. A
+    // snapshot or a batch run reads it and leaves the file alone.
+    {
+        let mut st = state.borrow_mut();
+        let write = st.settings_file.is_some();
+        crate::panel::export_queue::open_at_launch(
+            &mut st,
+            &app,
+            settings::path().as_deref(),
+            write,
+        );
+    }
     // `--sheet import`: the sheet shows what the import flags name.
     if import_sheet {
         let mut st = state.borrow_mut();
