@@ -516,7 +516,13 @@ pub(crate) fn run_moves(
                 why_left = Some(why);
                 continue;
             }
-            match crate::cull::move_rejects(std::slice::from_ref(copy), &[0]) {
+            // An orphaned sidecar there keeps the copy whole where it
+            // is: on the archive nothing is written over (§197).
+            match crate::cull::move_rejects_as(
+                std::slice::from_ref(copy),
+                &[0],
+                crate::cull::Orphans::Keep,
+            ) {
                 Ok(m) if m.files == [0] => {
                     let to = rejects_dir(folder).join(copy.file_name().unwrap_or_default());
                     out.moved.push((entry.name.clone(), copy.clone(), to));

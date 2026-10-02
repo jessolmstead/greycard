@@ -23,11 +23,6 @@ the reasoning lives in `docs/notes.md`.
 - [ ] When clicking the backup button, the first click does nothing but
       the sheet flashes. clicking again works
 - [ ] No way to move a reject (or set) back when unrejected. not a huge deal tho
-- [ ] The Move rejects button only moved one photo, not the rest. clicking
-      it again did not help.
-  - I think this is because these frames were rejected before and I moved
-    them back out via the file explorer because there was no way in greycard.
-    So it's a case study where the dir structure SHOULD be the source of truth.
 
 ## Tweaks
 

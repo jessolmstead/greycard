@@ -811,6 +811,28 @@ pub struct Moved {
 /// alone and the frame stays, said so in `skipped`. The folder is
 /// made if it is not there.
 pub fn move_rejects(files: &[PathBuf], rejected: &[usize]) -> anyhow::Result<Moved> {
+    move_rejects_as(files, rejected, Orphans::WriteOver)
+}
+
+/// What a move does with a sidecar already in the rejects folder under
+/// one of the frame's names, with no raw of the name beside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Orphans {
+    /// The frame's own sidecar goes over it: the shoot's folder is the
+    /// user's working folder, and the orphan is an earlier cull's.
+    WriteOver,
+    /// The frame stays whole where it is and the clash is named: on an
+    /// archive nothing is ever written over.
+    Keep,
+}
+
+/// [`move_rejects`], with what to do about an orphaned sidecar in the
+/// rejects folder said.
+pub fn move_rejects_as(
+    files: &[PathBuf],
+    rejected: &[usize],
+    orphans: Orphans,
+) -> anyhow::Result<Moved> {
     let mut moved = Moved::default();
     // Each frame into the rejects folder of its own folder: a list
     // from more than one (the library's all-roots view) sends each
@@ -851,14 +873,14 @@ pub fn move_rejects(files: &[PathBuf], rejected: &[usize]) -> anyhow::Result<Mov
                 .extend(group.iter().map(|&i| (i, why.clone())));
             continue;
         }
-        move_into(files, &group, &dir, &mut moved);
+        move_into(files, &group, &dir, orphans, &mut moved);
     }
     Ok(moved)
 }
 
 /// The frames at `group`, all in one folder, into its rejects folder
 /// `dir`.
-fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, moved: &mut Moved) {
+fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, orphans: Orphans, moved: &mut Moved) {
     for &i in group {
         let Some(raw) = files.get(i) else {
             continue;
@@ -890,17 +912,24 @@ fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, moved: &mut Moved) 
                 Some((from, to))
             })
             .collect();
-        // A file of any of those names there already: the frame
-        // stays whole where it is, rather than its raw going and
-        // one of the files beside it not.
+        // The raw's name there already: the frame stays whole where
+        // it is, rather than its raw going and one of the files beside
+        // it not. A sidecar of its names there with no raw of the name
+        // beside it is what an earlier cull left when the frame was
+        // dragged back out by hand (the sidecar under the hidden folder
+        // is easy to miss): an orphan of this very frame, which its own
+        // sidecar, the one that carries the flag now, writes over. The
+        // folder is the truth, and a sidecar with no frame is nothing.
         let taken = if dest.exists() {
             Some(name.to_string_lossy().into_owned())
-        } else {
+        } else if orphans == Orphans::Keep {
             beside
                 .iter()
                 .find(|(_, to)| to.exists())
                 .and_then(|(_, to)| to.file_name())
                 .map(|n| n.to_string_lossy().into_owned())
+        } else {
+            None
         };
         if let Some(taken) = taken {
             moved
@@ -919,6 +948,9 @@ fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, moved: &mut Moved) 
             {
                 tracing::warn!("{}: not moved: {e}", from.display());
                 continue;
+            }
+            if to.exists() {
+                tracing::info!("{}: an orphan of this frame, written over", to.display());
             }
             match std::fs::rename(from, to) {
                 Ok(()) if Some(from) == sidecar.as_ref() => moved.sidecars += 1,
@@ -1247,6 +1279,9 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A raw of the name there already keeps the frame whole where it
+    /// is; a sidecar of its names there with no raw beside it is an
+    /// orphan of an earlier cull and goes under the frame's own.
     #[test]
     fn the_rejects_move_with_their_sidecars_and_nothing_is_deleted() {
         let dir = std::env::temp_dir().join(format!("greycard-rejects-{}", std::process::id()));
@@ -1285,30 +1320,33 @@ mod tests {
         files.push(f.clone());
 
         let moved = move_rejects(&files, &[1, 2, 3, 4, 5]).unwrap();
-        assert_eq!(moved.files, vec![1, 2]);
-        assert_eq!(moved.sidecars, 1);
-        assert_eq!(moved.skipped.len(), 3);
+        // D's raw is there already: D stays whole. E's sidecar and F's
+        // XMP there are orphans of an earlier cull, with no raw of the
+        // name beside them: E and F go, their own sidecars over them.
+        assert_eq!(moved.files, vec![1, 2, 4, 5]);
+        assert_eq!(moved.sidecars, 2);
+        assert_eq!(moved.skipped.len(), 1);
         assert_eq!(moved.skipped[0].0, 3);
-        assert_eq!(moved.skipped[1].0, 4);
-        assert_eq!(moved.skipped[2].0, 5);
-        // The kept frame and the clashes are where they were, E with
-        // its sidecar; the moved ones and B's sidecar are in the
-        // folder beside the shoot.
+        // The kept frame and the clash are where they were; the moved
+        // ones and their sidecars are in the folder beside the shoot.
         assert!(files[0].exists() && files[3].exists());
-        assert!(e.exists() && greycard_edit::Sidecar::path_for(&e).exists());
         assert!(!files[1].exists() && !files[2].exists());
+        assert!(!e.exists() && !greycard_edit::Sidecar::path_for(&e).exists());
+        assert!(!f.exists() && !dir.join("F.xmp").exists());
         assert!(!greycard_edit::Sidecar::path_for(&files[1]).exists());
         let there = rejects_dir(&dir);
         assert!(there.join("B.CR3").exists() && there.join("C.CR3").exists());
         assert!(greycard_edit::Sidecar::path_for(&there.join("B.CR3")).exists());
-        // Both of B's names went; F stayed whole, its XMP with it.
+        // Both of B's names went.
         assert!(there.join("B.xmp").exists() && !dir.join("B.xmp").exists());
         assert!(there.join("B.CR3.xmp").exists() && !dir.join("B.CR3.xmp").exists());
-        assert!(f.exists() && dir.join("F.xmp").exists());
         assert_eq!(std::fs::read(there.join("D.CR3")).unwrap(), b"older");
-        assert_eq!(std::fs::read(there.join("E.CR3.gcd")).unwrap(), b"older");
-        assert_eq!(std::fs::read(there.join("F.xmp")).unwrap(), b"older");
-        // Every file that was there is still somewhere.
+        // The orphans are gone under E's and F's own.
+        assert_ne!(std::fs::read(there.join("E.CR3.gcd")).unwrap(), b"older");
+        assert_ne!(std::fs::read(there.join("F.xmp")).unwrap(), b"older");
+        assert!(there.join("E.CR3").exists() && there.join("F.CR3").exists());
+        // Every file that was there is still somewhere, the two
+        // orphans excepted.
         let mut all: Vec<_> = std::fs::read_dir(&dir)
             .unwrap()
             .chain(std::fs::read_dir(&there).unwrap())
@@ -1330,9 +1368,7 @@ mod tests {
                 "D.CR3",
                 "E.CR3",
                 "E.CR3.gcd",
-                "E.CR3.gcd",
                 "F.CR3",
-                "F.xmp",
                 "F.xmp"
             ]
         );
