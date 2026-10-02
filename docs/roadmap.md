@@ -22,7 +22,17 @@ the reasoning lives in `docs/notes.md`.
       gone is dropped
 - [ ] When clicking the backup button, the first click does nothing but
       the sheet flashes. clicking again works
-- [ ] No way to move a reject (or set) back when unrejected. not a huge deal tho
+- [ ] A move seen by the index carries the sidecar along: a pass that
+      finds a raw gone from one folder and its content key new in
+      another keeps the row as a move already, and now also moves the
+      row's sidecar from the old folder's placement to the new one when
+      the new place has none, so a raw dragged by hand out of a rejects
+      folder (or anywhere) keeps its edits and its flag; the sidecar
+      under the hidden folder is the one a hand move forgets (§153)
+- [ ] Move back: the inverse of Move rejects, on a frame's menu and in
+      CULLING for a frame in a rejects folder, into the folder above
+      with its sidecars, placement kept; a name taken there leaves it
+      whole and said
 
 ## Tweaks
 
