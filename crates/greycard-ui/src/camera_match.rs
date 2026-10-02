@@ -1342,7 +1342,7 @@ mod tests {
         for c in 0..3 {
             assert!((got[c] - want[c]).abs() < 0.01, "{got:?} against {want:?}");
         }
-        std::fs::remove_dir_all(&store).unwrap();
+        crate::testing::remove_dir_retry(&store);
     }
 
     /// The store's rules, one case each: what is there, and whether a
@@ -1438,7 +1438,7 @@ mod tests {
             title_in(&store, "Canon EOS R6m2 Faithful").as_deref(),
             Some("Canon EOS R6m2 Faithful (fitted on Canon EOS R6m2, 22 frames)")
         );
-        std::fs::remove_dir_all(&store).unwrap();
+        crate::testing::remove_dir_retry(&store);
     }
 
     /// A body's own fit is not replaced by a borrow, nor by a fit that
@@ -1485,7 +1485,7 @@ mod tests {
             title_in(&store, "Canon EOS R5m2 Faithful").as_deref(),
             Some("Canon EOS R5m2 Faithful (fitted on Canon EOS R5m2, 30 frames)")
         );
-        std::fs::remove_dir_all(&store).unwrap();
+        crate::testing::remove_dir_retry(&store);
     }
 
     /// The donor is chosen once, on merit: of the bodies that fit the
@@ -1519,7 +1519,7 @@ mod tests {
             title_in(&store, "Canon EOS R5m2 Faithful").as_deref(),
             Some("Canon EOS R5m2 Faithful (fitted on Canon EOS R6m2, 23 frames)")
         );
-        std::fs::remove_dir_all(&store).unwrap();
+        crate::testing::remove_dir_retry(&store);
     }
 
     /// The exposure the match solves goes in through the finish: a

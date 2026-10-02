@@ -1046,7 +1046,7 @@ mod tests {
         );
         state.borrow_mut().index_reader = None;
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A folder opened from the disk that lies under a root has the
@@ -1172,7 +1172,7 @@ mod tests {
         assert!(crate::testing::buttons(&app, "day").is_empty());
         state.borrow_mut().index_reader = None;
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A click on a folder in the pane, found by its name, opens its
@@ -1207,7 +1207,7 @@ mod tests {
         assert_eq!(listed(&state), ["d1.tif", "d2.tif"], "still the day's");
         state.borrow_mut().index_reader = None;
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A pass that adds a folder under the root has the tree built
@@ -1244,7 +1244,7 @@ mod tests {
         );
         state.borrow_mut().index_reader = None;
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame moved from the day to a new folder under the root, the
@@ -1294,7 +1294,7 @@ mod tests {
             assert_eq!(rows(&app), moved_tree, "first build out: {first_build_out}");
             state.borrow_mut().index_reader = None;
             drop(state);
-            std::fs::remove_dir_all(&dir).unwrap();
+            crate::testing::remove_dir_retry(&dir);
         }
     }
 
@@ -1321,7 +1321,7 @@ mod tests {
         assert!(app.get_thumbs().row_data(0).unwrap().offline);
         state.borrow_mut().index_reader = None;
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The two ways an archive lays out a client: `cedar` with its raws

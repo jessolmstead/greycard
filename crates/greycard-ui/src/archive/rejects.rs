@@ -994,7 +994,7 @@ mod tests {
             .find(|r| r.frame == c.frames[2])
             .unwrap();
         assert_eq!(r.found.copies, [c.there.join("c.tif")]);
-        std::fs::remove_dir_all(&c.dir).unwrap();
+        crate::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1024,7 +1024,7 @@ mod tests {
         assert!(moves.moved.is_empty());
         assert_eq!(moves.left.len(), 1);
         assert!(c.there.join("a.tif").is_file());
-        std::fs::remove_dir_all(&c.dir).unwrap();
+        crate::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1059,7 +1059,7 @@ mod tests {
         assert!(c.there.join("c.tif").is_file());
         assert!(c.frames.iter().all(|f| f.is_file()));
         assert_eq!(moves.folders, [c.there.clone(), out.clone()]);
-        std::fs::remove_dir_all(&c.dir).unwrap();
+        crate::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1087,7 +1087,7 @@ mod tests {
         assert!(c.there.join(SIDECAR_FOLDER).join("b.tif.gcd").is_file());
         assert!(c.there.join("b.xmp").is_file());
         assert_eq!(std::fs::read(out.join("b.xmp")).unwrap(), b"someone else's");
-        std::fs::remove_dir_all(&c.dir).unwrap();
+        crate::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1135,7 +1135,7 @@ mod tests {
             );
             assert!(std::fs::symlink_metadata(c.nas.join("linked").join("a.tif")).is_ok());
         }
-        std::fs::remove_dir_all(&c.dir).unwrap();
+        crate::testing::remove_dir_retry(&c.dir);
     }
 
     /// The run acts on the copies the sheet listed and no others: one
@@ -1189,7 +1189,7 @@ mod tests {
         );
         assert!(later2.is_file(), "{moves:?}");
         assert!(rejects_dir(&c.nas.join("later")).join("a.tif").is_file());
-        std::fs::remove_dir_all(&c.dir).unwrap();
+        crate::testing::remove_dir_retry(&c.dir);
     }
 
     /// The rejects folder a copy would go to, a link or leading out of
@@ -1229,7 +1229,7 @@ mod tests {
         );
         assert!(moves.moved.is_empty(), "{moves:?}");
         assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
-        std::fs::remove_dir_all(&c.dir).unwrap();
+        crate::testing::remove_dir_retry(&c.dir);
     }
 
     /// A folder on the archive that is a link out of it is not one the
@@ -1246,7 +1246,7 @@ mod tests {
             &[c.nas.join("door").join("x.tif"), c.there.join("a.tif")],
         );
         assert_eq!(allowed, [std::fs::canonicalize(&c.there).unwrap()]);
-        std::fs::remove_dir_all(&c.dir).unwrap();
+        crate::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1264,7 +1264,7 @@ mod tests {
         assert_eq!(moves.canceled.len(), 1);
         assert_eq!(moves.canceled[0].name, "b.tif");
         assert!(c.there.join("b.tif").is_file());
-        std::fs::remove_dir_all(&c.dir).unwrap();
+        crate::testing::remove_dir_retry(&c.dir);
     }
 
     /// The share-hang path with a slow fake: a run held in the middle
@@ -1322,7 +1322,7 @@ mod tests {
             Heard::Aside | Heard::Lost => panic!("set aside twice, or lost"),
         }
         assert!(c.there.join("b.tif").is_file());
-        std::fs::remove_dir_all(&c.dir).unwrap();
+        crate::testing::remove_dir_retry(&c.dir);
     }
 
     /// The archive not answering: the copies as the index has them,
@@ -1336,7 +1336,7 @@ mod tests {
         assert!(!look.answered);
         assert_eq!(look.copies().0, 2);
         assert_eq!(look.not_known().len(), 1);
-        std::fs::remove_dir_all(&c.dir).unwrap();
+        crate::testing::remove_dir_retry(&c.dir);
     }
 
     #[test]
@@ -1383,6 +1383,6 @@ mod tests {
         assert_eq!(read.dropped.len(), 1);
         assert!(path.with_extension("json.unreadable").is_file());
         assert!(!path.exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

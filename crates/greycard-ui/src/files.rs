@@ -142,7 +142,7 @@ mod tests {
             }
         }
         assert_eq!(list_files(&dir).unwrap(), vec![dir.join("a.CR3")]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -194,7 +194,7 @@ mod tests {
         assert_eq!(files, vec![b, a]);
         assert_eq!(refused.len(), 1);
         assert!(refused[0].to_string().contains("gone.NEF"));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -231,7 +231,7 @@ mod tests {
             list_files(&hidden.join("a.CR3.gcd")).unwrap(),
             vec![dir.join("a.CR3")]
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]

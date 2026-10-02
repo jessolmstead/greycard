@@ -849,7 +849,7 @@ mod tests {
 
         crate::panel::deliver::deliver(&app, exported(&Edit::for_picture()));
         assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), back);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     fn scratch(what: &str) -> PathBuf {
@@ -973,7 +973,7 @@ mod tests {
         assert_eq!(state.borrow().sidecars[0].states(), 4);
         assert_eq!(state.borrow().sidecars[0].current.light.exposure, 1.0);
         assert_eq!(on_disk(&raw).current.light.exposure, 1.0);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Left and come back to, a frame opened under `--exposure` is its
@@ -993,7 +993,7 @@ mod tests {
         save(&app, &state);
         assert_eq!(state.borrow().sidecars[0].states(), 3);
         assert_eq!(on_disk(&raw).current, exposed(1.0));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Undo as the first thing done after an `--exposure` launch goes
@@ -1034,7 +1034,7 @@ mod tests {
         assert_eq!(state.borrow().sidecars[0].current, exposed(0.5));
         app.invoke_redo();
         assert_eq!(state.borrow().sidecars[0].current, exposed(0.75));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame never opened, exported in a set: the worker seeds its
@@ -1093,7 +1093,7 @@ mod tests {
             assert_eq!(loaded.current.noise.learned_strength, seed);
             assert!(!seed_again, "seeded already");
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A set records one row a frame, each on that frame's own state

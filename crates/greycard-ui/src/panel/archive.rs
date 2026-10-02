@@ -2705,7 +2705,7 @@ pub(crate) mod tests {
         assert_eq!(pairings(&state), 1);
 
         // An archive with nothing on it says nothing of its folders.
-        std::fs::remove_dir_all(&kept).unwrap();
+        crate::testing::remove_dir_retry(&kept);
         crate::roots::edit_roots(&mut state.borrow_mut(), |r| {
             r.set_backup_folder(&shoot, &nas, &moved)
         })

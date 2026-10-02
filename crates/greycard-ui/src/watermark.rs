@@ -724,7 +724,7 @@ pub(crate) mod tests {
             };
             assert!(mark.fitted(100, 100, Space::Srgb).is_err());
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     fn flat(w: u32, h: u32, v: u8) -> Vec<u8> {
@@ -808,7 +808,7 @@ pub(crate) mod tests {
             "{} vs {want}",
             pixels[i]
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -882,7 +882,7 @@ pub(crate) mod tests {
                 assert!((got - want).abs() <= 2, "{got} px for {want} at {w} wide");
             }
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]

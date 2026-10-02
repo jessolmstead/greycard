@@ -565,7 +565,7 @@ mod tests {
         std::fs::write(shoot.join("b.CR3"), b"not a raw either").unwrap();
         assert_eq!(from_index(&db, &shoot), None);
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]

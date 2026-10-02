@@ -651,7 +651,7 @@ mod tests {
         assert_eq!(move_sidecars(&files, Placement::Folder).moved, 0);
         assert_eq!(move_sidecars(&files, Placement::Beside).moved, 3);
         assert_eq!(sidecars_elsewhere(&files, Placement::Beside), 0);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -699,7 +699,7 @@ mod tests {
         // Escape closes it.
         crate::testing::press(&app, slint::platform::Key::Escape);
         assert!(!app.get_settings_open());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -729,7 +729,7 @@ mod tests {
         );
         assert!(Sidecar::path_in(&a, Placement::Beside).exists());
         assert!(!stale.exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -748,7 +748,7 @@ mod tests {
         app.invoke_sidecars_move();
         assert!(Sidecar::path_in(&files[0], Placement::Beside).exists());
         assert_eq!(app.get_sidecars_elsewhere(), 2);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -892,7 +892,7 @@ mod tests {
         app.set_preview_cache_cap("0".into());
         app.invoke_preview_cache_cap_changed();
         until((300, 0));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]

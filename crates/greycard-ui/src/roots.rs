@@ -3363,7 +3363,7 @@ mod tests {
         let same = state.borrow().files.clone();
         assert_eq!(merge_read(&state, &app, &worker, same, None), None);
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The frame on screen deleted from under the window: the nearest
@@ -3387,7 +3387,7 @@ mod tests {
         assert_eq!(state.borrow().current, None);
         assert!(!files[2].with_extension("tif.gcd").exists());
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame on screen renamed, or moved to another folder, is
@@ -3447,7 +3447,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The pane's roots, with the grid up: a row a root with its count
@@ -3527,7 +3527,7 @@ mod tests {
         st.index_reader = None;
         drop(st);
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A folder opened over a view of the roots takes the chip's
@@ -3561,7 +3561,7 @@ mod tests {
             "the root's chip stayed lit after a folder opened"
         );
         assert!(!app.get_library_all_on());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     fn right_click(app: &App, x: f32, y: f32) {
@@ -3860,7 +3860,7 @@ mod tests {
             "Photos"
         );
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// With a root's menu up, a right-click on another root opens that
@@ -4176,7 +4176,7 @@ mod tests {
         }
         drop(st);
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// B2, the review's repro: a merge while the thumbnails are still
@@ -4234,7 +4234,7 @@ mod tests {
         assert_eq!(came, owed, "each frame still owed a picture gets one");
         worker.stop();
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// B3, the review's repro: the frame on screen copied to `backup/`
@@ -4282,7 +4282,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// B4, the review's repro: a filter kept from the last session
@@ -4325,7 +4325,7 @@ mod tests {
         assert!(!st.library.loading, "the folder's own load is done");
         drop(st);
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame under an offline root is culled from its local preview,
@@ -4544,7 +4544,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A root that is not there (unplugged, its mount point gone) is
@@ -4684,7 +4684,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A folder under a root that cannot be read (locked after the
@@ -4752,7 +4752,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A pass over a folder lands while a read that looked at the
@@ -4796,7 +4796,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A read that never comes back (a share that stopped answering in
@@ -4827,7 +4827,7 @@ mod tests {
         let look = ask(&state.borrow()).unwrap();
         assert!(look.roots.is_empty());
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Let `blocks` go: the test that holds it is done with it.
@@ -4882,7 +4882,7 @@ mod tests {
             real.offline(&[dir.clone(), gone.clone()], ROOT_WAIT),
             HashSet::from([gone])
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The frame on screen under a root the read found offline is not
@@ -4934,7 +4934,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A root of three frames in the index, and a window on it with
@@ -5040,7 +5040,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A view that lands within the first moment never shows a bar.
@@ -5070,7 +5070,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A read that hangs with no report coming is given up on by the
@@ -5116,7 +5116,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A view's read given up on takes its bar with it, and the status
@@ -5165,7 +5165,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A view's read given up on: the status says so rather than
@@ -5218,7 +5218,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The review's round trip: a folder under a root locked, and the
@@ -5287,7 +5287,7 @@ mod tests {
         assert_eq!(st.files.len(), 2);
         drop(st);
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The merge asks the disk nothing: a list whose folders are all
@@ -5332,7 +5332,7 @@ mod tests {
         assert!(refresh_view(&state, &app, &worker));
         let look = SENT.with(|s| s.borrow_mut().pop()).unwrap();
         let found = look.run();
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
         land(&state, &app, &worker, found);
         assert_eq!(state.borrow().files, files);
         assert!(!state.borrow().library.merging);
@@ -5465,7 +5465,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// An export pressed on a frame whose sidecar is being read, the
@@ -5496,7 +5496,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A sidecar the index says holds a develop, and that cannot be
@@ -5563,7 +5563,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A pick whose read was started under a list a view's read has
@@ -5597,7 +5597,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A pick whose read is given up on, then brought in by a key's
@@ -5646,7 +5646,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A preset pressed on a frame whose read was given up on loads the
@@ -5700,7 +5700,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Export on a frame on screen whose panel is the stand-in's (its
@@ -5730,7 +5730,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The frame on screen followed to its new name keeps its panel's
@@ -5809,7 +5809,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The sidecar stays the truth: a sidecar changed on disk is read by
@@ -5858,7 +5858,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A rating key on a frame standing in reads its whole sidecar first,
@@ -5896,7 +5896,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A folder's own open reads nothing on the window's thread: the
@@ -5995,7 +5995,7 @@ mod tests {
         }
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A folder on a share that does not answer: its open is looked at
@@ -6061,7 +6061,7 @@ mod tests {
         assert_eq!(state.borrow().files, next_files);
         tests::NOT_ANSWERING.with(|n| n.borrow_mut().clear());
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A folder opened through a link is made canonical by the read, off
@@ -6086,7 +6086,7 @@ mod tests {
         assert_eq!(st.recent.open.as_deref(), Some(real.as_path()));
         drop(st);
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Two roots on a window with the library open, sidecars on: `a`
@@ -6201,7 +6201,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A turn on a frame standing in reads its sidecar first and
@@ -6229,7 +6229,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
 
         let (dir, away, _files, writer, app, state, worker) = offline_view("offline-turn");
         let before = std::fs::read(away.join("z.tif.gcd")).unwrap();
@@ -6249,7 +6249,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame under an offline root opened in the loupe shows the
@@ -6353,7 +6353,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Culling's compare tiles and the loupe's stand-in read a frame's
@@ -6383,7 +6383,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A rating another tool wrote to an XMP beside the frame, with no
@@ -6439,7 +6439,7 @@ mod tests {
         }
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// `n` bare frames under one root, indexed, the view of the roots
@@ -6541,7 +6541,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A preset pressed on fifty frames whose sidecars are still to be
@@ -6580,7 +6580,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Two keys during one read both apply, in order.
@@ -6625,7 +6625,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A click on a frame whose sidecar is to be read, then on a loaded
@@ -6664,7 +6664,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A read dropped with its list takes the bar down with it, and a
@@ -6708,7 +6708,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A purple label, and no label, from the menu on a frame whose
@@ -6757,7 +6757,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// An export record for a frame the list holds as a stand-in (the
@@ -6795,7 +6795,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Culling with move-on, the frames' sidecars still to be read: each
@@ -6835,7 +6835,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
 
         // Ten keys on ten unread frames.
         let (dir, files, writer, app, state, worker) = many_under_a_root("rows-move-on-ten", 12);
@@ -6871,7 +6871,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A read started under one list lands nothing in the next: the
@@ -6924,7 +6924,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Giving up on a read names what it dropped, and a dropped pick is
@@ -6983,7 +6983,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame a request named that is gone from the list by the time
@@ -7017,7 +7017,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Three picked frames under a root, indexed, the view opened and
@@ -7096,7 +7096,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
 
         // Queued behind its read: last row.
         let (dir, _files, writer, app, state, worker) = three_picks_culling("end-queued");
@@ -7123,7 +7123,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
 
         // At once: the middle row.
         let (dir, _files, writer, app, state, worker) = three_picks_culling("middle-now");
@@ -7145,7 +7145,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
 
         // Queued: the middle row.
         let (dir, _files, writer, app, state, worker) = three_picks_culling("middle-queued");
@@ -7166,7 +7166,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Culling's undo is a request too, queued behind the keys still
@@ -7239,7 +7239,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A burst of passes reported while a read is out: one read is out
@@ -7303,7 +7303,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// M1: a capture of an empty all-roots view ends, failed, with a
@@ -7356,7 +7356,7 @@ mod tests {
         assert!(app.get_status().contains("nothing"), "{}", app.get_status());
         state.borrow_mut().index_reader = None;
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// M2: a pass that found one file changed asks for that file's
@@ -7375,7 +7375,7 @@ mod tests {
         assert_eq!(changed_rows(&state.borrow(), &report), [1]);
         assert!(changed_rows(&state.borrow(), &greycard_library::Report::default()).is_empty());
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// M3: the frame on screen, the last file in its folder, deleted.
@@ -7421,7 +7421,7 @@ mod tests {
         state.borrow_mut().index_reader = None;
         drop(state);
         drop(writer);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A root with two folders, `d` (two frames) and `e` (one), indexed,
@@ -7500,7 +7500,7 @@ mod tests {
             self.state.borrow_mut().index_reader = None;
             drop(self.state);
             drop(self.writer);
-            std::fs::remove_dir_all(&self.dir).unwrap();
+            crate::testing::remove_dir_retry(&self.dir);
         }
     }
 
@@ -8142,6 +8142,6 @@ mod tests {
                 _ => assert!(Instant::now() < deadline, "the timer still runs"),
             }
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

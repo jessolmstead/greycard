@@ -348,7 +348,7 @@ mod tests {
             [(a_s.to_string(), true), (b_s.to_string(), false)]
         );
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A click on the name opens the list, and the press that closes
@@ -375,7 +375,7 @@ mod tests {
         app.set_grid_open(true);
         assert_eq!(count_labeled(&app, "Recently opened"), 1);
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The hover text goes with the name it is over: the pane put away
@@ -419,7 +419,7 @@ mod tests {
         slint::platform::update_timers_and_animations();
         assert_eq!(app.get_tip_text(), "", "the hover text stayed up");
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A settings file to write: the folder goes through it as it is on
@@ -453,7 +453,7 @@ mod tests {
         assert_eq!(state.borrow().recent.folders, read.recent_folders);
         assert_eq!(app.get_recent_folders().row_count(), 3);
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -484,7 +484,7 @@ mod tests {
         assert_eq!(app.get_open_folder_name(), "Archive");
         assert_eq!(app.get_open_folder_root(), "");
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -495,7 +495,7 @@ mod tests {
         let (state, worker) = state_for(&app, Vec::new());
         open_folder(&state, &app, &worker, &a);
         open_folder(&state, &app, &worker, &b);
-        std::fs::remove_dir_all(&a).unwrap();
+        crate::testing::remove_dir_retry(&a);
         let before = listed(&app);
 
         chosen(&state, &app, &worker, a.to_string_lossy().as_ref());
@@ -513,7 +513,7 @@ mod tests {
         open_folder(&state, &app, &worker, &b);
         assert_eq!(app.get_open_folder_note(), "");
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A look at a folder that comes back after another list opened is
@@ -535,7 +535,7 @@ mod tests {
         let now = state.borrow().view_generation;
         assert!(still_wanted(&state.borrow(), now));
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -550,6 +550,6 @@ mod tests {
         let link = dir.join("link");
         let known: HashMap<PathBuf, PathBuf> = [(link.clone(), a.clone())].into_iter().collect();
         assert_eq!(folder_of(&[link.join("x.tif")], &known), Some(a.clone()));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

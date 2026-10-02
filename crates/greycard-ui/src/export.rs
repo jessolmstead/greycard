@@ -1265,7 +1265,7 @@ mod tests {
             .unwrap()
             .expect("a profile");
         assert_eq!(icc, Space::DisplayP3.icc().unwrap());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1356,7 +1356,7 @@ mod tests {
             let back = image::open(&path).unwrap();
             assert_eq!((back.width(), back.height()), source);
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// lcms writes the second of its making into a profile's header,
@@ -1445,7 +1445,7 @@ mod tests {
             };
             assert!(profile, "{what}");
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1535,7 +1535,7 @@ mod tests {
             }
             assert!(moved > 500, "{moved}");
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[cfg(target_os = "linux")]
@@ -1610,7 +1610,7 @@ mod tests {
                 .path(),
             Some(dir.join("frame (4).jpg").as_path())
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1636,7 +1636,7 @@ mod tests {
             OnExists::Increment.resolve(&dotfile).path(),
             Some(dir.join(".keep (2)").as_path())
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1664,6 +1664,6 @@ mod tests {
                 .note()
                 .is_none()
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

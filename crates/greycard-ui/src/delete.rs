@@ -559,7 +559,7 @@ mod tests {
         assert_eq!(done.vanished, 0);
         assert!(done.failed.is_empty() && done.trash_refused.is_none());
         assert_eq!(all(&dir), ["C.CR3", "D.CR3", "D.xmp", "notes.txt"]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -604,7 +604,7 @@ mod tests {
             assert!(link.exists() && away.exists() && files[3].exists());
             assert!(files[1].exists());
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -636,7 +636,7 @@ mod tests {
             ]
         );
         // And a whole folder gone: nothing to do, nothing panics.
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
         let done = delete(&p, How::Permanent, &ok, never);
         assert!(done.frames.is_empty());
         assert_eq!(done.failed.len(), 2);
@@ -687,7 +687,7 @@ mod tests {
              (no trash on this disk); 2 frames still where they were: ask again to \
              delete permanently"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The trash stops at its first error: here it takes the raw and
@@ -724,7 +724,7 @@ mod tests {
              refused B.CR3.gcd (left in .greycard): the sidecar would not go; 1 frame \
              still where it was: ask again to delete permanently"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A raw gone before the confirm, and the trash refusing the
@@ -751,7 +751,7 @@ mod tests {
              gone already, and the trash refused A.CR3.gcd (left in the folder), \
              A.CR3.xmp (left in the folder), A.xmp (left in the folder): refused"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// `delete` checks each path again whatever the plan says: a plan
@@ -800,7 +800,7 @@ mod tests {
             assert!(away.exists() && elsewhere.join("B.CR3").exists());
             assert!(dir.join("moved").join("A.CR3").exists());
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// No test can reach the real trash: the test build's is a panic.
@@ -822,6 +822,6 @@ mod tests {
         std::fs::remove_file(rejects.join("notes.txt")).unwrap();
         remove_if_empty(&rejects);
         assert!(!rejects.exists() && dir.exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

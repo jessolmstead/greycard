@@ -454,7 +454,7 @@ mod tests {
         assert_eq!(std::fs::metadata(&entry).unwrap().len(), made.bytes);
         drop(cache);
         assert!(!previews.owes(&file), "made once");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Made, then read back from the cache alone with the file gone:
@@ -487,7 +487,7 @@ mod tests {
         let (hash, _) = Previews::key_of(&other).unwrap();
         previews.note(&other, (1, 1), &hash);
         assert_eq!(previews.make(&other).unwrap(), None);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The cost of a preview on the frames of `GREYCARD_SAMPLES`: made
@@ -558,7 +558,7 @@ mod tests {
             read * 1e3 / n,
             seconds
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Only frames under a root are owed one; none is made with the
@@ -666,7 +666,7 @@ mod tests {
         assert!(own(300, 8192, 0, 6000), "under three quarters of their own");
         assert!(!own(300, 8192, 0, 6200), "past three quarters of their own");
         assert!(!own(300, 0, 0, 0), "a previews' cap of nothing keeps none");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Past `FROM_PICTURES_AT_ONCE` previews in hand from pictures, the
@@ -692,7 +692,7 @@ mod tests {
         drop(first);
         assert!(previews.take_for_picture(&files[2]).is_some(), "room again");
         drop(second);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// What was owed is the last list's: new roots clear it, and a
@@ -716,6 +716,6 @@ mod tests {
         previews.note(&file, file_stat(&file).unwrap(), &hash);
         *previews.roots.lock().unwrap() = Vec::new();
         assert!(previews.take(&file).is_none());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

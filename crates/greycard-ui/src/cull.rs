@@ -1210,7 +1210,7 @@ mod tests {
         std::fs::remove_file(&file).unwrap();
         let got = run(&local);
         assert!(matches!(&got[..], [Loaded::Ok { preview, .. }] if preview.local));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1276,7 +1276,7 @@ mod tests {
                 .join("A.CR3.gcd")
                 .exists()
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A raw of the name there already keeps the frame whole where it
@@ -1410,7 +1410,7 @@ mod tests {
         assert!(rejects_dir(&two).join("C.CR3").exists());
         assert!(!rejects_dir(&one).join("C.CR3").exists());
         assert!(files[0].exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A shoot whose rejects folder cannot be made keeps its rejects,
@@ -1447,7 +1447,7 @@ mod tests {
         std::fs::set_permissions(&b, std::fs::Permissions::from_mode(0o755)).unwrap();
         if writable {
             // Run as root, which writes anyway.
-            std::fs::remove_dir_all(&dir).unwrap();
+            crate::testing::remove_dir_retry(&dir);
             return;
         }
         assert_eq!(moved.files, vec![0]);
@@ -1462,6 +1462,6 @@ mod tests {
             "{:?}",
             moved.skipped
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

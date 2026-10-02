@@ -1365,7 +1365,7 @@ mod tests {
         assert_eq!(with.copies().0, 1);
         run(&with, &quiet_hooks(&cancel, &bytes));
         assert!(there.join(crate::cull::REJECTS).join("r.tif").is_file());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A shoot renamed here after its backup, or an archive reorganized
@@ -1397,7 +1397,7 @@ mod tests {
         std::fs::remove_file(elsewhere.join("renamed.tif")).unwrap();
         let plan = super::plan(&backup_ask(&local, &nas, &db, false), &no_beat());
         assert_eq!(plan.copies().0, 3);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1436,7 +1436,7 @@ mod tests {
             .filter(|e| e.file_name().to_string_lossy().ends_with(TEMPORARY))
             .collect();
         assert!(left.is_empty(), "the temporary removed");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1476,7 +1476,7 @@ mod tests {
         assert_eq!(report.stale, std::slice::from_ref(&stale));
         assert!(!stale.exists());
         assert!(fresh.exists() && own.exists(), "a live writer's are kept");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame there already takes the newer sidecar across, in either
@@ -1541,7 +1541,7 @@ mod tests {
         assert_eq!(read(&files[0]), 1);
         // c's sidecar came back to where c keeps its own: the hidden folder.
         assert!(!files[2].with_file_name("c.tif.gcd").exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Bring back skips a frame already under a local root, wherever it
@@ -1596,7 +1596,7 @@ mod tests {
                 .join("y.tif")
                 .exists()
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Another file at the destination's name is never written over.
@@ -1618,7 +1618,7 @@ mod tests {
             std::fs::read(there.join("a.tif")).unwrap(),
             b"another picture"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1641,7 +1641,7 @@ mod tests {
         let report = run(&plan, &hooks);
         assert_eq!(report.copied.len(), 1);
         assert_eq!(report.canceled, 2);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The share-hang path, with a slow fake: a job that beats, then
@@ -1769,7 +1769,7 @@ mod tests {
             }
             Heard::Aside | Heard::Lost => panic!("set aside twice, or lost"),
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1865,7 +1865,7 @@ mod tests {
         assert_eq!(lib.whole_hash(&late).unwrap(), None);
         assert_eq!(lib.whole_hash(&files[2]).unwrap(), None);
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -1952,7 +1952,7 @@ mod tests {
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].to, greycard_edit::xmp::paths_of(b)[0]);
         assert!(back[0].replace);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A sidecar left at the destination with no frame beside it keeps
@@ -1985,7 +1985,7 @@ mod tests {
         );
         // The others went whole.
         assert!(there.join("a.tif").is_file() && there.join("c.tif").is_file());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The copy's rows wait on a library another writer holds without
@@ -2031,7 +2031,7 @@ mod tests {
                 .is_some()
         );
         drop(lib);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// §197's open case, settled the hash-first way: a file at the
@@ -2095,7 +2095,7 @@ mod tests {
         // Asked again: decided from the rows, the same way.
         let second = plan(&ask, &no_beat());
         assert_eq!(second.items, first.items);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame with no sidecar of its own is still kept out by a sidecar
@@ -2140,7 +2140,7 @@ mod tests {
         let report = run(&plan, &quiet_hooks(&cancel, &bytes));
         assert!(report.taken.contains(a));
         assert!(!there.join("a.tif").exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A job whose thread ends without a result is said, so nothing
@@ -2170,7 +2170,7 @@ mod tests {
         write_frame(&dir.join("a.tif"), &R5, 1);
         let (frames, _) = walk(&dir, false, &[], &|| {}, &|| true);
         assert!(frames.is_empty());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A folder of no root's with the archive inside it: the walk never
@@ -2185,7 +2185,7 @@ mod tests {
         write_frame(&nas.join("z.tif"), &R6, 2);
         let (frames, _) = walk(&top, false, std::slice::from_ref(&nas), &|| {}, &|| false);
         assert_eq!(frames, [top.join("a.tif")]);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Under `--no-sidecars` the frames go without them, and nothing of
@@ -2208,7 +2208,7 @@ mod tests {
         let there = nas.join("local").join("shoot");
         assert!(!there.join("b.tif.gcd").exists());
         assert!(!there.join(SIDECAR_FOLDER).exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A whole hash on a row is the file's only while the row's size and
@@ -2249,6 +2249,6 @@ mod tests {
             What::Taken { to: copy.clone() },
             "not the frame backed up before"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

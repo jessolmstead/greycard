@@ -2189,7 +2189,7 @@ mod tests {
         st.filter.toggle_facet(Facet::Iso, "100");
         assert_eq!(shown(&st), [0, 1, 2, 4]);
         drop(st);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A facet's count is how many frames hold each value among the
@@ -2272,7 +2272,7 @@ mod tests {
         refresh_ids(&mut st);
         assert_eq!(counts(&mut st, Facet::Keyword), pairs(&[("harbor", 1)]));
         drop(st);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The text field takes the §160 grammar: an EXIF term goes to
@@ -2299,7 +2299,7 @@ mod tests {
         assert_eq!(st.filter.typed().errors.len(), 1);
         assert_eq!(shown(&st), Vec::<usize>::new());
         drop(st);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The window's side: a facet chip pressed on the bar narrows the
@@ -2341,7 +2341,7 @@ mod tests {
         // The callbacks hold the state too; its connection goes here.
         state.borrow_mut().index_reader = None;
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A panic on the indexer's thread is said to the window as a
@@ -2363,7 +2363,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         indexer.stop(Duration::from_secs(20));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A library another process holds locked past the writer's
@@ -2409,7 +2409,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         indexer.stop(Duration::from_secs(20));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The grid's header has two facet rows: camera and lens on the
@@ -2446,7 +2446,7 @@ mod tests {
         );
         state.borrow_mut().index_reader = None;
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A facet row longer than the header scrolls sideways under a
@@ -2546,7 +2546,7 @@ mod tests {
         assert_eq!(reader.by_path(&a).unwrap().unwrap().meta.rating, 4);
         indexer.stop(Duration::from_secs(20));
         drop(reader);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Two roots of two frames each under `dir`, `a` and `b`, and an
@@ -2645,7 +2645,7 @@ mod tests {
         assert_eq!(reader.count_under(&b).unwrap(), 2);
         drop(reader);
         indexer.stop(Duration::from_secs(20));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A root that answers the look and then hangs in the middle of its
@@ -2745,7 +2745,7 @@ mod tests {
         assert_eq!(reader.count_under(&a).unwrap(), 2);
         drop(reader);
         indexer.stop(Duration::from_secs(20));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The window hears a skipped pass: said on the status line once, a
@@ -2804,7 +2804,7 @@ mod tests {
         );
         drop(st);
         drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A share mounted below a local root that hangs holds its own pass
@@ -2877,7 +2877,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         indexer.stop(Duration::from_secs(20));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A pass set aside on a tree below a root (a share's tick, the share
@@ -2934,7 +2934,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         indexer.stop(Duration::from_secs(20));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A launch pass set aside is counted once: the word that it was set
@@ -2989,7 +2989,7 @@ mod tests {
         assert_eq!(a_landed, Some(false), "a's pass lands as no launch pass");
         assert_eq!(launches, vec![a.clone(), b, c], "each root counted once");
         indexer.stop(Duration::from_secs(20));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The window's own folder pass, stuck the same way, is said to the
@@ -3055,7 +3055,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
         indexer.stop(Duration::from_secs(20));
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]

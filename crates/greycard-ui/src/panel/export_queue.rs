@@ -747,7 +747,7 @@ mod tests {
         assert_eq!(second.sheet.size, "1024");
         assert_eq!(second.preset, None, "an edited sheet names no preset");
         assert_eq!(second.folder, None);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Export the queue runs the entries in order, each as a set under
@@ -817,7 +817,7 @@ mod tests {
             );
         }
         drop(st);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Stop while an entry's frame is in hand: that frame is done, the
@@ -861,7 +861,7 @@ mod tests {
             app.get_status()
         );
         drop(st);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame that fails is the set's failure as in any set: no line in
@@ -897,7 +897,7 @@ mod tests {
         assert!(st.sidecars[0].current_exports.is_empty());
         assert_eq!(st.sidecars[1].current_exports.len(), 1);
         drop(st);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The queue across a restart: a fresh window and state read the
@@ -937,7 +937,7 @@ mod tests {
         assert_eq!(state.borrow().export_queue, queued);
         clear(&mut state.borrow_mut(), &app);
         assert_eq!(export_queue::load(&queue_file(&dir)), queued);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame whose file is not there when the queue reaches it (a
@@ -989,7 +989,7 @@ mod tests {
             "{status}"
         );
         drop(st);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// An entry whose folder, or whose watermark's PNG, is not there
@@ -1035,7 +1035,7 @@ mod tests {
             .unwrap();
         app.invoke_export_queue_run();
         assert!(state.borrow().queue_run.as_ref().unwrap().set.is_some());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A window closed (or a crash) after some of an entry's frames are
@@ -1074,7 +1074,7 @@ mod tests {
         let on_disk = export_queue::load(&queue_file(&dir));
         assert_eq!(on_disk.len(), 1);
         assert_eq!(on_disk[0].sheet.size, "Full");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A folder opened by a relative path: the queue keeps each frame
@@ -1094,7 +1094,7 @@ mod tests {
             .take_while(|(a, b)| a == b)
             .count();
         if shared == 0 {
-            std::fs::remove_dir_all(&dir).unwrap();
+            crate::testing::remove_dir_retry(&dir);
             return;
         }
         let mut rel = PathBuf::new();
@@ -1119,7 +1119,7 @@ mod tests {
         frame(&app, &state, 0, exported("/nowhere/out/IMG_0000.jpg"));
         finish(&app, &state);
         assert_eq!(state.borrow().sidecars[0].current_exports.len(), 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A mark with nothing to draw is refused at Add to queue, the sheet
@@ -1143,7 +1143,7 @@ mod tests {
             app.get_status()
         );
         CHOSEN.with(|c| c.borrow_mut().take());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A plain set's frames and end, while the queue runs an entry of its
@@ -1189,7 +1189,7 @@ mod tests {
         assert!(st.exporting.is_some());
         assert_eq!(st.export_queue[0].frames.len(), 2);
         drop(st);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame queued with its blend still to be seeded comes back under
@@ -1238,7 +1238,7 @@ mod tests {
         assert_eq!(st.sidecars[0].current.noise.learned_strength, 0.35);
         assert!(!st.seed_blend[0]);
         drop(st);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Clear empties the queue and removes the file; not while it runs.
@@ -1269,6 +1269,6 @@ mod tests {
         assert!(!queue_file(&dir).exists());
         assert_eq!(app.get_export_queue_sets(), 0);
         assert_eq!(app.get_status(), "export queue cleared (2 sets)");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

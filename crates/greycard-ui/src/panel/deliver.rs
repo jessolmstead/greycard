@@ -1559,7 +1559,7 @@ mod tests {
         assert_eq!(on_disk.export_presets.len(), 1);
         assert_eq!(on_disk.export_presets[0].name, "Web");
         assert_eq!(on_disk.export_preset, "");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A set is read as each frame's own edit, the one on screen as

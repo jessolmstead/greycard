@@ -1965,7 +1965,7 @@ mod tests {
             err.contains("Nope") && err.contains("Web 2048, Print"),
             "{err}"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]

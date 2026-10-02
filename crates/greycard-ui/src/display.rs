@@ -361,7 +361,7 @@ mod tests {
         std::fs::write(&path, bytes).unwrap();
         let lut = Lut3d::from_icc(&path).unwrap();
         assert!(lut.max_deviation() < 1.0 / 255.0, "{}", lut.max_deviation());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]

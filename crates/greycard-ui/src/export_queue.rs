@@ -237,7 +237,7 @@ mod tests {
         assert_eq!(count_line(&q[1..]), "1 set, 1 frame queued");
         save(&file, &[]);
         assert!(!file.exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -261,7 +261,7 @@ mod tests {
             "{ not json"
         );
         assert!(dir.join("export-queue.json.unread.2").exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// An entry's edit is read through the edit's migration: an older
@@ -293,6 +293,6 @@ mod tests {
         assert!(load(&file).is_empty());
         assert!(!file.exists());
         assert!(dir.join("export-queue.json.unread").exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 }

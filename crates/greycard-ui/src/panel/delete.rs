@@ -649,7 +649,7 @@ mod tests {
         let indexer = state.borrow_mut().index.take().unwrap();
         indexer.stop(Duration::from_secs(20));
         drop(reader);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Where the platform has a trash the sheet offers it alone, and an
@@ -686,7 +686,7 @@ mod tests {
             assert!(f.exists(), "{}", f.display());
         }
         assert_eq!(state.borrow().files.len(), files.len());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A capture, an export or a timing run never deletes, even
@@ -706,7 +706,7 @@ mod tests {
         assert!(files.iter().all(|f| f.exists()));
         assert!(app.get_status().contains("never deletes"));
         assert_eq!(state.borrow().files.len(), files.len());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A folder swapped for a link to another between the sheet and
@@ -738,7 +738,7 @@ mod tests {
             "nothing was deleted; 1 frame not deleted (a.tif: a.tif is not in the folder open)"
         );
         assert_eq!(state.borrow().files.len(), files.len());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// One delete at a time, and none on the window's thread: while one
@@ -763,7 +763,7 @@ mod tests {
         assert_eq!(app.get_status(), "a delete is still under way");
         assert_eq!(land_all(&state, &app, &worker), 1);
         assert!(state.borrow().deleting.is_none() && !files[0].exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A thread that panics still lands: the window takes deletes
@@ -791,7 +791,7 @@ mod tests {
         // And the next delete is taken.
         app.invoke_delete_asked("selection".into());
         assert!(app.get_delete_open());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// While a delete is out, the frames it has planned keep their
@@ -827,7 +827,7 @@ mod tests {
         assert!(!app.get_rejects_open());
         land_all(&state, &app, &worker);
         assert!(!files[0].exists() && !Sidecar::path_for(&files[0]).exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A frame deleted by another hand between the sheet and the
@@ -865,7 +865,7 @@ mod tests {
                 "notes.txt"
             ]
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The rejects folder's frames go with their sidecars, the folder
@@ -904,7 +904,7 @@ mod tests {
             app.get_status()
                 .starts_with("deleted permanently: 2 frames and 2 sidecars")
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// Delete opens the sheet over the selection in the loupe, the

@@ -3070,7 +3070,7 @@ mod tests {
         }
         worker.stop();
         assert!(!dir.join("out").exists(), "nothing was written");
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
         said
     }
 
@@ -3729,7 +3729,7 @@ mod tests {
         assert_eq!((thumb.width, thumb.height), (3, 2));
         // Another size is not the same entry.
         assert!(cached_thumbnail_noting(&cache, None, &moved, 256, thumbnail).is_err());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// An offline frame's picture: looked up by the row's hash and
@@ -3790,7 +3790,7 @@ mod tests {
         });
         assert_eq!(rx.recv_timeout(wait).unwrap(), "none 4");
         worker.stop();
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A picture file is made once, kept, found; re-written in place,
@@ -3826,7 +3826,7 @@ mod tests {
             fresh.rgb.iter().all(|v| *v < 60),
             "the new picture's pixels"
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A stand-in for the decode: a picture whose every byte is the
@@ -3887,7 +3887,7 @@ mod tests {
             cached_thumbnail_noting(&cache, None, &renamed, 176, tail_picture).unwrap();
         assert!(cached);
         assert_eq!(again.rgb, done.rgb);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A card's frame and its import by a plain `cp`: one head, one
@@ -3916,7 +3916,7 @@ mod tests {
                 cached_thumbnail_noting(&cache, None, path, 176, tail_picture).unwrap();
             assert_eq!(cached, round >= 2, "round {round}");
         }
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A file that grows or is touched while its picture is being made
@@ -3952,7 +3952,7 @@ mod tests {
         assert!(!cached);
         let (_, cached) = cached_thumbnail_noting(&cache, None, &raw, 176, tail_picture).unwrap();
         assert!(cached);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A cache with a cap of nothing is off: nothing looked up, nothing
@@ -3970,7 +3970,7 @@ mod tests {
             assert!(!cached);
         }
         assert!(!dir.join("thumbs").exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The count runs off the caller's thread and seeds the cache.
@@ -4002,7 +4002,7 @@ mod tests {
             cache.lock().unwrap().as_ref().unwrap().known_usage(),
             Some(known)
         );
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]
@@ -4018,7 +4018,7 @@ mod tests {
             assert!(!cached);
         }
         assert!(!dir.join("thumbs").exists());
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The Sky shape over real frames, the product's own path: each
