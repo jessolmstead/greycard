@@ -231,3 +231,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§218. Archive roots, part two: Remove rejects and its queue](notes/218-archive-roots-part-two-remove-rejects-and-its-queue.md) (2026-10-01)
 - [§219. The backup pairing is the folder's, not the root's](notes/219-the-backup-pairing-is-the-folders-not-the-roots.md) (2026-10-02)
 - [§220. The folder is the truth, and the sidecar a hand move leaves behind](notes/220-the-folder-is-the-truth-and-the-sidecar-it-leaves-behind.md) (2026-10-02)
+- [§221. The shader checked against the CPU at random edits, and the GPU tests made to run in CI](notes/221-the-shader-checked-against-the-cpu-at-random-edits.md) (2026-10-02)

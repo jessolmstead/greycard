@@ -10,6 +10,22 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The viewport shader is checked against the CPU finish over 400
+  random edits a run, every slider at its panel range with the corners
+  weighted, locals of every shape with looks of their own, a look table
+  and a guide plane, each pixel held within 2.5/255 of a CPU answer at
+  rest or under small nudges of its inputs; seeds 1 to 10 pass on
+  NVIDIA, RADV and lavapipe. Five divergences it found are fixed on
+  both sides: the display curve overflowing to a black pixel under
+  stacked gains, a summed contrast of zero, rounding residue on
+  exact-zero channels out of the Oklab pass, the masks' rasters and
+  the guide plane read through the sampler's filter rather than by
+  texel, and the Oklab pass rebuilding a and b through sine and cosine
+  (§221)
+- The GPU tests run in CI, on lavapipe on the Linux runner, Vulkan
+  only, and fail there rather than skip when no adapter is found;
+  before, every GPU test passed green on a runner with no GPU without
+  running. The GPU instances read `WGPU_BACKEND` (§221)
 - The backup pairing is the folder's, not the root's: a root paired to
   the archive's year folder no longer claims every shoot under that
   year as its own on Bring back; the next Back up from a root opens

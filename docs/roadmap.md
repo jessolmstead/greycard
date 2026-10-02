@@ -196,6 +196,14 @@ ask for first.
       the viewport and the export alike. Every picture changes, so it
       lands behind a comparison over the archive sets and its own notes
       section
+- [ ] The color curves' lightness axis near black: the shift is looked
+      up by Oklab lightness, a cube root whose slope is unbounded at
+      zero, so a few parts in a billion of light at a clipped channel
+      read as a lightness near 1e-3 and a curve with a point under 0.05
+      turns them into a cast of whole levels; the random parity test
+      draws its points from 0.05 for that reason. Decide the axis's
+      floor or shape so the curves are stable at black, and lift the
+      draw back to the panel's 0.01
 - [ ] Camera match follow-ups (§181): a group's error held out over
       every frame rather than four, and that error deciding whether a
       new fit of the same body from another folder replaces the table
@@ -379,15 +387,6 @@ clears or a tester asks for it.
       WARP, slow but right; the develop already runs on the CPU, the
       viewport does not. A tester on such a machine decides whether
       the viewport wants a CPU path too
-- [ ] The shader checked against `finish_pixel` at random edits: a
-      few hundred edits drawn across every slider, mask shape and look,
-      rendered both ways and compared within a tolerance, so a drift
-      shows the day it is introduced; today the render tests check ten
-      cases, most at the default edit. And the GPU tests run in CI:
-      install lavapipe (`mesa-vulkan-drivers`) on the Linux runner and
-      have the test helper fail rather than return when no adapter is
-      found under CI, since today every GPU test passes green there
-      without running
 - [ ] A scene mode for the R, G and B curves: the color curves on
       log-encoded scene values before the display curve, in stops about
       mid grey, as a grading tool (what Resolve's log controls do),
