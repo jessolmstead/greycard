@@ -40,9 +40,11 @@
 //! A root can also be marked as an archive (notes §197, §216): a NAS
 //! or a mounted cloud folder that shoots are backed up to. The marks
 //! are a list of paths under a key of their own, `archives`, and the
-//! folder each source is backed up to under an archive under another,
-//! `backups`, so a build that knows nothing of archives still reads
-//! the file as a list of ordinary roots.
+//! folder each source folder was backed up to under an archive under
+//! another, `backups` (§219: the pairing is the folder's, not the
+//! root's), with the order they were chosen in under a third,
+//! `backup_order`, so a build that knows nothing of archives still
+//! reads the file as a list of ordinary roots.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
@@ -66,10 +68,46 @@ pub struct Roots {
     names: HashMap<PathBuf, String>,
     /// The roots marked as archives, in the order they were marked.
     archives: Vec<PathBuf>,
-    /// Where each source is backed up to: by the source (a root, or a
-    /// folder backed up from outside any root), the folders under the
-    /// archives its frames went to, one an archive at most.
-    backups: HashMap<PathBuf, Vec<PathBuf>>,
+    /// The pairings (§219): each folder backed up (the view's folder,
+    /// or the chosen frames' common folder) and the folder under an
+    /// archive it went to, one an archive at most for each source
+    /// folder, oldest chosen first.
+    backups: Vec<Pairing>,
+}
+
+/// A folder here and the folder under an archive it was backed up to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pairing {
+    pub source: PathBuf,
+    pub dest: PathBuf,
+}
+
+/// Where Back up's default destination came from (§219), in the order
+/// they are tried.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BackupDefault {
+    /// The folder's own pairing to this archive.
+    Own,
+    /// A folder above it was backed up to this archive under its own
+    /// name: that pairing's destination with the folder's path under it.
+    Under,
+    /// A pairing's destination was used as a container (a folder backed
+    /// up to the year folder itself): the container with the folder's
+    /// own name in it. From a folder above this one, or from the most
+    /// recent pairing of the same root.
+    Inside,
+    /// The parent of the most recent destination chosen from the same
+    /// root to this archive, that destination named as its source, with
+    /// the folder's own name.
+    Sibling,
+    /// `<archive>/<root's label>/<path under the root>`.
+    Mirror,
+}
+
+/// A path with no trailing separator and no `.` or doubled separators
+/// in it, as its components spell it: `/mnt/x/2026/` is `/mnt/x/2026`.
+pub fn tidy(path: &Path) -> PathBuf {
+    path.components().collect()
 }
 
 /// What a roots file said.
@@ -192,15 +230,40 @@ impl Roots {
         // mark off and on again finds the folder chosen before.
         if let Some(backups) = value.get("backups").and_then(|b| b.as_object()) {
             for (source, folders) in backups {
-                let folders: Vec<PathBuf> = folders
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|f| f.as_str())
-                    .map(PathBuf::from)
-                    .collect();
-                if !folders.is_empty() {
-                    roots.backups.insert(PathBuf::from(source), folders);
+                for dest in folders.as_array().into_iter().flatten() {
+                    if let Some(dest) = dest.as_str() {
+                        let pairing = Pairing {
+                            source: tidy(Path::new(source)),
+                            dest: tidy(Path::new(dest)),
+                        };
+                        if !roots.backups.contains(&pairing) {
+                            roots.backups.push(pairing);
+                        }
+                    }
+                }
+            }
+            // The order they were chosen in, when the file has it (an
+            // older build that saved has not kept it): those it names
+            // last, in its order; any it does not name first, as read.
+            if let Some(order) = value.get("backup_order").and_then(|o| o.as_array()) {
+                for item in order {
+                    let pair: Vec<&str> = item
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|p| p.as_str())
+                        .collect();
+                    let [source, dest] = pair[..] else {
+                        continue;
+                    };
+                    let pairing = Pairing {
+                        source: tidy(Path::new(source)),
+                        dest: tidy(Path::new(dest)),
+                    };
+                    if let Some(at) = roots.backups.iter().position(|p| *p == pairing) {
+                        let p = roots.backups.remove(at);
+                        roots.backups.push(p);
+                    }
                 }
             }
         }
@@ -248,24 +311,27 @@ impl Roots {
             );
         }
         if !self.backups.is_empty() {
-            let backups: serde_json::Map<String, serde_json::Value> = self
-                .backups
-                .iter()
-                .map(|(source, folders)| {
-                    (
-                        source.to_string_lossy().into_owned(),
-                        serde_json::Value::Array(
-                            folders
-                                .iter()
-                                .map(|f| {
-                                    serde_json::Value::String(f.to_string_lossy().into_owned())
-                                })
-                                .collect(),
-                        ),
-                    )
-                })
-                .collect();
+            let text = |p: &Path| serde_json::Value::String(p.to_string_lossy().into_owned());
+            let mut backups = serde_json::Map::new();
+            for p in &self.backups {
+                let folders = backups
+                    .entry(p.source.to_string_lossy().into_owned())
+                    .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+                if let serde_json::Value::Array(folders) = folders {
+                    folders.push(text(&p.dest));
+                }
+            }
             file["backups"] = serde_json::Value::Object(backups);
+            // The object's keys come out sorted, so the order the
+            // pairings were chosen in, which Back up's default reads
+            // (§219), goes beside it: pairs of source and destination,
+            // oldest first. An older build reads past it.
+            file["backup_order"] = serde_json::Value::Array(
+                self.backups
+                    .iter()
+                    .map(|p| serde_json::Value::Array(vec![text(&p.source), text(&p.dest)]))
+                    .collect(),
+            );
         }
         let text = serde_json::to_string_pretty(&file).map_err(std::io::Error::other)?;
         if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
@@ -380,34 +446,149 @@ impl Roots {
         true
     }
 
-    /// The folder under `archive` that `source` was last backed up to,
-    /// if it has been.
+    /// The folder under `archive` that the folder `source` was last
+    /// backed up to, if it has been.
     pub fn backup_folder(&self, source: &Path, archive: &Path) -> Option<&Path> {
         self.backups
-            .get(source)?
             .iter()
-            .find(|f| f.starts_with(archive))
-            .map(PathBuf::as_path)
+            .find(|p| p.source == source && p.dest.starts_with(archive))
+            .map(|p| p.dest.as_path())
     }
 
-    /// Every pairing: each source and the folders it backs up to.
-    pub fn backups(&self) -> impl Iterator<Item = (&Path, &[PathBuf])> {
+    /// Every pairing, oldest chosen first.
+    pub fn backups(&self) -> &[Pairing] {
+        &self.backups
+    }
+
+    /// The pairings from a folder under `base` (a root, or a folder of
+    /// no root's) to a folder under `archive`, oldest chosen first.
+    pub fn backups_between<'a>(
+        &'a self,
+        base: &'a Path,
+        archive: &'a Path,
+    ) -> impl Iterator<Item = &'a Pairing> + 'a {
         self.backups
             .iter()
-            .map(|(s, f)| (s.as_path(), f.as_slice()))
+            .filter(move |p| p.source.starts_with(base) && p.dest.starts_with(archive))
     }
 
-    /// Remember that `source` backs up to `folder`, under `archive`,
-    /// in place of the folder it had there. False when `folder` is not
-    /// under `archive`, or `archive` is not an archive.
+    /// Whether any folder under `base` has been backed up to `archive`:
+    /// the pairing is the mark, and the header's count is shown for
+    /// every folder under a root that has one (§217, §219).
+    pub fn backed_up_under(&self, base: &Path, archive: &Path) -> bool {
+        self.backups_between(base, archive).next().is_some()
+    }
+
+    /// Remember that the folder `source` backs up to `folder`, under
+    /// `archive`, in place of the folder it had there, as the most
+    /// recent choice. A trailing separator is not kept. False when
+    /// `folder` is not under `archive`, or `archive` is not an archive.
     pub fn set_backup_folder(&mut self, source: &Path, archive: &Path, folder: &Path) -> bool {
+        let (source, folder) = (tidy(source), tidy(folder));
         if !self.is_archive(archive) || !folder.starts_with(archive) {
             return false;
         }
-        let folders = self.backups.entry(source.to_path_buf()).or_default();
-        folders.retain(|f| !f.starts_with(archive));
-        folders.push(folder.to_path_buf());
+        self.backups
+            .retain(|p| !(p.source == source && p.dest.starts_with(archive)));
+        self.backups.push(Pairing {
+            source,
+            dest: folder,
+        });
         true
+    }
+
+    /// Forget one pairing. True when it was kept.
+    pub fn drop_backup(&mut self, pairing: &Pairing) -> bool {
+        let before = self.backups.len();
+        self.backups.retain(|p| p != pairing);
+        self.backups.len() != before
+    }
+
+    /// Whether a pairing's destination is its source folder under its
+    /// own name (a shoot to `<year>/<shoot>`, a root to `<archive>/<its
+    /// label>`), not a folder it was put into as a container (a shoot,
+    /// or a root, to `<year>` itself).
+    fn named_as_itself(&self, p: &Pairing) -> bool {
+        let Some(last) = p.dest.file_name() else {
+            return false;
+        };
+        p.source.file_name() == Some(last) || *self.label(&p.source) == *last
+    }
+
+    /// Back up's default destination for `folder`, under `base` (its
+    /// root, or the folder of no root's it is in), to `archive` (§219),
+    /// and where it came from, in order:
+    /// - the folder's own pairing;
+    /// - a folder above it that was backed up there: when that
+    ///   destination is its source under its own name, the destination
+    ///   with the folder's path under it; when it was a container (a
+    ///   root backed up to the year folder itself), the container with
+    ///   the folder's own name in it;
+    /// - the most recent destination chosen from a folder under `base`
+    ///   to `archive`, unless that source is under `folder` (a root
+    ///   after one of its shoots): named as its source, its parent with
+    ///   the folder's own name (a sibling); a container, the container
+    ///   with the folder's own name in it;
+    /// - the mirror, `<archive>/<base's label>/<path under base>`.
+    pub fn backup_default(
+        &self,
+        folder: &Path,
+        base: &Path,
+        archive: &Path,
+    ) -> (PathBuf, BackupDefault) {
+        if let Some(own) = self.backup_folder(folder, archive) {
+            return (own.to_path_buf(), BackupDefault::Own);
+        }
+        let name = folder.file_name();
+        let above = self
+            .backups_between(base, archive)
+            .filter(|p| folder.starts_with(&p.source))
+            .max_by_key(|p| p.source.components().count());
+        if let Some(p) = above
+            && let Ok(rel) = folder.strip_prefix(&p.source)
+        {
+            return match name {
+                Some(name) if !self.named_as_itself(p) => {
+                    (p.dest.join(name), BackupDefault::Inside)
+                }
+                _ => (p.dest.join(rel), BackupDefault::Under),
+            };
+        }
+        if let Some(recent) = self.backups_between(base, archive).last()
+            && !recent.source.starts_with(folder)
+            && let Some(name) = name
+        {
+            if !self.named_as_itself(recent) {
+                return (recent.dest.join(name), BackupDefault::Inside);
+            }
+            if let Some(parent) = recent.dest.parent().filter(|d| d.starts_with(archive)) {
+                return (parent.join(name), BackupDefault::Sibling);
+            }
+        }
+        let mirror = archive.join(self.label(base));
+        let mirror = match folder.strip_prefix(base) {
+            Ok(rel) if !rel.as_os_str().is_empty() => mirror.join(rel),
+            _ => mirror,
+        };
+        (mirror, BackupDefault::Mirror)
+    }
+
+    /// Where Bring back may unwind the archive folder `from` to, under
+    /// the local root `home` (§219): each pairing from a folder under
+    /// `home` whose destination is `from` or a folder above it, the
+    /// deepest destination first. One whose destination is `from`
+    /// itself is exact; one above `from` holds it only when its source
+    /// has the same folder under it, which is the disk's to say (a
+    /// folder under a paired destination that was never itself backed
+    /// up from there is not that pairing's).
+    pub fn unwind(&self, from: &Path, home: &Path, archive: &Path) -> Vec<Pairing> {
+        let mut found: Vec<Pairing> = self
+            .backups_between(home, archive)
+            .filter(|p| from.starts_with(&p.dest))
+            .cloned()
+            .collect();
+        found.sort_by_key(|p| std::cmp::Reverse(p.dest.components().count()));
+        found
     }
 
     /// A list of these folders as they are, for a run that names its
@@ -486,14 +667,10 @@ impl Roots {
         self.list.retain(|r| r != dir && *r != canonical);
         self.names.retain(|r, _| r != dir && *r != canonical);
         self.archives.retain(|r| r != dir && *r != canonical);
-        // Its pairings go with it, as a source; folders under it that
-        // other sources backed up to go too, since it is no archive now.
+        // The pairings from folders under it go with it; those to
+        // folders under it go too, since it is no archive now.
         let gone = |p: &Path| p.starts_with(dir) || p.starts_with(&canonical);
-        self.backups.retain(|s, _| !gone(s));
-        for folders in self.backups.values_mut() {
-            folders.retain(|f| !gone(f));
-        }
-        self.backups.retain(|_, f| !f.is_empty());
+        self.backups.retain(|p| !gone(&p.source) && !gone(&p.dest));
         self.list.len() != before
     }
 
@@ -1554,7 +1731,265 @@ mod tests {
         assert!(roots.backup_folder(&local, &nas).is_some());
         assert!(roots.remove(&nas));
         assert!(roots.archives().is_empty());
-        assert_eq!(roots.backups().count(), 0);
+        assert!(roots.backups().is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Two roots, `local` and `nas`, the second an archive, in a scratch
+    /// directory of the test's own.
+    fn local_and_nas(what: &str) -> (PathBuf, PathBuf, PathBuf, Roots) {
+        let dir = scratch(what);
+        let (local, nas) = (dir.join("local"), dir.join("nas"));
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::create_dir_all(&nas).unwrap();
+        let mut roots = Roots::default();
+        roots.add(&local).unwrap();
+        roots.add(&nas).unwrap();
+        roots.set_archive(&nas, true);
+        (dir, local, nas, roots)
+    }
+
+    /// §219: a pairing is the folder's. Back up's default is the
+    /// folder's own pairing, else a folder above it that was paired,
+    /// else the sibling of the most recent destination from the same
+    /// root, else the mirror; in that order.
+    #[test]
+    fn back_ups_default_is_the_folders_then_a_siblings_then_the_mirror() {
+        let (dir, local, nas, mut roots) = local_and_nas("roots-defaults");
+        let (a, b, c) = (
+            local.join("2026").join("shoot-a"),
+            local.join("2026").join("shoot-b"),
+            local.join("2026").join("shoot-c"),
+        );
+        // Nothing paired: the mirror, the path under the root kept.
+        assert_eq!(
+            roots.backup_default(&a, &local, &nas),
+            (
+                nas.join("local").join("2026").join("shoot-a"),
+                BackupDefault::Mirror
+            )
+        );
+        assert_eq!(
+            roots.backup_default(&local, &local, &nas),
+            (nas.join("local"), BackupDefault::Mirror)
+        );
+        assert!(!roots.backed_up_under(&local, &nas));
+        // One Back up to the archive's year folder: the next shoot opens
+        // beside it, by its own name.
+        assert!(roots.set_backup_folder(&a, &nas, &nas.join("2026").join("shoot-a")));
+        assert!(roots.backed_up_under(&local, &nas));
+        assert_eq!(
+            roots.backup_default(&b, &local, &nas),
+            (nas.join("2026").join("shoot-b"), BackupDefault::Sibling)
+        );
+        // The folder's own pairing comes first.
+        assert_eq!(
+            roots.backup_default(&a, &local, &nas),
+            (nas.join("2026").join("shoot-a"), BackupDefault::Own)
+        );
+        // The most recent of the root's pairings names the sibling.
+        assert!(roots.set_backup_folder(&b, &nas, &nas.join("clients").join("shoot-b")));
+        assert_eq!(
+            roots.backup_default(&c, &local, &nas),
+            (nas.join("clients").join("shoot-c"), BackupDefault::Sibling)
+        );
+        // Chosen again, a pairing is the most recent again.
+        assert!(roots.set_backup_folder(&a, &nas, &nas.join("2026").join("shoot-a")));
+        assert_eq!(
+            roots.backup_default(&c, &local, &nas).0,
+            nas.join("2026").join("shoot-c")
+        );
+        // A folder inside one that was backed up goes inside its
+        // destination.
+        assert_eq!(
+            roots.backup_default(&a.join("exports"), &local, &nas),
+            (
+                nas.join("2026").join("shoot-a").join("exports"),
+                BackupDefault::Under
+            )
+        );
+        // Another root's pairings are not this root's.
+        let other = dir.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        roots.add(&other).unwrap();
+        assert_eq!(
+            roots.backup_default(&other.join("x"), &other, &nas),
+            (nas.join("other").join("x"), BackupDefault::Mirror)
+        );
+
+        // A root view after one of its shoots: the most recent source is
+        // under the folder, so no sibling; the mirror.
+        assert_eq!(
+            roots.backup_default(&local, &local, &nas),
+            (nas.join("local"), BackupDefault::Mirror)
+        );
+        // A selection whose common folder is above the last source: the
+        // same.
+        assert_eq!(
+            roots.backup_default(&local.join("2026"), &local, &nas),
+            (nas.join("local").join("2026"), BackupDefault::Mirror)
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A destination that is not its source under its own name was a
+    /// container: a shoot backed up to the year folder itself, the next
+    /// shoot defaults into the year folder by its own name.
+    #[test]
+    fn a_destination_used_as_a_container_takes_the_next_shoot_inside() {
+        let (dir, local, nas, mut roots) = local_and_nas("roots-container");
+        let year = nas.join("2026");
+        let (a, b) = (local.join("shoot-a"), local.join("shoot-b"));
+        roots.set_backup_folder(&a, &nas, &year);
+        assert_eq!(
+            roots.backup_default(&b, &local, &nas),
+            (year.join("shoot-b"), BackupDefault::Inside)
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// §219's story as the user's file has it: a root backed up once with
+    /// the field changed to the archive's year folder. A shoot of the
+    /// root, at any depth, defaults into the year folder by its own name,
+    /// not with its path under the root; and Bring back of another shoot
+    /// under the year folder has the root's pairing only as a candidate
+    /// for the disk to settle (the window's test settles it).
+    #[test]
+    fn a_root_backed_up_to_the_year_folder_is_a_container() {
+        let (dir, local, nas, mut roots) = local_and_nas("roots-story");
+        let year = nas.join("2026");
+        roots.set_backup_folder(&local, &nas, &year);
+        assert_eq!(
+            roots.backup_default(&local.join("shoot-b"), &local, &nas),
+            (year.join("shoot-b"), BackupDefault::Inside)
+        );
+        assert_eq!(
+            roots.backup_default(&local.join("2026").join("shoot-c"), &local, &nas),
+            (year.join("shoot-c"), BackupDefault::Inside)
+        );
+        // A root backed up under its own name keeps the paths under it.
+        roots.set_backup_folder(&local, &nas, &nas.join("local"));
+        assert_eq!(
+            roots.backup_default(&local.join("2026").join("shoot-c"), &local, &nas),
+            (
+                nas.join("local").join("2026").join("shoot-c"),
+                BackupDefault::Under
+            )
+        );
+        roots.set_backup_folder(&local, &nas, &year);
+        let found = roots.unwind(&year.join("never-here"), &local, &nas);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].source, local);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A destination typed with a trailing separator is kept without
+    /// it, and found by the path as it is spelled without.
+    #[test]
+    fn a_trailing_separator_is_not_kept() {
+        let (dir, local, nas, mut roots) = local_and_nas("roots-slash");
+        let shoot = local.join("shoot");
+        let typed = format!("{}/", nas.join("2026").display());
+        assert!(roots.set_backup_folder(&shoot, &nas, Path::new(&typed)));
+        assert_eq!(
+            roots.backups()[0].dest.to_string_lossy(),
+            nas.join("2026").to_string_lossy()
+        );
+        let path = Roots::path_beside(&dir.join("library.sqlite"));
+        roots.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(!text.contains(&typed), "{text}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Bring back unwinds a pairing whose destination is the archive
+    /// folder or one above it, from the local root chosen, the deepest
+    /// first; a shoot under the paired year folder is a candidate only,
+    /// for the disk to settle.
+    #[test]
+    fn bring_back_unwinds_the_pairings_over_the_folder_deepest_first() {
+        let (dir, local, nas, mut roots) = local_and_nas("roots-unwind");
+        let year = nas.join("2026");
+        roots.set_backup_folder(&local.join("shoot-a"), &nas, &year);
+        roots.set_backup_folder(&local.join("shoot-b"), &nas, &year.join("b"));
+        let found = roots.unwind(&year.join("b").join("exports"), &local, &nas);
+        assert_eq!(
+            found.iter().map(|p| p.dest.clone()).collect::<Vec<_>>(),
+            [year.join("b"), year.clone()]
+        );
+        assert_eq!(
+            roots.unwind(&year, &local, &nas)[0].source,
+            local.join("shoot-a")
+        );
+        assert!(roots.unwind(&nas.join("2025"), &local, &nas).is_empty());
+        // Not from another root.
+        let other = dir.join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        roots.add(&other).unwrap();
+        assert!(roots.unwind(&year, &other, &nas).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The pairings round-trip with their order; an older file of the
+    /// same shape without the order reads, its pairings in the file's
+    /// order; one pairing is dropped alone; and taking out a root drops
+    /// the pairings from folders under it, an archive those to it.
+    #[test]
+    fn the_pairings_keep_their_order_and_go_with_their_roots() {
+        let (dir, local, nas, mut roots) = local_and_nas("roots-order");
+        let cloud = dir.join("cloud");
+        std::fs::create_dir_all(&cloud).unwrap();
+        roots.add(&cloud).unwrap();
+        roots.set_archive(&cloud, true);
+        let (z, a) = (local.join("z-shoot"), local.join("a-shoot"));
+        // Chosen z first, then a: the order is not the paths'.
+        roots.set_backup_folder(&z, &nas, &nas.join("z"));
+        roots.set_backup_folder(&a, &nas, &nas.join("a"));
+        roots.set_backup_folder(&a, &cloud, &cloud.join("a"));
+        let path = Roots::path_beside(&dir.join("library.sqlite"));
+        roots.save(&path).unwrap();
+        let back = Roots::load(&path).unwrap();
+        assert_eq!(back, roots);
+        assert_eq!(
+            back.backup_default(&local.join("next"), &local, &nas).0,
+            nas.join("a").join("next"),
+            "into the most recent, a, not z"
+        );
+        // The shape §217 wrote, keyed by the folder, with no order.
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(
+            value["backups"][a.to_str().unwrap()],
+            serde_json::json!([
+                nas.join("a").to_str().unwrap(),
+                cloud.join("a").to_str().unwrap()
+            ])
+        );
+        let mut older = value.clone();
+        older.as_object_mut().unwrap().remove("backup_order");
+        std::fs::write(&path, older.to_string()).unwrap();
+        let old = Roots::load(&path).unwrap();
+        assert_eq!(old.backups().len(), 3);
+        assert_eq!(old.backup_folder(&z, &nas), Some(nas.join("z").as_path()));
+        // A bad order item is passed over.
+        let mut bad = value.clone();
+        bad["backup_order"] =
+            serde_json::json!([7, ["only one"], [z.to_str().unwrap(), "/not/kept"]]);
+        std::fs::write(&path, bad.to_string()).unwrap();
+        assert_eq!(Roots::load(&path).unwrap().backups().len(), 3);
+
+        // One dropped, the rest kept.
+        let gone = roots.backups()[0].clone();
+        assert!(roots.drop_backup(&gone));
+        assert!(!roots.drop_backup(&gone));
+        assert_eq!(roots.backups().len(), 2);
+        // The archive out: the pairings to it go, the cloud's stays.
+        assert!(roots.remove(&nas));
+        assert_eq!(roots.backups().len(), 1);
+        assert_eq!(roots.backups()[0].dest, cloud.join("a"));
+        // The root out: the pairings from folders under it go.
+        assert!(roots.remove(&local));
+        assert!(roots.backups().is_empty());
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

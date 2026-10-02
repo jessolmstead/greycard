@@ -44,7 +44,7 @@ pub mod thumbs;
 pub use filter::{Facet, Filter, ParseError};
 pub use hash::hash_file;
 pub use index::{Progress, Report, TreeWalk, is_indexed_path, read_meta};
-pub use roots::{Change, Roots, Watcher};
+pub use roots::{BackupDefault, Change, Pairing, Roots, Watcher};
 pub use thumbs::{Thumb, Thumbs};
 
 #[derive(Debug, thiserror::Error)]

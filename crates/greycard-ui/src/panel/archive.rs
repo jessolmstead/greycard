@@ -14,7 +14,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use greycard_library::Change;
+use greycard_library::{Change, Pairing, Roots};
 
 use crate::archive::{self, Ask, Beat, Direction, Frames, Heard, Plan, Report};
 
@@ -75,12 +75,36 @@ struct Asked {
     other: PathBuf,
     /// That root's name, as the sheet and the status line say it.
     label: String,
-    /// For a backup, the source whose folder is remembered.
+    /// For a backup, the source folder whose pairing is kept.
     remember: Option<PathBuf>,
     /// For a bring-back the pairing did not unwind: the sheet asks.
     unpaired: bool,
     /// The archive the copy goes to or comes from.
     archive: PathBuf,
+    /// The local side's base (a root, or a folder of no root's): the
+    /// pairings between it and `archive` are the ones the look checks.
+    local: PathBuf,
+    /// While the field is still the default: what the look settles it
+    /// from, once it knows which pairings are gone (§219).
+    settle: Option<Settle>,
+}
+
+/// Where the sheet's destination comes from, while it is the default.
+#[derive(Debug, Clone)]
+enum Settle {
+    /// Back up's default for this folder under this base.
+    BackUp { folder: PathBuf, base: PathBuf },
+    /// Bring back's unwinding of this archive folder to the local root
+    /// asked.
+    BringBack { from: PathBuf },
+}
+
+/// What a sheet's look found: the plan, whether a bring-back's pairing
+/// did not unwind, and the pairings whose destinations are gone.
+struct Looked {
+    plan: Plan,
+    unpaired: bool,
+    gone: Vec<Pairing>,
 }
 
 /// A job on an archive under way: a copy, or the rejects' move or
@@ -415,19 +439,28 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
     }
     let roots = &st.library.roots;
     let label = roots.label(&other);
+    // The folder the copy is over (§219: the pairing is its): the
+    // folder walked, or the chosen frames' common folder.
+    let over = |fallback: &Path| {
+        match &frames {
+            Frames::Folder(d) => Some(d.clone()),
+            Frames::Chosen(f) => common_folder(f),
+        }
+        .unwrap_or_else(|| fallback.to_path_buf())
+    };
     let asked = match &side {
         Side::Local { base, .. } => {
-            let dest = roots
-                .backup_folder(base, &other)
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| other.join(roots.label(base)));
+            let folder = over(base);
+            // The default as the file has it; the look settles it again
+            // once it knows which pairings are gone.
+            let (dest, _) = roots.backup_default(&folder, base, &other);
             Asked {
                 ask: Ask {
                     direction: Direction::BackUp,
                     frames,
                     include_rejects: false,
                     sidecars: st.write_sidecars,
-                    base: base.clone(),
+                    base: folder.clone(),
                     dest,
                     other_side: vec![other.clone()],
                     skip: roots.archives().to_vec(),
@@ -435,40 +468,21 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
                 },
                 other,
                 label,
-                remember: Some(base.clone()),
+                remember: Some(folder.clone()),
                 unpaired: false,
                 archive: archive.clone(),
+                local: base.clone(),
+                settle: Some(Settle::BackUp {
+                    folder,
+                    base: base.clone(),
+                }),
             }
         }
         Side::Archive { archive, folder } => {
-            // Where these frames are on the archive: the folder walked,
-            // or the chosen frames' common folder.
-            let from_folder = folder.clone().or_else(|| match &frames {
-                Frames::Chosen(f) => common_folder(f),
-                Frames::Folder(d) => Some(d.clone()),
-            });
-            let from_folder = from_folder.unwrap_or_else(|| archive.clone());
-            // The pairing unwound: a source under the chosen root that
-            // backed up to a folder these frames are under.
-            let paired = roots.backups().find_map(|(source, folders)| {
-                if !source.starts_with(&other) {
-                    return None;
-                }
-                folders
-                    .iter()
-                    .find(|d| d.starts_with(archive) && from_folder.starts_with(d))
-                    .map(|d| (d.clone(), source.to_path_buf()))
-            });
-            let (base, dest, unpaired) = match paired {
-                Some((d, source)) => (d, source, false),
-                None => {
-                    let name = from_folder
-                        .file_name()
-                        .map(|n| n.to_os_string())
-                        .unwrap_or_else(|| roots.label(archive).into());
-                    (from_folder.clone(), other.join(name), true)
-                }
-            };
+            let from = folder.clone().unwrap_or_else(|| over(archive));
+            // Unwound by the look, which asks the disk whether a
+            // pairing above the folder holds it.
+            let (base, dest, unpaired) = unpaired(roots, &from, &other, archive);
             Asked {
                 ask: Ask {
                     direction: Direction::BringBack,
@@ -481,11 +495,13 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
                     skip: roots.locals(),
                     index: st.index_path.clone(),
                 },
-                other,
+                other: other.clone(),
                 label,
                 remember: None,
                 unpaired,
                 archive: archive.clone(),
+                local: other,
+                settle: Some(Settle::BringBack { from }),
             }
         }
         Side::None => {
@@ -500,6 +516,109 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
     st.archive.asked = Some(asked);
     st.archive.plan = None;
     look(&mut st, app);
+}
+
+/// Bring back with no pairing to unwind: from the archive folder `from`
+/// to `home` joined with its name, the sheet asking. The ask's base,
+/// its destination, and true.
+fn unpaired(roots: &Roots, from: &Path, home: &Path, archive: &Path) -> (PathBuf, PathBuf, bool) {
+    let name = from
+        .file_name()
+        .map(|n| n.to_os_string())
+        .unwrap_or_else(|| roots.label(archive).into());
+    (from.to_path_buf(), home.join(name), true)
+}
+
+/// The pairings between the sheet's local side and its archive whose
+/// destination is no longer on the archive, off the window's thread,
+/// after both roots answered. A pairing whose source folder is gone is
+/// kept: a shoot is brought back because its folder here was deleted,
+/// and the pairing is where home was. An archive that lists nothing at
+/// all (a share's mount point with the share not on it) says nothing
+/// about the folders under it, and none is taken for gone.
+fn gone_pairings(roots: &Roots, local: &Path, archive: &Path, beat: &Beat) -> Vec<Pairing> {
+    let lists = std::fs::read_dir(archive)
+        .map(|mut d| d.next().is_some())
+        .unwrap_or(false);
+    if !lists {
+        return Vec::new();
+    }
+    roots
+        .backups_between(local, archive)
+        .filter(|p| {
+            beat();
+            !p.dest.is_dir()
+        })
+        .cloned()
+        .collect()
+}
+
+/// The sheet's destination settled while it is the default, off the
+/// window's thread (§219). Back up's from the pairings less those gone.
+/// Bring back's from the pairings over the archive folder, the deepest
+/// first: one whose destination is the folder is exact, and unwinds to
+/// its source even when that folder is gone here (the copy makes it
+/// again, as it does any destination); one above it only when its
+/// source has the
+/// same folder under it, so a shoot under a paired year folder that was
+/// never backed up from here is not that pairing's. Whether the
+/// bring-back's pairing did not unwind.
+fn settle(
+    ask: &mut Ask,
+    settle: &Settle,
+    roots: &Roots,
+    gone: &[Pairing],
+    home: &Path,
+    archive: &Path,
+    beat: &Beat,
+) -> bool {
+    match settle {
+        Settle::BackUp { folder, base } => {
+            let mut left = roots.clone();
+            for p in gone {
+                left.drop_backup(p);
+            }
+            ask.base = folder.clone();
+            ask.dest = left.backup_default(folder, base, archive).0;
+            false
+        }
+        Settle::BringBack { from } => {
+            let found = roots.unwind(from, home, archive).into_iter().find(|p| {
+                beat();
+                match from.strip_prefix(&p.dest) {
+                    Ok(rel) if rel.as_os_str().is_empty() => true,
+                    Ok(rel) => p.source.join(rel).is_dir(),
+                    Err(_) => false,
+                }
+            });
+            let (base, dest, unpaired) = match found {
+                Some(p) => (p.dest, p.source, false),
+                None => unpaired(roots, from, home, archive),
+            };
+            ask.base = base;
+            ask.dest = dest;
+            unpaired
+        }
+    }
+}
+
+/// The status line's words for pairings dropped because their
+/// destination is gone: said once, since they are gone from the file
+/// after.
+fn gone_words(gone: &[Pairing], archive_label: &str) -> String {
+    match gone {
+        [] => String::new(),
+        [p] => format!(
+            "forgot that {} was backed up to {}: that folder is no longer on {archive_label}",
+            p.source.display(),
+            p.dest.display(),
+        ),
+        many => format!(
+            "forgot {} backups whose folders are no longer on {archive_label}: {}",
+            many.len(),
+            some_names(&many.iter().map(|p| p.source.as_path()).collect::<Vec<_>>())
+        ),
+    }
 }
 
 /// The folder every one of `frames` is under.
@@ -531,7 +650,9 @@ fn look(st: &mut State, app: &App) {
     if let Some(r) = source {
         looked.push((r.to_path_buf(), roots.label(r)));
     }
-    let ask = asked.ask.clone();
+    let mut ask = asked.ask.clone();
+    let (pairings, local, archive) = (roots.clone(), asked.local.clone(), asked.archive.clone());
+    let (to_settle, mut unpaired) = (asked.settle.clone(), asked.unpaired);
     let sent = send(
         app,
         "archive look",
@@ -549,7 +670,15 @@ fn look(st: &mut State, app: &App) {
                     "{name} is not answering; is its drive or share there? Nothing was copied"
                 ));
             }
-            Ok(archive::plan(&ask, beat))
+            let gone = gone_pairings(&pairings, &local, &archive, beat);
+            if let Some(how) = &to_settle {
+                unpaired = settle(&mut ask, how, &pairings, &gone, &local, &archive, beat);
+            }
+            Ok(Looked {
+                plan: archive::plan(&ask, beat),
+                unpaired,
+                gone,
+            })
         },
         land_look,
     );
@@ -566,13 +695,13 @@ fn land_look(
     app: &App,
     _worker: &Rc<Worker>,
     token: u64,
-    heard: Heard<Result<Plan, String>>,
+    heard: Heard<Result<Looked, String>>,
 ) {
     let mut st = state.borrow_mut();
     if token != st.archive.look_token {
         return;
     }
-    let Some(asked) = st.archive.asked.clone() else {
+    let Some(mut asked) = st.archive.asked.clone() else {
         return;
     };
     match heard {
@@ -599,11 +728,29 @@ fn land_look(
             close(&mut st, app);
         }
         Heard::Done {
-            result: Ok(plan), ..
+            result: Ok(looked), ..
         } => {
-            fill(app, &asked, &plan);
-            st.archive.plan = Some(plan);
-            app.set_status("".into());
+            // The pairings found gone are dropped, through the file, and
+            // said once: the next look does not find them.
+            let gone = looked.gone.clone();
+            if !gone.is_empty()
+                && let Err(e) = crate::roots::edit_roots(&mut st, |r| {
+                    for p in &gone {
+                        r.drop_backup(p);
+                    }
+                })
+            {
+                tracing::warn!("library: roots not saved: {e}");
+            }
+            // The field as settled is what the sheet holds from now on.
+            asked.ask = looked.plan.ask.clone();
+            asked.unpaired = looked.unpaired;
+            asked.settle = None;
+            fill(app, &asked, &looked.plan);
+            let archive_label = st.library.roots.label(&asked.archive);
+            st.archive.asked = Some(asked);
+            st.archive.plan = Some(looked.plan);
+            app.set_status(gone_words(&looked.gone, &archive_label).into());
             app.set_archive_open(true);
         }
     }
@@ -747,7 +894,9 @@ pub(crate) fn look_again(state: &Rc<RefCell<State>>, app: &App) {
     let Some(asked) = st.archive.asked.as_mut() else {
         return;
     };
-    let typed = PathBuf::from(app.get_archive_dest().trim());
+    // Kept as typed less a trailing separator: `/mnt/x/2026/` is the
+    // folder `/mnt/x/2026`.
+    let typed = greycard_library::roots::tidy(Path::new(app.get_archive_dest().trim()));
     if !typed.is_absolute()
         || !typed.starts_with(&asked.other)
         || typed
@@ -766,6 +915,8 @@ pub(crate) fn look_again(state: &Rc<RefCell<State>>, app: &App) {
         return;
     }
     asked.ask.dest = typed;
+    // The field is the user's now: the look keeps it as it is.
+    asked.settle = None;
     asked.ask.include_rejects = app.get_archive_include_rejects();
     app.set_archive_can_confirm(false);
     app.set_archive_confirm("Looking...".into());
@@ -814,7 +965,7 @@ pub(crate) fn answered(state: &Rc<RefCell<State>>, app: &App, yes: bool) {
         app.set_status(why.into());
         return;
     }
-    // The folder chosen is kept for the next backup of this source.
+    // The folder chosen is kept as this folder's pairing (§219).
     if let Some(source) = &asked.remember {
         let (archive, dest) = (asked.other.clone(), plan.ask.dest.clone());
         if let Err(e) =
@@ -1125,9 +1276,9 @@ pub(crate) fn summary(report: &Report, direction: Direction, label: &str) -> Str
 }
 
 /// The header's counts taken again, off the window's thread, when the
-/// view is a source that has been backed up once (its root, or the
-/// folder of no root's, has a pairing: the pairing is the mark, so every
-/// folder of a paired root counts): for each archive it is paired with,
+/// view is a source that has been backed up once (a folder under its
+/// root, or under the folder of no root's, has a pairing to the archive:
+/// the pairing is the mark, §219): for each archive so paired,
 /// how many of the frames a Back up of the view would walk (its folder,
 /// every folder down, the rejects left out) are not on it. A count
 /// overtaken by a newer one stops between frames.
@@ -1144,7 +1295,7 @@ pub(crate) fn want_count(st: &mut State, app: &App) {
     let paired: Vec<PathBuf> = roots
         .archives()
         .iter()
-        .filter(|a| roots.backup_folder(&base, a).is_some())
+        .filter(|a| roots.backed_up_under(&base, a))
         .cloned()
         .collect();
     if paired.is_empty() {
@@ -1875,7 +2026,10 @@ pub(crate) mod tests {
             app.get_archive_text()
         );
         assert_eq!(app.get_archive_rejects(), 1);
-        assert_eq!(app.get_archive_dest(), nas.join("local").to_string_lossy());
+        assert_eq!(
+            app.get_archive_dest(),
+            nas.join("local").join("shoot").to_string_lossy()
+        );
         // A folder not under the archive is refused before any look.
         app.set_archive_dest(dir.join("elsewhere").to_string_lossy().into_owned().into());
         app.invoke_archive_look_again();
@@ -1883,7 +2037,7 @@ pub(crate) mod tests {
         assert!(app.get_archive_dest_note().contains("has to be under nas"));
         assert_eq!(land_sent(&state, &app, &worker), 0);
         // Another folder under it, and the rejects asked for.
-        let chosen = nas.join("clients").join("local");
+        let chosen = nas.join("clients").join("shoot");
         app.set_archive_dest(chosen.to_string_lossy().into_owned().into());
         app.set_archive_include_rejects(true);
         app.invoke_archive_look_again();
@@ -1897,16 +2051,16 @@ pub(crate) mod tests {
         // The copy, then the count it asks for.
         assert_eq!(land_sent(&state, &app, &worker), 2);
         assert!(!app.get_archive_running());
-        let there = chosen.join("shoot");
+        let there = chosen.clone();
         for f in &files {
             assert!(there.join(f.file_name().unwrap()).is_file());
         }
         assert!(there.join(crate::cull::REJECTS).join("r.tif").is_file());
         let status = app.get_status();
         assert!(status.starts_with("backed up 4 frames to nas"), "{status}");
-        // The folder chosen is kept for the next backup of the root.
+        // The folder chosen is kept as the folder's pairing (§219).
         let kept = greycard_library::Roots::load(&dir.join("roots.json")).unwrap();
-        assert_eq!(kept.backup_folder(&local, &nas), Some(chosen.as_path()));
+        assert_eq!(kept.backup_folder(&shoot, &nas), Some(chosen.as_path()));
         // The header counts what is not on the archive: nothing now.
         assert_eq!(app.get_archive_header(), "All on nas");
         // The copies' rows carry the whole file's hash.
@@ -1948,7 +2102,7 @@ pub(crate) mod tests {
         app.invoke_archive_header_pressed(0);
         assert_eq!(land_sent(&state, &app, &worker), 1);
         assert_eq!(app.get_archive_title(), "Bring back to local");
-        assert_eq!(app.get_archive_dest(), local.to_string_lossy());
+        assert_eq!(app.get_archive_dest(), shoot.to_string_lossy());
         assert!(
             app.get_archive_text().contains("3 frames already here"),
             "{}",
@@ -2204,6 +2358,363 @@ pub(crate) mod tests {
         land_run(&state, &app, &worker, token, Heard::Lost);
         assert!(!app.get_archive_running());
         assert!(state.borrow().archive.running.is_none());
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A folder's view opened, its lists and counts landed, nothing
+    /// picked.
+    fn open_branch(
+        state: &Rc<RefCell<State>>,
+        app: &App,
+        worker: &Rc<Worker>,
+        root: &Path,
+        folder: &Path,
+    ) {
+        crate::roots::open_view(
+            state,
+            app,
+            worker,
+            View::Branch {
+                root: root.to_path_buf(),
+                folder: folder.to_path_buf(),
+                deep: true,
+            },
+        );
+        crate::roots::land_sent(state, app, worker);
+        land_sent(state, app, worker);
+        state.borrow_mut().picked.clear();
+    }
+
+    /// The sheet opened from the header and its look landed: the field.
+    fn sheet_dest(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> String {
+        app.invoke_archive_header_pressed(0);
+        assert_eq!(land_sent(state, app, worker), 1);
+        assert!(app.get_archive_open(), "{}", app.get_status());
+        app.get_archive_dest().to_string()
+    }
+
+    /// §219 through the window: the mirror the first time; one Back up
+    /// of a shoot to the archive's year folder (typed with a trailing
+    /// separator, kept without), after which the next shoot from the
+    /// root opens beside it by its own name and counts on the header;
+    /// and the first shoot opens at its own pairing again.
+    #[test]
+    fn back_ups_default_is_the_folders_then_a_siblings_then_the_mirror() {
+        let dir = scratch("defaults");
+        let (local, nas) = (dir.join("local"), dir.join("nas"));
+        let (a, b) = (
+            local.join("2026").join("shoot-a"),
+            local.join("2026").join("shoot-b"),
+        );
+        let files = frames(&a, &["a.tif", "b.tif"]);
+        frames(&b, &["c.tif"]);
+        std::fs::create_dir_all(&nas).unwrap();
+        let db = dir.join("library.sqlite");
+        index(&db, &[&local, &nas]);
+        let app = window(files.len());
+        let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
+        assert_eq!(
+            app.get_archive_header(),
+            "Back up...",
+            "no count before a pairing"
+        );
+
+        // The mirror, the path under the root kept.
+        assert_eq!(
+            sheet_dest(&state, &app, &worker),
+            nas.join("local")
+                .join("2026")
+                .join("shoot-a")
+                .to_string_lossy()
+        );
+        let year = nas.join("2026");
+        let typed = format!("{}/", year.join("shoot-a").display());
+        app.set_archive_dest(typed.clone().into());
+        app.invoke_archive_look_again();
+        assert_eq!(land_sent(&state, &app, &worker), 1);
+        app.invoke_archive_answered(true);
+        land_sent(&state, &app, &worker);
+        assert!(year.join("shoot-a").join("a.tif").is_file());
+        let text = std::fs::read_to_string(dir.join("roots.json")).unwrap();
+        assert!(!text.contains(&typed), "{text}");
+        let kept = greycard_library::Roots::load(&dir.join("roots.json")).unwrap();
+        assert_eq!(
+            kept.backup_folder(&a, &nas).unwrap().to_string_lossy(),
+            year.join("shoot-a").to_string_lossy()
+        );
+        assert_eq!(
+            kept.backup_folder(&local, &nas),
+            None,
+            "the root is not paired"
+        );
+
+        // The next shoot: beside it, and counted, since a folder of its
+        // root has been backed up.
+        index(&db, &[&nas]);
+        open_branch(&state, &app, &worker, &local, &b);
+        assert_eq!(app.get_archive_header(), "1 frame not on nas");
+        assert_eq!(
+            sheet_dest(&state, &app, &worker),
+            year.join("shoot-b").to_string_lossy()
+        );
+        app.invoke_archive_answered(false);
+        // The first again: its own pairing.
+        open_branch(&state, &app, &worker, &local, &a);
+        assert_eq!(app.get_archive_header(), "All on nas");
+        assert_eq!(
+            sheet_dest(&state, &app, &worker),
+            year.join("shoot-a").to_string_lossy()
+        );
+        app.invoke_archive_answered(false);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// §219's story: a shoot backed up to the archive's year folder
+    /// itself. Bring back of the year folder, or of a folder of that
+    /// shoot's under it, unwinds to the shoot; another shoot under the
+    /// year folder, never backed up from here, is not that pairing's,
+    /// and the sheet asks.
+    #[test]
+    fn bring_back_unwinds_only_the_pairing_that_holds_the_folder() {
+        let dir = scratch("unwind");
+        let (local, nas) = (dir.join("local"), dir.join("nas"));
+        let shoot = local.join("shoot-a");
+        let files = frames(&shoot, &["a.tif", "b.tif"]);
+        frames(&shoot.join("exports"), &["e.tif"]);
+        let year = nas.join("2026");
+        frames(&year.join("other-shoot"), &["z.tif"]);
+        let db = dir.join("library.sqlite");
+        index(&db, &[&local, &nas]);
+        let app = window(files.len());
+        let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
+        sheet_dest(&state, &app, &worker);
+        app.set_archive_dest(year.to_string_lossy().into_owned().into());
+        app.invoke_archive_look_again();
+        assert_eq!(land_sent(&state, &app, &worker), 1);
+        app.invoke_archive_answered(true);
+        land_sent(&state, &app, &worker);
+        assert!(year.join("a.tif").is_file());
+        assert!(year.join("exports").join("e.tif").is_file());
+        index(&db, &[&nas]);
+
+        // The shoot never backed up from here: not the root's, asked.
+        open_branch(&state, &app, &worker, &nas, &year.join("other-shoot"));
+        assert_eq!(app.get_archive_header(), "Bring back...");
+        assert_eq!(
+            sheet_dest(&state, &app, &worker),
+            local.join("other-shoot").to_string_lossy()
+        );
+        assert!(
+            app.get_archive_dest_note()
+                .contains("was not backed up from local"),
+            "{}",
+            app.get_archive_dest_note()
+        );
+        app.invoke_archive_answered(false);
+        // The year folder: the pairing's own destination, exact.
+        open_branch(&state, &app, &worker, &nas, &year);
+        assert_eq!(sheet_dest(&state, &app, &worker), shoot.to_string_lossy());
+        assert!(
+            app.get_archive_dest_note()
+                .starts_with("Where it was backed up from")
+        );
+        app.invoke_archive_answered(false);
+        // The shoot's own subfolder there: the shoot, its path kept.
+        open_branch(&state, &app, &worker, &nas, &year.join("exports"));
+        assert_eq!(sheet_dest(&state, &app, &worker), shoot.to_string_lossy());
+        assert!(
+            app.get_archive_text().contains("1 frame already here"),
+            "{}",
+            app.get_archive_text()
+        );
+        app.invoke_archive_answered(false);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// §219's story as the user hit it: the ROOT backed up once from its
+    /// own view, the field changed to the archive's year folder. Bring
+    /// back of another shoot under the year folder, never here, asks
+    /// with `<root>/<name>` and never offers the root as home; and a Back
+    /// up of a second shoot of the root, deeper down, defaults into the
+    /// year folder by its own name, not with its path under the root.
+    #[test]
+    fn a_root_backed_up_to_the_year_folder_does_not_claim_the_year() {
+        let dir = scratch("story");
+        let (local, nas) = (dir.join("local"), dir.join("nas"));
+        let files = frames(&local.join("shoot-a"), &["a.tif"]);
+        let second = local.join("2025").join("shoot-b");
+        frames(&second, &["b.tif"]);
+        let year = nas.join("2026");
+        frames(&year.join("never-here"), &["z.tif"]);
+        let db = dir.join("library.sqlite");
+        index(&db, &[&local, &nas]);
+        let app = window(files.len());
+        let (state, worker) = opened(&app, &dir, files, &local, &nas, &db);
+        crate::roots::open_view(&state, &app, &worker, View::Roots(Some(local.clone())));
+        crate::roots::land_sent(&state, &app, &worker);
+        land_sent(&state, &app, &worker);
+        state.borrow_mut().picked.clear();
+        assert_eq!(
+            sheet_dest(&state, &app, &worker),
+            nas.join("local").to_string_lossy()
+        );
+        app.set_archive_dest(year.to_string_lossy().into_owned().into());
+        app.invoke_archive_look_again();
+        assert_eq!(land_sent(&state, &app, &worker), 1);
+        app.invoke_archive_answered(true);
+        land_sent(&state, &app, &worker);
+        assert!(year.join("shoot-a").join("a.tif").is_file());
+        let kept = greycard_library::Roots::load(&dir.join("roots.json")).unwrap();
+        assert_eq!(kept.backup_folder(&local, &nas), Some(year.as_path()));
+        index(&db, &[&nas]);
+
+        // Bring back of a shoot under the year folder never here: asked.
+        open_branch(&state, &app, &worker, &nas, &year.join("never-here"));
+        let dest = sheet_dest(&state, &app, &worker);
+        assert_eq!(dest, local.join("never-here").to_string_lossy());
+        assert_ne!(dest, local.to_string_lossy());
+        assert!(
+            app.get_archive_dest_note()
+                .contains("was not backed up from local"),
+            "{}",
+            app.get_archive_dest_note()
+        );
+        app.invoke_archive_answered(false);
+
+        // Back up of a second shoot of the root: into the year folder,
+        // by its own name.
+        open_branch(&state, &app, &worker, &local, &second);
+        assert_eq!(
+            sheet_dest(&state, &app, &worker),
+            year.join("shoot-b").to_string_lossy()
+        );
+        app.invoke_archive_answered(false);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// The sibling rule stands aside when the most recent source is under
+    /// the folder backed up: a root's view after one of its shoots, or a
+    /// selection whose common folder is above that shoot, opens at the
+    /// mirror.
+    #[test]
+    fn a_folder_above_the_last_backed_up_opens_at_the_mirror() {
+        let (dir, local, nas, app, state, worker) = shoot_window("above");
+        let shoot = local.join("shoot");
+        frames(&local.join("other"), &["o.tif"]);
+        index(&dir.join("library.sqlite"), &[&local]);
+        crate::roots::edit_roots(&mut state.borrow_mut(), |r| {
+            r.set_backup_folder(&shoot, &nas, &nas.join("2026").join("shoot"))
+        })
+        .unwrap();
+        // The root's view.
+        crate::roots::open_view(&state, &app, &worker, View::Roots(Some(local.clone())));
+        crate::roots::land_sent(&state, &app, &worker);
+        land_sent(&state, &app, &worker);
+        state.borrow_mut().picked.clear();
+        assert_eq!(
+            sheet_dest(&state, &app, &worker),
+            nas.join("local").to_string_lossy()
+        );
+        app.invoke_archive_answered(false);
+        // A selection across the shoot and another folder: its common
+        // folder is the root, above the shoot.
+        let (in_shoot, in_other) = {
+            let st = state.borrow();
+            let at = |d: &Path| st.files.iter().position(|f| f.starts_with(d)).unwrap();
+            (at(&shoot), at(&local.join("other")))
+        };
+        state.borrow_mut().picked = vec![in_shoot.min(in_other), in_shoot.max(in_other)];
+        assert_eq!(
+            sheet_dest(&state, &app, &worker),
+            nas.join("local").to_string_lossy()
+        );
+        app.invoke_archive_answered(false);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A pairing whose destination is no longer on the archive is
+    /// dropped by the sheet's look and said once; the default is then
+    /// settled without it. One whose source folder is no longer here is
+    /// kept, and Bring back unwinds to it, the folder made again. An
+    /// archive that lists nothing at all (a mount point with no share on
+    /// it) drops nothing.
+    #[test]
+    fn a_pairing_whose_destination_is_gone_is_dropped_and_said_once() {
+        let (dir, local, nas, app, state, worker) = shoot_window("gone");
+        let shoot = local.join("shoot");
+        let mirror = nas.join("local").join("shoot");
+        let (moved, kept) = (nas.join("moved"), nas.join("kept"));
+        std::fs::create_dir_all(&kept).unwrap();
+        // The pairings the file keeps, and the window agrees.
+        let pairings = |state: &Rc<RefCell<State>>| {
+            let file = greycard_library::Roots::load(&dir.join("roots.json")).unwrap();
+            assert_eq!(file.backups(), state.borrow().library.roots.backups());
+            file.backups().len()
+        };
+        // The destination gone from the archive.
+        crate::roots::edit_roots(&mut state.borrow_mut(), |r| {
+            r.set_backup_folder(&shoot, &nas, &moved)
+        })
+        .unwrap();
+        assert_eq!(sheet_dest(&state, &app, &worker), mirror.to_string_lossy());
+        assert_eq!(
+            app.get_status(),
+            format!(
+                "forgot that {} was backed up to {}: that folder is no longer on nas",
+                shoot.display(),
+                moved.display()
+            )
+        );
+        assert_eq!(pairings(&state), 0);
+        app.invoke_archive_answered(false);
+        sheet_dest(&state, &app, &worker);
+        assert_eq!(app.get_status(), "", "said once");
+        app.invoke_archive_answered(false);
+
+        // The source folder gone from here: kept, and nothing said. The
+        // next shoot opens inside its destination, a container (§219).
+        let vanished = local.join("vanished");
+        let backed = frames(&kept, &["k.tif"]);
+        crate::roots::edit_roots(&mut state.borrow_mut(), |r| {
+            r.set_backup_folder(&vanished, &nas, &kept)
+        })
+        .unwrap();
+        assert_eq!(
+            sheet_dest(&state, &app, &worker),
+            kept.join("shoot").to_string_lossy()
+        );
+        assert_eq!(app.get_status(), "");
+        assert_eq!(pairings(&state), 1);
+        app.invoke_archive_answered(false);
+        // Bring back of its destination unwinds to it, and the copy
+        // makes the folder again.
+        index(&dir.join("library.sqlite"), &[&nas]);
+        open_branch(&state, &app, &worker, &nas, &kept);
+        assert_eq!(
+            sheet_dest(&state, &app, &worker),
+            vanished.to_string_lossy()
+        );
+        assert!(
+            app.get_archive_dest_note()
+                .starts_with("Where it was backed up from")
+        );
+        assert_eq!(app.get_status(), "");
+        app.invoke_archive_answered(true);
+        land_sent(&state, &app, &worker);
+        assert!(vanished.join(backed[0].file_name().unwrap()).is_file());
+        assert_eq!(pairings(&state), 1);
+
+        // An archive with nothing on it says nothing of its folders.
+        std::fs::remove_dir_all(&kept).unwrap();
+        crate::roots::edit_roots(&mut state.borrow_mut(), |r| {
+            r.set_backup_folder(&shoot, &nas, &moved)
+        })
+        .unwrap();
+        open_branch(&state, &app, &worker, &local, &shoot);
+        assert_eq!(sheet_dest(&state, &app, &worker), moved.to_string_lossy());
+        assert_eq!(app.get_status(), "");
+        assert_eq!(pairings(&state), 2);
+        app.invoke_archive_answered(false);
         crate::testing::remove_scratch(state, &dir);
     }
 }
