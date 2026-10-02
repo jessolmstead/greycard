@@ -211,3 +211,25 @@ pub(crate) fn rename_away(from: &std::path::Path, to: &std::path::Path) {
         }
     }
 }
+
+/// A test's scratch folder removed once the state has let go of what
+/// it holds open under it: the index's reader is closed first, since
+/// the window's callbacks keep their own handle on the state and a
+/// `drop` in the test does not end it, and Windows refuses to remove
+/// an open file. The removal is tried again for a while, as
+/// [`rename_away`] is, for the pool's reads still in flight.
+pub(crate) fn remove_scratch(state: Rc<RefCell<State>>, dir: &std::path::Path) {
+    state.borrow_mut().index_reader = None;
+    drop(state);
+    let start = std::time::Instant::now();
+    loop {
+        match std::fs::remove_dir_all(dir) {
+            Ok(()) => return,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(_) if start.elapsed() < std::time::Duration::from_secs(20) => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => panic!("{} could not be removed: {e}", dir.display()),
+        }
+    }
+}

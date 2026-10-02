@@ -178,8 +178,22 @@ fn install(file: Option<&File>, verbose: u8, terminal: bool) {
     let _ = tracing_log::LogTracer::builder().with_max_level(max).init();
     // Fails only when one is installed already, which is a test binary.
     let _ = tracing::subscriber::set_global_default(subscriber);
+    // With no terminal sink (the test binary) the hook that was there
+    // is kept and called after the file: the hook is the process's,
+    // and a panic in any later test would otherwise reach the file
+    // alone and the test's failure print nothing.
+    if !terminal {
+        let _ = PREVIOUS.set(std::panic::take_hook());
+    }
     std::panic::set_hook(Box::new(on_panic));
 }
+
+/// A panic hook as the standard library boxes one.
+type Hook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Send + Sync>;
+
+/// The panic hook that was installed before ours, kept only when no
+/// terminal listens, and called after the file has its line.
+static PREVIOUS: std::sync::OnceLock<Hook> = std::sync::OnceLock::new();
 
 /// A panic, in whatever thread, as one error event with the message,
 /// the place and a backtrace, so the file says why before the process
@@ -202,6 +216,9 @@ fn on_panic(info: &std::panic::PanicHookInfo<'_>) {
     }
     let backtrace = std::backtrace::Backtrace::force_capture();
     tracing::error!("thread '{thread}' panicked{at}: {message}\n{backtrace}");
+    if let Some(previous) = PREVIOUS.get() {
+        previous(info);
+    }
 }
 
 /// Seconds since the log started, to the millisecond: enough to see

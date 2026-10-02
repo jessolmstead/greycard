@@ -1131,8 +1131,7 @@ mod tests {
         }
 
         fn done(self) {
-            drop(self.state);
-            std::fs::remove_dir_all(&self.dir).unwrap();
+            crate::testing::remove_scratch(self.state, &self.dir);
         }
     }
 

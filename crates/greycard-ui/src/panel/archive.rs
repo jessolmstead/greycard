@@ -1836,8 +1836,7 @@ pub(crate) mod tests {
             [false, true]
         );
         assert!(app.get_status().contains("is an archive"));
-        drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// The whole of a backup through the window: the header's button,
@@ -1958,8 +1957,7 @@ pub(crate) mod tests {
         assert!(!app.get_archive_can_confirm());
         app.invoke_archive_answered(false);
         assert!(!app.get_archive_open());
-        drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// The Delete sheet says whether the frames are on an archive, from
@@ -1992,8 +1990,7 @@ pub(crate) mod tests {
         land_sent(&state, &app, &worker);
         assert_eq!(app.get_delete_archive(), "It is on nas.");
         app.invoke_delete_answered(0);
-        drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// All roots keeps the archive's own frames and leaves out its
@@ -2027,8 +2024,7 @@ pub(crate) mod tests {
         crate::roots::open_view(&state, &app, &worker, View::Roots(None));
         crate::roots::land_sent(&state, &app, &worker);
         assert_eq!(state.borrow().files.len(), 4);
-        drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// A window over a shoot of three frames, a rejects folder and a
@@ -2116,8 +2112,7 @@ pub(crate) mod tests {
         assert!(app.get_archive_open());
         assert!(app.get_archive_text().starts_with("4 frames to copy"));
         assert!(!nas.join("local").exists());
-        drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// The header counts what a Back up of the folder would walk (the
@@ -2160,8 +2155,7 @@ pub(crate) mod tests {
                 "Back up to cloud (4 frames not on cloud)..."
             ]
         );
-        drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// Under `--no-sidecars` the sheet says the frames go without them.
@@ -2176,8 +2170,7 @@ pub(crate) mod tests {
         assert!(!text.contains("with their sidecars"), "{text}");
         assert!(text.contains("Sidecars are off"), "{text}");
         app.invoke_archive_answered(false);
-        drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// A copy whose thread ends with nothing to say lets go of the
@@ -2211,7 +2204,6 @@ pub(crate) mod tests {
         land_run(&state, &app, &worker, token, Heard::Lost);
         assert!(!app.get_archive_running());
         assert!(state.borrow().archive.running.is_none());
-        drop(state);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 }

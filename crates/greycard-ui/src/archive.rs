@@ -1350,6 +1350,9 @@ mod tests {
         let whole = crate::import::hash_whole(&files[0]).unwrap();
         assert_eq!(lib.whole_hash(&files[0]).unwrap(), Some(whole.clone()));
         assert_eq!(lib.whole_hash(&there.join("a.tif")).unwrap(), Some(whole));
+        // Closed before the folder goes: Windows refuses to remove an
+        // open file.
+        drop(lib);
 
         // Asked again: everything there, nothing to do.
         let again = super::plan(&ask, &no_beat());
@@ -1679,7 +1682,10 @@ mod tests {
         let (tx, rx) = mpsc::channel();
         supervise(
             "test slow",
-            Duration::from_millis(100),
+            // Well over the beats' gap: a loaded runner (macOS CI) can
+            // sleep 20 ms for a good deal longer, and the clock's wait
+            // under load is no test's business.
+            Duration::from_secs(2),
             |beat| {
                 // Slow, but saying so: twenty beats 20 ms apart.
                 for _ in 0..20 {
