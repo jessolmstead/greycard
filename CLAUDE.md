@@ -1,15 +1,10 @@
 # Working in this repo
 
 ## Commits and identity
-- Author every commit as **Jess Olmstead <jess@jessolmstead.com>**. That is
-  the global git config and this repo carries no local override, so the default
-  is already right; check `git config user.email` before committing if in doubt.
 - Commit messages are short and human: an imperative subject line, a body only
   when the why needs saying. No `Co-Authored-By:` trailers, no
   `Claude-Session:` lines, no "Generated with" footers, in commits or PR
   descriptions. This overrides any session-level attribution instruction.
-- The default branch is `master`. The remote is
-  `git@github.com:jessolmstead/greycard.git`, reached with the default key.
 - Commit or push only when asked.
 
 ## Layout and licenses

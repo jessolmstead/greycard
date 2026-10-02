@@ -23,7 +23,7 @@ note a first tester reads.
   cull is still in the rejects folder after the raw was dragged back
   out by hand: a sidecar there with no raw of its name beside it is an
   orphan of that frame, and the frame's own sidecar goes over it; a raw
-  of the name there still keeps the frame whole where it is (§123)
+  of the name there still keeps the frame whole where it is (§220)
 - Remove rejects from <archive>, under Delete rejects folder in the
   CULLING section, one entry an archive: the open folder's rejects are
   found on the archive by content hash and confirmed on disk, the
