@@ -234,11 +234,8 @@ pub(crate) fn bake_locals(
         .adjustments
         .iter()
         .take(MAX_LOCALS)
-        .map(|a| Local {
-            baked: Baked::of(&a.look),
-            mask: a.mask.clone(),
-            enabled: a.enabled && !a.mask.is_empty(),
-            rasters: a
+        .map(|a| {
+            let rasters = a
                 .mask
                 .components
                 .iter()
@@ -277,7 +274,8 @@ pub(crate) fn bake_locals(
                     Arc::make_mut(raster).update(strokes);
                     Some(RasterRef(raster.clone()))
                 })
-                .collect(),
+                .collect();
+            Local::of(a, rasters)
         })
         .collect();
     rasters.retain(|k, _| live.contains(k));

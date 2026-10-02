@@ -97,7 +97,7 @@ use crate::panel::mask::{MaskDrag, Placing};
 use crate::panel::retouch::PatchShape;
 use crate::panel::viewport::Picking;
 pub(crate) use ai::{Key, prompted};
-pub(crate) use finish::{Baked, Local, MAX_LOCALS, RasterRef};
+pub(crate) use finish::{Local, MAX_LOCALS, RasterRef};
 use panel::startup::main;
 pub(crate) use render::{Renderer, View};
 pub(crate) use worker::{

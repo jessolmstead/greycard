@@ -385,11 +385,9 @@ pub fn render(
         .adjustments
         .iter()
         .take(finish::MAX_LOCALS)
-        .map(|a| finish::Local {
-            baked: finish::Baked::of(&a.look),
-            mask: a.mask.clone(),
-            enabled: a.enabled && !a.mask.is_empty(),
-            rasters: finish::rasterize(&a.mask, sh / sw, |i| learned.get(&(a.id, i)).cloned()),
+        .map(|a| {
+            let rasters = finish::rasterize(&a.mask, sh / sw, |i| learned.get(&(a.id, i)).cloned());
+            finish::Local::of(a, rasters)
         })
         .collect();
     // A pixel of the image, through the resize and the frame, to the
@@ -494,7 +492,7 @@ pub fn mark(rendered: &mut Rendered, settings: &Settings) -> Result<()> {
 /// Whether either exposure shift is set, in the picture's own look or
 /// in a local adjustment that acts: the only thing that reads the
 /// guide plane. Not whites, which is a white point and global.
-fn reads_guide(edit: &greycard_edit::Edit) -> bool {
+pub(crate) fn reads_guide(edit: &greycard_edit::Edit) -> bool {
     let set = |t: &greycard_edit::Tone| t.highlights != 0.0 || t.shadows != 0.0;
     set(&edit.look().light.effective().tone)
         || edit

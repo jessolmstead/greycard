@@ -1092,25 +1092,40 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         st.look = edit.look_lut.look();
                     }
                     renderer.set_look(st.look.as_ref());
+                    // The look's fields from `with_look`, the one place
+                    // they are read from an edit, named one by one with
+                    // every other field, so that a field added to `View`
+                    // is a compile error here rather than blank's value.
+                    let View {
+                        light,
+                        mixer,
+                        color,
+                        bw,
+                        tint,
+                        curves,
+                        vignette,
+                        grain,
+                        ..
+                    } = View::with_look(&edit);
                     let view = View {
                         zoom,
                         center: st.center,
-                        light: edit.light.effective(),
-                        mixer: edit.acting_mixer(),
-                        color: edit.color,
-                        bw: edit.bw,
-                        tint: edit.tint,
+                        light,
+                        mixer,
+                        color,
+                        bw,
+                        tint,
+                        curves,
+                        vignette,
+                        grain,
                         matrix: edit.geometry.matrix(),
                         persp: edit.geometry.perspective(sw, sh),
                         plane: edit.geometry.plane_size(sw, sh),
                         cubic: edit.geometry.resamples(),
                         frame_origin: frame.origin,
                         frame_size: frame.size,
-                        curves: edit.curves.bake_with(&edit.grading),
                         white,
                         locals,
-                        vignette: edit.vignette,
-                        grain: edit.grain,
                         warn: render::Warn {
                             shadows: app.get_warn_shadows(),
                             highlights: app.get_warn_highlights(),

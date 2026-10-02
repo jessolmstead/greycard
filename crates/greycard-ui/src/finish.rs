@@ -121,6 +121,19 @@ pub struct Local {
 }
 
 impl Local {
+    /// An adjustment baked, with its components' `rasters`: the one
+    /// way the viewport (`panel::mask::bake_locals`) and the export
+    /// (`export::render`) both make one, so the two cannot drift. An
+    /// adjustment whose mask has nothing live in it is off.
+    pub fn of(a: &greycard_edit::Adjustment, rasters: Vec<Option<RasterRef>>) -> Self {
+        Self {
+            baked: Baked::of(&a.look),
+            mask: a.mask.clone(),
+            enabled: a.enabled && !a.mask.is_empty(),
+            rasters,
+        }
+    }
+
     /// The mask's value at (u, v), its brushes from their rasters.
     #[cfg(test)]
     pub fn weight(&self, u: f32, v: f32) -> f32 {
@@ -285,8 +298,8 @@ impl Guide {
     };
 
     /// The guide at a continuous source position, bilinear, the edges
-    /// clamped — the convention the shader's sampler uses, so the two
-    /// read one plane: a source position of `scale * (i + 0.5)` is
+    /// clamped, as the shader's `guide_at` reads it by texel, so the
+    /// two read one plane: a source position of `scale * (i + 0.5)` is
     /// texel `i`'s center.
     pub fn at(&self, x: f32, y: f32) -> f32 {
         if self.data.is_empty() {
@@ -443,12 +456,13 @@ pub fn finish_pixel_with(
         shaded |= b.curves.shaded;
     }
     let tint = Tint::from_vector(tint);
+    t.contrast = t.contrast.max(MIN_CONTRAST);
     let gain = 2f32.powf(exposure);
     let mut c = px.map(|v| v * gain);
     // The black and white is the picture's, not a local's: a mask
     // carries a look, and half a mono picture is not one.
     let bw = global.bw.effective();
-    if mixer.enabled || color.enabled || bw.enabled || !tint.is_identity() {
+    if oklab_pass_acts(&mixer, &color, &bw, &tint) {
         // Oklab's a and b scale with the cube root of a gain, so the
         // source's mean is the exposed picture's mean, scaled.
         let reference = reference.map(|ab| ab.map(|v| v * gain.cbrt()));
@@ -539,7 +553,7 @@ pub fn pick(
     let gain = 2f32.powf(source.baseline() + light.exposure);
     let mut c = px.map(|v| v * gain);
     let hue = oklab(c)[2].atan2(oklab(c)[1]).to_degrees();
-    if mixer.enabled || color.enabled || bw.enabled || !tint.is_identity() {
+    if oklab_pass_acts(&mixer, &color, &bw, &tint) {
         c = mix_with(c, &mixer, &color, &bw, &tint, None);
     }
     c = shape(c, &light.tone, None).map(|x| source.curve(x));
@@ -629,22 +643,33 @@ pub fn mix_with(
     OKLAB.with(|ok| {
         let lms = apply3(&ok.to_lms, c).map(|v| v.abs().cbrt().copysign(v));
         let lab = apply3(&LMS_TO_LAB, lms);
-        let chroma = (lab[1] * lab[1] + lab[2] * lab[2]).sqrt();
+        let own = (lab[1] * lab[1] + lab[2] * lab[2]).sqrt();
         let hue = lab[2].atan2(lab[1]).to_degrees();
         let [ra, rb] = reference.unwrap_or([lab[1], lab[2]]);
         let seen = rb.atan2(ra).to_degrees();
         let trust = confidence((ra * ra + rb * rb).sqrt());
         let (shift, chroma_scale, light_scale) = mixer.at_with(seen, trust);
         let hue = hue + shift;
-        let mut chroma = chroma * chroma_scale * light_scale;
+        let mut chroma = own * chroma_scale * light_scale;
         if color.enabled {
             chroma *= color.scale(chroma, hue);
         }
-        let h = hue.to_radians();
+        // The pixel's own a and b scaled by the chroma's change and
+        // turned by the shift alone, not rebuilt from the hue through a
+        // cosine and a sine: the shader's are held only to an absolute
+        // 2^-11, and a saturated primary's near-zero channel, which the
+        // round trip lands either side of zero, took that as its sign
+        // (the shader's `mix_color` is the same arithmetic).
+        let k = if own > 0.0 { chroma / own } else { 0.0 };
+        let (mut a, mut b) = (lab[1] * k, lab[2] * k);
+        if shift != 0.0 {
+            let (sn, cs) = shift.to_radians().sin_cos();
+            (a, b) = (a * cs - b * sn, a * sn + b * cs);
+        }
         let mut lab = if bw.enabled {
             [lab[0] * light_scale * bw.light(seen, trust), 0.0, 0.0]
         } else {
-            [lab[0] * light_scale, chroma * h.cos(), chroma * h.sin()]
+            [lab[0] * light_scale, a, b]
         };
         if !tint.is_identity() {
             let [a, b] = tint.applied(lab[0], lab[1], lab[2]);
@@ -652,8 +677,36 @@ pub fn mix_with(
             lab[2] = b;
         }
         let lms = apply3(&LAB_TO_LMS, lab).map(|v| v * v * v);
-        apply3(&ok.from_lms, lms)
+        snap_residue(apply3(&ok.from_lms, lms))
     })
+}
+
+/// Whether the Oklab pass (`mix_with`) would change anything: a mixer
+/// with a band moved, a color slider moved, the black and white on, or
+/// a tint. Not the switches alone: the mixer's is on by default, and a
+/// pass that changes nothing still costs its round trip's rounding,
+/// which a channel at zero comes back from as a signed residue that the
+/// gains after it can raise to whole levels. The shader's `mix_color`
+/// is called on the same test.
+pub fn oklab_pass_acts(mixer: &Mixer, color: &Color, bw: &BlackWhite, tint: &Tint) -> bool {
+    !mixer.is_identity() || !color.is_identity() || bw.enabled || !tint.is_identity()
+}
+
+/// Below this share of a pixel's largest channel, a channel out of the
+/// Oklab pass is that pass's rounding and not the picture: a channel at
+/// zero beside a lit one comes back as about 1e-7 of it, of either sign
+/// and a different one on the GPU (whose cube root is a `pow`), and a
+/// contrast under one or a stacked gain makes that whole levels on one
+/// side only. Held to zero on both sides; no color the pass makes on
+/// purpose is that close to the edge of the gamut.
+const RESIDUE: f32 = 1e-6;
+
+/// `c` with every channel under [`RESIDUE`] of its largest at zero, as
+/// the shader's `mix_color` ends.
+#[inline]
+fn snap_residue(c: [f32; 3]) -> [f32; 3] {
+    let top = c[0].abs().max(c[1].abs()).max(c[2].abs());
+    c.map(|v| if v.abs() < RESIDUE * top { 0.0 } else { v })
 }
 
 /// The mean Oklab a and b of the source about every pixel, a box of
@@ -862,6 +915,15 @@ fn shape(c: [f32; 3], t: &greycard_edit::Tone, guide: Option<f32>) -> [f32; 3] {
     let gain = 2f32.powf(shift);
     black_point(white_point(c.map(|v| v * gain), t.whites), t.blacks)
 }
+
+/// The least the contrast summed over a pixel's looks may come to.
+/// Each slider stops at 0.5, but a mask adds its excess over one, so
+/// two stacked flattenings reach zero and three go under it: a power
+/// of zero takes black to mid grey (0^0 is 1 here and undefined in
+/// the shader), and a negative one turns the scene over. Neither is a
+/// meaning on offer; two stacked flattenings cannot flatten past this.
+/// The shader's `MIN_CONTRAST` is this.
+const MIN_CONTRAST: f32 = 0.05;
 
 /// The top of the blacks slider, where [`BLACKS_LIFT`] is reached.
 const BLACKS_TOP: f32 = 0.3;
@@ -1332,6 +1394,81 @@ mod tests {
         };
         let a = fp([MID_GREY; 3], &plus, &no_mix, &id, &m);
         assert!((a[1] - up[1]).abs() < 1e-5);
+    }
+
+    /// The Oklab pass runs only where it changes something, and a
+    /// channel at zero beside a lit one comes out of it at zero rather
+    /// than as its round trip's signed rounding, which a contrast under
+    /// one and a stacked gain raised to whole levels.
+    #[test]
+    fn a_zero_channel_comes_out_of_the_oklab_pass_at_zero() {
+        let edit = Edit::default();
+        assert!(edit.mixer.enabled, "the mixer's switch is on by default");
+        assert!(!oklab_pass_acts(
+            &edit.mixer,
+            &edit.color,
+            &edit.bw,
+            &edit.tint
+        ));
+        let mut mixer = Mixer::default();
+        mixer.luminance[3] = 0.5;
+        assert!(oklab_pass_acts(&mixer, &edit.color, &edit.bw, &edit.tint));
+        for px in [
+            [0.0, 4.2, 0.0],
+            [0.0, 0.0, 9.2],
+            [11.9, 0.0, 0.0],
+            [0.0, 0.49, 0.24],
+        ] {
+            for mixer in [Mixer::default(), mixer] {
+                let out = mix(px, &mixer, &Color::default());
+                for k in 0..3 {
+                    if px[k] == 0.0 {
+                        assert_eq!(out[k], 0.0, "{px:?} -> {out:?}");
+                    }
+                }
+            }
+        }
+        // And the whole finish at a stacked corner keeps a primary's
+        // dark channels where they would be with no pass at all.
+        let mut corner = Edit::default();
+        corner.light.exposure = 5.0;
+        corner.light.tone.contrast = 0.5;
+        corner.light.tone.whites = 2.0;
+        let m = crate::export::Space::Rec2020.matrix();
+        let plain = finish_pixel(
+            [0.0, 4.2, 0.0],
+            &Baked::global(&corner, Source::Scene),
+            &[],
+            &m,
+        );
+        assert_eq!([plain[0], plain[2]], [0.0, 0.0], "{plain:?}");
+    }
+
+    /// Contrast summed under masks is held at `MIN_CONTRAST`: the
+    /// picture's 0.5 and a mask's 0.5 over it would make a power of
+    /// zero, which took black to mid grey, and a third would turn the
+    /// scene over. Held, black stays black and the order of the tones
+    /// holds.
+    #[test]
+    fn stacked_flattenings_do_not_flatten_past_the_floor() {
+        let m = crate::export::Space::Srgb.matrix();
+        let flat = |c: f32| {
+            let mut look = Look::default();
+            look.light.tone.contrast = c;
+            look
+        };
+        let mut edit = Edit::default();
+        edit.set_look(flat(0.5));
+        let global = Baked::global(&edit, Source::Scene);
+        let local = Baked::of(&flat(0.5));
+        for n in [1, 2] {
+            let on = vec![(&local, 1.0); n];
+            assert_eq!(finish_pixel([0.0; 3], &global, &on, &m), [0.0; 3], "{n}");
+            let dark = finish_pixel([0.01; 3], &global, &on, &m)[1];
+            let grey = finish_pixel([MID_GREY; 3], &global, &on, &m)[1];
+            let light = finish_pixel([1.0; 3], &global, &on, &m)[1];
+            assert!(dark < grey && grey < light, "{n}: {dark} {grey} {light}");
+        }
     }
 
     /// The Light section switched off is its sliders undone, not the

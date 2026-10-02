@@ -106,8 +106,8 @@ struct Params {
     tint: vec4<f32>,
     // The tone equalizer's guide plane: in xy the source pixels
     // its texture covers, which is its size times the pixels to a
-    // texel, so a source position divided by it is the texture's uv and
-    // the sampler's bilinear is `Guide::at` in `finish.rs`; in z
+    // texel, which `guide_at` reads the pixels to a texel from and then
+    // interpolates by texel as `Guide::at` in `finish.rs` does; in z
     // whether there is one to read.
     guide: vec4<f32>,
     // The target pixel this view's top left corner sits at: nonzero
@@ -232,6 +232,12 @@ const LAB_TO_LMS: mat3x3<f32> = mat3x3<f32>(
 );
 
 const MID_GREY: f32 = 0.18;
+// The least the summed contrast may come to, as `MIN_CONTRAST` in
+// `finish.rs`.
+const MIN_CONTRAST: f32 = 0.05;
+// The share of a pixel's largest channel under which a channel out of
+// the Oklab pass is its rounding, as `RESIDUE` in `finish.rs`.
+const RESIDUE: f32 = 1e-6;
 // Luminance weights of the working space, Rec.2020.
 const LUMA: vec3<f32> = vec3<f32>(0.2627, 0.6780, 0.0593);
 
@@ -386,8 +392,22 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
         look.tint = look.tint + w * l.tint.xy;
         if (l.shaded > 0.5) { look.shaded = true; }
     }
+    // The summed contrast held at `MIN_CONTRAST`, as `finish_pixel_with`
+    // holds it: two stacked flattenings cannot flatten past it, and
+    // `pow` of zero to a power of zero or under is undefined here.
+    look.contrast = max(look.contrast, MIN_CONTRAST);
     var c = vec3<f32>(dot(p.w0.xyz, t), dot(p.w1.xyz, t), dot(p.w2.xyz, t)) * exp2(look.exposure);
-    if (look.mixer || look.color || look.bw || length(look.tint) > 0.0) {
+    // The pass only where it would change something, as
+    // `oklab_pass_acts` in `finish.rs`: not for the switches alone.
+    var mixer_acts = false;
+    for (var b = 0u; b < 8u; b = b + 1u) {
+        if (look.hue[b] != 0.0 || look.sat[b] != 0.0 || look.lum[b] != 0.0) {
+            mixer_acts = true;
+        }
+    }
+    mixer_acts = mixer_acts && look.mixer;
+    let color_acts = look.color && (look.saturation != 0.0 || look.vibrance != 0.0);
+    if (mixer_acts || color_acts || look.bw || length(look.tint) > 0.0) {
         // The mixer and the black and white read their hue from the
         // source's mean a and b about this pixel, brought to this
         // exposure: Oklab's a and b scale with the cube root of a gain.
@@ -408,7 +428,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var g = 0.0;
     let has_guide = p.guide.z > 0.5;
     if (has_guide) {
-        g = look.contrast * (textureSampleLevel(guide, samp, tex_at / p.guide.xy, 0.0).r + look.exposure);
+        g = look.contrast * (guide_at(tex_at) + look.exposure);
     }
     let shaped = shape(c, look, g, has_guide);
     // 1: a picture already rendered for a display, which takes the
@@ -593,6 +613,51 @@ fn vignette_at(uv: vec2<f32>, aspect: f32) -> f32 {
     return smoothstep(m, e1, d);
 }
 
+// A raster's value at (u, v / aspect), its layer of `brushes`, as
+// `Raster::at` in `brush.rs`: by texel, bilinear in f32, the edges
+// clamped. Not through the sampler, whose filtered read of an R8Unorm
+// texture Vulkan holds to no more than the format's eight bits:
+// lavapipe's came back a third of a level from the exact bilinear,
+// which two masks' stacked looks made whole levels.
+fn raster_at(layer: u32, u: f32, v: f32) -> f32 {
+    let size = vec2<f32>(textureDimensions(brushes).xy);
+    let last = size - vec2<f32>(1.0);
+    let at = clamp(vec2<f32>(u, v) * size - vec2<f32>(0.5), vec2<f32>(0.0), last);
+    let lo = floor(at);
+    let f = at - lo;
+    let hi = min(lo + vec2<f32>(1.0), last);
+    let a = textureLoad(brushes, vec2<i32>(lo), layer, 0).r;
+    let b = textureLoad(brushes, vec2<i32>(i32(hi.x), i32(lo.y)), layer, 0).r;
+    let c = textureLoad(brushes, vec2<i32>(i32(lo.x), i32(hi.y)), layer, 0).r;
+    let d = textureLoad(brushes, vec2<i32>(hi), layer, 0).r;
+    let top = a * (1.0 - f.x) + b * f.x;
+    let bottom = c * (1.0 - f.x) + d * f.x;
+    return top * (1.0 - f.y) + bottom * f.y;
+}
+
+// The guide plane at a source position, as `Guide::at` in `finish.rs`:
+// a texel's center at `scale * (i + 0.5)`, by texel, bilinear in f32,
+// the edges clamped, for the reason `raster_at` gives (the plane is
+// R16Float, and a filtered read of it comes back at about half
+// precision).
+fn guide_at(pos: vec2<f32>) -> f32 {
+    let size = vec2<i32>(textureDimensions(guide));
+    let scale = p.guide.x / f32(size.x);
+    let g = pos / scale - vec2<f32>(0.5);
+    let lo = floor(g);
+    let f = g - lo;
+    let last = size - vec2<i32>(1);
+    let a = clamp(vec2<i32>(lo), vec2<i32>(0), last);
+    let b = clamp(vec2<i32>(lo) + vec2<i32>(1), vec2<i32>(0), last);
+    let t00 = textureLoad(guide, a, 0).r;
+    let t10 = textureLoad(guide, vec2<i32>(b.x, a.y), 0).r;
+    let t01 = textureLoad(guide, vec2<i32>(a.x, b.y), 0).r;
+    let t11 = textureLoad(guide, b, 0).r;
+    let top = t00 + (t10 - t00) * f.x;
+    let bottom = t01 + (t11 - t01) * f.x;
+    return top + (bottom - top) * f.y;
+}
+
 // A shape's value at a source position in units of the width, as
 // `Shape::at` in `mask.rs`.
 fn shape_at(sh: Shape, uv: vec2<f32>, sample: vec3<f32>) -> f32 {
@@ -604,7 +669,7 @@ fn shape_at(sh: Shape, uv: vec2<f32>, sample: vec3<f32>) -> f32 {
             s = 1.0 - clamp(dot(uv - sh.a.xy, d) / len2, 0.0, 1.0);
         }
     } else if (sh.kind == 2u) {
-        s = textureSampleLevel(brushes, samp, vec2<f32>(uv.x, uv.y / sh.b.x), sh.layer, 0.0).r;
+        s = raster_at(sh.layer, uv.x, uv.y / sh.b.x);
     } else if (sh.kind == 3u) {
         // A raster shape whose raster is not made yet: nothing, which
         // is what `Local::weight` reads a missing raster as. It takes
@@ -880,7 +945,6 @@ fn mix_color(c: vec3<f32>, look: Look, ab: vec2<f32>, by_mean: bool) -> vec3<f32
     let shift = trust * mix(look.hue[below], look.hue[above], t);
     let sat = trust * mix(look.sat[below], look.sat[above], t);
     let lum = trust * mix(look.lum[below], look.lum[above], t);
-    let h = radians(hue + shift);
     let light = exp2(lum / 3.0);
     let chroma2 = chroma * max(1.0 + sat, 0.0) * light;
     let chroma3 = select(chroma2, chroma2 * color_scale(chroma2, hue + shift, look), look.color);
@@ -888,7 +952,21 @@ fn mix_color(c: vec3<f32>, look: Look, ab: vec2<f32>, by_mean: bool) -> vec3<f32
     // `finish.rs` gives it: the chroma goes, and the band's weight,
     // shared and faded exactly as a mixer slider is, is one more gain
     // on the lightness (`BlackWhite::light` in `bw.rs`).
-    var lab2 = vec3<f32>(lab.x * light, chroma3 * cos(h), chroma3 * sin(h));
+    // The pixel's own a and b scaled by the chroma's change and turned
+    // by the shift alone, as `mix_with` in `finish.rs`, rather than
+    // rebuilt from the hue through `cos` and `sin`: those Vulkan holds
+    // only to an absolute 2^-11, and a saturated primary's near-zero
+    // channel, which the round trip lands either side of zero, took
+    // that as its sign (100 levels on Mesa, past a steep point curve).
+    let k = select(chroma3 / chroma, 0.0, chroma <= 0.0);
+    var ab2 = lab.yz * k;
+    if (shift != 0.0) {
+        let r = radians(shift);
+        let cs = cos(r);
+        let sn = sin(r);
+        ab2 = vec2<f32>(ab2.x * cs - ab2.y * sn, ab2.x * sn + ab2.y * cs);
+    }
+    var lab2 = vec3<f32>(lab.x * light, ab2);
     if (look.bw) {
         let bw = trust * mix(look.bw_w[below], look.bw_w[above], t) * BW_RANGE;
         lab2 = vec3<f32>(lab.x * light * exp2(bw / 3.0), 0.0, 0.0);
@@ -899,7 +977,11 @@ fn mix_color(c: vec3<f32>, look: Look, ab: vec2<f32>, by_mean: bool) -> vec3<f32
     lab2 = vec3<f32>(lab2.x, tint_ab(look.tint, lab2.x, lab2.yz));
     let lms2 = LAB_TO_LMS * lab2;
     let lin = lms2 * lms2 * lms2;
-    return vec3<f32>(dot(p.ok_out0.xyz, lin), dot(p.ok_out1.xyz, lin), dot(p.ok_out2.xyz, lin));
+    let out = vec3<f32>(dot(p.ok_out0.xyz, lin), dot(p.ok_out1.xyz, lin), dot(p.ok_out2.xyz, lin));
+    // A channel under `RESIDUE` of the largest is the round trip's
+    // rounding, not the picture: zero, as `snap_residue` in `finish.rs`.
+    let top = max(max(abs(out.x), abs(out.y)), abs(out.z));
+    return select(out, vec3<f32>(0.0), abs(out) < vec3<f32>(RESIDUE * top));
 }
 
 // Global vibrance and saturation's further scale of chroma, as
@@ -1102,8 +1184,22 @@ fn look_at(c: vec3<f32>) -> vec3<f32> {
 // business (§5): a consumer's choice, and this consumer's default.
 const DISPLAY_WHITE_STOPS: f32 = 3.27;
 const SHOULDER_GAIN: f32 = 1.114332;
+// `MID_GREY * 2^DISPLAY_WHITE_STOPS`, where the curve is one, as
+// `DISPLAY_WHITE` in `finish.rs`.
+const DISPLAY_WHITE: f32 = 1.736363;
 
-fn tone(x: vec3<f32>) -> vec3<f32> {
+fn tone(scene: vec3<f32>) -> vec3<f32> {
+    // Held at display white, where the CPU returns one, so the fit's
+    // squares cannot overflow (past about 1e19 they did, inf over inf
+    // is NaN, and the clamp below made NaN black on some devices). A
+    // NaN coming in is taken to display white too, as the CPU's
+    // `f32::min` takes it to one; WGSL leaves `min` of a NaN to the
+    // device, so it is found by its bits, which no compiler folds
+    // away. That keeps the curve finite; the shape before it can
+    // still overflow on its own and hand this an inf or a NaN.
+    let bits = bitcast<vec3<u32>>(scene) & vec3<u32>(0x7fffffffu);
+    let nan = bits > vec3<u32>(0x7f800000u);
+    let x = select(min(scene, vec3<f32>(DISPLAY_WHITE)), vec3<f32>(DISPLAY_WHITE), nan);
     let a = 2.51;
     let b = 0.03;
     let c = 2.43;

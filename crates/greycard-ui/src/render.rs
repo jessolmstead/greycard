@@ -123,9 +123,9 @@ struct Params {
     /// direction, in x and y (`tint.rs`); each local adds its own.
     tint: [f32; 4],
     /// The tone equalizer's guide plane: in xy the source pixels its
-    /// texture covers (its size times the source pixels to a texel), so
-    /// a source position over it is the texture's uv and the sampler's
-    /// bilinear is `Guide::at`; in z whether there is one.
+    /// texture covers (its size times the source pixels to a texel),
+    /// which the shader's `guide_at` reads the source pixels to a texel
+    /// from, as `Guide::at` does; in z whether there is one.
     guide: [f32; 4],
     /// The target pixel this view's top left corner sits at, for a
     /// view drawn into part of the target (the compare view's tiles);
@@ -616,6 +616,25 @@ impl View {
             canvas: [0.0; 3],
             source: Source::Scene,
             source_turn: 0,
+        }
+    }
+
+    /// A blank view with `edit`'s look on it, as the viewport shows it:
+    /// the light through its switch, the mixer as the black and white
+    /// leaves it, the curves with the grading baked in, the vignette
+    /// and the grain. The one place the viewport reads them from an
+    /// edit, so the parity test reads them the same way.
+    pub fn with_look(edit: &greycard_edit::Edit) -> Self {
+        View {
+            light: edit.light.effective(),
+            mixer: edit.acting_mixer(),
+            color: edit.color,
+            bw: edit.bw,
+            tint: edit.tint,
+            curves: edit.curves.bake_with(&edit.grading),
+            vignette: edit.vignette,
+            grain: edit.grain,
+            ..View::blank()
         }
     }
 }
@@ -3301,5 +3320,1216 @@ mod tests {
         let (worst, mean) = gpu_against_cpu(&device, &queue, &crop, &locals, 0.0, false);
         eprintln!("its middle, GPU against CPU: max {worst:.4}, mean {mean:.5}");
         assert!(worst <= 1.5 / 255.0, "max {worst}");
+    }
+
+    /// A small seeded generator for the parity test: splitmix64, each
+    /// edit seeded from the run's seed and its own index, so one edit
+    /// is replayed from those two numbers alone.
+    struct Rng(u64);
+
+    impl Rng {
+        fn new(seed: u64, k: u64) -> Self {
+            let mut r = Rng(seed ^ k.wrapping_mul(0xD1B5_4A32_D192_ED03));
+            r.next();
+            r
+        }
+
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = self.0;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+
+        /// 0 to 1, 24 bits of it.
+        fn unit(&mut self) -> f32 {
+            (self.next() >> 40) as f32 / (1u64 << 24) as f32
+        }
+
+        fn range(&mut self, lo: f32, hi: f32) -> f32 {
+            lo + (hi - lo) * self.unit()
+        }
+
+        fn chance(&mut self, p: f32) -> bool {
+            self.unit() < p
+        }
+
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n as u64) as usize
+        }
+
+        /// A slider: moved, with chance `p`, else at `rest`; moved, at
+        /// `lo` a fifth of the time, at `hi` a fifth, and anywhere
+        /// between otherwise, since the ends and their sums are where
+        /// the arithmetic breaks first. Both draws are taken either
+        /// way, so what follows is the same whatever this one says.
+        fn slider(&mut self, p: f32, lo: f32, hi: f32, rest: f32) -> f32 {
+            let moved = self.chance(p);
+            let u = self.unit();
+            let v = if u < 0.2 {
+                lo
+            } else if u >= 0.8 {
+                hi
+            } else {
+                lo + (hi - lo) * (u - 0.2) / 0.6
+            };
+            if moved { v } else { rest }
+        }
+
+        /// A slider always moved: `slider` with its ends as likely.
+        fn moved(&mut self, lo: f32, hi: f32) -> f32 {
+            self.slider(1.0, lo, hi, lo)
+        }
+    }
+
+    /// The parts of an edit the parity test draws, a bit each, so a
+    /// failing edit can be drawn again with one part left at its
+    /// default to see which part the difference is in.
+    const PARTS: [&str; 17] = [
+        "light",
+        "light switch",
+        "point curves",
+        "parametric curve",
+        "color curves",
+        "grading",
+        "mixer",
+        "color",
+        "black and white",
+        "tint",
+        "vignette",
+        "grain",
+        "locals",
+        "look table",
+        "guide plane",
+        "display source",
+        "output space",
+    ];
+
+    fn part(name: &str) -> u32 {
+        1 << PARTS.iter().position(|p| *p == name).expect("a part")
+    }
+
+    /// One random edit: the edit, and what the viewport and the
+    /// export are handed beside it.
+    struct Case {
+        edit: greycard_edit::Edit,
+        /// The rasters of each adjustment's components, by index.
+        rasters: Vec<Vec<Option<RasterRef>>>,
+        look: Option<lut::Look>,
+        source: Source,
+        /// Which guide plane, if any: 0 the picture's own, 1 a coarser
+        /// one (the test's `guides`).
+        guide: Option<usize>,
+        space: crate::export::Space,
+    }
+
+    /// A point curve: the ends at x 0 and 1, up to three points
+    /// between them from `first` to 0.99 and at least `MIN_GAP` apart,
+    /// every y anywhere from 0 to 1, as the curve editor lets them be
+    /// dragged (`panel::curve`). A color curve's ends rest at 0.5, a
+    /// point curve's on the diagonal.
+    fn random_points(rng: &mut Rng, color: bool) -> Vec<greycard_edit::curve::Point> {
+        use greycard_edit::curve::MIN_GAP;
+        let n = rng.below(4);
+        // A color curve's points start a twentieth of the way up, not
+        // at the panel's 0.01: excluded. The color curves look their
+        // shift up by Oklab lightness, a cube root, whose slope at zero
+        // has no bound, so near black a point within a few hundredths
+        // of the start turns a few billionths of light into a cast, and
+        // the shader's fused multiply-adds in the point curves leave
+        // such light where the CPU's separate roundings leave none
+        // (seed 10, edit 117: 3 levels after a look table). That is the
+        // export's own sensitivity, there on any device.
+        let first = if color { 0.05 } else { 0.01 };
+        let mut xs: Vec<f32> = (0..n).map(|_| rng.moved(first, 0.99)).collect();
+        xs.sort_by(f32::total_cmp);
+        let mut kept: Vec<f32> = Vec::new();
+        for x in xs {
+            if kept.last().is_none_or(|l| x - l >= MIN_GAP) {
+                kept.push(x);
+            }
+        }
+        let (rest0, rest1) = if color { (0.5, 0.5) } else { (0.0, 1.0) };
+        let (y0, y1) = (
+            rng.slider(0.4, 0.0, 1.0, rest0),
+            rng.slider(0.4, 0.0, 1.0, rest1),
+        );
+        let mut points = vec![[0.0, y0]];
+        points.extend(kept.into_iter().map(|x| [x, rng.moved(0.0, 1.0)]));
+        points.push([1.0, y1]);
+        points
+    }
+
+    /// A look, every slider over the range the panel gives it
+    /// (`edit.slint`, `color.slint`, `curve.slint`), each moved with
+    /// chance `p`; the parts in `skip` left at their defaults.
+    fn random_look(rng: &mut Rng, p: f32, skip: u32) -> Look {
+        use greycard_edit::grading::Wheel;
+        let has = |name: &str| skip & part(name) == 0;
+        let mut look = Look::default();
+        // Light: exposure ±5, contrast 0.5 to 2, highlights, shadows
+        // and whites ±2, blacks ±0.3; the section's switch.
+        let mut light = Light {
+            enabled: !rng.chance(0.15),
+            exposure: rng.slider(p, -5.0, 5.0, 0.0),
+            ..Light::default()
+        };
+        light.tone.contrast = rng.slider(p, 0.5, 2.0, 1.0);
+        light.tone.highlights = rng.slider(p, -2.0, 2.0, 0.0);
+        light.tone.shadows = rng.slider(p, -2.0, 2.0, 0.0);
+        light.tone.whites = rng.slider(p, -2.0, 2.0, 0.0);
+        light.tone.blacks = rng.slider(p, -0.3, 0.3, 0.0);
+        if !has("light switch") {
+            light.enabled = true;
+        }
+        if has("light") {
+            look.light = light;
+        }
+        // The curves: the section's switch, the four channels' points,
+        // the parametric's four amounts ±1 and its splits, the two
+        // color curves.
+        let mut curves = greycard_edit::Curves {
+            enabled: !rng.chance(0.1),
+            ..Default::default()
+        };
+        let channels = [
+            &mut curves.rgb,
+            &mut curves.red,
+            &mut curves.green,
+            &mut curves.blue,
+        ];
+        let mut drawn = Vec::new();
+        for _ in 0..4 {
+            let moved = rng.chance(p);
+            let points = random_points(rng, false);
+            drawn.push(moved.then_some(points));
+        }
+        if has("point curves") {
+            for (c, d) in channels.into_iter().zip(drawn) {
+                if let Some(points) = d {
+                    *c = points;
+                }
+            }
+        }
+        let mut para = greycard_edit::Parametric {
+            highlights: rng.slider(p, -1.0, 1.0, 0.0),
+            lights: rng.slider(p, -1.0, 1.0, 0.0),
+            darks: rng.slider(p, -1.0, 1.0, 0.0),
+            shadows: rng.slider(p, -1.0, 1.0, 0.0),
+            ..Default::default()
+        };
+        for i in 0..3 {
+            let moved = rng.chance(p);
+            let x = rng.unit();
+            if moved {
+                para.set_split(i, x);
+            }
+        }
+        if has("parametric curve") {
+            curves.parametric = para;
+        }
+        let rg = rng.chance(p).then(|| random_points(rng, true));
+        let by = rng.chance(p).then(|| random_points(rng, true));
+        if has("color curves") {
+            if let Some(points) = rg {
+                curves.red_green = points;
+            }
+            if let Some(points) = by {
+                curves.blue_yellow = points;
+            }
+        }
+        look.curves = curves;
+        // Grading: three wheels, hue 0 to 360 and strength 0 to 1, and
+        // the balance ±1.
+        let wheel = |rng: &mut Rng| {
+            let moved = rng.chance(p);
+            let w = Wheel {
+                hue: rng.range(0.0, 360.0),
+                saturation: rng.moved(0.0, 1.0),
+            };
+            if moved { w } else { Wheel::default() }
+        };
+        let grading = greycard_edit::Grading {
+            enabled: !rng.chance(0.1),
+            shadows: wheel(rng),
+            midtones: wheel(rng),
+            highlights: wheel(rng),
+            balance: rng.slider(p, -1.0, 1.0, 0.0),
+        };
+        if has("grading") {
+            look.grading = grading;
+        }
+        // The mixer: eight bands, hue ±30 degrees, saturation and
+        // luminance ±1.
+        let mut mixer = Mixer {
+            enabled: !rng.chance(0.15),
+            ..Mixer::default()
+        };
+        for b in 0..greycard_edit::mixer::BANDS {
+            mixer.hue[b] = rng.slider(p * 0.6, -30.0, 30.0, 0.0);
+            mixer.saturation[b] = rng.slider(p * 0.6, -1.0, 1.0, 0.0);
+            mixer.luminance[b] = rng.slider(p * 0.6, -1.0, 1.0, 0.0);
+        }
+        if has("mixer") {
+            look.mixer = mixer;
+        }
+        // Color: vibrance and saturation ±1.
+        let color = Color {
+            enabled: !rng.chance(0.15),
+            saturation: rng.slider(p, -1.0, 1.0, 0.0),
+            vibrance: rng.slider(p, -1.0, 1.0, 0.0),
+        };
+        if has("color") {
+            look.color = color;
+        }
+        // The tint: hue 0 to 360, amount 0 to 1.
+        let tint = Tint {
+            hue: rng.range(0.0, 360.0),
+            amount: rng.slider(p, 0.0, 1.0, 0.0),
+        };
+        if has("tint") {
+            look.tint = tint;
+        }
+        look
+    }
+
+    /// A brush's strokes, a few of them, adds and subtracts and an
+    /// erase. The radius is drawn from 0.02 to 0.15 of the width
+    /// rather than the panel's 0.002 to 0.5: painting a raster
+    /// 2048 texels wide in a debug build costs by the disc's area,
+    /// and what is checked is the raster's sampling, the same grid
+    /// of texels whatever the strokes were.
+    fn random_strokes(rng: &mut Rng, aspect: f32) -> Vec<greycard_edit::brush::Stroke> {
+        use greycard_edit::brush::{Op, Stroke};
+        let n = 1 + rng.below(3);
+        (0..n)
+            .map(|i| {
+                let op = if i == 0 {
+                    Op::Add
+                } else {
+                    Op::ALL[rng.below(Op::ALL.len())]
+                };
+                let mut s = Stroke::new(op, rng.range(0.02, 0.15), rng.unit(), rng.unit());
+                let points = 2 + rng.below(3);
+                s.points = (0..points)
+                    .map(|_| [rng.range(-0.1, 1.1), rng.range(-0.1, aspect + 0.1)])
+                    .collect();
+                s
+            })
+            .collect()
+    }
+
+    /// The rasters the cases draw their raster shapes from, made once:
+    /// three brushes and a learned mask (a model's, here a pattern of
+    /// soft blobs and hard edges), each a raster of the picture's
+    /// aspect, all `RASTER_WIDTH` wide as the app's are.
+    fn raster_pool(seed: u64, aspect: f32) -> (Vec<(Shape, RasterRef)>, RasterRef) {
+        use greycard_edit::brush::Raster;
+        let mut rng = Rng::new(seed, u64::MAX);
+        let brushes = (0..3)
+            .map(|_| {
+                let strokes = random_strokes(&mut rng, aspect);
+                let raster = Raster::of(&strokes, aspect);
+                (Shape::Brush { strokes }, RasterRef(Arc::new(raster)))
+            })
+            .collect();
+        let w = RASTER_WIDTH;
+        let h = ((w as f32 * aspect).round() as usize).max(1);
+        let data = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let (u, v) = (x as f32 / w as f32, y as f32 / w as f32);
+                let blob = (0.5 + 0.5 * (u * 9.0).sin() * (v * 13.0).cos()).clamp(0.0, 1.0);
+                let edge = if (u - 0.6).abs() < 0.15 && v > 0.3 {
+                    1.0
+                } else {
+                    0.0
+                };
+                ((blob * 0.7 + edge * 0.3) * 255.0).round() as u8
+            })
+            .collect();
+        let learned = RasterRef(Arc::new(Raster::from_data(aspect, w, data)));
+        (brushes, learned)
+    }
+
+    /// A mask of one to three shapes, each of any kind in any mode,
+    /// on, off or inverted, with the raster each needs.
+    fn random_mask(
+        rng: &mut Rng,
+        aspect: f32,
+        brushes: &[(Shape, RasterRef)],
+        learned: &RasterRef,
+    ) -> (Mask, Vec<Option<RasterRef>>) {
+        let n = 1 + rng.below(3);
+        let mut components = Vec::new();
+        let mut rasters = Vec::new();
+        for _ in 0..n {
+            let (shape, raster) = match rng.below(7) {
+                0 => (
+                    Shape::Linear {
+                        from: [rng.range(-0.2, 1.2), rng.range(-0.2, aspect + 0.2)],
+                        to: [rng.range(-0.2, 1.2), rng.range(-0.2, aspect + 0.2)],
+                    },
+                    None,
+                ),
+                1 => (
+                    Shape::Radial {
+                        center: [rng.range(0.0, 1.0), rng.range(0.0, aspect)],
+                        radius: [rng.range(0.02, 0.7), rng.range(0.02, 0.7)],
+                        angle: rng.range(0.0, 360.0),
+                        feather: rng.moved(0.0, 1.0),
+                    },
+                    None,
+                ),
+                2 => {
+                    let (shape, raster) = &brushes[rng.below(brushes.len())];
+                    (shape.clone(), Some(raster.clone()))
+                }
+                3 => {
+                    // A learned shape, its raster there or, now and
+                    // then, still on its way.
+                    let there = !rng.chance(0.2);
+                    (Shape::Subject {}, there.then(|| learned.clone()))
+                }
+                // The panel's ranges: low and high 0 to 1, their
+                // fades 0 to 0.5 (`mask.slint`).
+                4 => (
+                    Shape::Luminance {
+                        low: rng.slider(0.8, 0.0, 1.0, 0.0),
+                        high: rng.slider(0.8, 0.0, 1.0, 1.0),
+                        low_feather: rng.moved(0.0, 0.5),
+                        high_feather: rng.moved(0.0, 0.5),
+                    },
+                    None,
+                ),
+                // Hue 0 to 360, width 0 to 180, its fade 0 to 90,
+                // chroma 0 to 0.2, its fade 0 to 0.1.
+                _ => (
+                    Shape::Color {
+                        hue: rng.range(0.0, 360.0),
+                        width: rng.moved(0.0, 180.0),
+                        hue_feather: rng.moved(0.0, 90.0),
+                        chroma: rng.moved(0.0, 0.2),
+                        chroma_feather: rng.moved(0.0, 0.1),
+                    },
+                    None,
+                ),
+            };
+            components.push(Component {
+                shape,
+                mode: Mode::ALL[rng.below(Mode::ALL.len())],
+                invert: rng.chance(0.2),
+                enabled: !rng.chance(0.1),
+            });
+            rasters.push(raster);
+        }
+        let mask = Mask {
+            components,
+            invert: rng.chance(0.2),
+        };
+        (mask, rasters)
+    }
+
+    /// Three look tables with a cross term, one channel's output
+    /// moved by the other two's product, so a lookup that read the
+    /// wrong corner of a cell would show: an sRGB one at 9 nodes, a
+    /// linear Rec.2020 one at 5 with a domain past one, and a gamma
+    /// 2.2 Display P3 one at 17.
+    fn look_tables() -> Vec<Arc<lut::Lut3d>> {
+        let table = |size: usize,
+                     encoding: lut::Encoding,
+                     primaries: lut::Primaries,
+                     max: f32,
+                     f: &dyn Fn([f32; 3]) -> [f32; 3]| {
+            let mut t = lut::Lut3d::identity(size);
+            t.encoding = encoding;
+            t.primaries = primaries;
+            t.domain_max = [max; 3];
+            let last = (size - 1) as f32;
+            let mut i = 0;
+            for b in 0..size {
+                for g in 0..size {
+                    for r in 0..size {
+                        let c = [r, g, b].map(|v| v as f32 / last * max);
+                        t.data[i] = f(c);
+                        i += 1;
+                    }
+                }
+            }
+            for px in &mut t.data {
+                *px = px.map(|v| half::f16::from_f32(v).to_f32());
+            }
+            Arc::new(t)
+        };
+        vec![
+            table(
+                9,
+                lut::Encoding::Srgb,
+                lut::Primaries::Srgb,
+                1.0,
+                &|[r, g, b]| {
+                    [
+                        0.9 * r + 0.1 * g * b,
+                        g * g * 0.8 + 0.2 * r,
+                        (b + 0.3 * r * g).min(1.2),
+                    ]
+                },
+            ),
+            table(
+                5,
+                lut::Encoding::Linear,
+                lut::Primaries::Rec2020,
+                1.25,
+                &|[r, g, b]| [r * 0.8 + 0.2 * g * b, g, b * 0.9 + 0.1 * r],
+            ),
+            table(
+                17,
+                lut::Encoding::Gamma(2.2),
+                lut::Primaries::DisplayP3,
+                1.0,
+                &|[r, g, b]| {
+                    let m = (r + g + b) / 3.0;
+                    [
+                        m + 1.2 * (r - m) + 0.05 * g * b,
+                        m + 0.9 * (g - m),
+                        b.sqrt(),
+                    ]
+                },
+            ),
+        ]
+    }
+
+    /// Edit `k` of the run seeded `seed`, with the parts in `skip` at
+    /// their defaults.
+    fn random_case(
+        seed: u64,
+        k: u64,
+        skip: u32,
+        aspect: f32,
+        pool: &(Vec<(Shape, RasterRef)>, RasterRef),
+        tables: &[Arc<lut::Lut3d>],
+    ) -> Case {
+        use greycard_edit::grain::Kind;
+        let has = |name: &str| skip & part(name) == 0;
+        let mut rng = Rng::new(seed, k);
+        let mut edit = greycard_edit::Edit::default();
+        edit.set_look(random_look(&mut rng, 0.5, skip));
+        // The black and white: eight weights ±1 and a strength 0 to 3.
+        let mut bw = BlackWhite {
+            enabled: rng.chance(0.3),
+            weights: [0.0; 8],
+            strength: rng.moved(0.0, greycard_edit::bw::STRENGTH_MAX),
+        };
+        for b in 0..8 {
+            bw.weights[b] = rng.slider(0.5, -1.0, 1.0, 0.0);
+        }
+        if has("black and white") {
+            edit.bw = bw;
+        }
+        // The vignette: amount ±5 stops, midpoint and feather 0 to 1,
+        // roundness ±1.
+        let vignette = Vignette {
+            enabled: !rng.chance(0.1),
+            amount: rng.slider(0.5, -5.0, 5.0, 0.0),
+            midpoint: rng.moved(0.0, 1.0),
+            feather: rng.moved(0.0, 1.0),
+            roundness: rng.moved(-1.0, 1.0),
+        };
+        if has("vignette") {
+            edit.vignette = vignette;
+        }
+        // The grain: amount 0 to 1, size 0.1 to 2, either kind.
+        let grain = Grain {
+            enabled: !rng.chance(0.1),
+            amount: rng.slider(0.4, 0.0, 1.0, 0.0),
+            size: rng.moved(0.1, 2.0),
+            kind: Kind::ALL[rng.below(Kind::ALL.len())],
+        };
+        if has("grain") {
+            edit.grain = grain;
+        }
+        // Two or three local adjustments, each its own look.
+        let n = 2 + rng.below(2);
+        let mut rasters = Vec::new();
+        for id in 0..n {
+            let (mask, r) = random_mask(&mut rng, aspect, &pool.0, &pool.1);
+            let look = random_look(&mut rng, 0.35, skip);
+            let enabled = !rng.chance(0.1);
+            if has("locals") {
+                edit.adjustments.push(greycard_edit::Adjustment {
+                    id: id as u64,
+                    enabled,
+                    mask,
+                    look,
+                    ..Default::default()
+                });
+                rasters.push(r);
+            }
+        }
+        // A look table, at any strength.
+        let which = rng.below(tables.len() + 1);
+        let strength = rng.moved(0.0, 1.0);
+        let look = (has("look table") && which < tables.len())
+            .then(|| lut::Look::new(tables[which].clone(), strength).expect("a look"));
+        let display = rng.chance(0.25);
+        let guide = rng.chance(0.6);
+        let coarse = rng.chance(0.5);
+        let space = crate::export::Space::ALL[rng.below(crate::export::Space::ALL.len())];
+        Case {
+            edit,
+            rasters,
+            look,
+            source: if display && has("display source") {
+                Source::Display
+            } else {
+                Source::Scene
+            },
+            guide: (guide && has("guide plane")).then_some(usize::from(coarse)),
+            space: if has("output space") {
+                space
+            } else {
+                crate::export::Space::Srgb
+            },
+        }
+    }
+
+    /// A small frame with the corners of what a picture holds: rows of
+    /// near black, an Oklab field from grey to chroma 0.3 at every
+    /// hue, the working space's primaries alone at a range of levels
+    /// (the other two channels exactly zero), and highlights past
+    /// white, some with one channel clipped high; a little noise over
+    /// all of it so the local mean has something to do.
+    fn parity_frame() -> WorkingImage {
+        let (w, h) = (48usize, 32usize);
+        let ok = greycard_core::color::Oklab::for_working_space();
+        let from_lms = greycard_core::color::invert3(ok.to_lms).unwrap();
+        let hash = |x: usize, y: usize, c: usize| {
+            let mut z = (x as u64) << 32 | (y as u64) << 8 | c as u64;
+            z = (z ^ (z >> 33)).wrapping_mul(0xFF51_AFD7_ED55_8CCD);
+            z = (z ^ (z >> 33)).wrapping_mul(0xC4CE_B9FE_1A85_EC53);
+            ((z ^ (z >> 33)) >> 40) as f32 / (1u64 << 24) as f32
+        };
+        let lab_to = |lab: [f32; 3]| {
+            let lms = greycard_core::color::apply3(&greycard_core::color::LAB_TO_LMS, lab)
+                .map(|v| v * v * v);
+            greycard_core::color::apply3(&from_lms, lms).map(|v| v.max(0.0))
+        };
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let n = |c| 1.0 + 0.06 * (hash(x, y, c) - 0.5);
+                let px = match y {
+                    0..=3 => {
+                        let level = [0.0, 2e-5, 3e-4, 4e-3][y];
+                        [0, 1, 2].map(|c| level * hash(x, y, c) * 2.0)
+                    }
+                    4..=21 => {
+                        let l = 0.12 + 0.85 * (y - 4) as f32 / 17.0;
+                        let hue = (x as f32 * 7.5).to_radians();
+                        let chroma = 0.3 * ((x % 4) as f32 / 3.0);
+                        let c = lab_to([l, chroma * hue.cos(), chroma * hue.sin()]);
+                        [0, 1, 2].map(|k| c[k] * n(k))
+                    }
+                    22..=25 => {
+                        let level = 0.01 * 1.3f32.powi((x / 3) as i32 + 4 * (y - 22) as i32 % 16);
+                        let mut c = [0.0; 3];
+                        c[x % 3] = level;
+                        c
+                    }
+                    _ => {
+                        let over = 1.0 + 7.0 * x as f32 / w as f32;
+                        let hue = (x as f32 * 31.0).to_radians();
+                        let base = lab_to([0.8, 0.08 * hue.cos(), 0.08 * hue.sin()]);
+                        let mut c = base.map(|v| v * over);
+                        if y % 2 == 0 {
+                            c[x % 3] = 6.0;
+                        }
+                        [0, 1, 2].map(|k| c[k] * n(k))
+                    }
+                };
+                data.extend(px);
+            }
+        }
+        WorkingImage {
+            width: w,
+            height: h,
+            data,
+        }
+    }
+
+    /// What one edit came to: how far the GPU was at worst from the
+    /// nearest of the CPU's answers, where, the CPU's answer and the
+    /// GPU's there, how many pixels were steep (their answers spread
+    /// wider than `STEEP`), and how many channels' answers spread wider
+    /// than `WIDE`.
+    struct Outcome {
+        worst: f32,
+        at: (usize, usize, usize),
+        cpu: [f32; 3],
+        gpu: [f32; 3],
+        steep: usize,
+        wide: usize,
+        /// The CPU's answers in the worst channel, as it is first.
+        answers: Vec<f32>,
+    }
+
+    /// How far each channel of the picture is moved, up and then down,
+    /// as a share of the pixel's largest, for the CPU's answers: the
+    /// picture as it is and so moved, at each of `NUDGES` of this. The
+    /// GPU passes where it lies within the tolerance of one of them,
+    /// not merely between the least and the most, so a spread over the
+    /// whole scale cannot pass a black. Where the CPU's answer is flat,
+    /// they are one answer; where an error of the size the GPU's
+    /// arithmetic is allowed moves it far, they spread with it, and they
+    /// are graded rather than one step each way because such a pixel's
+    /// answer is a continuum the GPU can land anywhere on: at one step
+    /// of 1e-5 each way, five edits over seeds 1 to 10 on Mesa fell
+    /// between answers 50 to 250 levels apart, and none does graded.
+    /// What makes pixels steep, all found by this test:
+    ///
+    /// - A large stacked gain into the white point, whose exponent runs
+    ///   to tens of stops at the sliders' corners with the masks' added:
+    ///   it carries a few ULP of the GPU's `log2` and `exp2` to 1e-5 of
+    ///   the value and past, and a steep point curve, or the output
+    ///   matrix's cancellation into a dark channel where the sRGB curve
+    ///   is steepest, makes that whole levels.
+    /// - A contrast under one, a power with no bound on its slope at
+    ///   zero, on a channel the Oklab pass leaves near zero.
+    /// - A tint whose hue is opposite a pixel's own. `Tint::applied`
+    ///   turns the short way round, and at 180 degrees both ways are as
+    ///   short, so rounding picks the side and the two hues land
+    ///   `(1 - share) * 360` degrees apart.
+    ///
+    /// The brush rasters and the guide plane are read by texel and
+    /// interpolated in f32 on both sides (`raster_at`, `guide_at` in
+    /// the shader), so neither needs a nudge: through the sampler,
+    /// lavapipe's filtered read of a raster came back a third of a
+    /// level off, and 45 of the default seed's 400 edits fell outside
+    /// the bracket.
+    ///
+    /// A share of the pixel's largest channel, the nudge does not move
+    /// black; and a window's weight at no light can be 6e-8 on one side
+    /// and nothing on the other, which the point and color curves near
+    /// black make whole levels (default seed, edits 1324 and 2565, 35
+    /// and 12 levels, outside the bracket at 5 000 edits; not at 400).
+    const NUDGE: f32 = 1e-5;
+    const NUDGES: [f32; 4] = [1.0, 0.3, 0.1, 0.03];
+    /// The spread of a channel's answers past which it counts as wide,
+    /// a few of which every run has: the run prints how many.
+    const WIDE: f32 = 32.0 / 255.0;
+    /// The bracket's width from which a pixel counts as steep: wider
+    /// than the tolerance, so that the bracket loosens the check by
+    /// more than the tolerance itself does. A narrower width, a level,
+    /// put a few edits at the sliders' corners over `STEEP_SHARE`.
+    const STEEP: f32 = 2.5 / 255.0;
+    /// The most of an edit's pixels that may be steep: past it the
+    /// bracket is checking too little of the picture for the edit to
+    /// count, and it fails. Set from seeds 1 to 10, whose steepest edit
+    /// is 11.1% (seed 4, edit 372; the same on every device, since it
+    /// is the CPU's own spread), with a margin; `STEEP_MEAN` is what
+    /// holds the run as a whole.
+    const STEEP_SHARE: f64 = 0.15;
+    /// The most of the pixels that may be steep over the whole run, so
+    /// that a change that made every answer jump cannot pass by
+    /// widening every bracket a little.
+    const STEEP_MEAN: f64 = 0.01;
+
+    /// A mask over everything (a luminance window from 0 to 1) with
+    /// `look` under it.
+    fn everywhere(look: Look) -> greycard_edit::Adjustment {
+        greycard_edit::Adjustment {
+            mask: Mask {
+                components: vec![Component {
+                    shape: Shape::Luminance {
+                        low: 0.0,
+                        high: 1.0,
+                        low_feather: 0.0,
+                        high_feather: 0.0,
+                    },
+                    ..Default::default()
+                }],
+                invert: false,
+            },
+            look,
+            ..Default::default()
+        }
+    }
+
+    /// `edit` over `image` through both sides, sRGB, eight bits: the
+    /// CPU's `finish_with` as the export calls it and the shader's
+    /// picture read back.
+    fn both_sides(
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        image: &WorkingImage,
+        edit: &greycard_edit::Edit,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let (w, h) = (image.width, image.height);
+        let locals: Vec<Local> = edit
+            .adjustments
+            .iter()
+            .map(|a| Local::of(a, vec![None; a.mask.components.len()]))
+            .collect();
+        let mut renderer = Renderer::new(device, queue);
+        renderer.upload(&crate::worker::Halves::from_image(image, None));
+        let view = View {
+            center: (w as f32 / 2.0, h as f32 / 2.0),
+            plane: (w as f32, h as f32),
+            frame_size: (w as f32, h as f32),
+            locals: locals.clone(),
+            ..View::with_look(edit)
+        };
+        let target = renderer.render(w as u32, h as u32, &view).0;
+        let shown = renderer.read_back(&target).expect("read back");
+        let gpu = shown.pixels().flat_map(|p| [p[0], p[1], p[2]]).collect();
+        let (iw, ih) = (w as f32, h as f32);
+        let vignette = edit.vignette;
+        let cpu = crate::finish::finish_with(
+            image,
+            None,
+            &Baked::global(edit, Source::Scene),
+            &locals,
+            |x, y| ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / iw),
+            |x, y| {
+                let (u, v) = ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / ih);
+                let stops = if vignette.is_off() {
+                    0.0
+                } else {
+                    vignette.amount * vignette.at(u, v, iw / ih)
+                };
+                (stops, None)
+            },
+            None,
+            None,
+            &crate::export::Space::Srgb.matrix(),
+            |v| (v * 255.0).round() as u8,
+        );
+        (cpu, gpu)
+    }
+
+    /// The stacked corner the random draws found the shader's display
+    /// curve going black at: global exposure +5, contrast 2 and whites
+    /// +2, the vignette's +5 at the corners, and a mask over everything
+    /// at +5 more, on a pixel of 6. The scene comes to around 1e31, past
+    /// where the fit's squares overflow; both sides make it white.
+    #[test]
+    fn the_stacked_corner_is_white_on_both_sides() {
+        let Some((device, queue)) = device("the stacked corner's check") else {
+            return;
+        };
+        let (w, h) = (8usize, 6usize);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: vec![6.0; w * h * 3],
+        };
+        let mut edit = greycard_edit::Edit::default();
+        edit.light.exposure = 5.0;
+        edit.light.tone.contrast = 2.0;
+        edit.light.tone.whites = 2.0;
+        edit.vignette.amount = 5.0;
+        let mut look = Look::default();
+        look.light.exposure = 5.0;
+        edit.adjustments.push(everywhere(look));
+        let (cpu, gpu) = both_sides(&device, &queue, &image, &edit);
+        assert!(cpu.iter().all(|&v| v == 255), "the CPU: {cpu:?}");
+        assert!(gpu.iter().all(|&v| v == 255), "the GPU: {gpu:?}");
+    }
+
+    /// Contrast summed to nothing and under: the picture's 0.5 and one
+    /// or two masks over everything at 0.5 sum to 0 and -0.5, which
+    /// both sides hold at `MIN_CONTRAST` (a power of zero took black to
+    /// mid grey on the CPU, and is undefined in the shader). Black
+    /// stays black, and the two sides agree over a ramp.
+    #[test]
+    fn stacked_flattenings_agree_on_both_sides() {
+        let Some((device, queue)) = device("the stacked flattenings' check") else {
+            return;
+        };
+        let (w, h) = (16usize, 2usize);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: (0..w * h)
+                .flat_map(|i| {
+                    let v = if i % w == 0 {
+                        0.0
+                    } else {
+                        0.002 * 2f32.powf((i % w) as f32 * 0.6)
+                    };
+                    [v, v * 0.8, v * 1.1]
+                })
+                .collect(),
+        };
+        for n in [1, 2] {
+            let mut edit = greycard_edit::Edit::default();
+            edit.light.tone.contrast = 0.5;
+            for _ in 0..n {
+                let mut look = Look::default();
+                look.light.tone.contrast = 0.5;
+                edit.adjustments.push(everywhere(look));
+            }
+            let (cpu, gpu) = both_sides(&device, &queue, &image, &edit);
+            assert_eq!(&cpu[..3], &[0, 0, 0], "{n}: the CPU's black");
+            assert_eq!(&gpu[..3], &[0, 0, 0], "{n}: the GPU's black");
+            let worst = cpu.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max();
+            assert!(worst <= Some(2), "{n}: {cpu:?} against {gpu:?}");
+        }
+    }
+
+    /// The viewport's shader against the export's finish over a few
+    /// hundred random edits, over a small frame of saturated colors,
+    /// near black and clipped highlights. Each edit draws every look
+    /// slider the viewport previews over the range its panel gives it,
+    /// a fifth of the time at each end (the Light section and its
+    /// switch, the point, parametric and color curves, the grading,
+    /// the mixer, the color, the black and white, the tint, the
+    /// vignette and the grain), two or three local adjustments with
+    /// their own looks under masks of gradients, radials, brushes, a
+    /// learned raster (Subject) present or missing, and luminance and
+    /// color windows, in every mode, a look table, a source of a scene
+    /// or a picture already rendered, an output space and a guide
+    /// plane.
+    ///
+    /// Both sides are built from the edit the way the app builds them:
+    /// the locals by `Local::of`, as the viewport and the export bake
+    /// them, the view's look by `View::with_look`, the guide handed to
+    /// the CPU only where `export::reads_guide` says the export reads
+    /// it, the vignette and the grain by frame position as
+    /// `export::render` has them. The CPU is handed the picture, the
+    /// guide and the look tables the GPU holds, rounded to half
+    /// floats. Every encoded channel of every pixel is held to 2.5
+    /// levels of the CPU's bracket (`NUDGE`).
+    ///
+    /// Not covered: the white balance the viewport previews
+    /// (`View::white`), the geometry (zoom, turns, crop, perspective,
+    /// the cubic reader), the export's mask sample from before its
+    /// output sharpen (`sampled`), the Background, Sky and Object
+    /// shapes (rasters as Subject's is, not drawn), the mask and
+    /// clipping overlays, the display table and the soft proof, and
+    /// the encoded picture's path.
+    ///
+    /// `GREYCARD_PARITY_SEED` and `GREYCARD_PARITY_EDITS` change the
+    /// run; `GREYCARD_PARITY_ONLY` replays one edit, and
+    /// `GREYCARD_PARITY_SKIP` (names from `PARTS`, by commas) leaves
+    /// parts at their defaults. The first three failing edits are drawn
+    /// again with each part left at its default in turn, and the parts
+    /// whose removal brings them within the tolerance are named; an
+    /// amplifier's removal does that as well as a cause's.
+    #[test]
+    fn the_shader_is_the_cpu_over_random_edits() {
+        let Some((device, queue)) = device("the random parity check") else {
+            return;
+        };
+        let env = |name: &str| {
+            std::env::var(name).ok().and_then(|v| {
+                let v = v.trim();
+                match v.strip_prefix("0x") {
+                    Some(hex) => u64::from_str_radix(hex, 16).ok(),
+                    None => v.parse().ok(),
+                }
+            })
+        };
+        let seed = env("GREYCARD_PARITY_SEED").unwrap_or(0x6772_6579);
+        let edits = env("GREYCARD_PARITY_EDITS").unwrap_or(400);
+        let only = env("GREYCARD_PARITY_ONLY");
+        let skip = std::env::var("GREYCARD_PARITY_SKIP")
+            .map(|names| {
+                names
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .fold(0, |s, n| {
+                        assert!(
+                            PARTS.contains(&n),
+                            "GREYCARD_PARITY_SKIP: no part {n:?}; the parts are {PARTS:?}"
+                        );
+                        s | part(n)
+                    })
+            })
+            .unwrap_or(0);
+        let started = std::time::Instant::now();
+        let image = parity_frame();
+        let (w, h) = (image.width, image.height);
+        let aspect = h as f32 / w as f32;
+        let seen = WorkingImage {
+            width: w,
+            height: h,
+            data: image
+                .data
+                .iter()
+                .map(|v| half::f16::from_f32(*v).to_f32())
+                .collect(),
+        };
+        // Two guide planes: the picture's own, which at this size is a
+        // texel a pixel, so `guide_at` never falls between texels; and
+        // its mean over blocks of four, as a frame larger than
+        // `GUIDE_EDGE` has it, read between texels everywhere.
+        // Half floats on the GPU (`set_guide`), so the CPU is handed
+        // them rounded the same way, as it is the picture and the look
+        // tables.
+        let native = crate::finish::guide_plane(&seen);
+        let coarse = {
+            let s = 4;
+            let (gw, gh) = (w / s, h / s);
+            let data = (0..gh)
+                .flat_map(|y| (0..gw).map(move |x| (x, y)))
+                .map(|(x, y)| {
+                    let block =
+                        (0..s * s).map(|k| native.data[(y * s + k / s) * w + x * s + k % s]);
+                    block.sum::<f32>() / (s * s) as f32
+                })
+                .collect();
+            crate::finish::Guide {
+                width: gw,
+                height: gh,
+                scale: s,
+                data,
+            }
+        };
+        let guides = [native, coarse].map(|mut g| {
+            for v in &mut g.data {
+                *v = half::f16::from_f32(*v).to_f32();
+            }
+            g
+        });
+        let pool = raster_pool(seed, aspect);
+        let tables = look_tables();
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        // The picture with each channel in turn moved by `NUDGE` of the
+        // pixel's largest, up and down.
+        let nudged: Vec<WorkingImage> = NUDGES
+            .into_iter()
+            .flat_map(|step| [step, -step])
+            .flat_map(|step| (0..3).map(move |c| (step, c)))
+            .map(|(step, c)| {
+                let mut n = seen.clone();
+                for px in n.data.chunks_mut(3) {
+                    let top = px.iter().fold(0.0f32, |a, &b| a.max(b));
+                    px[c] += step * NUDGE * top;
+                }
+                n
+            })
+            .collect();
+        // One case through both sides.
+        let mut run = |case: &Case| -> Outcome {
+            let edit = &case.edit;
+            let locals: Vec<Local> = edit
+                .adjustments
+                .iter()
+                .zip(&case.rasters)
+                .take(MAX_LOCALS)
+                .map(|(a, rasters)| Local::of(a, rasters.clone()))
+                .collect();
+            renderer.set_look(case.look.as_ref());
+            renderer.set_output(case.space.matrix());
+            let guide = case.guide.map(|k| &guides[k]);
+            renderer.set_guide(guide.unwrap_or(&crate::finish::Guide::NONE));
+            let view = View {
+                center: (w as f32 / 2.0, h as f32 / 2.0),
+                plane: (w as f32, h as f32),
+                frame_size: (w as f32, h as f32),
+                locals: locals.clone(),
+                source: case.source,
+                ..View::with_look(edit)
+            };
+            let target = renderer.render(w as u32, h as u32, &view).0;
+            let shown = renderer.read_back(&target).expect("read back");
+            // The export's side, as `export::render` sets it up: the
+            // guide only where it says the export reads one.
+            let reads = crate::export::reads_guide(edit);
+            let global = Baked::global(edit, case.source);
+            let (iw, ih) = (w as f32, h as f32);
+            let vignette = edit.vignette;
+            let grain = edit.grain;
+            let frame_at = |x: usize, y: usize| {
+                let (u, v) = ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / ih);
+                let stops = if vignette.is_off() {
+                    0.0
+                } else {
+                    vignette.amount * vignette.at(u, v, iw / ih)
+                };
+                let noise = (!grain.is_off()).then(|| grain.at(u, v, iw / ih));
+                (stops, noise)
+            };
+            let look = case.look.as_ref().filter(|l| !l.is_off());
+            let finish = |image: &WorkingImage, global: &Baked| {
+                crate::finish::finish_with(
+                    image,
+                    None,
+                    global,
+                    &locals,
+                    |x, y| ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / iw),
+                    frame_at,
+                    guide.filter(|_| reads).map(|g| (g, iw)),
+                    look,
+                    &case.space.matrix(),
+                    |v: f32| v,
+                )
+            };
+            let cpu = finish(&seen, &global);
+            let around: Vec<Vec<f32>> = nudged.iter().map(|n| finish(n, &global)).collect();
+            let mut out = Outcome {
+                worst: 0.0,
+                at: (0, 0, 0),
+                cpu: [0.0; 3],
+                gpu: [0.0; 3],
+                steep: 0,
+                wide: 0,
+                answers: Vec::new(),
+            };
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * w + x) * 3;
+                    let gpu = shown.get_pixel(x as u32, y as u32);
+                    let gpu = [0, 1, 2].map(|c| f32::from(gpu[c]) / 255.0);
+                    let here = [cpu[i], cpu[i + 1], cpu[i + 2]];
+                    let mut steep = false;
+                    for c in 0..3 {
+                        // The CPU's answers: the picture as it is and
+                        // nudged. The GPU is held to the nearest of
+                        // them, not to anything between the least and
+                        // the most, so a bracket spread over the whole
+                        // scale cannot pass a black. A NaN in the CPU's
+                        // own answer fails.
+                        let answers =
+                            || std::iter::once(here[c]).chain(around.iter().map(|a| a[i + c]));
+                        let (lo, hi) = answers()
+                            .fold((here[c], here[c]), |(lo, hi), v| (lo.min(v), hi.max(v)));
+                        steep |= hi - lo >= STEEP;
+                        out.wide += usize::from(hi - lo > WIDE);
+                        let d = if here[c].is_nan() {
+                            f32::NAN
+                        } else {
+                            answers()
+                                .map(|v| (v - gpu[c]).abs())
+                                .fold(f32::INFINITY, f32::min)
+                        };
+                        if d > out.worst || (d.is_nan() && !out.worst.is_nan()) {
+                            out.worst = d;
+                            out.at = (x, y, c);
+                            out.cpu = here;
+                            out.gpu = gpu;
+                            out.answers = answers().collect();
+                        }
+                    }
+                    out.steep += usize::from(steep);
+                }
+            }
+            out
+        };
+        let tolerance = 2.5 / 255.0;
+        let pixels = (w * h) as f64;
+        let mut failed = Vec::new();
+        let mut overall = 0.0f32;
+        let mut steep_sum = 0.0f64;
+        let mut wide = 0usize;
+        let mut steepest = (0.0f64, 0u64);
+        let range = match only {
+            Some(k) => k..k + 1,
+            None => 0..edits,
+        };
+        for k in range {
+            let case = random_case(seed, k, skip, aspect, &pool, &tables);
+            let Outcome {
+                worst: d,
+                at: (x, y, c),
+                cpu,
+                gpu,
+                steep,
+                wide: n,
+                answers,
+            } = run(&case);
+            wide += n;
+            let share = steep as f64 / pixels;
+            steep_sum += share;
+            if share > steepest.0 {
+                steepest = (share, k);
+            }
+            if !d.is_nan() {
+                overall = overall.max(d);
+            }
+            let too_steep = share > STEEP_SHARE;
+            if d <= tolerance && !too_steep {
+                continue;
+            }
+            let i = (y * w + x) * 3;
+            eprintln!(
+                "seed {seed:#x} edit {k}: {:.1} levels from the nearest CPU answer at {x},{y} \
+                 channel {c} (cpu {cpu:.4?}, gpu {gpu:.4?}); the pixel {:?}; \
+                 {:.1}% of pixels steep",
+                d * 255.0,
+                &seen.data[i..i + 3],
+                100.0 * share
+            );
+            eprintln!(
+                "  the CPU's answers there, in levels: {:?}",
+                answers
+                    .iter()
+                    .map(|v| (v * 255.0 * 10.0).round() / 10.0)
+                    .collect::<Vec<_>>()
+            );
+            // Which part it is in, for the first few: drawn again
+            // without each.
+            let mut parts = Vec::new();
+            if failed.len() < 3 {
+                for (b, name) in PARTS.iter().enumerate() {
+                    let without = random_case(seed, k, skip | 1 << b, aspect, &pool, &tables);
+                    let o = run(&without);
+                    if o.worst <= tolerance && o.steep as f64 / pixels <= STEEP_SHARE {
+                        parts.push(*name);
+                    }
+                }
+                eprintln!("  within tolerance without: {parts:?}");
+            }
+            if only.is_some() {
+                eprintln!("  {:#?}", case.edit);
+                eprintln!(
+                    "  look {:?}, source {:?}, guide {:?}, space {:?}",
+                    case.look.as_ref().map(|l| (l.lut.size, l.strength)),
+                    case.source,
+                    case.guide,
+                    case.space
+                );
+            }
+            failed.push((k, d, share, parts));
+        }
+        let count = if only.is_some() { 1 } else { edits };
+        let mean = steep_sum / count as f64;
+        eprintln!(
+            "{count} edits, GPU against CPU: at most {:.2} levels from the nearest CPU answer, \
+             {} failing; steep pixels {:.3}% on average, most {:.2}% (edit {}); \
+             {wide} channels' answers over {:.0} levels apart; in {:.1} s",
+            overall * 255.0,
+            failed.len(),
+            100.0 * mean,
+            100.0 * steepest.0,
+            steepest.1,
+            WIDE * 255.0,
+            started.elapsed().as_secs_f64()
+        );
+        // A single edit replayed has no run to hold to the mean.
+        assert!(
+            only.is_some() || mean <= STEEP_MEAN,
+            "seed {seed:#x}: {:.2}% of pixels steep over the run",
+            100.0 * mean
+        );
+        assert!(
+            failed.is_empty(),
+            "seed {seed:#x}: {} edits failing (over {:.1} levels, or over {:.0}% steep): {:?}",
+            failed.len(),
+            tolerance * 255.0,
+            STEEP_SHARE * 100.0,
+            failed
+                .iter()
+                .map(|(k, d, s, p)| format!(
+                    "{k} ({:.1} levels, {:.1}% steep: {p:?})",
+                    d * 255.0,
+                    s * 100.0
+                ))
+                .collect::<Vec<_>>()
+        );
     }
 }
