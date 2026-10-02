@@ -1228,12 +1228,47 @@ fn land_count(
 /// The Delete sheet's line: whether the frames are on an archive, by
 /// the same lookup, off the window's thread. A line, not a refusal.
 pub(crate) fn delete_line(st: &mut State, app: &App, frames: &[PathBuf]) {
-    let archives = st.library.roots.archives().to_vec();
+    let mut archives = st.library.roots.archives().to_vec();
     if archives.is_empty() || frames.is_empty() {
         app.set_delete_archive("".into());
         return;
     }
-    app.set_delete_archive("Looking for these on the archives...".into());
+    // Frames that are themselves on an archive (its chip view) are the
+    // archive's copies: the question for them is whether a copy is
+    // anywhere else, on a local root or another archive, since the
+    // lookup never finds a frame at its own path. The roots looked at
+    // are then every root but the archives the frames are on.
+    let own: Vec<PathBuf> = frames
+        .iter()
+        .filter_map(|f| st.library.roots.archive_of(f).map(Path::to_path_buf))
+        .collect();
+    let elsewhere = frames.len() == own.len();
+    if elsewhere {
+        archives = st
+            .library
+            .roots
+            .list()
+            .iter()
+            .filter(|r| !own.contains(r))
+            .cloned()
+            .collect();
+        if archives.is_empty() {
+            app.set_delete_archive(if frames.len() == 1 {
+                "It is on no other root.".into()
+            } else {
+                format!("All {} are on no other root.", frames.len()).into()
+            });
+            return;
+        }
+    }
+    app.set_delete_archive(
+        if elsewhere {
+            "Looking for copies of these on the other roots..."
+        } else {
+            "Looking for these on the archives..."
+        }
+        .into(),
+    );
     st.archive.delete_token += 1;
     let token = st.archive.delete_token;
     let frames: Vec<PathBuf> = frames.iter().map(|f| keyed(st, f)).collect();
@@ -1272,7 +1307,7 @@ pub(crate) fn delete_line(st: &mut State, app: &App, frames: &[PathBuf]) {
                     unknown: w.unknown.into_iter().map(|k| into[k]).collect(),
                 })
                 .collect();
-            delete_words(&labels, &answered, &on)
+            delete_words(&labels, &answered, &on, elsewhere)
         },
         land_delete,
     );
@@ -1304,20 +1339,32 @@ fn land_delete(
 /// The Delete sheet's words: all the frames on one archive, all on
 /// some archive, or how many are on none; how many could not be told
 /// without reading them whole (the look never does: the Back up sheet's
-/// does); and the archives that did not answer.
-pub(crate) fn delete_words(labels: &[String], answered: &[bool], on: &[archive::Where]) -> String {
+/// does); and the archives that did not answer. With `elsewhere` the
+/// frames are an archive's own and the roots looked at are the others,
+/// so the words say "also on" and "no other root".
+pub(crate) fn delete_words(
+    labels: &[String],
+    answered: &[bool],
+    on: &[archive::Where],
+    elsewhere: bool,
+) -> String {
     let n = on.len();
     let unknown = on
         .iter()
         .filter(|w| w.on.is_empty() && !w.unknown.is_empty())
         .count();
+    let (also, none_of, an) = if elsewhere {
+        ("also on", "no other root", "another root")
+    } else {
+        ("on", "no archive", "an archive")
+    };
     let mut words = if n == 0 {
         String::new()
     } else if let Some(k) = (0..labels.len()).find(|k| on.iter().all(|w| w.on.contains(k))) {
         if n == 1 {
-            format!("It is on {}.", labels[k])
+            format!("It is {also} {}.", labels[k])
         } else {
-            format!("All {n} are on {}.", labels[k])
+            format!("All {n} are {also} {}.", labels[k])
         }
     } else {
         let none = on
@@ -1325,19 +1372,19 @@ pub(crate) fn delete_words(labels: &[String], answered: &[bool], on: &[archive::
             .filter(|w| w.on.is_empty() && w.unknown.is_empty())
             .count();
         match none {
-            0 if unknown == 0 => format!("All {n} are on an archive."),
+            0 if unknown == 0 => format!("All {n} are {also} {an}."),
             0 => String::new(),
-            1 if n == 1 => "It is on no archive.".to_string(),
-            1 => "1 of these is on no archive.".to_string(),
-            none => format!("{none} of these are on no archive."),
+            1 if n == 1 => format!("It is on {none_of}."),
+            1 => format!("1 of these is on {none_of}."),
+            none => format!("{none} of these are on {none_of}."),
         }
     };
     match unknown {
         0 => {}
-        1 if n == 1 => words.push_str(
-            " Whether it is on an archive could not be told without reading it whole \
-             (Back up's sheet reads it).",
-        ),
+        1 if n == 1 => words.push_str(&format!(
+            " Whether it is {also} {an} could not be told without reading it whole \
+             (Back up's sheet reads it)."
+        )),
         u => words.push_str(&format!(
             " {u} could not be told without reading them whole (Back up's sheet reads them)."
         )),
@@ -1633,42 +1680,57 @@ pub(crate) mod tests {
         let labels = vec!["Archive".to_string(), "Cloud".to_string()];
         let both = [true, true];
         assert_eq!(
-            delete_words(&labels, &both, &on(&[&[0], &[0, 1], &[0]])),
+            delete_words(&labels, &both, &on(&[&[0], &[0, 1], &[0]]), false),
             "All 3 are on Archive."
         );
         assert_eq!(
-            delete_words(&labels, &both, &on(&[&[0], &[1]])),
+            delete_words(&labels, &both, &on(&[&[0], &[1]]), false),
             "All 2 are on an archive."
         );
         assert_eq!(
-            delete_words(&labels, &both, &on(&[&[0], &[], &[]])),
+            delete_words(&labels, &both, &on(&[&[0], &[], &[]]), false),
             "2 of these are on no archive."
         );
         assert_eq!(
-            delete_words(&labels, &both, &on(&[&[1]])),
+            delete_words(&labels, &both, &on(&[&[1]]), false),
             "It is on Cloud."
         );
         assert_eq!(
-            delete_words(&labels, &both, &on(&[&[]])),
+            delete_words(&labels, &both, &on(&[&[]]), false),
             "It is on no archive."
         );
         assert_eq!(
-            delete_words(&labels, &[true, false], &on(&[&[], &[0]])),
+            delete_words(&labels, &[true, false], &on(&[&[], &[0]]), false),
             "1 of these is on no archive. Cloud did not answer, and was not looked at."
         );
         // Unknowns: never counted as on, and said.
         let mut some = on(&[&[0], &[], &[]]);
         some[1].unknown = vec![0];
         assert_eq!(
-            delete_words(&labels, &both, &some),
+            delete_words(&labels, &both, &some, false),
             "1 of these is on no archive. 1 could not be told without reading them whole \
              (Back up's sheet reads them)."
         );
         let mut all = on(&[&[0], &[]]);
         all[1].unknown = vec![0];
         assert_eq!(
-            delete_words(&labels, &both, &all),
+            delete_words(&labels, &both, &all, false),
             "1 could not be told without reading them whole (Back up's sheet reads them)."
+        );
+        // The archive's own frames: the other roots looked at, and the
+        // words say so.
+        let others = vec!["Laptop".to_string(), "Cloud".to_string()];
+        assert_eq!(
+            delete_words(&others, &both, &on(&[&[0], &[0]]), true),
+            "All 2 are also on Laptop."
+        );
+        assert_eq!(
+            delete_words(&others, &both, &on(&[&[]]), true),
+            "It is on no other root."
+        );
+        assert_eq!(
+            delete_words(&others, &both, &on(&[&[0], &[], &[1]]), true),
+            "1 of these is on no other root."
         );
         assert_eq!(header_words(0, 0, "nas"), "All on nas");
         assert_eq!(header_words(0, 2, "nas"), "2 frames not known on nas");
