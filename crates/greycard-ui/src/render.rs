@@ -2441,7 +2441,8 @@ mod tests {
     /// A device of our own, off any window; none without an adapter,
     /// and the test says so rather than passing in silence.
     fn device(what: &str) -> Option<(gpu::Device, gpu::Queue)> {
-        let instance = gpu::Instance::new(gpu::InstanceDescriptor::new_without_display_handle());
+        let instance =
+            gpu::Instance::new(gpu::InstanceDescriptor::new_without_display_handle_from_env());
         let got = pollster::block_on(instance.request_adapter(&gpu::RequestAdapterOptions {
             power_preference: gpu::PowerPreference::HighPerformance,
             ..Default::default()

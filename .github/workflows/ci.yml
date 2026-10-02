@@ -99,6 +99,11 @@ jobs:
         # returning, so a broken lavapipe cannot pass the GPU tests by
         # skipping them. The Mac and Windows runners are not held to
         # it: Metal under virtualization and WARP are not promised.
+        # Vulkan alone, because wgpu ranks a GL adapter above a CPU
+        # Vulkan one, and a GL device made off any display is lost at
+        # creation (seen on NVIDIA's GL beside lavapipe); the instances
+        # read WGPU_BACKEND, as wgpu's own convention has it.
         env:
           GREYCARD_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '' }}
+          WGPU_BACKEND: ${{ runner.os == 'Linux' && 'vulkan' || '' }}
         run: cargo test

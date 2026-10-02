@@ -3462,7 +3462,8 @@ mod tests {
     /// the GPU paths into their errors; none without an adapter.
     fn context_with(limits: greycard_gpu::wgpu::Limits) -> Option<greycard_gpu::Context> {
         use greycard_gpu::wgpu;
-        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()
