@@ -59,15 +59,19 @@ jobs:
 
       - name: Native libraries
         # lcms2 for the profiles, fontconfig and wayland for Slint's
-        # backend, xkbcommon for its keyboard. A Mac needs nothing
-        # beyond Xcode's tools, and neither does Windows, where lcms2
-        # builds from its own source with no pkg-config to find one.
+        # backend, xkbcommon for its keyboard, and Mesa's Vulkan
+        # drivers for lavapipe, the software GPU the GPU tests run on:
+        # a hosted runner has no other adapter, and without one every
+        # GPU-against-CPU test returned at its first line and passed
+        # green without running. A Mac needs nothing beyond Xcode's
+        # tools, and neither does Windows, where lcms2 builds from its
+        # own source with no pkg-config to find one.
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             liblcms2-dev libfontconfig1-dev libwayland-dev libxkbcommon-dev \
-            pkg-config
+            pkg-config mesa-vulkan-drivers
 
       - name: MSVC toolsets on this runner
         # Printed before the build, not after it fails: an older
@@ -91,4 +95,10 @@ jobs:
         run: cargo clippy --all-targets -- -D warnings
 
       - name: cargo test
+        # On Linux a GPU test that finds no adapter fails instead of
+        # returning, so a broken lavapipe cannot pass the GPU tests by
+        # skipping them. The Mac and Windows runners are not held to
+        # it: Metal under virtualization and WARP are not promised.
+        env:
+          GREYCARD_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '' }}
         run: cargo test

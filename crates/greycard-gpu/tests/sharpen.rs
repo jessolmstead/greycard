@@ -13,11 +13,22 @@ fn context() -> Option<Context> {
     match Context::own() {
         Ok(c) => Some(c),
         Err(e) => {
+            require_gpu(&format!("the GPU sharpen has nothing to run on ({e})"));
             eprintln!("SKIPPED: the GPU sharpen has nothing to run on ({e})");
             println!("SKIPPED: the GPU sharpen has nothing to run on ({e})");
             None
         }
     }
+}
+
+/// Under CI the skip is a failure: the runner installs a software
+/// adapter so that these tests run, and a run that finds none has
+/// lost it, not earned a pass.
+fn require_gpu(why: &str) {
+    assert!(
+        std::env::var_os("GREYCARD_REQUIRE_GPU").is_none_or(|v| v.is_empty()),
+        "{why} and GREYCARD_REQUIRE_GPU is set"
+    );
 }
 
 /// A picture with detail in every tile: bars, spots and a color

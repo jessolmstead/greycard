@@ -2455,6 +2455,13 @@ mod tests {
             .ok()
         });
         if got.is_none() {
+            // Under CI the skip is a failure: the runner installs a
+            // software adapter so that these tests run, and a run
+            // that finds none has lost it, not earned a pass.
+            assert!(
+                std::env::var_os("GREYCARD_REQUIRE_GPU").is_none_or(|v| v.is_empty()),
+                "{what} has no GPU to run on and GREYCARD_REQUIRE_GPU is set"
+            );
             eprintln!("SKIPPED: {what} has no GPU to run on");
             println!("SKIPPED: {what} has no GPU to run on");
         }
