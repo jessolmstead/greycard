@@ -126,7 +126,7 @@ impl Previews {
     /// the pool, when that many are in hand already.
     pub(crate) fn take_for_picture(self: &Arc<Self>, path: &Path) -> Option<(Owed, InHand)> {
         self.from_pictures
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < FROM_PICTURES_AT_ONCE).then_some(n + 1)
             })
             .ok()?;
