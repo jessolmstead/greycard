@@ -229,3 +229,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§216. Archive roots revised at the desk](notes/216-archive-roots-revised-at-the-desk.md) (2026-09-30)
 - [§217. Archive roots, part one: the mark, Back up and Bring back](notes/217-archive-roots-part-one-the-mark-back-up-and-bring-back.md) (2026-10-01)
 - [§218. Archive roots, part two: Remove rejects and its queue](notes/218-archive-roots-part-two-remove-rejects-and-its-queue.md) (2026-10-01)
+- [§219. The backup pairing is the folder's, not the root's](notes/219-the-backup-pairing-is-the-folders-not-the-roots.md) (2026-10-02)

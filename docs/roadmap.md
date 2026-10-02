@@ -15,11 +15,24 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-None open.
+- [ ] The backup pairing is the folder's, not the root's (§219): a
+      pairing per root claimed every archive folder under it; Back up
+      defaults to a sibling of the last destination from the root, Bring
+      back unwinds only an exact pairing, and a pairing whose folder is
+      gone is dropped
+- [ ] When clicking the backup button, the first click does nothing but
+      the sheet flashes. clicking again works
+- [ ] No way to move a reject (or set) back when unrejected. not a huge deal tho
+- [ ] The Move rejects button only moved one photo, not the rest. clicking
+      it again did not help.
+  - I think this is because these frames were rejected before and I moved
+    them back out via the file explorer because there was no way in greycard.
+    So it's a case study where the dir structure SHOULD be the source of truth.
 
 ## Tweaks
 
-None open.
+- [ ] Move rejects, delete rejects folder (and archive options) should be
+      available on the grid screen as well.
 
 ## Next: 0.4.0
 
@@ -160,6 +173,29 @@ A camera's own profile and look are a picker away, and a chart shot
 makes a new one. This and the library can swap order on what testers
 ask for first.
 
+- [ ] A scene-referred tail, one design in four parts. The display
+      curve is Narkowicz's fit of the ACES output transform run per
+      channel (finish.rs `tone`, §145), which turns a bright saturated
+      color's hue as it rolls off, blue toward magenta and red toward
+      yellow, and clips at 3.3 stops over mid grey. (1) Replace it with
+      a curve on a norm, the hue held and the desaturation toward white
+      an explicit, controlled step (darktable's sigmoid is GPL and
+      small; AgX and ACES 2.0 are the other designs to read). (2) The
+      master point curve on a norm too, the channels scaled by one
+      ratio, so a contrast curve changes tone and not chromaticity; the
+      R, G and B curves stay per channel, since moving one channel is
+      their point. The curves and the look table stay display-referred:
+      a curve's x axis is how bright a pixel is on screen, and that is
+      its contract, as every scene-referred editor keeps it. (3) A
+      gamut compression at constant hue after the curves and the look
+      table, before the output matrix, pulling back whatever any of
+      them pushed out of the output gamut, in place of the clamps at
+      the curve, in the look table and at the output. (4) The clamp
+      before the curves dropped once the curve's range is guaranteed,
+      a final clamp to the encodable range kept as the safety net. For
+      the viewport and the export alike. Every picture changes, so it
+      lands behind a comparison over the archive sets and its own notes
+      section
 - [ ] Camera match follow-ups (§181): a group's error held out over
       every frame rather than four, and that error deciding whether a
       new fit of the same body from another folder replaces the table
@@ -316,6 +352,8 @@ clears or a tester asks for it.
 
 #### Editor
 
+- [ ] Home and end should go to the beginning/end of the grid/filmstrip
+      when it is selected.
 - [ ] The panel's look, refined as the editor grows (§14); in develop
       order on Develop, Crop, Masks and Retouch tabs since 2026-09-14
 - [ ] Choose output color space/gamut for export: sRGB, Display P3 and
@@ -341,6 +379,21 @@ clears or a tester asks for it.
       WARP, slow but right; the develop already runs on the CPU, the
       viewport does not. A tester on such a machine decides whether
       the viewport wants a CPU path too
+- [ ] The shader checked against `finish_pixel` at random edits: a
+      few hundred edits drawn across every slider, mask shape and look,
+      rendered both ways and compared within a tolerance, so a drift
+      shows the day it is introduced; today the render tests check ten
+      cases, most at the default edit. And the GPU tests run in CI:
+      install lavapipe (`mesa-vulkan-drivers`) on the Linux runner and
+      have the test helper fail rather than return when no adapter is
+      found under CI, since today every GPU test passes green there
+      without running
+- [ ] A scene mode for the R, G and B curves: the color curves on
+      log-encoded scene values before the display curve, in stops about
+      mid grey, as a grading tool (what Resolve's log controls do),
+      beside the display-referred curves and not in their place; waits
+      on the scene-referred tail above, which decides where the curve
+      sits
 - [ ] Export naming patterns (a suffix, a sequence number, the date)
       on the sheet and in an export preset, for a set (§167)
 - [ ] Export naming patterns and a destination folder on the sheet,
