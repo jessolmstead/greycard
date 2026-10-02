@@ -10,6 +10,15 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The backup pairing is the folder's, not the root's: a root paired to
+  the archive's year folder no longer claims every shoot under that
+  year as its own on Bring back; the next Back up from a root opens
+  beside the last destination when that was named for its shoot and
+  inside it otherwise, Bring back unwinds only an exact pairing or one
+  whose source has the same subfolder here, a trailing slash in the
+  field is dropped, and a pairing whose archive folder is gone is
+  forgotten and said once while one whose local folder is gone is kept
+  for Bring back (§219)
 - Move rejects no longer refuses a frame whose sidecar from an earlier
   cull is still in the rejects folder after the raw was dragged back
   out by hand: a sidecar there with no raw of its name beside it is an

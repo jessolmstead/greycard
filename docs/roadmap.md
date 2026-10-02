@@ -15,11 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] The backup pairing is the folder's, not the root's (§219): a
-      pairing per root claimed every archive folder under it; Back up
-      defaults to a sibling of the last destination from the root, Bring
-      back unwinds only an exact pairing, and a pairing whose folder is
-      gone is dropped
 - [ ] When clicking the backup button, the first click does nothing but
       the sheet flashes. clicking again works
 - [ ] A move seen by the index carries the sidecar along: a pass that
