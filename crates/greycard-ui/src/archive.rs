@@ -1727,7 +1727,10 @@ mod tests {
         let (job_cancel, hold) = (cancel.clone(), held.clone());
         supervise(
             "test stall",
-            Duration::from_millis(100),
+            // Longer than a sync of the first frame on a slow disk
+            // (the Windows runner's), which does not beat: the stall
+            // this test means is the hold on the second frame.
+            Duration::from_secs(1),
             move |beat| {
                 let bytes = AtomicU64::new(0);
                 let hand = |f: &Path| {

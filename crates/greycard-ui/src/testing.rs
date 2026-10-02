@@ -221,6 +221,14 @@ pub(crate) fn rename_away(from: &std::path::Path, to: &std::path::Path) {
 pub(crate) fn remove_scratch(state: Rc<RefCell<State>>, dir: &std::path::Path) {
     state.borrow_mut().index_reader = None;
     drop(state);
+    remove_dir_retry(dir);
+}
+
+/// A test's folder removed, tried again for a while when the system
+/// refuses: on Windows a file a thread has just let go of can still be
+/// held for a moment after the thread was joined. The last refusal is
+/// the panic.
+pub(crate) fn remove_dir_retry(dir: &std::path::Path) {
     let start = std::time::Instant::now();
     loop {
         match std::fs::remove_dir_all(dir) {

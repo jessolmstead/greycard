@@ -4119,9 +4119,7 @@ mod tests {
         let _held = indexer.asker();
         indexer.stop(Duration::from_secs(20));
         eprintln!("stopped");
-        if let Err(e) = std::fs::remove_dir_all(&dir) {
-            panic!("the test's folder could not be removed: {e}");
-        }
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The first pixel of a row's picture on the window.
