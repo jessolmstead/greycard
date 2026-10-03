@@ -2678,7 +2678,7 @@ fn blend(model: &Arc<WorkingImage>, plain: &Arc<WorkingImage>, strength: f32) ->
 /// core names this constant), and every entry made the old way is a
 /// miss and is made again. The long edge is in the key already, so a
 /// change of the sizes made (`grid::MADE`) needs no bump.
-pub const THUMB_RECIPE: u16 = 1;
+pub const THUMB_RECIPE: u16 = 2;
 
 /// Count what `cache` holds on a thread of its own, walking the disk
 /// without its lock, and hand `then` what is known after: the count

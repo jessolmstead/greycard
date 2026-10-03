@@ -15,7 +15,9 @@ use greycard_core::develop::denoise::{
     DEFAULT_CHROMA, DEFAULT_HYBRID_FROM, DenoiseMethod, DenoiseOptions, Strength,
 };
 use greycard_core::develop::dual::{DualContrast, ThresholdSource};
-use greycard_core::develop::hotpixels::{DEFAULT_RATIO, DEFAULT_SIGMAS, HotPixelOptions};
+use greycard_core::develop::hotpixels::{
+    DEFAULT_OTHERS, DEFAULT_RATIO, DEFAULT_SIGMAS, HotPixelOptions,
+};
 use greycard_core::develop::local_contrast::{LocalContrastOptions, local_contrast};
 use greycard_core::develop::nlm::{DEFAULT_CENTER_WEIGHT, DEFAULT_SEARCH, NlmOptions};
 use greycard_core::develop::noise::MID_GREY;
@@ -231,10 +233,15 @@ enum Command {
         /// Leave lateral chromatic aberration uncorrected
         #[arg(long)]
         no_ca: bool,
-        /// Repair hot and dead photosites on the mosaic. Off by default and
-        /// not safe on: anything at most two photosites across looks hot to
-        /// it, catchlights and stars included
+        /// Leave hot and dead photosites as shot. The repair is on by
+        /// default: it takes a photosite far out from its own color's
+        /// neighbors only when the other colors round it sit at their
+        /// background, which a glint, a star or a catchlight never does
         #[arg(long)]
+        no_hot_pixels: bool,
+        /// The old switch, from when the repair was off by default: accepted
+        /// and ignored, with a warning, so scripts that pass it still run
+        #[arg(long, hide = true)]
         hot_pixels: bool,
         /// How far out a photosite must be, in standard deviations of the
         /// measured noise beyond its brightest or darkest same-color neighbor
@@ -244,6 +251,11 @@ enum Command {
         /// neighbor by
         #[arg(long, default_value_t = DEFAULT_RATIO)]
         hot_ratio: f32,
+        /// The factor the other colors' adjacent photosites may stand above
+        /// their own background with the site still a defect ("inf" leaves
+        /// the test out)
+        #[arg(long, default_value_t = DEFAULT_OTHERS)]
+        hot_others: f32,
         /// Capture sharpening: Richardson-Lucy deconvolution of the
         /// luminance, blended in by local contrast
         #[arg(long)]
@@ -471,9 +483,11 @@ fn main() -> Result<()> {
             combine,
             candidating,
             no_ca,
+            no_hot_pixels,
             hot_pixels,
             hot_sigmas,
             hot_ratio,
+            hot_others,
             sharpen,
             sharpen_radius,
             sharpen_iterations,
@@ -505,6 +519,12 @@ fn main() -> Result<()> {
         } => {
             if dng.is_none() && output.is_none() && preview.is_none() {
                 anyhow::bail!("nothing to write: pass --dng, --output and/or --preview");
+            }
+            if hot_pixels {
+                tracing::warn!(
+                    "--hot-pixels does nothing now: the repair is on by default, and \
+                     --no-hot-pixels turns it off"
+                );
             }
             let white_point = match temp {
                 Some(cct) => WhitePoint::TempTint(TempTint { cct, duv: tint }),
@@ -545,9 +565,10 @@ fn main() -> Result<()> {
                 } else {
                     Some(Default::default())
                 },
-                hot_pixels: hot_pixels.then_some(HotPixelOptions {
+                hot_pixels: (!no_hot_pixels).then_some(HotPixelOptions {
                     sigmas: hot_sigmas,
                     ratio: hot_ratio,
+                    others: hot_others,
                 }),
                 sharpen: sharpen.then_some(sharpen::SharpenOptions {
                     radius: match sharpen_radius.0 {
@@ -787,10 +808,10 @@ fn develop_learned(
 /// same scene luminance: no gradient there, which costs the fit
 /// nothing it had, and no disagreement either.
 ///
-/// Hot photosite repair is on, which nothing else in this command
-/// defaults to: a stuck photosite is a bright speck in every frame at
-/// the same sensor position, which is to say a feature that does not
-/// move, and the fit would rather not be shown one.
+/// Hot photosite repair is on, as the develop's default has it: a
+/// stuck photosite is a bright speck in every frame at the same sensor
+/// position, which is to say a feature that does not move, and the fit
+/// would rather not be shown one.
 fn luminance_of(file: &std::path::Path) -> Result<(Vec<f32>, usize, usize)> {
     let image = if greycard_core::picture::is_picture_path(file) {
         greycard_core::picture::decode_picture_path(file)
@@ -802,10 +823,6 @@ fn luminance_of(file: &std::path::Path) -> Result<(Vec<f32>, usize, usize)> {
             demosaic: DemosaicMethod::Bilinear,
             highlights: HighlightMode::Clip,
             chromatic_aberration: None,
-            hot_pixels: Some(HotPixelOptions {
-                sigmas: DEFAULT_SIGMAS,
-                ratio: DEFAULT_RATIO,
-            }),
             ..Default::default()
         };
         develop(&frame, &settings)
@@ -3000,10 +3017,6 @@ fn stack_files(
         demosaic: DemosaicMethod::Bilinear,
         highlights: HighlightMode::Clip,
         chromatic_aberration: None,
-        hot_pixels: Some(HotPixelOptions {
-            sigmas: DEFAULT_SIGMAS,
-            ratio: DEFAULT_RATIO,
-        }),
         ..Default::default()
     };
 

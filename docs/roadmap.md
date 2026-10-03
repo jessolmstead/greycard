@@ -15,21 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A hot photosite renders as a blown blue dot: in the backlit
-      couple (DSCF0599.RAF) one blue site reads 34 times its same-color
-      neighbors (4453 against a background near 100 in the linear
-      develop); the demosaic spreads it to a 5 by 5 pure-blue cluster
-      with a black ring, the sharpen draws a yellow halo round it, and
-      the Lanczos shrink to 1600 keeps it saturated. The hot pixel pass
-      (`develop::hotpixels`, darktable's rule) removes it cleanly but
-      is off, since anything two photosites across looks hot to it, a
-      catchlight included. What separates this defect from a glint:
-      the hot site is one color while the other colors' sites round it
-      sit at the background, where a catchlight or a star lights every
-      color. Try a default-on rule that asks for that, measured on the
-      portrait whose catchlight the old rule took, the stars frame and
-      this one; the per-camera defect map (the pool, §13s) stays the
-      answer for a site this rule misses
 - [ ] The random parity test fails past the seeds it was set from: with
       the display curve left as it is, seed 29 edit 51 is 7.7 levels
       apart on NVIDIA (the parts named: light, point curves, color,
@@ -538,6 +523,15 @@ clears or a tester asks for it.
 - [ ] X-Trans demosaic. Waits on an X-Trans frame to test against
 - [ ] Per-camera hot pixel defect map. Waits on a place for per-camera
       data and a way to take dark frames in (§13s)
+- [ ] A per-photo switch for the hot pixel repair in the edit schema,
+      since a misfire (a colored point light one site across on busy
+      texture) has no escape in the editor; only the CLI turns it off
+      (§229)
+- [ ] The hot pixel others test counts a neighbor as lit by ratio and
+      sigma alone, so a defect's own bleed into the next photosite
+      (about three percent of its excess) spares it; ask the excess to
+      be a fraction of the candidate's, measured on the lanterns' one
+      recurring site (§229)
 - [ ] The sharpen's corner radius offset. Waits on a per-lens notion (§21)
 - [ ] Segment highlights' rebuild modes. Waits on a frame that shows the
       need (§13o)

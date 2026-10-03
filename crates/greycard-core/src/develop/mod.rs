@@ -59,7 +59,9 @@ pub struct DevelopSettings {
     /// measured on the frame; `None` leaves the noise.
     pub denoise: Option<denoise::DenoiseOptions>,
     /// Hot and dead photosite repair on the mosaic, against the noise
-    /// measured on the frame; `None` leaves them.
+    /// measured on the frame; `None` leaves them. On by default: the
+    /// repair takes a site only when the other colors round it sit at
+    /// their background, which a glint or a catchlight never does.
     pub hot_pixels: Option<hotpixels::HotPixelOptions>,
     /// Capture sharpening on the working image, last; `None` leaves the
     /// picture as the lens and the demosaic made it.
@@ -102,7 +104,7 @@ impl Default for DevelopSettings {
             chromatic_aberration: Some(ca::CaOptions::default()),
             dual_contrast: dual::DualContrast::default(),
             denoise: None,
-            hot_pixels: None,
+            hot_pixels: Some(hotpixels::HotPixelOptions::default()),
             sharpen: None,
             dehaze: None,
             orientation: None,

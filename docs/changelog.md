@@ -10,6 +10,15 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The hot pixel repair on by default: a candidate (darktable's rule,
+  six sigmas and three times its same-color neighbors) is repaired only
+  when none of the other three colors' sites round it is lit, since a
+  defect is one color where a glint, a star or a catchlight lights
+  every color; a floor under the noise so clamped black is not read as
+  defects; the catchlight portrait identical to repair off, the point
+  lights kept, the backlit couple's blue dot gone; `--no-hot-pixels`
+  and `--hot-others` on the CLI, `--hot-pixels` kept hidden for a
+  release (§229)
 - A Rejects menu in the grid's header, with the count on its button:
   Move rejects, Move back, Delete rejects folder and Remove rejects
   from each archive, the same callbacks and sheets as CULLING's; the
