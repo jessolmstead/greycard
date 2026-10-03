@@ -15,6 +15,17 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] The random parity test fails past the seeds it was set from: with
+      the display curve left as it is, seed 29 edit 51 is 7.7 levels
+      apart on NVIDIA (the parts named: light, point curves, color,
+      locals), and seeds 16, 23 and 32 pass the 15 percent steep cap,
+      seed 32 at 29.7 percent; the cap and the tolerance were set from
+      seeds 1 to 10 (§221); with Hold hue to white drawn, seed 16 edit
+      43 is 3.9 levels apart on lavapipe at a channel at zero under
+      steep curves, where the chroma weight's slope sits (§226), and
+      seed 12 edit 28 passes the cap by CPU sensitivity at the white
+      face. Run the seeds further out, find what the failing edits
+      share, and fix the divergence or justify the bound
 
 ## Tweaks
 
@@ -59,6 +70,17 @@ Look section's job.
       `application:openURLs:` is written but has not run on a Mac;
       try a double-click, Open With and a Dock drop, at launch and
       while it runs (§148)
+- [ ] The yellow skew, once Hold hue to white has been lived with: a
+      bright red held at its hue goes to white through pink, which the
+      eye reads as a pale object, where film, the camera's JPEG and
+      the per-channel curve take it through yellow, which reads as a
+      thing lit; AgX keeps that drift on purpose, as a chosen rotation
+      and not a channel's accident. Decide whether the step toward
+      white turns bright reds toward yellow, by how much and over
+      which hues, as parameters of the step; judged on screen on the
+      lanterns, the sunset and a skin frame, both ways behind the
+      switch, by the track's rule. Waits on the scene-referred tail's
+      part (1)
 - [ ] Reference frames for the feel: eight frames with a Lightroom edit
       each and the greycard values that match, a check of the default
       develop's brightness against the embedded JPEG, a slider response
@@ -164,10 +186,10 @@ ask for first.
       curve is Narkowicz's fit of the ACES output transform run per
       channel (finish.rs `tone`, §145), which turns a bright saturated
       color's hue as it rolls off, blue toward magenta and red toward
-      yellow, and clips at 3.3 stops over mid grey. (1) Replace it with
-      a curve on a norm, the hue held and the desaturation toward white
-      an explicit, controlled step (darktable's sigmoid is GPL and
-      small; AgX and ACES 2.0 are the other designs to read). (2) The
+      yellow, and clips at 3.3 stops over mid grey. (1) landed behind
+      the Hold hue to white switch (§226): the curve on a norm, the hue
+      held, the step toward white explicit but not yet controlled (part
+      (1b) below). (2) The
       master point curve on a norm too, the channels scaled by one
       ratio, so a contrast curve changes tone and not chromaticity; the
       R, G and B curves stay per channel, since moving one channel is
@@ -183,6 +205,65 @@ ask for first.
       the viewport and the export alike. Every picture changes, so it
       lands behind a comparison over the archive sets and its own notes
       section
+- [ ] The step toward white given a control, part (1b) of the tail.
+      Part (1) holds the hue but its step has nothing to set it: a
+      saturated light goes to white when its mean does, and the
+      hyperbola takes the chroma over the stop and a half before,
+      where per channel keeps a tenth of it until the weakest channel
+      clips, a stop later, so a lit red lantern reads as pink paper.
+      Three ways to control it, not exclusive, each to be tried behind
+      the switch and measured on the lanterns, the sun-in-sky and a
+      skin frame: (a) where the pull starts and how fast, a distance in
+      stops from white under which the chroma is left alone and over
+      which it is compressed, one number, zero being per channel's
+      snap and three a long fade, the smallest change and the first to
+      try; (b) what counts as the color's brightness, since the mean
+      reads a red lamp as a third as bright as its red channel and so
+      takes it to white late and then fast: a norm leaning toward the
+      brightest channel (filmic's power norm, the sum of cubes over the
+      sum of squares) spreads the roll-off over more stops and tracks
+      the lightness of pure primaries better (the mean darkens a green
+      by 0.07 and lightens a blue by 0.1 in Oklab L, §226), but a color
+      such a norm keeps inside the cube to the end gives the cube's
+      geometry nothing to push against, so the step would need a rule
+      of its own; belongs with the curve's shape item below, where the
+      norm is reconsidered anyway; (c) the chosen skew (the feel
+      track's line), a bounded hue rotation during the pull, which
+      changes the hue on the way out and not how much chroma survives,
+      so it is orthogonal to (a) and (b). The measure for all three is
+      the chroma kept by band against per channel and the hue turn,
+      as §226 measures them, and the lanterns looked at. Waits on
+      part (1)
+- [ ] ACES 2.0 compared on our frames, by its output and not by a
+      port: a handful of reference frames (the lanterns, the jets
+      against the sky, a skin tone, a sky by the sun) exported from
+      greycard as scene-linear Rec.2020 with no display curve, run
+      through ACES 2.0's sRGB and Rec.709 output transforms with
+      OpenColorIO's command-line tool, and put beside the per-channel,
+      the hue-held and later the sigmoid exports of the same frames,
+      measured the way §143 and the tail's part (1) measure. It does in
+      one pass through a color appearance model what the tail does in
+      steps; the question is whether that buys anything on wide-gamut
+      highlights that a norm and a step cannot. If it does, a port of
+      its gamut step is the item that follows; if not, the frames and
+      numbers go in the notes and it is left. Waits on the tail's part
+      (1)
+- [ ] The curve's shape, after the tail's part (1): the display curve
+      is Narkowicz's fit of the ACES output transform, a fixed
+      polynomial with §145's shoulder patched on, kept through part
+      (1) so that comparison is about hue alone. Replace the shape, on
+      the norm, with darktable's sigmoid (the log-logistic, GPL),
+      whose contrast, skew and display white are parameters: white at
+      3.27 stops over mid grey (§145) becomes a setting rather than a
+      gain, and contrast and skew are fitted on the reference set with
+      §143's harness, first to today's medians against Lightroom as
+      the starting point and then to Adobe's slope between grey and
+      white, which §145 left open as the one gap. Behind its own
+      switch beside the hue one, so testers judge the shape and the
+      hue separately; §141's baseline and §143's medians re-measured
+      and recorded; if it measures no better the fit stays. Filmic's
+      spline read and left: more parameters than the fit can settle,
+      which is why darktable moved its default to the sigmoid
 - [ ] The color curves' lightness axis near black: the shift is looked
       up by Oklab lightness, a cube root whose slope is unbounded at
       zero, so a few parts in a billion of light at a clipped channel

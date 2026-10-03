@@ -90,6 +90,12 @@ pub struct Edit {
     /// Schema version of the struct as written.
     pub version: u32,
     pub light: Light,
+    /// How the display curve under the light treats color: per
+    /// channel, as it always has, or on a norm with the hue held.
+    /// Global, as the curve is; left out of a sidecar at its default,
+    /// so a picture nobody switched writes what it always wrote.
+    #[serde(skip_serializing_if = "DisplayCurve::is_channels")]
+    pub display_curve: DisplayCurve,
     pub white_balance: WhiteBalance,
     pub noise: Noise,
     /// Local contrast, Texture and Clarity, on the developed picture
@@ -263,6 +269,7 @@ impl Default for Edit {
         Self {
             version: VERSION,
             light: Light::default(),
+            display_curve: DisplayCurve::default(),
             white_balance: WhiteBalance::default(),
             noise: Noise::default(),
             detail: Detail::default(),
@@ -283,6 +290,28 @@ impl Default for Edit {
             camera: Camera::default(),
             retouch: retouch::Retouch::default(),
         }
+    }
+}
+
+/// The display curve's way with color. Both are the same curve on a
+/// neutral; they differ on a color as it rolls off toward white.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DisplayCurve {
+    /// The curve on each channel on its own: a bright saturated color
+    /// turns as its channels reach the shoulder at different points,
+    /// blue toward magenta and red toward yellow.
+    #[default]
+    Channels,
+    /// The curve on the mean of the channels, every channel scaled by
+    /// the one gain so the hue holds, and the way to white a step in
+    /// chroma at a constant Oklab hue.
+    Norm,
+}
+
+impl DisplayCurve {
+    pub fn is_channels(&self) -> bool {
+        *self == DisplayCurve::Channels
     }
 }
 
@@ -2564,6 +2593,30 @@ mod tests {
             Noise::blend_for_iso(None),
             Noise::default().learned_strength
         );
+    }
+
+    /// The display curve's switch is left out of a sidecar at its
+    /// default, so a picture nobody switched writes what it always
+    /// did, and read back either way; a preset or a copy of the light
+    /// leaves it as it is on the picture, and the history names it.
+    #[test]
+    fn the_display_curve_switch_is_written_only_when_thrown() {
+        let edit = Edit::default();
+        assert!(!edit.to_json().contains("display_curve"));
+        let mut norm = edit.clone();
+        norm.display_curve = DisplayCurve::Norm;
+        let json = norm.to_json();
+        assert!(json.contains(r#""display_curve": "norm""#), "{json}");
+        assert_eq!(Edit::from_json(&json).unwrap(), norm);
+        let mut onto = norm.clone();
+        Section::Light.copy(&edit, &mut onto);
+        assert_eq!(onto.display_curve, DisplayCurve::Norm);
+        let mut onto = Edit::default();
+        Section::Light.copy(&norm, &mut onto);
+        assert_eq!(onto.display_curve, DisplayCurve::Channels);
+        assert!(Section::Light.same(&edit, &norm));
+        assert_eq!(describe(&edit, &norm, &[]), "Hold hue to white");
+        assert_eq!(describe(&norm, &edit, &[]), "Hold hue to white off");
     }
 
     #[test]

@@ -236,3 +236,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§223. A move seen by the index carries the sidecar along](notes/223-a-move-seen-by-the-index-carries-the-sidecar-along.md) (2026-10-02)
 - [§224. One frame in two places: listed from the copy that is there](notes/224-one-frame-in-two-places-listed-from-the-copy-that-is-there.md) (2026-10-02)
 - [§225. Move back, the inverse of Move rejects](notes/225-move-back-the-inverse-of-move-rejects.md) (2026-10-02)
+- [§226. The display curve on a norm, behind a switch](notes/226-the-display-curve-on-a-norm-behind-a-switch.md) (2026-10-02)

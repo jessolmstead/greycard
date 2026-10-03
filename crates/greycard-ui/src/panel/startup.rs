@@ -312,6 +312,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     let overrides = Overrides {
         temperature: cli.develop_temperature,
         exposure: (cli.exposure != 0.0).then_some(cli.exposure),
+        display_curve: cli.hold_hue.then_some(greycard_edit::DisplayCurve::Norm),
     };
     let tweak_at_start: Option<crate::Tweak> =
         (preset_at_start_wanted.is_some() || !overrides.is_empty()).then(|| {
@@ -1103,6 +1104,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         bw,
                         tint,
                         curves,
+                        display_curve,
                         vignette,
                         grain,
                         ..
@@ -1136,6 +1138,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         weigh_by: None,
                         canvas: render::canvas_rgb(app.get_canvas_choice()),
                         source: st.source,
+                        display_curve,
                         source_turn: lag,
                     };
                     if app.get_crop_mode() {
@@ -1595,6 +1598,7 @@ pub(crate) fn sync_rows<T: Clone + PartialEq + 'static>(model: &VecModel<T>, row
 pub(crate) struct Overrides {
     pub temperature: Option<f32>,
     pub exposure: Option<f32>,
+    pub display_curve: Option<greycard_edit::DisplayCurve>,
 }
 
 impl Overrides {
@@ -1612,6 +1616,9 @@ impl Overrides {
         }
         if let Some(ev) = self.exposure {
             edit.light.exposure = ev;
+        }
+        if let Some(curve) = self.display_curve {
+            edit.display_curve = curve;
         }
     }
 }

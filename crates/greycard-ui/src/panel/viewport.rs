@@ -406,6 +406,7 @@ pub(crate) fn pick_stages(st: &mut State, app: &App, px: [f32; 3]) -> finish::Pi
         &edit.tint,
         &edit.curves.bake_with(&edit.grading),
         st.source,
+        edit.display_curve,
     )
 }
 

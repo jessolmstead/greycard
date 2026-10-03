@@ -666,6 +666,8 @@ export component App inherits Window {
     callback show-mask-toggled();
     // The sections' switches that are not a part's own.
     in-out property <bool> light-enabled: true;
+    // The display curve on a norm rather than per channel.
+    in-out property <bool> display-norm: false;
     in-out property <bool> noise-enabled: true;
     in-out property <bool> lens-enabled: true;
     in-out property <bool> vignette-enabled: true;
@@ -1998,6 +2000,8 @@ export component App inherits Window {
                             whites <=> root.whites;
                             blacks <=> root.blacks;
                             light-enabled <=> root.light-enabled;
+                            display-norm <=> root.display-norm;
+                            show-display-curve: root.target == 0 && root.raw-input;
                             collapsed-light <=> root.collapsed-light;
                             target-name <=> root.target-name;
                             view-changed => { root.view-changed(); }

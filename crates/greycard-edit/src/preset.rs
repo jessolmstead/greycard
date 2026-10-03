@@ -147,6 +147,11 @@ impl Section {
     /// Lay this section of `from` over `onto`.
     pub fn copy(self, from: &Edit, onto: &mut Edit) {
         match self {
+            // Not the display curve's switch: a sidecar leaves it out at
+            // its default, so a preset made before it and one made from
+            // a picture per channel read alike, and carrying it would
+            // turn the switch off on every picture such a preset is
+            // laid on. The switch is the picture's.
             Section::Light => onto.light = from.light,
             Section::WhiteBalance => onto.white_balance = from.white_balance.clone(),
             // The profiled denoiser only: `learned` and

@@ -10,6 +10,16 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- Hold hue to white, a toggle at the foot of LIGHT, off by default: the
+  display curve on a norm with one gain on the three channels, the hue
+  held through the roll-off to white and the step toward white an
+  explicit chroma compression in Oklab, ported from darktable's
+  sigmoid; a neutral is today's curve exactly, the per-channel curve's
+  saturation given back by the curve's slope; on the viewport and the
+  export alike, checked by the random parity test; a bright saturated
+  color's hue turn at the top goes from a median of 7 degrees to 1 on
+  the test set, with the honest cost that a lit red lantern goes to
+  white through pink (§226)
 - Move back, the inverse of Move rejects, on the frame menu and in
   CULLING for frames in a rejects folder: each goes to the folder above
   with its sidecars, placement kept, its reject flag taken off; a name

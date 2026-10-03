@@ -12,6 +12,11 @@ export component LightSection inherits Section {
     in-out property <float> whites;
     in-out property <float> blacks;
     in-out property <bool> light-enabled;
+    // The display curve on a norm, the hue held as a color rolls off
+    // to white, in place of the curve per channel. The picture's, not
+    // a mask's, and a raw's only: shown on the global look of a raw.
+    in-out property <bool> display-norm;
+    in property <bool> show-display-curve;
     in-out property <bool> collapsed-light;
     in-out property <string> target-name;
     callback view-changed();
@@ -84,6 +89,11 @@ export component LightSection inherits Section {
         scale: 100;
         text: (root.blacks >= 0 ? "+" : "") + round(root.blacks * 100) + "%";
         changed(v) => { root.view-changed(); }
+    }
+    if root.show-display-curve: Toggle {
+        label: "Hold hue to white";
+        checked <=> root.display-norm;
+        toggled => { root.view-changed(); }
     }
 }
 

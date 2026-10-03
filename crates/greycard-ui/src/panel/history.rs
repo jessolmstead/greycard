@@ -904,6 +904,7 @@ mod tests {
                 crate::panel::startup::Overrides {
                     temperature: temperature.then_some(4000.0),
                     exposure: Some(1.0),
+                    display_curve: None,
                 },
             ));
         }

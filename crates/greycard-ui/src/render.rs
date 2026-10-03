@@ -549,6 +549,8 @@ pub struct View {
     /// A raw's scene or a picture already rendered: whether the
     /// baseline and the display curve apply (`finish::Source`).
     pub source: Source,
+    /// The display curve per channel or on a norm, for a scene.
+    pub display_curve: greycard_edit::DisplayCurve,
     /// Quarter turns clockwise the frame has been turned since the
     /// picture on the GPU was developed: the view is of the turned
     /// source, and the shader reads the texture through the turn, so
@@ -615,6 +617,7 @@ impl View {
             warn: Warn::default(),
             canvas: [0.0; 3],
             source: Source::Scene,
+            display_curve: greycard_edit::DisplayCurve::Channels,
             source_turn: 0,
         }
     }
@@ -632,6 +635,7 @@ impl View {
             bw: edit.bw,
             tint: edit.tint,
             curves: edit.curves.bake_with(&edit.grading),
+            display_curve: edit.display_curve,
             vignette: edit.vignette,
             grain: edit.grain,
             ..View::blank()
@@ -1336,11 +1340,13 @@ impl Renderer {
             clip: [v.warn.bits() as f32, 0.0, 0.0, 0.0],
             zoom: v.zoom,
             exposure: v.source.baseline() + v.light.exposure,
-            // The shape, then 0 the display curve, 1 a clip, for a
-            // picture that has had its curve.
-            curve: match v.source {
-                Source::Scene => 0.0,
-                Source::Display => 1.0,
+            // The shape, then 0 the display curve per channel, 1 a
+            // clip, for a picture that has had its curve, 2 the
+            // display curve on a norm.
+            curve: match (v.source, v.display_curve) {
+                (Source::Scene, greycard_edit::DisplayCurve::Channels) => 0.0,
+                (Source::Display, _) => 1.0,
+                (Source::Scene, greycard_edit::DisplayCurve::Norm) => 2.0,
             },
             contrast: v.light.tone.contrast,
             highlights: v.light.tone.highlights,
@@ -2201,6 +2207,7 @@ impl Renderer {
                         warn,
                         canvas,
                         source,
+                        display_curve,
                         source_turn
                     );
                     format!("{f:?}")
@@ -3147,6 +3154,62 @@ mod tests {
         assert!(worst < 2.5 / 255.0, "{worst}");
     }
 
+    /// The display curve on a norm on the GPU is `tail::tone_norm` on
+    /// the CPU, over the parity frame's primaries, near blacks and
+    /// highlights past white, at exposures from three stops down to
+    /// four up: the switch reaches the shader through `with_look`,
+    /// and both sides read the same field of the edit.
+    #[test]
+    fn the_norm_curve_on_the_gpu_is_the_cpus() {
+        let Some((device, queue)) = device("the norm curve's check") else {
+            return;
+        };
+        let image = parity_frame();
+        let (w, h) = (image.width, image.height);
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        let seen: Vec<f32> = image
+            .data
+            .iter()
+            .map(|v| half::f16::from_f32(*v).to_f32())
+            .collect();
+        let to_out = crate::export::Space::Srgb.matrix();
+        let mut edit = greycard_edit::Edit {
+            display_curve: greycard_edit::DisplayCurve::Norm,
+            ..Default::default()
+        };
+        let mut worst = (0.0f32, [0.0f32; 3], [0.0f32; 3], [0.0f32; 3], 0.0f32);
+        for stops in [-3.0f32, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0] {
+            edit.light.exposure = stops;
+            let view = View {
+                center: (w as f32 / 2.0, h as f32 / 2.0),
+                plane: (w as f32, h as f32),
+                frame_size: (w as f32, h as f32),
+                ..View::with_look(&edit)
+            };
+            let target = renderer.render(w as u32, h as u32, &view).0;
+            let shown = renderer.read_back(&target).expect("read back");
+            let global = Baked::global(&edit, Source::Scene);
+            for y in 0..h {
+                for x in 0..w {
+                    let i = (y * w + x) * 3;
+                    let px = [seen[i], seen[i + 1], seen[i + 2]];
+                    let cpu = crate::finish::finish_pixel(px, &global, &[], &to_out);
+                    let gpu = shown.get_pixel(x as u32, y as u32);
+                    let gpu = [0, 1, 2].map(|k| f32::from(gpu[k]) / 255.0);
+                    for k in 0..3 {
+                        let d = (cpu[k] - gpu[k]).abs();
+                        if d > worst.0 {
+                            worst = (d, px, cpu, gpu, stops);
+                        }
+                    }
+                }
+            }
+        }
+        eprintln!("the norm curve, GPU against CPU: {worst:?}");
+        assert!(worst.0 < 1.5 / 255.0, "{worst:?}");
+    }
+
     /// The auto white balance's grid is the picture's own pixels at
     /// the grid's points, as the CPU would pick them, row and column.
     #[test]
@@ -3386,7 +3449,7 @@ mod tests {
     /// The parts of an edit the parity test draws, a bit each, so a
     /// failing edit can be drawn again with one part left at its
     /// default to see which part the difference is in.
-    const PARTS: [&str; 17] = [
+    const PARTS: [&str; 18] = [
         "light",
         "light switch",
         "point curves",
@@ -3404,6 +3467,7 @@ mod tests {
         "guide plane",
         "display source",
         "output space",
+        "display curve",
     ];
 
     fn part(name: &str) -> u32 {
@@ -3876,6 +3940,11 @@ mod tests {
         let guide = rng.chance(0.6);
         let coarse = rng.chance(0.5);
         let space = crate::export::Space::ALL[rng.below(crate::export::Space::ALL.len())];
+        // The display curve on a norm, half the time: drawn last, so
+        // the draws before it are the ones every seed had before.
+        if rng.chance(0.5) && has("display curve") {
+            edit.display_curve = greycard_edit::DisplayCurve::Norm;
+        }
         Case {
             edit,
             rasters,

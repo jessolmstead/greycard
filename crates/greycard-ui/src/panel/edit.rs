@@ -442,6 +442,12 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
     edit.sharpen.auto_threshold = app.get_sharpen_auto_threshold();
     edit.sharpen.threshold = app.get_sharpen_threshold();
     edit.demosaic = Demosaic::from_name(app.get_demosaic().as_str()).unwrap_or_default();
+    // Global, as the black and white is: the curve under every look.
+    edit.display_curve = if app.get_display_norm() {
+        greycard_edit::DisplayCurve::Norm
+    } else {
+        greycard_edit::DisplayCurve::Channels
+    };
     edit.camera.profile =
         greycard_edit::camera::ProfileChoice::from_name(app.get_camera_profile().as_str());
     edit.look_lut.lut = greycard_edit::look::LutChoice::from_name(app.get_look_name().as_str());
@@ -593,6 +599,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_sharpen_auto_threshold(edit.sharpen.auto_threshold);
     app.set_sharpen_threshold(edit.sharpen.threshold);
     app.set_demosaic(edit.demosaic.name().into());
+    app.set_display_norm(edit.display_curve == greycard_edit::DisplayCurve::Norm);
     // The list and its warning follow the choice, so an undo or a
     // preset that brings another camera's profile says so at once.
     show_profiles(st, &edit.camera.profile, app);

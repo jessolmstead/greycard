@@ -12,7 +12,7 @@ use greycard_edit::brush::Raster;
 use greycard_edit::curve::{CurveLut, color_shift, lookup};
 use greycard_edit::mask::Sample;
 use greycard_edit::mixer::{BANDS, MEAN_RADIUS, confidence};
-use greycard_edit::{BlackWhite, Color, Edit, Grain, Light, Look, Mask, Mixer, Tint};
+use greycard_edit::{BlackWhite, Color, DisplayCurve, Edit, Grain, Light, Look, Mask, Mixer, Tint};
 use rayon::prelude::*;
 
 /// A look baked for the finish: its light, its mixer, its global
@@ -33,6 +33,9 @@ pub struct Baked {
     /// Global only, as the black and white is: what the picture under
     /// the look is, which decides the baseline and the display curve.
     pub source: Source,
+    /// Global only, as the source is: the display curve per channel
+    /// or on a norm. Read only when the source is a scene.
+    pub display_curve: DisplayCurve,
 }
 
 /// What the finish is handed. A raw's develop is a scene, which the
@@ -58,13 +61,15 @@ impl Source {
         }
     }
 
-    /// The display curve, or a clip at white for a picture that has
-    /// been through one already.
+    /// The display curve, per channel or on a norm as `how` says, or
+    /// a clip at white for a picture that has been through one
+    /// already.
     #[inline]
-    fn curve(self, x: f32) -> f32 {
-        match self {
-            Source::Scene => tone(x),
-            Source::Display => x.clamp(0.0, 1.0),
+    fn curve(self, c: [f32; 3], how: DisplayCurve) -> [f32; 3] {
+        match (self, how) {
+            (Source::Display, _) => c.map(|x| x.clamp(0.0, 1.0)),
+            (Source::Scene, DisplayCurve::Channels) => c.map(tone),
+            (Source::Scene, DisplayCurve::Norm) => crate::tail::tone_norm(c),
         }
     }
 }
@@ -81,6 +86,7 @@ impl Baked {
             tint: look.tint,
             curves: look.curves.bake_with(&look.grading),
             source: Source::Scene,
+            display_curve: DisplayCurve::Channels,
         }
     }
 
@@ -94,6 +100,7 @@ impl Baked {
             bw: edit.bw,
             mixer: edit.acting_mixer(),
             source,
+            display_curve: edit.display_curve,
             ..Self::of(&edit.look())
         }
     }
@@ -472,7 +479,7 @@ pub fn finish_pixel_with(
     // this pixel is a shift of it in stops and the contrast a scale,
     // which is what the power about mid grey is in stops.
     let g = guide.map(|g| t.contrast * (g + exposure));
-    c = shape(c, &t, g).map(|x| global.source.curve(x));
+    c = global.source.curve(shape(c, &t, g), global.display_curve);
     c = [0, 1, 2].map(|k| {
         let x = encode(c[k].clamp(0.0, 1.0));
         let mut x2 = x;
@@ -543,6 +550,7 @@ pub fn pick(
     tint: &Tint,
     curves: &CurveLut,
     source: Source,
+    display_curve: DisplayCurve,
 ) -> Picked {
     // Each section as it acts, as `finish_pixel_with` takes it: a
     // switch off is nothing to do, whatever its sliders still say.
@@ -556,7 +564,7 @@ pub fn pick(
     if oklab_pass_acts(&mixer, &color, &bw, &tint) {
         c = mix_with(c, &mixer, &color, &bw, &tint, None);
     }
-    c = shape(c, &light.tone, None).map(|x| source.curve(x));
+    c = source.curve(shape(c, &light.tone, None), display_curve);
     let encoded = c.map(|v| encode(v.clamp(0.0, 1.0)));
     let luma = encode((LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]).clamp(0.0, 1.0));
     let shaded = [0, 1, 2].map(|k| decode(lookup(curves, k, encoded[k])));
@@ -704,7 +712,7 @@ const RESIDUE: f32 = 1e-6;
 /// `c` with every channel under [`RESIDUE`] of its largest at zero, as
 /// the shader's `mix_color` ends.
 #[inline]
-fn snap_residue(c: [f32; 3]) -> [f32; 3] {
+pub(crate) fn snap_residue(c: [f32; 3]) -> [f32; 3] {
     let top = c[0].abs().max(c[1].abs()).max(c[2].abs());
     c.map(|v| if v.abs() < RESIDUE * top { 0.0 } else { v })
 }
@@ -971,7 +979,7 @@ const DISPLAY_WHITE_STOPS: f32 = SCENE_WHITE_STOPS + BASELINE_EXPOSURE;
 /// `MID_GREY * 2^DISPLAY_WHITE_STOPS`, and the gain that takes the fit
 /// there to one. Constants because `powf` is not `const`; a test holds
 /// them to what they name.
-const DISPLAY_WHITE: f32 = 1.736_363;
+pub(crate) const DISPLAY_WHITE: f32 = 1.736_363;
 const SHOULDER_GAIN: f32 = 1.114_332;
 
 /// Narkowicz's fit of the ACES output transform.
@@ -988,7 +996,7 @@ fn aces(x: f32) -> f32 {
 /// at 0.9 of white. Both factors rise, so the curve does; the slope it
 /// meets white with is the fit's there, a tenth of a display stop per
 /// scene stop, so the clip is a soft corner.
-fn tone(x: f32) -> f32 {
+pub(crate) fn tone(x: f32) -> f32 {
     if x <= MID_GREY {
         return aces(x).max(0.0);
     }
@@ -998,6 +1006,30 @@ fn tone(x: f32) -> f32 {
     let u = (x / MID_GREY).log2();
     let gain = 1.0 + (SHOULDER_GAIN - 1.0) * smoothstep(0.0, DISPLAY_WHITE_STOPS, u);
     (aces(x) * gain).min(1.0)
+}
+
+/// The display curve's slope in stops, `d ln tone / d ln x`: how much
+/// a curve per channel multiplies a small departure from grey by, so
+/// the chroma the curve on a norm puts back (`tail::tone_norm`). The
+/// fit's own, and over mid grey the shoulder gain's added; nothing at
+/// and past display white, where the curve is flat. The shader's
+/// `tone_slope` is this.
+pub(crate) fn tone_slope(x: f32) -> f32 {
+    if x <= 0.0 {
+        return 1.0;
+    }
+    if x >= DISPLAY_WHITE {
+        return 0.0;
+    }
+    let fit = 1.0 + 2.51 * x / (2.51 * x + 0.03)
+        - (4.86 * x * x + 0.59 * x) / (2.43 * x * x + 0.59 * x + 0.14);
+    if x <= MID_GREY {
+        return fit;
+    }
+    let t = ((x / MID_GREY).log2() / DISPLAY_WHITE_STOPS).clamp(0.0, 1.0);
+    let gain = 1.0 + (SHOULDER_GAIN - 1.0) * t * t * (3.0 - 2.0 * t);
+    let rise = (SHOULDER_GAIN - 1.0) * 6.0 * t * (1.0 - t) / DISPLAY_WHITE_STOPS;
+    fit + rise / gain / std::f32::consts::LN_2
 }
 
 pub fn encode(v: f32) -> f32 {
@@ -1212,6 +1244,7 @@ mod tests {
             tint: Tint::OFF,
             curves: *curves,
             source: Source::Scene,
+            display_curve: DisplayCurve::Channels,
         };
         finish_pixel(px, &global, &[], m)
     }
@@ -1231,6 +1264,7 @@ mod tests {
             tint: Tint::OFF,
             curves: identity(),
             source: Source::Scene,
+            display_curve: DisplayCurve::Channels,
         }
     }
 
@@ -1523,6 +1557,7 @@ mod tests {
                 &e.tint,
                 &e.curves.bake_with(&e.grading),
                 Source::Scene,
+                DisplayCurve::Channels,
             )
             .encoded
         };
@@ -1587,6 +1622,7 @@ mod tests {
                 &plain.tint,
                 &plain.curves,
                 Source::Display,
+                DisplayCurve::Channels,
             );
             for k in 0..3 {
                 assert!(
@@ -1923,6 +1959,7 @@ mod tests {
             tint: Tint::OFF,
             curves: identity(),
             source: Source::Scene,
+            display_curve: DisplayCurve::Channels,
         };
         let g = guide.map(|g| g.at(x as f32 + 0.5, y as f32 + 0.5));
         let px = image.pixel(x, y);
@@ -2373,6 +2410,7 @@ mod tests {
             &Tint::OFF,
             &curves,
             Source::Scene,
+            DisplayCurve::Channels,
         );
         // The baseline is in the pick as it is in the render.
         let expect = encode(tone(
@@ -2399,6 +2437,7 @@ mod tests {
             &Tint::OFF,
             &curves,
             Source::Scene,
+            DisplayCurve::Channels,
         );
         let (band, w) = nearest_band(red.hue);
         assert!(band == 0 && w > 0.5, "{red:?} {band} {w}");
@@ -2415,6 +2454,7 @@ mod tests {
             &Tint::OFF,
             &curves,
             Source::Scene,
+            DisplayCurve::Channels,
         );
         assert!((red2.hue - red.hue).abs() < 1e-3, "{red:?} {red2:?}");
         assert!(red2.encoded[0] > red.encoded[0], "{red:?} {red2:?}");
@@ -2429,6 +2469,7 @@ mod tests {
             &Tint::OFF,
             &curves,
             Source::Display,
+            DisplayCurve::Channels,
         );
         for (k, v) in [0.1f32, 0.2, 0.3].iter().enumerate() {
             assert!((raw.encoded[k] - encode(*v)).abs() < 1e-5, "{raw:?}");
@@ -2449,6 +2490,7 @@ mod tests {
             &Tint::OFF,
             &curves,
             Source::Scene,
+            DisplayCurve::Channels,
         );
         // Every section's sliders wound right up, every switch off:
         // the dropper reads what it read with none of them set.
@@ -2473,6 +2515,7 @@ mod tests {
             &Tint::OFF,
             &curves,
             Source::Scene,
+            DisplayCurve::Channels,
         );
         let bare = pick(
             px,
@@ -2489,6 +2532,7 @@ mod tests {
             &Tint::OFF,
             &curves,
             Source::Scene,
+            DisplayCurve::Channels,
         );
         assert_eq!(held, bare);
         // And that is the all-default answer to the last f32 place
@@ -2517,6 +2561,7 @@ mod tests {
             &Tint::OFF,
             &curves,
             Source::Scene,
+            DisplayCurve::Channels,
         );
         assert!(moved.encoded[0] != plain.encoded[0], "{moved:?} {plain:?}");
         let mono = pick(
@@ -2528,6 +2573,7 @@ mod tests {
             &Tint::OFF,
             &curves,
             Source::Scene,
+            DisplayCurve::Channels,
         );
         assert!((mono.encoded[0] - mono.encoded[2]).abs() < 1e-4, "{mono:?}");
     }
@@ -2827,6 +2873,7 @@ mod tests {
             tint: Tint::OFF,
             curves: identity(),
             source: Source::Scene,
+            display_curve: DisplayCurve::Channels,
         };
         let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let out = finish_pixel(px, &global, &[], &m);
@@ -2868,6 +2915,7 @@ mod tests {
             tint: Tint::OFF,
             curves: identity(),
             source: Source::Scene,
+            display_curve: DisplayCurve::Channels,
         };
         let bare = Baked {
             tint: idle,
@@ -2953,6 +3001,7 @@ mod tests {
             tint: Tint::OFF,
             curves: identity(),
             source: Source::Scene,
+            display_curve: DisplayCurve::Channels,
         };
         let local = Baked {
             tint,
