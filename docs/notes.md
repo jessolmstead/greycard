@@ -237,3 +237,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§224. One frame in two places: listed from the copy that is there](notes/224-one-frame-in-two-places-listed-from-the-copy-that-is-there.md) (2026-10-02)
 - [§225. Move back, the inverse of Move rejects](notes/225-move-back-the-inverse-of-move-rejects.md) (2026-10-02)
 - [§226. The display curve on a norm, behind a switch](notes/226-the-display-curve-on-a-norm-behind-a-switch.md) (2026-10-02)
+- [§227. ACES 2.0 and AgX on our frames, by their output](notes/227-aces-2-and-agx-on-our-frames.md) (2026-10-03)

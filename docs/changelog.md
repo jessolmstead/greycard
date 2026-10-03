@@ -10,6 +10,10 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- `tools/compare-transforms.py`: a raw rendered through greycard's
+  display curve both ways and through ACES 2.0 and AgX from greycard's
+  own scene-linear develop, at matched exposure, for looking at side by
+  side (§227)
 - Hold hue to white, a toggle at the foot of LIGHT, off by default: the
   display curve on a norm with one gain on the three channels, the hue
   held through the roll-off to white and the step toward white an

@@ -70,6 +70,15 @@ Look section's job.
       `application:openURLs:` is written but has not run on a Mac;
       try a double-click, Open With and a Dock drop, at launch and
       while it runs (§148)
+- [ ] The default's saturation: beside ACES 2.0 and AgX Punchy on a
+      shaded skin tone, per channel renders skin a deep tanned orange
+      and reads over-saturated (§227); the per-channel curve's slope
+      spreads the channels in the mid-tones, which the camera JPEG and
+      Lightroom temper. Measure the default develop's chroma by
+      lightness band against the camera JPEG and Lightroom on the
+      reference set, and decide whether the Light section's defaults
+      or the curve's own saturation moves; behind a switch, by the
+      track's rule
 - [ ] The yellow skew, once Hold hue to white has been lived with: a
       bright red held at its hue goes to white through pink, which the
       eye reads as a pale object, where film, the camera's JPEG and
@@ -232,8 +241,9 @@ ask for first.
       changes the hue on the way out and not how much chroma survives,
       so it is orthogonal to (a) and (b). The measure for all three is
       the chroma kept by band against per channel and the hue turn,
-      as §226 measures them, and the lanterns looked at. Waits on
-      part (1)
+      as §226 measures them, and the lanterns looked at; the target
+      is ACES 2.0's output on the gates and the lanterns (§227), the
+      best render of both
 - [ ] ACES 2.0 compared on our frames, by its output and not by a
       port: a handful of reference frames (the lanterns, the jets
       against the sky, a skin tone, a sky by the sun) exported from
@@ -246,8 +256,11 @@ ask for first.
       steps; the question is whether that buys anything on wide-gamut
       highlights that a norm and a step cannot. If it does, a port of
       its gamut step is the item that follows; if not, the frames and
-      numbers go in the notes and it is left. Waits on the tail's part
-      (1)
+      numbers go in the notes and it is left. A first look on six
+      frames is in §227 with `tools/compare-transforms.py`: ACES 2.0
+      is the best render of the gates and the lanterns, AgX Punchy
+      within reach of per channel; what remains is the measurement by
+      band and the call on the gamut step
 - [ ] The curve's shape, after the tail's part (1): the display curve
       is Narkowicz's fit of the ACES output transform, a fixed
       polynomial with §145's shoulder patched on, kept through part
