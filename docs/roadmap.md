@@ -273,9 +273,13 @@ ask for first.
       its gamut step is the item that follows; if not, the frames and
       numbers go in the notes and it is left. A first look on six
       frames is in §227 with `tools/compare-transforms.py`: ACES 2.0
-      is the best render of the gates and the lanterns, AgX Punchy
-      within reach of per channel; what remains is the measurement by
-      band and the call on the gamut step
+      won where correctness shows (the gates, the lanterns, skin in
+      shade), AgX Punchy won some frames on look. Next: the tool over
+      the whole test set and a shoot or two, frame by frame, skin
+      across the range; then the call, likely ACES 2.0 as the
+      transform with a look laid over it where AgX Punchy won, ported
+      behind the same switch and checked against OpenColorIO's output
+      on our frames; the cost is measured in §227
 - [ ] The curve's shape, after the tail's part (1): the display curve
       is Narkowicz's fit of the ACES output transform, a fixed
       polynomial with §145's shoulder patched on, kept through part

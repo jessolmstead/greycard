@@ -69,3 +69,31 @@ stops and 0.1 to 1.2 stops over the linear develop, respectively,
 which says where each puts mid grey. The script's docstring has the
 venv and the configs; the AgX config is cloned under `target/`, not
 checked in.
+
+**Where we left it.** Two finalists, read two ways. ACES 2.0 won the
+frames where correctness shows: the gates, the lanterns, skin in
+shade. AgX Punchy won some frames on look: its chosen skew and its
+extra contrast flatter a warm lit scene. The difference is that a look
+can be laid over ACES 2.0's output, by the Look section and the camera
+match tables, while AgX's hue behavior is in its primaries and cannot
+be taken off. So the shape of the decision is likely ACES 2.0 as the
+transform and a look on top that reads like AgX Punchy where it won,
+and the call waits on a run of the tool over the whole test set and a
+shoot or two, frame by frame, with an eye on skin across the range.
+Not called tonight. The sigmoid shape item is a fallback to this, not
+the plan, and part (1b) would become a port of ACES 2.0's chroma
+compression rather than a control of our own.
+
+**The cost, measured.** OpenColorIO's own CPU path on this machine,
+one thread, 24 megapixels of scene-linear: ACES 2.0 SDR with the
+matrix and the encoding, 243 ns a pixel, 5.8 s; the same path with no
+tone mapping, 9 ns; our norm switch 68 ns (§226's review); the
+per-channel fit 7 ns. An export is parallel over every core, so a 100
+megapixel frame takes about a second more on 32 threads over roughly
+seven today. The viewport is the shader's: three to four hundred
+operations a pixel by the count of the model, a matrix, three
+fractional powers each way, an arctangent, a sine and cosine, and the
+gamut cusp from a table per hue, which OpenColorIO precomputes and a
+port would too. Under a millisecond at 4K on a discrete GPU; a few
+milliseconds on an integrated one, which is the machine to time before
+any default.
