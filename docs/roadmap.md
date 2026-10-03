@@ -15,6 +15,18 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] A `--export` run can stall on the desktop: twice in about
+      ninety runs on 2026-10-03 a hold-hue export of one frame sat
+      for minutes at low CPU where the same export takes two
+      seconds, once for eleven minutes; under a headless weston the
+      same command ran forty times without one. The per-channel
+      export of that frame two seconds earlier never stalled, and
+      the two stalls came while other windows were being used over
+      the editor's, so the likely cause is the window waiting on the
+      compositor (a frame callback for an occluded surface) for
+      something the export should not need. Catch it with the
+      symbolized build under gdb on the desktop, or make the export
+      headless (the pool's item) and it cannot happen
 - [ ] The random parity test fails past the seeds it was set from: with
       the display curve left as it is, seed 29 edit 51 is 7.7 levels
       apart on NVIDIA (the parts named: light, point curves, color,
@@ -25,7 +37,10 @@ the reasoning lives in `docs/notes.md`.
       steep curves, where the chroma weight's slope sits (§226), and
       seed 12 edit 28 passes the cap by CPU sensitivity at the white
       face. Run the seeds further out, find what the failing edits
-      share, and fix the divergence or justify the bound
+      share, and fix the divergence or justify the bound. Two of the
+      three seeds fail at Hold hue to white's chroma weight, which goes
+      with the old curve (§230), so the fix waits on the AgX port and
+      runs against it
 - [ ] CULLING's Move rejects button keeps the focus after its click, so
       Return while its sheet is up asks again and Escape does not close
       the sheet; the sheet wants a FocusScope of its own as the delete
@@ -69,26 +84,16 @@ Look section's job.
       `application:openURLs:` is written but has not run on a Mac;
       try a double-click, Open With and a Dock drop, at launch and
       while it runs (§148)
-- [ ] The default's saturation: beside ACES 2.0 and AgX Punchy on a
-      shaded skin tone, per channel renders skin a deep tanned orange
-      and reads over-saturated (§227); the per-channel curve's slope
-      spreads the channels in the mid-tones, which the camera JPEG and
-      Lightroom temper. Measure the default develop's chroma by
-      lightness band against the camera JPEG and Lightroom on the
-      reference set, and decide whether the Light section's defaults
-      or the curve's own saturation moves; behind a switch, by the
-      track's rule
-- [ ] The yellow skew, once Hold hue to white has been lived with: a
-      bright red held at its hue goes to white through pink, which the
-      eye reads as a pale object, where film, the camera's JPEG and
-      the per-channel curve take it through yellow, which reads as a
-      thing lit; AgX keeps that drift on purpose, as a chosen rotation
-      and not a channel's accident. Decide whether the step toward
-      white turns bright reds toward yellow, by how much and over
-      which hues, as parameters of the step; judged on screen on the
-      lanterns, the sunset and a skin frame, both ways behind the
-      switch, by the track's rule. Waits on the scene-referred tail's
-      part (1)
+- [ ] The default's saturation and the reds' skew, measured under AgX
+      once it is the default (§230): the per-channel curve's slope
+      added chroma in the mid-tones that read as over-saturated beside
+      ACES 2.0 and AgX Punchy (§227), and its yellow skew of bright reds
+      is what the eye expects where AgX holds them and they go pink.
+      Measure the default develop's chroma by lightness band against
+      the camera JPEG and a Lightroom export on the reference set, and
+      the reds' hue the same way; Punchy's saturation and the camera
+      match's fitted table are the two places to put the answer, not a
+      skew of our own. Waits on the AgX port
 - [ ] Reference frames for the feel: eight frames with a Lightroom edit
       each and the greycard values that match, a check of the default
       develop's brightness against the embedded JPEG, a slider response
@@ -190,96 +195,40 @@ A camera's own profile and look are a picker away, and a chart shot
 makes a new one. This and the library can swap order on what testers
 ask for first.
 
-- [ ] A scene-referred tail, one design in four parts. The display
-      curve is Narkowicz's fit of the ACES output transform run per
-      channel (finish.rs `tone`, §145), which turns a bright saturated
-      color's hue as it rolls off, blue toward magenta and red toward
-      yellow, and clips at 3.3 stops over mid grey. (1) landed behind
-      the Hold hue to white switch (§226): the curve on a norm, the hue
-      held, the step toward white explicit but not yet controlled (part
-      (1b) below). (2) The
-      master point curve on a norm too, the channels scaled by one
-      ratio, so a contrast curve changes tone and not chromaticity; the
-      R, G and B curves stay per channel, since moving one channel is
-      their point. The curves and the look table stay display-referred:
-      a curve's x axis is how bright a pixel is on screen, and that is
-      its contract, as every scene-referred editor keeps it. (3) A
-      gamut compression at constant hue after the curves and the look
-      table, before the output matrix, pulling back whatever any of
-      them pushed out of the output gamut, in place of the clamps at
-      the curve, in the look table and at the output. (4) The clamp
-      before the curves dropped once the curve's range is guaranteed,
-      a final clamp to the encodable range kept as the safety net. For
-      the viewport and the export alike. Every picture changes, so it
-      lands behind a comparison over the archive sets and its own notes
-      section
-- [ ] The step toward white given a control, part (1b) of the tail.
-      Part (1) holds the hue but its step has nothing to set it: a
-      saturated light goes to white when its mean does, and the
-      hyperbola takes the chroma over the stop and a half before,
-      where per channel keeps a tenth of it until the weakest channel
-      clips, a stop later, so a lit red lantern reads as pink paper.
-      Three ways to control it, not exclusive, each to be tried behind
-      the switch and measured on the lanterns, the sun-in-sky and a
-      skin frame: (a) where the pull starts and how fast, a distance in
-      stops from white under which the chroma is left alone and over
-      which it is compressed, one number, zero being per channel's
-      snap and three a long fade, the smallest change and the first to
-      try; (b) what counts as the color's brightness, since the mean
-      reads a red lamp as a third as bright as its red channel and so
-      takes it to white late and then fast: a norm leaning toward the
-      brightest channel (filmic's power norm, the sum of cubes over the
-      sum of squares) spreads the roll-off over more stops and tracks
-      the lightness of pure primaries better (the mean darkens a green
-      by 0.07 and lightens a blue by 0.1 in Oklab L, §226), but a color
-      such a norm keeps inside the cube to the end gives the cube's
-      geometry nothing to push against, so the step would need a rule
-      of its own; belongs with the curve's shape item below, where the
-      norm is reconsidered anyway; (c) the chosen skew (the feel
-      track's line), a bounded hue rotation during the pull, which
-      changes the hue on the way out and not how much chroma survives,
-      so it is orthogonal to (a) and (b). The measure for all three is
-      the chroma kept by band against per channel and the hue turn,
-      as §226 measures them, and the lanterns looked at; the target
-      is ACES 2.0's output on the gates and the lanterns (§227), the
-      best render of both
-- [ ] ACES 2.0 compared on our frames, by its output and not by a
-      port: a handful of reference frames (the lanterns, the jets
-      against the sky, a skin tone, a sky by the sun) exported from
-      greycard as scene-linear Rec.2020 with no display curve, run
-      through ACES 2.0's sRGB and Rec.709 output transforms with
-      OpenColorIO's command-line tool, and put beside the per-channel,
-      the hue-held and later the sigmoid exports of the same frames,
-      measured the way §143 and the tail's part (1) measure. It does in
-      one pass through a color appearance model what the tail does in
-      steps; the question is whether that buys anything on wide-gamut
-      highlights that a norm and a step cannot. If it does, a port of
-      its gamut step is the item that follows; if not, the frames and
-      numbers go in the notes and it is left. A first look on six
-      frames is in §227 with `tools/compare-transforms.py`: ACES 2.0
-      won where correctness shows (the gates, the lanterns, skin in
-      shade), AgX Punchy won some frames on look. Next: the tool over
-      the whole test set and a shoot or two, frame by frame, skin
-      across the range; then the call, likely ACES 2.0 as the
-      transform with a look laid over it where AgX Punchy won, ported
-      behind the same switch and checked against OpenColorIO's output
-      on our frames; the cost is measured in §227
-- [ ] The curve's shape, after the tail's part (1): the display curve
-      is Narkowicz's fit of the ACES output transform, a fixed
-      polynomial with §145's shoulder patched on, kept through part
-      (1) so that comparison is about hue alone. Replace the shape, on
-      the norm, with darktable's sigmoid (the log-logistic, GPL),
-      whose contrast, skew and display white are parameters: white at
-      3.27 stops over mid grey (§145) becomes a setting rather than a
-      gain, and contrast and skew are fitted on the reference set with
-      §143's harness, first to today's medians against Lightroom as
-      the starting point and then to Adobe's slope between grey and
-      white, which §145 left open as the one gap. Behind its own
-      switch beside the hue one, so testers judge the shape and the
-      hue separately; §141's baseline and §143's medians re-measured
-      and recorded; if it measures no better the fit stays. Filmic's
-      spline read and left: more parameters than the fit can settle,
-      which is why darktable moved its default to the sigmoid
+- [ ] AgX as the display transform, Punchy's look the default, behind
+      the existing display-curve switch beside per channel (§230): the
+      inset matrix, the log encoding, the contrast curve and the CDL,
+      ported from darktable's AgX module (GPL) with the curve's shape
+      and the inset as parameters, on the CPU with a test against
+      OpenColorIO's render of the same linear frame, and in the shader
+      against the CPU, in the random parity test's draw. Replaces the
+      per-channel curve as the default once the camera match below is
+      refitted under it and the §143 medians are re-measured; per
+      channel stays as the fallback. Hold hue to white (§226) goes with
+      the old curve. The tail's other parts stay as follow-ups below
+- [ ] The camera match table tagged with the display transform it was
+      fitted under, applied only to a picture on that transform, and
+      on a mismatch the Look section saying so and offering the refit;
+      untagged tables read as per channel (§230). Waits on the AgX port
+- [ ] The camera match refitted on the library under AgX and its
+      fitted and held-out error set beside §181's per-channel fits: a
+      lower error is the number that confirms §230's call, and the
+      fitted reds are where AgX's pinks come back toward the camera's.
+      Waits on the two above
+- [ ] The comparison tool's baseline from one pipeline: render per
+      channel from the same linear develop the OpenColorIO renders
+      start from, so a difference is the transform's and not the
+      export's lens profile, crop or look (§227, §230)
+- [ ] The scene-referred tail's remaining parts, after the AgX port
+      (§226 for the design): (2) the master point curve on a norm with
+      the channels scaled by one ratio, the R, G and B curves per
+      channel; (3) a gamut compression at constant hue after the curves
+      and the look table, before the output matrix, in place of the
+      clamps at the curve, the look table and the output, measured as
+      §226 measures the hue turn in sRGB; (4) the clamp before the
+      curves dropped once the curve's range is guaranteed, a final clamp
+      to the encodable range kept. Each behind the comparison over the
+      archive sets and its own notes section. Waits on the AgX port
 - [ ] The color curves' lightness axis near black: the shift is looked
       up by Oklab lightness, a cube root whose slope is unbounded at
       zero, so a few parts in a billion of light at a clipped channel
@@ -456,6 +405,15 @@ clears or a tester asks for it.
 
 
 #### Editor
+
+- [ ] A headless `--export`: the export is a worker job already, the
+      window only lends it the wgpu device and reads the edit and the
+      sheet; a branch beside the headless import makes its own device
+      (as the worker's tests do), lays the command line's overrides on
+      the sidecar's edit, and waits on the set's outcome, so a
+      comparison or parity run over a hundred frames opens no window;
+      the test exports one frame both ways and diffs the pixels. Until
+      then the runs go under a headless weston
 
 - [ ] Home and end should go to the beginning/end of the grid/filmstrip
       when it is selected.

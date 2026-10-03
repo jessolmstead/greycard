@@ -10,6 +10,11 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- `tools/compare-transforms.py` on the release binaries, resuming a
+  run and skipping a render that fails or stalls; `tools/transform-sheets.py`
+  lays its renders out one row a frame for judging; the two sets
+  judged and the call for AgX with Punchy's look, over ACES 2.0,
+  recorded (§230)
 - The hot pixel repair on by default: a candidate (darktable's rule,
   six sigmas and three times its same-color neighbors) is repaired only
   when none of the other three colors' sites round it is lit, since a

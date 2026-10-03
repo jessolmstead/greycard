@@ -5,7 +5,7 @@ ACES 2.0 and AgX, at matched exposure, for looking at side by side.
     python3 -m venv target/venv-ocio
     target/venv-ocio/bin/pip install opencolorio numpy tifffile imagecodecs imageio
     git clone --depth 1 https://github.com/sobotka/AgX target/agx
-    cargo build -p greycard-cli -p greycard-ui
+    cargo build --release -p greycard-cli -p greycard-ui
     target/venv-ocio/bin/python tools/compare-transforms.py OUT_DIR RAW...
 
 Writes, per raw, NAME-off.jpg (greycard, per channel), NAME-on.jpg
@@ -17,12 +17,16 @@ scene-linear Rec.2020 develop (`greycard develop --output`) and are
 given the exposure that puts their median luminance at greycard's
 per-channel export's, so only the transform differs. Nothing is
 written beside the raw: the greycard runs pass --no-sidecars and keep
-their settings under OUT_DIR.
+their settings under OUT_DIR. A raw already rendered is skipped, and
+a failed or stuck render (ten minutes) is printed and skipped. The
+binaries are the release build;
+GREYCARD_PROFILE=debug picks the debug one.
 """
 import os, subprocess, sys
 import numpy as np, tifffile, imageio.v3 as iio, PyOpenColorIO as o
 
 out, raws = sys.argv[1], sys.argv[2:]
+profile = os.environ.get("GREYCARD_PROFILE", "release")
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.makedirs(out, exist_ok=True)
 xdg = {k: f"{out}/xdg/{k[4:].lower()}" for k in ("XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_CACHE_HOME", "XDG_STATE_HOME")}
@@ -47,14 +51,14 @@ def matched(fn, target):
         lo, hi = (g, hi) if np.median(luma(srgb_to_lin(fn(g)))) < target else (lo, g)
     return (lo * hi) ** 0.5
 
-for raw in raws:
+def render(raw):
     name = os.path.splitext(os.path.basename(raw))[0]
     for mode, flag in (("off", []), ("on", ["--hold-hue"])):
-        subprocess.run([f"{root}/target/debug/greycard-ui", raw, "--no-sidecars", "--no-display-profile",
+        subprocess.run([f"{root}/target/{profile}/greycard-ui", raw, "--no-sidecars", "--no-display-profile",
                         *flag, "--long-edge", "1600", "--export", f"{out}/{name}-{mode}.jpg"],
-                       env=env, check=True, capture_output=True)
-    subprocess.run([f"{root}/target/debug/greycard", "develop", raw, "--output", f"{out}/{name}-linear.tif"],
-                   check=True, capture_output=True)
+                       env=env, check=True, capture_output=True, timeout=600)
+    subprocess.run([f"{root}/target/{profile}/greycard", "develop", raw, "--output", f"{out}/{name}-linear.tif"],
+                   check=True, capture_output=True, timeout=600)
     lin = tifffile.imread(f"{out}/{name}-linear.tif").astype(np.float32) / 65535.0
     os.remove(f"{out}/{name}-linear.tif")
     f = max(1, round(max(lin.shape[:2]) / 1600))
@@ -71,3 +75,14 @@ for raw in raws:
         g = matched(fn, target)
         iio.imwrite(f"{out}/{name}-{tag}.jpg", (fn(g) * 255 + 0.5).astype(np.uint8), quality=92)
         print(f"{name} {tag}: {np.log2(g):+.2f} stops to match")
+
+for raw in raws:
+    name = os.path.splitext(os.path.basename(raw))[0]
+    if os.path.exists(f"{out}/{name}-agx-punchy.jpg"):
+        continue
+    try:
+        render(raw)
+    except subprocess.TimeoutExpired as e:
+        print(f"{raw}: timed out after 600 s in {os.path.basename(e.cmd[0])} {' '.join(a for a in e.cmd if a.startswith('--'))}", flush=True)
+    except subprocess.CalledProcessError as e:
+        print(f"{raw}: {os.path.basename(e.cmd[0])} failed ({e.returncode}): {(e.stderr or b'').decode(errors='replace').strip()[-400:]}", flush=True)
