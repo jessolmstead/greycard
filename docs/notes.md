@@ -238,3 +238,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§225. Move back, the inverse of Move rejects](notes/225-move-back-the-inverse-of-move-rejects.md) (2026-10-02)
 - [§226. The display curve on a norm, behind a switch](notes/226-the-display-curve-on-a-norm-behind-a-switch.md) (2026-10-02)
 - [§227. ACES 2.0 and AgX on our frames, by their output](notes/227-aces-2-and-agx-on-our-frames.md) (2026-10-03)
+- [§228. The rejects' actions on the grid's header](notes/228-the-rejects-actions-on-the-grids-header.md) (2026-10-03)

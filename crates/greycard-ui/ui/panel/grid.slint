@@ -131,6 +131,11 @@ export component GridSheet inherits Rectangle {
     /// selection while the left pane, which says it under Import, is
     /// put away: the grid covers the status plate. Empty for none.
     in property <string> import-line;
+    /// The window's status line, which the viewport's plate shows and
+    /// the grid covers: said after the selection's name, so what the
+    /// header's actions answer ("there is no rejects folder", a move's
+    /// clash) is seen from here as it is from the loupe.
+    in property <string> status-line;
     callback focus-keys();
     /// The header's Back up or Bring back (§216): its words ("3 frames
     /// not on Archive", "Back up...", "Bring back..."), empty for none;
@@ -139,6 +144,21 @@ export component GridSheet inherits Rectangle {
     in property <string> archive-text;
     in property <[string]> archive-choices;
     callback archive-pressed(int);
+    /// The header's Rejects menu: CULLING's ways out for the rejects,
+    /// here because the grid covers the panel. The same counts and
+    /// the same callbacks as the section's, which the window forwards
+    /// to the one handler each: Move rejects (none to move grays it),
+    /// Move back over the selection (none in a rejects folder leaves
+    /// it out), Delete rejects folder, and Remove rejects from each
+    /// archive (no archive, no item).
+    in property <int> reject-count;
+    callback rejects-asked();
+    in property <int> back-count;
+    in property <string> back-to;
+    callback move-back();
+    callback delete-asked(string);
+    in property <[string]> archive-rejects-choices;
+    callback archive-rejects-asked(int);
     /// A view's sidecars being read, past the moment a fast one takes:
     /// its bar over the sheet, which holds the list before it until
     /// the new one lands.
@@ -201,6 +221,14 @@ export component GridSheet inherits Rectangle {
                         horizontal-stretch: 1;
                         overflow: elide;
                     }
+                    if root.import-line == "" && root.status-line != "": Text {
+                        text: root.status-line;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                        horizontal-stretch: 2;
+                        overflow: elide;
+                    }
                     Text {
                         text: root.thumbs.length + (root.thumbs.length == 1 ? " frame · " : " frames · ")
                             + round(root.grid-cell / 1px) + " px";
@@ -227,6 +255,57 @@ export component GridSheet inherits Rectangle {
                                 for name[i] in root.archive-choices: MenuItem {
                                     title: name;
                                     activated => { root.archive-pressed(i); }
+                                }
+                            }
+                        }
+                    }
+                    // What CULLING offers for the folder's rejects, which
+                    // the grid would otherwise hide: folder-level, so it
+                    // sits here beside the archive's button rather than
+                    // on the frame menu, which is the selection's. Move
+                    // back is in both, as it is in CULLING beside Move
+                    // rejects. One menu, so the header keeps its width.
+                    PanelButton {
+                        text: root.reject-count == 0 ? "Rejects"
+                            : root.reject-count == 1 ? "1 reject" : root.reject-count + " rejects";
+                        icon: @image-url("../icons/folder-open.svg");
+                        clicked => {
+                            root.focus-keys();
+                            rejects-menu.show({ x: 0, y: self.height });
+                        }
+                        rejects-menu := ContextMenuArea {
+                            width: 0px;
+                            height: 0px;
+                            enabled: false;
+                            Menu {
+                                MenuItem {
+                                    title: root.reject-count == 0 ? "No rejects to move"
+                                        : "Move " + root.reject-count
+                                            + (root.reject-count == 1 ? " reject..." : " rejects...");
+                                    enabled: root.reject-count > 0;
+                                    activated => { root.rejects-asked(); root.menu-done(); }
+                                }
+                                if root.back-count > 0: MenuItem {
+                                    title: (root.back-count > 1 ? "Move " + root.back-count + " frames back to "
+                                        : "Move back to ") + root.back-to;
+                                    activated => { root.move-back(); root.menu-done(); }
+                                }
+                                MenuSeparator { }
+                                // These two open a sheet that takes the
+                                // focus itself, so no `menu-done`: its
+                                // timer would take the focus back to the
+                                // window's keys after the sheet had it,
+                                // and Return on the sheet would answer
+                                // nothing. The timer is for a pick from
+                                // a sub-menu, and this menu has none.
+                                MenuItem {
+                                    title: "Delete rejects folder...";
+                                    activated => { root.delete-asked("rejects"); }
+                                }
+                                if root.archive-rejects-choices.length > 0: MenuSeparator { }
+                                for choice[i] in root.archive-rejects-choices: MenuItem {
+                                    title: choice;
+                                    activated => { root.archive-rejects-asked(i); }
                                 }
                             }
                         }

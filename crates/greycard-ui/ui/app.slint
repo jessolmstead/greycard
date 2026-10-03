@@ -2470,6 +2470,7 @@ export component App inherits Window {
         // Said here only with the pane, which says it under Import,
         // put away.
         import-line: root.left-hidden ? root.import-status : "";
+        status-line: root.status;
         focus-keys => { keys.focus(); }
         loading-shown: root.loading-shown;
         loading-fraction: root.loading-fraction;
@@ -2477,6 +2478,14 @@ export component App inherits Window {
         archive-text: root.archive-header;
         archive-choices: root.archive-header-choices;
         archive-pressed(i) => { root.archive-header-pressed(i); }
+        reject-count: root.reject-count;
+        rejects-asked => { root.rejects-asked(); }
+        back-count: root.back-count;
+        back-to: root.back-to;
+        move-back => { root.move-back-asked(); }
+        delete-asked(w) => { root.delete-asked(w); }
+        archive-rejects-choices: root.archive-rejects-choices;
+        archive-rejects-asked(i) => { root.archive-rejects-asked(i); }
     }
 
     // The left pane: the folder open and Recently opened, then the
@@ -2713,8 +2722,7 @@ export component App inherits Window {
     }
 
     // The move-rejects sheet: how many and where, until answered.
-    // Never a delete, and no undo but a move back by hand, which it
-    // says.
+    // Never a delete, and undone by Move back, which it says.
     if root.rejects-open: RejectsSheet {
         rejects-text: root.rejects-text;
         rejects-answered(a) => { root.rejects-answered(a); }

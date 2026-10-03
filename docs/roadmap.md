@@ -41,11 +41,10 @@ the reasoning lives in `docs/notes.md`.
       seed 12 edit 28 passes the cap by CPU sensitivity at the white
       face. Run the seeds further out, find what the failing edits
       share, and fix the divergence or justify the bound
-
-## Tweaks
-
-- [ ] Move rejects, delete rejects folder (and archive options) should be
-      available on the grid screen as well.
+- [ ] CULLING's Move rejects button keeps the focus after its click, so
+      Return while its sheet is up asks again and Escape does not close
+      the sheet; the sheet wants a FocusScope of its own as the delete
+      sheet has, or the button hands the keys back (found in §228)
 
 ## Next: 0.4.0
 

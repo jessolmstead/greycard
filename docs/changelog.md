@@ -10,6 +10,12 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A Rejects menu in the grid's header, with the count on its button:
+  Move rejects, Move back, Delete rejects folder and Remove rejects
+  from each archive, the same callbacks and sheets as CULLING's; the
+  status line shown in the header too, since the grid covers the
+  viewport's plate; the Move rejects sheet now points at Move back
+  instead of saying there is no undo (§228)
 - `tools/compare-transforms.py`: a raw rendered through greycard's
   display curve both ways and through ACES 2.0 and AgX from greycard's
   own scene-linear develop, at matched exposure, for looking at side by

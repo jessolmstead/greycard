@@ -3786,4 +3786,186 @@ mod tests {
         drop(worker);
         crate::testing::remove_dir_retry(&dir);
     }
+
+    /// The window's rejects callbacks, each recorded by name and
+    /// nothing more: no state behind them, so a click that reaches one
+    /// moves, deletes and opens nothing.
+    fn recorded_rejects(app: &App) -> Rc<RefCell<Vec<String>>> {
+        let got = Rc::new(RefCell::new(Vec::new()));
+        let g = got.clone();
+        app.on_rejects_asked(move || g.borrow_mut().push("move rejects".into()));
+        let g = got.clone();
+        app.on_move_back_asked(move || g.borrow_mut().push("move back".into()));
+        let g = got.clone();
+        app.on_delete_asked(move |w| g.borrow_mut().push(format!("delete {w}")));
+        let g = got.clone();
+        app.on_archive_rejects_asked(move |i| g.borrow_mut().push(format!("archive {i}")));
+        got
+    }
+
+    /// The grid header's Rejects menu opened by a click inside its
+    /// button's own words, and the item `downs` steps down it (the
+    /// menu skips its separators) taken with Return. The menu's items
+    /// are not clicked: the testing backend places them in the
+    /// popup's own coordinates, and a click there would land on the
+    /// window under it instead.
+    fn rejects_menu_pick(app: &App, button: &str, item: &str, downs: usize) {
+        let (at, size) = crate::testing::labeled(app, button);
+        click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(crate::testing::count_labeled(app, item), 1, "{item:?}");
+        for _ in 0..downs {
+            press(app, Key::DownArrow);
+        }
+        press(app, Key::Return);
+        slint::platform::update_timers_and_animations();
+    }
+
+    /// The grid's header holds CULLING's rejects actions in a menu,
+    /// each the same window callback the section's button calls, so
+    /// each runs the one handler and opens the one sheet.
+    #[test]
+    fn the_grids_rejects_menu_asks_what_the_culling_section_asks() {
+        let app = window(3);
+        let got = recorded_rejects(&app);
+        app.set_reject_count(2);
+        app.set_back_count(1);
+        app.set_back_to("shoot".into());
+        app.set_archive_rejects_choices(ModelRc::new(VecModel::from(vec![
+            slint::SharedString::from("Remove rejects from nas..."),
+        ])));
+        let items = [
+            ("Move 2 rejects...", "move rejects"),
+            ("Move back to shoot", "move back"),
+            ("Delete rejects folder...", "delete rejects"),
+            ("Remove rejects from nas...", "archive 0"),
+        ];
+        app.set_grid_open(true);
+        for (downs, (item, call)) in items.iter().enumerate() {
+            rejects_menu_pick(&app, "2 rejects", item, downs + 1);
+            assert_eq!(got.borrow_mut().drain(..).collect::<Vec<_>>(), [*call]);
+        }
+        app.set_grid_open(false);
+        app.set_panel_tab(CULL_TAB.into());
+        for (item, call) in items {
+            let (at, size) = crate::testing::labeled(&app, item);
+            click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+            assert_eq!(got.borrow_mut().drain(..).collect::<Vec<_>>(), [call]);
+        }
+    }
+
+    /// The menu grays and leaves out what CULLING does: no rejects
+    /// grays Move rejects, none of the selection in a rejects folder
+    /// leaves Move back out, and Delete rejects folder is always there
+    /// to ask, its handler saying when there is no folder.
+    #[test]
+    fn the_grids_rejects_menu_grays_and_hides_as_the_section_does() {
+        let app = window(3);
+        let got = recorded_rejects(&app);
+        // A name with no frame to move back: the count alone decides.
+        app.set_back_to("shoot".into());
+        app.set_grid_open(true);
+        rejects_menu_pick(&app, "Rejects", "No rejects to move", 1);
+        assert!(got.borrow().is_empty(), "a grayed item asks nothing");
+        // Still open, a grayed pick closing nothing: what it holds.
+        assert_eq!(crate::testing::count_labeled(&app, "Move back to shoot"), 0);
+        assert_eq!(
+            crate::testing::count_labeled(&app, "Delete rejects folder..."),
+            1
+        );
+        press(&app, Key::Escape);
+        slint::platform::update_timers_and_animations();
+        // Down past Move rejects and its separator: Delete is next,
+        // with nothing between them.
+        rejects_menu_pick(&app, "Rejects", "Delete rejects folder...", 2);
+        assert_eq!(
+            got.borrow_mut().drain(..).collect::<Vec<_>>(),
+            ["delete rejects"]
+        );
+    }
+
+    /// A moment past the menu's 1 ms refocus, with any sheet a pick
+    /// brought in built first: what a person's next key meets.
+    fn a_moment_on(app: &App) {
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(0.0, 0.0),
+        });
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(5));
+        slint::platform::update_timers_and_animations();
+    }
+
+    /// Delete rejects folder and Remove rejects, picked from the grid's
+    /// menu, open sheets that keep the focus, so Return answers them
+    /// as it does when they come from CULLING. The window's callbacks
+    /// open the sheets and record the answers, and nothing else: no
+    /// state behind them, nothing deleted or moved.
+    #[test]
+    fn return_answers_the_sheets_the_grids_rejects_menu_opens() {
+        let app = window(3);
+        let got = Rc::new(RefCell::new(Vec::<String>::new()));
+        let (g, weak) = (got.clone(), app.as_weak());
+        app.on_delete_asked(move |w| {
+            g.borrow_mut().push(format!("delete {w}"));
+            weak.unwrap().set_delete_open(true);
+        });
+        let (g, weak) = (got.clone(), app.as_weak());
+        app.on_delete_answered(move |a| {
+            g.borrow_mut().push(format!("delete answered {a}"));
+            weak.unwrap().set_delete_open(false);
+        });
+        let (g, weak) = (got.clone(), app.as_weak());
+        app.on_archive_rejects_asked(move |i| {
+            g.borrow_mut().push(format!("archive {i}"));
+            let app = weak.unwrap();
+            app.set_archive_rejects_move("Move to rejects".into());
+            app.set_archive_rejects_open(true);
+        });
+        let (g, weak) = (got.clone(), app.as_weak());
+        app.on_archive_rejects_answered(move |a| {
+            g.borrow_mut().push(format!("archive answered {a}"));
+            weak.unwrap().set_archive_rejects_open(false);
+        });
+        app.set_delete_trash(true);
+        app.set_reject_count(2);
+        app.set_archive_rejects_choices(ModelRc::new(VecModel::from(vec![
+            slint::SharedString::from("Remove rejects from nas..."),
+        ])));
+        let items = [
+            (
+                "Delete rejects folder...",
+                2,
+                "delete rejects",
+                "delete answered 1",
+            ),
+            (
+                "Remove rejects from nas...",
+                3,
+                "archive 0",
+                "archive answered 1",
+            ),
+        ];
+        app.set_grid_open(true);
+        for (item, downs, asked, answered) in items {
+            rejects_menu_pick(&app, "2 rejects", item, downs);
+            a_moment_on(&app);
+            press(&app, Key::Return);
+            assert_eq!(
+                got.borrow_mut().drain(..).collect::<Vec<_>>(),
+                [asked, answered],
+                "{item} from the grid"
+            );
+        }
+        app.set_grid_open(false);
+        app.set_panel_tab(CULL_TAB.into());
+        for (item, _, asked, answered) in items {
+            let (at, size) = crate::testing::labeled(&app, item);
+            click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+            a_moment_on(&app);
+            press(&app, Key::Return);
+            assert_eq!(
+                got.borrow_mut().drain(..).collect::<Vec<_>>(),
+                [asked, answered],
+                "{item} from CULLING"
+            );
+        }
+    }
 }

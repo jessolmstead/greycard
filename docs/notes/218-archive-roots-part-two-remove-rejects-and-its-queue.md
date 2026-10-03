@@ -15,7 +15,7 @@ folder, after a move made by hand.
 **The action.** The CULLING section has an entry per archive under
 Delete rejects folder: "Remove rejects from Archive...". The grid
 header's menu has no Delete rejects folder, so the CULLING section is
-the only place it goes. It works in the folder view only, over the same
+the only place it goes (until §228 put a Rejects menu in the header). It works in the folder view only, over the same
 folder §190's Delete rejects folder takes, in the spelling the reads kept. An open
 folder on the archive itself is refused: its rejects folder is the
 archive's own, and Delete rejects folder is the way to take it off.
@@ -225,7 +225,8 @@ A third pass on the user's Cancel (verdict: ready, two should-fixes):
 
 **Decisions the design left open.**
 - One entry per archive in the CULLING section, a button each; the
-  grid header has no Delete rejects folder, so no entry goes there.
+  grid header has no Delete rejects folder, so no entry goes there
+  (reversed in §228).
 - A frame's copies are all the confirmed rows, not the first: two
   backups of one shoot leave two copies, and both are moved or deleted.
 - The queue entry carries the frame's whole hash and time beside §197's
