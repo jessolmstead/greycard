@@ -1119,11 +1119,16 @@ pub(crate) fn on_archives(
 /// The rows of a view of every root with the archives' copies of local
 /// frames left out: a row under an archive whose content key is also
 /// under a local root is the same frame shown twice (§216). The local
-/// copy is the one kept. Nothing is asked of the disk.
+/// copy is the one kept while it is there: a local row that `present`
+/// says is not (its root offline, its folder gone) hides nothing, and
+/// the frame is listed from the archive instead, where it can be
+/// opened. Nothing is asked of the disk here; `present` is what the
+/// caller already knows.
 pub(crate) fn hide_local_copies<T>(
     rows: Vec<(PathBuf, T)>,
     archives: &[PathBuf],
     key: impl Fn(&T) -> &str,
+    present: impl Fn(&Path) -> bool,
 ) -> Vec<(PathBuf, T)> {
     if archives.is_empty() {
         return rows;
@@ -1131,7 +1136,7 @@ pub(crate) fn hide_local_copies<T>(
     let on_archive = |p: &Path| archives.iter().any(|a| p.starts_with(a));
     let local: std::collections::HashSet<String> = rows
         .iter()
-        .filter(|(p, _)| !on_archive(p))
+        .filter(|(p, _)| !on_archive(p) && present(p))
         .map(|(_, r)| key(r).to_owned())
         .collect();
     rows.into_iter()
@@ -1784,11 +1789,15 @@ mod tests {
             ),
             (PathBuf::from("/other/b.cr3"), "hb".to_string()),
         ];
-        let kept: Vec<PathBuf> =
-            hide_local_copies(rows.clone(), &[PathBuf::from("/nas")], |h| h.as_str())
-                .into_iter()
-                .map(|(p, _)| p)
-                .collect();
+        let kept: Vec<PathBuf> = hide_local_copies(
+            rows.clone(),
+            &[PathBuf::from("/nas")],
+            |h| h.as_str(),
+            |_| true,
+        )
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
         assert_eq!(
             kept,
             [
@@ -1797,9 +1806,21 @@ mod tests {
                 PathBuf::from("/other/b.cr3")
             ]
         );
+        // The local copy not there (its root offline, its folder
+        // gone): the archive's copies are the frame, and listed.
+        let kept: Vec<PathBuf> = hide_local_copies(
+            rows.clone(),
+            &[PathBuf::from("/nas")],
+            |h| h.as_str(),
+            |p| !p.starts_with("/local"),
+        )
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
+        assert_eq!(kept.len(), 5, "{kept:?}");
         // No archive: every row.
         assert_eq!(
-            hide_local_copies(rows.clone(), &[], |h| h.as_str()).len(),
+            hide_local_copies(rows.clone(), &[], |h| h.as_str(), |_| true).len(),
             5
         );
     }

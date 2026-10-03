@@ -46,8 +46,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use greycard_edit::Sidecar;
 use greycard_edit::meta::Meta;
+use greycard_edit::{Placement, Sidecar};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 use crate::{
@@ -81,6 +81,9 @@ pub struct Report {
     pub added: usize,
     /// Files found under a new path by their hash.
     pub moved: usize,
+    /// Of those, the ones whose sidecar was left behind at the old
+    /// path and carried to the new one by the pass.
+    pub carried: usize,
     /// Files whose size or mtime changed, read again whole.
     pub changed: usize,
     /// Those files, by path: whose pictures are to be made again.
@@ -126,6 +129,7 @@ impl Report {
     fn add(&mut self, other: Report) {
         self.added += other.added;
         self.moved += other.moved;
+        self.carried += other.carried;
         self.changed += other.changed;
         self.changed_files.extend(other.changed_files);
         self.meta_refreshed += other.meta_refreshed;
@@ -623,6 +627,82 @@ struct SidecarNow {
     xmp: Option<PathBuf>,
 }
 
+/// A raw found moved from `old` to `new` with no sidecar at the new
+/// place: the sidecar it left behind, beside the old path or under the
+/// old folder's hidden `.greycard`, carried to the new folder in the
+/// same placement, so a raw dragged by hand keeps its edits and its
+/// flag. The hidden placement is the one a hand move forgets, since a
+/// file manager shows nothing beside the raw to take along. Nothing is
+/// written over: a sidecar at the new place under either placement
+/// leaves the old one where it is, and so does a name taken there by
+/// the time the move is made. The XMP, a visible file beside the raw,
+/// is left to the hand that moved the raw. Done in the first phase,
+/// before the new place's sidecar is read, so the row's meta is the
+/// carried sidecar's. True when a sidecar was carried.
+fn carry_sidecar(old: &Path, new: &Path) -> bool {
+    disk_call();
+    let Some(from) = Sidecar::find(old) else {
+        return false;
+    };
+    if Sidecar::find(new).is_some() {
+        return false;
+    }
+    let placement = if from.parent().and_then(Path::file_name)
+        == Some(std::ffi::OsStr::new(greycard_edit::SIDECAR_FOLDER))
+    {
+        Placement::Folder
+    } else {
+        Placement::Beside
+    };
+    let to = Sidecar::path_in(new, placement);
+    if placement == Placement::Folder
+        && let Some(folder) = new.parent()
+        && let Err(e) = Sidecar::folder_under(folder)
+    {
+        log::warn!(
+            "{}: sidecar not carried from {}: {e}",
+            new.display(),
+            from.display()
+        );
+        return false;
+    }
+    match move_noreplace(&from, &to) {
+        Ok(()) => {
+            log::info!("{}: sidecar carried from {}", to.display(), from.display());
+            true
+        }
+        Err(e) => {
+            log::warn!(
+                "{}: sidecar not carried from {}: {e}",
+                to.display(),
+                from.display()
+            );
+            false
+        }
+    }
+}
+
+/// `from` moved to `to`, never over a file there: a hard link, which
+/// fails where `to` exists, then the unlink; across devices or on a
+/// file system without links, a copy into a file that must be new,
+/// then the unlink.
+fn move_noreplace(from: &Path, to: &Path) -> std::io::Result<()> {
+    match std::fs::hard_link(from, to) {
+        Ok(()) => return std::fs::remove_file(from),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => return Err(e),
+        Err(_) => {}
+    }
+    let bytes = std::fs::read(from)?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(to)?;
+    std::io::Write::write_all(&mut file, &bytes)?;
+    file.sync_all()?;
+    drop(file);
+    std::fs::remove_file(from)
+}
+
 /// A sidecar is small and is read whole: its hash is what says
 /// whether it changed, since a save that changes one digit of a
 /// rating changes neither its length nor, within one timestamp
@@ -845,6 +925,11 @@ fn index_paths(
                 } else {
                     Some(probe(path, &mut report))
                 };
+                if let Some((_, old)) = &found
+                    && carry_sidecar(&path_from_bytes(old), path)
+                {
+                    report.carried += 1;
+                }
                 moved = found;
                 Plan::Fresh { hash, exif }
             }
@@ -1528,7 +1613,6 @@ pub(crate) mod tests {
     use super::*;
     use crate::fixture::{A7, R5, R6, write_frame};
     use crate::{Entry, Filter, Library};
-    use greycard_edit::Placement;
     use greycard_edit::meta::{Flag, Label};
     use std::time::SystemTime;
 
@@ -2152,6 +2236,82 @@ pub(crate) mod tests {
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.added, 1, "{report:?}");
         assert_eq!(lib.by_hash(&e.hash).unwrap().len(), 2);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A raw dragged by hand to another folder, or renamed, leaves its
+    /// sidecar behind: the pass that sees the move carries the sidecar
+    /// to the new place in the placement it had, and the row keeps the
+    /// edits and the flag.
+    #[test]
+    fn a_hand_moved_raw_has_its_sidecar_carried_along() {
+        let dir = scratch("carry");
+        let (r5, r6, a7) = shoot(&dir);
+        let picks = dir.join("picks");
+        std::fs::create_dir(&picks).unwrap();
+        // A frame in each folder, so neither is ever empty.
+        write_frame(&picks.join("keep.tif"), &A7, 21);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut quiet()).unwrap();
+
+        // The raws alone, one with a sidecar beside it and one with
+        // its sidecar under the hidden folder.
+        let (r5_to, r6_to) = (picks.join("r5.tif"), picks.join("r6.tif"));
+        std::fs::rename(&r5, &r5_to).unwrap();
+        std::fs::rename(&r6, &r6_to).unwrap();
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!(
+            (report.moved, report.carried, report.added),
+            (2, 2, 0),
+            "{report:?}"
+        );
+        assert_eq!(Sidecar::find(&r5_to), Some(Sidecar::path_for(&r5_to)));
+        assert_eq!(
+            Sidecar::find(&r6_to),
+            Some(Sidecar::path_in(&r6_to, Placement::Folder))
+        );
+        assert!(Sidecar::find(&r5).is_none(), "nothing left behind");
+        assert!(Sidecar::find(&r6).is_none(), "nothing left behind");
+        let row = lib.by_path(&r5_to).unwrap().unwrap();
+        assert_eq!((row.meta.rating, row.meta.flag), (4, Flag::Pick));
+        let row = lib.by_path(&r6_to).unwrap().unwrap();
+        assert_eq!((row.meta.rating, row.meta.label), (2, Label::Red));
+
+        // Renamed within the folder, the raw alone: the same.
+        let renamed = picks.join("z.tif");
+        std::fs::rename(&r5_to, &renamed).unwrap();
+        let report = lib.index_folder(&picks, &mut quiet()).unwrap();
+        assert_eq!((report.moved, report.carried), (1, 1), "{report:?}");
+        assert_eq!(Sidecar::find(&renamed), Some(Sidecar::path_for(&renamed)));
+        assert!(Sidecar::find(&r5_to).is_none());
+        assert_eq!(lib.by_path(&renamed).unwrap().unwrap().meta.rating, 4);
+
+        // A frame with no sidecar moves as before.
+        let a7_to = picks.join("a7.tif");
+        std::fs::rename(&a7, &a7_to).unwrap();
+        let report = lib.index_tree(&dir, &mut quiet()).unwrap();
+        assert_eq!((report.moved, report.carried), (1, 0), "{report:?}");
+        assert!(Sidecar::find(&a7_to).is_none());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A sidecar at the new place already is the frame's now: the one
+    /// left behind stays where it is, and the row reads the new one.
+    #[test]
+    fn a_sidecar_at_the_new_place_is_not_written_over() {
+        let dir = scratch("carry-taken");
+        let (r5, _r6, _a7) = shoot(&dir);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let renamed = dir.join("z.tif");
+        std::fs::rename(&r5, &renamed).unwrap();
+        let mut s = Sidecar::default();
+        s.meta.rating = 1;
+        s.save(&renamed).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!((report.moved, report.carried), (1, 0), "{report:?}");
+        assert!(Sidecar::path_for(&r5).is_file(), "left where it was");
+        assert_eq!(lib.by_path(&renamed).unwrap().unwrap().meta.rating, 1);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

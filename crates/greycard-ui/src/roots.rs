@@ -1720,18 +1720,18 @@ impl Look {
                         }
                     },
                 };
-                let listed = crate::archive::hide_local_copies(listed, &hide, |r| r.hash.as_str());
                 let mut seen: HashMap<PathBuf, bool> = HashMap::new();
                 let mut kept = Vec::with_capacity(listed.len());
                 let mut map = HashMap::with_capacity(listed.len());
-                for (f, row) in listed {
+                let is_away = |f: &Path| away.iter().any(|r| f.starts_with(r));
+                // A folder under a root that is offline is not looked
+                // at (nothing there would answer), and its frames are
+                // kept, to be shown dimmed.
+                let mut can_read = |f: &Path| {
                     let Some(dir) = f.parent() else {
-                        continue;
+                        return false;
                     };
-                    // A folder under a root that is offline is not
-                    // looked at (nothing there would answer), and its
-                    // frames are kept, to be shown dimmed.
-                    let can = away.iter().any(|r| f.starts_with(r))
+                    is_away(f)
                         || self.known.contains(dir)
                         || match seen.get(dir) {
                             Some(&can) => can,
@@ -1746,12 +1746,60 @@ impl Look {
                                 }
                                 can
                             }
-                        };
-                    if can {
+                        }
+                };
+                // The local rows first, then the archives' with the
+                // copies of local frames that are there left out, so a
+                // hidden copy's folder is never looked at, and a frame
+                // whose local copy is offline or gone is listed from
+                // the archive, where it can be opened. The order is
+                // the index's.
+                let order: HashMap<PathBuf, usize> = listed
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (f, _))| (f.clone(), i))
+                    .collect();
+                let on_archive = |f: &Path| hide.iter().any(|a| f.starts_with(a));
+                let (archived, local): (Vec<_>, Vec<_>) =
+                    listed.into_iter().partition(|(f, _)| on_archive(f));
+                for (f, row) in local {
+                    if can_read(&f) {
                         kept.push(f.clone());
                         map.insert(f, row);
                     }
                 }
+                let there: HashSet<PathBuf> =
+                    kept.iter().filter(|f| !is_away(f)).cloned().collect();
+                let mut both: Vec<(PathBuf, RowMeta)> =
+                    Vec::with_capacity(there.len() + archived.len());
+                both.extend(there.iter().map(|f| (f.clone(), map[f].clone())));
+                both.extend(archived);
+                let shown = crate::archive::hide_local_copies(
+                    both,
+                    &hide,
+                    |r| r.hash.as_str(),
+                    |f| there.contains(f),
+                );
+                let mut from_archive: HashSet<String> = HashSet::new();
+                for (f, row) in shown {
+                    if on_archive(&f) && can_read(&f) {
+                        from_archive.insert(row.hash.clone());
+                        kept.push(f.clone());
+                        map.insert(f, row);
+                    }
+                }
+                // A local copy offline whose frame is listed from the
+                // archive would be the frame twice, once dimmed: the
+                // archive's is the one, and the stand-in goes.
+                kept.retain(|f| {
+                    let twice =
+                        is_away(f) && map.get(f).is_some_and(|r| from_archive.contains(&r.hash));
+                    if twice {
+                        map.remove(f);
+                    }
+                    !twice
+                });
+                kept.sort_by_key(|f| order.get(f).copied().unwrap_or(usize::MAX));
                 // The index's own paths: their folders are canonical.
                 let mut folders: HashSet<&Path> = HashSet::new();
                 for f in &kept {
@@ -4545,6 +4593,83 @@ mod tests {
         drop(state);
         drop(writer);
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A frame with a copy on an archive is one frame (§216): All roots
+    /// lists the local copy and leaves the archive's out while the local
+    /// one is there. When it is not, its root offline or its folder
+    /// gone after a backup, the frame is listed from the archive, with a
+    /// picture, rather than as a dimmed stand-in for a file that cannot
+    /// be opened.
+    #[test]
+    fn all_roots_lists_the_archives_copy_when_the_local_one_is_away() {
+        let dir = scratch("two-places");
+        let (a, nas) = (dir.join("a"), dir.join("nas"));
+        std::fs::create_dir_all(a.join("day")).unwrap();
+        std::fs::create_dir_all(nas.join("day")).unwrap();
+        let x = a.join("x.tif");
+        let y = a.join("day").join("y.tif");
+        write_frame(&x, &R5, 1);
+        write_frame(&y, &R6, 2);
+        write_frame(&nas.join("z.tif"), &A7, 3);
+        std::fs::copy(&x, nas.join("x.tif")).unwrap();
+        std::fs::copy(&y, nas.join("day").join("y.tif")).unwrap();
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_tree(&dir, &mut |_| {}).unwrap();
+        let app = window(0);
+        let (state, worker) = state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.index_reader = Some(greycard_library::Library::open_read_only(&db).unwrap());
+            st.library.roots.add(&a).unwrap();
+            st.library.roots.add(&nas).unwrap();
+            st.library.roots.set_archive(&nas, true);
+            recount(&mut st);
+        }
+        let listed = |state: &Rc<RefCell<State>>| {
+            let mut files = state.borrow().files.clone();
+            files.sort();
+            files
+        };
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
+        assert_eq!(
+            listed(&state),
+            [y.clone(), x.clone(), nas.join("z.tif")],
+            "the copies hidden"
+        );
+
+        // The day's folder deleted after its backup: its frame is the
+        // archive's now.
+        std::fs::remove_dir_all(a.join("day")).unwrap();
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
+        assert_eq!(
+            listed(&state),
+            [x.clone(), nas.join("day").join("y.tif"), nas.join("z.tif")]
+        );
+
+        // The root unplugged: both from the archive, and not dimmed.
+        crate::testing::rename_away(&a, &dir.join("a-away"));
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
+        assert_eq!(
+            listed(&state),
+            [
+                nas.join("day").join("y.tif"),
+                nas.join("x.tif"),
+                nas.join("z.tif")
+            ]
+        );
+        let thumbs = app.get_thumbs();
+        for i in 0..3 {
+            assert!(
+                !thumbs.row_data(i).unwrap().offline,
+                "listed from the archive"
+            );
+        }
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// A root that is not there (unplugged, its mount point gone) is

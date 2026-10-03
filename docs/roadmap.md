@@ -15,15 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] When clicking the backup button, the first click does nothing but
-      the sheet flashes. clicking again works
-- [ ] A move seen by the index carries the sidecar along: a pass that
-      finds a raw gone from one folder and its content key new in
-      another keeps the row as a move already, and now also moves the
-      row's sidecar from the old folder's placement to the new one when
-      the new place has none, so a raw dragged by hand out of a rejects
-      folder (or anywhere) keeps its edits and its flag; the sidecar
-      under the hidden folder is the one a hand move forgets (§220)
 - [ ] Move back: the inverse of Move rejects, on a frame's menu and in
       CULLING for a frame in a rejects folder, into the folder above
       with its sidecars, placement kept; a name taken there leaves it
@@ -42,11 +33,11 @@ is backed up to it and brought back by hash, and the last folders
 opened are a click away; a crop can be drawn, an export is a line in
 History, and the Masks tab reads at a glance.
 
-- [ ] One frame in two places: a file whose hash is under two roots
-      (the shoot and its archive copy) shown once, opened from the copy
-      that is online and fastest, its sidecar written to both when both
-      are there, so "back up, then delete local" removes nothing from the
-      library
+- [ ] One frame in two places, what is left after §224 listed a frame
+      from the copy that is there: its sidecar written to both copies
+      when both are there, with the reconciliation design below, and
+      the frame on screen following to the archive's copy when its
+      local root goes
 
 ## Tracks
 
@@ -211,6 +202,8 @@ ask for first.
       into the vignetting line below; `style:` in the filter text;
       Nikon, Sony and Panasonic styles once files with the settings
       varied make exiv2 a clean oracle for them (§180)
+- [ ] Camera match "refine" button to further refine a given look lut
+      based on new frames (especially the current frame maybe?)
 - [ ] The match sheet's groups chosen: a checkbox on each body and
       style line, all on at first, the run over the checked ones and
       the Run button counting them, an unchecked group skipped as a

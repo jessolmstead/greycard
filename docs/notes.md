@@ -232,3 +232,6 @@ in its section; the roadmap and the changelog only point at it.
 - [§219. The backup pairing is the folder's, not the root's](notes/219-the-backup-pairing-is-the-folders-not-the-roots.md) (2026-10-02)
 - [§220. The folder is the truth, and the sidecar a hand move leaves behind](notes/220-the-folder-is-the-truth-and-the-sidecar-it-leaves-behind.md) (2026-10-02)
 - [§221. The shader checked against the CPU at random edits, and the GPU tests made to run in CI](notes/221-the-shader-checked-against-the-cpu-at-random-edits.md) (2026-10-02)
+- [§222. The archive sheet is up from the press](notes/222-the-archive-sheet-is-up-from-the-press.md) (2026-10-02)
+- [§223. A move seen by the index carries the sidecar along](notes/223-a-move-seen-by-the-index-carries-the-sidecar-along.md) (2026-10-02)
+- [§224. One frame in two places: listed from the copy that is there](notes/224-one-frame-in-two-places-listed-from-the-copy-that-is-there.md) (2026-10-02)

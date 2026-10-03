@@ -513,9 +513,33 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
         }
     };
     app.set_status(format!("looking at what is on {}...", asked.label).into());
+    // The sheet is up from the press, saying it is looking, so the
+    // press is seen to have done something while an archive over the
+    // wire takes its second or two to answer; the look fills it in.
+    fill_looking(app, &asked);
     st.archive.asked = Some(asked);
     st.archive.plan = None;
+    app.set_archive_open(true);
     look(&mut st, app);
+}
+
+/// The sheet as it is while the first look is out: its title, where
+/// the copy would go as the file has it, and nothing to confirm.
+fn fill_looking(app: &App, asked: &Asked) {
+    let label = &asked.label;
+    let title = match asked.ask.direction {
+        Direction::BackUp => format!("Back up to {label}"),
+        Direction::BringBack => format!("Bring back to {label}"),
+    };
+    app.set_archive_title(title.into());
+    app.set_archive_text(format!("Looking at what is on {label}...").into());
+    app.set_archive_named("".into());
+    app.set_archive_dest(asked.ask.dest.to_string_lossy().into_owned().into());
+    app.set_archive_dest_note("".into());
+    app.set_archive_rejects(-1);
+    app.set_archive_include_rejects(false);
+    app.set_archive_confirm("Looking...".into());
+    app.set_archive_can_confirm(false);
 }
 
 /// Bring back with no pairing to unwind: from the archive folder `from`
@@ -706,6 +730,11 @@ fn land_look(
     };
     match heard {
         Heard::Aside => {
+            tracing::warn!(
+                "archive: the look at {} said nothing for {} s; set aside",
+                asked.label,
+                ROOT_WAIT.as_secs()
+            );
             app.set_status(
                 format!(
                     "{} has said nothing for {} s; the look is set aside and nothing was copied",
@@ -717,6 +746,10 @@ fn land_look(
             close(&mut st, app);
         }
         Heard::Lost => {
+            tracing::warn!(
+                "archive: the look at {} stopped without a report",
+                asked.label
+            );
             app.set_status("the look at the archive failed; the log has why".into());
             close(&mut st, app);
         }
@@ -724,6 +757,7 @@ fn land_look(
         Heard::Done {
             result: Err(why), ..
         } => {
+            tracing::warn!("archive: the look at {} failed: {why}", asked.label);
             app.set_status(why.into());
             close(&mut st, app);
         }
@@ -2016,7 +2050,16 @@ pub(crate) mod tests {
         assert_eq!(app.get_archive_verb(), "Back up");
 
         app.invoke_archive_header_pressed(0);
-        assert!(!app.get_archive_open(), "not until the look is in");
+        // Up from the press, looking, with nothing to confirm yet.
+        assert!(app.get_archive_open(), "up from the press");
+        assert_eq!(app.get_archive_title(), "Back up to nas");
+        assert!(
+            app.get_archive_text()
+                .starts_with("Looking at what is on nas")
+        );
+        assert_eq!(app.get_archive_confirm(), "Looking...");
+        assert!(!app.get_archive_can_confirm());
+        assert_eq!(app.get_archive_rejects(), -1);
         assert_eq!(land_sent(&state, &app, &worker), 1);
         assert!(app.get_archive_open());
         assert_eq!(app.get_archive_title(), "Back up to nas");

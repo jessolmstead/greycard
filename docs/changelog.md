@@ -10,6 +10,18 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- All roots lists a frame from its archive copy when the local copy's
+  folder is gone or its root offline, in place of a dimmed stand-in for
+  a file that cannot be opened; the two copies are still one frame, and
+  the hidden copies' folders are still never looked at (§224)
+- A raw dragged by hand to another folder, or renamed, keeps its edits
+  and its flag: the index pass that sees the move carries the sidecar
+  it left behind to the new place, in the placement it had, never over
+  a file there (§223)
+- The archive sheet is up from the press, saying it is looking, while
+  an archive over the wire takes its second to answer, so a second
+  click no longer cancels the sheet as it appears; a look that fails is
+  logged (§222)
 - The viewport shader is checked against the CPU finish over 400
   random edits a run, every slider at its panel range with the corners
   weighted, locals of every shape with looks of their own, a look table
