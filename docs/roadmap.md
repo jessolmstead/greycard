@@ -15,10 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] Move back: the inverse of Move rejects, on a frame's menu and in
-      CULLING for a frame in a rejects folder, into the folder above
-      with its sidecars, placement kept; a name taken there leaves it
-      whole and said (§220)
 
 ## Tweaks
 
@@ -202,8 +198,19 @@ ask for first.
       into the vignetting line below; `style:` in the filter text;
       Nikon, Sony and Panasonic styles once files with the settings
       varied make exiv2 a clean oracle for them (§180)
-- [ ] Camera match "refine" button to further refine a given look lut
-      based on new frames (especially the current frame maybe?)
+- [ ] Camera match Refine: the frame on screen, or the selection,
+      pinned into a group's sample and the group fitted again, with the
+      pinned frames' error and the rest's said before and after; a
+      pinned frame that will not register, or has an adaptive setting
+      on, refused with the reason. Fast because each frame's block
+      pairs are cached under the cache directory, keyed by the frame's
+      content hash and a version of the default develop, so a fit over
+      a group develops only the frames it has not seen; the held-out
+      error over every frame (above) reads the same cache with one
+      frame left out each time, and its per-frame list is what says
+      which frames to refine with. Never a nudge of the table toward
+      one frame: a refined table is still one fit over a sample, so
+      the replacement rule still counts frames
 - [ ] The match sheet's groups chosen: a checkbox on each body and
       style line, all on at first, the run over the checked ones and
       the Run button counting them, an unchecked group skipped as a

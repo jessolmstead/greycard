@@ -180,6 +180,7 @@ pub(crate) fn menu_asked(state: &Rc<RefCell<State>>, app: &App, row: i32) {
     app.set_menu_flag(shared(metas.iter().map(|m| m.flag.code())));
     app.set_menu_label(shared(metas.iter().map(|m| m.label.code())));
     crate::panel::archive::menu_asked(&st, app);
+    crate::panel::cull::show_back(&st, app);
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {

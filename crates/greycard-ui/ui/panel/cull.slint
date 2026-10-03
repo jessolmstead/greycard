@@ -35,6 +35,11 @@ export component CullSection inherits Section {
     callback filter-cleared();
     in property <int> reject-count;
     callback rejects-asked();
+    /// Move back: the frames of the selection in a rejects folder, and
+    /// the folder above by name.
+    in property <int> back-count;
+    in property <string> back-to;
+    callback move-back();
     callback delete-asked(string);
     /// "Remove rejects from Archive...", one an archive (§216).
     in property <[string]> archive-rejects-choices;
@@ -129,6 +134,14 @@ export component CullSection inherits Section {
         icon: @image-url("../icons/folder-open.svg");
         enabled: root.reject-count > 0;
         clicked => { root.rejects-asked(); }
+    }
+    // The way back, for a frame in a rejects folder: no sheet, since
+    // nothing is written over and the frame can go out again.
+    if root.back-count > 0: PanelButton {
+        text: (root.back-count > 1 ? "Move " + root.back-count + " frames back to " : "Move back to ")
+            + root.back-to;
+        icon: @image-url("../icons/folder-open.svg");
+        clicked => { root.move-back(); }
     }
     // Deleting, beside moving: each opens a sheet that names the
     // count and the folder, and nothing goes until it is answered.

@@ -2411,6 +2411,53 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A move the editor made, told to the index: the row goes to the
+    /// new path with its id, its hash and its keywords, found again if
+    /// it was missing, even out of a folder the move emptied, which a
+    /// pass takes for a drive that is away. A stale row at the new path
+    /// goes; a path with no row moves nothing.
+    #[test]
+    fn a_move_the_editor_made_takes_the_row_along() {
+        let dir = scratch("told-move");
+        let rejects = dir.join("rejects");
+        std::fs::create_dir_all(&rejects).unwrap();
+        let (r5, r6, _a7) = shoot(&dir);
+        let from = rejects.join("r5.tif");
+        std::fs::rename(&r5, &from).unwrap();
+        std::fs::rename(Sidecar::path_for(&r5), Sidecar::path_for(&from)).unwrap();
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        lib.index_folder(&rejects, &mut quiet()).unwrap();
+        let before = lib.by_path(&from).unwrap().unwrap();
+        // A row at the new path from a file once there, gone since:
+        // r6 renamed away and its row marked missing.
+        let stale = dir.join("r6-gone.tif");
+        std::fs::rename(&r6, &stale).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        std::fs::remove_file(&stale).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert!(lib.by_path(&stale).unwrap().unwrap().missing);
+        let to = stale;
+        std::fs::rename(&from, &to).unwrap();
+
+        assert!(lib.file_moved(&from, &to).unwrap());
+        let after = lib.by_path(&to).unwrap().unwrap();
+        assert_eq!(after.id, before.id);
+        assert_eq!(after.hash, before.hash);
+        assert!(!after.missing);
+        assert_eq!(after.name(), "r6-gone.tif");
+        assert!(lib.by_path(&from).unwrap().is_none());
+        assert_eq!(names(&lib, "keyword:Harbor"), ["r6-gone.tif"]);
+        // The emptied folder's pass and the new one's agree: nothing
+        // added, nothing missing.
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!((report.added, report.missing), (0, 0), "{report:?}");
+        lib.index_folder(&rejects, &mut quiet()).unwrap();
+        assert!(names(&lib, "missing:yes").is_empty());
+        assert!(!lib.file_moved(&from, &to).unwrap(), "nothing left at from");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A folder deleted with its files: a pass over the tree above
     /// it marks them missing, and so does a pass over the folder
     /// itself, which is not an error while its parent is there.

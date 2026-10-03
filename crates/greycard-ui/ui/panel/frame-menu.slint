@@ -32,6 +32,11 @@ export component FrameMenu inherits Rectangle {
     in property <string> archive-verb;
     in property <[string]> archive-choices;
     callback archive(int);
+    /// How many of the selection are in a rejects folder, and the
+    /// folder above it by name, for Move back; none leaves it out.
+    in property <int> back-count;
+    in property <string> back-to;
+    callback move-back();
     callback copy();
     callback paste();
     /// A rating, a flag or a label ("rating", "flag", "label") and its
@@ -116,6 +121,11 @@ export component FrameMenu inherits Rectangle {
                 title: root.count > 1 ? "Export " + root.count + " frames..." : "Export...";
                 enabled: root.can-export;
                 activated => { root.export(); }
+            }
+            if root.back-count > 0: MenuItem {
+                title: (root.back-count > 1 ? "Move " + root.back-count + " frames back to " : "Move back to ")
+                    + root.back-to;
+                activated => { root.move-back(); }
             }
             if root.archive-verb != "" && root.archive-choices.length == 1: MenuItem {
                 title: root.archive-verb + " to " + root.archive-choices[0] + "...";

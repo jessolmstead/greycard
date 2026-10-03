@@ -412,6 +412,7 @@ pub(crate) fn show_set(st: &mut State, app: &App) {
         }
     }
     app.set_set_count(chosen_set.len().max(1) as i32);
+    crate::panel::cull::show_back(st, app);
 }
 
 /// Put file `i`'s meta on its row in the strip and the grid, leaving

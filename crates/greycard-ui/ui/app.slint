@@ -561,6 +561,11 @@ export component App inherits Window {
     in property <string> rejects-text: "";
     callback rejects-asked();
     callback rejects-answered(bool);
+    /// Move back, the inverse: how many of the selection are in a
+    /// rejects folder (none hides it), and the folder above by name.
+    in property <int> back-count: 0;
+    in property <string> back-to: "";
+    callback move-back-asked();
     /// The delete sheet: what it will delete, from where, and what it
     /// offers, until answered. Asked for "selection" or "rejects";
     /// answered 0 no, 1 the trash, 2 permanently.
@@ -1907,6 +1912,9 @@ export component App inherits Window {
                             filter-cleared => { root.filter-cleared(); }
                             reject-count: root.reject-count;
                             rejects-asked => { root.rejects-asked(); }
+                            back-count: root.back-count;
+                            back-to: root.back-to;
+                            move-back => { root.move-back-asked(); }
                             delete-asked(w) => { root.delete-asked(w); }
                             archive-rejects-choices: root.archive-rejects-choices;
                             archive-rejects-asked(i) => { root.archive-rejects-asked(i); }
@@ -2931,6 +2939,9 @@ export component App inherits Window {
         can-export: !root.export-open && !root.export-running && root.selected >= 0 && !root.culling;
         archive-verb: root.archive-verb;
         archive-choices: root.archive-choices;
+        back-count: root.back-count;
+        back-to: root.back-to;
+        move-back => { root.move-back-asked(); root.menu-done(); }
         archive(i) => { root.archive-menu-picked(i); root.menu-done(); }
         copy => { root.menu-copy(); root.menu-done(); }
         paste => { root.paste-asked(); root.menu-done(); }

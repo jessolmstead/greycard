@@ -799,6 +799,8 @@ pub const REJECTS: &str = "rejects";
 pub struct Moved {
     /// The files moved, by their index in the list given.
     pub files: Vec<usize>,
+    /// Where each of `files` went, in the same order.
+    pub to: Vec<PathBuf>,
     /// How many of them had a sidecar that went with them.
     pub sidecars: usize,
     /// The files left where they were, and why.
@@ -850,7 +852,7 @@ pub fn move_rejects_as(
         // Already out: a frame in a rejects folder (the all-roots view
         // lists those too) stays there, rather than going one folder
         // deeper each time the rejects are moved.
-        if shoot.file_name() == Some(std::ffi::OsStr::new(REJECTS)) {
+        if above_rejects(raw).is_some() {
             moved
                 .skipped
                 .push((i, "it is in a rejects folder already".into()));
@@ -878,9 +880,108 @@ pub fn move_rejects_as(
     Ok(moved)
 }
 
-/// The frames at `group`, all in one folder, into its rejects folder
-/// `dir`.
+/// Move the frames at `chosen` (indices into `files`) that are in a
+/// rejects folder back into the folder above it, each with its
+/// sidecar and its XMPs: the inverse of [`move_rejects`]. A sidecar
+/// under the rejects folder's hidden folder goes under the folder
+/// above's own, one beside stays beside. Never a delete and never a
+/// file of another frame's written over: a raw of the name in the
+/// folder above, or a sidecar of one of its names there with a raw it
+/// belongs to beside it, leaves the frame whole where it is, said in
+/// `skipped`. A sidecar there of its names with no raw beside it is
+/// this frame's own, left when it was culled, and the frame's sidecar
+/// goes over it, as [`Orphans::WriteOver`] has it. A frame not in a
+/// rejects folder is left and said.
+pub fn move_back(files: &[PathBuf], chosen: &[usize]) -> Moved {
+    let mut moved = Moved::default();
+    let mut by_folder: Vec<(PathBuf, Vec<usize>)> = Vec::new();
+    for &i in chosen {
+        let Some(raw) = files.get(i) else {
+            continue;
+        };
+        let Some(above) = above_rejects(raw) else {
+            moved
+                .skipped
+                .push((i, "it is not in a rejects folder".into()));
+            continue;
+        };
+        match by_folder.iter_mut().find(|(d, _)| *d == above) {
+            Some((_, group)) => group.push(i),
+            None => by_folder.push((above, vec![i])),
+        }
+    }
+    for (above, group) in by_folder {
+        move_into(files, &group, &above, Orphans::WriteOver, &mut moved);
+    }
+    moved
+}
+
+/// The folder above the rejects folder `raw` is in, where Move back
+/// takes it; None when `raw` is not in a rejects folder.
+pub fn above_rejects(raw: &Path) -> Option<PathBuf> {
+    let dir = raw.parent()?;
+    if dir.file_name() != Some(std::ffi::OsStr::new(REJECTS)) {
+        return None;
+    }
+    Some(
+        dir.parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map_or_else(|| PathBuf::from("."), Path::to_path_buf),
+    )
+}
+
+/// The file in `dir` that answers to the stem of the short XMP name
+/// `xmp` (`IMG.xmp`), by its name: a picture there of that stem, the
+/// camera's `IMG.JPG` beside a raw, which the XMP is then that file's
+/// or nobody's. Stems are matched without regard to case, as the disks
+/// of two of the three platforms match them, and sidecars of ours and
+/// files part-written (`.tmp`) are no picture. A folder that cannot be
+/// read is taken to hold one. Only the short name has this question:
+/// a `.gcd` and the long XMP name (`IMG.CR3.xmp`) carry their raw's
+/// whole name, and no other file answers to it.
+///
+/// The files this same move brought in (`arrived`) are passed over:
+/// a raw and the camera's JPEG of one shot moved together share the
+/// short XMP as they did where they were, and the one that went first
+/// is no other frame's claim on it.
+fn stem_owner(xmp: &Path, dir: &Path, arrived: &[PathBuf]) -> Option<String> {
+    let stem = xmp.file_stem()?.to_string_lossy().to_lowercase();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Some(format!("{} (it cannot be read)", dir.display()));
+    };
+    entries.flatten().find_map(|e| {
+        let name = e.file_name();
+        if arrived
+            .iter()
+            .any(|a| a.file_name() == Some(name.as_os_str()))
+        {
+            return None;
+        }
+        let path = Path::new(&name);
+        let ours = path
+            .extension()
+            .and_then(|x| x.to_str())
+            .is_some_and(|x| matches!(x.to_ascii_lowercase().as_str(), "xmp" | "gcd" | "tmp"));
+        let same = path
+            .file_stem()
+            .is_some_and(|s| s.to_string_lossy().to_lowercase() == stem);
+        (same && !ours).then(|| name.to_string_lossy().into_owned())
+    })
+}
+
+/// Whether `from`, one of `raw`'s XMPs, is its short name (`IMG.xmp`)
+/// rather than its long one (`IMG.CR3.xmp`).
+fn is_short_xmp(from: &Path, raw: &Path) -> bool {
+    from.extension()
+        .is_some_and(|x| x.eq_ignore_ascii_case("xmp"))
+        && from.file_stem() == raw.file_stem()
+}
+
+/// The frames at `group`, all in one folder, into the folder `dir`:
+/// its rejects folder, or for Move back the folder above.
 fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, orphans: Orphans, moved: &mut Moved) {
+    // The raws this call has moved into `dir` so far.
+    let mut arrived: Vec<PathBuf> = Vec::new();
     for &i in group {
         let Some(raw) = files.get(i) else {
             continue;
@@ -912,29 +1013,65 @@ fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, orphans: Orphans, m
                 Some((from, to))
             })
             .collect();
+        // The frame's `.gcd` names there, under either placement: a
+        // reader takes the newer of the two (`Sidecar::find`), so one
+        // left under the other placement would shadow the frame's own.
+        let gcd = greycard_edit::Sidecar::path_for(&dest);
+        let gcds = [
+            gcd.clone(),
+            dir.join(hidden).join(gcd.file_name().unwrap_or_default()),
+        ];
         // The raw's name there already: the frame stays whole where
         // it is, rather than its raw going and one of the files beside
         // it not. A sidecar of its names there with no raw of the name
-        // beside it is what an earlier cull left when the frame was
-        // dragged back out by hand (the sidecar under the hidden folder
-        // is easy to miss): an orphan of this very frame, which its own
+        // beside it is what an earlier move left when the frame was
+        // dragged out by hand (the sidecar under the hidden folder is
+        // easy to miss): an orphan of this very frame, which its own
         // sidecar, the one that carries the flag now, writes over. The
         // folder is the truth, and a sidecar with no frame is nothing.
+        // The short XMP name is the one a file there can answer to (the
+        // camera's JPEG of the stem): written over it would be that
+        // file's lost, and moved in beside it with none there it would
+        // be nobody's, the frame's ratings lost to every reader; either
+        // way the frame stays whole and the file is named.
         let taken = if dest.exists() {
-            Some(name.to_string_lossy().into_owned())
-        } else if orphans == Orphans::Keep {
-            beside
-                .iter()
-                .find(|(_, to)| to.exists())
-                .and_then(|(_, to)| to.file_name())
-                .map(|n| n.to_string_lossy().into_owned())
+            Some(format!(
+                "{} is in {} already",
+                name.to_string_lossy(),
+                dir.display()
+            ))
         } else {
-            None
+            let keep = orphans == Orphans::Keep;
+            let there = |to: &Path| {
+                format!(
+                    "{} is in {} already",
+                    to.file_name().unwrap_or_default().to_string_lossy(),
+                    dir.display()
+                )
+            };
+            gcds.iter()
+                .find(|to| keep && to.exists())
+                .map(|to| there(to))
+                .or_else(|| {
+                    beside.iter().find_map(|(from, to)| {
+                        if is_short_xmp(from, raw)
+                            && let Some(owner) = stem_owner(to, dir, &arrived)
+                        {
+                            return Some(if to.exists() {
+                                there(to)
+                            } else {
+                                format!(
+                                    "{owner} there answers to {} too",
+                                    to.file_name().unwrap_or_default().to_string_lossy()
+                                )
+                            });
+                        }
+                        (keep && to.exists()).then(|| there(to))
+                    })
+                })
         };
-        if let Some(taken) = taken {
-            moved
-                .skipped
-                .push((i, format!("{taken} is in {} already", dir.display())));
+        if let Some(why) = taken {
+            moved.skipped.push((i, why));
             continue;
         }
         if let Err(e) = std::fs::rename(raw, &dest) {
@@ -942,6 +1079,28 @@ fn move_into(files: &[PathBuf], group: &[usize], dir: &Path, orphans: Orphans, m
             continue;
         }
         moved.files.push(i);
+        moved.to.push(dest.clone());
+        arrived.push(dest.clone());
+        // An orphan under the placement the frame's own sidecar does
+        // not take goes, so it cannot shadow it; one under the same
+        // placement is written over below. A frame with no sidecar of
+        // its own leaves an orphan there alone, and takes it up: it is
+        // this frame's, and the only edit it has.
+        if let Some(own) = sidecar.as_ref() {
+            let lands = beside
+                .iter()
+                .find(|(from, _)| from == own)
+                .map(|(_, to)| to);
+            for other in gcds.iter().filter(|g| Some(*g) != lands && g.exists()) {
+                match std::fs::remove_file(other) {
+                    Ok(()) => tracing::info!(
+                        "{}: an orphan of this frame under the other placement, taken away",
+                        other.display()
+                    ),
+                    Err(e) => tracing::warn!("{}: orphan not taken away: {e}", other.display()),
+                }
+            }
+        }
         for (from, to) in &beside {
             if to.parent().is_some_and(|p| !p.exists())
                 && let Err(e) = greycard_edit::Sidecar::folder_under(dir)
@@ -1462,6 +1621,348 @@ mod tests {
             "{:?}",
             moved.skipped
         );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A shoot with a rejects folder in it, for Move back: the shoot,
+    /// and its rejects folder.
+    fn shoot_with_rejects(what: &str) -> (PathBuf, PathBuf) {
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-back-{what}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let rejects = rejects_dir(&dir);
+        std::fs::create_dir_all(&rejects).unwrap();
+        (dir, rejects)
+    }
+
+    /// A raw at `path` with a sidecar flagged reject, at `placement`.
+    fn rejected_frame(path: &Path, placement: greycard_edit::Placement) {
+        std::fs::write(path, b"raw").unwrap();
+        let mut sidecar = greycard_edit::Sidecar::default();
+        sidecar.meta.flag = greycard_edit::meta::Flag::Reject;
+        sidecar.save_in(path, placement).unwrap();
+    }
+
+    /// The plain move back: the raw into the folder above, its sidecar
+    /// beside it still, and both of its XMPs along.
+    #[test]
+    fn move_back_takes_a_frame_home_with_its_sidecar_and_xmps() {
+        let (dir, rejects) = shoot_with_rejects("plain");
+        let a = rejects.join("A.CR3");
+        rejected_frame(&a, greycard_edit::Placement::Beside);
+        let meta = greycard_edit::Sidecar::load(&a).unwrap().unwrap().meta;
+        greycard_edit::xmp::save(&a, &meta, None).unwrap();
+        std::fs::write(
+            greycard_edit::xmp::long_path(&a),
+            greycard_edit::xmp::fresh(&meta, None),
+        )
+        .unwrap();
+        assert_eq!(above_rejects(&a), Some(dir.clone()));
+
+        let moved = move_back(std::slice::from_ref(&a), &[0]);
+        assert_eq!(moved.files, vec![0]);
+        assert_eq!(moved.sidecars, 1);
+        assert!(moved.skipped.is_empty());
+        assert!(dir.join("A.CR3").exists() && !a.exists());
+        assert!(dir.join("A.CR3.gcd").exists());
+        assert!(!rejects.join("A.CR3.gcd").exists());
+        assert!(dir.join("A.xmp").exists() && !rejects.join("A.xmp").exists());
+        assert!(dir.join("A.CR3.xmp").exists() && !rejects.join("A.CR3.xmp").exists());
+        // Nothing made under the hidden folder for a sidecar that was
+        // beside.
+        assert!(!dir.join(greycard_edit::SIDECAR_FOLDER).exists());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A sidecar under the rejects folder's hidden folder goes under
+    /// the folder above's own, not beside.
+    #[test]
+    fn move_back_keeps_a_sidecar_under_the_hidden_folder() {
+        let (dir, rejects) = shoot_with_rejects("hidden");
+        let a = rejects.join("A.CR3");
+        rejected_frame(&a, greycard_edit::Placement::Folder);
+        let moved = move_back(std::slice::from_ref(&a), &[0]);
+        assert_eq!(moved.files, vec![0]);
+        assert_eq!(moved.sidecars, 1);
+        let hidden = greycard_edit::SIDECAR_FOLDER;
+        assert!(dir.join(hidden).join("A.CR3.gcd").exists());
+        assert!(!dir.join("A.CR3.gcd").exists());
+        assert!(!rejects.join(hidden).join("A.CR3.gcd").exists());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A raw of the name in the folder above, or an XMP of one of the
+    /// frame's names there that a frame there answers to, leaves the
+    /// frame whole in the rejects folder, the clash named; the files
+    /// there are as they were.
+    #[test]
+    fn move_back_leaves_a_frame_whose_name_is_taken_whole() {
+        let (dir, rejects) = shoot_with_rejects("taken");
+        let (a, b) = (rejects.join("A.CR3"), rejects.join("B.CR3"));
+        rejected_frame(&a, greycard_edit::Placement::Beside);
+        rejected_frame(&b, greycard_edit::Placement::Beside);
+        let meta = greycard_edit::Sidecar::load(&b).unwrap().unwrap().meta;
+        greycard_edit::xmp::save(&b, &meta, None).unwrap();
+        assert!(rejects.join("B.xmp").exists(), "B's own short XMP");
+        // A's raw name is taken above; B's short XMP name is the
+        // camera JPEG's there.
+        std::fs::write(dir.join("A.CR3"), b"other").unwrap();
+        std::fs::write(dir.join("B.JPG"), b"jpeg").unwrap();
+        std::fs::write(dir.join("B.xmp"), b"the jpeg's").unwrap();
+
+        let moved = move_back(&[a.clone(), b.clone()], &[0, 1]);
+        assert!(moved.files.is_empty());
+        let skipped: Vec<usize> = moved.skipped.iter().map(|(i, _)| *i).collect();
+        assert_eq!(skipped, vec![0, 1]);
+        assert!(moved.skipped[0].1.contains("A.CR3"), "{:?}", moved.skipped);
+        assert!(moved.skipped[1].1.contains("B.xmp"), "{:?}", moved.skipped);
+        // Whole where they were, and nothing above written over.
+        assert!(a.exists() && rejects.join("A.CR3.gcd").exists());
+        assert!(b.exists() && rejects.join("B.CR3.gcd").exists());
+        assert!(rejects.join("B.xmp").exists());
+        assert_eq!(std::fs::read(dir.join("A.CR3")).unwrap(), b"other");
+        assert_eq!(std::fs::read(dir.join("B.xmp")).unwrap(), b"the jpeg's");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A sidecar in the folder above under the frame's name with no
+    /// raw of the name beside it is the frame's own, left when it was
+    /// culled; the frame's sidecar, which carries the flag and the
+    /// newer edits, goes over it.
+    #[test]
+    fn move_back_writes_the_frames_sidecar_over_its_own_orphan() {
+        let (dir, rejects) = shoot_with_rejects("orphan");
+        let a = rejects.join("A.CR3");
+        rejected_frame(&a, greycard_edit::Placement::Folder);
+        let hidden = dir.join(greycard_edit::SIDECAR_FOLDER);
+        std::fs::create_dir_all(&hidden).unwrap();
+        std::fs::write(hidden.join("A.CR3.gcd"), b"older").unwrap();
+
+        let moved = move_back(std::slice::from_ref(&a), &[0]);
+        assert_eq!(moved.files, vec![0]);
+        assert_eq!(moved.sidecars, 1);
+        assert!(dir.join("A.CR3").exists());
+        let now = greycard_edit::Sidecar::load(&dir.join("A.CR3"))
+            .unwrap()
+            .expect("the frame's own sidecar");
+        assert_eq!(now.meta.flag, greycard_edit::meta::Flag::Reject);
+        assert_ne!(std::fs::read(hidden.join("A.CR3.gcd")).unwrap(), b"older");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A frame not in a rejects folder stays where it is, said; the
+    /// rest of the list goes on.
+    #[test]
+    fn move_back_leaves_a_frame_not_in_a_rejects_folder() {
+        let (dir, rejects) = shoot_with_rejects("not");
+        let (a, b) = (dir.join("A.CR3"), rejects.join("B.CR3"));
+        rejected_frame(&a, greycard_edit::Placement::Beside);
+        rejected_frame(&b, greycard_edit::Placement::Beside);
+        assert_eq!(above_rejects(&a), None);
+        let moved = move_back(&[a.clone(), b.clone()], &[0, 1]);
+        assert_eq!(moved.files, vec![1]);
+        assert_eq!(moved.skipped.len(), 1);
+        assert_eq!(moved.skipped[0].0, 0);
+        assert!(moved.skipped[0].1.contains("not in a rejects folder"));
+        assert!(a.exists() && dir.join("A.CR3.gcd").exists());
+        assert!(dir.join("B.CR3").exists() && !b.exists());
+        // Nothing went up a folder from the shoot itself.
+        assert!(!dir.parent().unwrap().join("A.CR3").exists());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// An orphan under the other placement than the frame's own
+    /// sidecar takes: written over, it goes, so it cannot shadow the
+    /// frame's own by a higher saved count; kept, on an archive, the
+    /// frame stays whole and it is named.
+    #[test]
+    fn an_orphan_under_the_other_placement_goes_or_keeps_the_frame_whole() {
+        let (dir, rejects) = shoot_with_rejects("other-placement");
+        let hidden = greycard_edit::SIDECAR_FOLDER;
+        // A's own beside it in the rejects folder; an older copy, saved
+        // more times, under the shoot's hidden folder.
+        let a = rejects.join("A.CR3");
+        rejected_frame(&a, greycard_edit::Placement::Beside);
+        let mut old = greycard_edit::Sidecar::default();
+        for n in 0..5 {
+            old.meta.rating = n;
+            old.save_in(&dir.join("A.CR3"), greycard_edit::Placement::Folder)
+                .unwrap();
+        }
+        std::fs::remove_file(dir.join("A.CR3")).unwrap_or(());
+        assert!(dir.join(hidden).join("A.CR3.gcd").exists());
+
+        let moved = move_back(std::slice::from_ref(&a), &[0]);
+        assert_eq!(moved.files, vec![0]);
+        assert_eq!(moved.to, vec![dir.join("A.CR3")]);
+        assert!(dir.join("A.CR3.gcd").exists());
+        assert!(
+            !dir.join(hidden).join("A.CR3.gcd").exists(),
+            "the orphan under the other placement went"
+        );
+        let now = greycard_edit::Sidecar::load(&dir.join("A.CR3"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(now.meta.flag, greycard_edit::meta::Flag::Reject);
+        assert_eq!(now.meta.rating, 0, "the frame's own, not the orphan's");
+
+        // Kept: the same shape the other way, into the rejects folder.
+        let b = dir.join("B.CR3");
+        rejected_frame(&b, greycard_edit::Placement::Beside);
+        std::fs::create_dir_all(rejects.join(hidden)).unwrap();
+        std::fs::write(rejects.join(hidden).join("B.CR3.gcd"), b"older").unwrap();
+        let kept = move_rejects_as(std::slice::from_ref(&b), &[0], Orphans::Keep).unwrap();
+        assert!(kept.files.is_empty());
+        assert!(
+            kept.skipped[0].1.contains("B.CR3.gcd"),
+            "{:?}",
+            kept.skipped
+        );
+        assert!(b.exists() && dir.join("B.CR3.gcd").exists());
+        assert_eq!(
+            std::fs::read(rejects.join(hidden).join("B.CR3.gcd")).unwrap(),
+            b"older"
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The `.gcd` and the long XMP name carry the raw's whole name, so
+    /// an unrelated file of the stem there owns neither: a hidden
+    /// orphan beside the camera's JPEG of the frame is still an orphan.
+    #[test]
+    fn a_jpeg_of_the_stem_owns_no_gcd() {
+        let (dir, rejects) = shoot_with_rejects("jpeg-gcd");
+        let a = rejects.join("A.CR3");
+        rejected_frame(&a, greycard_edit::Placement::Folder);
+        let hidden = dir.join(greycard_edit::SIDECAR_FOLDER);
+        std::fs::create_dir_all(&hidden).unwrap();
+        std::fs::write(hidden.join("A.CR3.gcd"), b"older").unwrap();
+        std::fs::write(dir.join("A.CR3.jpg"), b"jpeg").unwrap();
+        std::fs::write(dir.join("A.JPG"), b"jpeg").unwrap();
+        let moved = move_back(std::slice::from_ref(&a), &[0]);
+        assert_eq!(moved.files, vec![0], "{:?}", moved.skipped);
+        assert_ne!(std::fs::read(hidden.join("A.CR3.gcd")).unwrap(), b"older");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Move rejects with the camera's JPEG of a frame's stem in the
+    /// rejects folder: its short XMP there is the JPEG's and is never
+    /// written over, and with none there a short XMP moved in would be
+    /// nobody's; either way the frame stays whole and the file is
+    /// named. The stem is matched without regard to case. The long
+    /// name has no such question and goes.
+    #[test]
+    fn a_jpegs_short_xmp_in_the_rejects_folder_keeps_the_frame_whole() {
+        let (dir, rejects) = shoot_with_rejects("jpeg-xmp");
+        let meta = greycard_edit::meta::Meta {
+            flag: greycard_edit::meta::Flag::Reject,
+            ..Default::default()
+        };
+        // B with its short XMP; the rejects folder has B.JPG and its XMP.
+        let b = dir.join("B.CR3");
+        rejected_frame(&b, greycard_edit::Placement::Beside);
+        std::fs::write(dir.join("B.xmp"), greycard_edit::xmp::fresh(&meta, None)).unwrap();
+        assert_eq!(greycard_edit::xmp::paths_of(&b), vec![dir.join("B.xmp")]);
+        std::fs::write(rejects.join("B.JPG"), b"jpeg").unwrap();
+        std::fs::write(rejects.join("B.xmp"), b"the jpeg's").unwrap();
+        // C with its short XMP; the rejects folder has c.jpg, no XMP.
+        let c = dir.join("C.CR3");
+        rejected_frame(&c, greycard_edit::Placement::Beside);
+        std::fs::write(dir.join("C.xmp"), greycard_edit::xmp::fresh(&meta, None)).unwrap();
+        std::fs::write(rejects.join("c.jpg"), b"jpeg").unwrap();
+        // D with only its long XMP, and a d.jpg there: D goes.
+        let d = dir.join("D.CR3");
+        rejected_frame(&d, greycard_edit::Placement::Beside);
+        std::fs::write(
+            greycard_edit::xmp::long_path(&d),
+            greycard_edit::xmp::fresh(&meta, None),
+        )
+        .unwrap();
+        std::fs::write(rejects.join("D.jpg"), b"jpeg").unwrap();
+
+        let files = [b.clone(), c.clone(), d.clone()];
+        let moved = move_rejects(&files, &[0, 1, 2]).unwrap();
+        assert_eq!(moved.files, vec![2]);
+        let why: Vec<&str> = moved.skipped.iter().map(|(_, w)| w.as_str()).collect();
+        assert!(why[0].starts_with("B.xmp is in"), "{why:?}");
+        assert_eq!(why[1], "c.jpg there answers to C.xmp too");
+        assert!(b.exists() && dir.join("B.xmp").exists());
+        assert_eq!(std::fs::read(rejects.join("B.xmp")).unwrap(), b"the jpeg's");
+        assert!(c.exists() && dir.join("C.xmp").exists() && !rejects.join("C.xmp").exists());
+        assert!(rejects.join("D.CR3").exists() && rejects.join("D.CR3.xmp").exists());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A raw and the camera's JPEG of one shot, each with its `.gcd`,
+    /// and one short XMP between them, both chosen: the three move
+    /// together, out and back, in either order, the one that goes
+    /// first being no claim of another frame's on the XMP. With only
+    /// the raw chosen, the XMP was nobody's while the pair was together
+    /// and stays with the JPEG left behind, whose it then is.
+    #[test]
+    fn a_raw_and_its_jpeg_move_with_their_short_xmp_together() {
+        let meta = greycard_edit::meta::Meta {
+            flag: greycard_edit::meta::Flag::Reject,
+            ..Default::default()
+        };
+        let names = |d: &Path| {
+            let mut all: Vec<String> = std::fs::read_dir(d)
+                .unwrap()
+                .flatten()
+                .filter(|e| e.path().is_file())
+                .map(|e| e.file_name().to_string_lossy().into_owned())
+                .collect();
+            all.sort();
+            all
+        };
+        let trio = ["A.CR3", "A.CR3.gcd", "A.JPG", "A.JPG.gcd", "A.xmp"];
+        for order in [[0usize, 1], [1, 0]] {
+            let (dir, rejects) = shoot_with_rejects("pair");
+            let pair = [dir.join("A.CR3"), dir.join("A.JPG")];
+            for f in &pair {
+                rejected_frame(f, greycard_edit::Placement::Beside);
+            }
+            std::fs::write(dir.join("A.xmp"), greycard_edit::xmp::fresh(&meta, None)).unwrap();
+
+            let out = move_rejects(&pair, &order).unwrap();
+            assert_eq!(out.files.len(), 2, "{:?}", out.skipped);
+            assert_eq!(names(&rejects), trio, "out, in the order {order:?}");
+            assert!(names(&dir).is_empty());
+
+            let back_from = [rejects.join("A.CR3"), rejects.join("A.JPG")];
+            let back = move_back(&back_from, &order);
+            assert_eq!(back.files.len(), 2, "{:?}", back.skipped);
+            assert_eq!(names(&dir), trio, "back, in the order {order:?}");
+            assert!(names(&rejects).is_empty());
+            crate::testing::remove_dir_retry(&dir);
+        }
+
+        // Only the raw: the XMP stays with the JPEG.
+        let (dir, rejects) = shoot_with_rejects("pair-raw");
+        let pair = [dir.join("A.CR3"), dir.join("A.JPG")];
+        for f in &pair {
+            rejected_frame(f, greycard_edit::Placement::Beside);
+        }
+        std::fs::write(dir.join("A.xmp"), greycard_edit::xmp::fresh(&meta, None)).unwrap();
+        let out = move_rejects(&pair, &[0]).unwrap();
+        assert_eq!(out.files, vec![0]);
+        assert_eq!(names(&rejects), ["A.CR3", "A.CR3.gcd"]);
+        assert_eq!(names(&dir), ["A.JPG", "A.JPG.gcd", "A.xmp"]);
+        assert_eq!(
+            greycard_edit::xmp::paths_of(&pair[1]),
+            vec![dir.join("A.xmp")],
+            "the JPEG's now"
+        );
+        // And back, the raw alone: the JPEG answers to A.xmp in the
+        // shoot, which is not the raw's, so nothing stands in its way.
+        let back = move_back(&[rejects.join("A.CR3")], &[0]);
+        assert_eq!(back.files, vec![0], "{:?}", back.skipped);
+        assert_eq!(names(&dir), trio);
         crate::testing::remove_dir_retry(&dir);
     }
 }

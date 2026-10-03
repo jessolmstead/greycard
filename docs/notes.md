@@ -235,3 +235,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§222. The archive sheet is up from the press](notes/222-the-archive-sheet-is-up-from-the-press.md) (2026-10-02)
 - [§223. A move seen by the index carries the sidecar along](notes/223-a-move-seen-by-the-index-carries-the-sidecar-along.md) (2026-10-02)
 - [§224. One frame in two places: listed from the copy that is there](notes/224-one-frame-in-two-places-listed-from-the-copy-that-is-there.md) (2026-10-02)
+- [§225. Move back, the inverse of Move rejects](notes/225-move-back-the-inverse-of-move-rejects.md) (2026-10-02)

@@ -1406,6 +1406,53 @@ impl Library {
         Ok(gone)
     }
 
+    /// The row of a file the editor moved itself, taken from `from` to
+    /// `to`: its path, folder and name, and found again if it was
+    /// missing. Its size, time and hash stay, since the file is the
+    /// same file; its id stays, so whatever is keyed by it follows. The
+    /// editor knows both paths, which a pass does not always: a pass
+    /// over a folder the move emptied takes it for a drive that is
+    /// away and marks nothing missing, so the move is never seen. A
+    /// row already at `to` is a file that was there once and is not
+    /// now (the move never writes over one), and goes. Whether there
+    /// was a row at `from` to move.
+    pub fn file_moved(&mut self, from: &Path, to: &Path) -> Result<bool> {
+        let (from, to) = (canonical_file(from), canonical_file(to));
+        let folder = to.parent().unwrap_or(Path::new("."));
+        let name = to
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let tx = self.conn.transaction()?;
+        let moved = {
+            let id: Option<i64> = tx
+                .prepare_cached("SELECT id FROM files WHERE path = ?")?
+                .query_row(params![path_bytes(&from)], |r| r.get(0))
+                .optional()?;
+            match id {
+                Some(id) => {
+                    tx.prepare_cached("DELETE FROM files WHERE path = ? AND id != ?")?
+                        .execute(params![path_bytes(&to), id])?;
+                    tx.prepare_cached(
+                        "UPDATE files SET path = ?, folder = ?, folder_text = ?, name = ?, \
+                         missing_since = NULL WHERE id = ?",
+                    )?
+                    .execute(params![
+                        path_bytes(&to),
+                        path_bytes(folder),
+                        path_text(folder),
+                        name,
+                        id
+                    ])?;
+                    true
+                }
+                None => false,
+            }
+        };
+        tx.commit()?;
+        Ok(moved)
+    }
+
     /// The database's size on disk, for the numbers.
     pub fn size_on_disk(&self) -> Result<u64> {
         if self.path.as_os_str() == ":memory:" {

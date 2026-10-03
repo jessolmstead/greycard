@@ -83,6 +83,9 @@ enum Ask {
     File(PathBuf),
     /// Forget these files' rows: the window deleted the files.
     Forget(Vec<PathBuf>),
+    /// Take these files' rows from the first path to the second: the
+    /// window moved the files itself (Move rejects, Move back).
+    Moved(Vec<(PathBuf, PathBuf)>),
     /// The launch pass: each root's tree, one after another, in the
     /// background of everything else; with the network mounts below
     /// them that their walks leave out, as the same look found them, so
@@ -343,6 +346,22 @@ impl Indexer {
         }
         self.files_waiting.fetch_add(1, Ordering::SeqCst);
         if self.asks.send(Ask::Forget(paths)).is_err() {
+            self.files_waiting.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Take the rows of files the window has moved, each from the
+    /// first path to the second, and read each again where it is now.
+    /// Told rather than found: a pass over a folder the move emptied
+    /// takes it for a drive that is away and sees no move. Done ahead
+    /// of the saves waiting with it, so a sidecar written at the new
+    /// path after the move finds the row there and does not add one.
+    pub(crate) fn moved(&self, moves: Vec<(PathBuf, PathBuf)>) {
+        if moves.is_empty() {
+            return;
+        }
+        self.files_waiting.fetch_add(1, Ordering::SeqCst);
+        if self.asks.send(Ask::Moved(moves)).is_err() {
             self.files_waiting.fetch_sub(1, Ordering::SeqCst);
         }
     }
@@ -846,8 +865,13 @@ fn serve(
         // has already left is nobody's question.
         let mut files: Vec<PathBuf> = Vec::new();
         let mut forget: Vec<PathBuf> = Vec::new();
+        let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
         for ask in first.into_iter().chain(waiting.try_iter()) {
             match ask {
+                Ask::Moved(more) => {
+                    files_waiting.fetch_sub(1, Ordering::SeqCst);
+                    moves.extend(more);
+                }
                 Ask::File(p) => {
                     files_waiting.fetch_sub(1, Ordering::SeqCst);
                     if !files.contains(&p) {
@@ -916,6 +940,18 @@ fn serve(
                     left_out = points;
                 }
                 Ask::Leave => return,
+            }
+        }
+        // The window's own moves first, so the saves after them find
+        // each row at its new path; each read again there.
+        for (from, to) in &moves {
+            match lib.file_moved(from, to) {
+                Ok(_) => {
+                    if !files.contains(to) {
+                        files.push(to.clone());
+                    }
+                }
+                Err(e) => tracing::warn!("index: {} moved, its row not: {e}", from.display()),
             }
         }
         if !files.is_empty() {

@@ -10,6 +10,14 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- Move back, the inverse of Move rejects, on the frame menu and in
+  CULLING for frames in a rejects folder: each goes to the folder above
+  with its sidecars, placement kept, its reject flag taken off; a name
+  taken there leaves it whole and said. On the way: the index is told
+  of every move the editor makes, so a rejects folder emptied no longer
+  leaves a ghost row; an orphaned sidecar under either placement is
+  seen; a JPEG's short XMP is never written over, and a raw and its
+  JPEG move together with their shared XMP (§225)
 - All roots lists a frame from its archive copy when the local copy's
   folder is gone or its root offline, in place of a dimmed stand-in for
   a file that cannot be opened; the two copies are still one frame, and

@@ -1365,24 +1365,241 @@ pub(crate) fn move_rejects(st: &mut State, app: &App, worker: &Worker) {
         if moved.sidecars == 1 { "" } else { "s" },
         dir
     );
-    if let Some((_, why)) = moved.skipped.first() {
-        status.push_str(&format!(
-            "; {} left where {} ({why}{})",
-            moved.skipped.len(),
-            if moved.skipped.len() == 1 {
-                "it was"
-            } else {
-                "they were"
-            },
-            if moved.skipped.len() > 1 {
-                "; the log has each"
-            } else {
-                ""
-            }
-        ));
-    }
+    status.push_str(&left_words(&moved.skipped));
     tracing::info!("{status}");
+    hand_moves(st, &moved);
+    hand_folders(st, &moved);
     drop_files(st, app, worker, &moved.files, status);
+}
+
+/// The window's own moves told to the indexer, each row taken from the
+/// old path to the new: a pass would see a move only by the content
+/// key, and not at all out of a folder the move emptied, which it
+/// takes for a drive that is away. Called with the list still holding
+/// the old paths, and ahead of the folders' passes.
+fn hand_moves(st: &State, moved: &cull::Moved) {
+    if let Some(indexer) = &st.index {
+        indexer.moved(
+            moved
+                .files
+                .iter()
+                .zip(&moved.to)
+                .map(|(&i, to)| (st.files[i].clone(), to.clone()))
+                .collect(),
+        );
+    }
+}
+
+/// The folders a move touched, the one each frame left and the one it
+/// went to, passed over by the indexer now rather than at the watcher's
+/// word or the next poll, so the grid, the tree and the counts follow
+/// at once. Called with the list still holding the old paths.
+fn hand_folders(st: &State, moved: &cull::Moved) {
+    let mut folders: Vec<PathBuf> = Vec::new();
+    for (&i, to) in moved.files.iter().zip(&moved.to) {
+        for dir in [st.files[i].parent(), to.parent()].into_iter().flatten() {
+            if !folders.iter().any(|f| f == dir) {
+                folders.push(dir.to_path_buf());
+            }
+        }
+    }
+    if let Some(indexer) = &st.index
+        && !folders.is_empty()
+    {
+        indexer.asker().changes(
+            folders
+                .into_iter()
+                .map(greycard_library::Change::Folder)
+                .collect(),
+        );
+    }
+}
+
+/// What a move left where it was, as the status line's tail: how
+/// many, and the first one's reason; empty when it left none.
+fn left_words(skipped: &[(usize, String)]) -> String {
+    let Some((_, why)) = skipped.first() else {
+        return String::new();
+    };
+    format!(
+        "; {} left where {} ({why}{})",
+        skipped.len(),
+        if skipped.len() == 1 {
+            "it was"
+        } else {
+            "they were"
+        },
+        if skipped.len() > 1 {
+            "; the log has each"
+        } else {
+            ""
+        }
+    )
+}
+
+/// Whether file `i` can be moved back: it is in a rejects folder, and
+/// not under a root that is offline, where nothing is moved.
+pub(crate) fn to_move_back(st: &State, i: usize) -> bool {
+    st.files
+        .get(i)
+        .is_some_and(|f| cull::above_rejects(f).is_some())
+        && !crate::rows::is_offline(st, i)
+}
+
+/// The frames Move back is over: those of the selection in a rejects
+/// folder.
+fn back_frames(st: &State) -> Vec<usize> {
+    crate::panel::browser::chosen_frames(st)
+        .into_iter()
+        .filter(|&i| to_move_back(st, i))
+        .collect()
+}
+
+/// The folders above the rejects folders `frames` are in, each once.
+fn folders_above(st: &State, frames: &[usize]) -> Vec<PathBuf> {
+    let mut out: Vec<PathBuf> = Vec::new();
+    for above in frames
+        .iter()
+        .filter_map(|&i| st.files.get(i).and_then(|f| cull::above_rejects(f)))
+    {
+        if !out.contains(&above) {
+            out.push(above);
+        }
+    }
+    out
+}
+
+/// A folder's own name, for a line: from the path when it has one,
+/// and from its canonical form when it is "." or "..".
+fn folder_name(dir: &Path) -> String {
+    let named = |p: &Path| p.file_name().map(|n| n.to_string_lossy().into_owned());
+    named(dir)
+        .filter(|n| n != "..")
+        .or_else(|| dunce::canonicalize(dir).ok().as_deref().and_then(named))
+        .unwrap_or_else(|| {
+            dunce::canonicalize(dir)
+                .unwrap_or_else(|_| dir.into())
+                .display()
+                .to_string()
+        })
+}
+
+/// Move back on the frame menu and in CULLING: how many of the
+/// selection are in a rejects folder, and the folder above it by name
+/// ("their folders" when they are in more than one); none hides it.
+pub(crate) fn show_back(st: &State, app: &App) {
+    let frames = back_frames(st);
+    let to = match folders_above(st, &frames).as_slice() {
+        [] => String::new(),
+        // Named from the path alone, with no look at the disk: this is
+        // asked at every change of the selection. Only a frame opened
+        // by a bare relative name (`rejects/A.CR3`, the folder above
+        // the working one) has no name in its path, and is looked up.
+        [one] => folder_name(one),
+        _ => "their folders".into(),
+    };
+    app.set_back_count(frames.len() as i32);
+    app.set_back_to(to.into());
+}
+
+/// Move back: the frames of the selection in a rejects folder into
+/// the folder above it, with their sidecars, out of the browser's
+/// list as Move rejects takes its frames out. A frame moved back is
+/// no longer a reject: the move is the user saying so, and a flag
+/// left on would send it out again at the next Move rejects, so the
+/// flag comes off in its sidecar where it now is.
+pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
+    if st.deleting.is_some() {
+        app.set_status("a delete is still under way".into());
+        return;
+    }
+    let frames = back_frames(st);
+    if frames.is_empty() {
+        app.set_status("no frame chosen is in a rejects folder".into());
+        return;
+    }
+    let moved = cull::move_back(&st.files, &frames);
+    for (i, why) in &moved.skipped {
+        tracing::warn!("{} left where it is: {why}", file_name(&st.files[*i]));
+    }
+    // Said while the list still has them where they were.
+    let above = folders_above(st, &moved.files);
+    let mut status = match above.as_slice() {
+        [] => "nothing moved back".to_string(),
+        many => format!(
+            "moved {} frame{} and {} sidecar{} back to {}",
+            moved.files.len(),
+            if moved.files.len() == 1 { "" } else { "s" },
+            moved.sidecars,
+            if moved.sidecars == 1 { "" } else { "s" },
+            match many {
+                [one] => dunce::canonicalize(one)
+                    .unwrap_or_else(|_| one.clone())
+                    .display()
+                    .to_string(),
+                _ => format!(
+                    "the folder above each of the {} rejects folders",
+                    many.len()
+                ),
+            }
+        ),
+    };
+    status.push_str(&left_words(&moved.skipped));
+    tracing::info!("{status}");
+    // The frames' flags written at their new paths, then the index told
+    // of the moves, then both folders passed over. A save's word that
+    // reaches the index before the move's makes a row at the new path,
+    // which the move's then puts the old row over, reading the sidecar
+    // again; one after it finds the row moved. Either way the row keeps
+    // its id and has the flag as written.
+    let old: Vec<PathBuf> = moved.files.iter().map(|&i| st.files[i].clone()).collect();
+    for (&i, to) in moved.files.iter().zip(&moved.to) {
+        st.files[i] = to.clone();
+        unreject(st, i);
+    }
+    for (&i, from) in moved.files.iter().zip(old) {
+        st.files[i] = from;
+    }
+    hand_moves(st, &moved);
+    hand_folders(st, &moved);
+    drop_files(st, app, worker, &moved.files, status);
+}
+
+/// The reject flag taken off frame `i`, moved back to the path the list
+/// now has for it, and its sidecar written there: through the window's
+/// own write when the sidecar in memory is the frame's, and otherwise
+/// (a row of the index standing in for it) read from the disk, changed
+/// and written back where it was found.
+fn unreject(st: &mut State, i: usize) {
+    if st.sidecars[i].meta.flag != meta::Flag::Reject {
+        return;
+    }
+    st.sidecars[i].meta.flag = meta::Flag::None;
+    if crate::panel::edit::writable(st, i) {
+        crate::panel::edit::write_sidecar(st, i);
+        return;
+    }
+    if !st.write_sidecars {
+        return;
+    }
+    let path = st.files[i].clone();
+    let placement = greycard_edit::Placement::of(&path);
+    match Sidecar::load(&path) {
+        Ok(Some(mut sidecar)) if sidecar.meta.flag == meta::Flag::Reject => {
+            sidecar.meta.flag = meta::Flag::None;
+            if st.xmp_sidecars
+                && let Err(e) = greycard_edit::xmp::save(&path, &sidecar.meta, None)
+            {
+                tracing::warn!("{}: xmp not written: {e}", file_name(&path));
+            }
+            if let Err(e) = sidecar.save_in(&path, placement) {
+                tracing::warn!("{}: sidecar not saved: {e}", file_name(&path));
+            }
+            crate::library::sidecar_written(st, i);
+        }
+        Ok(_) => {}
+        Err(e) => tracing::warn!("{}: sidecar not read: {e}", file_name(&path)),
+    }
 }
 
 /// Take the files at `gone` (indices into the list) out of the
@@ -1848,6 +2065,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     app.set_filter_focus(true);
                 }
             });
+        });
+    }
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_move_back_asked(move || {
+            if let Some(app) = app_weak.upgrade() {
+                move_back(&mut state.borrow_mut(), &app, &worker);
+            }
         });
     }
     {
@@ -3192,5 +3417,373 @@ mod tests {
             0,
             "and rated nothing"
         );
+    }
+
+    /// A shoot with a rejects folder in it: c.tif in the shoot, a.tif
+    /// and b.tif in its rejects folder flagged reject, a's sidecar
+    /// beside it with an XMP, b's under the hidden folder. The scratch
+    /// folder, the shoot, and the three frames in that order.
+    fn shoot_with_rejects(what: &str) -> (PathBuf, PathBuf, Vec<PathBuf>) {
+        use greycard_library::fixture::{A7, R5, R6, write_frame};
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-ui-back-{what}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let shoot = dir.join("shoot");
+        let rejects = cull::rejects_dir(&shoot);
+        std::fs::create_dir_all(&rejects).unwrap();
+        let shoot = dunce::canonicalize(&shoot).unwrap();
+        let rejects = cull::rejects_dir(&shoot);
+        let files = vec![
+            shoot.join("c.tif"),
+            rejects.join("a.tif"),
+            rejects.join("b.tif"),
+        ];
+        for (i, (f, camera)) in files.iter().zip([&R6, &R5, &A7]).enumerate() {
+            write_frame(f, camera, i as u16 + 1);
+        }
+        let mut s = Sidecar::default();
+        s.meta.flag = meta::Flag::Reject;
+        s.save_in(&files[1], greycard_edit::Placement::Beside)
+            .unwrap();
+        greycard_edit::xmp::save(&files[1], &s.meta, None).unwrap();
+        s.save_in(&files[2], greycard_edit::Placement::Folder)
+            .unwrap();
+        (dir, shoot, files)
+    }
+
+    /// `files` open with their sidecars read and writes on, the first
+    /// frame on screen.
+    fn opened_with_sidecars(app: &App, files: &[PathBuf]) -> (Rc<RefCell<State>>, Rc<Worker>) {
+        let (state, worker) = state_for(app, files.to_vec());
+        {
+            let mut st = state.borrow_mut();
+            st.write_sidecars = true;
+            for (i, f) in files.iter().enumerate() {
+                if let Some(s) = Sidecar::load(f).unwrap() {
+                    st.sidecars[i] = s;
+                }
+            }
+            st.current = Some(0);
+            rebuild_browser(&mut st, app);
+        }
+        (state, worker)
+    }
+
+    /// Move back is offered for a frame in a rejects folder and not for
+    /// one in the shoot, on the menu and in CULLING alike; asked, it
+    /// takes the frame home with its sidecar and XMP and the flag off,
+    /// and a frame whose name is taken above stays whole, said.
+    #[test]
+    fn move_back_takes_the_frame_home_unflagged_and_leaves_a_taken_name_whole() {
+        let (dir, shoot, files) = shoot_with_rejects("menu");
+        let rejects = cull::rejects_dir(&shoot);
+        let app = window(files.len());
+        let (state, worker) = opened_with_sidecars(&app, &files);
+        // c, in the shoot: nothing to move back.
+        app.invoke_frame_menu_asked(0);
+        assert_eq!(app.get_back_count(), 0);
+        assert_eq!(app.get_back_to(), "");
+        // a, in the rejects folder: back to the shoot.
+        app.invoke_select(1);
+        assert_eq!(app.get_back_count(), 1);
+        assert_eq!(app.get_back_to(), "shoot");
+        app.invoke_frame_menu_asked(1);
+        assert_eq!(app.get_back_count(), 1);
+        // The set of all three: the two in the rejects folder.
+        {
+            let mut st = state.borrow_mut();
+            st.picked = vec![0, 1, 2];
+            crate::panel::browser::show_set(&mut st, &app);
+        }
+        assert_eq!(app.get_back_count(), 2);
+        // b's name is taken in the shoot already.
+        std::fs::write(shoot.join("b.tif"), b"another").unwrap();
+        app.invoke_move_back_asked();
+
+        let status = app.get_status().to_string();
+        assert!(
+            status.starts_with(&format!(
+                "moved 1 frame and 1 sidecar back to {}",
+                shoot.display()
+            )),
+            "{status}"
+        );
+        assert!(
+            status.contains("1 left where it was (b.tif is in"),
+            "{status}"
+        );
+        // a is home, with its sidecar beside and its XMP, and no longer
+        // a reject.
+        let home = shoot.join("a.tif");
+        assert!(home.exists() && !files[1].exists());
+        assert!(shoot.join("a.tif.gcd").exists() && shoot.join("a.xmp").exists());
+        assert!(!rejects.join("a.tif.gcd").exists() && !rejects.join("a.xmp").exists());
+        let s = Sidecar::load(&home).unwrap().unwrap();
+        assert_eq!(s.meta.flag, meta::Flag::None);
+        // b is whole where it was, still a reject; the file above as
+        // it was.
+        assert!(files[2].exists());
+        let hidden = rejects
+            .join(greycard_edit::SIDECAR_FOLDER)
+            .join("b.tif.gcd");
+        assert!(hidden.exists());
+        let s = Sidecar::load(&files[2]).unwrap().unwrap();
+        assert_eq!(s.meta.flag, meta::Flag::Reject);
+        assert_eq!(std::fs::read(shoot.join("b.tif")).unwrap(), b"another");
+        // a went out of the list, as Move rejects takes its frames out.
+        let st = state.borrow();
+        assert_eq!(st.files, [files[0].clone(), files[2].clone()]);
+        assert_eq!(st.sidecars[1].meta.flag, meta::Flag::Reject);
+        drop(st);
+        // Asked again for b alone: nothing goes, and the line says so.
+        app.invoke_select(1);
+        app.invoke_move_back_asked();
+        let status = app.get_status().to_string();
+        assert!(
+            status.starts_with("nothing moved back; 1 left where it was (b.tif is in"),
+            "{status}"
+        );
+        assert!(files[2].exists());
+        drop(state);
+        drop(worker);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// In CULLING, the button is there for a frame in a rejects folder
+    /// and gone for one that is not.
+    #[test]
+    fn the_culling_section_offers_move_back_for_a_frame_in_rejects() {
+        let (dir, shoot, files) = shoot_with_rejects("section");
+        let app = window(files.len());
+        let (state, _worker) = opened_with_sidecars(&app, &files);
+        {
+            let mut st = state.borrow_mut();
+            // The hidden folder is the setting here: the flag's write
+            // after the move settles a sidecar where the setting says,
+            // as every save does.
+            st.placement = greycard_edit::Placement::Folder;
+            enter_cull(&mut st, &app, 0);
+        }
+        assert_eq!(app.get_panel_tab(), "Cull");
+        assert_eq!(crate::testing::count_labeled(&app, "Move back to shoot"), 0);
+        app.invoke_select(2);
+        assert_eq!(crate::testing::count_labeled(&app, "Move back to shoot"), 1);
+        app.invoke_move_back_asked();
+        assert!(shoot.join("b.tif").exists());
+        assert!(
+            shoot
+                .join(greycard_edit::SIDECAR_FOLDER)
+                .join("b.tif.gcd")
+                .exists(),
+            "the sidecar kept its place under the hidden folder"
+        );
+        assert_eq!(
+            crate::testing::count_labeled(&app, "Move back to shoot"),
+            0,
+            "{}",
+            app.get_status()
+        );
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Move back of every frame in the rejects folder, which empties
+    /// it, and Move rejects after: each move told to the index, so the
+    /// rows follow with their ids, nothing is left at an old path, and
+    /// nothing is missing. A pass over the emptied folder takes it for
+    /// a drive that is away and sees no move, which is why it is told.
+    #[test]
+    fn the_rows_follow_both_moves_even_out_of_an_emptied_folder() {
+        use crate::library::{Indexer, Told};
+        use std::time::Duration;
+        let (dir, shoot, files) = shoot_with_rejects("emptied");
+        let rejects = cull::rejects_dir(&shoot);
+        let db = dir.join("data").join("library.sqlite");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let indexer = Indexer::start(db.clone(), move |told| {
+            let _ = tx.send(told);
+        })
+        .expect("the indexer starts");
+        let wait = |want: &dyn Fn(&Told) -> bool| loop {
+            let told = rx
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the indexer answers");
+            if want(&told) {
+                return told;
+            }
+        };
+        // Both folders' passes over, by a word of either kind.
+        let passed = |a: &Path, b: &Path| {
+            let mut seen: Vec<PathBuf> = Vec::new();
+            while !(seen.iter().any(|p| p == a) && seen.iter().any(|p| p == b)) {
+                match wait(&|t| matches!(t, Told::Background { .. } | Told::Skipped { .. })) {
+                    Told::Background { path, .. } | Told::Skipped { path, .. } => seen.push(path),
+                    _ => {}
+                }
+            }
+        };
+        wait(&|t| matches!(t, Told::Opened(_)));
+        indexer.folders(vec![shoot.clone(), rejects.clone()], 1);
+        wait(&|t| matches!(t, Told::Indexed { .. }));
+        let ids: Vec<i64> = {
+            let reader = greycard_library::Library::open_read_only(&db).unwrap();
+            files
+                .iter()
+                .map(|f| reader.by_path(f).unwrap().expect("indexed").id)
+                .collect()
+        };
+
+        let app = window(files.len());
+        let (state, worker) = opened_with_sidecars(&app, &files);
+        {
+            let mut st = state.borrow_mut();
+            st.index = Some(indexer);
+            // a has an XMP, which the index reads too: written with the
+            // flag, as the editor does with XMPs on.
+            st.xmp_sidecars = true;
+        }
+        app.invoke_select(1);
+        {
+            let mut st = state.borrow_mut();
+            st.picked = vec![1, 2];
+            crate::panel::browser::show_set(&mut st, &app);
+        }
+        app.invoke_move_back_asked();
+        let (a, b) = (shoot.join("a.tif"), shoot.join("b.tif"));
+        assert!(a.exists() && b.exists(), "{}", app.get_status());
+        passed(&shoot, &rejects);
+        {
+            let reader = greycard_library::Library::open_read_only(&db).unwrap();
+            for (f, (old, id)) in [&a, &b].iter().zip(files[1..].iter().zip(&ids[1..])) {
+                let row = reader.by_path(f).unwrap().expect("the row at the new path");
+                assert_eq!(row.id, *id, "{}", f.display());
+                assert!(!row.missing);
+                assert_eq!(row.meta.flag, meta::Flag::None, "the flag's write read");
+                assert!(reader.by_path(old).unwrap().is_none(), "{}", old.display());
+            }
+        }
+
+        // Move rejects, the other way, the same: c out.
+        {
+            let mut st = state.borrow_mut();
+            assert_eq!(st.files[0], files[0]);
+            st.sidecars[0].meta.flag = meta::Flag::Reject;
+            crate::panel::edit::write_sidecar(&mut st, 0);
+        }
+        app.invoke_rejects_answered(true);
+        let out = rejects.join("c.tif");
+        assert!(out.exists(), "{}", app.get_status());
+        passed(&shoot, &rejects);
+        {
+            let reader = greycard_library::Library::open_read_only(&db).unwrap();
+            let row = reader.by_path(&out).unwrap().expect("c's row in rejects");
+            assert_eq!(row.id, ids[0]);
+            assert!(!row.missing);
+            assert!(reader.by_path(&files[0]).unwrap().is_none());
+        }
+        let indexer = state.borrow_mut().index.take().unwrap();
+        indexer.stop(Duration::from_secs(20));
+        drop(state);
+        drop(worker);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A frame in a rejects folder under a root that is offline is not
+    /// offered, and asked anyway nothing moves.
+    #[test]
+    fn move_back_leaves_a_frame_under_an_offline_root_alone() {
+        let (dir, shoot, files) = shoot_with_rejects("offline");
+        let app = window(files.len());
+        let (state, worker) = opened_with_sidecars(&app, &files);
+        app.invoke_select(1);
+        assert_eq!(app.get_back_count(), 1);
+        {
+            let mut st = state.borrow_mut();
+            st.library.offline.insert(shoot.clone());
+            assert!(!to_move_back(&st, 1));
+            crate::panel::browser::show_set(&mut st, &app);
+        }
+        assert_eq!(app.get_back_count(), 0);
+        app.invoke_move_back_asked();
+        assert_eq!(app.get_status(), "no frame chosen is in a rejects folder");
+        assert!(files[1].exists() && !shoot.join("a.tif").exists());
+        drop(state);
+        drop(worker);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A folder with no name in its path, "." or "..", is named by its
+    /// canonical form, never as the dot.
+    #[test]
+    fn a_folder_without_a_name_in_its_path_is_named_all_the_same() {
+        let here = std::env::current_dir().unwrap();
+        let name = here.file_name().unwrap().to_string_lossy().into_owned();
+        assert_eq!(folder_name(Path::new(".")), name);
+        assert_eq!(folder_name(&here), name);
+        let up = here
+            .parent()
+            .unwrap()
+            .file_name()
+            .unwrap()
+            .to_string_lossy();
+        assert_eq!(folder_name(Path::new("..")), up);
+    }
+
+    /// The rejects folder and the folder above are handed to the
+    /// indexer at once, so the index has the frame at its new path
+    /// without waiting for the watcher or a poll.
+    #[test]
+    fn move_back_hands_both_folders_to_the_indexer() {
+        use crate::library::{Indexer, Told};
+        use std::time::Duration;
+        let (dir, shoot, files) = shoot_with_rejects("index");
+        let rejects = cull::rejects_dir(&shoot);
+        let db = dir.join("data").join("library.sqlite");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let indexer = Indexer::start(db.clone(), move |told| {
+            let _ = tx.send(told);
+        })
+        .expect("the indexer starts");
+        let wait = |want: &dyn Fn(&Told) -> bool| loop {
+            let told = rx
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the indexer answers");
+            if want(&told) {
+                return told;
+            }
+        };
+        wait(&|t| matches!(t, Told::Opened(_)));
+        indexer.folders(vec![shoot.clone(), rejects.clone()], 1);
+        wait(&|t| matches!(t, Told::Indexed { .. }));
+
+        let app = window(files.len());
+        let (state, worker) = opened_with_sidecars(&app, &files);
+        state.borrow_mut().index = Some(indexer);
+        app.invoke_select(1);
+        app.invoke_move_back_asked();
+        assert!(shoot.join("a.tif").exists());
+        let mut passed: Vec<PathBuf> = Vec::new();
+        while !(passed.contains(&shoot) && passed.contains(&rejects)) {
+            if let Told::Background { path, .. } = wait(&|t| matches!(t, Told::Background { .. })) {
+                passed.push(path);
+            }
+        }
+        let reader = greycard_library::Library::open_read_only(&db).unwrap();
+        let row = reader
+            .by_path(&shoot.join("a.tif"))
+            .unwrap()
+            .expect("a's row at its new path");
+        assert!(!row.missing);
+        drop(reader);
+        let indexer = state.borrow_mut().index.take().unwrap();
+        indexer.stop(Duration::from_secs(20));
+        drop(state);
+        drop(worker);
+        crate::testing::remove_dir_retry(&dir);
     }
 }
