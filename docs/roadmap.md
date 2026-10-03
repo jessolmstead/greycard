@@ -15,6 +15,21 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] A hot photosite renders as a blown blue dot: in the backlit
+      couple (DSCF0599.RAF) one blue site reads 34 times its same-color
+      neighbors (4453 against a background near 100 in the linear
+      develop); the demosaic spreads it to a 5 by 5 pure-blue cluster
+      with a black ring, the sharpen draws a yellow halo round it, and
+      the Lanczos shrink to 1600 keeps it saturated. The hot pixel pass
+      (`develop::hotpixels`, darktable's rule) removes it cleanly but
+      is off, since anything two photosites across looks hot to it, a
+      catchlight included. What separates this defect from a glint:
+      the hot site is one color while the other colors' sites round it
+      sit at the background, where a catchlight or a star lights every
+      color. Try a default-on rule that asks for that, measured on the
+      portrait whose catchlight the old rule took, the stars frame and
+      this one; the per-camera defect map (the pool, §13s) stays the
+      answer for a site this rule misses
 - [ ] The random parity test fails past the seeds it was set from: with
       the display curve left as it is, seed 29 edit 51 is 7.7 levels
       apart on NVIDIA (the parts named: light, point curves, color,
