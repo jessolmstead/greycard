@@ -2586,6 +2586,14 @@ mod tests {
     /// Two roots of two frames each under `dir`, `a` and `b`, and an
     /// indexer on a library there with `guard`; what it tells, on a
     /// channel.
+    /// The guard's wait in the tests that hang a pass. The hang is the
+    /// test's own, held until it lets go, so any wait sets that pass
+    /// aside; the wait is for the passes meant to land, which must never
+    /// go this long without a word. 300 ms did on a Windows runner (a
+    /// fresh TIFF scanned before it is read), and a pass meant to land
+    /// was set aside.
+    const SET_ASIDE_WAIT: Duration = Duration::from_secs(2);
+
     fn two_roots(dir: &Path, guard: Guard) -> (PathBuf, PathBuf, Indexer, mpsc::Receiver<Told>) {
         let (a, b) = (dir.join("a"), dir.join("b"));
         for (root, seed) in [(&a, 1), (&b, 3)] {
@@ -2701,7 +2709,7 @@ mod tests {
                 counted.fetch_add(1, Ordering::SeqCst);
                 true
             }),
-            wait: Duration::from_millis(300),
+            wait: SET_ASIDE_WAIT,
             each_file: Some(Arc::new(move |file: &Path| {
                 while file.starts_with(&hang_under) && !let_go.load(Ordering::SeqCst) {
                     std::thread::sleep(Duration::from_millis(5));
@@ -2853,7 +2861,7 @@ mod tests {
         let let_go = released.clone();
         let guard = Guard {
             answers: Box::new(|_| true),
-            wait: Duration::from_millis(300),
+            wait: SET_ASIDE_WAIT,
             each_file: Some(Arc::new(move |file: &Path| {
                 while file.starts_with(&held) && !let_go.load(Ordering::SeqCst) {
                     std::thread::sleep(Duration::from_millis(5));
@@ -2927,7 +2935,7 @@ mod tests {
         let let_go = released.clone();
         let guard = Guard {
             answers: Box::new(|_| true),
-            wait: Duration::from_millis(300),
+            wait: SET_ASIDE_WAIT,
             each_file: Some(Arc::new(move |file: &Path| {
                 while file.starts_with(&held) && !let_go.load(Ordering::SeqCst) {
                     std::thread::sleep(Duration::from_millis(5));
@@ -2982,7 +2990,7 @@ mod tests {
         let hang_under = dir.join("a");
         let guard = Guard {
             answers: Box::new(|_| true),
-            wait: Duration::from_millis(300),
+            wait: SET_ASIDE_WAIT,
             each_file: Some(Arc::new(move |file: &Path| {
                 while file.starts_with(&hang_under) && !let_go.load(Ordering::SeqCst) {
                     std::thread::sleep(Duration::from_millis(5));
@@ -3037,7 +3045,7 @@ mod tests {
         let hang_under = dir.join("a");
         let guard = Guard {
             answers: Box::new(|_| true),
-            wait: Duration::from_millis(300),
+            wait: SET_ASIDE_WAIT,
             each_file: Some(Arc::new(move |file: &Path| {
                 while file.starts_with(&hang_under) && !let_go.load(Ordering::SeqCst) {
                     std::thread::sleep(Duration::from_millis(5));
