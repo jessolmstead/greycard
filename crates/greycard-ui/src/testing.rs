@@ -151,6 +151,17 @@ pub(crate) fn labeled(app: &App, label: &str) -> (slint::LogicalPosition, slint:
         .size()
         .to_logical(app.window().scale_factor())
         .height;
+    // The panel's view ends above its footer (Fit and Export) and the
+    // strip, not at the window's bottom: a control under the footer is
+    // found and drawn over, and a click there lands on the footer. How
+    // far down the footer sits depends on the system's font, so it is
+    // looked up rather than assumed: the lowest "Fit", since the zoom's
+    // words say "Fit" too, higher up.
+    let bottom = ElementHandle::find_by_accessible_label(app, "Fit")
+        .map(|e| e.absolute_position().y)
+        .reduce(f32::max)
+        .unwrap_or(height)
+        - 40.0;
     // The panel's scroll only builds what is in view: down it a
     // screen at a time from the top until the control is there, then
     // to where it is well inside the view.
@@ -158,10 +169,10 @@ pub(crate) fn labeled(app: &App, label: &str) -> (slint::LogicalPosition, slint:
     for _ in 0..40 {
         if let Some(element) = find() {
             let at = element.absolute_position();
-            if at.y > 80.0 && at.y < height - 80.0 {
+            if at.y > 80.0 && at.y + element.size().height < bottom {
                 return (at, element.size());
             }
-            app.set_panel_scroll(app.get_panel_scroll() - (at.y - height / 2.0));
+            app.set_panel_scroll(app.get_panel_scroll() - (at.y - (80.0 + bottom) / 2.0));
             let element = find().unwrap_or_else(|| panic!("{label:?} scrolled away"));
             return (element.absolute_position(), element.size());
         }

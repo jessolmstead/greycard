@@ -4669,6 +4669,7 @@ mod tests {
                 "listed from the archive"
             );
         }
+        drop(writer);
         crate::testing::remove_scratch(state, &dir);
     }
 
