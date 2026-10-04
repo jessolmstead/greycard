@@ -1320,6 +1320,7 @@ impl Renderer {
             .unwrap_or([1.0, 1.0]);
         let (ox, oy, tw, th) = rect.unwrap_or((0, 0, target.width(), target.height()));
         let m = self.output;
+        let rail = crate::agx::rail_weights_for(&m);
         let w = v.white;
         let params = Params {
             view: [tw as f32, th as f32],
@@ -1342,11 +1343,12 @@ impl Renderer {
             exposure: v.source.baseline() + v.light.exposure,
             // The shape, then 0 the display curve per channel, 1 a
             // clip, for a picture that has had its curve, 2 the
-            // display curve on a norm.
+            // display curve on a norm, 3 AgX.
             curve: match (v.source, v.display_curve) {
                 (Source::Scene, greycard_edit::DisplayCurve::Channels) => 0.0,
                 (Source::Display, _) => 1.0,
                 (Source::Scene, greycard_edit::DisplayCurve::Norm) => 2.0,
+                (Source::Scene, greycard_edit::DisplayCurve::Agx) => 3.0,
             },
             contrast: v.light.tone.contrast,
             highlights: v.light.tone.highlights,
@@ -1361,9 +1363,11 @@ impl Renderer {
             saturation: v.color.saturation,
             vibrance: v.color.vibrance,
             source_turn: f32::from(v.source_turn % 4),
-            m0: [m[0][0], m[0][1], m[0][2], 0.0],
-            m1: [m[1][0], m[1][1], m[1][2], 0.0],
-            m2: [m[2][0], m[2][1], m[2][2], 0.0],
+            // The fourth lane carries the AgX output rail's luminance
+            // weights for this output space (`agx::rail_weights_for`).
+            m0: [m[0][0], m[0][1], m[0][2], rail[0]],
+            m1: [m[1][0], m[1][1], m[1][2], rail[1]],
+            m2: [m[2][0], m[2][1], m[2][2], rail[2]],
             w0: [w[0][0], w[0][1], w[0][2], 0.0],
             w1: [w[1][0], w[1][1], w[1][2], 0.0],
             w2: [w[2][0], w[2][1], w[2][2], 0.0],
@@ -3161,7 +3165,18 @@ mod tests {
     /// and both sides read the same field of the edit.
     #[test]
     fn the_norm_curve_on_the_gpu_is_the_cpus() {
-        let Some((device, queue)) = device("the norm curve's check") else {
+        a_display_curve_on_the_gpu_is_the_cpus(greycard_edit::DisplayCurve::Norm, "the norm curve");
+    }
+
+    /// And AgX on the GPU is `agx::tone_agx` on the CPU, over the same
+    /// frame and exposures.
+    #[test]
+    fn the_agx_curve_on_the_gpu_is_the_cpus() {
+        a_display_curve_on_the_gpu_is_the_cpus(greycard_edit::DisplayCurve::Agx, "the AgX curve");
+    }
+
+    fn a_display_curve_on_the_gpu_is_the_cpus(curve: greycard_edit::DisplayCurve, what: &str) {
+        let Some((device, queue)) = device(&format!("{what}'s check")) else {
             return;
         };
         let image = parity_frame();
@@ -3175,10 +3190,17 @@ mod tests {
             .collect();
         let to_out = crate::export::Space::Srgb.matrix();
         let mut edit = greycard_edit::Edit {
-            display_curve: greycard_edit::DisplayCurve::Norm,
+            display_curve: curve,
             ..Default::default()
         };
         let mut worst = (0.0f32, [0.0f32; 3], [0.0f32; 3], [0.0f32; 3], 0.0f32);
+        // The signed difference's mean and its root mean square over
+        // the channels not at either end, in levels: the GPU is read
+        // back in 8 bits, so the square root of a twelfth (0.29) is
+        // the quantization's own, and a mean well under a hundredth of
+        // a level says the curve on the GPU has no bias against the
+        // CPU's that the quantization could hide.
+        let (mut sum, mut sq, mut n) = (0.0f64, 0.0f64, 0usize);
         for stops in [-3.0f32, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0] {
             edit.light.exposure = stops;
             let view = View {
@@ -3202,12 +3224,193 @@ mod tests {
                         if d > worst.0 {
                             worst = (d, px, cpu, gpu, stops);
                         }
+                        if cpu[k] > 0.02 && cpu[k] < 0.98 {
+                            let signed = f64::from(gpu[k] - cpu[k]) * 255.0;
+                            sum += signed;
+                            sq += signed * signed;
+                            n += 1;
+                        }
                     }
                 }
             }
         }
-        eprintln!("the norm curve, GPU against CPU: {worst:?}");
+        eprintln!(
+            "{what}, GPU against CPU: {worst:?}; over {n} channels mean {:+.4} levels, rms {:.3}",
+            sum / n as f64,
+            (sq / n as f64).sqrt()
+        );
         assert!(worst.0 < 1.5 / 255.0, "{worst:?}");
+    }
+
+    /// How far each display curve's value on the GPU is from the CPU's
+    /// before the point curves, which an 8-bit read back cannot show on
+    /// its own: a master point curve rising from 0 to 1 across a
+    /// fiftieth of the encoded range magnifies every pixel that lands
+    /// in it by fifty to seventy-five, and that curve inverted on the
+    /// GPU's level gives the pixel's encoded value to a few
+    /// hundred-thousandths. The output space is Rec.2020, the working
+    /// space, so the level is the curve's own value. Over the parity
+    /// frame at three exposures and five windows, for each curve: how
+    /// many channels landed in a window, the root mean square and the
+    /// largest gap, in levels of the encoded value. The random parity
+    /// test finds such a gap only when a drawn curve is this steep
+    /// where a pixel lands, and then reads it as whole levels; this
+    /// says how big the gap is for every pixel, whichever curve.
+    #[test]
+    fn a_display_curves_gap_before_the_point_curves() {
+        use greycard_edit::curve::lookup;
+        let Some((device, queue)) = device("the display curves' gap") else {
+            return;
+        };
+        let image = parity_frame();
+        let (w, h) = (image.width, image.height);
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        renderer.set_output(crate::export::Space::Rec2020.matrix());
+        let seen: Vec<f32> = image
+            .data
+            .iter()
+            .map(|v| half::f16::from_f32(*v).to_f32())
+            .collect();
+        let mut report = Vec::new();
+        for curve in greycard_edit::DisplayCurve::ALL {
+            let (mut sq, mut sum, mut n, mut worst) = (0.0f64, 0.0f64, 0usize, 0.0f32);
+            for window in [0.1f32, 0.3, 0.5, 0.7, 0.9] {
+                for stops in [-2.0f32, 0.0, 2.0] {
+                    let mut edit = greycard_edit::Edit {
+                        display_curve: curve,
+                        ..Default::default()
+                    };
+                    edit.light.exposure = stops;
+                    edit.curves.rgb = vec![
+                        [0.0, 0.0],
+                        [window - 0.01, 0.0],
+                        [window + 0.01, 1.0],
+                        [1.0, 1.0],
+                    ];
+                    let view = View {
+                        center: (w as f32 / 2.0, h as f32 / 2.0),
+                        plane: (w as f32, h as f32),
+                        frame_size: (w as f32, h as f32),
+                        ..View::with_look(&edit)
+                    };
+                    let target = renderer.render(w as u32, h as u32, &view).0;
+                    let shown = renderer.read_back(&target).expect("read back");
+                    let global = Baked::global(&edit, Source::Scene);
+                    let look = edit.look();
+                    for y in 0..h {
+                        for x in 0..w {
+                            let i = (y * w + x) * 3;
+                            let px = [seen[i], seen[i + 1], seen[i + 2]];
+                            let before = crate::finish::pick(
+                                px,
+                                &look.light,
+                                &look.mixer,
+                                &look.color,
+                                &edit.bw,
+                                &look.tint,
+                                &global.curves,
+                                Source::Scene,
+                                curve,
+                            )
+                            .encoded;
+                            let gpu = shown.get_pixel(x as u32, y as u32);
+                            for k in 0..3 {
+                                let e = before[k];
+                                let level = f32::from(gpu[k]) / 255.0;
+                                if (e - window).abs() > 0.008 || !(0.02..0.98).contains(&level) {
+                                    continue;
+                                }
+                                // The curve inverted on the GPU's level, by
+                                // bisection over the window, where it rises.
+                                let (mut lo, mut hi) = (window - 0.011, window + 0.011);
+                                for _ in 0..40 {
+                                    let mid = 0.5 * (lo + hi);
+                                    if lookup(&global.curves, k, mid) < level {
+                                        lo = mid;
+                                    } else {
+                                        hi = mid;
+                                    }
+                                }
+                                let gap = (0.5 * (lo + hi) - e) * 255.0;
+                                sq += f64::from(gap * gap);
+                                sum += f64::from(gap);
+                                n += 1;
+                                worst = worst.max(gap.abs());
+                            }
+                        }
+                    }
+                }
+            }
+            report.push((
+                curve,
+                n,
+                (sq / n.max(1) as f64).sqrt(),
+                sum / n.max(1) as f64,
+                worst,
+            ));
+        }
+        eprintln!("| curve | channels | rms gap | mean gap | largest gap |");
+        for (curve, n, rms, mean, worst) in &report {
+            eprintln!("| {curve:?} | {n} | {rms:.4} | {mean:+.4} | {worst:.4} |");
+        }
+        // NVIDIA and lavapipe both: an rms of 0.006 levels and a largest
+        // of 0.02 for each of the three curves, which is the chain's
+        // float rounding; a tenth of a level is five times that.
+        for (curve, n, _, _, worst) in &report {
+            assert!(*n > 100, "{curve:?}: only {n} channels landed in a window");
+            assert!(
+                *worst < 0.1,
+                "{curve:?}: {worst} levels before the point curves"
+            );
+        }
+    }
+
+    /// Milliseconds a 4K viewport frame takes on this device with each
+    /// display curve, the default edit otherwise; printed, for the
+    /// notes. The frame is the parity frame drawn at 3840 by 2160, so
+    /// the cost is the shader's per pixel and not the texture's.
+    #[test]
+    #[ignore = "a timing, run by hand in release"]
+    fn the_cost_of_a_4k_frame() {
+        let Some((device, queue)) = device("the 4K frame's timing") else {
+            return;
+        };
+        let image = parity_frame();
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        let (w, h) = (3840u32, 2160u32);
+        for curve in greycard_edit::DisplayCurve::ALL {
+            let edit = greycard_edit::Edit {
+                display_curve: curve,
+                ..Default::default()
+            };
+            // The renderer draws again only for another view, so each
+            // frame moves the exposure by a thousandth of a stop.
+            let mut time = |frames: u32| {
+                let start = std::time::Instant::now();
+                for i in 0..frames {
+                    let mut edit = edit.clone();
+                    edit.light.exposure = i as f32 * 1e-3;
+                    let view = View {
+                        center: (image.width as f32 / 2.0, image.height as f32 / 2.0),
+                        plane: (image.width as f32, image.height as f32),
+                        frame_size: (w as f32, h as f32),
+                        ..View::with_look(&edit)
+                    };
+                    let (target, _) = renderer.render(w, h, &view);
+                    // Read back, so the frame is finished before the
+                    // next; the copy of 33 MB is in the figure.
+                    let _ = renderer.read_back(&target);
+                }
+                start.elapsed().as_secs_f64() * 1e3 / f64::from(frames)
+            };
+            time(3);
+            eprintln!(
+                "{curve:?}: {:.2} ms a 4K frame, read back included",
+                time(20)
+            );
+        }
     }
 
     /// The auto white balance's grid is the picture's own pixels at
@@ -3944,6 +4147,11 @@ mod tests {
         // the draws before it are the ones every seed had before.
         if rng.chance(0.5) && has("display curve") {
             edit.display_curve = greycard_edit::DisplayCurve::Norm;
+        }
+        // And AgX a third of the time, drawn after the norm so every
+        // draw before it is what it was: a third each, then.
+        if rng.chance(1.0 / 3.0) && has("display curve") {
+            edit.display_curve = greycard_edit::DisplayCurve::Agx;
         }
         Case {
             edit,

@@ -12,7 +12,16 @@
 // ratio processing (`process_loglogistic_rgb_ratio`),
 // GPL-3.0-or-later, written by Jakob Dove for darktable 4.0, copyright
 // (C) 2020-2026 darktable developers; `tail.rs` says what was taken and
-// what departs.
+// what departs. `tone_agx` and the `agx_` functions, Blender's AgX
+// with its Punchy look, are ported from darktable's AgX module,
+// `src/iop/agx.c`, GPL-3.0-or-later, written by Kofa in 2025, copyright
+// (C) 2025-2026 darktable developers, with Blender's parameters (Eary
+// Chow's formation on Troy Sobotka's AgX), and `agx_shadows` from
+// OpenColorIO's GradingToneTransform, BSD-3-Clause, copyright
+// Contributors to the OpenColorIO Project, whose notice `agx.rs`
+// carries and which covers that function here; the two rails are Eary
+// Chow's method written from its description and darktable's GPL
+// code; `agx.rs` says what was taken and what departs.
 
 struct Params {
     view: vec2<f32>,
@@ -41,7 +50,7 @@ struct Params {
     // After the shape: 0 the display curve per channel, for a raw; 1 a
     // clip, for a picture already rendered for a display
     // (`finish::Source`); 2 the display curve on a norm, for a raw
-    // (`tail.rs`).
+    // (`tail.rs`); 3 AgX (`agx.rs`).
     curve: f32,
     // Slope at mid grey relative to the base curve's.
     contrast: f32,
@@ -442,8 +451,10 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let shaped = shape(c, look, g, has_guide);
     // 1: a picture already rendered for a display, which takes the
     // shape and a clip at white, not a second curve.
-    // 2: the curve on a norm, the hue held.
-    if (p.curve > 1.5) {
+    // 2: the curve on a norm, the hue held. 3: AgX.
+    if (p.curve > 2.5) {
+        c = tone_agx(shaped);
+    } else if (p.curve > 1.5) {
         c = tone_norm(shaped);
     } else if (p.curve > 0.5) {
         c = clamp(shaped, vec3<f32>(0.0), vec3<f32>(1.0));
@@ -464,7 +475,13 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // The proof's gamut mark is looked up at the working-space color,
     // before the output matrix clamps it into its space.
     let wide = encode(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)));
-    let s = vec3<f32>(dot(p.m0.xyz, c), dot(p.m1.xyz, c), dot(p.m2.xyz, c));
+    var s = vec3<f32>(dot(p.m0.xyz, c), dot(p.m1.xyz, c), dot(p.m2.xyz, c));
+    // Under AgX the output's guard rail in place of the clip's zeroing,
+    // its luminance weights in the output rows' fourth lane, as
+    // `finish_pixel_with` has it.
+    if (p.curve > 2.5) {
+        s = agx_output_rail(s, vec3<f32>(p.m0.w, p.m1.w, p.m2.w));
+    }
     var e = encode(clamp(s, vec3<f32>(0.0), vec3<f32>(1.0)));
     if (p.grain0.x > 0.0) {
         e = grain_apply(grain_at(q / p.frame_size, p.frame_size.x / p.frame_size.y), e);
@@ -1315,4 +1332,206 @@ fn tone_norm(scene: vec3<f32>) -> vec3<f32> {
     let out = q + (stepped - back);
     let top = max(max(abs(out.x), abs(out.y)), abs(out.z));
     return select(out, vec3<f32>(0.0), abs(out) < vec3<f32>(RESIDUE * top));
+}
+
+// AgX, Blender's wide-gamut formation with its Punchy look, as
+// `tone_agx` in `agx.rs`: the gain, the look in the inset space's
+// 25-stop log (a shadows grade per channel and as the master, then a
+// power), then the formation: the lower guard rail, the inset, the log
+// from ten stops under mid grey to the white relative exposure that
+// puts the sensor's clip at display white, Jed Smith's sigmoid per
+// channel to a
+// 2.4-encoded value and the decode, forty percent of the per-channel
+// hue shift kept against the HSV hue before the curve, and the outset.
+// The constants are what `Agx::blender_punchy` computes; `agx.rs` says
+// where each comes from. Anything not finite, found by its bits as
+// `tone` finds a NaN, is white.
+const AGX_GAIN: f32 = 2.4658713;
+const AGX_LOG_MIN: f32 = -12.4739312;
+const AGX_LOG_RANGE: f32 = 13.872135;
+const AGX_LOOK_LOG_MIN: f32 = -12.47393;
+const AGX_LOOK_LOG_RANGE: f32 = 24.9999988;
+const AGX_PIVOT_X: f32 = 0.72086954;
+const AGX_PIVOT_Y: f32 = 0.48943709;
+const AGX_SLOPE: f32 = 2.4;
+const AGX_TOE_POWER: f32 = 1.5;
+const AGX_SHOULDER_POWER: f32 = 1.5;
+const AGX_TOE_SCALE: f32 = -0.54564518;
+const AGX_SHOULDER_SCALE: f32 = 1.0592132;
+const AGX_GAMMA: f32 = 2.4;
+const AGX_HUE_KEPT: f32 = 0.4;
+const AGX_LOOK_POWER: f32 = 1.0912;
+// Rec.2020's luminance weights the rails read, darktable's.
+const AGX_LUMA: vec3<f32> = vec3<f32>(0.26581804, 0.59846986, 0.1357121);
+// Blender's inset, its inverse, and its outset, rows.
+const AGX_INSET_0: vec3<f32> = vec3<f32>(0.85662715, 0.09512124, 0.048251606);
+const AGX_INSET_1: vec3<f32> = vec3<f32>(0.13731897, 0.76124199, 0.10143904);
+const AGX_INSET_2: vec3<f32> = vec3<f32>(0.11189821, 0.07679942, 0.81130237);
+const AGX_UNINSET_0: vec3<f32> = vec3<f32>(1.197441077, -0.144261513, -0.053179564);
+const AGX_UNINSET_1: vec3<f32> = vec3<f32>(-0.196474626, 1.354095131, -0.157620505);
+const AGX_UNINSET_2: vec3<f32> = vec3<f32>(-0.146557417, -0.108284059, 1.254841476);
+const AGX_OUTSET_0: vec3<f32> = vec3<f32>(1.1271006, -0.11060664, -0.016493931);
+const AGX_OUTSET_1: vec3<f32> = vec3<f32>(-0.14132975, 1.1578237, -0.016493931);
+const AGX_OUTSET_2: vec3<f32> = vec3<f32>(-0.14132975, -0.11060664, 1.2519364);
+
+fn agx_mat(r0: vec3<f32>, r1: vec3<f32>, r2: vec3<f32>, c: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(dot(r0, c), dot(r1, c), dot(r2, c));
+}
+
+// The lower guard rail, as `compensate_low_side` in `agx.rs`: a color
+// with a channel under zero offset until that channel is zero, then
+// scaled so its luminance, corrected for the negative part by the
+// opponent color, is what it was. A color with nothing under zero is
+// returned as it is.
+fn agx_compensate(c: vec3<f32>, weights: vec3<f32>) -> vec3<f32> {
+    let lo = min(min(c.x, c.y), c.z);
+    if (lo >= 0.0) {
+        return c;
+    }
+    let hi = max(max(c.x, c.y), c.z);
+    let opponent = vec3<f32>(hi) - c;
+    let y_compensated = max(max(opponent.x, opponent.y), opponent.z) - dot(weights, opponent) + dot(weights, c);
+    let offset = c - vec3<f32>(lo);
+    let hi2 = max(max(offset.x, offset.y), offset.z);
+    let opponent2 = vec3<f32>(hi2) - offset;
+    let y_new = max(max(opponent2.x, opponent2.y), opponent2.z) - dot(weights, opponent2) + dot(weights, offset);
+    let ratio = select(1.0, y_compensated / y_new, y_new > y_compensated && y_new > 1e-6);
+    return offset * ratio;
+}
+
+// The output guard rail, as `output_rail` in `agx.rs`: the lower rail
+// in the output space with that space's weights.
+fn agx_output_rail(c: vec3<f32>, weights: vec3<f32>) -> vec3<f32> {
+    return agx_compensate(c, weights);
+}
+
+// HSV's hue in turns, saturation and value, as `hsv` in `agx.rs`.
+fn agx_hsv(c: vec3<f32>) -> vec3<f32> {
+    let hi = max(max(c.x, c.y), c.z);
+    let lo = min(min(c.x, c.y), c.z);
+    let d = hi - lo;
+    if (d <= 0.0) {
+        return vec3<f32>(0.0, 0.0, hi);
+    }
+    var h = 4.0 + (c.x - c.y) / d;
+    if (hi == c.x) {
+        h = (c.y - c.z) / d;
+    } else if (hi == c.y) {
+        h = 2.0 + (c.z - c.x) / d;
+    }
+    h = h / 6.0;
+    h = h - floor(h);
+    let s = select(d / hi, 0.0, hi == 0.0);
+    return vec3<f32>(h, s, hi);
+}
+
+fn agx_hsv_to_rgb(h: f32, s: f32, v: f32) -> vec3<f32> {
+    let h6 = h * 6.0;
+    let i = i32(floor(h6)) % 6;
+    let f = h6 - floor(h6);
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - s * f);
+    let t = v * (1.0 - s * (1.0 - f));
+    switch (i) {
+        case 0: { return vec3<f32>(v, t, p); }
+        case 1: { return vec3<f32>(q, v, p); }
+        case 2: { return vec3<f32>(p, v, t); }
+        case 3: { return vec3<f32>(p, q, v); }
+        case 4: { return vec3<f32>(t, p, v); }
+        default: { return vec3<f32>(v, p, q); }
+    }
+}
+
+// `h1` moved toward `h2` by `t`, the short way round.
+fn agx_lerp_hue(h1: f32, h2: f32, t: f32) -> f32 {
+    var d = h2 - h1;
+    if (d > 0.5) {
+        d = d - 1.0;
+    } else if (d < -0.5) {
+        d = d + 1.0;
+    }
+    let h = h1 + t * d;
+    return h - floor(h);
+}
+
+// OpenColorIO's shadows tone grade on one channel, forward, as
+// `Shadows::at` in `agx.rs`: x0 0.1, x2 0.4, slope m0 at x0 and one
+// at x2, `y1` its precomputed middle.
+fn agx_shadows(t: f32, m0: f32, y1: f32) -> f32 {
+    let x0 = 0.1;
+    let x1 = 0.25;
+    let x2 = 0.4;
+    if (t < x0) {
+        return x0 + (t - x0) * m0;
+    }
+    if (t > x2) {
+        return t;
+    }
+    if (t < x1) {
+        let tl = (t - x0) / (x1 - x0);
+        return x0 * (1.0 - tl * tl) + y1 * tl * tl + m0 * (1.0 - tl) * tl * (x1 - x0);
+    }
+    let tr = (t - x1) / (x2 - x1);
+    return y1 * (1.0 - tr) * (1.0 - tr) + x2 * (2.0 - tr) * tr + (tr - 1.0) * tr * (x2 - x1);
+}
+
+fn agx_sigmoid(x: vec3<f32>) -> vec3<f32> {
+    let run = AGX_SLOPE * (x - AGX_PIVOT_X);
+    let tt = max(run / AGX_TOE_SCALE, vec3<f32>(0.0));
+    let ts = max(run / AGX_SHOULDER_SCALE, vec3<f32>(0.0));
+    // Both powers are 1.5: `t^1.5` as `t * sqrt(t)`, as the CPU has it.
+    let toe = AGX_TOE_SCALE * (tt / pow(1.0 + tt * sqrt(tt), vec3<f32>(1.0 / AGX_TOE_POWER))) + AGX_PIVOT_Y;
+    let shoulder = AGX_SHOULDER_SCALE * (ts / pow(1.0 + ts * sqrt(ts), vec3<f32>(1.0 / AGX_SHOULDER_POWER))) + AGX_PIVOT_Y;
+    return max(select(shoulder, toe, x < vec3<f32>(AGX_PIVOT_X)), vec3<f32>(0.0));
+}
+
+// The look in the inset space, as `Agx::look_inset`: in the 25-stop
+// log, the shadows grade per channel (0.2) and as the master (0.35),
+// then the power, the log clamped at zero before it as OCIO's CDL
+// does; returns the graded color's log2 per channel.
+fn agx_look_log2(scene: vec3<f32>) -> vec3<f32> {
+    let c = agx_compensate(scene, AGX_LUMA);
+    let inset = agx_mat(AGX_INSET_0, AGX_INSET_1, AGX_INSET_2, c);
+    var x = (log2(max(inset, vec3<f32>(1e-30))) - AGX_LOOK_LOG_MIN) / AGX_LOOK_LOG_RANGE;
+    x = vec3<f32>(agx_shadows(x.x, 0.2, 0.22), agx_shadows(x.y, 0.2, 0.22), agx_shadows(x.z, 0.2, 0.22));
+    x = vec3<f32>(agx_shadows(x.x, 0.35, 0.225625), agx_shadows(x.y, 0.35, 0.225625), agx_shadows(x.z, 0.35, 0.225625));
+    x = pow(max(x, vec3<f32>(0.0)), vec3<f32>(AGX_LOOK_POWER));
+    return x * AGX_LOOK_LOG_RANGE + AGX_LOOK_LOG_MIN;
+}
+
+// The formation from the inset space, as `Agx::form_inset`: the inset
+// color, linear, and its log2; display-linear Rec.2020 in the unit
+// cube.
+fn agx_form_inset(inset: vec3<f32>, l: vec3<f32>) -> vec3<f32> {
+    let before = agx_hsv(inset);
+    let x = max((l - AGX_LOG_MIN) / AGX_LOG_RANGE, vec3<f32>(0.0));
+    let lin = pow(agx_sigmoid(x), vec3<f32>(AGX_GAMMA));
+    let after = agx_hsv(lin);
+    let mixed = agx_hsv_to_rgb(agx_lerp_hue(before.x, after.x, AGX_HUE_KEPT), after.y, after.z);
+    return clamp(agx_mat(AGX_OUTSET_0, AGX_OUTSET_1, AGX_OUTSET_2, mixed), vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// The formation on a Rec.2020 color, as `Agx::form`: the rail, the
+// inset, then the above.
+fn agx_form(scene: vec3<f32>) -> vec3<f32> {
+    let c = agx_compensate(scene, AGX_LUMA);
+    let inset = agx_mat(AGX_INSET_0, AGX_INSET_1, AGX_INSET_2, c);
+    return agx_form_inset(inset, log2(max(inset, vec3<f32>(1e-30))));
+}
+
+// As `Agx::apply`: the gain, the look, and where the graded color
+// taken out of the inset space has nothing under zero, the formation
+// straight from the inset space; otherwise the long way.
+fn tone_agx(scene: vec3<f32>) -> vec3<f32> {
+    let bits = bitcast<vec3<u32>>(scene) & vec3<u32>(0x7fffffffu);
+    if (any(bits >= vec3<u32>(0x7f800000u))) {
+        return vec3<f32>(1.0);
+    }
+    let l = agx_look_log2(scene * AGX_GAIN);
+    let inset = exp2(l);
+    let back = agx_mat(AGX_UNINSET_0, AGX_UNINSET_1, AGX_UNINSET_2, inset);
+    if (all(back >= vec3<f32>(0.0))) {
+        return agx_form_inset(inset, l);
+    }
+    return agx_form(back);
 }

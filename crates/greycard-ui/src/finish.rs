@@ -33,8 +33,8 @@ pub struct Baked {
     /// Global only, as the black and white is: what the picture under
     /// the look is, which decides the baseline and the display curve.
     pub source: Source,
-    /// Global only, as the source is: the display curve per channel
-    /// or on a norm. Read only when the source is a scene.
+    /// Global only, as the source is: the display curve per channel,
+    /// on a norm or AgX. Read only when the source is a scene.
     pub display_curve: DisplayCurve,
 }
 
@@ -61,15 +61,16 @@ impl Source {
         }
     }
 
-    /// The display curve, per channel or on a norm as `how` says, or
-    /// a clip at white for a picture that has been through one
+    /// The display curve, per channel, on a norm or AgX as `how` says,
+    /// or a clip at white for a picture that has been through one
     /// already.
     #[inline]
-    fn curve(self, c: [f32; 3], how: DisplayCurve) -> [f32; 3] {
+    pub(crate) fn curve(self, c: [f32; 3], how: DisplayCurve) -> [f32; 3] {
         match (self, how) {
             (Source::Display, _) => c.map(|x| x.clamp(0.0, 1.0)),
             (Source::Scene, DisplayCurve::Channels) => c.map(tone),
             (Source::Scene, DisplayCurve::Norm) => crate::tail::tone_norm(c),
+            (Source::Scene, DisplayCurve::Agx) => crate::agx::tone_agx(c),
         }
     }
 }
@@ -508,16 +509,43 @@ pub fn finish_pixel_with(
     if let Some(look) = look {
         c = look.at(c);
     }
-    let s = [
+    let mut s = [
         to_out[0][0] * c[0] + to_out[0][1] * c[1] + to_out[0][2] * c[2],
         to_out[1][0] * c[0] + to_out[1][1] * c[1] + to_out[1][2] * c[2],
         to_out[2][0] * c[0] + to_out[2][1] * c[1] + to_out[2][2] * c[2],
     ];
+    // Under AgX the output's guard rail in place of the clip's zeroing:
+    // a color the output space cannot hold is offset onto its face at
+    // held luminance, as Blender forms for an sRGB or P3 display
+    // (`agx::output_rail`). Nothing to do in Rec.2020, where the
+    // formation leaves nothing under zero, and nothing on the other
+    // curves. The weights are the matrix's, kept from the last pixel.
+    if global.source == Source::Scene && global.display_curve == DisplayCurve::Agx {
+        s = crate::agx::output_rail(s, rail_weights(to_out));
+    }
     let e = s.map(|v| encode(v.clamp(0.0, 1.0)));
     match grain {
         Some(noise) => Grain::apply(noise, e),
         None => e,
     }
+}
+
+/// The output rail's weights for `to_out`, computed once per matrix
+/// on each thread: the finish hands every pixel the same matrix.
+fn rail_weights(to_out: &[[f32; 3]; 3]) -> [f32; 3] {
+    thread_local! {
+        static RAIL: std::cell::Cell<([[f32; 3]; 3], [f32; 3])> =
+            const { std::cell::Cell::new(([[0.0; 3]; 3], [0.0; 3])) };
+    }
+    RAIL.with(|cell| {
+        let (m, w) = cell.get();
+        if m == *to_out {
+            return w;
+        }
+        let w = crate::agx::rail_weights_for(to_out);
+        cell.set((*to_out, w));
+        w
+    })
 }
 
 /// What a pixel is where the droppers read it, under the global look

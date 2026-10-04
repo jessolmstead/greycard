@@ -100,10 +100,7 @@ fn changes(b: &Edit, a: &Edit) -> Vec<String> {
     }
     out.extend(look(&b.look(), &a.look(), ""));
     if b.display_curve != a.display_curve {
-        out.push(match a.display_curve {
-            crate::DisplayCurve::Channels => "Hold hue to white off".to_string(),
-            crate::DisplayCurve::Norm => "Hold hue to white".to_string(),
-        });
+        out.push(format!("Display curve: {}", a.display_curve.name()));
     }
     if b.bw != a.bw {
         out.push(black_and_white(b, a));

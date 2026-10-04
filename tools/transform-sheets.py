@@ -16,6 +16,16 @@ out = sys.argv[1]
 w = 1000 if "--wide" in sys.argv else 640
 cols = [("off", "per channel (today)"), ("aces2", "ACES 2.0"), ("agx-punchy", "AgX Punchy"),
         ("agx", "AgX base"), ("on", "Hold hue to white")]
+# The columns as "key=label,key=label": SHEET_BASE replaces the five above,
+# SHEET_COLUMNS adds to them, e.g. a second config's renders.
+if os.environ.get("SHEET_BASE"):
+    cols = []
+for kv in [c for c in (os.environ.get("SHEET_BASE", "") + "," + os.environ.get("SHEET_COLUMNS", "")).split(",") if c]:
+    k, _, label = kv.partition("="); cols.append((k, label or k))
+# Only these frames, one name a line, when given.
+only = os.environ.get("SHEET_ONLY")
+# A suffix for the sheets and the index, so a second page leaves the first.
+suffix = os.environ.get("SHEET_SUFFIX", "")
 try:
     font = ImageFont.truetype("/usr/share/fonts/TTF/DejaVuSans.ttf", 22)
 except OSError:
@@ -25,6 +35,9 @@ order = []
 if os.path.exists(f"{out}/raws.txt"):
     order = [os.path.splitext(os.path.basename(l.strip()))[0] for l in open(f"{out}/raws.txt")]
 names = [n for n in order if n in names] + [n for n in names if n not in order]
+if only:
+    keep = {l.strip() for l in open(only) if l.strip()}
+    names = [n for n in names if n in keep]
 rows = []
 for n in names:
     ims = []
@@ -47,13 +60,13 @@ for n in names:
     for i in ims:
         sheet.paste(i, (x, 34))
         x += i.width + 8
-    sheet.save(f"{out}/{n}-sheet.jpg", quality=90)
+    sheet.save(f"{out}/{n}-sheet{suffix}.jpg", quality=90)
     rows.append(n)
-with open(f"{out}/index.html", "w") as f:
+with open(f"{out}/index{suffix}.html", "w") as f:
     f.write("<html><body style='background:#181818;color:#eee;font-family:sans-serif;margin:0'>\n")
-    f.write("<p style='padding:8px'>Columns: per channel (today), ACES 2.0, AgX Punchy, AgX base, Hold hue to white. "
+    f.write("<p style='padding:8px'>Columns: " + ", ".join(l for _, l in cols) + ". "
             "Exposure matched by median luminance; framing differs slightly between greycard's export and the linear develop.</p>\n")
     for n in rows:
-        f.write(f"<div style='padding:4px 0'><img src='{n}-sheet.jpg' style='width:100%'></div>\n")
+        f.write(f"<div style='padding:4px 0'><img src='{n}-sheet{suffix}.jpg' style='width:100%'></div>\n")
     f.write("</body></html>\n")
-print(f"{len(rows)} sheets, {out}/index.html")
+print(f"{len(rows)} sheets, {out}/index{suffix}.html")

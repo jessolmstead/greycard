@@ -12,10 +12,11 @@ export component LightSection inherits Section {
     in-out property <float> whites;
     in-out property <float> blacks;
     in-out property <bool> light-enabled;
-    // The display curve on a norm, the hue held as a color rolls off
-    // to white, in place of the curve per channel. The picture's, not
-    // a mask's, and a raw's only: shown on the global look of a raw.
-    in-out property <bool> display-norm;
+    // The display curve: per channel, on a norm with the hue held as a
+    // color rolls off to white, or AgX; named as `DisplayCurve::name`
+    // names them. The picture's, not a mask's, and a raw's only: shown
+    // on the global look of a raw.
+    in-out property <string> display-curve;
     in property <bool> show-display-curve;
     in-out property <bool> collapsed-light;
     in-out property <string> target-name;
@@ -90,10 +91,18 @@ export component LightSection inherits Section {
         text: (root.blacks >= 0 ? "+" : "") + round(root.blacks * 100) + "%";
         changed(v) => { root.view-changed(); }
     }
-    if root.show-display-curve: Toggle {
-        label: "Hold hue to white";
-        checked <=> root.display-norm;
-        toggled => { root.view-changed(); }
+    if root.show-display-curve: VerticalLayout {
+        spacing: 4px;
+        Text {
+            text: "Display curve";
+            color: Theme.text;
+            font-size: Theme.font-sm;
+        }
+        Segmented {
+            options: ["Per channel", "Hold hue to white", "AgX"];
+            current <=> root.display-curve;
+            selected(v) => { root.view-changed(); }
+        }
     }
 }
 

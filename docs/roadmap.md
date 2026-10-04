@@ -45,6 +45,7 @@ the reasoning lives in `docs/notes.md`.
       Return while its sheet is up asks again and Escape does not close
       the sheet; the sheet wants a FocusScope of its own as the delete
       sheet has, or the button hands the keys back (found in §228)
+- [ ] Auto white balance seems to lean way too warm. (tbf lightroom does too)
 
 ## Next: 0.4.0
 
@@ -94,6 +95,21 @@ Look section's job.
       the reds' hue the same way; Punchy's saturation and the camera
       match's fitted table are the two places to put the answer, not a
       skew of our own. Waits on the AgX port
+- [ ] AgX's contrast and white as the feel track's controls (§231): the
+      port ships Blender's slope over a range shortened to put white at
+      the sensor's clip, about 19 percent more contrast per stop than
+      Blender; a second construction keeps Blender's contrast per stop
+      (`GREYCARD_AGX_SOFT`, no user control), and the user could not
+      pick between them on 33 frames. Decide whether contrast, white
+      and the inset's rotation (the reds' warmth, the lanterns) are
+      sliders, a preset's, or fixed, by the track's rule
+- [ ] Blender's sRGB and P3 guard rail lerps the luminance toward the
+      opponent-compensated one by its 0.08 power; that step is Eary
+      Chow's and his generator carries no license, so the port ships
+      darktable's form of the rail, which departs from Blender's sRGB
+      table by a 99th percentile of 18 levels on saturated colors
+      inside Rec.2020 (§231). Waits on a license from its author, or on
+      a derivation of our own from the method
 - [ ] Reference frames for the feel: eight frames with a Lightroom edit
       each and the greycard values that match, a check of the default
       develop's brightness against the embedded JPEG, a slider response
@@ -195,17 +211,12 @@ A camera's own profile and look are a picker away, and a chart shot
 makes a new one. This and the library can swap order on what testers
 ask for first.
 
-- [ ] AgX as the display transform, Punchy's look the default, behind
-      the existing display-curve switch beside per channel (§230): the
-      inset matrix, the log encoding, the contrast curve and the CDL,
-      ported from darktable's AgX module (GPL) with the curve's shape
-      and the inset as parameters, on the CPU with a test against
-      OpenColorIO's render of the same linear frame, and in the shader
-      against the CPU, in the random parity test's draw. Replaces the
-      per-channel curve as the default once the camera match below is
-      refitted under it and the §143 medians are re-measured; per
-      channel stays as the fallback. Hold hue to white (§226) goes with
-      the old curve. The tail's other parts stay as follow-ups below
+- [ ] AgX made the default display curve, after the camera match below
+      is refitted under it and §141's baseline and §143's medians are
+      re-measured under it: sidecars written before the flip read as
+      per channel (a schema rule, so no edited picture moves), a
+      picture with no sidecar gets AgX; the viewport timed on an
+      integrated GPU and lavapipe first (§231). Waits on the two below
 - [ ] The camera match table tagged with the display transform it was
       fitted under, applied only to a picture on that transform, and
       on a mismatch the Look section saying so and offering the refit;

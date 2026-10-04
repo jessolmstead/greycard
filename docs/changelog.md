@@ -10,6 +10,15 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- AgX as a third display curve behind the per-picture switch, beside
+  per channel and Hold hue to white: Blender's wide-gamut formation
+  (Eary Chow's, as darktable's module parametrizes it) with the "AgX -
+  Punchy" look, the inset in Rec.2020 with guard rails in place of any
+  clamp, mid grey held where per channel puts it and white at the
+  sensor's clip; on the CPU and in the shader, checked against
+  OpenColorIO's render of Blender's own config and in the random parity
+  test; `--agx` on the command line; per channel stays the default
+  (§231)
 - `tools/compare-transforms.py` on the release binaries, resuming a
   run and skipping a render that fails or stalls; `tools/transform-sheets.py`
   lays its renders out one row a frame for judging; the two sets

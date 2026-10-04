@@ -12,6 +12,7 @@
 // it passes down, but does not wait for it.
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
+mod agx;
 mod ai;
 mod archive;
 mod camera_match;
@@ -135,8 +136,13 @@ struct Cli {
     /// rolls off to white, in place of the curve per channel: the
     /// LIGHT section's switch, for a comparison from the command line;
     /// on the first file only, as --exposure is
-    #[arg(long)]
+    #[arg(long, conflicts_with = "agx")]
     hold_hue: bool,
+    /// Open with AgX as the display curve, Blender's formation with
+    /// its Punchy look, in place of the curve per channel: the same
+    /// switch's third choice; on the first file only, as --exposure is
+    #[arg(long)]
+    agx: bool,
     /// Set the panel's temperature after opening, without a develop: the
     /// preview path alone (for checking it against --develop-temperature)
     #[arg(long)]

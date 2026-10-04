@@ -90,10 +90,10 @@ pub struct Edit {
     /// Schema version of the struct as written.
     pub version: u32,
     pub light: Light,
-    /// How the display curve under the light treats color: per
-    /// channel, as it always has, or on a norm with the hue held.
-    /// Global, as the curve is; left out of a sidecar at its default,
-    /// so a picture nobody switched writes what it always wrote.
+    /// The display curve under the light: per channel, as it always
+    /// has been, on a norm with the hue held, or AgX. Global, as the
+    /// curve is; left out of a sidecar at its default, so a picture
+    /// nobody switched writes what it always wrote.
     #[serde(skip_serializing_if = "DisplayCurve::is_channels")]
     pub display_curve: DisplayCurve,
     pub white_balance: WhiteBalance,
@@ -293,8 +293,9 @@ impl Default for Edit {
     }
 }
 
-/// The display curve's way with color. Both are the same curve on a
-/// neutral; they differ on a color as it rolls off toward white.
+/// The display curve's way with color. The first two are the same
+/// curve on a neutral and differ on a color as it rolls off toward
+/// white; the third is another transform.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum DisplayCurve {
@@ -307,11 +308,36 @@ pub enum DisplayCurve {
     /// the one gain so the hue holds, and the way to white a step in
     /// chroma at a constant Oklab hue.
     Norm,
+    /// AgX, Blender's wide-gamut formation with its Punchy look: the
+    /// primaries inset toward white and rotated, a sigmoid per channel
+    /// in a log encoding, part of the per-channel hue shift kept and
+    /// the primaries pushed back out, so a bright saturated color goes
+    /// to white by the formation's path rather than the clip's.
+    Agx,
 }
 
 impl DisplayCurve {
+    pub const ALL: [DisplayCurve; 3] = [
+        DisplayCurve::Channels,
+        DisplayCurve::Norm,
+        DisplayCurve::Agx,
+    ];
+
     pub fn is_channels(&self) -> bool {
         *self == DisplayCurve::Channels
+    }
+
+    /// The name the LIGHT section's choice shows, and the history.
+    pub fn name(self) -> &'static str {
+        match self {
+            DisplayCurve::Channels => "Per channel",
+            DisplayCurve::Norm => "Hold hue to white",
+            DisplayCurve::Agx => "AgX",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|c| c.name() == name)
     }
 }
 
@@ -2615,8 +2641,20 @@ mod tests {
         Section::Light.copy(&norm, &mut onto);
         assert_eq!(onto.display_curve, DisplayCurve::Channels);
         assert!(Section::Light.same(&edit, &norm));
-        assert_eq!(describe(&edit, &norm, &[]), "Hold hue to white");
-        assert_eq!(describe(&norm, &edit, &[]), "Hold hue to white off");
+        assert_eq!(
+            describe(&edit, &norm, &[]),
+            "Display curve: Hold hue to white"
+        );
+        assert_eq!(describe(&norm, &edit, &[]), "Display curve: Per channel");
+        let mut agx = edit.clone();
+        agx.display_curve = DisplayCurve::Agx;
+        let json = agx.to_json();
+        assert!(json.contains(r#""display_curve": "agx""#), "{json}");
+        assert_eq!(Edit::from_json(&json).unwrap(), agx);
+        assert_eq!(describe(&edit, &agx, &[]), "Display curve: AgX");
+        for c in DisplayCurve::ALL {
+            assert_eq!(DisplayCurve::from_name(c.name()), Some(c));
+        }
     }
 
     #[test]

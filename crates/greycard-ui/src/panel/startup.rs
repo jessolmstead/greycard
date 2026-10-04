@@ -312,7 +312,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     let overrides = Overrides {
         temperature: cli.develop_temperature,
         exposure: (cli.exposure != 0.0).then_some(cli.exposure),
-        display_curve: cli.hold_hue.then_some(greycard_edit::DisplayCurve::Norm),
+        display_curve: cli
+            .agx
+            .then_some(greycard_edit::DisplayCurve::Agx)
+            .or(cli.hold_hue.then_some(greycard_edit::DisplayCurve::Norm)),
     };
     let tweak_at_start: Option<crate::Tweak> =
         (preset_at_start_wanted.is_some() || !overrides.is_empty()).then(|| {
