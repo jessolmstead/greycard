@@ -50,3 +50,11 @@ femtovg = { git = "https://github.com/jessolmstead/femtovg", rev = "befdd4dc512d
 # much less.
 [profile.release]
 strip = true
+
+# The fit's numbers built optimized in a debug build too. Unoptimized,
+# a camera match test's holds (a Model::fit a frame, spread over the
+# global rayon pool) run for tens of seconds, and another test's work
+# queued on the same pool waits behind them past its own deadline; the
+# match crate's own tests went from 73 s to 5 s with it.
+[profile.dev.package.greycard-match]
+opt-level = 3

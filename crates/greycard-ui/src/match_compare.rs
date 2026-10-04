@@ -10,13 +10,17 @@
 //! [`camera_match::sample`]), each sampled frame developed once and
 //! finished under both curves ([`camera_match::lay`],
 //! [`camera_match::matched`]), and the fit ([`Model::fit`]) on each
-//! curve's pairs. What it reports, per group and curve: the error with
-//! no look, fitted at each stage, held out over the sheet's four frames
-//! and over every frame, each split into lightness and chroma and hue
-//! and by the camera's lightness and chroma; the per-frame brightness
-//! left after the exposure match, and the fit again with that match
-//! iterated to convergence; and, for a body that borrows, every donor
-//! of its style measured on its frames.
+//! curve's pairs. The exposure match is the match's own, one function
+//! for both ([`camera_match::matched`]): it gives the first pass and
+//! where the iteration from it ended, so the tool measures the match as
+//! it was (one pass) and as it runs (converged) on the same develops.
+//! What it reports, per group and curve: the error with no look, fitted
+//! at each stage, held out over every frame (the sheet's figure), each
+//! split into lightness and chroma and hue and by the camera's
+//! lightness and chroma; the per-frame brightness one pass left, and
+//! the fit on the converged match's pairs; what each costs a frame;
+//! and, for a body that borrows, every donor of its style measured on
+//! its frames.
 //!
 //! Each frame's measurement is kept under `OUT/frames` as numbers (the
 //! block means, no pixels), keyed by a hash of the file's path, with
@@ -42,29 +46,19 @@ use serde::{Deserialize, Serialize};
 
 use greycard_edit::DisplayCurve;
 use greycard_match::color::{decode3, oklab};
-use greycard_match::exposure::offset_stops;
 use greycard_match::fit::LutParams;
 use greycard_match::{Model, Pair, Pairs};
 
-use crate::camera_match::{self as cm, Group, Plan};
+use crate::camera_match::{self as cm, CONVERGED, Group, MAX_STEP, PASSES, Plan, SLOPE_RANGE};
 
 /// Bumped when what a frame's record holds changes, so an old record
 /// is measured again rather than misread.
 const RECORD_VERSION: u32 = 2;
-/// The iterated exposure match stops when the pairs' median is this
-/// close to the camera's, in stops, or after this many finishes.
-pub(crate) const CONVERGED: f32 = 0.005;
-pub(crate) const PASSES: usize = 8;
-/// How the iterated match steps, bumped when that changes: a record
-/// whose iteration is another's is measured again unless it had
-/// converged, since a converged offset is the same whatever the step.
+/// How the match's exposure iteration steps ([`cm::iterate`]), bumped
+/// when that changes: a record whose iteration is another's is measured
+/// again unless it had converged, since a converged offset is the same
+/// whatever the step.
 const ITERATION: u32 = 2;
-/// The step's bounds: the local slope of the residual against the
-/// offset is trusted between these (a curve from a quarter as steep to
-/// four times as steep as a stop for a stop; the curves here measure
-/// about 1.5 to 1.9), and no step is longer than [`MAX_STEP`].
-const SLOPE_RANGE: (f32, f32) = (-4.0, -0.25);
-const MAX_STEP: f32 = 1.0;
 /// Edges of the lightness bands, Oklab L of the camera's block.
 pub(crate) const L_EDGES: [f32; 4] = [0.35, 0.5, 0.65, 0.8];
 /// Edges of the chroma bands, Oklab C of the camera's block.
@@ -148,15 +142,17 @@ pub(crate) struct Measured {
     pub(crate) rows: usize,
     pub(crate) cols: usize,
     pub(crate) total: usize,
-    /// The match's offset: solved once on the pairs at the default.
+    /// The match's first pass: the offset solved once on the pairs at
+    /// the default ([`cm::Matched::once`]).
     pub(crate) offset: f32,
     /// What one pass leaves: the median of the pairs at `offset`, in
     /// stops, positive where the camera is still brighter.
     pub(crate) residual: f32,
-    /// The pairs the match fits: at `offset`.
+    /// The pairs at `offset`: what the match fitted before it
+    /// converged the exposure.
     pub(crate) pairs: Vec<Block>,
     /// The offset iterated until the median is within [`CONVERGED`]
-    /// ([`iterate`]).
+    /// ([`cm::iterate`]), and the pairs there: what the match fits.
     pub(crate) offset_iterated: f32,
     pub(crate) residual_iterated: f32,
     pub(crate) passes: usize,
@@ -165,6 +161,14 @@ pub(crate) struct Measured {
     /// stopped at the last offset that had some.
     #[serde(default)]
     pub(crate) iteration_lost: bool,
+    /// Seconds laying the JPEG over the develop (one finish, the
+    /// registration and the first pairs) and matching the exposure
+    /// (every finish after it, `passes` of them), as the match spends
+    /// them on a frame; zero in a record from before they were kept.
+    #[serde(default)]
+    pub(crate) seconds_laid: f32,
+    #[serde(default)]
+    pub(crate) seconds_matched: f32,
 }
 
 impl Measured {
@@ -172,68 +176,6 @@ impl Measured {
     pub(crate) fn converged(&self) -> bool {
         self.residual_iterated.abs() <= CONVERGED
     }
-}
-
-/// Where the iterated exposure match ended.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct Iterated {
-    pub(crate) offset: f32,
-    pub(crate) residual: f32,
-    /// Finishes at an offset, the match's own one included.
-    pub(crate) passes: usize,
-    pub(crate) lost: bool,
-}
-
-/// The exposure at which the pairs' median sits on the camera's,
-/// from the match's two points: the residual `first` at no offset (the
-/// match's offset) and `residual` at `first`. Each step is a secant
-/// through the last two points, its slope held to [`SLOPE_RANGE`]
-/// (else a plain step of the residual) and its length to [`MAX_STEP`],
-/// so a curve steeper than a stop for a stop does not make it
-/// oscillate as the plain step did. `at` finishes at an offset and
-/// gives the residual there and its pairs, or `None` with no block
-/// left, where the iteration stops at the last offset that had some.
-pub(crate) fn iterate<P>(
-    first: f32,
-    residual: f32,
-    pairs: P,
-    at: &mut dyn FnMut(f32) -> Option<(f32, P)>,
-) -> (Iterated, P) {
-    let (mut o0, mut r0, mut o1, mut r1) = (0.0f32, first, first, residual);
-    let (mut passes, mut lost, mut pairs) = (1, false, pairs);
-    while r1.abs() > CONVERGED && passes < PASSES {
-        let slope = if (o1 - o0).abs() > 1e-4 {
-            (r1 - r0) / (o1 - o0)
-        } else {
-            -1.0
-        };
-        let slope = if (SLOPE_RANGE.0..=SLOPE_RANGE.1).contains(&slope) {
-            slope
-        } else {
-            -1.0
-        };
-        let o2 = o1 + (-r1 / slope).clamp(-MAX_STEP, MAX_STEP);
-        passes += 1;
-        match at(o2) {
-            Some((r2, p)) => {
-                (o0, r0, o1, r1) = (o1, r1, o2, r2);
-                pairs = p;
-            }
-            None => {
-                lost = true;
-                break;
-            }
-        }
-    }
-    (
-        Iterated {
-            offset: o1,
-            residual: r1,
-            passes,
-            lost,
-        },
-        pairs,
-    )
 }
 
 impl Measured {
@@ -373,37 +315,37 @@ fn keep(dir: &Path, r: &Record) -> Result<()> {
     Ok(())
 }
 
-/// One curve of a developed frame: laid, matched as the match does,
-/// then matched again until the median sits on the camera's.
+/// One curve of a developed frame, laid and matched as the match does
+/// it ([`cm::lay`], [`cm::matched`]): its first pass and where the
+/// iteration from it ended.
 fn measure_curve(
     developed: &mut crate::worker::FrameDevelop,
     jpeg: &greycard_match::Picture,
     curve: DisplayCurve,
 ) -> Result<Measured, String> {
+    let started = Instant::now();
     let laid = cm::lay(developed, jpeg, curve)?;
-    let (offset, pairs) = cm::matched(developed, &laid, curve)?;
-    // `matched` refuses a finish with no block, so there is a median.
-    let residual = offset_stops(&pairs).unwrap_or(0.0);
-    let (it, iterated) = iterate(offset, residual, pairs.clone(), &mut |o| {
-        let p = cm::pairs_at(developed, &laid, curve, o);
-        offset_stops(&p).map(|r| (r, p))
-    });
+    let seconds_laid = started.elapsed().as_secs_f32();
+    let m = cm::matched(developed, &laid, curve)?;
+    let seconds_matched = started.elapsed().as_secs_f32() - seconds_laid;
     Ok(Measured {
         scale: laid.reg.scale,
         dy: laid.reg.dy,
         dx: laid.reg.dx,
         ncc: laid.reg.ncc,
-        rows: pairs.rows,
-        cols: pairs.cols,
-        total: pairs.total,
-        offset,
-        residual,
-        pairs: blocks_of(&pairs),
-        offset_iterated: it.offset,
-        residual_iterated: it.residual,
-        passes: it.passes,
-        pairs_iterated: blocks_of(&iterated),
-        iteration_lost: it.lost,
+        rows: m.once_pairs.rows,
+        cols: m.once_pairs.cols,
+        total: m.once_pairs.total,
+        offset: m.once,
+        residual: m.once_residual,
+        pairs: blocks_of(&m.once_pairs),
+        offset_iterated: m.exposure.offset,
+        residual_iterated: m.exposure.residual,
+        passes: m.exposure.passes,
+        pairs_iterated: blocks_of(&m.pairs),
+        iteration_lost: m.exposure.lost,
+        seconds_laid,
+        seconds_matched,
     })
 }
 
@@ -692,11 +634,9 @@ pub(crate) struct Evaluation {
     pub(crate) no_look: Banded,
     /// Fitted on every frame and measured on them, per stage.
     pub(crate) fitted: [Banded; 3],
-    /// The sheet's figure: the mean over four frames, each held out of
-    /// its own fit, of the frame's mean error, per stage.
-    pub(crate) held4: [f32; 3],
     /// Every frame held out once: the mean of the frames' means (the
-    /// sheet's way of averaging), and per block, per stage.
+    /// sheet's figure, [`cm::fit_group`], at the last stage), and per
+    /// block, per stage.
     pub(crate) held_all: [f32; 3],
     pub(crate) held_all_blocks: [Banded; 3],
     /// The held-out error with each frame's mean lightness error taken
@@ -728,9 +668,8 @@ pub(crate) struct Evaluation {
     pub(crate) model: Option<Model>,
 }
 
-/// Fit `d` and measure it every way. `held` says whether to hold every
-/// frame out (the costly part) or only the sheet's four.
-pub(crate) fn evaluate(d: &Data, held_every: bool) -> Option<Evaluation> {
+/// Fit `d` and measure it every way, every frame held out once.
+pub(crate) fn evaluate(d: &Data) -> Option<Evaluation> {
     let frames = d.frames();
     if frames.len() < 3 {
         return None;
@@ -770,16 +709,7 @@ pub(crate) fn evaluate(d: &Data, held_every: bool) -> Option<Evaluation> {
             .map(|&k| [0, 1, 2].map(|s| st[s].apply(d.x[k])))
             .collect()
     };
-    let four: Vec<usize> = cm::evenly(frames.len(), cm::HELD_OUT)
-        .into_iter()
-        .map(|k| frames[k])
-        .collect();
-    let chosen: Vec<usize> = if held_every {
-        frames.clone()
-    } else {
-        four.clone()
-    };
-    let outs: Vec<(usize, Vec<[[f32; 3]; 3]>)> = chosen.par_iter().map(|&f| (f, hold(f))).collect();
+    let outs: Vec<(usize, Vec<[[f32; 3]; 3]>)> = frames.par_iter().map(|&f| (f, hold(f))).collect();
     let outs: HashMap<usize, Vec<[[f32; 3]; 3]>> = outs.into_iter().collect();
     let frame_mean = |f: usize, s: usize| -> f32 {
         let ks = &by_frame[&f];
@@ -789,19 +719,14 @@ pub(crate) fn evaluate(d: &Data, held_every: bool) -> Option<Evaluation> {
             .sum::<f32>()
             / ks.len().max(1) as f32
     };
-    let held4 =
-        [0, 1, 2].map(|s| four.iter().map(|&f| frame_mean(f, s)).sum::<f32>() / four.len() as f32);
-    let mut held_all = [f32::NAN; 3];
+    let held_all = [0, 1, 2]
+        .map(|s| frames.iter().map(|&f| frame_mean(f, s)).sum::<f32>() / frames.len() as f32);
     let mut held_all_blocks: [Banded; 3] = Default::default();
     let mut oracle = Acc::default();
     let mut tone_oracle = Acc::default();
     let mut slopes = Vec::new();
     let mut per_frame = Vec::new();
     let mut dls = Vec::new();
-    if held_every {
-        held_all = [0, 1, 2]
-            .map(|s| frames.iter().map(|&f| frame_mean(f, s)).sum::<f32>() / frames.len() as f32);
-    }
     for &f in &frames {
         let ks = &by_frame[&f];
         let mut nl = Acc::default();
@@ -815,9 +740,7 @@ pub(crate) fn evaluate(d: &Data, held_every: bool) -> Option<Evaluation> {
             fit.add(oklab(decode3(model.apply(d.x[k]))), cam);
             if let Some(o) = outs.get(&f) {
                 for s in 0..3 {
-                    if held_every {
-                        held_all_blocks[s].add(o[j][s], d.y[k]);
-                    }
+                    held_all_blocks[s].add(o[j][s], d.y[k]);
                 }
                 let out = oklab(decode3(o[j][2]));
                 held.add(out, cam);
@@ -885,7 +808,6 @@ pub(crate) fn evaluate(d: &Data, held_every: bool) -> Option<Evaluation> {
         blocks: d.x.len(),
         no_look,
         fitted,
-        held4,
         held_all,
         held_all_blocks,
         held_lightness_oracle: oracle.summary(),
@@ -964,14 +886,18 @@ pub(crate) struct CurveReport {
     /// Frames kept under this curve, and the dropped with the reason.
     pub(crate) kept: usize,
     pub(crate) dropped: Vec<(String, String)>,
-    /// The match as it runs: each curve's own blocks, one exposure pass.
+    /// The match as it was: each curve's own blocks, one exposure pass.
     pub(crate) own: Option<Evaluation>,
     /// Both curves' frames and blocks in common.
     pub(crate) common: Option<Evaluation>,
-    /// The exposure match iterated to convergence, own blocks and
-    /// common.
+    /// The exposure match iterated to convergence, own blocks (the
+    /// match as it runs) and common.
     pub(crate) iterated: Option<Evaluation>,
     pub(crate) iterated_common: Option<Evaluation>,
+    /// What the sheet reports for this group, by the sheet's own
+    /// function ([`cm::fit_group`]) on the converged own blocks: fitted,
+    /// held out over every frame, and the seconds that call took.
+    pub(crate) sheet: Option<[f32; 3]>,
     /// Per frame, in the sample's order: offset, one-pass residual,
     /// iterated offset and passes.
     pub(crate) exposure: Vec<Option<[f32; 4]>>,
@@ -1033,6 +959,9 @@ pub(crate) struct Report {
     /// fitted groups' frames.
     pub(crate) convergence: Vec<(String, Convergence)>,
     pub(crate) develop_seconds: f64,
+    /// The mean seconds a frame's develop and camera JPEG took, over
+    /// the fitted groups' frames timed.
+    pub(crate) develop_per_frame: f32,
     pub(crate) seconds: f64,
     pub(crate) l_edges: Vec<f32>,
     pub(crate) c_edges: Vec<f32>,
@@ -1070,6 +999,14 @@ pub(crate) struct Convergence {
     /// but their finishes are another step's count.
     pub(crate) this_step: usize,
     pub(crate) mean_passes: f32,
+    /// Over the frames timed: the mean seconds laying the
+    /// JPEG over the develop, matching the exposure (every finish after
+    /// the lay), and one of those finishes. One pass cost the lay and
+    /// one finish; the converged match costs the lay and the matching.
+    pub(crate) timed: usize,
+    pub(crate) mean_laid: f32,
+    pub(crate) mean_matched: f32,
+    pub(crate) mean_finish: f32,
 }
 
 pub(crate) fn convergence<'a>(of: impl Iterator<Item = (&'a Measured, u32)>) -> Convergence {
@@ -1087,8 +1024,18 @@ pub(crate) fn convergence<'a>(of: impl Iterator<Item = (&'a Measured, u32)>) -> 
         c.over_002 += usize::from(miss > 0.02);
         c.lost += usize::from(m.iteration_lost);
         c.largest = c.largest.max(miss);
+        if m.seconds_matched > 0.0 {
+            c.timed += 1;
+            c.mean_laid += m.seconds_laid;
+            c.mean_matched += m.seconds_matched;
+            c.mean_finish += m.seconds_matched / m.passes.max(1) as f32;
+        }
     }
     c.mean_passes = passes as f32 / c.this_step.max(1) as f32;
+    let timed = c.timed.max(1) as f32;
+    c.mean_laid /= timed;
+    c.mean_matched /= timed;
+    c.mean_finish /= timed;
     c
 }
 
@@ -1352,16 +1299,26 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
                 .iter()
                 .filter_map(|r| r.why(curve).map(|w| (r.name.clone(), w.to_string())))
                 .collect();
-            let own_e = fits.then(|| evaluate(&own, true)).flatten();
+            let own_e = fits.then(|| evaluate(&own)).flatten();
             let common_e = fits
-                .then(|| evaluate(&data(&recs, curve, Blocks::Common, false), true))
+                .then(|| evaluate(&data(&recs, curve, Blocks::Common, false)))
                 .flatten();
             let iter_e = fits
-                .then(|| evaluate(&data(&recs, curve, Blocks::Own, true), true))
+                .then(|| evaluate(&data(&recs, curve, Blocks::Own, true)))
                 .flatten();
             let iter_common_e = fits
-                .then(|| evaluate(&data(&recs, curve, Blocks::Common, true), true))
+                .then(|| evaluate(&data(&recs, curve, Blocks::Common, true)))
                 .flatten();
+            let sheet = fits.then(|| {
+                let d = data(&recs, curve, Blocks::Own, true);
+                let started = Instant::now();
+                let f = cm::fit_group(&d.x, &d.y, &d.ids);
+                [
+                    f.fitted,
+                    f.held_out.unwrap_or(f32::NAN),
+                    started.elapsed().as_secs_f32(),
+                ]
+            });
             let mut radial = Vec::new();
             if let Some(m) = own_e.as_ref().and_then(|e| e.model.as_ref()) {
                 models.insert((gi, ci), (m.clone(), kept));
@@ -1387,6 +1344,7 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
                 common: common_e,
                 iterated: iter_e,
                 iterated_common: iter_common_e,
+                sheet,
                 exposure: recs
                     .iter()
                     .map(|r| {
@@ -1496,6 +1454,26 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
             )
         })
         .collect();
+    // The develop and the JPEG's read: a timed record's seconds less
+    // what both curves spent on it. A record where a curve failed is
+    // left out, since what that curve spent before it failed is not
+    // kept and would be counted as the develop's.
+    let develops: Vec<f32> = measured_fits
+        .iter()
+        .filter_map(|r| {
+            let curves: Vec<&Measured> = CURVES.into_iter().filter_map(|c| r.under(c)).collect();
+            (curves.len() == CURVES.len() && curves.iter().all(|m| m.seconds_matched > 0.0)).then(
+                || {
+                    r.seconds
+                        - curves
+                            .iter()
+                            .map(|m| m.seconds_laid + m.seconds_matched)
+                            .sum::<f32>()
+                },
+            )
+        })
+        .collect();
+    let develop_per_frame = develops.iter().sum::<f32>() / develops.len().max(1) as f32;
     let pooled_common_no_look = pool(&|cr| cr.common.as_ref().map(|e| e.no_look.clone()));
     let pooled_common_fitted = pool(&|cr| cr.common.as_ref().map(|e| e.fitted[2].clone()));
 
@@ -1512,6 +1490,7 @@ pub(crate) fn run(opts: &Options) -> Result<Report> {
         not_kept,
         convergence,
         develop_seconds,
+        develop_per_frame,
         seconds: started.elapsed().as_secs_f64(),
         l_edges: L_EDGES.to_vec(),
         c_edges: C_EDGES.to_vec(),
@@ -1596,8 +1575,11 @@ pub(crate) fn markdown(r: &Report) -> String {
         s,
         "{} frames developed this run, {} from the record; develop {:.0} s, all {:.0} s. \
          Up to {} frames a group, the sheet's sample. ΔE is Oklab, mean over blocks unless \
-         said; \"held out (4)\" is the sheet's figure, the mean of four frames' means each \
-         held out of its own fit; \"held out (all)\" the same over every frame.\n",
+         said; \"held out (all)\" is the mean of every frame's mean, each held out of its \
+         own fit. \"One pass\" is the exposure matched once, as the match did before it \
+         converged; \"converged\" is the match as it runs, the exposure stepped until the \
+         pairs' median is within {CONVERGED} stops of the camera's, and its fitted and \
+         held-out figures are the ones the sheet reports.\n",
         r.developed, r.recorded, r.develop_seconds, r.seconds, r.frames_per_group
     );
     let _ = writeln!(
@@ -1625,27 +1607,32 @@ pub(crate) fn markdown(r: &Report) -> String {
     );
     let _ = writeln!(
         s,
-        "| group | frames pc / AgX | no look pc / AgX | fitted pc / AgX | held out (4) pc / AgX | held out (all) pc / AgX |"
+        "| group | frames pc / AgX | no look pc / AgX | one pass: fitted pc / AgX | one pass: held out (all) pc / AgX | converged: fitted pc / AgX | converged: held out (all) pc / AgX |"
     );
-    let _ = writeln!(s, "|---|---|---|---|---|---|");
+    let _ = writeln!(s, "|---|---|---|---|---|---|---|");
     for g in &fitted {
         let (p, a) = pc_agx(g).unwrap();
         let (pe, ae) = (p.own.as_ref().unwrap(), a.own.as_ref());
-        let ae_or = |f: &dyn Fn(&Evaluation) -> f32| ae.map_or(f32::NAN, f);
+        let (pi, ai) = (p.iterated.as_ref(), a.iterated.as_ref());
+        let or = |e: Option<&Evaluation>, f: &dyn Fn(&Evaluation) -> f32| e.map_or(f32::NAN, f);
+        let fitted = |e: &Evaluation| e.fitted[2].all.summary().de;
+        let held = |e: &Evaluation| e.held_all[2];
         let _ = writeln!(
             s,
-            "| {} | {} / {} | {} / {} | {} / {} | {} / {} | {} / {} |",
+            "| {} | {} / {} | {} / {} | {} / {} | {} / {} | {} / {} | {} / {} |",
             cell(&g.name),
             pe.frames,
             ae.map_or(0, |e| e.frames),
             f4(pe.no_look.all.summary().de),
-            f4(ae_or(&|e| e.no_look.all.summary().de)),
-            f4(pe.fitted[2].all.summary().de),
-            f4(ae_or(&|e| e.fitted[2].all.summary().de)),
-            f4(pe.held4[2]),
-            f4(ae_or(&|e| e.held4[2])),
-            f4(pe.held_all[2]),
-            f4(ae_or(&|e| e.held_all[2])),
+            f4(or(ae, &|e| e.no_look.all.summary().de)),
+            f4(fitted(pe)),
+            f4(or(ae, &fitted)),
+            f4(held(pe)),
+            f4(or(ae, &held)),
+            f4(or(pi, &fitted)),
+            f4(or(ai, &fitted)),
+            f4(or(pi, &held)),
+            f4(or(ai, &held)),
         );
     }
 
@@ -1657,13 +1644,18 @@ pub(crate) fn markdown(r: &Report) -> String {
     );
     let _ = writeln!(
         s,
-        "| group | frames | blocks | no look pc / AgX | fitted pc / AgX | held out (4) pc / AgX | held out (all) pc / AgX |"
+        "| group | frames | blocks | no look pc / AgX | one pass: fitted pc / AgX | one pass: held out (all) pc / AgX | converged: held out (all) pc / AgX |"
     );
     let _ = writeln!(s, "|---|---|---|---|---|---|---|");
     for g in &fitted {
         let (p, a) = pc_agx(g).unwrap();
         let (Some(pe), Some(ae)) = (p.common.as_ref(), a.common.as_ref()) else {
             continue;
+        };
+        let held_it = |c: &CurveReport| {
+            c.iterated_common
+                .as_ref()
+                .map_or(f32::NAN, |e| e.held_all[2])
         };
         let _ = writeln!(
             s,
@@ -1675,10 +1667,10 @@ pub(crate) fn markdown(r: &Report) -> String {
             f4(ae.no_look.all.summary().de),
             f4(pe.fitted[2].all.summary().de),
             f4(ae.fitted[2].all.summary().de),
-            f4(pe.held4[2]),
-            f4(ae.held4[2]),
             f4(pe.held_all[2]),
             f4(ae.held_all[2]),
+            f4(held_it(p)),
+            f4(held_it(a)),
         );
     }
 
@@ -1984,7 +1976,7 @@ pub(crate) fn markdown(r: &Report) -> String {
     for (c, v) in &r.convergence {
         let _ = writeln!(
             s,
-            "| {c} | {} | {} | {:.1} | {} | {} | {} | {:.3} | {} |",
+            "| {c} | {} | {} | {:.2} | {} | {} | {} | {:.3} | {} |",
             v.frames,
             v.this_step,
             v.mean_passes,
@@ -1994,6 +1986,61 @@ pub(crate) fn markdown(r: &Report) -> String {
             v.largest,
             v.lost
         );
+    }
+    let _ = writeln!(
+        s,
+        "\nWhat it costs a frame, over the frames timed, as the match spends it \
+         under one curve. The develop and the camera's JPEG come first, {:.2} s a frame on \
+         average here (shared by both curves in this tool, once a run in the match); the \
+         lay is one finish, the registration and the first pairs; one pass added one more \
+         finish, and the converged match adds them all.\n",
+        r.develop_per_frame
+    );
+    let _ = writeln!(
+        s,
+        "| curve | frames timed | lay s | one finish s | one pass: lay + one finish s | converged: lay + matching s | more a frame s |"
+    );
+    let _ = writeln!(s, "|---|---|---|---|---|---|---|");
+    for (c, v) in &r.convergence {
+        let once = v.mean_laid + v.mean_finish;
+        let converged = v.mean_laid + v.mean_matched;
+        let _ = writeln!(
+            s,
+            "| {c} | {} | {:.2} | {:.2} | {:.2} | {:.2} | {:+.2} |",
+            v.timed,
+            v.mean_laid,
+            v.mean_finish,
+            once,
+            converged,
+            converged - once
+        );
+    }
+    let _ = writeln!(
+        s,
+        "\nThe sheet's figures by its own function (`fit_group`) on the converged match's own \
+         blocks: fitted, held out over every frame, and the seconds the call took (the fit \
+         and a fit for each frame held out).\n"
+    );
+    let _ = writeln!(
+        s,
+        "| group | curve | frames | fitted | held out | seconds |"
+    );
+    let _ = writeln!(s, "|---|---|---|---|---|---|");
+    for g in &fitted {
+        for c in &g.curves {
+            let (Some([f, h, t]), Some(e)) = (c.sheet, c.iterated.as_ref()) else {
+                continue;
+            };
+            let _ = writeln!(
+                s,
+                "| {} | {} | {} | {} | {} | {t:.2} |",
+                cell(&g.name),
+                c.curve,
+                e.frames,
+                f4(f),
+                f4(h)
+            );
+        }
     }
 
     let _ = writeln!(
@@ -2211,6 +2258,8 @@ mod tests {
             passes: 1,
             pairs_iterated: blocks,
             iteration_lost: false,
+            seconds_laid: 0.0,
+            seconds_matched: 0.0,
         }
     }
 
@@ -2344,13 +2393,13 @@ mod tests {
                 k += 1;
             }
         }
-        let e = evaluate(&d, true).unwrap();
+        let e = evaluate(&d).unwrap();
         let none = e.no_look.all.summary().de;
         let fit = e.fitted[2].all.summary().de;
         assert_eq!(e.frames, 6);
         assert!(fit < none / 3.0, "{none} {fit}");
         assert!(e.held_all[2] < none / 2.0, "{:?}", e.held_all);
-        assert!(e.held4[2].is_finite() && e.per_frame.len() == 6);
+        assert_eq!(e.per_frame.len(), 6);
         let md = markdown(&Report {
             library: String::new(),
             roots: 0,
@@ -2364,6 +2413,7 @@ mod tests {
             not_kept: 0,
             convergence: vec![],
             develop_seconds: 0.0,
+            develop_per_frame: 0.0,
             seconds: 0.0,
             l_edges: L_EDGES.to_vec(),
             c_edges: C_EDGES.to_vec(),
@@ -2432,40 +2482,6 @@ mod tests {
             key_of(Path::new("abc")),
             blake3::hash(b"abc").to_hex()[..16].to_string()
         );
-    }
-
-    /// A develop 1.8 times as steep as a stop for a stop, and bending:
-    /// the plain step of the residual overshoots and swings; the
-    /// secant lands within a few finishes.
-    #[test]
-    fn the_iterated_match_converges_on_a_steep_curve() {
-        let target = -1.2f32;
-        let residual = |o: f32| 1.8 * (target - o) + 0.3 * (target - o) * (target - o).abs();
-        let first = residual(0.0);
-        let (it, ()) = iterate(first, residual(first), (), &mut |o| Some((residual(o), ())));
-        assert!(it.residual.abs() <= CONVERGED, "{it:?}");
-        assert!((it.offset - target).abs() < 0.01, "{it:?}");
-        assert!(it.passes <= 5 && !it.lost, "{it:?}");
-        // The plain step of the old loop, for the record: it does not
-        // settle in the same number of finishes.
-        let (mut o, mut r) = (first, residual(first));
-        for _ in 1..it.passes {
-            o += r;
-            r = residual(o);
-        }
-        assert!(r.abs() > CONVERGED, "{r}");
-    }
-
-    /// A step that leaves no block stops the iteration where the last
-    /// blocks were, and says so.
-    #[test]
-    fn a_step_with_no_block_stops_at_the_last_with_some() {
-        let (it, last) = iterate(-1.0, 0.3, 7u32, &mut |_| None);
-        assert!(
-            it.lost && last == 7 && it.offset == -1.0 && it.residual == 0.3,
-            "{it:?}"
-        );
-        assert_eq!(it.passes, 2);
     }
 
     /// Narrowed to a borrower, the run keeps its donor, planned over

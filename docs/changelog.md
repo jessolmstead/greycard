@@ -10,6 +10,11 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The camera match lines each frame's brightness up with its JPEG
+  until it lands, not in one pass, about one more finish a frame
+  (+0.4 s per channel, +0.6 s under AgX); its held-out error is over
+  every frame, not four, and drops by up to two fifths where a group's
+  frames vary most (§240)
 - A channel pushed past 2^64 under AgX exported black (a NaN); it is
   white, as every color past 2^6 already was. A color shift at black
   (a shadows wheel, a color curve's end) no longer turns light under

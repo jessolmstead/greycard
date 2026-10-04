@@ -11,7 +11,8 @@
 //! it, and this module is the join: sample the frames, develop each at
 //! the export's size, lay the camera's JPEG over it, take the block
 //! pairs, solve the frame's exposure against the camera's and finish
-//! it again at that offset, then fit the shared model and write it.
+//! it again until it sits there, then fit the shared model, hold each
+//! frame out of it once for the error the sheet reports, and write it.
 //!
 //! A run develops under one display curve, the open picture's, and
 //! every table it writes declares it in its header with the body it is
@@ -46,8 +47,17 @@ pub(crate) const MIN_FRAMES: usize = 20;
 pub(crate) const PER_FOLDER: usize = 3;
 /// The long edge each frame is developed at, the trial's.
 pub(crate) const LONG_EDGE: u32 = 2048;
-/// Frames held out, one at a time, for the reported error.
-pub(crate) const HELD_OUT: usize = 4;
+/// The exposure match stops when the pairs' median is this close to
+/// the camera's, in stops, or after [`PASSES`] finishes.
+pub(crate) const CONVERGED: f32 = 0.005;
+pub(crate) const PASSES: usize = 8;
+/// The exposure match's step: the local slope of the residual against
+/// the offset is trusted between these (a curve from a quarter as
+/// steep to four times as steep as a stop for a stop; the cameras'
+/// measure about 1.5 to 1.9 against the develop), and no step is
+/// longer than [`MAX_STEP`] stops.
+pub(crate) const SLOPE_RANGE: (f32, f32) = (-4.0, -0.25);
+pub(crate) const MAX_STEP: f32 = 1.0;
 
 /// One frame of a group.
 #[derive(Debug, Clone, PartialEq)]
@@ -674,10 +684,9 @@ pub(crate) enum Outcome {
         frames: usize,
         /// Mean ΔE in Oklab over every kept block, fitted on all.
         fitted: f32,
-        /// Mean over `held_frames` frames, each held out of its own
-        /// fit.
+        /// The mean over every frame, each held out of its own fit, of
+        /// the frame's mean ΔE.
         held_out: Option<f32>,
-        held_frames: usize,
     },
     Borrowed {
         from: String,
@@ -708,11 +717,10 @@ impl GroupResult {
                 frames,
                 fitted,
                 held_out,
-                held_frames,
             } => match held_out {
                 Some(h) => format!(
-                    "{}: fitted on {frames} frames, ΔE {h:.3} held out over {held_frames} \
-                     frames ({fitted:.3} fitted)",
+                    "{}: fitted on {frames} frames, ΔE {h:.3} held out over every frame \
+                     ({fitted:.3} fitted)",
                     self.name
                 ),
                 None => format!("{}: fitted on {frames} frames, ΔE {fitted:.3}", self.name),
@@ -846,21 +854,32 @@ fn measure(
         crate::worker::FrameDevelop::develop(&frame.path, &fit_edit(curve), lenses)?;
     let jpeg = camera_jpeg(&frame.path)?;
     let laid = lay(&mut developed, &jpeg, curve)?;
-    let (offset, pairs) = matched(&mut developed, &laid, curve)?;
+    let m = matched(&mut developed, &laid, curve)?;
     let reg = laid.reg;
+    let e = m.exposure;
+    let ended = if e.lost {
+        ", stopped where a step left no block"
+    } else if e.residual.abs() > CONVERGED {
+        ", stopped at the cap"
+    } else {
+        ""
+    };
     tracing::info!(
         "camera match {}: scale {:.4}, shift ({:+.1}, {:+.1}), correlation {:.3}, \
-         {} of {} blocks, {offset:+.2} stops",
+         {} of {} blocks, {:+.2} stops ({:+.3} off after {} finishes{ended})",
         frame.path.display(),
         reg.scale,
         reg.dy,
         reg.dx,
         reg.ncc,
-        pairs.pairs.len(),
-        pairs.total
+        m.pairs.pairs.len(),
+        m.pairs.total,
+        e.offset,
+        e.residual,
+        e.passes,
     );
     Ok(Kept {
-        pairs,
+        pairs: m.pairs,
         lens: frame.lens.clone(),
     })
 }
@@ -919,21 +938,151 @@ pub(crate) fn pairs_at(
     greycard_match::pairs::pairs(&render, &laid.laid, &laid.coverage)
 }
 
-/// The frame's exposure against the camera's, solved once on the
-/// first pairs, and the pairs again at it: the offset in stops and the
-/// pairs the fit takes.
+/// A frame's exposure matched to the camera's: the first pass, and
+/// where the iteration from it ended with the pairs the fit takes.
+pub(crate) struct Matched {
+    /// The offset solved once on the first pairs, in stops.
+    pub(crate) once: f32,
+    /// What that pass leaves: the pairs' median at `once`, in stops,
+    /// positive where the camera is still brighter.
+    pub(crate) once_residual: f32,
+    /// The pairs at `once`.
+    pub(crate) once_pairs: Pairs,
+    /// Where the iteration ended ([`iterate`]).
+    pub(crate) exposure: Iterated,
+    /// The pairs at `exposure.offset`: what the fit takes.
+    pub(crate) pairs: Pairs,
+}
+
+/// The frame's exposure against the camera's: solved once on the first
+/// pairs, finished at it, then stepped ([`iterate`]) until the pairs'
+/// median sits within [`CONVERGED`] stops of the camera's. An error
+/// only when the first pass leaves no block; a step that leaves none
+/// stops the iteration at the last offset that had some, and the cap
+/// stops it where it is, so a frame that registered is always kept.
 pub(crate) fn matched(
     developed: &mut crate::worker::FrameDevelop,
     laid: &Laid,
     curve: DisplayCurve,
-) -> Result<(f32, Pairs), String> {
-    let offset =
-        greycard_match::exposure::offset_stops(&laid.first).ok_or("no flat, unclipped blocks")?;
-    let pairs = pairs_at(developed, laid, curve, offset);
-    if pairs.pairs.is_empty() {
-        return Err("no flat, unclipped blocks".into());
+) -> Result<Matched, String> {
+    use greycard_match::exposure::offset_stops;
+    let once = offset_stops(&laid.first).ok_or("no flat, unclipped blocks")?;
+    let once_pairs = pairs_at(developed, laid, curve, once);
+    let once_residual = offset_stops(&once_pairs).ok_or("no flat, unclipped blocks")?;
+    let (exposure, pairs) = iterate(once, once_residual, once_pairs.clone(), &mut |o| {
+        let p = pairs_at(developed, laid, curve, o);
+        offset_stops(&p).map(|r| (r, p))
+    });
+    Ok(Matched {
+        once,
+        once_residual,
+        once_pairs,
+        exposure,
+        pairs,
+    })
+}
+
+/// Where the exposure match ended.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct Iterated {
+    pub(crate) offset: f32,
+    /// The pairs' median at `offset`, in stops.
+    pub(crate) residual: f32,
+    /// Finishes at an offset, the first pass's own one included, and a
+    /// step's that left no block.
+    pub(crate) passes: usize,
+    /// A step left no flat, unclipped block, so it stopped at the last
+    /// offset that had some.
+    pub(crate) lost: bool,
+}
+
+/// The exposure at which the pairs' median sits on the camera's,
+/// from the match's two points: the residual `first` at no offset
+/// (which is the first pass's offset) and `residual` at `first`. Each
+/// step is a secant through the last two points, its slope held to
+/// [`SLOPE_RANGE`] (else a plain step of the residual) and its length
+/// to [`MAX_STEP`], so a curve steeper than a stop for a stop does not
+/// make it overshoot and swing as a plain step does. At most
+/// [`PASSES`] finishes. `at` finishes at an offset and gives the
+/// residual there and its pairs, or `None` with no block left, where
+/// the iteration stops at the last offset that had some.
+pub(crate) fn iterate<P>(
+    first: f32,
+    residual: f32,
+    pairs: P,
+    at: &mut dyn FnMut(f32) -> Option<(f32, P)>,
+) -> (Iterated, P) {
+    let (mut o0, mut r0, mut o1, mut r1) = (0.0f32, first, first, residual);
+    let (mut passes, mut lost, mut pairs) = (1, false, pairs);
+    while r1.abs() > CONVERGED && passes < PASSES {
+        let slope = if (o1 - o0).abs() > 1e-4 {
+            (r1 - r0) / (o1 - o0)
+        } else {
+            -1.0
+        };
+        let slope = if (SLOPE_RANGE.0..=SLOPE_RANGE.1).contains(&slope) {
+            slope
+        } else {
+            -1.0
+        };
+        let o2 = o1 + (-r1 / slope).clamp(-MAX_STEP, MAX_STEP);
+        passes += 1;
+        match at(o2) {
+            Some((r2, p)) => {
+                (o0, r0, o1, r1) = (o1, r1, o2, r2);
+                pairs = p;
+            }
+            None => {
+                lost = true;
+                break;
+            }
+        }
     }
-    Ok((offset, pairs))
+    (
+        Iterated {
+            offset: o1,
+            residual: r1,
+            passes,
+            lost,
+        },
+        pairs,
+    )
+}
+
+/// A group's table fitted on every kept block, and how well it does:
+/// its mean ΔE on the blocks it was fitted on, and the mean over every
+/// frame, each held out of its own fit, of the frame's mean ΔE.
+pub(crate) struct GroupFit {
+    pub(crate) model: Model,
+    pub(crate) fitted: f32,
+    pub(crate) held_out: Option<f32>,
+}
+
+/// Fit the blocks `x` (the render) to `y` (the camera's), `ids` each
+/// block's frame, and hold every frame out once. The holds are a fit
+/// each, run across the threads: measured on eight under `nice`, 0.9 to
+/// 1.2 seconds for a group of 22 to 29 frames and 1.9 to 2.2 for 35,
+/// so about two and a half for forty. They run on the global pool, so
+/// the editor's other work queued there (a preview's decode) can wait
+/// behind them that long, once a group.
+pub(crate) fn fit_group(x: &[[f32; 3]], y: &[[f32; 3]], ids: &[usize]) -> GroupFit {
+    use rayon::prelude::*;
+    let params = LutParams::default();
+    let model = Model::fit(x, y, params);
+    let fitted = model.mean_delta_e(x, y);
+    let mut frames = ids.to_vec();
+    frames.sort_unstable();
+    frames.dedup();
+    let held: Vec<f32> = frames
+        .par_iter()
+        .map(|&f| leave_one_out(x, y, ids, &[f], params)[0])
+        .collect();
+    let held_out = (!held.is_empty()).then(|| held.iter().sum::<f32>() / held.len() as f32);
+    GroupFit {
+        model,
+        fitted,
+        held_out,
+    }
 }
 
 /// Every kept frame's pairs as the fit takes them: the render side,
@@ -1163,12 +1312,11 @@ fn run_with(
             && kept.len() >= MIN_FRAMES
         {
             let (x, y, ids) = stacked(&kept);
-            let params = LutParams::default();
-            let model = Model::fit(&x, &y, params);
-            let fitted_de = model.mean_delta_e(&x, &y);
-            let chosen = evenly(kept.len(), HELD_OUT);
-            let held = leave_one_out(&x, &y, &ids, &chosen, params);
-            let held_out = (!held.is_empty()).then(|| held.iter().sum::<f32>() / held.len() as f32);
+            let GroupFit {
+                model,
+                fitted: fitted_de,
+                held_out,
+            } = fit_group(&x, &y, &ids);
             result.radial = radial_lines(&model, &kept);
             result.replaced = replaces;
             result.outcome = match write_look(store, g, &g.camera, kept.len(), curve, &model) {
@@ -1183,7 +1331,6 @@ fn run_with(
                         frames: kept.len(),
                         fitted: fitted_de,
                         held_out,
-                        held_frames: held.len(),
                     }
                 }
                 Err(e) => Outcome::Failed(e.to_string()),
@@ -1609,7 +1756,6 @@ mod tests {
             frames,
             fitted,
             held_out,
-            held_frames,
         } = results[1].outcome
         else {
             panic!("{:?}", results[1]);
@@ -1617,9 +1763,8 @@ mod tests {
         assert_eq!(frames, 24);
         assert!(fitted < 0.004, "fitted ΔE {fitted}");
         assert!(held_out.unwrap() < 0.006, "held out {held_out:?}");
-        assert_eq!(held_frames, HELD_OUT);
         assert!(
-            results[1].line().contains("held out over 4 frames"),
+            results[1].line().contains("held out over every frame"),
             "{}",
             results[1].line()
         );
@@ -2274,6 +2419,220 @@ mod tests {
             moved * 255.0
         );
         assert!(moved * 255.0 > 2.0, "{moved}");
+    }
+
+    /// A frame of flat patches, linear from `lo` to `hi` in the working
+    /// space, each patch two blocks square so every block is flat and
+    /// the edges between them give the registration something to hold.
+    fn patches(lo: f32, hi: f32) -> crate::worker::FrameDevelop {
+        let (side, cols, rows) = (2 * greycard_match::BLOCK, 10usize, 7usize);
+        let (w, h) = (side * cols, side * rows);
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                let k = ((y / side) * cols + x / side) as f32;
+                data.extend([0.618_034f32, 0.414_214, 0.267_949].map(|g| {
+                    let t = (k * g + 0.3).fract();
+                    lo + (hi - lo) * t
+                }));
+            }
+        }
+        crate::worker::FrameDevelop::of_image(WorkingImage {
+            width: w,
+            height: h,
+            data,
+        })
+    }
+
+    /// The camera's JPEG as the develop finished `stops` brighter
+    /// under `curve`: the frame's exposure is all that separates them,
+    /// and the match should find it.
+    fn brighter(
+        developed: &mut crate::worker::FrameDevelop,
+        curve: DisplayCurve,
+        stops: f32,
+    ) -> Picture {
+        let mut at = fit_edit(curve);
+        at.light.exposure += stops;
+        picture_of(&developed.finish(&at, &settings()))
+    }
+
+    /// The match's exposure match on a real finish. One pass reads the
+    /// camera's distance in stops off the develop's own exposure and
+    /// takes a stop on the slider to move the finish a stop; the
+    /// display curve does not: it moves the mid-tones by less (one
+    /// pass falls short) and the toe by more (one pass overshoots). So
+    /// one pass leaves the frame well off the camera's, and the
+    /// iteration lands it within [`CONVERGED`] of the exposure the
+    /// camera's JPEG was made at, under both curves, the pairs the fit
+    /// takes being the converged finish's.
+    #[test]
+    fn the_exposure_match_converges_where_one_pass_does_not() {
+        let target = 1.2f32;
+        for ((lo, hi), curve) in [(0.03, 0.2), (0.002, 0.012)]
+            .into_iter()
+            .flat_map(|tones| DisplayCurve::ALL.map(|c| (tones, c)))
+        {
+            let mut developed = patches(lo, hi);
+            let jpeg = brighter(&mut developed, curve, target);
+            let laid = lay(&mut developed, &jpeg, curve).unwrap();
+            let r = laid.reg;
+            assert!(
+                (r.scale - 1.0).abs() < 0.01 && r.dy.abs() < 1.0 && r.dx.abs() < 1.0,
+                "{curve:?} {lo}-{hi}: {r:?}"
+            );
+            let m = matched(&mut developed, &laid, curve).unwrap();
+            let e = m.exposure;
+            eprintln!(
+                "{curve:?} {lo}-{hi}: one pass {:+.3} leaves {:+.3}; converged {:+.4} leaves {:+.4} \
+                 after {} finishes",
+                m.once, m.once_residual, e.offset, e.residual, e.passes
+            );
+            assert!(
+                m.once_residual.abs() > 0.05,
+                "{curve:?} {lo}-{hi}: one pass already lands, {:+.3}",
+                m.once_residual
+            );
+            assert!(
+                e.residual.abs() <= CONVERGED && !e.lost,
+                "{curve:?} {lo}-{hi}: {e:?}"
+            );
+            assert!(e.passes <= PASSES, "{curve:?} {lo}-{hi}: {e:?}");
+            assert!(
+                (e.offset - target).abs() < 0.03,
+                "{curve:?} {lo}-{hi}: {e:?}"
+            );
+            // The pairs it hands on are the converged finish's.
+            let again = pairs_at(&mut developed, &laid, curve, e.offset);
+            assert_eq!(m.pairs, again, "{curve:?} {lo}-{hi}");
+            assert_ne!(m.pairs, m.once_pairs, "{curve:?} {lo}-{hi}");
+        }
+    }
+
+    /// A residual 1.8 times as steep as a stop for a stop, and bending:
+    /// the plain step of the residual overshoots and swings; the
+    /// secant lands within a few finishes.
+    #[test]
+    fn the_iteration_converges_on_a_steep_curve() {
+        let target = -1.2f32;
+        let residual = |o: f32| 1.8 * (target - o) + 0.3 * (target - o) * (target - o).abs();
+        let first = residual(0.0);
+        let (it, ()) = iterate(first, residual(first), (), &mut |o| Some((residual(o), ())));
+        assert!(it.residual.abs() <= CONVERGED, "{it:?}");
+        assert!((it.offset - target).abs() < 0.01, "{it:?}");
+        assert!(it.passes <= 5 && !it.lost, "{it:?}");
+        // The plain step, for the record: it does not settle in the
+        // same number of finishes.
+        let (mut o, mut r) = (first, residual(first));
+        for _ in 1..it.passes {
+            o += r;
+            r = residual(o);
+        }
+        assert!(r.abs() > CONVERGED, "{r}");
+    }
+
+    /// A step that leaves no block stops the iteration where the last
+    /// blocks were, and says so; a residual that never settles stops
+    /// at the cap, where it is.
+    #[test]
+    fn a_step_with_no_block_or_the_cap_stops_the_iteration() {
+        let (it, last) = iterate(-1.0, 0.3, 7u32, &mut |_| None);
+        assert!(
+            it.lost && last == 7 && it.offset == -1.0 && it.residual == 0.3,
+            "{it:?}"
+        );
+        assert_eq!(it.passes, 2);
+        // A residual that ignores the offset: every step is a plain
+        // one, a stop at most, and the cap ends it.
+        let mut asked = 0;
+        let (it, last) = iterate(0.5, 2.0, 0u32, &mut |_| {
+            asked += 1;
+            Some((2.0, asked))
+        });
+        assert_eq!(it.passes, PASSES, "{it:?}");
+        assert_eq!(asked as usize, PASSES - 1);
+        assert_eq!(last, asked, "the last finish's pairs");
+        assert!(!it.lost && it.residual == 2.0, "{it:?}");
+        assert!((it.offset - (0.5 + (PASSES - 1) as f32 * MAX_STEP)).abs() < 1e-4);
+    }
+
+    /// The error the sheet reports holds every frame out once, not a
+    /// few: on a set where two frames disagree with the rest and
+    /// neither is among the four the sheet used to hold out, the four
+    /// would not see them; every frame does, and the run reports
+    /// exactly the mean of every frame's held-out error.
+    #[test]
+    fn the_held_out_error_is_over_every_frame() {
+        let groups = vec![synthetic_group("Canon EOS R6m2", "Canon Faithful", 24)];
+        // Frames 0 and 12 of the run (seeds 1 and 13): the camera's
+        // JPEG a third of a stop darker than the rest's.
+        let odd = [1usize, 13];
+        let pairs_of = |seed: usize| {
+            let mut p = synthetic_pairs(seed);
+            if odd.contains(&seed) {
+                for pair in &mut p.pairs {
+                    use greycard_match::color::{decode3, encode3};
+                    pair.jpeg = encode3(decode3(pair.jpeg).map(|v| v * 0.8));
+                }
+            }
+            p
+        };
+        let store = scratch_store("held");
+        let mut seed = 0;
+        let results = run_with(
+            &groups,
+            &store,
+            Choices {
+                curve: CH,
+                replace: false,
+                chosen: &[],
+            },
+            &AtomicBool::new(false),
+            &mut |_| {},
+            &mut |_| {
+                seed += 1;
+                Ok(Kept {
+                    pairs: pairs_of(seed),
+                    lens: None,
+                })
+            },
+        );
+        let Outcome::Fitted {
+            held_out, fitted, ..
+        } = results[0].outcome
+        else {
+            panic!("{:?}", results[0]);
+        };
+        let kept: Vec<Kept> = (1..=24)
+            .map(|s| Kept {
+                pairs: pairs_of(s),
+                lens: None,
+            })
+            .collect();
+        let (x, y, ids) = stacked(&kept);
+        let every: Vec<usize> = (0..24).collect();
+        let held = leave_one_out(&x, &y, &ids, &every, LutParams::default());
+        let mean = held.iter().sum::<f32>() / held.len() as f32;
+        let four = evenly(24, 4);
+        assert!(!four.contains(&0) && !four.contains(&12), "{four:?}");
+        let held4 = leave_one_out(&x, &y, &ids, &four, LutParams::default());
+        let mean4 = held4.iter().sum::<f32>() / 4.0;
+        eprintln!("held out over every frame {mean:.4}, over four {mean4:.4}, fitted {fitted:.4}");
+        assert_eq!(held_out, Some(mean));
+        assert!(
+            (fit_group(&x, &y, &ids).held_out.unwrap() - mean).abs() < 1e-7,
+            "the run reports what fit_group gives"
+        );
+        // The two frames that disagree are what every frame sees and
+        // the four never did.
+        assert!(held[0] > 0.03 && held[12] > 0.03, "{held:?}");
+        assert!(held4.iter().all(|&h| h < 0.02), "{held4:?}");
+        assert!(
+            results[0].line().contains("held out over every frame"),
+            "{}",
+            results[0].line()
+        );
+        crate::testing::remove_dir_retry(&store);
     }
 
     /// The develop, the JPEG and the registration on real raws: every
