@@ -434,18 +434,13 @@ pub(crate) const MIN_STEP: f32 = 1.0 / greycard_edit::brush::RASTER_WIDTH as f32
 /// What the status line says while a tool is in hand.
 pub(crate) fn placing_hint(kind: &str) -> &'static str {
     match kind {
-        "Brush" => "paint on the picture; scroll for size; Esc or the button when done",
-        "Object" => {
-            "click a thing, right-click what is not it, or drag a box round it; Esc or the button when done"
-        }
-        "Sky" => {
-            "click sky the mask missed, right-click what is not sky; Esc or the button when done"
-        }
+        "Brush" => "paint; scroll for size; Esc to finish",
+        "Object" => "click to add, right-click to exclude, or drag a box; Esc to finish",
+        "Sky" => "click to add sky, right-click to remove; Esc to finish",
         "Linear" => {
-            "drag on the picture to place it; once placed, drag an end line to turn and \
-            stretch it about the center, Alt to move just that end"
+            "drag to place; drag an end line to turn and stretch, Alt to move just that end"
         }
-        _ => "drag on the picture to place it",
+        _ => "drag to place",
     }
 }
 
@@ -456,12 +451,9 @@ pub(crate) fn placing_hint(kind: &str) -> &'static str {
 /// sky does nothing, and a right click still takes what is not sky out.
 pub(crate) fn sky_pick(no_sky: bool, have_sam: bool) -> Result<&'static str, &'static str> {
     if no_sky {
-        Err("no sky to correct: the model found none in this picture")
+        Err("no sky found in this picture")
     } else if !have_sam {
-        Ok(
-            "right-click what is not sky; a click that adds sky needs the Object model, \
-            which is not downloaded; Esc or the button when done",
-        )
+        Ok("right-click to remove sky (adding needs the Object model); Esc to finish")
     } else {
         Ok(placing_hint("Sky"))
     }
@@ -1533,10 +1525,10 @@ mod tests {
     #[test]
     fn the_offer_says_who_publishes_the_model() {
         let ours = crate::panel::assets::model_note(&greycard_ai::SUBJECT_WEBGPU);
-        assert!(ours.contains("greycard publishes this copy"), "{ours}");
+        assert!(ours.contains("greycard's faster copy"), "{ours}");
         assert!(ours.contains("MIT"), "{ours}");
         let theirs = crate::panel::assets::model_note(&greycard_ai::SUBJECT);
-        assert!(theirs.contains("does not ship"), "{theirs}");
+        assert!(theirs.contains("Its own license"), "{theirs}");
     }
 
     /// The overlay is drawn in view pixels off a shape that knows
@@ -1638,10 +1630,7 @@ mod tests {
         app.invoke_add_shape("Sky".into(), "Add".into());
         assert!(app.get_placing().is_empty());
         assert!(state.borrow().placing.is_none());
-        assert_eq!(
-            app.get_status(),
-            "no sky to correct: the model found none in this picture"
-        );
+        assert_eq!(app.get_status(), "no sky found in this picture");
     }
 
     #[test]

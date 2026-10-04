@@ -249,18 +249,14 @@ pub(crate) const DEFRINGE_PICK_FLOOR: f32 = 1.0e-4;
 /// The hint the status line shows for a dropper in hand.
 pub(crate) fn picking_hint(kind: &str) -> &'static str {
     match kind {
-        "White" => "click something neutral in the picture; Esc or the button to leave it",
-        "Curve" => {
-            "click a tone in the picture for a point there; drag up or down to move it; Esc or the button when done"
-        }
-        "Range" => {
-            "click a color in the picture to center the mask's hue on it; Esc or the button to leave it"
-        }
+        "White" => "click something neutral; Esc to finish",
+        "Curve" => "click a tone to add a point, drag up or down to move it; Esc to finish",
+        "Range" => "click a color to center the mask's hue on it; Esc to finish",
         "Defringe" => {
-            "the defringe is off while this is out, so the fringes show: zoom to 1:1 first, a fringe is a few pixels wide; click one to center the nearer hue window on it; Esc or the button when done"
+            "defringe is off while picking; zoom to 1:1 and click a fringe; Esc to finish"
         }
         _ => {
-            "click a color in the picture for its band; drag up or down for saturation, sideways for hue; Esc or the button when done"
+            "click a color for its band, drag up or down for saturation, sideways for hue; Esc to finish"
         }
     }
 }

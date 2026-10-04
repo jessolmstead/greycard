@@ -1168,7 +1168,7 @@ pub(crate) fn cull_status(
         if why == cull::NO_LOCAL_PREVIEW {
             return format!("{mode}: nothing to show; {why}");
         }
-        return format!("{mode}: no camera preview ({why}); Enter develops the frame");
+        return format!("{mode}: no camera preview ({why}); Enter develops");
     }
     let Some(named) = names.iter().find(|n| n.file == current) else {
         return format!("{mode}: decoding the camera JPEG...");
@@ -1180,14 +1180,14 @@ pub(crate) fn cull_status(
     let at = if zoom <= 0.0 {
         "fitted".to_string()
     } else if named.own {
-        format!("{}% of its own pixels", (zoom * 100.0).round() as i32)
+        format!("{}%", (zoom * 100.0).round() as i32)
     } else {
         format!(
-            "{}% of its own pixels, the screen-size copy until the full one is decoded",
+            "{}%, screen-size copy until the full one decodes",
             (zoom * 100.0).round() as i32
         )
     };
-    format!("{mode}: {what}, {at}, through the monitor profile only; Enter develops")
+    format!("{mode}: {what}, {at}; Enter develops")
 }
 
 /// `--time-cull`, on each frame that showed a stepped-to picture:
@@ -2248,8 +2248,7 @@ mod tests {
         assert!(app.get_placeholder());
         assert_eq!(
             app.get_placeholder_status(),
-            "camera preview: the camera JPEG, 8192 \u{d7} 5464, fitted, \
-             through the monitor profile only; developing..."
+            "camera preview: the camera JPEG, 8192 \u{d7} 5464, fitted; developing..."
         );
         // The readings of a picture that is not on screen wait.
         assert!(!app.get_nav_partial());

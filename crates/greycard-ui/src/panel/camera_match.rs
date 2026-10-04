@@ -95,17 +95,10 @@ impl Sheet {
     /// what a refit is for.
     fn curve_note(&self) -> String {
         let under = self.curve.phrase();
-        let mut out = format!(
-            "Fits under {under}, the open picture's display curve: a look fitted here \
-             applies to pictures on {under}, and is off under another."
-        );
+        let mut out = format!("Fits under {under}; the look applies only there.");
         if let Some((name, _)) = &self.refit {
             match (&self.survey, self.groups().is_some_and(|g| !g.is_empty())) {
-                (Some(_), false) => out.push_str(&format!(
-                    " Nothing here makes {name}: no body and picture style in this scope has \
-                     its name, or the body and style its table declares, so there is nothing \
-                     to refit it from."
-                )),
+                (Some(_), false) => out.push_str(&format!(" Nothing here to refit {name} from.")),
                 _ => out.push_str(&format!(" Refitting {name}.")),
             }
         }
@@ -260,11 +253,8 @@ pub(crate) fn group_line(g: &Group, plan: &Plan) -> String {
                 out.push_str(&format!("; {warning}"));
             }
         }
-        Plan::Donor => out.push_str(
-            " — not being fitted; its frames are read for a body that borrows its look, \
-             and no table of its own is written",
-        ),
-        Plan::Skip(why) if why == fit::NOT_CHOSEN => out.push_str(" — not chosen, so not fitted"),
+        Plan::Donor => out.push_str(" — read only, for a borrow"),
+        Plan::Skip(why) if why == fit::NOT_CHOSEN => out.push_str(" — not chosen"),
         Plan::Skip(why) => out.push_str(&format!(" — skipped: {why}")),
     }
     out
@@ -275,8 +265,7 @@ pub(crate) fn group_line(g: &Group, plan: &Plan) -> String {
 fn donor_note(plan: &Plan, chosen: &[bool]) -> &'static str {
     match plan {
         Plan::Borrow { donor, .. } if !chosen.get(*donor).copied().unwrap_or(true) => {
-            "; that group is not being fitted, so its frames are read for this look and its \
-             own table is not written"
+            "; its source is unchecked, so read only"
         }
         _ => "",
     }
@@ -289,19 +278,14 @@ fn donor_note(plan: &Plan, chosen: &[bool]) -> &'static str {
 /// them.
 pub(crate) fn fit_label(checked: usize, have_groups: bool, donors: usize) -> (String, String) {
     match (checked, have_groups) {
-        (0, true) => (
-            "Fit".into(),
-            "No group is checked: check at least one to fit.".into(),
-        ),
+        (0, true) => ("Fit".into(), "No group is checked.".into()),
         (0, false) => ("Fit".into(), String::new()),
         (n, _) => {
             let plural = |n: usize| if n == 1 { "" } else { "s" };
             let note = if donors > 0 {
                 format!(
-                    "Also reads {donors} group{} that {} not checked, for a borrow: its \
-                     frames are developed and nothing of it is written.",
-                    plural(donors),
-                    if donors == 1 { "is" } else { "are" }
+                    "Also reads {donors} unchecked group{} to borrow from.",
+                    plural(donors)
                 )
             } else {
                 String::new()
@@ -316,8 +300,7 @@ pub(crate) fn summary(survey: &Survey) -> String {
     let mut out = Vec::new();
     if survey.unread > 0 {
         out.push(format!(
-            "{} raw{} here {} not had the picture style read yet; the next pass over \
-             their folders reads it.",
+            "{} raw{} here {} no picture style read yet.",
             survey.unread,
             if survey.unread == 1 { "" } else { "s" },
             if survey.unread == 1 { "has" } else { "have" },
@@ -325,8 +308,7 @@ pub(crate) fn summary(survey: &Survey) -> String {
     }
     if survey.no_style > 0 {
         out.push(format!(
-            "{} raw{} no fixed picture style (an adaptive one such as Auto, or a \
-             maker whose styles are not read yet) and {} not grouped.",
+            "{} raw{} no fixed picture style and {} not grouped.",
             survey.no_style,
             if survey.no_style == 1 {
                 " has"
@@ -457,8 +439,7 @@ pub(crate) fn open(st: &mut State, app: &App, refit: Option<String>) {
         if library {
             ""
         } else {
-            "No library yet, so this folder alone: add folders to the library for a fit \
-             across sessions, lights and lenses."
+            "No library yet: this folder only."
         }
         .into(),
     );
@@ -854,7 +835,8 @@ mod tests {
         let gone = sheet(Some("Slide Warm"));
         assert!(names(&gone).is_empty());
         assert!(
-            gone.curve_note().contains("Nothing here makes Slide Warm"),
+            gone.curve_note()
+                .contains("Nothing here to refit Slide Warm"),
             "{}",
             gone.curve_note()
         );
@@ -956,10 +938,7 @@ mod tests {
         assert_eq!(fit_label(3, true, 0).1, "");
         let (label, note) = fit_label(2, true, 1);
         assert_eq!(label, "Fit 2 groups");
-        assert!(
-            note.starts_with("Also reads 1 group that is not checked"),
-            "{note}"
-        );
+        assert!(note.starts_with("Also reads 1 unchecked group"), "{note}");
         assert_eq!(fit_label(1, true, 0).0, "Fit 1 group");
         let (label, note) = fit_label(0, true, 0);
         assert_eq!(label, "Fit");
@@ -974,13 +953,13 @@ mod tests {
             donor: 0,
             replaces: None,
         };
-        assert!(donor_note(&borrow, &[false, true]).contains("not being fitted"));
+        assert!(donor_note(&borrow, &[false, true]).contains("read only"));
         assert_eq!(donor_note(&borrow, &[true, true]), "");
         let few = group("Canon EOS R5m2", &["a"], 5, 5);
         let line = group_line(&few, &Plan::Skip(fit::NOT_CHOSEN.into()));
-        assert!(line.ends_with("not chosen, so not fitted"), "{line}");
+        assert!(line.ends_with("not chosen"), "{line}");
         let donor = group_line(&few, &Plan::Donor);
-        assert!(donor.contains("no table of its own is written"), "{donor}");
+        assert!(donor.contains("read only"), "{donor}");
     }
 
     /// The window: a box a group, found by its label and clicked inside
@@ -1016,19 +995,19 @@ mod tests {
         assert_eq!(app.get_match_fit_label(), "Fit 1 group");
         assert!(
             app.get_match_fit_note()
-                .starts_with("Also reads 1 group that is not checked"),
+                .starts_with("Also reads 1 unchecked group"),
             "{}",
             app.get_match_fit_note()
         );
         let rows: Vec<_> = app.get_match_groups().iter().collect();
         assert!(!rows[0].checked && rows[1].checked);
         assert!(
-            rows[1].text.contains("not being fitted"),
+            rows[1].text.contains("source is unchecked"),
             "{}",
             rows[1].text
         );
         assert!(
-            rows[0].text.contains("no table of its own is written"),
+            rows[0].text.contains("read only, for a borrow"),
             "{}",
             rows[0].text
         );
@@ -1039,11 +1018,7 @@ mod tests {
         assert!(!app.get_match_can_fit());
         assert!(app.get_match_fit_note().contains("No group is checked"));
         let rows: Vec<_> = app.get_match_groups().iter().collect();
-        assert!(
-            rows[0].text.ends_with("not chosen, so not fitted"),
-            "{}",
-            rows[0].text
-        );
+        assert!(rows[0].text.ends_with("not chosen"), "{}", rows[0].text);
         // Fit does nothing at zero.
         app.invoke_match_fit();
         assert!(state.borrow().camera_match.cancel.is_none());
@@ -1061,7 +1036,7 @@ mod tests {
             no_style: 3,
         };
         let text = summary(&s);
-        assert!(text.contains("1 raw here has not"), "{text}");
+        assert!(text.contains("1 raw here has no picture style"), "{text}");
         assert!(
             text.contains("3 raws have no fixed picture style"),
             "{text}"

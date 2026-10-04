@@ -91,7 +91,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             // A fill needs its model; offer it first.
             if method == Some(RetouchMethod::Fill)
-                && !st.store.as_ref().is_some_and(|s| s.have(&greycard_ai::FILL))
+                && !st
+                    .store
+                    .as_ref()
+                    .is_some_and(|s| s.have(&greycard_ai::FILL))
             {
                 if !st.fetching {
                     offer_model(&mut st, &app, &greycard_ai::FILL, false);
@@ -103,8 +106,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_placing("".into());
             app.set_retouch_mode(kind);
             app.set_status(
-                "click a spot or drag a stroke to repair; scroll for size; drag the pins to move it or its source; Esc or the button when done"
-                    .into(),
+                "click or drag to repair; scroll for size; drag pins to move; Esc to finish".into(),
             );
         });
     }

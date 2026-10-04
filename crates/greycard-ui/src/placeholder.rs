@@ -156,7 +156,7 @@ pub fn overlays(placeholder_up: bool) -> Overlays {
 /// camera's full frame.
 pub fn status(size: (u32, u32), small: bool, local: bool) -> String {
     let what = crate::panel::cull::picture_words(size, small, local);
-    format!("{WORD}: {what}, fitted, through the monitor profile only; developing...")
+    format!("{WORD}: {what}, fitted; developing...")
 }
 
 /// The rows whose camera picture is kept about `row` of `count`.

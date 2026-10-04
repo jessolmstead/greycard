@@ -289,7 +289,7 @@ pub fn words(outcome: &Outcome, current: &str) -> String {
             format!("{} is available", shown(&r.tag))
         }
         Outcome::Found(_) => "You have the latest version".into(),
-        Outcome::Refused => "GitHub did not answer with a release; try again later".into(),
+        Outcome::Refused => "GitHub returned no release; try again later".into(),
         Outcome::Unreachable => "Could not reach GitHub".into(),
     }
 }

@@ -151,13 +151,7 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, choice: usize) {
         return;
     }
     if st.archive.aside.iter().any(|(_, a)| *a == archive) {
-        app.set_status(
-            format!(
-                "the job set aside earlier has not come back from {label} yet; another starts \
-                 once it has"
-            )
-            .into(),
-        );
+        app.set_status(format!("still waiting on {label}; try again shortly").into());
         return;
     }
     let r = &mut st.archive.rejects;
@@ -205,7 +199,7 @@ fn land_look(
         Heard::Aside => {
             app.set_status(
                 format!(
-                    "{} has said nothing for {} s; the look is set aside and nothing was done",
+                    "{} timed out after {} s; nothing was done",
                     asked.label,
                     ROOT_WAIT.as_secs()
                 )
@@ -308,8 +302,7 @@ fn fill(app: &App, asked: &Asked, look: &Look, offer: Offer) {
     }
     if !look.answered {
         lines.push(format!(
-            "{label} is not answering: the copies are as the index last saw them. A move is \
-             queued and runs when {label} answers; a delete cannot be done while it does not."
+            "{label} isn't reachable: moves will queue, deletes can't run."
         ));
     }
     let mut named = Vec::new();
@@ -319,11 +312,7 @@ fn fill(app: &App, asked: &Asked, look: &Look, offer: Offer) {
     }
     let unknown = look.not_known();
     if !unknown.is_empty() {
-        named.push(format!(
-            "Not known, a file there that could not be told from it without reading both whole, \
-             left alone: {}.",
-            some_names(&unknown)
-        ));
+        named.push(format!("Unverified, skipped: {}.", some_names(&unknown)));
     }
     let unreadable = look.unreadable();
     if !unreadable.is_empty() {
@@ -331,23 +320,13 @@ fn fill(app: &App, asked: &Asked, look: &Look, offer: Offer) {
         named.push(format!("Could not be read: {}.", some_names(&paths)));
     }
     let delete_note = match (offer.trash, offer.permanent) {
-        (true, false) => format!(
-            "Delete sends the copies on {label} and their sidecars to the system trash, where \
-             they can be restored from."
-        ),
-        (true, true) => format!(
-            "The trash refused files from these folders on {label} earlier: try the trash \
-             again, or delete the copies permanently. A permanent delete cannot be undone."
-        ),
-        _ => format!(
-            "There is no system trash here, so a delete takes the copies off {label} \
-             permanently. This cannot be undone."
-        ),
+        (true, false) => "Delete uses the trash.".to_string(),
+        (true, true) => {
+            format!("The trash failed on {label} earlier; a permanent delete can't be undone.")
+        }
+        _ => format!("No trash on {label}: deletes are permanent."),
     };
-    let note = format!(
-        "Move puts each copy into a rejects folder beside it on {label}, its sidecars with it; \
-         nothing is deleted. {delete_note} The rejects here are not touched."
-    );
+    let note = format!("Move files them in a rejects folder on {label}. {delete_note}");
     app.set_archive_rejects_title(format!("Remove rejects from {label}").into());
     app.set_archive_rejects_text(lines.join("\n").into());
     app.set_archive_rejects_named(named.join("\n").into());
@@ -409,14 +388,7 @@ pub(crate) fn answered(state: &Rc<RefCell<State>>, app: &App, answer: i32) {
         _ => None,
     };
     if matches!(answer, 2 | 3) && !look.answered {
-        app.set_status(
-            format!(
-                "not deleted: {} is not answering. A delete is never queued; ask again when it \
-                 answers",
-                asked.label
-            )
-            .into(),
-        );
+        app.set_status(format!("not deleted: {} isn't reachable", asked.label).into());
         run_due(&mut st, app);
         return;
     }
@@ -561,8 +533,7 @@ fn land_run(
                 app.set_archive_running(false);
                 app.set_status(
                     format!(
-                        "{} has said nothing for {} s: the rejects' job is set aside, and stops \
-                         after the frame it is on; what it did is said if it answers",
+                        "{} timed out after {} s; stopping after this frame",
                         r.label,
                         ROOT_WAIT.as_secs()
                     )
@@ -585,11 +556,7 @@ fn land_run(
             }
             st.archive.rejects.canceled_by_hand.remove(&token);
             tracing::error!("archive: the rejects' job ended without a report");
-            app.set_status(
-                "the rejects' job stopped without a report; what it did is found again by the \
-                 next look (the log has why)"
-                    .into(),
-            );
+            app.set_status("the rejects' job stopped without a report; see the log".into());
             run_due(&mut st, app);
         }
         Heard::Done { result, late } => {
@@ -604,7 +571,7 @@ fn land_run(
             let by_hand = st.archive.rejects.canceled_by_hand.remove(&token);
             let mut words = landed(&mut st, result, late && !by_hand);
             if late {
-                words = format!("the job set aside earlier came back: {words}");
+                words = format!("the timed-out job finished: {words}");
             }
             tracing::info!("archive: {words}");
             app.set_status(words.into());
@@ -656,25 +623,21 @@ fn landed_words(
             st.archive.rejects.tried.remove(&archive);
             match enqueue(st, &archive, &entries) {
                 Ok(dropped) => format!(
-                    "{label} is not answering: the move of {} is queued, and runs when {label} \
-                     answers{dropped}",
+                    "{label} isn't reachable; the move of {} is queued until it's back{dropped}",
                     frames_word(entries.len()).replace("frame", "reject")
                 ),
                 Err(e) => {
-                    format!("{label} is not answering, and the move could not be queued: {e}")
+                    format!("{label} isn't reachable, and the move couldn't be queued: {e}")
                 }
             }
         }
         (Kind::Delete(_), Ran::NotAnswering) => {
             st.archive.rejects.tried.remove(&archive);
-            format!(
-                "not deleted: {label} is not answering. A delete is never queued; ask again when \
-                 it answers"
-            )
+            format!("not deleted: {label} isn't reachable; try again when it's back")
         }
         (Kind::Queue, Ran::NotAnswering) => {
             st.archive.rejects.tried.remove(&archive);
-            format!("{label} did not answer after all: its queued moves wait for the next time")
+            format!("{label} isn't reachable after all; its queued moves wait")
         }
         (_, Ran::Moved(moves)) => {
             hand_folders(st, &moves.folders);
@@ -687,7 +650,7 @@ fn landed_words(
                 st.archive.rejects.tried.remove(&archive);
                 match enqueue(st, &archive, &moves.canceled) {
                     Ok(dropped) => words.push_str(&format!(
-                        "; the {} not reached are queued, and run when {label} answers{dropped}",
+                        "; the {} not reached are queued until {label} is back{dropped}",
                         frames_word(moves.canceled.len())
                     )),
                     Err(e) => words.push_str(&format!(
@@ -709,7 +672,7 @@ fn landed_words(
                 return words;
             };
             let edited = core::edit_queue(&file, |q| core::dequeue(q, &archive, &moves.done));
-            let mut words = format!("{label} answered, and its queued moves ran: {words}");
+            let mut words = format!("{label} is back; queued moves ran: {words}");
             match edited {
                 Ok((read, ())) => words.push_str(&dropped_words(&read.dropped)),
                 Err(e) => {
@@ -956,7 +919,7 @@ fn run_queue(st: &mut State, app: &App, archive: &Path) {
     let label = st.library.roots.label(archive);
     app.set_status(
         format!(
-            "{label} answered: running its queued move of {}...",
+            "{label} is back: moving its {} queued...",
             frames_word(entries.len()).replace("frame", "reject")
         )
         .into(),
@@ -1156,7 +1119,7 @@ mod tests {
         assert_eq!(c.app.get_archive_rejects_move(), "Move to rejects on nas");
         assert_eq!(c.app.get_archive_rejects_trash(), "Delete from nas");
         assert_eq!(c.app.get_archive_rejects_permanent(), "");
-        assert!(c.app.get_archive_rejects_note().contains("system trash"));
+        assert!(c.app.get_archive_rejects_note().contains("trash"));
 
         // Enter is the move.
         press(&c.app, Key::Return);
@@ -1199,7 +1162,7 @@ mod tests {
             c.app.get_archive_rejects_permanent(),
             "Delete from nas permanently"
         );
-        assert!(c.app.get_archive_rejects_note().contains("refused"));
+        assert!(c.app.get_archive_rejects_note().contains("trash failed"));
         c.app.invoke_archive_rejects_answered(3);
         assert_eq!(c.land(), 1);
         assert!(!c.there.join("a.tif").exists() && !c.there.join("a.tif.gcd").exists());
@@ -1229,7 +1192,7 @@ mod tests {
             text.starts_with("2 rejects here have 2 copies on nas"),
             "{text}"
         );
-        assert!(text.contains("nas is not answering"), "{text}");
+        assert!(text.contains("nas isn't reachable"), "{text}");
 
         // No delete is offered from a look the archive did not answer,
         // and one asked for anyway is refused and not queued.
@@ -1240,7 +1203,7 @@ mod tests {
         assert!(
             c.app
                 .get_status()
-                .starts_with("not deleted: nas is not answering"),
+                .starts_with("not deleted: nas isn't reachable"),
             "{}",
             c.app.get_status()
         );
@@ -1256,7 +1219,7 @@ mod tests {
         assert!(
             c.app
                 .get_status()
-                .starts_with("not deleted: nas is not answering"),
+                .starts_with("not deleted: nas isn't reachable"),
             "{}",
             c.app.get_status()
         );
@@ -1268,7 +1231,7 @@ mod tests {
         assert_eq!(c.land(), 1);
         let status = c.app.get_status();
         assert!(
-            status.starts_with("nas is not answering: the move of 2 rejects is queued"),
+            status.starts_with("nas isn't reachable; the move of 2 rejects is queued"),
             "{status}"
         );
         let read = core::read_queue(&c.queue()).unwrap();
@@ -1302,7 +1265,7 @@ mod tests {
         assert!(out.join("a.tif").is_file() && out.join("b.tif").is_file());
         let status = c.app.get_status();
         assert!(
-            status.starts_with("nas answered, and its queued moves ran: moved 2 copies on nas"),
+            status.starts_with("nas is back; queued moves ran: moved 2 copies on nas"),
             "{status}"
         );
         assert!(status.contains("left in the queue: gone.tif"), "{status}");
@@ -1488,16 +1451,14 @@ mod tests {
         }
         assert!(!c.app.get_archive_running());
         assert!(
-            c.app.get_status().contains("set aside"),
+            c.app.get_status().contains("timed out"),
             "{}",
             c.app.get_status()
         );
         let held: Vec<_> = SENT.with(|s| s.borrow_mut().drain(..).collect());
         c.app.invoke_archive_rejects_asked(0);
         assert!(
-            c.app
-                .get_status()
-                .contains("has not come back from nas yet"),
+            c.app.get_status().contains("still waiting on nas"),
             "{}",
             c.app.get_status()
         );
@@ -1507,7 +1468,7 @@ mod tests {
         c.land();
         let status = c.app.get_status();
         assert!(
-            status.starts_with("the job set aside earlier came back: nothing was moved on nas"),
+            status.starts_with("the timed-out job finished: nothing was moved on nas"),
             "{status}"
         );
         assert!(
@@ -1515,7 +1476,7 @@ mod tests {
             "{status}"
         );
         assert!(
-            status.contains("the 2 frames not reached are queued"),
+            status.contains("the 2 frames not reached are queued until"),
             "{status}"
         );
         assert!(c.there.join("a.tif").is_file());
@@ -1587,10 +1548,7 @@ mod tests {
         super::super::cancel(&c.state.borrow(), &c.app);
         c.land();
         let status = c.app.get_status();
-        assert!(
-            status.starts_with("the job set aside earlier came back"),
-            "{status}"
-        );
+        assert!(status.starts_with("the timed-out job finished"), "{status}");
         assert!(!status.contains("queued"), "{status}");
         assert!(!c.queue().exists());
         assert!(c.there.join("a.tif").is_file());

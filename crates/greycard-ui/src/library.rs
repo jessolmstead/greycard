@@ -2069,9 +2069,7 @@ pub(crate) fn skipped_words(roots: &greycard_library::Roots, root: &Path) -> Str
     } else {
         root.display().to_string()
     };
-    format!(
-        "{name} is not answering: its frames are kept as the index has them, and it is passed over again later"
-    )
+    format!("{name} isn't reachable; showing its last indexed frames")
 }
 
 /// The index moved under the window: the rows read again, and the
@@ -2814,7 +2812,7 @@ mod tests {
         };
         told(&app, skipped(true, true, None));
         assert!(
-            app.get_status().starts_with("Archive is not answering"),
+            app.get_status().starts_with("Archive isn't reachable"),
             "{}",
             app.get_status()
         );
@@ -2836,7 +2834,7 @@ mod tests {
         assert!(
             st.index_error
                 .as_deref()
-                .is_some_and(|e| e.starts_with("Archive is not answering"))
+                .is_some_and(|e| e.starts_with("Archive isn't reachable"))
         );
         drop(st);
         drop(state);

@@ -99,7 +99,7 @@ export component SnapshotsSection inherits Section {
         }
     }
     if root.snapshot-names.length == 0: Text {
-        text: "None yet: take one to keep this state by name.";
+        text: "None yet.";
         font-size: Theme.font-xs;
         color: Theme.text-muted;
         wrap: word-wrap;
@@ -200,7 +200,7 @@ export component HistorySection inherits Section {
         }
     }
     if root.history-rows.length == 0: Text {
-        text: "Nothing yet: each change is a step here.";
+        text: "No changes yet.";
         font-size: Theme.font-xs;
         color: Theme.text-muted;
         wrap: word-wrap;

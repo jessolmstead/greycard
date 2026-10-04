@@ -979,7 +979,7 @@ fn checked_within(
             dir.to_path_buf(),
             std::io::Error::new(
                 std::io::ErrorKind::TimedOut,
-                format!("did not answer in {} s", ROOT_WAIT.as_secs()),
+                format!("timed out after {} s", ROOT_WAIT.as_secs()),
             ),
         )
     };
@@ -1674,11 +1674,7 @@ impl Look {
                     None => {
                         // Not "in 3 s": a look still out from before
                         // answers no at once.
-                        said = Some(format!(
-                            "{} is not answering; is its drive or share there? \
-                             The list is as it was",
-                            dir.display()
-                        ));
+                        said = Some(format!("{} isn't reachable", dir.display()));
                         None
                     }
                     Some(_) => {
@@ -6162,7 +6158,7 @@ mod tests {
             assert!(!st.library.canonical.contains_key(&gone));
         }
         assert!(
-            app.get_status().contains("is not answering"),
+            app.get_status().contains("isn't reachable"),
             "{}",
             app.get_status()
         );
@@ -6174,14 +6170,14 @@ mod tests {
         assert_eq!(land_all(&state, &app, &worker), 2);
         assert_eq!(state.borrow().files, next_files);
         assert!(
-            !app.get_status().contains("is not answering"),
+            !app.get_status().contains("isn't reachable"),
             "{}",
             app.get_status()
         );
         // Recently opened: the same look, the same words.
         crate::panel::recent::choose_for_test(&state, &app, &worker, &gone);
         assert!(
-            app.get_status().contains("is not answering"),
+            app.get_status().contains("isn't reachable"),
             "{}",
             app.get_status()
         );
@@ -7960,7 +7956,7 @@ mod tests {
             std::slice::from_ref(&b)
         );
         assert!(
-            app.get_status().contains("did not answer in 3 s"),
+            app.get_status().contains("timed out after 3 s"),
             "{}",
             app.get_status()
         );

@@ -33,8 +33,7 @@ pub(crate) fn offer_lenses_once(st: &mut State, app: &App) {
 }
 
 /// The first line of the lens profiles' unprompted offer.
-pub(crate) const LENSES_WHY: &str = "There are no lens profiles on this machine, so no lens is \
-     corrected for its distortion, color fringes or vignetting.";
+pub(crate) const LENSES_WHY: &str = "No lens profiles installed; lenses aren't corrected.";
 
 /// Open the download sheet for the lens database: `unprompted` when
 /// no one asked for it, and the sheet says why it is up.
@@ -65,14 +64,10 @@ Kept in {}.",
         details
     };
     app.set_fetch_text(text.into());
-    let note =
-        "greycard does not ship the profiles; they are fetched for you under their own license.";
+    let note = "Their own license.";
     app.set_fetch_note(
         if unprompted {
-            format!(
-                "{note} Choose Not now and you will not be asked again; the download stays \
-                 available in the LENS section."
-            )
+            format!("{note} Not now won't ask again; it's also in LENS.")
         } else {
             note.to_string()
         }
@@ -92,12 +87,8 @@ fn mb(bytes: u64) -> u64 {
 /// changed and publishes itself says so, and under whose license.
 pub(crate) fn model_note(model: &greycard_ai::Model) -> String {
     match model.modified {
-        Some(_) => format!(
-            "greycard publishes this copy, changed from the original for speed; it is fetched for you under the original's {} license.",
-            model.license.name
-        ),
-        None => "greycard does not ship this model; it is fetched for you under its own license."
-            .to_string(),
+        Some(_) => format!("greycard's faster copy; {} license.", model.license.name),
+        None => "Its own license.".to_string(),
     }
 }
 
@@ -118,8 +109,7 @@ pub(crate) fn offer_model(
     app.set_fetch_note(
         if falls_back {
             format!(
-                "The Subject model in your store falls back to the CPU on this card; a rewrite \
-                 of the same weights runs on it, {} MB. {note}",
+                "Your Subject model runs on the CPU here; a GPU version is {} MB. {note}",
                 mb(model.bytes()),
             )
         } else {
@@ -266,7 +256,7 @@ pub(crate) fn show_lens(report: &LensReport, app: &App) {
                 lens,
                 camera: false,
                 ..
-            } => format!("{lens} (body unknown, its own format assumed)"),
+            } => format!("{lens} (body unknown)"),
         }
         .into(),
     );
@@ -411,7 +401,7 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
         Some(entry) => entry.described(),
         None if st.looks.is_empty() => match greycard_edit::look::store_dir() {
             Some(dir) => format!(
-                "No looks yet: put .cube or HaldCLUT .png files in {}.",
+                "No looks yet. Add .cube or HaldCLUT .png files to {}.",
                 dir.display()
             ),
             None => "No look directory on this machine.".to_string(),
@@ -772,7 +762,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     });
                     app.set_status(
                         if restorable {
-                            format!("{name} removed; Settings can restore the default one")
+                            format!("{name} removed; Settings can restore it")
                         } else {
                             format!("{name} removed")
                         }
@@ -1108,7 +1098,7 @@ mod tests {
         assert_eq!(count(), 2);
         assert_eq!(
             app.get_status(),
-            "Muted Slide removed; Settings can restore the default one"
+            "Muted Slide removed; Settings can restore it"
         );
         assert_eq!(app.get_presets_missing(), 1);
         assert_eq!(

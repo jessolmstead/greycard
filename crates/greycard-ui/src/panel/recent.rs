@@ -244,17 +244,14 @@ fn checked(
     let Some(there) = there else {
         tracing::warn!("recently opened: {} is not answering", dir.display());
         // Not "in 3 s": a look still out from before answers no at once.
-        let said = format!(
-            "{} is not answering; is its drive or share there?",
-            tilde(dir)
-        );
+        let said = format!("{} isn't reachable; is its drive connected?", tilde(dir));
         app.set_status(said.as_str().into());
         app.set_open_folder_note(said.into());
         return;
     };
     if !there {
         tracing::warn!("recently opened: {} is not there", dir.display());
-        let said = format!("{} is not there any more", tilde(dir));
+        let said = format!("{} no longer exists", tilde(dir));
         app.set_status(said.as_str().into());
         app.set_open_folder_note(said.into());
         return;
@@ -500,7 +497,7 @@ mod tests {
 
         chosen(&state, &app, &worker, a.to_string_lossy().as_ref());
         assert!(
-            app.get_status().contains("is not there any more"),
+            app.get_status().contains("no longer exists"),
             "{}",
             app.get_status()
         );

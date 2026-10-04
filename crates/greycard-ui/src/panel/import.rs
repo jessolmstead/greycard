@@ -173,11 +173,11 @@ pub(crate) fn show(st: &State, app: &App) {
     app.set_import_destination(path_text(&st.import.destination));
     app.set_import_backup(path_text(&st.import.backup));
     let note = if missing(&st.import.destination, st.import.destination_there) {
-        "The destination folder is not there: is its drive connected? It is not made anew here."
+        "Destination missing; is the drive connected?"
     } else if missing(&st.import.backup, st.import.backup_there) {
-        "The backup folder is not there: is its drive connected? It is not made anew here."
+        "Backup missing; is the drive connected?"
     } else if st.import.backup.is_some() && st.import.same_drive {
-        "The backup is on the same drive as the destination: one failing drive takes both."
+        "Backup is on the same drive."
     } else {
         ""
     };
@@ -1128,8 +1128,7 @@ mod tests {
         }
         assert!(!app.get_import_ready());
         assert!(
-            app.get_import_folders_note()
-                .contains("backup folder is not there"),
+            app.get_import_folders_note().contains("Backup missing"),
             "{}",
             app.get_import_folders_note()
         );

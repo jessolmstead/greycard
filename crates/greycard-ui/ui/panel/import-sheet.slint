@@ -87,7 +87,7 @@ export component ImportSheet inherits Rectangle {
                 color: Theme.text;
             }
             Text {
-                text: "Each copy is read back and checked against the card's bytes by a hash before it takes its name. Nothing on the card is changed or deleted.";
+                text: "Copies are verified; the card is untouched.";
                 wrap: word-wrap;
                 font-size: Theme.font-xs;
                 color: Theme.text-secondary;
@@ -120,7 +120,7 @@ export component ImportSheet inherits Rectangle {
                 LineEdit {
                     horizontal-stretch: 1;
                     text <=> root.import-subfolder;
-                    placeholder-text: "none: straight into the folder";
+                    placeholder-text: "none";
                 }
             }
             HorizontalLayout {
@@ -181,7 +181,7 @@ export component ImportSheet inherits Rectangle {
                 checked <=> root.import-verify;
             }
             Text {
-                text: "A frame already in the destination is known by its size and its first and last 64 KiB; Verify compares every byte, which reads the whole card again.";
+                text: "Verify compares every byte (slower).";
                 wrap: word-wrap;
                 font-size: Theme.font-xs;
                 color: Theme.text-muted;

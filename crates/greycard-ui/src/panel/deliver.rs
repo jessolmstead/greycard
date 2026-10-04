@@ -369,7 +369,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     app.set_raw_input(false);
                     app.set_source_note(
                         format!(
-                            "{}-bit {} taken as {space}; its white balance, demosaic and noise are as rendered",
+                            "{}-bit {} read as {space}; already rendered",
                             bits,
                             st.current
                                 .and_then(|i| st.files.get(i))

@@ -62,8 +62,7 @@ export component RootSheet inherits Rectangle {
                     init => { self.focus(); self.select-all(); }
                 }
                 Text {
-                    text: "A name for the library to show in place of \"" + root.folder
-                        + "\". Leave it empty to use the folder's name. The folder itself is not renamed or moved.";
+                    text: "Empty uses the folder's name. The folder isn't renamed.";
                     font-size: Theme.font-xs;
                     color: Theme.text-muted;
                     wrap: word-wrap;

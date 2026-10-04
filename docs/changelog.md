@@ -10,6 +10,10 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The sheets, settings and status line say less: the notes under each
+  setting are a line, an unreachable drive "isn't reachable", a timed
+  out job "timed out", and every tool's hint ends "Esc to finish"
+  (2026-10-04)
 - A mask has a white balance of its own on the Masks tab: a switch,
   Temperature, Tint and Neutral, absolute, so the light it names stays
   put when the global white moves; it starts at the global's white,

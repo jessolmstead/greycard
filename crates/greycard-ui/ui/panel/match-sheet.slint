@@ -78,7 +78,7 @@ export component MatchSheet inherits Rectangle {
                 color: Theme.text;
             }
             Text {
-                text: "Each body and picture style gets a look fitted from the JPEG its raws carry, written to the look directory under the body's and the style's name. About 40 frames a group are developed; a group under 20 usable frames borrows the same style from another body, or is skipped.";
+                text: "Fits a look per camera and picture style to its JPEGs. Groups under 20 frames borrow or are skipped.";
                 font-size: Theme.font-xs;
                 color: Theme.text-secondary;
                 wrap: word-wrap;
@@ -165,7 +165,7 @@ export component MatchSheet inherits Rectangle {
                             }
                         }
                         if root.match-groups.length == 0: Text {
-                            text: "No body with a fixed picture style here.";
+                            text: "No camera with a fixed picture style here.";
                             font-size: Theme.font-xs;
                             color: Theme.text-muted;
                         }

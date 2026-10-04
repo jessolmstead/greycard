@@ -197,12 +197,10 @@ pub(crate) fn thumb_cache_words(shown: CacheShown) -> String {
     let mb = |b: u64| b as f64 / (1024.0 * 1024.0);
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     match shown {
-        CacheShown::Missing => {
-            "No cache folder on this machine: thumbnails are made each time.".into()
-        }
+        CacheShown::Missing => "No cache folder: thumbnails are rebuilt each time.".into(),
         CacheShown::Counting => "Counting…".into(),
         CacheShown::Known { usage, cap: 0, .. } if usage.total().entries == 0 => {
-            "Off: thumbnails are made each time a folder opens.".into()
+            "Off: thumbnails are rebuilt each time.".into()
         }
         CacheShown::Known { usage, cap: 0, .. } => {
             let all = usage.total();
@@ -576,7 +574,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if let Err(e) = spawned {
                 tracing::warn!("sidecars move: {e}");
                 MOVING.store(false, std::sync::atomic::Ordering::SeqCst);
-                app.set_settings_note("The sidecars could not be moved; the log has why.".into());
+                app.set_settings_note("The sidecars couldn't be moved; see the log.".into());
             }
         });
     }

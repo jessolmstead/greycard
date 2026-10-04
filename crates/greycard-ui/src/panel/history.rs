@@ -611,7 +611,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             match snapshot {
                 Some(s) => {
                     let what = format!(
-                        "{}, taken {}; click to restore, double-click to rename",
+                        "{}, {}; click to restore, double-click to rename",
                         s.name,
                         date_of(s.taken)
                     );

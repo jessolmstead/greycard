@@ -96,11 +96,6 @@ export component SettingsSheet inherits Rectangle {
                         font-weight: Theme.weight-medium;
                         color: Theme.text;
                     }
-                    Text {
-                        text: "For this installation, not for a picture.";
-                        font-size: Theme.font-sm;
-                        color: Theme.text-secondary;
-                    }
                     Rectangle { height: Theme.space-1; }
                     Text {
                         text: "SIDECARS";
@@ -122,14 +117,14 @@ export component SettingsSheet inherits Rectangle {
                     }
                     Text {
                         text: root.sidecar-placement == "Hidden folder"
-                            ? "In a hidden .greycard folder inside the shoot's folder, which travels with it."
-                            : "As IMG_0001.CR3.gcd beside IMG_0001.CR3.";
+                            ? "In a hidden .greycard folder."
+                            : "IMG_0001.CR3.gcd, beside the raw.";
                         font-size: Theme.font-xs;
                         color: Theme.text-secondary;
                         wrap: word-wrap;
                     }
                     Text {
-                        text: "A sidecar is read in either place. Changing this moves nothing: each frame's sidecar goes to the chosen place when that frame is next saved.";
+                        text: "Sidecars move when next saved.";
                         font-size: Theme.font-xs;
                         color: Theme.text-muted;
                         wrap: word-wrap;
@@ -178,12 +173,12 @@ export component SettingsSheet inherits Rectangle {
                         wrap: word-wrap;
                     }
                     Toggle {
-                        label: "Also write an XMP for Lightroom and darktable";
+                        label: "Write XMP sidecars";
                         checked <=> root.xmp-sidecars;
                         toggled => { root.xmp-changed(); }
                     }
                     Text {
-                        text: "The rating, the label and the keywords, in an .xmp beside the raw. An XMP that is there is read either way.";
+                        text: "Rating, label and keywords, for Lightroom and darktable.";
                         font-size: Theme.font-xs;
                         color: Theme.text-muted;
                         wrap: word-wrap;
@@ -236,7 +231,7 @@ export component SettingsSheet inherits Rectangle {
                         Text { text: "MB, 0 for none"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
                     }
                     Text {
-                        text: "Kept by content, so a folder moved or renamed opens without making them again. A lower cap drops the thumbnails used longest ago at once. The previews are culling's pictures of the frames under the library's folders, so a shoot on a share or an unplugged drive is culled without its files; about half a megabyte a frame.";
+                        text: "Previews let you cull offline drives; about 0.5 MB a frame.";
                         font-size: Theme.font-xs;
                         color: Theme.text-muted;
                         wrap: word-wrap;
@@ -250,7 +245,7 @@ export component SettingsSheet inherits Rectangle {
                     }
                     HorizontalLayout {
                         spacing: Theme.space-2;
-                        Text { text: "Look every"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        Text { text: "Rescan every"; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                         LineEdit {
                             width: 96px;
                             text <=> root.network-poll-minutes;
@@ -261,7 +256,7 @@ export component SettingsSheet inherits Rectangle {
                         Text { text: "minutes, 0 for never"; color: Theme.text-secondary; font-size: Theme.font-sm; vertical-alignment: center; horizontal-stretch: 1; }
                     }
                     Text {
-                        text: "A library folder on a network share (NFS, SMB, sshfs) is not watched, since the share never says what changed on it; it is looked over at launch and this often. Each look lists every folder on it.";
+                        text: "Shares can't be watched, so they're rescanned.";
                         font-size: Theme.font-xs;
                         color: Theme.text-muted;
                         wrap: word-wrap;
@@ -290,7 +285,7 @@ export component SettingsSheet inherits Rectangle {
                         }
                     }
                     Text {
-                        text: "The film presets that come with the editor. Restore puts back the ones removed and leaves every preset of your own as it is.";
+                        text: "Restores removed built-in presets.";
                         font-size: Theme.font-xs;
                         color: Theme.text-muted;
                         wrap: word-wrap;
@@ -308,7 +303,7 @@ export component SettingsSheet inherits Rectangle {
                         toggled => { root.update-check-changed(); }
                     }
                     Text {
-                        text: "Once a day at most: one HTTPS request to GitHub for the latest release. It names the app and its version and nothing more; GitHub sees the request come from your network, as it would for any page. A new version is offered in the left pane; nothing is downloaded.";
+                        text: "Once a day; sends only the version number.";
                         font-size: Theme.font-xs;
                         color: Theme.text-muted;
                         wrap: word-wrap;

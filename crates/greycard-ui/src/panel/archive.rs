@@ -429,8 +429,7 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
     if st.archive.aside.iter().any(|(_, a)| *a == archive) {
         app.set_status(
             format!(
-                "the copy set aside earlier has not come back from {} yet; another starts once \
-                 it has",
+                "still waiting on {}; try again shortly",
                 st.library.roots.label(&archive)
             )
             .into(),
@@ -690,9 +689,7 @@ fn look(st: &mut State, app: &App) {
                 .find(|(_, a)| !**a)
                 .map(|(l, _)| l)
             {
-                return Err(format!(
-                    "{name} is not answering; is its drive or share there? Nothing was copied"
-                ));
+                return Err(format!("{name} isn't reachable; nothing was copied"));
             }
             let gone = gone_pairings(&pairings, &local, &archive, beat);
             if let Some(how) = &to_settle {
@@ -737,7 +734,7 @@ fn land_look(
             );
             app.set_status(
                 format!(
-                    "{} has said nothing for {} s; the look is set aside and nothing was copied",
+                    "{} timed out after {} s; nothing was copied",
                     asked.label,
                     ROOT_WAIT.as_secs()
                 )
@@ -831,11 +828,7 @@ fn fill(app: &App, asked: &Asked, plan: &Plan) {
         ));
     }
     if !plan.ask.sidecars {
-        lines.push(
-            "Sidecars are off for this run: the frames go without them, and no sidecar is \
-             compared or written."
-                .into(),
-        );
+        lines.push("Sidecars are off for this run.".into());
     }
     if sidecars > 0 {
         let here = match asked.ask.direction {
@@ -843,7 +836,7 @@ fn fill(app: &App, asked: &Asked, plan: &Plan) {
             Direction::BringBack => "on the archive",
         };
         lines.push(format!(
-            "{} already there {} newer sidecars {here}: the sidecars alone go.",
+            "{} already there {} newer sidecars {here}; only the sidecars copy.",
             frames_word(sidecars),
             if sidecars == 1 { "has" } else { "have" }
         ));
@@ -878,7 +871,7 @@ fn fill(app: &App, asked: &Asked, plan: &Plan) {
     let taken = plan.taken();
     if !taken.is_empty() {
         named.push(format!(
-            "Left, another file has the name, or a sidecar's name, there: {}.",
+            "Skipped, the name is taken there: {}.",
             some_names(&taken)
         ));
     }
@@ -892,12 +885,12 @@ fn fill(app: &App, asked: &Asked, plan: &Plan) {
     app.set_archive_named(named.join("\n").into());
     app.set_archive_dest(plan.ask.dest.to_string_lossy().into_owned().into());
     let note = match (asked.ask.direction, asked.unpaired) {
-        (Direction::BackUp, _) => format!(
-            "Under {label}; kept for the next backup of this folder. Each frame goes at its path under it."
-        ),
-        (Direction::BringBack, true) => format!(
-            "This folder of the archive was not backed up from {label}: choose where under {label} it goes."
-        ),
+        (Direction::BackUp, _) => {
+            format!("Under {label}; remembered for this folder.")
+        }
+        (Direction::BringBack, true) => {
+            format!("Not from {label}: choose a place under it.")
+        }
         (Direction::BringBack, false) => {
             format!("Where it was backed up from, under {label}.")
         }
@@ -1173,8 +1166,7 @@ fn land_run(
                 app.set_archive_running(false);
                 app.set_status(
                     format!(
-                        "{} has said nothing for {} s: the copy is set aside, and stops after \
-                         the frame it is on; what it did is said if it answers",
+                        "{} timed out after {} s; stopping after this frame",
                         r.label,
                         ROOT_WAIT.as_secs()
                     )
@@ -1193,8 +1185,7 @@ fn land_run(
             st.archive.aside.retain(|(t, _)| *t != token);
             tracing::error!("archive: the copy's thread ended without a report");
             app.set_status(
-                "the copy stopped without a report; what it copied is checked by the next Back up \
-                 (the log has why)"
+                "the copy stopped without a report; the next Back up checks it (see the log)"
                     .into(),
             );
             rejects::run_due(&mut st, app);
@@ -1213,7 +1204,7 @@ fn land_run(
             } = result;
             let mut words = summary(&report, direction, &label);
             if late {
-                words = format!("the copy set aside earlier came back: {words}");
+                words = format!("the timed-out copy finished: {words}");
             }
             tracing::info!("archive: {words}");
             for (f, why) in &report.failed {
@@ -1516,7 +1507,7 @@ fn land_delete(
         } => app.set_delete_archive(result.into()),
         Heard::Done { late: true, .. } => {}
         Heard::Aside | Heard::Lost => app.set_delete_archive(
-            "An archive stopped answering; whether these are on it is not known.".into(),
+            "An archive isn't reachable; unknown whether these are on it.".into(),
         ),
     }
 }
@@ -1567,12 +1558,9 @@ pub(crate) fn delete_words(
     match unknown {
         0 => {}
         1 if n == 1 => words.push_str(&format!(
-            " Whether it is {also} {an} could not be told without reading it whole \
-             (Back up's sheet reads it)."
+            " Unsure whether it is {also} {an}; Back up checks it fully."
         )),
-        u => words.push_str(&format!(
-            " {u} could not be told without reading them whole (Back up's sheet reads them)."
-        )),
+        u => words.push_str(&format!(" {u} unsure; Back up checks them fully.")),
     }
     let quiet: Vec<&str> = labels
         .iter()
@@ -1581,11 +1569,7 @@ pub(crate) fn delete_words(
         .map(|(l, _)| l.as_str())
         .collect();
     if !quiet.is_empty() {
-        words.push_str(&format!(
-            " {} did not answer, and {} not looked at.",
-            quiet.join(", "),
-            if quiet.len() == 1 { "was" } else { "were" }
-        ));
+        words.push_str(&format!(" Not reachable: {}.", quiet.join(", ")));
     }
     words.trim().to_string()
 }
@@ -1619,9 +1603,9 @@ pub(crate) fn toggle(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>,
         );
         app.set_status(
             if on {
-                format!("{name} is an archive: Back up copies to it, Bring back from it")
+                format!("{name} is now an archive")
             } else {
-                format!("{name} is a plain root again; its files are where they were")
+                format!("{name} is no longer an archive; nothing moved")
             }
             .into(),
         );
@@ -1886,21 +1870,20 @@ pub(crate) mod tests {
         );
         assert_eq!(
             delete_words(&labels, &[true, false], &on(&[&[], &[0]]), false),
-            "1 of these is on no archive. Cloud did not answer, and was not looked at."
+            "1 of these is on no archive. Not reachable: Cloud."
         );
         // Unknowns: never counted as on, and said.
         let mut some = on(&[&[0], &[], &[]]);
         some[1].unknown = vec![0];
         assert_eq!(
             delete_words(&labels, &both, &some, false),
-            "1 of these is on no archive. 1 could not be told without reading them whole \
-             (Back up's sheet reads them)."
+            "1 of these is on no archive. 1 unsure; Back up checks them fully."
         );
         let mut all = on(&[&[0], &[]]);
         all[1].unknown = vec![0];
         assert_eq!(
             delete_words(&labels, &both, &all, false),
-            "1 could not be told without reading them whole (Back up's sheet reads them)."
+            "1 unsure; Back up checks them fully."
         );
         // The archive's own frames: the other roots looked at, and the
         // words say so.
@@ -2020,7 +2003,7 @@ pub(crate) mod tests {
             chips.iter().map(|c| c.archive).collect::<Vec<_>>(),
             [false, true]
         );
-        assert!(app.get_status().contains("is an archive"));
+        assert!(app.get_status().contains("is now an archive"));
         crate::testing::remove_scratch(state, &dir);
     }
 
@@ -2264,14 +2247,14 @@ pub(crate) mod tests {
         assert_eq!(land_once(&state, &app, &worker), 1);
         assert!(!app.get_archive_running());
         assert!(
-            app.get_status().contains("set aside"),
+            app.get_status().contains("timed out"),
             "{}",
             app.get_status()
         );
         // Meanwhile, no other copy to that archive.
         app.invoke_archive_header_pressed(0);
         assert!(
-            app.get_status().contains("has not come back from nas yet"),
+            app.get_status().contains("still waiting on nas"),
             "{}",
             app.get_status()
         );
@@ -2299,7 +2282,7 @@ pub(crate) mod tests {
         land_once(&state, &app, &worker);
         let status = app.get_status();
         assert!(
-            status.starts_with("the copy set aside earlier came back: backed up 0 frames to nas"),
+            status.starts_with("the timed-out copy finished: backed up 0 frames to nas"),
             "{status}"
         );
         assert!(status.contains("canceled, 4 frames not copied"), "{status}");
@@ -2548,8 +2531,7 @@ pub(crate) mod tests {
             local.join("other-shoot").to_string_lossy()
         );
         assert!(
-            app.get_archive_dest_note()
-                .contains("was not backed up from local"),
+            app.get_archive_dest_note().contains("Not from local"),
             "{}",
             app.get_archive_dest_note()
         );
@@ -2617,8 +2599,7 @@ pub(crate) mod tests {
         assert_eq!(dest, local.join("never-here").to_string_lossy());
         assert_ne!(dest, local.to_string_lossy());
         assert!(
-            app.get_archive_dest_note()
-                .contains("was not backed up from local"),
+            app.get_archive_dest_note().contains("Not from local"),
             "{}",
             app.get_archive_dest_note()
         );

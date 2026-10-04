@@ -160,15 +160,9 @@ fn folders_of(frames: &[PathBuf]) -> Vec<PathBuf> {
 /// What the sheet says will happen, by what it offers.
 pub(crate) fn offer_note(offer: Offer) -> &'static str {
     match (offer.trash, offer.permanent) {
-        (true, false) => "They go to the system trash, where they can be restored from.",
-        (true, true) => {
-            "The trash refused files from this folder earlier. Try the trash again, \
-             or delete them permanently. A permanent delete cannot be undone."
-        }
-        _ => {
-            "There is no system trash here, so they will be deleted permanently. \
-             This cannot be undone."
-        }
+        (true, false) => "They go to the trash.",
+        (true, true) => "The trash failed here earlier; a permanent delete can't be undone.",
+        _ => "No trash here: this is permanent.",
     }
 }
 
@@ -614,7 +608,7 @@ mod tests {
         assert_eq!(app.get_delete_title(), "Delete 2 frames?");
         let text = app.get_delete_text();
         assert!(text.starts_with("2 frames and 3 sidecars, from "), "{text}");
-        assert!(app.get_delete_note().contains("cannot be undone"));
+        assert!(app.get_delete_note().contains("can't be undone"));
 
         app.invoke_delete_answered(2);
         land_all(&state, &app, &worker);
@@ -674,7 +668,7 @@ mod tests {
         );
         assert_eq!(app.get_delete_trash(), TRASH_SUPPORTED);
         assert!(!app.get_delete_permanent());
-        assert!(app.get_delete_note().contains("system trash"));
+        assert!(app.get_delete_note().contains("trash"));
         app.invoke_delete_answered(2);
         land_all(&state, &app, &worker);
         assert!(!app.get_delete_open());
