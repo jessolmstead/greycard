@@ -117,6 +117,18 @@ const MID_GREY: f64 = 0.18;
 /// darktable's `_epsilon`: the guard on the scale's divisions.
 const EPSILON: f64 = 1e-6;
 
+/// The largest channel, scene-linear before the gain, from which
+/// [`Agx::apply`] returns white without working it out: 2^64. Every
+/// color with a channel past 2^6 is exactly white already (the inset
+/// mixes at least a twentieth of the largest into every channel, and
+/// the curve is past white for all three), and the look's power
+/// stretches the log, so
+/// a channel near 2^108 is past `f32` once the look has had it, and the
+/// infinities after it made a NaN (seed 56, edit 295 of the random
+/// parity test: whites and exposures stacked under two masks to 1e33).
+/// The shader's `AGX_WHITE_PAST` is this.
+pub const WHITE_PAST: f32 = 18_446_744_073_709_551_616.0;
+
 /// Jed Smith's sigmoid about a pivot: a toe and a shoulder, each
 /// `scale * t / (1 + t^power)^(1/power)` of the slope's run from the
 /// pivot, scaled so the curve reaches (0, 0) and (1, 1) exactly, with
@@ -607,10 +619,10 @@ impl Agx {
     /// the formation's rail and inset would give the inset color back
     /// as it is, so it is handed straight on with its log; otherwise it
     /// goes the long way. Anything not finite is white, as `tone` takes
-    /// an infinity to white.
+    /// an infinity to white, and so is anything past [`WHITE_PAST`].
     #[inline]
     pub fn apply(&self, c: [f32; 3]) -> [f32; 3] {
-        if c.iter().any(|v| !v.is_finite()) {
+        if c.iter().any(|v| !v.is_finite() || *v >= WHITE_PAST) {
             return [1.0; 3];
         }
         let (log2, inset) = self.look_inset(c.map(|v| v * self.gain));
@@ -912,6 +924,7 @@ mod tests {
             ("AGX_PIVOT_X", agx.curve.pivot_x),
             ("AGX_TOE_SCALE", agx.curve.toe_scale),
             ("AGX_SHOULDER_SCALE", agx.curve.shoulder_scale),
+            ("AGX_WHITE_PAST", WHITE_PAST),
         ];
         let literals: Vec<f32> = wanted
             .iter()
@@ -997,6 +1010,49 @@ mod tests {
                 "{label}: {}",
                 ds[ds.len() - 1]
             );
+        }
+    }
+
+    /// Any color with a channel at 2^6 or past it is
+    /// white on both constructions, every kind of color, so returning
+    /// white past `WHITE_PAST` changes no answer; and it is white to
+    /// the top of `f32` rather than a NaN.
+    #[test]
+    fn past_the_top_every_color_is_white() {
+        // Colors of every kind, their largest channel one: the
+        // primaries and secondaries with the rest exactly zero, and a
+        // spread of mixtures.
+        let mut colors: Vec<[f32; 3]> = vec![
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 1.0, 1.0],
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0, 1.0],
+        ];
+        let steps = [0.0, 1e-6, 1e-3, 0.05, 0.3, 0.7, 1.0];
+        for &a in &steps {
+            for &b in &steps {
+                colors.extend([[1.0, a, b], [a, 1.0, b], [a, b, 1.0]]);
+            }
+        }
+        for agx in [&*BLENDER_PUNCHY, &Agx::blender_punchy_soft()] {
+            for c in &colors {
+                // White from 2^6 on, so the shortcut at WHITE_PAST is
+                // the answer the arithmetic gives, not a new one.
+                for k in [6, 8, 12, 20, 32, 48, 63] {
+                    let s = 2f32.powi(k);
+                    let out = agx.apply(c.map(|v| v * s));
+                    assert_eq!(out, [1.0; 3], "{c:?} at 2^{k}");
+                }
+                // And past it to the top of f32, where the look's
+                // stretched log once overflowed into a NaN.
+                for s in [WHITE_PAST, 1e30, 1e33, f32::MAX] {
+                    let out = agx.apply(c.map(|v| v * s));
+                    assert_eq!(out, [1.0; 3], "{c:?} at {s:e}");
+                }
+            }
         }
     }
 

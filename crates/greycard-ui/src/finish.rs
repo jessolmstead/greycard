@@ -599,7 +599,8 @@ pub fn pick(
         hue,
         encoded,
         luma,
-        lightness: oklab(shaded)[0],
+        lightness: oklab(shaded.map(|v| v * shade_fade(shaded[0].max(shaded[1]).max(shaded[2]))))
+            [0],
     }
 }
 
@@ -798,9 +799,65 @@ pub fn shade(c: [f32; 3], curves: &CurveLut) -> [f32; 3] {
     shade_by(c, |l| color_shift(curves, l))
 }
 
-/// To Oklab, a and b shifted by `shift` of the lightness, back.
+/// The light, linear and in the largest channel, under which the color
+/// shifts read a pixel as black, and from which they read it as it is,
+/// faded in between. Oklab's lightness is a cube root, unbounded in
+/// slope at zero, and a shift of a and b at lightness zero (a color
+/// curve's end at black, a grading's shadows wheel) gives black a
+/// color that the lightness then moves by its cube. A pixel the point
+/// curves take to black comes out of them with a residue that differs
+/// between the CPU and the shader: a mask's weight a rounding short of
+/// one leaves 6e-8 of the encoded value before the master curve, whose
+/// table rises at most 255 times as fast (a cell of 1/255 holds at most
+/// the whole range), so up to 1.5e-5 encoded and 1.2e-6 linear, and a
+/// fused multiply-add per local adds its own. Read through the cube
+/// root, 1e-9 is a lightness of 1e-3 and 3e-7 of 7e-3, and the shift
+/// at black turned them into casts 2.7 to 6.8 levels apart (seeds 13,
+/// 50, 98 and 138 of the random parity test): the export's own color
+/// there was set by light a thousandth of a level deep, and a mask
+/// weight of 0.99999994 rather than 1 moved it. The black point is
+/// over that bound with a margin, and the fade to `SHADE_LIGHT` is as
+/// short as the parity test passes with, so as few pixels as can be
+/// are read differently: under a strong shift at black those pixels
+/// do change, since the cast the shift gave them was a steep function
+/// of their sub-level light (the notes measure it). The shader's
+/// `SHADE_BLACK` and `SHADE_LIGHT` are these.
+pub(crate) const SHADE_BLACK: f32 = 2e-6;
+pub(crate) const SHADE_LIGHT: f32 = 4e-6;
+
+/// How much of its light the color shifts read in a pixel whose
+/// largest channel is `top`: none under [`SHADE_BLACK`], all of it
+/// from [`SHADE_LIGHT`], and between them the cube of `t (2 - t)`, `t`
+/// the way across. The lightness read, a cube root, is then the
+/// pixel's own scaled by `t (2 - t)`: rising from black with a bounded
+/// slope, where a smoothstep's square at its foot would give the cube
+/// root back a slope without bound, and meeting the pixel's own at
+/// `SHADE_LIGHT` with no corner, where the cube of `t` alone met it
+/// three times as steep.
+#[inline]
+fn shade_fade(top: f32) -> f32 {
+    let t = ((top - SHADE_BLACK) / (SHADE_LIGHT - SHADE_BLACK)).clamp(0.0, 1.0);
+    let g = t * (2.0 - t);
+    g * g * g
+}
+
+/// To Oklab, a and b shifted by `shift` of the lightness, back. Under
+/// [`SHADE_LIGHT`] the shift is worked out on the light faded by
+/// [`shade_fade`] and its change added to the pixel as it is, so a
+/// residue under [`SHADE_BLACK`] is read as black and kept as light.
 #[inline]
 pub fn shade_by(c: [f32; 3], shift: impl Fn(f32) -> [f32; 2]) -> [f32; 3] {
+    let top = c[0].max(c[1]).max(c[2]);
+    if top >= SHADE_LIGHT {
+        return shade_full(c, shift);
+    }
+    let read = c.map(|v| v * shade_fade(top));
+    let shaded = shade_full(read, shift);
+    [0, 1, 2].map(|k| c[k] - read[k] + shaded[k])
+}
+
+#[inline]
+fn shade_full(c: [f32; 3], shift: impl Fn(f32) -> [f32; 2]) -> [f32; 3] {
     OKLAB.with(|ok| {
         let lms = apply3(&ok.to_lms, c).map(|v| v.abs().cbrt().copysign(v));
         let mut lab = apply3(&LMS_TO_LAB, lms);
@@ -2302,6 +2359,105 @@ mod tests {
         .bake();
         let b = shade(grey, &cool);
         assert!(b[2] > grey[2] && b[0] < grey[0] && b[1] < grey[1], "{b:?}");
+    }
+
+    /// A color curve whose end at black is off neutral gives black a
+    /// color, and the residue a rounding leaves in a pixel the point
+    /// curves took to black takes that same color, not one the cube
+    /// root has moved: the shift reads light under `SHADE_BLACK` as
+    /// black, reads it faded in up to `SHADE_LIGHT`, and from there is
+    /// what it was; under it the pixel keeps its own light. The
+    /// shader's two literals are these.
+    #[test]
+    fn the_color_shifts_are_still_at_black() {
+        let blue_black = Curves {
+            blue_yellow: vec![[0.0, 0.0], [0.5, 0.5], [1.0, 0.5]],
+            ..Default::default()
+        }
+        .bake();
+        let black = shade([0.0; 3], &blue_black);
+        assert!(
+            black[2] > 0.02,
+            "black is given the curve's color: {black:?}"
+        );
+        // Residues of the sizes the parity test found (1e-9 to 2.7e-7,
+        // in one channel or all three) and up to the black point take
+        // black's color, their own light added and nothing else.
+        for r in [1e-9, 2.3e-9, 1.5e-8, 2.7e-7, 1.2e-6, 1.9e-6] {
+            for c in [[r, 0.0, 0.0], [0.0, r, r], [r; 3]] {
+                let want = [0, 1, 2].map(|k| c[k] + black[k]);
+                assert_eq!(shade(c, &blue_black), want, "{c:?}");
+            }
+        }
+        // Without the fade the same residue moved the color: a
+        // lightness of 6.5e-3 under a shift at black, by its cube.
+        // Here 0.8 of a level; the parity test's edits, with a dark
+        // channel through the output matrix and a look table after,
+        // made such residues 2.7 to 6.8.
+        let unfaded = |c: [f32; 3]| {
+            OKLAB.with(|ok| {
+                let lms = apply3(&ok.to_lms, c).map(|v| v.abs().cbrt().copysign(v));
+                let mut lab = apply3(&LMS_TO_LAB, lms);
+                let [da, db] = color_shift(&blue_black, lab[0]);
+                lab[1] += da;
+                lab[2] += db;
+                let lms = apply3(&LAB_TO_LMS, lab).map(|v| v * v * v);
+                apply3(&ok.from_lms, lms)
+            })
+        };
+        let srgb = crate::export::Space::Srgb.matrix();
+        let out = |c: [f32; 3]| apply3(&srgb, c).map(|v| encode(v.clamp(0.0, 1.0)));
+        let levels = |a: [f32; 3], b: [f32; 3]| {
+            let (a, b) = (out(a), out(b));
+            (0..3)
+                .map(|k| 255.0 * (a[k] - b[k]).abs())
+                .fold(0.0f32, f32::max)
+        };
+        let moved = levels(unfaded([2.7e-7; 3]), black);
+        let kept = levels(shade([2.7e-7; 3], &blue_black), black);
+        assert!(
+            moved > 0.5 && kept < 0.05,
+            "a residue moved black {moved} levels unfaded, {kept} faded"
+        );
+        // From SHADE_LIGHT on, the fade is no change at all, and
+        // between the two it rises without a step.
+        for v in [SHADE_LIGHT, 1e-3, 0.01, 0.3, 1.0] {
+            let c = [v, 0.5 * v, 0.25 * v];
+            assert_eq!(shade(c, &blue_black), unfaded(c), "{c:?}");
+        }
+        let mut last = shade([SHADE_BLACK; 3], &blue_black);
+        for i in 1..=200 {
+            let v = SHADE_BLACK + (SHADE_LIGHT - SHADE_BLACK) * i as f32 / 200.0;
+            let now = shade([v; 3], &blue_black);
+            let step = levels(now, last);
+            assert!(step < 0.1, "a step of {step} levels at {v:e}");
+            last = now;
+        }
+        // And where the curve is level at black, the pixel's light is
+        // untouched through the fade, to a rounding.
+        let level = Curves {
+            red_green: vec![[0.0, 0.5], [0.3, 0.5], [0.6, 0.8], [1.0, 0.5]],
+            ..Default::default()
+        }
+        .bake();
+        for v in [1e-6, 2.5e-6, 3.5e-6] {
+            let c = [v, 0.5 * v, 0.25 * v];
+            let after = shade(c, &level);
+            for k in 0..3 {
+                assert!((after[k] - c[k]).abs() < 1e-3 * v, "{c:?} {after:?}");
+            }
+        }
+        let shader = include_str!("viewport.wgsl");
+        for (name, value) in [("SHADE_BLACK", SHADE_BLACK), ("SHADE_LIGHT", SHADE_LIGHT)] {
+            let prefix = format!("const {name}: f32 = ");
+            let line = shader.lines().find(|l| l.starts_with(&prefix)).expect(name);
+            let literal: f32 = line
+                .trim_start_matches(&prefix)
+                .trim_end_matches(';')
+                .parse()
+                .unwrap();
+            assert_eq!(literal, value, "the shader's {name}");
+        }
     }
 
     #[test]

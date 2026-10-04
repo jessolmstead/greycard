@@ -10,6 +10,14 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A channel pushed past 2^64 under AgX exported black (a NaN); it is
+  white, as every color past 2^6 already was. A color shift at black
+  (a shadows wheel, a color curve's end) no longer turns light under
+  2e-6 into a cast of whole levels that differed between the screen
+  and the export; renders change only in near-black under a strong
+  shift there, by at most 3 levels for a wheel and up to black's full
+  cast across a crushed toe. The random parity test passes seeds 1 to
+  150 on NVIDIA and lavapipe and 1 to 40 on RADV (§239)
 - The library refit under AgX, and `--match-compare DIR`: the camera
   match's own sample, develop, registration and fit under both display
   curves on the same frames, headless, writing no table, with a report

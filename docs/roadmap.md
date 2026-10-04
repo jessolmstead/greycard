@@ -15,16 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] The random parity test fails past the seeds it was set from: the
-      cap and the tolerance were set from seeds 1 to 10 (§221), which
-      pass on NVIDIA and lavapipe; past them, with the draw per channel
-      or AgX since §232, seed 23 edit 69 fails the 15 percent steep cap
-      on NVIDIA at 15.49 percent, 0.6 levels apart. Seeds 12, 16, 29
-      and 32, which failed under the earlier draws (29 by 7.7 levels,
-      32 at 29.7 percent steep, and 16 and 12 at Hold hue to white's
-      chroma weight, which is gone), pass on NVIDIA. Run the seeds
-      further out on both drivers, find what the failing edits share,
-      and fix the divergence or justify the bound
 - [ ] Auto white balance seems to lean way too warm. (tbf lightroom does too)
 - [ ] The Settings sheet's previews cap can show the file's value, not
       the live one: `on_settings_asked` takes the thumbnail cache with
@@ -242,7 +232,9 @@ ask for first.
       turns them into a cast of whole levels; the random parity test
       draws its points from 0.05 for that reason. Decide the axis's
       floor or shape so the curves are stable at black, and lift the
-      draw back to the panel's 0.01
+      draw back to the panel's 0.01. §239's fade at black (a shift reads
+      light under 2e-6 as black) may be that floor; try the 0.01 draw
+      over the seed sweep
 - [ ] Camera match follow-ups (§181): a group's error held out over
       every frame rather than four (the four-frame figure is off by up
       to 0.004 and too noisy to size a gap, §238), and that error deciding whether a

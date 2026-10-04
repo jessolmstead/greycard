@@ -1019,10 +1019,30 @@ fn color_scale(chroma: f32, hue_degrees: f32, look: Look) -> f32 {
     return sat_scale * vib_scale;
 }
 
+// `SHADE_BLACK` and `SHADE_LIGHT` in `finish.rs`: the light the color
+// shifts read as black, and from which they read it as it is.
+const SHADE_BLACK: f32 = 2e-6;
+const SHADE_LIGHT: f32 = 4e-6;
+
 // The color curves, as `shade` in `finish.rs`: to Oklab, a and b
 // shifted by the global table at the lightness and each local's by
 // its weight, back.
-fn shade(c: vec3<f32>, count: u32, weights: array<f32, 16>) -> vec3<f32> {
+fn shade(c_in: vec3<f32>, count: u32, weights: array<f32, 16>) -> vec3<f32> {
+    // Under `SHADE_LIGHT` the shift is read on the light faded to black
+    // and its change added to the pixel as it is, as `shade_by` does:
+    // the cube root's slope at zero would make a rounding's residue a
+    // cast.
+    let top = max(c_in.x, max(c_in.y, c_in.z));
+    if (top >= SHADE_LIGHT) {
+        return shade_full(c_in, count, weights);
+    }
+    let t = clamp((top - SHADE_BLACK) / (SHADE_LIGHT - SHADE_BLACK), 0.0, 1.0);
+    let g = t * (2.0 - t);
+    let read = c_in * (g * g * g);
+    return c_in - read + shade_full(read, count, weights);
+}
+
+fn shade_full(c: vec3<f32>, count: u32, weights: array<f32, 16>) -> vec3<f32> {
     let lms = signed_cbrt(vec3<f32>(dot(p.ok_in0.xyz, c), dot(p.ok_in1.xyz, c), dot(p.ok_in2.xyz, c)));
     let lab = LMS_TO_LAB * lms;
     let v = clamp(lab.x, 0.0, 1.0) * 255.0;
@@ -1244,8 +1264,11 @@ fn tone(scene: vec3<f32>) -> vec3<f32> {
 // hue shift kept against the HSV hue before the curve, and the outset.
 // The constants are what `Agx::blender_punchy` computes; `agx.rs` says
 // where each comes from. Anything not finite, found by its bits as
-// `tone` finds a NaN, is white.
+// `tone` finds a NaN, is white, and so is a channel at or past
+// `AGX_WHITE_PAST` (`agx::WHITE_PAST`, 2^64): white long before it, and
+// past f32 inside the look long after.
 const AGX_GAIN: f32 = 2.4658713;
+const AGX_WHITE_PAST: f32 = 18446744073709551616.0;
 const AGX_LOG_MIN: f32 = -12.4739312;
 const AGX_LOG_RANGE: f32 = 13.872135;
 const AGX_LOOK_LOG_MIN: f32 = -12.47393;
@@ -1423,7 +1446,7 @@ fn agx_form(scene: vec3<f32>) -> vec3<f32> {
 // straight from the inset space; otherwise the long way.
 fn tone_agx(scene: vec3<f32>) -> vec3<f32> {
     let bits = bitcast<vec3<u32>>(scene) & vec3<u32>(0x7fffffffu);
-    if (any(bits >= vec3<u32>(0x7f800000u))) {
+    if (any(bits >= vec3<u32>(0x7f800000u)) || any(scene >= vec3<f32>(AGX_WHITE_PAST))) {
         return vec3<f32>(1.0);
     }
     let l = agx_look_log2(scene * AGX_GAIN);

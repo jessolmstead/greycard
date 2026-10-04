@@ -4336,7 +4336,15 @@ mod tests {
         cpu: [f32; 3],
         gpu: [f32; 3],
         steep: usize,
+        /// The steep pixels among the lit ones (`lit`), which
+        /// `STEEP_SHARE` holds.
+        steep_lit: usize,
         wide: usize,
+        /// Channels whose answers the finest nudges alone spread
+        /// wider than the tolerance (`FINEST`).
+        unsettled: usize,
+        /// Channels checked again against the finer nudges (`REFINED`).
+        refined: usize,
         /// The CPU's answers in the worst channel, as it is first.
         answers: Vec<f32>,
     }
@@ -4382,6 +4390,48 @@ mod tests {
     /// and 12 levels, outside the bracket at 5 000 edits; not at 400).
     const NUDGE: f32 = 1e-5;
     const NUDGES: [f32; 4] = [1.0, 0.3, 0.1, 0.03];
+    /// The finest nudges' answers, the last of the run's: the smallest
+    /// step, both signs, each channel. That step, 3e-7 of the largest
+    /// channel, is two to five of its roundings; where it alone spreads
+    /// a channel's answers wider than the tolerance, the CPU's answer
+    /// there is not settled at f32's precision, and the GPU, whose
+    /// arithmetic is allowed about as much, is held to the range of
+    /// all the answers rather than to the nearest one. The answers
+    /// there are samples of a continuum steep enough that the GPU lands
+    /// between them: seed 55 edit 121, a channel the Oklab pass leaves
+    /// at a two-thousandth of the largest, taken by a contrast under one
+    /// and a point curve rising at zero, answers 57 to 242 levels and
+    /// lavapipe at 134, 25 levels from the nearest; and three more past
+    /// seed 10, by 2.7 to 4.5 levels, on one driver or two. A black
+    /// still fails inside a range that does not reach it, and a pixel
+    /// whose finest answers agree is held to the nearest as before.
+    const FINEST: usize = 2 * 3;
+    /// The most channels of an edit that may be unsettled, and the most
+    /// an edit may have on average over the run: the range they are
+    /// held to is a looser check than the nearest answer, nearly all of
+    /// them are in the frame's empty channels, which the steep cap
+    /// does not count, and a change that made those answers chaotic in
+    /// a few edits in a hundred would otherwise pass. Over seeds 1 to
+    /// 150 the most in one edit is 630 of the frame's 4608 channels
+    /// (seed 133, edit 81, every steep pixel of it empty), then 425
+    /// (seed 74, edit 395); the most in a run is 631, 1.6 an edit. The
+    /// caps are a half and three times over those.
+    const UNSETTLED_MAX: usize = 1000;
+    const UNSETTLED_MEAN: f64 = 5.0;
+    /// How many steps the finer nudges take from `NUDGE` down to the
+    /// finest, evenly in their logarithm, each channel alone and all
+    /// three together, both signs: run for an edit only where a channel
+    /// of the GPU's lies between two of the answers and within the
+    /// tolerance of none, which a continuous answer steep at the scale
+    /// of the nudges can do (seed 129 edit 102 on lavapipe: a channel
+    /// the Oklab pass takes from nothing to 0.055, which the blacks'
+    /// crush at 0.054 leaves at 9e-4 and a steep point curve lifts,
+    /// answers 186 to 255 levels and the GPU 7.9 from the nearest of
+    /// them). A value off every answer of the finer sampling still
+    /// fails, so an answer that jumps cannot pass between its sides.
+    const REFINED: usize = 64;
+    /// How far an encoded channel may be from the CPU's answers.
+    const TOLERANCE: f32 = 2.5 / 255.0;
     /// The spread of a channel's answers past which it counts as wide,
     /// a few of which every run has: the run prints how many.
     const WIDE: f32 = 32.0 / 255.0;
@@ -4390,13 +4440,22 @@ mod tests {
     /// more than the tolerance itself does. A narrower width, a level,
     /// put a few edits at the sliders' corners over `STEEP_SHARE`.
     const STEEP: f32 = 2.5 / 255.0;
-    /// The most of an edit's pixels that may be steep: past it the
-    /// bracket is checking too little of the picture for the edit to
-    /// count, and it fails. Set from seeds 1 to 10, whose steepest edit
-    /// is 11.1% (seed 4, edit 372; the same on every device, since it
-    /// is the CPU's own spread), with a margin; `STEEP_MEAN` is what
-    /// holds the run as a whole.
-    const STEEP_SHARE: f64 = 0.15;
+    /// The most of an edit's lit pixels (`lit` in the test: every
+    /// channel holds more than the nudge puts in) that may be steep:
+    /// past it the bracket is checking too little of the picture for
+    /// the edit to count, and it fails. The frame's other pixels, 461
+    /// of its 1536 besides the black row (the rows of lone primaries
+    /// and the Oklab field's colors clipped at a channel), are steep
+    /// wherever the edit has a curve steep at zero, as a point at the
+    /// panel's 0.01 rising makes it: counted with them, the steepest
+    /// edit of seeds 1 to 10 was 11.1% and the cap of 15% set from it
+    /// failed five edits in 40 000 past seed 10 (seed 74 edit 395 at
+    /// 21.4%, and every steep pixel of the five with an empty channel,
+    /// none lit; the same on every device, since it is the CPU's own
+    /// spread). The lit share's steepest over seeds 1 to 150 is 0.78%
+    /// (seed 63, edit 133); a break that made answers jump shows in
+    /// many times that. `STEEP_MEAN` holds the run as a whole.
+    const STEEP_SHARE: f64 = 0.03;
     /// The most of the pixels that may be steep over the whole run, so
     /// that a change that made every answer jump cannot pass by
     /// widening every bracket a little.
@@ -4667,6 +4726,9 @@ mod tests {
         renderer.upload(&crate::worker::Halves::from_image(&image, None));
         // The picture with each channel in turn moved by `NUDGE` of the
         // pixel's largest, up and down.
+        // `FINEST` is the last step's answers: the steps run from the
+        // largest down, both signs of each, three channels of each sign.
+        assert!(NUDGES.windows(2).all(|p| p[0] > p[1]));
         let nudged: Vec<WorkingImage> = NUDGES
             .into_iter()
             .flat_map(|step| [step, -step])
@@ -4678,6 +4740,42 @@ mod tests {
                     px[c] += step * NUDGE * top;
                 }
                 n
+            })
+            .collect();
+        assert_eq!(nudged.len(), NUDGES.len() * FINEST);
+        // The finer nudges, for a channel the GPU puts between two of
+        // the answers and near none (`REFINED`).
+        let fine: Vec<WorkingImage> = (0..REFINED)
+            .map(|k| 0.03f32.powf(k as f32 / (REFINED - 1) as f32))
+            .flat_map(|step| [step, -step])
+            .flat_map(|step| (0..4).map(move |c| (step, c)))
+            .map(|(step, c)| {
+                let mut n = seen.clone();
+                for px in n.data.chunks_mut(3) {
+                    let top = px.iter().fold(0.0f32, |a, &b| a.max(b));
+                    // Each channel alone, and all three together.
+                    for (k, v) in px.iter_mut().enumerate() {
+                        if c == 3 || c == k {
+                            *v += step * NUDGE * top;
+                        }
+                    }
+                }
+                n
+            })
+            .collect();
+        // The lit pixels: every channel holds more than the largest
+        // nudge puts into it. In the others a channel is empty, or as
+        // good as, and the nudge is not a small change of it but light
+        // where there was none, which a curve steep at zero (a point at
+        // the panel's 0.01, the encoding's 12.92 under it) makes whole
+        // levels: an edit with such a curve makes every one of them
+        // steep, the same on any device.
+        let lit: Vec<bool> = seen
+            .data
+            .chunks(3)
+            .map(|px| {
+                let top = px.iter().fold(0.0f32, |a, &b| a.max(b));
+                top > 0.0 && px.iter().all(|&v| v > NUDGE * top)
             })
             .collect();
         // One case through both sides.
@@ -4738,13 +4836,17 @@ mod tests {
             };
             let cpu = finish(&seen, &global);
             let around: Vec<Vec<f32>> = nudged.iter().map(|n| finish(n, &global)).collect();
+            let mut refined: Option<Vec<Vec<f32>>> = None;
             let mut out = Outcome {
                 worst: 0.0,
                 at: (0, 0, 0),
                 cpu: [0.0; 3],
                 gpu: [0.0; 3],
                 steep: 0,
+                steep_lit: 0,
                 wide: 0,
+                unsettled: 0,
+                refined: 0,
                 answers: Vec::new(),
             };
             for y in 0..h {
@@ -4767,13 +4869,38 @@ mod tests {
                             .fold((here[c], here[c]), |(lo, hi), v| (lo.min(v), hi.max(v)));
                         steep |= hi - lo >= STEEP;
                         out.wide += usize::from(hi - lo > WIDE);
-                        let d = if here[c].is_nan() {
+                        // Where the finest nudges alone, a few roundings
+                        // of the largest channel, spread the answers
+                        // wider than the tolerance, the CPU's own answer
+                        // is not settled at f32's precision, and the GPU
+                        // is held to their range instead (`FINEST`).
+                        let (flo, fhi) = std::iter::once(here[c])
+                            .chain(around[around.len() - FINEST..].iter().map(|a| a[i + c]))
+                            .fold((here[c], here[c]), |(lo, hi), v| (lo.min(v), hi.max(v)));
+                        let unsettled = fhi - flo > TOLERANCE;
+                        out.unsettled += usize::from(unsettled);
+                        let mut d = if here[c].is_nan() {
                             f32::NAN
+                        } else if unsettled {
+                            (lo - gpu[c]).max(gpu[c] - hi).max(0.0)
                         } else {
                             answers()
                                 .map(|v| (v - gpu[c]).abs())
                                 .fold(f32::INFINITY, f32::min)
                         };
+                        // Between two answers and near none: the finer
+                        // sampling of the same neighborhood decides
+                        // (`REFINED`).
+                        if d > TOLERANCE && gpu[c] > lo && gpu[c] < hi {
+                            let refined = refined.get_or_insert_with(|| {
+                                fine.iter().map(|n| finish(n, &global)).collect()
+                            });
+                            d = refined
+                                .iter()
+                                .map(|a| (a[i + c] - gpu[c]).abs())
+                                .fold(d, f32::min);
+                            out.refined += 1;
+                        }
                         if d > out.worst || (d.is_nan() && !out.worst.is_nan()) {
                             out.worst = d;
                             out.at = (x, y, c);
@@ -4783,17 +4910,23 @@ mod tests {
                         }
                     }
                     out.steep += usize::from(steep);
+                    out.steep_lit += usize::from(steep && lit[y * w + x]);
                 }
             }
             out
         };
-        let tolerance = 2.5 / 255.0;
+        let tolerance = TOLERANCE;
         let pixels = (w * h) as f64;
+        let lit_pixels = lit.iter().filter(|l| **l).count() as f64;
         let mut failed = Vec::new();
         let mut overall = 0.0f32;
         let mut steep_sum = 0.0f64;
         let mut wide = 0usize;
         let mut steepest = (0.0f64, 0u64);
+        let mut steepest_lit = (0.0f64, 0u64);
+        let mut unsettled = 0usize;
+        let mut most_unsettled = (0usize, 0u64);
+        let mut refined = 0usize;
         let range = match only {
             Some(k) => k..k + 1,
             None => 0..edits,
@@ -4806,30 +4939,43 @@ mod tests {
                 cpu,
                 gpu,
                 steep,
+                steep_lit,
                 wide: n,
+                unsettled: u,
+                refined: r,
                 answers,
             } = run(&case);
             wide += n;
+            unsettled += u;
+            if u > most_unsettled.0 {
+                most_unsettled = (u, k);
+            }
+            refined += r;
             let share = steep as f64 / pixels;
+            let share_lit = steep_lit as f64 / lit_pixels;
             steep_sum += share;
             if share > steepest.0 {
                 steepest = (share, k);
             }
+            if share_lit > steepest_lit.0 {
+                steepest_lit = (share_lit, k);
+            }
             if !d.is_nan() {
                 overall = overall.max(d);
             }
-            let too_steep = share > STEEP_SHARE;
+            let too_steep = share_lit > STEEP_SHARE || u > UNSETTLED_MAX;
             if d <= tolerance && !too_steep {
                 continue;
             }
             let i = (y * w + x) * 3;
             eprintln!(
-                "seed {seed:#x} edit {k}: {:.1} levels from the nearest CPU answer at {x},{y} \
+                "seed {seed:#x} edit {k}: {:.1} levels from the CPU's answers at {x},{y} \
                  channel {c} (cpu {cpu:.4?}, gpu {gpu:.4?}); the pixel {:?}; \
-                 {:.1}% of pixels steep",
+                 {:.1}% of pixels steep, {:.1}% of the lit ones; {u} channels unsettled",
                 d * 255.0,
                 &seen.data[i..i + 3],
-                100.0 * share
+                100.0 * share,
+                100.0 * share_lit
             );
             eprintln!(
                 "  the CPU's answers there, in levels: {:?}",
@@ -4845,7 +4991,10 @@ mod tests {
                 for (b, name) in PARTS.iter().enumerate() {
                     let without = random_case(seed, k, skip | 1 << b, aspect, &pool, &tables);
                     let o = run(&without);
-                    if o.worst <= tolerance && o.steep as f64 / pixels <= STEEP_SHARE {
+                    if o.worst <= tolerance
+                        && o.steep_lit as f64 / lit_pixels <= STEEP_SHARE
+                        && o.unsettled <= UNSETTLED_MAX
+                    {
                         parts.push(*name);
                     }
                 }
@@ -4861,20 +5010,26 @@ mod tests {
                     case.space
                 );
             }
-            failed.push((k, d, share, parts));
+            failed.push((k, d, share_lit, parts));
         }
         let count = if only.is_some() { 1 } else { edits };
         let mean = steep_sum / count as f64;
         eprintln!(
-            "{count} edits, GPU against CPU: at most {:.2} levels from the nearest CPU answer, \
-             {} failing; steep pixels {:.3}% on average, most {:.2}% (edit {}); \
-             {wide} channels' answers over {:.0} levels apart; in {:.1} s",
+            "{count} edits, GPU against CPU: at most {:.2} levels from the CPU's answers, \
+             {} failing; steep pixels {:.3}% on average, most {:.2}% (edit {}), \
+             of the lit ones most {:.2}% (edit {}); {wide} channels' answers over {:.0} \
+             levels apart, {unsettled} unsettled, most {} (edit {}), {refined} refined; \
+             in {:.1} s",
             overall * 255.0,
             failed.len(),
             100.0 * mean,
             100.0 * steepest.0,
             steepest.1,
+            100.0 * steepest_lit.0,
+            steepest_lit.1,
             WIDE * 255.0,
+            most_unsettled.0,
+            most_unsettled.1,
             started.elapsed().as_secs_f64()
         );
         // A single edit replayed has no run to hold to the mean.
@@ -4883,16 +5038,22 @@ mod tests {
             "seed {seed:#x}: {:.2}% of pixels steep over the run",
             100.0 * mean
         );
+        let unsettled_mean = unsettled as f64 / count as f64;
+        assert!(
+            only.is_some() || unsettled_mean <= UNSETTLED_MEAN,
+            "seed {seed:#x}: {unsettled_mean:.1} channels an edit unsettled over the run"
+        );
         assert!(
             failed.is_empty(),
-            "seed {seed:#x}: {} edits failing (over {:.1} levels, or over {:.0}% steep): {:?}",
+            "seed {seed:#x}: {} edits failing (over {:.1} levels, over {:.0}% of the lit pixels \
+             steep, or over {UNSETTLED_MAX} channels unsettled): {:?}",
             failed.len(),
             tolerance * 255.0,
             STEEP_SHARE * 100.0,
             failed
                 .iter()
                 .map(|(k, d, s, p)| format!(
-                    "{k} ({:.1} levels, {:.1}% steep: {p:?})",
+                    "{k} ({:.1} levels, {:.1}% of the lit steep: {p:?})",
                     d * 255.0,
                     s * 100.0
                 ))
