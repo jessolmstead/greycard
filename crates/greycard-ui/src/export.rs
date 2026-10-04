@@ -343,6 +343,10 @@ pub struct Rendered {
 /// the developed picture before the geometry; it is read through
 /// the same mapping the masks are, so the export and the viewport read
 /// one plane at one place and the resize below cannot move it.
+///
+/// `white` is the develop's white and the profile it was resolved
+/// through, which the masks' own white balances are made matrices
+/// from (`finish::Local::of`), as the viewport makes them.
 #[allow(clippy::too_many_arguments)]
 pub fn render(
     image: &WorkingImage,
@@ -353,6 +357,7 @@ pub fn render(
     clip_level: f32,
     guide: Option<&finish::Guide>,
     kind: finish::Source,
+    white: Option<&greycard_edit::WhiteShift>,
 ) -> Rendered {
     let framed = image.width as f32;
     let fitted;
@@ -387,7 +392,7 @@ pub fn render(
         .take(finish::MAX_LOCALS)
         .map(|a| {
             let rasters = finish::rasterize(&a.mask, sh / sw, |i| learned.get(&(a.id, i)).cloned());
-            finish::Local::of(a, rasters)
+            finish::Local::of(a, rasters, white)
         })
         .collect();
     // A pixel of the image, through the resize and the frame, to the
@@ -1143,6 +1148,7 @@ mod tests {
                 1.0,
                 None,
                 finish::Source::Scene,
+                None,
             );
             let Pixels::Sixteen(p) = rendered.pixels else {
                 panic!("a TIFF is sixteen bits")
@@ -1228,6 +1234,7 @@ mod tests {
             1.0,
             None,
             finish::Source::Scene,
+            None,
         );
         let Pixels::Sixteen(p) = &rendered.pixels else {
             panic!("a TIFF is sixteen bits")
@@ -1255,6 +1262,7 @@ mod tests {
                 1.0,
                 None,
                 finish::Source::Scene,
+                None,
             ),
             &jpeg,
             &path,
@@ -1309,6 +1317,7 @@ mod tests {
                 1.0,
                 None,
                 finish::Source::Scene,
+                None,
             );
             let origin = Origin {
                 source_name: Some("IMG_0001.CR3".into()),
@@ -1419,6 +1428,7 @@ mod tests {
                 1.0,
                 None,
                 finish::Source::Scene,
+                None,
             );
             let path = dir.join(format!("m-{}.{}", policy.name(), format.extension()));
             write(&rendered, &settings, &path, Some(&metadata), &origin).unwrap();
@@ -1486,6 +1496,7 @@ mod tests {
                 1.0,
                 None,
                 finish::Source::Scene,
+                None,
             );
             mark(&mut r, settings).unwrap();
             let Pixels::Eight(p) = r.pixels else {

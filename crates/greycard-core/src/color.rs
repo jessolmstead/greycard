@@ -186,6 +186,52 @@ pub fn resolve_white_balance(
     Ok(wb)
 }
 
+/// A temperature and tint resolved through a profile alone: what
+/// [`resolve_white_balance`] does for [`WhitePoint::TempTint`], which
+/// needs nothing of the frame.
+pub fn white_balance_at(profile: &CameraProfile, temp_tint: TempTint) -> Result<WhiteBalance> {
+    Ok(WhiteBalance::from_temp_tint(
+        profile,
+        temp_tint,
+        &WORKING_SPACE,
+        CAT,
+    )?)
+}
+
+/// A white balance's camera to working matrix, rows, as [`apply3`]
+/// takes it; rawcolor hands it over in columns, for a GPU.
+pub fn matrix_rows(wb: &WhiteBalance) -> Matrix3 {
+    let cols = wb.matrix_f32();
+    std::array::from_fn(|r| std::array::from_fn(|c| cols[c][r]))
+}
+
+/// The working-space matrix that takes a picture developed at one white
+/// balance to another: back through the first's camera to working
+/// matrix (`base_rows`, rows) to camera space with its gains on, the
+/// gains' ratio, and through the second's matrix. Exact for the matrix
+/// and the gains; the demosaic and the highlight reconstruction saw the
+/// first's gains, which no matrix after them can change. `None` when
+/// the first matrix has no inverse.
+///
+/// The viewport's white balance preview, until the develop at the new
+/// white lands, and a local white balance, for good.
+pub fn white_shift(
+    base_gains: [f32; 3],
+    base_rows: Matrix3,
+    target_gains: [f32; 3],
+    target_rows: Matrix3,
+) -> Option<Matrix3> {
+    let inv = invert3(base_rows)?;
+    let mut scaled = target_rows;
+    for row in scaled.iter_mut() {
+        for (c, v) in row.iter_mut().enumerate() {
+            *v *= target_gains[c] / base_gains[c];
+        }
+    }
+    let m = mul3(scaled, inv);
+    m.iter().flatten().all(|v| v.is_finite()).then_some(m)
+}
+
 /// The illuminant the camera's as-shot white balance implies.
 pub fn as_shot_temp_tint(frame: &RawFrame, profile: &CameraProfile) -> Result<TempTint> {
     resolve_white_balance(frame, profile, WhitePoint::AsShot).map(|wb| wb.temp_tint)
@@ -501,6 +547,64 @@ pub(crate) mod tests {
     }
 
     const IDENTITY3: Matrix3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
+
+    #[test]
+    fn a_white_shift_lands_where_a_develop_at_the_target_would() {
+        let frame = frame_with(vec![
+            Calibration {
+                illuminant: A,
+                color_matrix: rec2020_camera_matrix(),
+                forward_matrix: None,
+            },
+            Calibration {
+                illuminant: D65,
+                color_matrix: rec2020_camera_matrix(),
+                forward_matrix: None,
+            },
+        ]);
+        let profile = profile_from_frame(&frame).unwrap();
+        let at = |cct| white_balance_at(&profile, TempTint { cct, duv: 0.0 }).unwrap();
+        let (day, warm) = (at(5500.0), at(3200.0));
+        let develop = |wb: &WhiteBalance, cam: [f32; 3]| {
+            let g = wb.coefficients_f32();
+            apply3(&matrix_rows(wb), std::array::from_fn(|c| cam[c] * g[c]))
+        };
+        let m = white_shift(
+            day.coefficients_f32(),
+            matrix_rows(&day),
+            warm.coefficients_f32(),
+            matrix_rows(&warm),
+        )
+        .unwrap();
+        for cam in [[0.2f32, 0.5, 0.3], [0.05, 0.02, 0.4], [0.9, 0.9, 0.9]] {
+            let shifted = apply3(&m, develop(&day, cam));
+            let direct = develop(&warm, cam);
+            for c in 0..3 {
+                assert!(
+                    (shifted[c] - direct[c]).abs() < 1e-5,
+                    "{shifted:?} {direct:?}"
+                );
+            }
+        }
+        // To itself, nothing.
+        let same = white_shift(
+            day.coefficients_f32(),
+            matrix_rows(&day),
+            day.coefficients_f32(),
+            matrix_rows(&day),
+        )
+        .unwrap();
+        for (r, row) in same.iter().enumerate() {
+            for (c, v) in row.iter().enumerate() {
+                assert!(
+                    (v - if r == c { 1.0 } else { 0.0 }).abs() < 1e-5,
+                    "{same:?}"
+                );
+            }
+        }
+        // No inverse, no shift.
+        assert!(white_shift([1.0; 3], [[1.0; 3]; 3], [1.0; 3], IDENTITY3).is_none());
+    }
 
     /// [`auto_neutral`] on a picture developed with no gains and no
     /// matrix, the camera's own white at one: working space is

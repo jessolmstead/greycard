@@ -304,7 +304,33 @@ fn look(b: &Look, a: &Look, prefix: &str) -> Vec<String> {
     if b.tint != a.tint {
         out.push(format!("{prefix}{}", tint(&b.tint, &a.tint)));
     }
+    if b.white_balance != a.white_balance {
+        out.push(format!(
+            "{prefix}{}",
+            local_white(&b.white_balance, &a.white_balance)
+        ));
+    }
     out
+}
+
+/// A mask's white balance that moved, in the global's words.
+fn local_white(b: &crate::LocalWhite, a: &crate::LocalWhite) -> String {
+    use crate::LocalWhite::{Absolute, Off};
+    match (b, a) {
+        (_, Off) => "White balance off".to_string(),
+        (Off, Absolute { .. }) => "White balance on".to_string(),
+        (
+            Absolute {
+                temperature: t0,
+                tint: d0,
+            },
+            Absolute {
+                temperature: t1,
+                tint: d1,
+            },
+        ) if t0 == t1 && d0 != d1 => format!("Tint {d1:+.3}"),
+        (_, Absolute { temperature, .. }) => format!("White balance {temperature:.0} K"),
+    }
 }
 
 /// The tint that moved. "Color tint", not "Tint": the white
@@ -698,6 +724,26 @@ mod tests {
         let mut after = e.clone();
         after.adjustments[0].look.tint.amount = 0.4;
         assert_eq!(describe(&e, &after, &[]), "Sky: Color tint 40%");
+        // And its white balance, in the global's words.
+        let mut warm = after.clone();
+        warm.adjustments[0].look.white_balance = crate::LocalWhite::Absolute {
+            temperature: 5500.0,
+            tint: 0.0,
+        };
+        assert_eq!(describe(&after, &warm, &[]), "Sky: White balance on");
+        let mut warmer = warm.clone();
+        warmer.adjustments[0].look.white_balance = crate::LocalWhite::Absolute {
+            temperature: 3200.0,
+            tint: 0.0,
+        };
+        assert_eq!(describe(&warm, &warmer, &[]), "Sky: White balance 3200 K");
+        let mut tinted = warmer.clone();
+        tinted.adjustments[0].look.white_balance = crate::LocalWhite::Absolute {
+            temperature: 3200.0,
+            tint: -0.002,
+        };
+        assert_eq!(describe(&warmer, &tinted, &[]), "Sky: Tint -0.002");
+        assert_eq!(describe(&tinted, &after, &[]), "Sky: White balance off");
         let mut e = base.clone();
         e.bw.enabled = true;
         assert_eq!(describe(&base, &e, &[]), "Black and white on");

@@ -10,6 +10,11 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A mask has a white balance of its own on the Masks tab: a switch,
+  Temperature, Tint and Neutral, absolute, so the light it names stays
+  put when the global white moves; it starts at the global's white,
+  blends by the mask's weight before the rest of the mask's look, and
+  the export makes the same picture as the viewport (§241)
 - The camera match lines each frame's brightness up with its JPEG
   until it lands, not in one pass, about one more finish a frame
   (+0.4 s per channel, +0.6 s under AgX); its held-out error is over

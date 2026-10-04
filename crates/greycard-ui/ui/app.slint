@@ -953,6 +953,13 @@ export component App inherits Window {
     callback parametric-changed();
     in-out property <float> temperature: 5500;
     in-out property <float> tint: 0;
+    // The chosen mask's own white balance: whether it has one, and
+    // the light it says is there.
+    in-out property <bool> local-wb-on: false;
+    in-out property <float> local-temperature: 5500;
+    in-out property <float> local-tint: 0;
+    // Its switch: turned on, it starts at the global's white.
+    callback local-wb-toggled();
     in-out property <bool> denoise: false;
     in-out property <float> denoise-strength: 1.5;
     // The learned denoiser's tier by name, "off" for the engine's own.
@@ -2023,6 +2030,23 @@ export component App inherits Window {
                             tint <=> root.tint;
                             raw-input: root.raw-input;
                             develop-changed => { root.develop-changed(); }
+                        }
+                        // The chosen mask's own white balance: the light
+                        // under it, where that is not the light under the
+                        // rest. Off until switched on.
+                        if root.panel-tab == "Masks" && root.target > 0: WhiteBalanceSection {
+                            local: true;
+                            owner: root.target-name;
+                            switchable: true;
+                            on <=> root.local-wb-on;
+                            switched => { root.local-wb-toggled(); }
+                            collapsed-wb <=> root.collapsed-wb;
+                            picking <=> root.picking;
+                            pick-started(a) => { root.pick-started(a); }
+                            temperature <=> root.local-temperature;
+                            tint <=> root.local-tint;
+                            raw-input: root.raw-input;
+                            develop-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop": CameraSection {
                             collapsed-camera <=> root.collapsed-camera;

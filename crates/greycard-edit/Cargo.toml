@@ -17,6 +17,10 @@ thiserror.workspace = true
 roxmltree.workspace = true
 dirs.workspace = true
 
+[dev-dependencies]
+# A camera profile made by hand, for the local white balance's tests.
+rawcolor.workspace = true
+
 [target.'cfg(windows)'.dependencies]
 # For the hidden attribute on the sidecar folder; a leading dot hides
 # nothing on Windows.

@@ -179,6 +179,12 @@ struct Local {
     pad0: f32,
     // This adjustment's tint as a vector, in xy.
     tint: vec4<f32>,
+    // Its own white balance: the rows of the working-space matrix that
+    // takes the developed picture to it, in xyz, and in white0.w
+    // whether it has one (`Baked::white` in `finish.rs`).
+    white0: vec4<f32>,
+    white1: vec4<f32>,
+    white2: vec4<f32>,
     mix_hue0: vec4<f32>,
     mix_hue1: vec4<f32>,
     mix_sat0: vec4<f32>,
@@ -377,12 +383,28 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             sample = vec3<f32>(lab0.x, mean * exp2(p.range.z / 3.0));
         }
     }
+    // The white balance here, rows: the preview's (the develop's own
+    // white until a new one lands), and each local's own blended in
+    // over it by its weight, as `white_at` in `finish.rs` blends them
+    // over the develop's. A local's says what the light is wherever
+    // the global's is, so it is blended against the preview's, not
+    // against nothing.
+    var wm0 = p.w0.xyz;
+    var wm1 = p.w1.xyz;
+    var wm2 = p.w2.xyz;
+    var whited = false;
     for (var k = 0u; k < count; k = k + 1u) {
         let l = locals[k];
         let m = mask_at(l, uv, sample);
         weights[k] = m;
         let w = m * f32(l.enabled);
         if (w <= 0.0) { continue; }
+        if (l.white0.w > 0.5) {
+            wm0 = wm0 + w * (l.white0.xyz - p.w0.xyz);
+            wm1 = wm1 + w * (l.white1.xyz - p.w1.xyz);
+            wm2 = wm2 + w * (l.white2.xyz - p.w2.xyz);
+            whited = true;
+        }
         look.exposure = look.exposure + w * l.exposure;
         look.contrast = look.contrast + w * (l.contrast - 1.0);
         look.highlights = look.highlights + w * l.highlights;
@@ -409,7 +431,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // holds it: two stacked flattenings cannot flatten past it, and
     // `pow` of zero to a power of zero or under is undefined here.
     look.contrast = max(look.contrast, MIN_CONTRAST);
-    var c = vec3<f32>(dot(p.w0.xyz, t), dot(p.w1.xyz, t), dot(p.w2.xyz, t)) * exp2(look.exposure);
+    var c = vec3<f32>(dot(wm0, t), dot(wm1, t), dot(wm2, t)) * exp2(look.exposure);
     // The pass only where it would change something, as
     // `oklab_pass_acts` in `finish.rs`: not for the switches alone.
     var mixer_acts = false;
@@ -430,7 +452,24 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             if (!have_mean) {
                 mean = local_ab(tex_at);
             }
-            ab = mean * exp2(look.exposure / 3.0);
+            // Under a local white the mean is taken with the pixel,
+            // as `rebalanced` in `finish.rs`: rebuilt at the pixel's
+            // own lightness, through the same matrix, and read again.
+            // The mean is of the picture at the preview's white
+            // (`local_ab` reads every tap through it), so the pixel's
+            // lightness is read there too, and the matrix it goes
+            // through is the locals' relative to the preview's,
+            // `wm · W⁻¹`: the preview's is not applied twice while a
+            // global slider moves. With no preview the two are one.
+            var m = mean;
+            if (whited) {
+                let w = transpose(mat3x3<f32>(p.w0.xyz, p.w1.xyz, p.w2.xyz));
+                let shown = w * t;
+                let lin = from_oklab(vec3<f32>(to_oklab(shown).x, mean));
+                let rel = transpose(mat3x3<f32>(wm0, wm1, wm2)) * inverse3(w);
+                m = to_oklab(rel * lin).yz;
+            }
+            ab = m * exp2(look.exposure / 3.0);
         }
         c = mix_color(c, look, ab, by_mean);
     }
@@ -758,6 +797,27 @@ fn range_window(x: f32, low: f32, high: f32, low_f: f32, high_f: f32) -> f32 {
 fn to_oklab(c: vec3<f32>) -> vec3<f32> {
     let lms = signed_cbrt(vec3<f32>(dot(p.ok_in0.xyz, c), dot(p.ok_in1.xyz, c), dot(p.ok_in2.xyz, c)));
     return LMS_TO_LAB * lms;
+}
+
+// A 3x3 matrix undone, by its columns' cross products over the
+// determinant, as `invert3` in the engine; the identity for one too
+// near singular to undo, which no white balance matrix is.
+fn inverse3(m: mat3x3<f32>) -> mat3x3<f32> {
+    let a = m[0];
+    let b = m[1];
+    let c = m[2];
+    let det = dot(a, cross(b, c));
+    if (abs(det) < 1e-12) {
+        return mat3x3<f32>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0));
+    }
+    return transpose(mat3x3<f32>(cross(b, c), cross(c, a), cross(a, b))) * (1.0 / det);
+}
+
+// Back from Oklab to the working space, as `Oklab::to_rgb`.
+fn from_oklab(lab: vec3<f32>) -> vec3<f32> {
+    let lms = LAB_TO_LMS * lab;
+    let lin = lms * lms * lms;
+    return vec3<f32>(dot(p.ok_out0.xyz, lin), dot(p.ok_out1.xyz, lin), dot(p.ok_out2.xyz, lin));
 }
 
 // A local's mask at a source position: its shapes joined or taken

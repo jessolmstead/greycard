@@ -890,6 +890,8 @@ pub(crate) fn preview(image: &WorkingImage, edit: &Edit, kind: crate::finish::So
         f32::INFINITY,
         None,
         kind,
+        // No masks, so no white of theirs.
+        None,
     );
     let crate::export::Pixels::Eight(data) = rendered.pixels else {
         unreachable!("a JPEG render is eight bit");

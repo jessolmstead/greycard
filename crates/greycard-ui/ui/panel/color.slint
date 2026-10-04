@@ -14,13 +14,18 @@ export component WhiteBalanceSection inherits Section {
     in-out property <float> temperature;
     in-out property <float> tint;
     in property <bool> raw-input;
+    // A mask's own: no As shot and no Auto, its switch on the
+    // section's title, its sliders live while it is on.
+    in property <bool> local: false;
+    // Whether the sliders move the picture.
+    property <bool> live: root.raw-input && (root.local ? root.on : !root.as-shot);
     callback develop-changed();
 
     title: "WHITE BALANCE";
     icon: @image-url("../icons/thermometer.svg");
     hint: root.raw-input ? "" : "raw only";
     collapsed <=> root.collapsed-wb;
-    Toggle {
+    if !root.local: Toggle {
         label: "As shot";
         enabled: root.raw-input;
         checked <=> root.as-shot;
@@ -31,7 +36,7 @@ export component WhiteBalanceSection inherits Section {
     // tint (a green white point) renders magenta.
     EditSlider {
         label: "Temperature";
-        enabled: root.raw-input && !root.as-shot;
+        enabled: root.live;
         tinted: true;
         tint: @linear-gradient(90deg, #4d86e8 0%, #cfd6dc 50%, #f0b24a 100%);
         minimum: 2000;
@@ -44,7 +49,7 @@ export component WhiteBalanceSection inherits Section {
     }
     EditSlider {
         label: "Tint";
-        enabled: root.raw-input && !root.as-shot;
+        enabled: root.live;
         tinted: true;
         tint: @linear-gradient(90deg, #5fbf5f 0%, #cfd6dc 50%, #d65fd6 100%);
         minimum: -0.05;
@@ -58,7 +63,7 @@ export component WhiteBalanceSection inherits Section {
     HorizontalLayout {
         spacing: Theme.space-2;
         alignment: end;
-        PanelButton {
+        if !root.local: PanelButton {
             text: "Auto";
             enabled: root.raw-input;
             clicked => { root.wb-auto(); }
@@ -67,6 +72,8 @@ export component WhiteBalanceSection inherits Section {
             text: "Neutral";
             icon: @image-url("../icons/pipette.svg");
             enabled: root.raw-input;
+            // On a mask the patch is made neutral under the mask, and
+            // the mask's white is switched on to do it.
             primary: root.picking == "White";
             clicked => { root.pick-started("White"); }
         }

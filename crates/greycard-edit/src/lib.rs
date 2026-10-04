@@ -36,6 +36,7 @@ pub mod preset;
 pub mod retouch;
 pub mod tint;
 pub mod vignette;
+pub mod white;
 // XMP interop for the meta section (§72): read and write the
 // standard fields in an `.xmp` beside the frame.
 pub mod xmp;
@@ -55,6 +56,7 @@ pub use mixer::Mixer;
 pub use preset::{Preset, Section};
 pub use tint::Tint;
 pub use vignette::Vignette;
+pub use white::{LocalWhite, WhiteShift};
 
 use greycard_core::TempTint;
 use greycard_core::color::WhitePoint;
@@ -158,6 +160,12 @@ pub struct Look {
     pub color: Color,
     pub grading: Grading,
     pub tint: Tint,
+    /// A mask's own white balance, on the developed picture before
+    /// the rest of the look ([`white`]). Off on the global look, which
+    /// never reads it: the picture's white is the edit's, in the
+    /// develop. Left out of a sidecar while off.
+    #[serde(skip_serializing_if = "LocalWhite::is_off")]
+    pub white_balance: LocalWhite,
 }
 
 /// A local adjustment: a look where a mask says, with a stable id so
@@ -229,6 +237,7 @@ impl Edit {
             color: self.color,
             grading: self.grading,
             tint: self.tint,
+            white_balance: LocalWhite::Off,
         }
     }
 
@@ -239,6 +248,8 @@ impl Edit {
         self.color = look.color;
         self.grading = look.grading;
         self.tint = look.tint;
+        // `look.white_balance` is a mask's alone: the picture's white
+        // is `white_balance`, in the develop.
     }
 
     /// The look of a target: an adjustment by index, or the global

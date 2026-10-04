@@ -6,13 +6,16 @@
 
 use std::sync::Arc;
 
+use greycard_core::color::Matrix3;
 use greycard_core::image::WorkingImage;
 use greycard_core::lut;
 use greycard_edit::brush::Raster;
 use greycard_edit::curve::{CurveLut, color_shift, lookup};
 use greycard_edit::mask::Sample;
 use greycard_edit::mixer::{BANDS, MEAN_RADIUS, confidence};
-use greycard_edit::{BlackWhite, Color, DisplayCurve, Edit, Grain, Light, Look, Mask, Mixer, Tint};
+use greycard_edit::{
+    BlackWhite, Color, DisplayCurve, Edit, Grain, Light, Look, Mask, Mixer, Tint, WhiteShift,
+};
 use rayon::prelude::*;
 
 /// A look baked for the finish: its light, its mixer, its global
@@ -36,6 +39,12 @@ pub struct Baked {
     /// Global only, as the source is: the display curve per channel,
     /// or AgX. Read only when the source is a scene.
     pub display_curve: DisplayCurve,
+    /// A local's own white balance, as the working-space matrix that
+    /// takes the developed picture to it (`greycard_edit::white`),
+    /// rows; `None` for none. Never the global's: the picture's white
+    /// is in the develop. Made by [`Local::of`], which has the
+    /// develop's white to make it from.
+    pub white: Option<Matrix3>,
 }
 
 /// What the finish is handed. A raw's develop is a scene, which the
@@ -87,6 +96,7 @@ impl Baked {
             curves: look.curves.bake_with(&look.grading),
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
+            white: None,
         }
     }
 
@@ -132,9 +142,21 @@ impl Local {
     /// way the viewport (`panel::mask::bake_locals`) and the export
     /// (`export::render`) both make one, so the two cannot drift. An
     /// adjustment whose mask has nothing live in it is off.
-    pub fn of(a: &greycard_edit::Adjustment, rasters: Vec<Option<RasterRef>>) -> Self {
+    ///
+    /// `white` is the develop's white balance and the profile it was
+    /// resolved through, which the adjustment's own white balance is
+    /// made a matrix from; without it (a picture that is not a raw,
+    /// whose white no slider moves) the adjustment has none.
+    pub fn of(
+        a: &greycard_edit::Adjustment,
+        rasters: Vec<Option<RasterRef>>,
+        white: Option<&WhiteShift>,
+    ) -> Self {
         Self {
-            baked: Baked::of(&a.look),
+            baked: Baked {
+                white: white.and_then(|w| w.local(&a.look.white_balance)),
+                ..Baked::of(&a.look)
+            },
             mask: a.mask.clone(),
             enabled: a.enabled && !a.mask.is_empty(),
             rasters,
@@ -429,6 +451,15 @@ pub fn finish_pixel_with(
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
 ) -> [f32; 3] {
+    // The locals' white balances first, on the developed picture, as
+    // the develop's own is under everything else: the look after it
+    // reads the picture at the white the masks ask for. The masks'
+    // weights were read before it (`finish_with`), so a range mask
+    // never moves under its own white.
+    let (px, reference) = match white_at(locals) {
+        Some(m) => rebalanced(px, reference, &m),
+        None => (px, reference),
+    };
     let mut exposure = global.source.baseline() + global.light.exposure + stops;
     let mut t = global.light.tone;
     let mut mixer = global.mixer.effective();
@@ -527,6 +558,50 @@ pub fn finish_pixel_with(
         Some(noise) => Grain::apply(noise, e),
         None => e,
     }
+}
+
+/// The white balance at a pixel, as a matrix on the developed picture:
+/// the locals' own, each blended in by its weight as every other
+/// parameter is, `I + Σ wᵢ (Mᵢ − I)`, so two masks at half each are one
+/// at full and a feathered edge walks between the two whites. `None`
+/// where no local with one is.
+#[inline]
+pub fn white_at(locals: &[(&Baked, f32)]) -> Option<Matrix3> {
+    let mut out: Option<Matrix3> = None;
+    for (b, w) in locals {
+        let Some(m) = &b.white else { continue };
+        let acc = out.get_or_insert([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]);
+        for (r, row) in acc.iter_mut().enumerate() {
+            for (c, v) in row.iter_mut().enumerate() {
+                let id = if r == c { 1.0 } else { 0.0 };
+                *v += w * (m[r][c] - id);
+            }
+        }
+    }
+    out
+}
+
+/// `px` through a local white balance `m`, and `reference`, the mean
+/// Oklab a and b about it that the mixer reads a hue from, taken with
+/// it: the mean is rebuilt as a color at the pixel's own lightness,
+/// put through the same matrix and read again, so a wall a mask turns
+/// from orange to grey is grey to the mixer too. The shader's
+/// `rebalanced` is the same arithmetic.
+#[inline]
+pub fn rebalanced(
+    px: [f32; 3],
+    reference: Option<[f32; 2]>,
+    m: &Matrix3,
+) -> ([f32; 3], Option<[f32; 2]>) {
+    let out = apply3(m, px);
+    let reference = reference.map(|[a, b]| {
+        OKLAB.with(|ok| {
+            let l = oklab(px)[0];
+            let lab = oklab(apply3(m, ok.to_rgb([l, a, b])));
+            [lab[1], lab[2]]
+        })
+    });
+    (out, reference)
 }
 
 /// The output rail's weights for `to_out`, computed once per matrix
@@ -1305,6 +1380,7 @@ mod tests {
             curves: *curves,
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
+            white: None,
         };
         finish_pixel(px, &global, &[], m)
     }
@@ -1325,6 +1401,7 @@ mod tests {
             curves: identity(),
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
+            white: None,
         }
     }
 
@@ -2020,6 +2097,7 @@ mod tests {
             curves: identity(),
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
+            white: None,
         };
         let g = guide.map(|g| g.at(x as f32 + 0.5, y as f32 + 0.5));
         let px = image.pixel(x, y);
@@ -3033,6 +3111,7 @@ mod tests {
             curves: identity(),
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
+            white: None,
         };
         let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let out = finish_pixel(px, &global, &[], &m);
@@ -3075,6 +3154,7 @@ mod tests {
             curves: identity(),
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
+            white: None,
         };
         let bare = Baked {
             tint: idle,
@@ -3161,6 +3241,7 @@ mod tests {
             curves: identity(),
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
+            white: None,
         };
         let local = Baked {
             tint,
@@ -3202,6 +3283,154 @@ mod tests {
         for k in 0..3 {
             assert!((both[k] - one[k]).abs() < 1e-6, "{both:?} {one:?}");
         }
+    }
+
+    /// A mask's own white balance at 3200 K over a develop at 5500 K,
+    /// through the test profile, as `Local::of` makes it.
+    fn warm_white() -> Matrix3 {
+        crate::testing::white_shift()
+            .local(&greycard_edit::LocalWhite::Absolute {
+                temperature: 3200.0,
+                tint: 0.0,
+            })
+            .expect("3200 K resolves")
+    }
+
+    #[test]
+    fn a_masks_white_balance_is_its_matrix_on_the_developed_picture_by_its_weight() {
+        let m = crate::export::Space::Srgb.matrix();
+        let global = plain_look();
+        let white = warm_white();
+        let local = Baked {
+            white: Some(white),
+            ..Baked::of(&greycard_edit::Look::default())
+        };
+        let close = |a: [f32; 3], b: [f32; 3], what: &str| {
+            for k in 0..3 {
+                assert!((a[k] - b[k]).abs() < 2e-6, "{what}: {a:?} {b:?}");
+            }
+        };
+        for px in [
+            [0.18; 3],
+            [0.4, 0.2, 0.05],
+            [0.02, 0.05, 0.3],
+            [0.9, 0.85, 0.8],
+        ] {
+            // At full weight: the picture developed at the mask's white,
+            // finished under the global look.
+            let whole = finish_pixel(px, &global, &[(&local, 1.0)], &m);
+            close(
+                whole,
+                finish_pixel(apply3(&white, px), &global, &[], &m),
+                "full",
+            );
+            // Half and half again are one at full, and a half is the
+            // matrix halfway to the identity.
+            let halves = finish_pixel(px, &global, &[(&local, 0.5), (&local, 0.5)], &m);
+            close(halves, whole, "two halves");
+            let half: Matrix3 = std::array::from_fn(|r| {
+                std::array::from_fn(|c| {
+                    let id = if r == c { 1.0 } else { 0.0 };
+                    id + 0.5 * (white[r][c] - id)
+                })
+            });
+            let part = finish_pixel(px, &global, &[(&local, 0.5)], &m);
+            close(
+                part,
+                finish_pixel(apply3(&half, px), &global, &[], &m),
+                "half",
+            );
+        }
+        // A local without one asks for no matrix at all, so the pixel
+        // is not touched, not even by an identity's rounding.
+        let none = Baked::of(&greycard_edit::Look::default());
+        assert_eq!(white_at(&[(&none, 1.0)]), None);
+        assert_eq!(white_at(&[]), None);
+        assert_eq!(
+            white_at(&[(&none, 1.0), (&local, 0.0)]),
+            Some([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
+        );
+        // Warmer light named under the mask: a grey comes out bluer.
+        let grey = finish_pixel([0.18; 3], &global, &[(&local, 1.0)], &m);
+        assert!(grey[2] > grey[0] + 0.02, "{grey:?}");
+    }
+
+    #[test]
+    fn the_mixers_reference_moves_with_a_masks_white() {
+        // A flat patch: its mean is its own a and b, so the mean taken
+        // with the pixel is the white-balanced pixel's own a and b.
+        let white = warm_white();
+        for px in [[0.4, 0.2, 0.05], [0.18; 3], [0.05, 0.1, 0.3]] {
+            let lab = oklab(px);
+            let (out, reference) = rebalanced(px, Some([lab[1], lab[2]]), &white);
+            let want = oklab(apply3(&white, px));
+            let [a, b] = reference.unwrap();
+            assert!(
+                (a - want[1]).abs() < 1e-5 && (b - want[2]).abs() < 1e-5,
+                "{px:?}: {a} {b} against {want:?}"
+            );
+            assert_eq!(out, apply3(&white, px));
+        }
+        assert_eq!(rebalanced([0.2; 3], None, &white).1, None);
+    }
+
+    #[test]
+    fn a_range_mask_reads_the_picture_before_its_own_white() {
+        use greycard_edit::mask::{Component, Shape};
+        // A grey at a lightness of 0.6, and a hard window from 0.55 to
+        // 0.65 about it: the mask is on there. Its own white, a matrix
+        // that darkens the picture a stop, would take the grey out of
+        // its window if the mask read the picture after it.
+        let grey = from_lch(0.6, 0.0, 0.0);
+        let (w, h) = (8usize, 4usize);
+        let mut image = WorkingImage::new(w, h);
+        for px in image.data.as_chunks_mut::<3>().0 {
+            *px = grey;
+        }
+        let darker: Matrix3 = [[0.5, 0.0, 0.0], [0.0, 0.5, 0.0], [0.0, 0.0, 0.5]];
+        assert!(sample(apply3(&darker, grey), None, 0.0).lightness < 0.55);
+        let local = Local {
+            baked: Baked {
+                white: Some(darker),
+                ..Baked::of(&greycard_edit::Look::default())
+            },
+            mask: Mask {
+                components: vec![Component {
+                    shape: Shape::Luminance {
+                        low: 0.55,
+                        high: 0.65,
+                        low_feather: 0.0,
+                        high_feather: 0.0,
+                    },
+                    ..Default::default()
+                }],
+                invert: false,
+            },
+            enabled: true,
+            rasters: vec![None],
+        };
+        let m = crate::export::Space::Srgb.matrix();
+        let global = plain_look();
+        let out = finish_with(
+            &image,
+            None,
+            &global,
+            std::slice::from_ref(&local),
+            |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
+            |_, _| (0.0, None),
+            None,
+            None,
+            &m,
+            |v| v,
+        );
+        // On, fully: the grey through the matrix.
+        let want = finish_pixel(apply3(&darker, grey), &global, &[], &m);
+        for px in out.as_chunks::<3>().0 {
+            for k in 0..3 {
+                assert!((px[k] - want[k]).abs() < 1e-6, "{px:?} {want:?}");
+            }
+        }
+        assert!(want[0] < finish_pixel(grey, &global, &[], &m)[0]);
     }
 
     #[test]

@@ -266,3 +266,60 @@ pub(crate) fn remove_dir_retry(dir: &std::path::Path) {
         }
     }
 }
+
+/// A camera profile with a warm and a daylight calibration, the
+/// matrices of an ordinary sensor (a little wider than Rec.2020 in its
+/// reds, a little narrower in its blues), for the masks' white
+/// balances in tests that have no raw: the profile and a develop at
+/// 5500 K, what [`greycard_edit::WhiteShift`] is made from.
+pub(crate) fn white_shift() -> greycard_edit::WhiteShift {
+    use greycard_core::raw::{
+        Calibration, CfaPattern, LevelPattern, Levels, Samples, SensorLayout,
+    };
+    let calibration = |illuminant: u16, m: [f32; 9]| Calibration {
+        illuminant,
+        color_matrix: m.to_vec(),
+        forward_matrix: None,
+    };
+    let frame = greycard_core::RawFrame {
+        make: "Test".into(),
+        model: "Cam".into(),
+        width: 2,
+        height: 2,
+        channels: 1,
+        layout: SensorLayout::Cfa(CfaPattern::rggb()),
+        samples: Samples::U16(vec![0; 4]),
+        levels: Levels {
+            black: LevelPattern::uniform(0.0, 1),
+            white: LevelPattern::uniform(1.0, 1),
+        },
+        as_shot_coefficients: Some([2.0, 1.0, 1.6]),
+        calibrations: vec![
+            calibration(
+                17,
+                [
+                    1.1564, -0.4626, -0.1081, -0.4229, 1.2260, 0.2187, -0.0711, 0.1500, 0.6268,
+                ],
+            ),
+            calibration(
+                21,
+                [
+                    0.9766, -0.2953, -0.1254, -0.4276, 1.2116, 0.2433, -0.0437, 0.1336, 0.5131,
+                ],
+            ),
+        ],
+        crop: None,
+        orientation: Default::default(),
+        shot: Default::default(),
+    };
+    let profile = greycard_core::color::profile_from_frame(&frame).expect("two calibrations");
+    let base = greycard_core::color::white_balance_at(
+        &profile,
+        greycard_core::TempTint {
+            cct: 5500.0,
+            duv: 0.0,
+        },
+    )
+    .expect("daylight resolves");
+    greycard_edit::WhiteShift::new(profile, &base)
+}

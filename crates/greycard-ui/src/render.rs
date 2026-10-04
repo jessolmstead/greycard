@@ -193,6 +193,9 @@ struct LocalGpu {
     pad0: f32,
     /// This adjustment's tint as a vector, in x and y.
     tint: [f32; 4],
+    /// Its own white balance's matrix, rows, in the first three of
+    /// each; the first row's fourth is one when it has one.
+    white: [[f32; 4]; 3],
     mix_hue: [[f32; 4]; 2],
     mix_sat: [[f32; 4]; 2],
     mix_lum: [[f32; 4]; 2],
@@ -359,6 +362,14 @@ fn locals_gpu(locals: &[Local]) -> LocalsGpu {
             tint: {
                 let v = b.tint.vector();
                 [v[0], v[1], 0.0, 0.0]
+            },
+            white: match &b.white {
+                Some(m) => [
+                    [m[0][0], m[0][1], m[0][2], 1.0],
+                    [m[1][0], m[1][1], m[1][2], 0.0],
+                    [m[2][0], m[2][1], m[2][2], 0.0],
+                ],
+                None => [[0.0; 4]; 3],
             },
             mix_hue: halves(&b.mixer.hue),
             mix_sat: halves(&b.mixer.saturation),
@@ -3747,7 +3758,7 @@ mod tests {
     /// The parts of an edit the parity test draws, a bit each, so a
     /// failing edit can be drawn again with one part left at its
     /// default to see which part the difference is in.
-    const PARTS: [&str; 18] = [
+    const PARTS: [&str; 19] = [
         "light",
         "light switch",
         "point curves",
@@ -3766,6 +3777,7 @@ mod tests {
         "display source",
         "output space",
         "display curve",
+        "local white",
     ];
 
     fn part(name: &str) -> u32 {
@@ -4243,6 +4255,16 @@ mod tests {
         if rng.chance(0.5) && has("display curve") {
             edit.display_curve = greycard_edit::DisplayCurve::Agx;
         }
+        // Each mask's own white balance half the time, over the
+        // panel's ranges: after AgX, for the same reason.
+        for a in &mut edit.adjustments {
+            let on = rng.chance(0.5);
+            let temperature = rng.range(2000.0, 12000.0) as f64;
+            let tint = rng.range(-0.05, 0.05) as f64;
+            if on && has("local white") {
+                a.look.white_balance = greycard_edit::LocalWhite::Absolute { temperature, tint };
+            }
+        }
         Case {
             edit,
             rasters,
@@ -4492,10 +4514,11 @@ mod tests {
         edit: &greycard_edit::Edit,
     ) -> (Vec<u8>, Vec<u8>) {
         let (w, h) = (image.width, image.height);
+        let shift = crate::testing::white_shift();
         let locals: Vec<Local> = edit
             .adjustments
             .iter()
-            .map(|a| Local::of(a, vec![None; a.mask.components.len()]))
+            .map(|a| Local::of(a, vec![None; a.mask.components.len()], Some(&shift)))
             .collect();
         let mut renderer = Renderer::new(device, queue);
         renderer.upload(&crate::worker::Halves::from_image(image, None));
@@ -4563,6 +4586,181 @@ mod tests {
         assert!(gpu.iter().all(|&v| v == 255), "the GPU: {gpu:?}");
     }
 
+    /// A mask's own white balance on both sides: a warm one over
+    /// everything with the mixer moved under it, so the mixer's mean
+    /// is taken with the pixel (`finish::rebalanced`), and a cool one
+    /// at part weight over half the frame, blended over the first.
+    #[test]
+    fn a_masks_white_balance_agrees_on_both_sides() {
+        let Some((device, queue)) = device("the masks' white balance check") else {
+            return;
+        };
+        let (w, h) = (24usize, 8usize);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: (0..w * h)
+                .flat_map(|i| {
+                    let (x, y) = ((i % w) as f32, (i / w) as f32);
+                    let v = 0.02 + 0.03 * x;
+                    [v * (1.0 + 0.1 * y), v * 0.9, v * (1.2 - 0.1 * y)]
+                })
+                .collect(),
+        };
+        let mut edit = greycard_edit::Edit::default();
+        let mut warm = Look {
+            white_balance: greycard_edit::LocalWhite::Absolute {
+                temperature: 3200.0,
+                tint: 0.004,
+            },
+            ..Look::default()
+        };
+        warm.mixer.hue[1] = 20.0;
+        warm.mixer.saturation[5] = -0.6;
+        edit.adjustments.push(everywhere(warm));
+        let cool = Look {
+            white_balance: greycard_edit::LocalWhite::Absolute {
+                temperature: 9000.0,
+                tint: -0.01,
+            },
+            ..Look::default()
+        };
+        edit.adjustments.push(greycard_edit::Adjustment {
+            id: 2,
+            mask: Mask {
+                components: vec![Component {
+                    shape: Shape::Linear {
+                        from: [0.3, 0.0],
+                        to: [0.7, 0.0],
+                    },
+                    ..Default::default()
+                }],
+                invert: false,
+            },
+            look: cool,
+            ..Default::default()
+        });
+        let (cpu, gpu) = both_sides(&device, &queue, &image, &edit);
+        let worst = cpu.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max();
+        assert!(worst <= Some(1), "{worst:?}: {cpu:?} against {gpu:?}");
+        // And it did something: without the whites the picture differs.
+        let mut plain = edit.clone();
+        for a in &mut plain.adjustments {
+            a.look.white_balance = greycard_edit::LocalWhite::Off;
+        }
+        let (bare, _) = both_sides(&device, &queue, &image, &plain);
+        let moved = cpu.iter().zip(&bare).map(|(a, b)| a.abs_diff(*b)).max();
+        assert!(moved >= Some(20), "{moved:?}");
+    }
+
+    /// A mask's own white balance while the global's slider is moving:
+    /// the view previews 6500 K over a develop at 5500 K, and a mask
+    /// over everything names 3200 K with the mixer moved under it. The
+    /// CPU is handed what the develop at 6500 K would be (the picture
+    /// through the preview's matrix) and the mask's matrix relative to
+    /// that (`Mᵢ · W⁻¹`), which is what the export makes once the
+    /// develop lands. The mixer's mean, read through the preview on the
+    /// GPU, must not take the preview twice.
+    #[test]
+    fn a_masks_white_balance_holds_under_a_moving_global() {
+        let Some((device, queue)) = device("the masks' white under a preview check") else {
+            return;
+        };
+        let (w, h) = (24usize, 8usize);
+        let data: Vec<f32> = (0..w * h)
+            .flat_map(|i| {
+                let (x, y) = ((i % w) as f32, (i / w) as f32);
+                let v = 0.02 + 0.025 * x;
+                [v * (1.2 + 0.1 * y), v * 0.9, v * (0.6 - 0.05 * y)]
+            })
+            .map(|v| half::f16::from_f32(v).to_f32())
+            .collect();
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data,
+        };
+        let shift = crate::testing::white_shift();
+        let preview = shift
+            .to_temp_tint(greycard_core::TempTint {
+                cct: 6500.0,
+                duv: 0.0,
+            })
+            .unwrap();
+        let mut look = Look {
+            white_balance: greycard_edit::LocalWhite::Absolute {
+                temperature: 3200.0,
+                tint: 0.0,
+            },
+            ..Look::default()
+        };
+        look.mixer.hue[1] = 25.0;
+        look.mixer.saturation[1] = 0.8;
+        look.mixer.saturation[0] = -0.5;
+        let mut edit = greycard_edit::Edit::default();
+        edit.adjustments.push(everywhere(look));
+        // The GPU: the develop's picture, the preview's matrix, the
+        // mask's made against the develop's white.
+        let locals: Vec<Local> = edit
+            .adjustments
+            .iter()
+            .map(|a| Local::of(a, vec![None], Some(&shift)))
+            .collect();
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        let view = View {
+            center: (w as f32 / 2.0, h as f32 / 2.0),
+            plane: (w as f32, h as f32),
+            frame_size: (w as f32, h as f32),
+            locals: locals.clone(),
+            white: preview,
+            ..View::with_look(&edit)
+        };
+        let target = renderer.render(w as u32, h as u32, &view).0;
+        let shown = renderer.read_back(&target).expect("read back");
+        let gpu: Vec<u8> = shown.pixels().flat_map(|p| [p[0], p[1], p[2]]).collect();
+        // The CPU: the develop at the preview's white, and the mask's
+        // matrix against that.
+        let developed = WorkingImage {
+            width: w,
+            height: h,
+            data: image
+                .data
+                .chunks(3)
+                .flat_map(|px| greycard_core::color::apply3(&preview, [px[0], px[1], px[2]]))
+                .collect(),
+        };
+        let inv = greycard_core::color::invert3(preview).unwrap();
+        let cpu_locals: Vec<Local> = locals
+            .iter()
+            .map(|l| Local {
+                baked: Baked {
+                    white: l.baked.white.map(|m| greycard_core::color::mul3(m, inv)),
+                    ..l.baked.clone()
+                },
+                ..l.clone()
+            })
+            .collect();
+        let iw = w as f32;
+        let cpu = |locals: &[Local]| {
+            crate::finish::finish_with(
+                &developed,
+                None,
+                &Baked::global(&edit, Source::Scene),
+                locals,
+                |x, y| ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / iw),
+                |_, _| (0.0, None),
+                None,
+                None,
+                &crate::export::Space::Srgb.matrix(),
+                |v| (v * 255.0).round() as u8,
+            )
+        };
+        let want = cpu(&cpu_locals);
+        let worst = want.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max();
+        assert!(worst <= Some(2), "{worst:?}: {want:?} against {gpu:?}");
+    }
+
     /// Contrast summed to nothing and under: the picture's 0.5 and one
     /// or two masks over everything at 0.5 sum to 0 and -0.5, which
     /// both sides hold at `MIN_CONTRAST` (a power of zero took black to
@@ -4612,7 +4810,9 @@ mod tests {
     /// switch, the point, parametric and color curves, the grading,
     /// the mixer, the color, the black and white, the tint, the
     /// vignette and the grain), two or three local adjustments with
-    /// their own looks under masks of gradients, radials, brushes, a
+    /// their own looks, half of them with a white balance of their own
+    /// (through `testing::white_shift`'s profile), under masks of
+    /// gradients, radials, brushes, a
     /// learned raster (Subject) present or missing, and luminance and
     /// color windows, in every mode, a look table, a source of a scene
     /// or a picture already rendered, an output space and a guide
@@ -4722,6 +4922,7 @@ mod tests {
         });
         let pool = raster_pool(seed, aspect);
         let tables = look_tables();
+        let shift = crate::testing::white_shift();
         let mut renderer = Renderer::new(&device, &queue);
         renderer.upload(&crate::worker::Halves::from_image(&image, None));
         // The picture with each channel in turn moved by `NUDGE` of the
@@ -4786,7 +4987,12 @@ mod tests {
                 .iter()
                 .zip(&case.rasters)
                 .take(MAX_LOCALS)
-                .map(|(a, rasters)| Local::of(a, rasters.clone()))
+                // A raw's locals have their white balance; a picture
+                // already rendered has none to move (`local_white_shift`).
+                .map(|(a, rasters)| {
+                    let white = (case.source == Source::Scene).then_some(&shift);
+                    Local::of(a, rasters.clone(), white)
+                })
                 .collect();
             renderer.set_look(case.look.as_ref());
             renderer.set_output(case.space.matrix());

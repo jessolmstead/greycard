@@ -21,6 +21,10 @@ the reasoning lives in `docs/notes.md`.
       `try_lock` and falls back to `Settings::load()` while the cache's
       count thread holds it; the prefs test of the field fails under load
       for the same reason
+- [ ] `--zoom 1 --screenshot` opens fitted: the camera's JPEG standing in
+      for the develop resets the zoom (`cull::placeholder_arrived`) (§241)
+- [ ] `--show-mask` is dropped when the first file is opened a second
+      time at startup (§241)
 
 ## Next: 0.4.0
 

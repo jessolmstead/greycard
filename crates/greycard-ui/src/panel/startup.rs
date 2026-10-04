@@ -1022,8 +1022,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     sync_rows(&st.mask_boxes, boxes);
                     sync_rows(&st.mask_picks, picks);
                     let st = &mut *st;
-                    let (locals, wants) =
-                        bake_locals(&edit, &mut st.rasters, &mut st.learned, sh / sw.max(1.0));
+                    let shift = crate::panel::color::local_white_shift(st);
+                    let (locals, wants) = bake_locals(
+                        &edit,
+                        &mut st.rasters,
+                        &mut st.learned,
+                        sh / sw.max(1.0),
+                        shift.as_ref(),
+                    );
                     ask_for(st, &app, wants);
                     // A screenshot waits for the masks asked for.
                     // A snapshot waits for the develop; one of the
@@ -1944,6 +1950,7 @@ mod tests {
             1.0,
             None,
             finish::Source::Scene,
+            None,
         );
         export::mark(&mut rendered, &settings).unwrap();
         export::write(&rendered, &settings, &out, None, &export::Origin::default()).unwrap();

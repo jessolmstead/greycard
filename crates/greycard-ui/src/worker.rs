@@ -1667,6 +1667,7 @@ fn finish_export(
         clip_level,
         base.map(|b| &*b.guide),
         base.map(|b| b.source).unwrap_or_default(),
+        base.and_then(Base::white_shift).as_ref(),
     );
     (rendered, left_out)
 }
@@ -1924,6 +1925,23 @@ struct Base {
     /// keeps the base reports `Kept`, and an export of it must still
     /// say what it went without (`left_out_of`).
     stand_in: Option<LearnedReport>,
+    /// The camera profile a raw's white was resolved through, which a
+    /// mask's own white balance is resolved through too
+    /// ([`Base::white_shift`]); `None` for a picture that is not a raw.
+    profile: Option<Arc<CameraProfile>>,
+}
+
+impl Base {
+    /// What the masks' white balances are made matrices from: this
+    /// develop's white and the profile it was resolved through.
+    fn white_shift(&self) -> Option<greycard_edit::WhiteShift> {
+        let profile = self.profile.as_ref()?;
+        Some(greycard_edit::WhiteShift::from_parts(
+            (**profile).clone(),
+            self.white.gains,
+            self.white.matrix,
+        ))
+    }
 }
 
 /// The picture the sharpen reads, on the GPU, with what it was made
@@ -2162,6 +2180,7 @@ fn develop_job(
                 pre: None,
                 ca_on_gpu: false,
                 stand_in: None,
+                profile: None,
             }),
             (Input::Raw(frame), Some(model)) => {
                 match learned_base(
@@ -2214,6 +2233,17 @@ fn develop_job(
         match made {
             Ok(mut b) => {
                 b.ca_on_gpu |= ca_on_gpu;
+                // The profile the develop resolved its white through,
+                // chosen as `white_balance_for` in the engine chooses
+                // it: the edit's DCP, else the file's own.
+                if let Input::Raw(frame) = input {
+                    b.profile = settings
+                        .profile
+                        .as_ref()
+                        .map(|p| p.camera.clone())
+                        .or_else(|| profile_from_frame(frame).ok())
+                        .map(Arc::new);
+                }
                 b.stand_in = matches!(report, LearnedReport::Missing(_) | LearnedReport::Failed(_))
                     .then(|| report.clone());
                 let corrects = !edit.lens.is_identity(lenses.is_some());
@@ -2639,6 +2669,7 @@ fn engine_base(
         pre: None,
         ca_on_gpu: false,
         stand_in: None,
+        profile: None,
     })
 }
 
@@ -2698,6 +2729,7 @@ fn learned_base(
             pre: None,
             ca_on_gpu: l.ca_on_gpu,
             stand_in: None,
+            profile: None,
         },
         report,
     ))
@@ -3538,6 +3570,7 @@ mod tests {
                 pre: None,
                 ca_on_gpu: false,
                 stand_in: None,
+                profile: None,
             };
             turn_base(&mut b, &mut learned, 1, 2, None);
             let l = learned.as_ref().unwrap();
@@ -3577,6 +3610,7 @@ mod tests {
             pre: None,
             ca_on_gpu: false,
             stand_in: None,
+            profile: None,
         };
         turn_base(&mut b, &mut learned, 1, 2, None);
         let l = learned.as_ref().unwrap();
@@ -3678,6 +3712,84 @@ mod tests {
         assert!(
             !pair_serves(&cpu, 0, &other, false),
             "other learned settings"
+        );
+    }
+
+    /// The export, with no window and no panel, makes a mask's white
+    /// balance from its own develop: the base keeps the profile its
+    /// white was resolved through, and a mask over everything at that
+    /// same white moves nothing while one at another moves the picture
+    /// the way the matrix says.
+    #[test]
+    fn an_export_makes_a_masks_white_balance_from_its_own_develop() {
+        let frame = Arc::new(aberrated_frame(200, 160));
+        // Developed at 5000 K, inside the range a mask's white takes.
+        let global = Edit {
+            white_balance: greycard_edit::WhiteBalance::Custom {
+                temperature: 5000.0,
+                tint: 0.002,
+            },
+            ..Edit::default()
+        };
+        let mut base = None;
+        let image = develop_turned(&frame, &global, 0, &mut base);
+        assert!(
+            base.as_ref().unwrap().white_shift().is_some(),
+            "a raw's base keeps its profile"
+        );
+        let everywhere = |white: greycard_edit::LocalWhite| greycard_edit::Adjustment {
+            id: 1,
+            mask: greycard_edit::mask::Mask {
+                components: vec![greycard_edit::mask::Component {
+                    shape: Shape::Linear {
+                        from: [0.5, 10.0],
+                        to: [0.5, 11.0],
+                    },
+                    ..Default::default()
+                }],
+                invert: false,
+            },
+            look: greycard_edit::Look {
+                white_balance: white,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let settings = crate::export::Settings {
+            format: crate::export::Format::Tiff,
+            sharpen: crate::export::Sharpen::Off,
+            ..Default::default()
+        };
+        let mut ai = Ai::new();
+        let mut render = |white| {
+            let mut edit = global.clone();
+            edit.adjustments.push(everywhere(white));
+            let (r, _) = finish_export(image.clone(), &edit, base.as_ref(), &mut ai, &settings);
+            let crate::export::Pixels::Sixteen(p) = r.pixels else {
+                panic!("a TIFF is sixteen bits")
+            };
+            p
+        };
+        let off = render(greycard_edit::LocalWhite::Off);
+        let same = render(greycard_edit::LocalWhite::Absolute {
+            temperature: 5000.0,
+            tint: 0.002,
+        });
+        let worst = off.iter().zip(&same).map(|(a, b)| a.abs_diff(*b)).max();
+        assert!(worst <= Some(2), "{worst:?}");
+        let warm = render(greycard_edit::LocalWhite::Absolute {
+            temperature: 2800.0,
+            tint: 0.0,
+        });
+        // Warmer light named: the picture comes out bluer.
+        let blue = |p: &[u16]| {
+            p.chunks(3).map(|c| c[2] as f64 - c[0] as f64).sum::<f64>() / (p.len() / 3) as f64
+        };
+        assert!(
+            blue(&warm) > blue(&off) + 500.0,
+            "{} {}",
+            blue(&warm),
+            blue(&off)
         );
     }
 

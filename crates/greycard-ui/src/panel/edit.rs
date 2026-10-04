@@ -16,6 +16,7 @@ use crate::panel::mask::{
 };
 use crate::panel::retouch::show_patches;
 use crate::*;
+use greycard_edit::LocalWhite;
 
 /// The edit the worker should develop right now. Normally the edit
 /// itself; but a tool in hand may need the picture to show something
@@ -316,6 +317,9 @@ pub(crate) fn read_look(app: &App) -> Look {
         },
         grading: read_grading(app),
         tint: panel_tint(app),
+        // A mask's alone: the global look's is never read
+        // (`Edit::set_look`), and is shown off.
+        white_balance: crate::panel::color::panel_local_white(app),
     }
 }
 
@@ -585,6 +589,18 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_tint_hue(look.tint.hue);
     app.set_tint_amount(look.tint.amount);
     show_tint(app);
+    // A mask's own white balance. Off, its sliders keep what they
+    // last said; turning it on starts them at the global's
+    // (`local-wb-toggled`).
+    // Held to the sliders' range, as the finish reads it.
+    match look.white_balance.clamped() {
+        LocalWhite::Absolute { temperature, tint } => {
+            app.set_local_wb_on(true);
+            app.set_local_temperature(temperature as f32);
+            app.set_local_tint(tint as f32);
+        }
+        LocalWhite::Off => app.set_local_wb_on(false),
+    }
     app.set_detail_enabled(edit.detail.enabled);
     app.set_detail_texture(edit.detail.texture);
     app.set_detail_clarity(edit.detail.clarity);

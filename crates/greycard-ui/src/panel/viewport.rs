@@ -110,6 +110,19 @@ pub(crate) fn white_from_neutral(
             NeutralMiss::Unresolved(e.to_string())
         })?;
     let tt = wb.temp_tint;
+    // On a mask's own white balance: the white that makes the patch
+    // grey is the light there, the same answer whatever the global
+    // says, since a mask's white is absolute. Under the mask at full
+    // weight the patch is then grey.
+    if st.target.is_some() && app.get_panel_tab() == "Masks" {
+        app.set_local_wb_on(true);
+        app.set_local_temperature((tt.cct as f32).clamp(2000.0, 12000.0));
+        app.set_local_tint((tt.duv as f32).clamp(-0.05, 0.05));
+        drop(st);
+        app.invoke_stop_placing();
+        app.invoke_view_changed();
+        return Ok(());
+    }
     app.set_as_shot(false);
     app.set_temperature((tt.cct as f32).clamp(2000.0, 12000.0));
     app.set_tint((tt.duv as f32).clamp(-0.05, 0.05));
@@ -1833,5 +1846,109 @@ mod tests {
             shot.temp_tint.cct
         );
         assert_eq!(state.borrow().sidecars[0].history.len(), steps + 1);
+    }
+
+    /// A picture held up while the next frame develops keeps its own
+    /// masks' white balances: the frame, its profile and the develop's
+    /// white move on to the next file before its develop lands, and the
+    /// held picture's masks must not flash back to the global's white.
+    #[test]
+    fn a_held_picture_keeps_its_masks_whites() {
+        use greycard_core::color::{WhitePoint, profile_from_frame, resolve_white_balance};
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        let frame = daylight_frame();
+        let profile = profile_from_frame(&frame).unwrap();
+        let shot = resolve_white_balance(&frame, &profile, WhitePoint::AsShot).unwrap();
+        let mut st = state.borrow_mut();
+        st.base_white = Some(WhiteBase::from(&shot, 1.0));
+        st.frame = Some((Arc::new(frame), Box::new(profile)));
+        let own = crate::panel::color::local_white_shift(&mut st).expect("a raw's");
+        // The next file chosen: the picture held, the frame gone and
+        // the develop's white not yet the next one's.
+        st.held = Some(st.edit.clone());
+        st.frame = None;
+        st.base_white = None;
+        let held = crate::panel::color::local_white_shift(&mut st).expect("the held one's");
+        assert_eq!((held.gains, held.rows), (own.gains, own.rows));
+        // Its develop landed: the next frame's own, here none.
+        st.held = None;
+        assert!(crate::panel::color::local_white_shift(&mut st).is_none());
+        st.held = Some(st.edit.clone());
+        assert!(crate::panel::color::local_white_shift(&mut st).is_none());
+    }
+
+    /// A mask's own white balance on the panel: switched on it starts
+    /// at the global's white, As shot read as its kelvin and Duv, and
+    /// the Neutral dropper on the Masks tab sets the mask's and leaves
+    /// the global's alone.
+    #[test]
+    fn a_masks_white_balance_starts_at_the_globals_and_takes_the_dropper() {
+        use greycard_core::color::{WhitePoint, profile_from_frame, resolve_white_balance};
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let frame = daylight_frame();
+        let profile = profile_from_frame(&frame).unwrap();
+        let shot = resolve_white_balance(&frame, &profile, WhitePoint::AsShot).unwrap();
+        {
+            let mut st = state.borrow_mut();
+            st.base_white = Some(WhiteBase::from(&shot, 1.0));
+            st.frame = Some((Arc::new(frame), Box::new(profile)));
+            st.shown_turn = Some((0, current_turn(&st)));
+            st.edit.adjustments.push(greycard_edit::Adjustment {
+                id: 1,
+                name: "Lamp".into(),
+                ..Default::default()
+            });
+            st.target = Some(0);
+        }
+        app.set_panel_tab("Masks".into());
+        app.set_target(1);
+        app.set_as_shot(true);
+        app.set_local_temperature(9000.0);
+        app.set_local_wb_on(true);
+        app.invoke_local_wb_toggled();
+        assert!(
+            (app.get_local_temperature() as f64 - shot.temp_tint.cct).abs() < 1.0,
+            "{} against {}",
+            app.get_local_temperature(),
+            shot.temp_tint.cct
+        );
+        assert!((app.get_local_tint() as f64 - shot.temp_tint.duv).abs() < 1e-4);
+        // A custom global is taken as it stands.
+        app.set_as_shot(false);
+        app.set_temperature(4100.0);
+        app.set_tint(0.003);
+        app.invoke_local_wb_toggled();
+        assert_eq!(app.get_local_temperature(), 4100.0);
+        assert_eq!(app.get_local_tint(), 0.003);
+        let edit = read_edit(&app, &state.borrow().edit, Some(0));
+        assert_eq!(
+            edit.adjustments[0].look.white_balance,
+            greycard_edit::LocalWhite::Absolute {
+                temperature: 4100.0,
+                tint: 0.003f32 as f64
+            }
+        );
+        // The dropper under a warm light, on the Masks tab: the mask's
+        // white moves, the global's does not.
+        app.set_local_wb_on(false);
+        white_from_neutral(state.borrow_mut(), &app, [0.4, 0.3, 0.15]).unwrap();
+        assert!(app.get_local_wb_on());
+        assert!(
+            app.get_local_temperature() < 4000.0,
+            "{}",
+            app.get_local_temperature()
+        );
+        assert_eq!(app.get_temperature(), 4100.0);
+        assert_eq!(app.get_tint(), 0.003);
+        // Off, the mask has none, and the global look never carries one.
+        app.set_local_wb_on(false);
+        let edit = read_edit(&app, &state.borrow().edit, Some(0));
+        assert!(edit.adjustments[0].look.white_balance.is_off());
+        app.set_local_wb_on(true);
+        let edit = read_edit(&app, &state.borrow().edit, None);
+        assert!(edit.look().white_balance.is_off());
     }
 }

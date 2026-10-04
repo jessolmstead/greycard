@@ -2064,6 +2064,7 @@ dependencies = [
  "dirs",
  "greycard-core",
  "log",
+ "rawcolor",
  "roxmltree",
  "serde",
  "serde_json",

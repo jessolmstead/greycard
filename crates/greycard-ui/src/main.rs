@@ -73,7 +73,7 @@ pub(crate) use slint::wgpu_30::{WGPUConfiguration, WGPUSettings, wgpu};
 pub(crate) use slint::{ComponentHandle, Model, ModelRc, VecModel};
 
 pub(crate) use greycard_core::CameraProfile;
-pub(crate) use greycard_core::color::{Matrix3, WhitePoint, invert3, mul3, resolve_white_balance};
+pub(crate) use greycard_core::color::{Matrix3, WhitePoint, resolve_white_balance};
 pub(crate) use greycard_core::develop::defringe;
 pub(crate) use greycard_core::raw::{Orientation, RawFrame};
 pub(crate) use greycard_edit::brush::{Op, Raster, Stroke};
@@ -690,6 +690,12 @@ pub(crate) struct State {
     pub(crate) source: finish::Source,
     /// The last preview matrix, keyed by what it was computed for.
     pub(crate) white_cache: Option<(WhiteKey, Matrix3)>,
+    /// What the picture on screen's masks made their white balances
+    /// from, kept from its own develop: a picture held up while the
+    /// next frame's develop is on the way keeps its masks' whites,
+    /// though the frame and its profile are the next one's by then
+    /// (`panel::color::local_white_shift`).
+    pub(crate) shown_white: Option<greycard_edit::WhiteShift>,
     /// Holds a develop back until the sliders rest.
     pub(crate) debounce: slint::Timer,
     /// Holds a sidecar write back until the sliders rest.
@@ -1063,6 +1069,7 @@ impl State {
             frame: None,
             source: finish::Source::Scene,
             white_cache: None,
+            shown_white: None,
             debounce: slint::Timer::default(),
             save_timer: slint::Timer::default(),
             preview_temperature: None,

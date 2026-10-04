@@ -268,7 +268,7 @@ and the log beside it; several frames at once, with the settings of
 one synced across them, a preset laid over all of them and an export
 of all of them; export presets, a watermark and an export queue that
 waits for a quiet moment; masks by lightness and
-by color; the Subject mask on the GPU; a Sky mask that refuses a frame
+by color, and a white balance of a mask's own for mixed light; the Subject mask on the GPU; a Sky mask that refuses a frame
 with no sky and takes its edge through hair and branches; a history
 that names a step by the preset, sync or snapshot that made it; a
 right-click menu on a frame, with copy and paste of settings onto the

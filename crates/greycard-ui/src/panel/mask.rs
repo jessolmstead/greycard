@@ -221,12 +221,14 @@ pub(crate) struct MaskDrag {
 /// from `rasters`, brought up to their strokes, their learned masks
 /// from `learned` where made for the shape as it is; a raster no
 /// shape has any more is dropped. Also the learned shapes still
-/// wanting their raster.
+/// wanting their raster. `white` is what their own white balances are
+/// made matrices from (`panel::color::local_white_shift`).
 pub(crate) fn bake_locals(
     edit: &Edit,
     rasters: &mut HashMap<(u64, usize), Arc<Raster>>,
     learned: &mut HashMap<Key, (Shape, Arc<Raster>)>,
     aspect: f32,
+    white: Option<&greycard_edit::WhiteShift>,
 ) -> (Vec<Local>, Vec<(Key, Shape)>) {
     let mut live = std::collections::HashSet::new();
     let mut wants = Vec::new();
@@ -275,7 +277,7 @@ pub(crate) fn bake_locals(
                     Some(RasterRef(raster.clone()))
                 })
                 .collect();
-            Local::of(a, rasters)
+            Local::of(a, rasters, white)
         })
         .collect();
     rasters.retain(|k, _| live.contains(k));

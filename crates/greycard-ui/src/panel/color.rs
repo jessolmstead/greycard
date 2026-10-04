@@ -1,4 +1,5 @@
 use crate::*;
+use greycard_edit::{LocalWhite, WhiteShift};
 
 /// The panel's white balance key for an edit's white balance.
 pub(crate) fn white_key(wb: &WhiteBalance) -> WhiteKey {
@@ -278,28 +279,17 @@ pub(crate) fn preview_white(st: &mut State, panel: WhiteKey) -> Matrix3 {
     };
     let white = panel_white(panel);
     let m = match resolve_white_balance(frame, &profile, white.white_point()) {
-        Ok(wb) => {
-            let target = WhiteBase::from(&wb, base.clip);
-            match invert3(base.matrix) {
-                Some(inv) => {
-                    let mut scaled = target.matrix;
-                    for row in scaled.iter_mut() {
-                        for (c, v) in row.iter_mut().enumerate() {
-                            *v *= target.gains[c] / base.gains[c];
-                        }
-                    }
-                    mul3(scaled, inv)
-                }
-                None => {
-                    // Per frame while a slider moves; the decode warned
-                    // once about the file already.
-                    tracing::debug!(
-                        "preview white balance: the base matrix has no inverse; identity"
-                    );
-                    IDENTITY
-                }
+        // The arithmetic a mask's own white balance is made with too,
+        // so the preview and a local cannot read one white two ways.
+        Ok(wb) => match WhiteShift::from_parts(profile, base.gains, base.matrix).to(&wb) {
+            Some(m) => m,
+            None => {
+                // Per frame while a slider moves; the decode warned
+                // once about the file already.
+                tracing::debug!("preview white balance: the base matrix has no inverse; identity");
+                IDENTITY
             }
-        }
+        },
         Err(e) => {
             tracing::debug!("preview white balance: {e}; identity");
             IDENTITY
@@ -307,6 +297,54 @@ pub(crate) fn preview_white(st: &mut State, panel: WhiteKey) -> Matrix3 {
     };
     st.white_cache = Some((panel, m));
     m
+}
+
+/// What the masks' own white balances are made matrices from: the
+/// white the picture on the GPU was developed at and the profile it
+/// was resolved through. `None` for a picture that is not a raw.
+///
+/// A picture held up while the next frame's develop is on its way
+/// keeps what its own masks were made from (`State::shown_white`):
+/// the frame and its profile are the next one's by then, and its
+/// masks would otherwise flash back to the global's white.
+pub(crate) fn local_white_shift(st: &mut State) -> Option<WhiteShift> {
+    if st.held.is_some() {
+        return st.shown_white.clone();
+    }
+    let shift = match (white_profile(st), st.base_white) {
+        (Some(profile), Some(base)) => {
+            Some(WhiteShift::from_parts(profile, base.gains, base.matrix))
+        }
+        _ => None,
+    };
+    st.shown_white = shift.clone();
+    shift
+}
+
+/// The global white balance as a temperature and tint, As shot
+/// resolved to the kelvin and Duv the camera's gains mean: where a
+/// mask's own starts when it is turned on, so nothing jumps.
+pub(crate) fn global_temp_tint(st: &mut State, panel: WhiteKey) -> Option<(f32, f32)> {
+    let (as_shot, temperature, tint) = panel;
+    if !as_shot {
+        return Some((temperature, tint));
+    }
+    let profile = white_profile(st)?;
+    let (frame, _) = st.frame.as_ref()?;
+    let tt = greycard_core::color::as_shot_temp_tint(frame, &profile).ok()?;
+    Some((tt.cct as f32, tt.duv as f32))
+}
+
+/// The panel's mask white balance: on, temperature, tint.
+pub(crate) fn panel_local_white(app: &App) -> LocalWhite {
+    if app.get_local_wb_on() {
+        LocalWhite::Absolute {
+            temperature: app.get_local_temperature() as f64,
+            tint: app.get_local_tint() as f64,
+        }
+    } else {
+        LocalWhite::Off
+    }
 }
 
 pub(crate) fn panel_white((as_shot, temperature, tint): WhiteKey) -> WhiteBalance {
@@ -320,7 +358,27 @@ pub(crate) fn panel_white((as_shot, temperature, tint): WhiteKey) -> WhiteBalanc
     }
 }
 
-pub(crate) fn install(app: &App, _state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+    // A mask's own white balance switched: on, it starts where the
+    // global stands, As shot read as the kelvin and Duv it means, so
+    // the picture under the mask holds still until a slider moves.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_local_wb_toggled(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            if app.get_local_wb_on() {
+                let key = (app.get_as_shot(), app.get_temperature(), app.get_tint());
+                let found = global_temp_tint(&mut state.borrow_mut(), key);
+                if let Some((temperature, tint)) = found {
+                    app.set_local_temperature(temperature.clamp(2000.0, 12000.0));
+                    app.set_local_tint(tint.clamp(-0.05, 0.05));
+                }
+            }
+            app.invoke_view_changed();
+        });
+    }
     // The color mixer: the sliders show the chosen band; a change on
     // them goes into that band's place in the arrays.
     {
@@ -586,14 +644,8 @@ mod tests {
             matrix: [[1.6, -0.4, -0.2], [-0.1, 1.3, -0.2], [0.0, -0.3, 1.3]],
             clip: 1.0,
         };
-        let inv = invert3(base.matrix).unwrap();
-        let mut scaled = base.matrix;
-        for row in scaled.iter_mut() {
-            for (c, v) in row.iter_mut().enumerate() {
-                *v *= base.gains[c] / base.gains[c];
-            }
-        }
-        let p = mul3(scaled, inv);
+        let p = greycard_core::color::white_shift(base.gains, base.matrix, base.gains, base.matrix)
+            .unwrap();
         for (r, row) in p.iter().enumerate() {
             for (c, v) in row.iter().enumerate() {
                 let want = if r == c { 1.0 } else { 0.0 };
