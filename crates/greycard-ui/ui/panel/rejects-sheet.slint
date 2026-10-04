@@ -1,4 +1,6 @@
-// The move-rejects sheet: how many and where, until answered.
+// The move-rejects sheet: how many and where, until answered. It
+// takes the keys while it is up, as the delete sheet does: Escape is
+// its no, Enter its Move, and every other key stops here.
 
 import { Theme } from "../theme.slint";
 import { PanelButton } from "../controls.slint";
@@ -19,39 +21,53 @@ export component RejectsSheet inherits Rectangle {
         drop-shadow-blur: 32px;
         drop-shadow-color: #00000099;
         TouchArea { }
-        rejects-sheet := VerticalLayout {
-            padding: Theme.space-5;
-            spacing: Theme.space-3;
-            Text {
-                text: "Move the rejects?";
-                font-size: Theme.font-lg;
-                font-weight: Theme.weight-medium;
-                color: Theme.text;
-            }
-            Text {
-                text: root.rejects-text;
-                font-size: Theme.font-sm;
-                color: Theme.text-secondary;
-                wrap: word-wrap;
-            }
-            Text {
-                text: "Nothing is deleted. To bring a frame back, open the rejects folder and use Move back.";
-                font-size: Theme.font-sm;
-                color: Theme.text-secondary;
-                wrap: word-wrap;
-            }
-            Rectangle { height: Theme.space-2; }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                PanelButton {
-                    text: "Cancel";
-                    clicked => { root.rejects-answered(false); }
+        keys := FocusScope {
+            init => { self.focus(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.rejects-answered(false);
+                    return accept;
                 }
-                PanelButton {
-                    text: "Move";
-                    icon: @image-url("../icons/folder-open.svg");
-                    primary: true;
-                    clicked => { root.rejects-answered(true); }
+                if (e.text == Key.Return && !e.repeat) {
+                    root.rejects-answered(true);
+                    return accept;
+                }
+                return accept;
+            }
+            rejects-sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                Text {
+                    text: "Move the rejects?";
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
+                }
+                Text {
+                    text: root.rejects-text;
+                    font-size: Theme.font-sm;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "Nothing is deleted. To bring a frame back, open the rejects folder and use Move back.";
+                    font-size: Theme.font-sm;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: Theme.space-2; }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.rejects-answered(false); }
+                    }
+                    PanelButton {
+                        text: "Move";
+                        icon: @image-url("../icons/folder-open.svg");
+                        primary: true;
+                        clicked => { root.rejects-answered(true); }
+                    }
                 }
             }
         }

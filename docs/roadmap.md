@@ -38,10 +38,6 @@ the reasoning lives in `docs/notes.md`.
       chroma weight, which is gone), pass on NVIDIA. Run the seeds
       further out on both drivers, find what the failing edits share,
       and fix the divergence or justify the bound
-- [ ] CULLING's Move rejects button keeps the focus after its click, so
-      Return while its sheet is up asks again and Escape does not close
-      the sheet; the sheet wants a FocusScope of its own as the delete
-      sheet has, or the button hands the keys back (found in §228)
 - [ ] Auto white balance seems to lean way too warm. (tbf lightroom does too)
 
 ## Next: 0.4.0

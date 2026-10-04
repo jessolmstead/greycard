@@ -1469,6 +1469,18 @@ export component App inherits Window {
     property <int> entries-done: Typing.done;
     changed entries-done => { keys.focus(); }
 
+    // A sheet closed from the Rust side (an answer invoked, not
+    // clicked) takes its focus with it: the keys are the window's
+    // again whoever closed it, unless another sheet is up by then.
+    // A changed handler runs after the turn, so a sheet that closed
+    // as the next one opened would otherwise take the keys from it.
+    changed rejects-open => { if (!root.rejects-open && !root.sheet-open()) { keys.focus(); } }
+    changed delete-open => { if (!root.delete-open && !root.sheet-open()) { keys.focus(); } }
+    changed archive-open => { if (!root.archive-open && !root.sheet-open()) { keys.focus(); } }
+    changed archive-rejects-open => {
+        if (!root.archive-rejects-open && !root.sheet-open()) { keys.focus(); }
+    }
+
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
     forward-focus: keys;
     keys := FocusScope {
@@ -2725,7 +2737,10 @@ export component App inherits Window {
     // Never a delete, and undone by Move back, which it says.
     if root.rejects-open: RejectsSheet {
         rejects-text: root.rejects-text;
-        rejects-answered(a) => { root.rejects-answered(a); }
+        rejects-answered(a) => {
+            root.rejects-answered(a);
+            keys.focus();
+        }
     }
 
     // The delete sheet: how many, from where, and to the trash or for

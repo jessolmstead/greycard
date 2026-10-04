@@ -2918,7 +2918,11 @@ mod tests {
         });
         let answers = Rc::new(RefCell::new(Vec::new()));
         let seen = answers.clone();
-        app.on_rejects_answered(move |yes| seen.borrow_mut().push(yes));
+        let weak = app.as_weak();
+        app.on_rejects_answered(move |yes| {
+            seen.borrow_mut().push(yes);
+            weak.unwrap().set_rejects_open(false);
+        });
         // C is the way in; out of the mode Return and V are nobody's.
         press(&app, "c");
         assert_eq!(*toggles.borrow(), 1);
@@ -2949,17 +2953,23 @@ mod tests {
         press(&app, Key::Return);
         assert!(!app.get_grid_open());
         assert_eq!(*leaves.borrow(), 2);
-        // The rejects sheet takes every key it is shown; Escape is
-        // its no.
+        // The rejects sheet takes every key it is shown; Return is
+        // its Move, once, and Escape its no.
         app.set_rejects_open(true);
+        a_moment_on(&app);
         press(&app, "c");
-        press(&app, Key::Return);
         press(&app, "4");
         assert_eq!(*toggles.borrow(), 1);
         assert_eq!(*leaves.borrow(), 2);
         assert_eq!(rated.borrow().len(), 2);
+        press(&app, Key::Return);
+        assert_eq!(*answers.borrow(), vec![true]);
+        assert!(!app.get_rejects_open());
+        assert_eq!(*leaves.borrow(), 2);
+        app.set_rejects_open(true);
+        a_moment_on(&app);
         press(&app, Key::Escape);
-        assert_eq!(*answers.borrow(), vec![false]);
+        assert_eq!(*answers.borrow(), vec![true, false]);
         // Ctrl+C is not the mode's.
         app.set_rejects_open(false);
         app.window().dispatch_event(WindowEvent::KeyPressed {
@@ -3853,6 +3863,135 @@ mod tests {
         }
     }
 
+    /// The Move rejects button keeps no focus once its sheet is up: the
+    /// sheet takes the keys, so Return confirms once instead of asking
+    /// again, Escape closes it, and the window has the keys after.
+    #[test]
+    fn the_move_rejects_sheet_takes_the_keys_from_the_button_that_opened_it() {
+        let app = window(3);
+        app.set_reject_count(2);
+        app.set_panel_tab(CULL_TAB.into());
+        let asked = Rc::new(RefCell::new(0));
+        let answers = Rc::new(RefCell::new(Vec::new()));
+        let n = asked.clone();
+        let weak = app.as_weak();
+        app.on_rejects_asked(move || {
+            *n.borrow_mut() += 1;
+            weak.unwrap().set_rejects_open(true);
+        });
+        let seen = answers.clone();
+        let weak = app.as_weak();
+        app.on_rejects_answered(move |yes| {
+            seen.borrow_mut().push(yes);
+            weak.unwrap().set_rejects_open(false);
+        });
+        let open = |app: &App| {
+            let (at, size) = crate::testing::labeled(app, "Move 2 rejects...");
+            click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+            slint::platform::update_timers_and_animations();
+            assert!(app.get_rejects_open());
+        };
+        open(&app);
+        assert_eq!(*asked.borrow(), 1);
+        press(&app, Key::Return);
+        assert_eq!(*asked.borrow(), 1, "Return does not ask again");
+        assert_eq!(*answers.borrow(), [true]);
+        assert!(!app.get_rejects_open());
+        open(&app);
+        press(&app, Key::Escape);
+        assert_eq!(*answers.borrow(), [true, false]);
+        assert!(!app.get_rejects_open());
+        // The keys are the window's again: C enters the mode.
+        let toggles = Rc::new(RefCell::new(0));
+        let seen = toggles.clone();
+        app.on_cull_toggled(move || *seen.borrow_mut() += 1);
+        press(&app, "c");
+        assert_eq!(*toggles.borrow(), 1);
+    }
+
+    /// The same for the archive's sheet, opened by its section button.
+    #[test]
+    fn the_archive_rejects_sheet_takes_the_keys_from_its_button_too() {
+        let app = window(3);
+        app.set_panel_tab(CULL_TAB.into());
+        app.set_archive_rejects_choices(ModelRc::new(VecModel::from(vec![
+            slint::SharedString::from("Remove rejects from nas..."),
+        ])));
+        let asked = Rc::new(RefCell::new(0));
+        let answers = Rc::new(RefCell::new(Vec::new()));
+        let n = asked.clone();
+        let weak = app.as_weak();
+        app.on_archive_rejects_asked(move |_| {
+            *n.borrow_mut() += 1;
+            let app = weak.unwrap();
+            app.set_archive_rejects_move("Move to rejects".into());
+            app.set_archive_rejects_open(true);
+        });
+        let seen = answers.clone();
+        let weak = app.as_weak();
+        app.on_archive_rejects_answered(move |a| {
+            seen.borrow_mut().push(a);
+            weak.unwrap().set_archive_rejects_open(false);
+        });
+        let open = |app: &App| {
+            let (at, size) = crate::testing::labeled(app, "Remove rejects from nas...");
+            click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+            slint::platform::update_timers_and_animations();
+            assert!(app.get_archive_rejects_open());
+        };
+        open(&app);
+        press(&app, Key::Return);
+        assert_eq!(*asked.borrow(), 1);
+        assert_eq!(*answers.borrow(), [1]);
+        open(&app);
+        press(&app, Key::Escape);
+        assert_eq!(*answers.borrow(), [1, 0]);
+    }
+
+    /// A sheet closed from Rust, as the `--move-rejects` driver does,
+    /// leaves the window its keys.
+    #[test]
+    fn a_sheet_closed_from_rust_gives_the_window_its_keys() {
+        let app = window(3);
+        app.set_reject_count(2);
+        app.set_panel_tab(CULL_TAB.into());
+        let weak = app.as_weak();
+        app.on_rejects_asked(move || weak.unwrap().set_rejects_open(true));
+        // As the real handler: the answer closes the sheet from Rust.
+        let weak = app.as_weak();
+        app.on_rejects_answered(move |_| weak.unwrap().set_rejects_open(false));
+        let toggles = Rc::new(RefCell::new(0));
+        let seen = toggles.clone();
+        app.on_cull_toggled(move || *seen.borrow_mut() += 1);
+        let (at, size) = crate::testing::labeled(&app, "Move 2 rejects...");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        a_moment_on(&app);
+        assert!(app.get_rejects_open());
+        app.invoke_rejects_answered(true);
+        a_moment_on(&app);
+        assert!(!app.get_rejects_open());
+        press(&app, "c");
+        assert_eq!(*toggles.borrow(), 1);
+    }
+
+    /// A sheet that closes in the turn another opens leaves the keys
+    /// with the one that opened: the closed one's handler runs after
+    /// the turn and finds a sheet up.
+    #[test]
+    fn a_sheet_closed_as_another_opens_leaves_it_the_keys() {
+        let app = window(3);
+        let answers = Rc::new(RefCell::new(Vec::new()));
+        let seen = answers.clone();
+        app.on_rejects_answered(move |yes| seen.borrow_mut().push(yes));
+        app.set_archive_open(true);
+        a_moment_on(&app);
+        app.set_archive_open(false);
+        app.set_rejects_open(true);
+        a_moment_on(&app);
+        press(&app, Key::Return);
+        assert_eq!(*answers.borrow(), [true]);
+    }
+
     /// The menu grays and leaves out what CULLING does: no rejects
     /// grays Move rejects, none of the selection in a rejects folder
     /// leaves Move back out, and Delete rejects folder is always there
@@ -3924,12 +4063,23 @@ mod tests {
             g.borrow_mut().push(format!("archive answered {a}"));
             weak.unwrap().set_archive_rejects_open(false);
         });
+        let (g, weak) = (got.clone(), app.as_weak());
+        app.on_rejects_asked(move || {
+            g.borrow_mut().push("move rejects".into());
+            weak.unwrap().set_rejects_open(true);
+        });
+        let (g, weak) = (got.clone(), app.as_weak());
+        app.on_rejects_answered(move |yes| {
+            g.borrow_mut().push(format!("move answered {yes}"));
+            weak.unwrap().set_rejects_open(false);
+        });
         app.set_delete_trash(true);
         app.set_reject_count(2);
         app.set_archive_rejects_choices(ModelRc::new(VecModel::from(vec![
             slint::SharedString::from("Remove rejects from nas..."),
         ])));
         let items = [
+            ("Move 2 rejects...", 1, "move rejects", "move answered true"),
             (
                 "Delete rejects folder...",
                 2,

@@ -244,3 +244,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§231. AgX ported as a display transform: Blender's formation with Punchy, behind the switch](notes/231-agx-ported-as-a-display-transform.md) (2026-10-03)
 - [§232. Hold hue to white taken out, unreleased](notes/232-hold-hue-to-white-taken-out.md) (2026-10-03)
 - [§233. One frame in two places: the sidecar on both copies, and two histories joined](notes/233-one-frame-in-two-places-the-sidecar-on-both-copies.md) (2026-10-03)
+- [§234. The rejects sheet takes the keys](notes/234-the-rejects-sheet-takes-the-keys.md) (2026-10-03)

@@ -10,6 +10,10 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The Move rejects sheet takes the keys when it opens, from
+  CULLING's button or the grid header's menu, so Return moves once and
+  Escape closes it; a sheet closed from the command line gives the
+  window its keys back (§234, 2026-10-03)
 - AgX as a display curve behind a per-picture switch at the foot of
   LIGHT, beside per channel: Blender's wide-gamut formation
   (Eary Chow's, as darktable's module parametrizes it) with the "AgX -
