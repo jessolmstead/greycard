@@ -12,6 +12,7 @@ import { PanelButton } from "../controls.slint";
 // undone.
 export component DangerButton inherits Rectangle {
     in property <string> text;
+    in property <image> icon: @image-url("../icons/trash-2.svg");
     callback clicked();
     // Known by its words to a screen reader, and to the tests' clicks;
     // still no focus and no default action, so nothing but a click
@@ -30,7 +31,7 @@ export component DangerButton inherits Rectangle {
         padding-left: Theme.space-3;
         padding-right: Theme.space-3;
         Image {
-            source: @image-url("../icons/trash-2.svg");
+            source: root.icon;
             colorize: Theme.label-red;
             width: Theme.icon;
             height: Theme.icon;

@@ -242,11 +242,12 @@ pub(crate) fn plan(
 
     let (folder, settings, preset_name) = if into_folder {
         let sources: Vec<PathBuf> = frames.iter().map(|f| f.source.clone()).collect();
-        for (frame, out) in
-            frames
-                .iter_mut()
-                .zip(queue::names(&sources, Some(target), sheet_settings.format))
-        {
+        for (frame, out) in frames.iter_mut().zip(queue::names(
+            &sources,
+            Some(target),
+            None,
+            sheet_settings.format,
+        )) {
             frame.out = out;
         }
         (Some(target.to_path_buf()), sheet_settings, preset_name)
@@ -415,7 +416,7 @@ pub(crate) fn run(plan: Plan) -> Finished {
             Some((_, why)) => format!("export to {} failed: {why}", path.display()),
             None => format!("export to {} did not happen", path.display()),
         },
-        (None, _) => queue::finished_line(&tally, total, set.folder.as_deref(), seconds),
+        (None, _) => queue::finished_line(&tally, total, &set.place(), seconds),
     };
     match (left_out, &single) {
         (0, _) => {}

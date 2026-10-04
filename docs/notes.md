@@ -252,3 +252,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§239. The random parity test past its seeds: a NaN in AgX, the color shifts at black, unsettled answers and lit pixels](notes/239-the-random-parity-test-past-its-seeds.md) (2026-10-04)
 - [§240. The camera match converges its exposure match, and holds every frame out](notes/240-the-camera-match-converges-its-exposure-match.md) (2026-10-04)
 - [§241. A white balance in a mask](notes/241-a-white-balance-in-a-mask.md) (2026-10-04)
+- [§242. An export into a subfolder, and a question before it writes over](notes/242-an-export-into-a-subfolder.md) (2026-10-04)

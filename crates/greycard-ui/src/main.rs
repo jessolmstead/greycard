@@ -897,6 +897,9 @@ pub(crate) struct State {
     pub(crate) exporting: Option<Arc<queue::Set>>,
     /// The folder chooser for a set is up: Export waits for its answer.
     pub(crate) export_choosing: bool,
+    /// A set that would write over files that are there, held while
+    /// the overwrite sheet asks; `export_choosing` is up meanwhile.
+    pub(crate) export_pending: Option<crate::panel::deliver::Pending>,
     /// The sets waiting to be exported, oldest first, as
     /// `export-queue.json` keeps them.
     pub(crate) export_queue: Vec<export_queue::Entry>,
@@ -1145,6 +1148,7 @@ impl State {
             encoded_lut_for: None,
             exporting: None,
             export_choosing: false,
+            export_pending: None,
             export_queue: Vec::new(),
             export_queue_file: None,
             queue_run: None,

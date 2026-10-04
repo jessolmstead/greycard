@@ -70,6 +70,9 @@ pub struct Set {
     /// Where the frames go: the folder chosen, for the finished line.
     /// None when each goes beside its own file.
     pub folder: Option<PathBuf>,
+    /// With no folder, the subfolder of each frame's own folder it goes
+    /// into, made when it is not there; none for beside the file.
+    pub sub: Option<PathBuf>,
     pub settings: Settings,
     pub on_exists: OnExists,
     /// The export preset the sheet was when the set began, for each
@@ -90,6 +93,7 @@ impl Set {
         Self {
             total,
             folder,
+            sub: None,
             settings,
             on_exists,
             preset: None,
@@ -102,6 +106,18 @@ impl Set {
     /// The set, with `preset` as the export preset it was begun under.
     pub fn with_preset(self, preset: Option<String>) -> Self {
         Self { preset, ..self }
+    }
+
+    /// The set, each frame into `sub` under its own folder when it has
+    /// no folder of its own.
+    pub fn with_sub(self, sub: Option<PathBuf>) -> Self {
+        Self { sub, ..self }
+    }
+
+    /// Where the frames go, for the status line and the log: "to
+    /// FOLDER", "into SUB beside their files" or "beside their files".
+    pub fn place(&self) -> String {
+        place(self.folder.as_deref(), self.sub.as_deref())
     }
 
     /// Stop after the frame in hand: every frame not yet begun is
@@ -158,16 +174,22 @@ fn file_name(path: &Path) -> String {
 }
 
 /// Where each frame of a set goes in `folder`: its own name with the
-/// format's extension. Without a folder (no chooser to ask) each goes
-/// beside its own file under the `.greycard` name the editor writes
-/// there, which no camera does. Two frames of one name (a raw and its camera
+/// format's extension. Without a folder, each goes into `sub` under its
+/// own file's folder by that name, or with no `sub` either (no chooser
+/// to ask) beside its own file under the `.greycard` name the editor
+/// writes there, which no camera does. Two frames of one name (a raw and its camera
 /// JPEG) are told apart as the policy would tell them, ` (2)` on the
 /// second, so neither writes over the other whatever the policy says;
 /// the names are compared as a case-blind file system compares them.
 /// A name that would be the source itself (a JPEG exported as a JPEG
 /// into its own folder) takes the `.greycard` name the editor writes
 /// beside a file when it has no chooser to ask.
-pub fn names(sources: &[PathBuf], folder: Option<&Path>, format: Format) -> Vec<PathBuf> {
+pub fn names(
+    sources: &[PathBuf],
+    folder: Option<&Path>,
+    sub: Option<&Path>,
+    format: Format,
+) -> Vec<PathBuf> {
     let key = |p: &Path| p.to_string_lossy().to_lowercase();
     // Every source of the set is taken before any name is given: a
     // frame's export must never land on another frame's file (a raw's
@@ -185,12 +207,11 @@ pub fn names(sources: &[PathBuf], folder: Option<&Path>, format: Format) -> Vec<
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "export".into());
             let ext = format.extension();
-            let (folder, beside) = match folder {
-                Some(f) => (f.to_path_buf(), false),
-                None => (
-                    source.parent().map(Path::to_path_buf).unwrap_or_default(),
-                    true,
-                ),
+            let own = || source.parent().map(Path::to_path_buf).unwrap_or_default();
+            let (folder, beside) = match (folder, sub) {
+                (Some(f), _) => (f.to_path_buf(), false),
+                (None, Some(sub)) => (own().join(sub), false),
+                (None, None) => (own(), true),
             };
             let mut path = folder.join(format!("{stem}.{ext}"));
             if beside || same_file(&path, source) {
@@ -234,19 +255,25 @@ pub fn progress_line(index: usize, total: usize, name: &str) -> String {
     format!("exporting {} of {total}: {name}", index + 1)
 }
 
+/// Where a set's frames go, in words: "to FOLDER", "into SUB beside
+/// their files" or "beside their files".
+pub fn place(folder: Option<&Path>, sub: Option<&Path>) -> String {
+    match (folder, sub) {
+        (Some(f), _) => format!("to {}", f.display()),
+        (None, Some(sub)) => format!("into {} beside their files", sub.display()),
+        (None, None) => "beside their files".into(),
+    }
+}
+
 /// The status line once the set is done with: how many were written,
-/// where, and what did not go.
-pub fn finished_line(tally: &Tally, total: usize, folder: Option<&Path>, seconds: f64) -> String {
+/// where (`place`), and what did not go.
+pub fn finished_line(tally: &Tally, total: usize, place: &str, seconds: f64) -> String {
     let mut s = if tally.canceled > 0 {
         format!("export stopped: {} of {total} exported", tally.exported)
     } else {
         format!("exported {}", frames(tally.exported))
     };
-    match folder {
-        Some(f) => s.push_str(&format!(" to {}", f.display())),
-        None => s.push_str(" beside their files"),
-    }
-    s.push_str(&format!(" in {seconds:.1} s"));
+    s.push_str(&format!(" {place} in {seconds:.1} s"));
     if tally.skipped > 0 {
         s.push_str(&format!(", {} skipped (there already)", tally.skipped));
     }
@@ -317,7 +344,7 @@ mod tests {
         let t = s.tally();
         assert_eq!((t.exported, t.canceled, t.skipped), (3, 2, 0));
         assert!(t.failed.is_empty());
-        let line = finished_line(&t, 5, s.folder.as_deref(), 3.0);
+        let line = finished_line(&t, 5, &s.place(), 3.0);
         assert!(
             line.starts_with("export stopped: 3 of 5 exported"),
             "{line}"
@@ -354,7 +381,7 @@ mod tests {
                 ("IMG_0003.CR3".to_string(), "not a raw".to_string()),
             ]
         );
-        let line = finished_line(&t, 4, Some(Path::new("/tmp/out")), 2.5);
+        let line = finished_line(&t, 4, &place(Some(Path::new("/tmp/out")), None), 2.5);
         assert_eq!(
             line,
             "exported 2 frames to /tmp/out in 2.5 s, 2 failed (see the log)"
@@ -366,7 +393,7 @@ mod tests {
             ..Tally::default()
         };
         assert_eq!(
-            finished_line(&one, 5, None, 1.0),
+            finished_line(&one, 5, &place(None, None), 1.0),
             "exported 4 frames beside their files in 1.0 s, 1 failed (IMG_0009.CR3: no such file)"
         );
         assert_eq!(
@@ -384,7 +411,7 @@ mod tests {
             PathBuf::from("b/img_1.CR3"),
             PathBuf::from("a/IMG_2.CR3"),
         ];
-        let got = names(&files, Some(folder), Format::Jpeg);
+        let got = names(&files, Some(folder), None, Format::Jpeg);
         assert_eq!(
             got,
             vec![
@@ -396,22 +423,33 @@ mod tests {
         );
         // A JPEG into its own folder as a JPEG is not written over.
         let a = Path::new("a");
-        let own = names(&[a.join("IMG_3.JPG")], Some(a), Format::Jpeg);
+        let own = names(&[a.join("IMG_3.JPG")], Some(a), None, Format::Jpeg);
         assert_eq!(own, vec![a.join("IMG_3.greycard.jpg")]);
-        let tiff = names(&[a.join("IMG_3.JPG")], Some(a), Format::Tiff);
+        let tiff = names(&[a.join("IMG_3.JPG")], Some(a), None, Format::Tiff);
         assert_eq!(tiff, vec![a.join("IMG_3.tif")]);
         // A raw's export never lands on the camera's JPEG beside it,
         // which is a frame of the set too; that JPEG's own export
         // takes the `.greycard` name.
-        let pair = names(&[a.join("X.CR3"), a.join("X.jpg")], Some(a), Format::Jpeg);
+        let pair = names(
+            &[a.join("X.CR3"), a.join("X.jpg")],
+            Some(a),
+            None,
+            Format::Jpeg,
+        );
         assert_eq!(pair, vec![a.join("X (2).jpg"), a.join("X.greycard.jpg")]);
         // The same in any case: one file on macOS and Windows.
-        let upper = names(&[a.join("A.CR3"), a.join("A.JPG")], Some(a), Format::Jpeg);
+        let upper = names(
+            &[a.join("A.CR3"), a.join("A.JPG")],
+            Some(a),
+            None,
+            Format::Jpeg,
+        );
         assert_eq!(upper, vec![a.join("A (2).jpg"), a.join("A.greycard.jpg")]);
         // Beside the files, a source already named `.greycard` is not
         // written over by another frame's export.
         let beside = names(
             &[a.join("X.CR3"), a.join("X.greycard.jpg")],
+            None,
             None,
             Format::Jpeg,
         );
@@ -426,6 +464,7 @@ mod tests {
         let beside = names(
             &[a.join("IMG_4.CR3"), a.join("IMG_4.JPG")],
             None,
+            None,
             Format::Jpeg,
         );
         assert_eq!(
@@ -435,5 +474,35 @@ mod tests {
                 a.join("IMG_4.greycard (2).jpg")
             ]
         );
+    }
+
+    #[test]
+    fn a_subfolder_takes_each_frame_s_own_name_under_its_own_folder() {
+        let (a, b, sub) = (Path::new("a"), Path::new("b"), Path::new("export"));
+        let got = names(
+            &[
+                a.join("IMG_1.CR3"),
+                b.join("IMG_2.CR3"),
+                a.join("IMG_1.JPG"),
+            ],
+            None,
+            Some(sub),
+            Format::Jpeg,
+        );
+        // No `.greycard`: the subfolder is not where the camera writes.
+        // Two of one name in one subfolder are still told apart.
+        assert_eq!(
+            got,
+            vec![
+                a.join("export/IMG_1.jpg"),
+                b.join("export/IMG_2.jpg"),
+                a.join("export/IMG_1 (2).jpg"),
+            ]
+        );
+        // A chosen folder wins over the subfolder.
+        let chosen = names(&[a.join("IMG_1.CR3")], Some(b), Some(sub), Format::Jpeg);
+        assert_eq!(chosen, vec![b.join("IMG_1.jpg")]);
+        assert_eq!(place(None, Some(sub)), "into export beside their files");
+        assert_eq!(place(Some(b), Some(sub)), "to b");
     }
 }

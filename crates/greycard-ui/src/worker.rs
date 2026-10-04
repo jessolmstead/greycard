@@ -1106,6 +1106,17 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                             path: frame.out.clone(),
                         };
                     };
+                    // A subfolder is made as its first frame goes in; a
+                    // chosen folder is there, and one that is not (a
+                    // drive gone) is never made on the disk under it.
+                    if set.sub.is_some()
+                        && let Some(dir) = path.parent()
+                        && let Err(e) = std::fs::create_dir_all(dir)
+                    {
+                        return crate::queue::Done::Failed {
+                            message: format!("making {}: {e}", dir.display()),
+                        };
+                    }
                     let start = Instant::now();
                     // The frame on screen is the open file: its picture
                     // is the last develop's when that was of this edit.

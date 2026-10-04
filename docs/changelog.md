@@ -10,6 +10,11 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The export sheet has a Subfolder: typed, Export writes each frame
+  into that folder beside its raw, made if it is not there, with no
+  chooser; a preset and a queued set carry it. Under Overwrite, an
+  export that would write over files first names every one of them,
+  with Keep both the default (§242)
 - The sheets, settings and status line say less: the notes under each
   setting are a line, an unreachable drive "isn't reachable", a timed
   out job "timed out", and every tool's hint ends "Esc to finish"

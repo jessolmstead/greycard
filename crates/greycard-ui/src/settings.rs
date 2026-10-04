@@ -347,6 +347,7 @@ mod tests {
             embed: false,
             sharpen: "High".into(),
             on_exists: "Skip".into(),
+            subfolder: "export".into(),
             metadata: "None".into(),
             mark: "Image".into(),
             mark_text: "© x".into(),

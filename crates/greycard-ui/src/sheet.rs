@@ -9,6 +9,7 @@
 use crate::export::{self, Metadata, OnExists, Sharpen, Space};
 use crate::watermark::{Kind, Mark, Position};
 use serde::{Deserialize, Serialize};
+use std::path::{Component, Path, PathBuf};
 
 /// The watermark's kinds by the sheet's names.
 pub const MARK_OFF: &str = "Off";
@@ -41,6 +42,10 @@ pub struct Sheet {
     /// Increment, Overwrite or Skip.
     #[serde(rename = "export_on_exists")]
     pub on_exists: String,
+    /// A folder under each frame's own to export into, with no chooser
+    /// asked; empty to ask.
+    #[serde(rename = "export_subfolder")]
+    pub subfolder: String,
     /// All, No edit or None.
     #[serde(rename = "export_metadata")]
     pub metadata: String,
@@ -80,6 +85,7 @@ impl Default for Sheet {
             embed: true,
             sharpen: Sharpen::default().name().into(),
             on_exists: OnExists::default().name().into(),
+            subfolder: String::new(),
             metadata: Metadata::default().name().into(),
             mark: MARK_OFF.into(),
             mark_text: String::new(),
@@ -117,6 +123,36 @@ impl Sheet {
         OnExists::from_name(&self.on_exists).unwrap_or_default()
     }
 
+    /// The folder under each frame's own that an export goes into
+    /// without a chooser, none when the sheet asks for one. Only names
+    /// going down are taken (`export`, `export/web`): a path that is
+    /// whole or climbs out would land the frames of a set wherever it
+    /// pointed rather than beside each.
+    pub fn subfolder(&self) -> Result<Option<PathBuf>, String> {
+        let typed = self.subfolder.trim();
+        if typed.is_empty() {
+            return Ok(None);
+        }
+        // A `.` is passed over: what is left has to name a folder, so
+        // a frame's export never lands on the frame's own name.
+        let mut path = PathBuf::new();
+        for c in Path::new(typed).components() {
+            match c {
+                Component::Normal(name) => path.push(name),
+                Component::CurDir => {}
+                _ => {
+                    return Err(format!(
+                        "the subfolder {typed} is not under the frame's folder"
+                    ));
+                }
+            }
+        }
+        if path.as_os_str().is_empty() {
+            return Err(format!("the subfolder {typed} names no folder"));
+        }
+        Ok(Some(path))
+    }
+
     fn watermark(&self) -> Option<Mark> {
         let kind = match self.mark.as_str() {
             MARK_TEXT => Kind::Text {
@@ -152,6 +188,7 @@ impl Sheet {
             s.custom.clear();
         }
         s.custom = s.custom.trim().to_string();
+        s.subfolder = s.subfolder.trim().to_string();
         s.mark_size = step(s.mark_size);
         s.mark_margin = step(s.mark_margin);
         s.mark_opacity = step(s.mark_opacity);
@@ -404,6 +441,39 @@ mod tests {
             ..a.clone()
         }));
         assert!(!a.same(&off));
+        // Where it goes, though not a space around the name.
+        let sub = Sheet {
+            subfolder: "export".into(),
+            ..a.clone()
+        };
+        assert!(!a.same(&sub));
+        assert!(sub.same(&Sheet {
+            subfolder: " export ".into(),
+            ..a.clone()
+        }));
+    }
+
+    #[test]
+    fn a_subfolder_only_goes_down_from_the_frame_s() {
+        let with = |typed: &str| {
+            Sheet {
+                subfolder: typed.into(),
+                ..Sheet::default()
+            }
+            .subfolder()
+        };
+        assert_eq!(with(""), Ok(None));
+        assert_eq!(with("  "), Ok(None));
+        assert_eq!(with(" export "), Ok(Some(PathBuf::from("export"))));
+        assert_eq!(with("export/web"), Ok(Some(PathBuf::from("export/web"))));
+        assert!(with("../export").is_err());
+        assert!(with("export/../..").is_err());
+        assert!(with("/tmp/export").is_err());
+        assert!(with(".").is_err());
+        assert_eq!(with("./export/."), Ok(Some(PathBuf::from("export"))));
+        // A settings file from before the field reads as asking.
+        let old: Sheet = serde_json::from_str(r#"{"export_format":"PNG"}"#).unwrap();
+        assert_eq!(old.subfolder(), Ok(None));
     }
 
     #[test]

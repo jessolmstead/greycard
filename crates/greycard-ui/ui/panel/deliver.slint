@@ -85,6 +85,7 @@ export component ExportSheet inherits Rectangle {
     in-out property <bool> export-embed;
     in-out property <string> export-sharpen;
     in-out property <string> export-on-exists;
+    in-out property <string> export-subfolder;
     in-out property <string> export-metadata;
     in-out property <string> export-mark;
     in-out property <string> export-mark-text;
@@ -274,6 +275,17 @@ export component ExportSheet inherits Rectangle {
                         spacing: Theme.space-2;
                         Text { text: "Metadata"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
                         Segmented { options: ["All", "No edit", "None"]; current <=> root.export-metadata; }
+                    }
+                    // Typed, every export goes into it beside each frame
+                    // with no chooser; left empty, the chooser asks.
+                    HorizontalLayout {
+                        spacing: Theme.space-2;
+                        Text { text: "Subfolder"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        LineEdit {
+                            horizontal-stretch: 1;
+                            text <=> root.export-subfolder;
+                            placeholder-text: "None: ask where";
+                        }
                     }
                     HorizontalLayout {
                         spacing: Theme.space-2;

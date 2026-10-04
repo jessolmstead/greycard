@@ -61,6 +61,7 @@ pub(crate) fn read_sheet(app: &App) -> Sheet {
         embed: app.get_export_embed(),
         sharpen: app.get_export_sharpen().into(),
         on_exists: app.get_export_on_exists().into(),
+        subfolder: app.get_export_subfolder().into(),
         metadata: app.get_export_metadata().into(),
         mark: app.get_export_mark().into(),
         mark_text: app.get_export_mark_text().into(),
@@ -83,6 +84,7 @@ pub(crate) fn show_sheet(app: &App, s: &Sheet) {
     app.set_export_embed(s.embed);
     app.set_export_sharpen(s.sharpen.as_str().into());
     app.set_export_on_exists(s.on_exists.as_str().into());
+    app.set_export_subfolder(s.subfolder.as_str().into());
     app.set_export_metadata(s.metadata.as_str().into());
     app.set_export_mark(s.mark.as_str().into());
     app.set_export_mark_text(s.mark_text.as_str().into());
@@ -144,13 +146,9 @@ pub(crate) fn show_edited(app: &App, presets: &[ExportPreset]) {
 }
 
 /// The export sheet as the panel shows it.
+#[cfg(test)]
 pub(crate) fn read_export_settings(app: &App) -> export::Settings {
     read_sheet(app).settings()
-}
-
-/// The sheet's answer to a file of that name being there already.
-pub(crate) fn read_on_exists(app: &App) -> export::OnExists {
-    read_sheet(app).on_exists()
 }
 
 /// Keep the presets in the settings file now, not at the window's
@@ -884,7 +882,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let line = queue::finished_line(
                 &tally,
                 set.total,
-                set.folder.as_deref(),
+                &set.place(),
                 set.started.elapsed().as_secs_f64(),
             );
             // Said on the terminal without -v when not all went.
@@ -965,14 +963,17 @@ fn exporting(st: &State, set: &Arc<queue::Set>) -> bool {
     st.exporting.as_ref().is_some_and(|s| Arc::ptr_eq(s, set))
 }
 
-/// Send `frames` to the worker as a set, into `folder` or beside each
-/// file, and hold the set to cancel it. The set started, or none when
-/// there was nothing to send.
+/// Send `frames` to the worker as a set, into `folder`, or with none
+/// into `sub` under each file's folder or beside each file, and hold
+/// the set to cancel it. The set started, or none when there was
+/// nothing to send.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn start_set(
     st: &mut State,
     app: &App,
     frames: SetFrames,
     folder: Option<PathBuf>,
+    sub: Option<PathBuf>,
     settings: export::Settings,
     on_exists: export::OnExists,
     preset: Option<String>,
@@ -989,7 +990,7 @@ pub(crate) fn start_set(
         return None;
     }
     let sources: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
-    let outs = queue::names(&sources, folder.as_deref(), settings.format);
+    let outs = queue::names(&sources, folder.as_deref(), sub.as_deref(), settings.format);
     let frames: Vec<queue::Frame> = frames
         .into_iter()
         .zip(outs)
@@ -1001,15 +1002,15 @@ pub(crate) fn start_set(
             out,
         })
         .collect();
-    let set =
-        Arc::new(queue::Set::new(frames.len(), folder, settings, on_exists).with_preset(preset));
+    let set = Arc::new(
+        queue::Set::new(frames.len(), folder, settings, on_exists)
+            .with_preset(preset)
+            .with_sub(sub),
+    );
     tracing::info!(
         "exporting {} {}: {}",
         queue::frames(frames.len()),
-        match &set.folder {
-            Some(f) => format!("to {}", f.display()),
-            None => "beside their files".to_string(),
-        },
+        set.place(),
         set.settings.describe()
     );
     app.set_status(format!("exporting {}...", queue::frames(frames.len())).into());
@@ -1027,7 +1028,100 @@ pub(crate) fn start_set(
     Some(set)
 }
 
+/// A set held while the overwrite sheet asks about the files it would
+/// write over: what `start_set` takes, but the policy, which is the
+/// answer's.
+pub(crate) struct Pending {
+    frames: SetFrames,
+    folder: Option<PathBuf>,
+    sub: Option<PathBuf>,
+    settings: export::Settings,
+    preset: Option<String>,
+}
+
+/// `start_set`, unless the policy is Overwrite and some of the files
+/// the set would write are there: then the overwrite sheet names every
+/// one of them and the set waits for its answer. Only an export the
+/// editor names the files of comes here; a file the desktop's chooser
+/// named was confirmed in the chooser.
+#[allow(clippy::too_many_arguments)]
+fn start_or_ask(
+    st: &mut State,
+    app: &App,
+    frames: SetFrames,
+    folder: Option<PathBuf>,
+    sub: Option<PathBuf>,
+    settings: export::Settings,
+    on_exists: export::OnExists,
+    preset: Option<String>,
+) {
+    if on_exists == export::OnExists::Overwrite {
+        let sources: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
+        let there: Vec<PathBuf> =
+            queue::names(&sources, folder.as_deref(), sub.as_deref(), settings.format)
+                .into_iter()
+                .filter(|p| p.exists())
+                .collect();
+        if !there.is_empty() {
+            let title = match there.as_slice() {
+                [one] => format!("{} is there already", file_name(one)),
+                _ => format!("{} files are there already", there.len()),
+            };
+            let files: Vec<slint::SharedString> = there
+                .iter()
+                .map(|p| p.display().to_string().into())
+                .collect();
+            app.set_overwrite_title(title.as_str().into());
+            app.set_overwrite_files(ModelRc::new(VecModel::from(files)));
+            app.set_export_open(false);
+            app.set_overwrite_open(true);
+            app.set_status(format!("{title}: overwrite?").into());
+            // One question at a time: another Export waits for this.
+            st.export_choosing = true;
+            st.export_pending = Some(Pending {
+                frames,
+                folder,
+                sub,
+                settings,
+                preset,
+            });
+            return;
+        }
+    }
+    start_set(st, app, frames, folder, sub, settings, on_exists, preset);
+}
+
+/// The overwrite sheet's answer: 0 no, 1 keep both (the set under
+/// Increment), 2 overwrite.
+fn overwrite_answered(st: &mut State, app: &App, answer: i32) {
+    app.set_overwrite_open(false);
+    let Some(p) = st.export_pending.take() else {
+        return;
+    };
+    let on_exists = match answer {
+        1 => export::OnExists::Increment,
+        2 => export::OnExists::Overwrite,
+        _ => {
+            st.export_choosing = false;
+            app.set_status("export canceled".into());
+            return;
+        }
+    };
+    start_set(
+        st, app, p.frames, p.folder, p.sub, p.settings, on_exists, p.preset,
+    );
+}
+
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_overwrite_answered(move |answer| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            overwrite_answered(&mut state.borrow_mut(), &app, answer);
+        });
+    }
     // Stop a set after the frame in hand.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
@@ -1273,8 +1367,10 @@ pub(crate) fn pressed_frames(
     }
 }
 
-/// The export of what [`pressed_frames`] took: one frame on screen to a
-/// file the desktop's chooser names, else the set into a folder.
+/// The export of what [`pressed_frames`] took: with a subfolder on the
+/// sheet, the set into it beside each frame and no chooser; else one
+/// frame on screen to a file the desktop's chooser names, and the set
+/// into a folder.
 fn export_gathered(
     state: &Rc<RefCell<State>>,
     app: &App,
@@ -1284,7 +1380,8 @@ fn export_gathered(
     on_screen: bool,
 ) {
     let preset = preset_in_use(app);
-    let settings = read_export_settings(app);
+    let sheet = read_sheet(app);
+    let settings = sheet.settings();
     // A mark asked for with nothing to draw: say so and keep
     // the sheet up, rather than write the picture unmarked.
     if let Some(Err(e)) = settings.watermark.as_ref().map(|m| m.check()) {
@@ -1292,7 +1389,31 @@ fn export_gathered(
         app.set_export_open(true);
         return;
     }
-    let on_exists = read_on_exists(app);
+    let on_exists = sheet.on_exists();
+    match sheet.subfolder() {
+        Err(e) => {
+            app.set_status(format!("not exported: {e}").into());
+            app.set_export_open(true);
+            return;
+        }
+        // The editor names every file, so the sheet's policy holds
+        // for each, the frame on screen as much as a set.
+        Ok(Some(sub)) => {
+            let mut st = state.borrow_mut();
+            start_or_ask(
+                &mut st,
+                app,
+                frames,
+                None,
+                Some(sub),
+                settings,
+                on_exists,
+                preset,
+            );
+            return;
+        }
+        Ok(None) => {}
+    }
     // Two frames or more, or a frame no longer on screen: the set,
     // into a folder.
     if frames.len() > 1 || !on_screen {
@@ -1329,7 +1450,9 @@ fn export_gathered(
                     return;
                 };
                 let mut st = state.borrow_mut();
-                start_set(&mut st, &app, frames, folder, settings, on_exists, preset);
+                start_or_ask(
+                    &mut st, &app, frames, folder, None, settings, on_exists, preset,
+                );
             });
         });
         return;
@@ -1587,5 +1710,117 @@ mod tests {
             "{}",
             app.get_status()
         );
+    }
+
+    #[test]
+    fn a_subfolder_exports_beside_each_frame_without_a_chooser() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        state.borrow_mut().current = Some(0);
+        // One that climbs out is refused, and the sheet stays up.
+        app.set_export_subfolder("../out".into());
+        app.set_export_open(false);
+        app.invoke_export();
+        assert!(app.get_export_open());
+        assert!(state.borrow().exporting.is_none());
+        assert!(
+            app.get_status().starts_with("not exported: the subfolder"),
+            "{}",
+            app.get_status()
+        );
+        // One that goes down: the frame on screen is a set of one into
+        // it, nothing asked, under the sheet's own policy.
+        app.set_export_subfolder(" export ".into());
+        app.set_export_on_exists("Skip".into());
+        app.invoke_export();
+        let st = state.borrow();
+        assert!(!st.export_choosing);
+        let set = st.exporting.as_ref().expect("a set, with no chooser");
+        assert_eq!(set.total, 1);
+        assert_eq!(set.folder, None);
+        assert_eq!(set.sub.as_deref(), Some(Path::new("export")));
+        assert_eq!(set.on_exists, export::OnExists::Skip);
+        assert!(set.place().starts_with("into export"), "{}", set.place());
+    }
+
+    #[test]
+    fn overwrite_names_every_file_there_and_waits_for_an_answer() {
+        let dir = std::env::temp_dir().join(format!("greycard-overwrite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("export")).unwrap();
+        let files: Vec<PathBuf> = (0..3)
+            .map(|i| {
+                let f = dir.join(format!("IMG_{i:04}.CR3"));
+                std::fs::write(&f, b"").unwrap();
+                f
+            })
+            .collect();
+        // Two of the three are there already.
+        for i in [0, 2] {
+            std::fs::write(dir.join(format!("export/IMG_{i:04}.jpg")), b"").unwrap();
+        }
+        let app = crate::testing::window(3);
+        let (state, _worker) = crate::testing::state_for(&app, files);
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(0);
+            st.picked = vec![0, 1, 2];
+        }
+        app.set_export_subfolder("export".into());
+        app.set_export_on_exists("Overwrite".into());
+        let ask = || {
+            app.invoke_export();
+            assert!(app.get_overwrite_open());
+            assert!(state.borrow().exporting.is_none(), "nothing written yet");
+        };
+
+        ask();
+        assert_eq!(app.get_overwrite_title(), "2 files are there already");
+        let listed: Vec<String> = app
+            .get_overwrite_files()
+            .iter()
+            .map(|f| f.to_string())
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                dir.join("export/IMG_0000.jpg").display().to_string(),
+                dir.join("export/IMG_0002.jpg").display().to_string(),
+            ]
+        );
+        // Another Export waits for the answer.
+        app.set_status("".into());
+        app.invoke_export();
+        assert!(state.borrow().export_pending.is_some());
+        // No: nothing goes, and Export is free again.
+        app.invoke_overwrite_answered(0);
+        assert!(!app.get_overwrite_open());
+        assert_eq!(app.get_status(), "export canceled");
+        assert!(state.borrow().exporting.is_none() && !state.borrow().export_choosing);
+
+        // Keep both: the set, under Increment.
+        ask();
+        app.invoke_overwrite_answered(1);
+        let set = state.borrow().exporting.clone().expect("the set");
+        assert_eq!(set.on_exists, export::OnExists::Increment);
+        assert_eq!(set.total, 3);
+        state.borrow_mut().exporting = None;
+
+        // Overwrite: the set, under Overwrite.
+        ask();
+        app.invoke_overwrite_answered(2);
+        let set = state.borrow().exporting.clone().expect("the set");
+        assert_eq!(set.on_exists, export::OnExists::Overwrite);
+        state.borrow_mut().exporting = None;
+
+        // Nothing there: no question.
+        for i in [0, 2] {
+            std::fs::remove_file(dir.join(format!("export/IMG_{i:04}.jpg"))).unwrap();
+        }
+        app.invoke_export();
+        assert!(!app.get_overwrite_open());
+        assert!(state.borrow().exporting.is_some());
+        state.borrow_mut().exporting = None;
+        crate::testing::remove_dir_retry(&dir);
     }
 }

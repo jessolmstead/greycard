@@ -29,6 +29,7 @@ import { ModelSheet } from "panel/model-sheet.slint";
 import { RejectsSheet } from "panel/rejects-sheet.slint";
 import { DeleteSheet } from "panel/delete-sheet.slint";
 import { LookRemoveSheet } from "panel/look-remove-sheet.slint";
+import { OverwriteSheet } from "panel/overwrite-sheet.slint";
 import { ArchiveSheet, ArchiveCard } from "panel/archive-sheet.slint";
 import { ArchiveRejectsSheet } from "panel/archive-rejects-sheet.slint";
 import { MatchSheet } from "panel/match-sheet.slint";
@@ -1064,6 +1065,13 @@ export component App inherits Window {
     in property <bool> look-remove-trash: true;
     in property <bool> look-remove-permanent: false;
     callback look-remove-answered(int);
+    /// An export about to write over files that are there, under the
+    /// Overwrite policy: every one of them, until answered (0 no, 1
+    /// keep both, 2 overwrite).
+    in-out property <bool> overwrite-open: false;
+    in property <string> overwrite-title: "";
+    in property <[string]> overwrite-files;
+    callback overwrite-answered(int);
     // The camera match's sheet, from the Look section: the scope, the
     // groups found in it, the run's progress and its results.
     in-out property <bool> match-open: false;
@@ -1248,6 +1256,9 @@ export component App inherits Window {
     in-out property <string> export-sharpen: "Standard";
     /// What an export does when a file of that name is already there.
     in-out property <string> export-on-exists: "Increment";
+    /// A folder under each frame's own to export into without asking
+    /// where; empty to ask.
+    in-out property <string> export-subfolder: "";
     /// What the file says of where it came from: All, No edit, None.
     in-out property <string> export-metadata: "All";
     /// The watermark: Off, Text or Image, and its settings; the size
@@ -1283,6 +1294,7 @@ export component App inherits Window {
     changed export-embed => { root.export-sheet-changed(); }
     changed export-sharpen => { root.export-sheet-changed(); }
     changed export-on-exists => { root.export-sheet-changed(); }
+    changed export-subfolder => { root.export-sheet-changed(); }
     changed export-metadata => { root.export-sheet-changed(); }
     changed export-mark => { root.export-sheet-changed(); }
     changed export-mark-text => { root.export-sheet-changed(); }
@@ -1495,7 +1507,7 @@ export component App inherits Window {
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
-            || root.delete-open || root.look-remove-open || root.archive-open || root.archive-rejects-open
+            || root.delete-open || root.look-remove-open || root.overwrite-open || root.archive-open || root.archive-rejects-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
             || root.root-sheet-open;
     }
@@ -1513,6 +1525,7 @@ export component App inherits Window {
     changed rejects-open => { if (!root.rejects-open && !root.sheet-open()) { keys.focus(); } }
     changed delete-open => { if (!root.delete-open && !root.sheet-open()) { keys.focus(); } }
     changed look-remove-open => { if (!root.look-remove-open && !root.sheet-open()) { keys.focus(); } }
+    changed overwrite-open => { if (!root.overwrite-open && !root.sheet-open()) { keys.focus(); } }
     changed archive-open => { if (!root.archive-open && !root.sheet-open()) { keys.focus(); } }
     changed archive-rejects-open => {
         if (!root.archive-rejects-open && !root.sheet-open()) { keys.focus(); }
@@ -1537,6 +1550,7 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
             if (e.text == Key.Escape && root.delete-open) { root.delete-answered(0); return accept; }
             if (e.text == Key.Escape && root.look-remove-open) { root.look-remove-answered(0); return accept; }
+            if (e.text == Key.Escape && root.overwrite-open) { root.overwrite-answered(0); return accept; }
             if (e.text == Key.Escape && root.archive-open) { root.archive-answered(false); return accept; }
             if (e.text == Key.Escape && root.archive-rejects-open) { root.archive-rejects-answered(0); return accept; }
             if (e.text == Key.Escape && root.match-open && !root.match-running) { root.match-close(); return accept; }
@@ -2837,6 +2851,17 @@ export component App inherits Window {
         }
     }
 
+    // The overwrite sheet: the files an export would write over, and
+    // keep both or overwrite. The keys go back to the window after.
+    if root.overwrite-open: OverwriteSheet {
+        overwrite-title: root.overwrite-title;
+        overwrite-files: root.overwrite-files;
+        overwrite-answered(a) => {
+            root.overwrite-answered(a);
+            keys.focus();
+        }
+    }
+
     if root.archive-open: ArchiveSheet {
         title: root.archive-title;
         text: root.archive-text;
@@ -2961,6 +2986,7 @@ export component App inherits Window {
         export-embed <=> root.export-embed;
         export-sharpen <=> root.export-sharpen;
         export-on-exists <=> root.export-on-exists;
+        export-subfolder <=> root.export-subfolder;
         export-metadata <=> root.export-metadata;
         export-mark <=> root.export-mark;
         export-mark-text <=> root.export-mark-text;

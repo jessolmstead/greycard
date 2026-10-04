@@ -145,7 +145,8 @@ pub(crate) fn open_at_launch(st: &mut State, app: &App, settings: Option<&Path>,
 
 /// Add to queue, the set's sidecars in hand: what Export would take
 /// from `pressed` and `frames` now, into a folder the desktop's chooser
-/// names, appended to the queue. Nothing is exported.
+/// names or, with a subfolder on the sheet, into that beside each
+/// frame, appended to the queue. Nothing is exported.
 fn queue_pressed(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: &[usize]) {
     if state.borrow().export_choosing {
         return;
@@ -161,9 +162,23 @@ fn queue_pressed(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: 
         app.set_export_open(true);
         return;
     }
+    // A subfolder that is not one would stop the run; one that is
+    // needs no chooser, being beside each frame.
+    let sub = match sheet.subfolder() {
+        Ok(sub) => sub,
+        Err(e) => {
+            app.set_status(format!("not queued: {e}").into());
+            app.set_export_open(true);
+            return;
+        }
+    };
     let entry = entry_of(frames, sheet, preset_in_use(app));
     if entry.frames.is_empty() {
         app.set_status("nothing to queue".into());
+        return;
+    }
+    if sub.is_some() {
+        add(&mut state.borrow_mut(), app, entry);
         return;
     }
     #[cfg(test)]
@@ -235,10 +250,10 @@ pub(crate) fn add(st: &mut State, app: &App, entry: Entry) {
     tracing::info!(
         "queued {} {}: {}",
         queue::frames(n),
-        match &entry.folder {
-            Some(f) => format!("to {}", f.display()),
-            None => "beside their files".to_string(),
-        },
+        queue::place(
+            entry.folder.as_deref(),
+            entry.sheet.subfolder().ok().flatten().as_deref()
+        ),
         entry.sheet.settings().describe()
     );
     st.export_queue.push(entry);
@@ -398,8 +413,12 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
         begin_at(st, app, index + 1, left);
         return;
     }
-    let (folder, settings, on_exists, preset) = (
+    // A subfolder the sheet was queued with that no longer reads as
+    // one (a file edited by hand) goes beside each file, as an entry
+    // with no folder always has.
+    let (folder, sub, settings, on_exists, preset) = (
         entry.folder.clone(),
+        entry.sheet.subfolder().ok().flatten(),
         entry.sheet.settings(),
         entry.sheet.on_exists(),
         entry.preset.clone(),
@@ -409,7 +428,7 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
     #[cfg(test)]
     let sent: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
     let Some(set) =
-        crate::panel::deliver::start_set(st, app, frames, folder, settings, on_exists, preset)
+        crate::panel::deliver::start_set(st, app, frames, folder, sub, settings, on_exists, preset)
     else {
         st.queue_run = None;
         show_queue(st, app);
@@ -748,6 +767,18 @@ mod tests {
         assert_eq!(second.sheet.size, "1024");
         assert_eq!(second.preset, None, "an edited sheet names no preset");
         assert_eq!(second.folder, None);
+
+        // With a subfolder on the sheet, no chooser is asked: the
+        // entry goes beside each frame, into it.
+        app.set_export_subfolder("export".into());
+        app.invoke_export_queue_add();
+        assert!(CHOSEN.with(|c| c.borrow().is_none()));
+        let third = state.borrow().export_queue[2].clone();
+        assert_eq!(third.folder, None);
+        assert_eq!(
+            third.sheet.subfolder().unwrap().as_deref(),
+            Some(Path::new("export"))
+        );
         crate::testing::remove_dir_retry(&dir);
     }
 
