@@ -78,6 +78,12 @@ time. "(edited)" next to the name means the sheet no longer matches the
 saved preset. Presets are kept in the settings file. A preset can also
 drive an export from the command line:
 `greycard-ui IMG_0001.CR3 --export out.jpg --export-preset "Web 2048"`.
+That export opens no window, so it runs from a script or over SSH as
+well as from a desktop. It exits 0 when the file is written as the edit
+asks, 1 when it is not (with the reason), and 2 when it is written but
+without something the edit names that this machine has not got (a
+look, a learned model), such as a Subject mask whose model has not
+been downloaded yet; the terminal says what.
 
 Your edits are saved beside each raw in a `.gcd` file, so
 `IMG_0001.CR3` keeps its edit in `IMG_0001.CR3.gcd`. To move a shoot to

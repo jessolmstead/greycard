@@ -30,6 +30,7 @@ mod finder;
 mod finish;
 mod geometry;
 mod grid;
+mod headless;
 mod import;
 mod library;
 mod log;
@@ -186,10 +187,16 @@ struct Cli {
     /// RUST_LOG, when set, decides instead
     #[arg(short, long, action = clap::ArgAction::Count)]
     verbose: u8,
-    /// Export the first file under its edit to this path, then quit.
-    /// A folder (one that is there, or a path ending in a separator)
-    /// takes the selection instead, the first file and the --also
-    /// rows, each frame under its own edit and its own name
+    /// Export the first file under its edit to this path, with no
+    /// window, then quit. A folder (one that is there, or a path
+    /// ending in a separator) takes the set instead, the first file
+    /// and the --also rows, each frame under its own edit and its own
+    /// name. Exits 0 when every frame was written as its edit asks (or
+    /// left, as --on-exists skip asks); 2 when every frame was written
+    /// but some without something the edit names that this machine
+    /// has not got (a look, a learned model) or could not run, each
+    /// named on stderr; 1, with the reason, when a frame was not
+    /// written or the run could not begin
     #[arg(long)]
     export: Option<PathBuf>,
     /// Fill the export sheet from this export preset, by name, for
@@ -845,11 +852,6 @@ pub(crate) struct State {
     /// What the encoded path's table was built for: the monitor
     /// alone, since the camera's JPEG is sRGB and takes no proof.
     pub(crate) encoded_lut_for: Option<display::MonitorProfile>,
-    /// An export to run once the first develop lands, then quit.
-    pub(crate) export_then_quit: Option<PathBuf>,
-    /// `--export` named a folder: the set goes into it, each frame
-    /// under its own name, rather than the one frame to a file.
-    pub(crate) export_into_folder: bool,
     /// A set being exported, until its last frame is done with: held
     /// to cancel it and to know its outcomes from a stale set's.
     pub(crate) exporting: Option<Arc<queue::Set>>,
@@ -1097,8 +1099,6 @@ impl State {
             monitors: Vec::new(),
             lut_for: None,
             encoded_lut_for: None,
-            export_then_quit: None,
-            export_into_folder: false,
             exporting: None,
             export_choosing: false,
             export_queue: Vec::new(),

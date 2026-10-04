@@ -631,6 +631,7 @@ mod tests {
             path: PathBuf::from(path),
             seconds: 1.0,
             note: None,
+            left_out: Vec::new(),
         }
     }
 

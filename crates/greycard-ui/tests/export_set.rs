@@ -7,9 +7,10 @@
 //! `cargo test --release -p greycard-ui --test export_set -- --ignored`
 //! (a debug build develops a frame in tens of seconds). It wants
 //! `GREYCARD_SAMPLES` (a folder of raws: three of one kind when it has
-//! them, so a mix-up of one frame's metadata with another's shows), a
-//! display for the window, and `exiv2` on the path to read the files
-//! back; without any of them it says SKIPPED and passes.
+//! them, so a mix-up of one frame's metadata with another's shows) and
+//! `exiv2` on the path to read the files back; without either it says
+//! SKIPPED and passes. The export opens no window, so it wants no
+//! display.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -65,13 +66,6 @@ fn samples() -> Option<Vec<PathBuf>> {
     Some(picked)
 }
 
-fn has_display() -> bool {
-    if cfg!(any(target_os = "macos", target_os = "windows")) {
-        return true;
-    }
-    std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some()
-}
-
 /// One tag's value, as exiv2 prints it; empty when it is not there.
 fn tag(file: &Path, key: &str) -> String {
     let out = Command::new("exiv2")
@@ -117,16 +111,12 @@ impl Drop for Scratch {
 }
 
 #[test]
-#[ignore = "wants GREYCARD_SAMPLES, a display and exiv2"]
+#[ignore = "wants GREYCARD_SAMPLES and exiv2"]
 fn a_set_exported_from_the_command_line_carries_each_frame_s_exif() {
     let Some(sources) = samples() else {
         skipped("GREYCARD_SAMPLES is not set, or holds no raw");
         return;
     };
-    if !has_display() {
-        skipped("no display for the window");
-        return;
-    }
     if Command::new("exiv2").arg("--version").output().is_err() {
         skipped("exiv2 is not on the path");
         return;

@@ -38,6 +38,10 @@ pub enum Done {
         seconds: f64,
         /// What the policy made of a file of that name being there.
         note: Option<String>,
+        /// What the edit names and the file was written without: a
+        /// look not in the look directory, a learned model not
+        /// downloaded or failing.
+        left_out: Vec<String>,
     },
     /// A file of that name was there and the policy said leave it.
     Skipped {
@@ -297,6 +301,7 @@ mod tests {
                     path: PathBuf::from(format!("out/{i}.jpg")),
                     seconds: 0.1,
                     note: None,
+                    left_out: Vec::new(),
                 }
             });
             results.push(done);
@@ -335,6 +340,7 @@ mod tests {
                         path: PathBuf::from("x.jpg"),
                         seconds: 0.0,
                         note: None,
+                        left_out: Vec::new(),
                     }
                 }
             });

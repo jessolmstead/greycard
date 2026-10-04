@@ -15,19 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A `--export` run can stall on the desktop: twice in about
-      ninety runs on 2026-10-03 a Hold hue to white export (§226, taken
-      out in §232) of one frame sat
-      for minutes at low CPU where the same export takes two
-      seconds, once for eleven minutes; under a headless weston the
-      same command ran forty times without one. The per-channel
-      export of that frame two seconds earlier never stalled, and
-      the two stalls came while other windows were being used over
-      the editor's, so the likely cause is the window waiting on the
-      compositor (a frame callback for an occluded surface) for
-      something the export should not need. Catch it with the
-      symbolized build under gdb on the desktop, or make the export
-      headless (the pool's item) and it cannot happen
 - [ ] The random parity test fails past the seeds it was set from: the
       cap and the tolerance were set from seeds 1 to 10 (§221), which
       pass on NVIDIA and lavapipe; past them, with the draw per channel
@@ -395,14 +382,12 @@ clears or a tester asks for it.
 
 #### Editor
 
-- [ ] A headless `--export`: the export is a worker job already, the
-      window only lends it the wgpu device and reads the edit and the
-      sheet; a branch beside the headless import makes its own device
-      (as the worker's tests do), lays the command line's overrides on
-      the sidecar's edit, and waits on the set's outcome, so a
-      comparison or parity run over a hundred frames opens no window;
-      the test exports one frame both ways and diffs the pixels. Until
-      then the runs go under a headless weston
+- [ ] The learned mask and fill caches keyed by the develop they were
+      made from: the window's Export reuses the mask its viewport made
+      from a base whose CA ran on the GPU, where `--export` makes it
+      from the export's CPU base (AE 174 on a Subject frame), and the
+      disk cache of masks is keyed by file, model and shape, so the
+      first run to make one decides it for every later edit (§236)
 
 - [ ] Home and end should go to the beginning/end of the grid/filmstrip
       when it is selected.

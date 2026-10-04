@@ -54,6 +54,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         };
         return crate::panel::import::headless(opts, cli.preset.as_deref());
     }
+    // `--export` is a run with no window too: the export never needed
+    // one (`headless`).
+    if let Some(target) = cli.export.as_deref() {
+        return crate::headless::export(&cli, target);
+    }
     let remembered = settings::Settings::load();
     match settings::path() {
         Some(p) => tracing::info!("settings: {}", p.display()),
@@ -309,11 +314,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // edit when it is opened (`Overrides`, through `overrides_at_start`,
     // which names the frame once the list has landed and said which it
     // is).
-    let overrides = Overrides {
-        temperature: cli.develop_temperature,
-        exposure: (cli.exposure != 0.0).then_some(cli.exposure),
-        display_curve: cli.agx.then_some(greycard_edit::DisplayCurve::Agx),
-    };
+    let overrides = Overrides::of(&cli);
     let tweak_at_start: Option<crate::Tweak> =
         (preset_at_start_wanted.is_some() || !overrides.is_empty()).then(|| {
             let preset = preset_at_start_wanted;
@@ -337,11 +338,6 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             }) as crate::Tweak
         });
 
-    let export_into_folder = cli
-        .export
-        .as_deref()
-        .is_some_and(|p| export_folder(p, !cli.also.is_empty()));
-    check_also(&cli, export_into_folder, files.len())?;
     if let Some(keys) = cli.keys.clone() {
         let _ = crate::panel::viewport::SNAPSHOT_KEYS.set(keys);
     }
@@ -366,23 +362,20 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             .or(cli.tool)
             .or(cli.menu.map(crate::panel::viewport::Shown::Menu))
             .or(cli.press.map(crate::panel::viewport::Shown::Key)),
-        export_then_quit: cli.export.clone(),
-        export_into_folder,
         export_presets: remembered.export_presets.clone(),
-        settings_file: if cli.snapshot.is_some() || cli.screenshot.is_some() || cli.export.is_some()
-        {
+        settings_file: if cli.snapshot.is_some() || cli.screenshot.is_some() {
             None
         } else {
             settings::path()
         },
         presets: preset_store.as_ref().map(|s| s.list()).unwrap_or_default(),
         preset_store,
-        batch: cli.snapshot.is_some() || cli.screenshot.is_some() || cli.export.is_some(),
-        // Only a session someone is at deletes: never a capture, an
-        // export or a timing run, which have nobody to have confirmed.
+        batch: cli.snapshot.is_some() || cli.screenshot.is_some(),
+        // Only a session someone is at deletes: never a capture or a
+        // timing run, which have nobody to have confirmed. (An export
+        // from the command line has no window: `headless`.)
         deletes_allowed: cli.snapshot.is_none()
             && cli.screenshot.is_none()
-            && cli.export.is_none()
             && cli.time_sharpen.is_none()
             && cli.time_cull.is_none()
             && cli.time_select.is_none()
@@ -1404,10 +1397,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     }
 
     // The panel's choices, for the next run. Not from a screenshot or
-    // a batch export, which should leave the user's alone. The last
-    // file is kept as whatever it already is: it is written as soon
-    // as it develops, not gathered from the panel here.
-    if cli.screenshot.is_none() && cli.snapshot.is_none() && cli.export.is_none() {
+    // a snapshot, which should leave the user's alone. The last file
+    // is kept as whatever it already is: it is written as soon as it
+    // develops, not gathered from the panel here.
+    if cli.screenshot.is_none() && cli.snapshot.is_none() {
         let mut settings = remember(&app);
         settings.export_presets = state.borrow().export_presets.clone();
         settings.filter = filter::Saved::of(&state.borrow().filter);
@@ -1440,8 +1433,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         read_edit(&app, &st.edit, st.target)
     };
     save_edit(&mut state.borrow_mut(), edit);
-    // A batch run whose picture never developed, or whose export did
-    // not happen, is a failure a script can see.
+    // A batch run whose picture never developed is a failure a script
+    // can see.
     Ok(if state.borrow().failed {
         std::process::ExitCode::FAILURE
     } else {
@@ -1606,6 +1599,15 @@ pub(crate) struct Overrides {
 }
 
 impl Overrides {
+    /// What the command line lays over the first frame's edit.
+    pub(crate) fn of(cli: &Cli) -> Self {
+        Self {
+            temperature: cli.develop_temperature,
+            exposure: (cli.exposure != 0.0).then_some(cli.exposure),
+            display_curve: cli.agx.then_some(greycard_edit::DisplayCurve::Agx),
+        }
+    }
+
     pub(crate) fn is_empty(&self) -> bool {
         *self == Self::default()
     }
@@ -1707,10 +1709,10 @@ pub(crate) fn opening_scope(cli: &Cli, remembered: &settings::Settings) -> scope
 }
 
 /// Whether a launch puts back the filter the last session left: not
-/// for a batch run (a snapshot, a screenshot, an export), and not when
+/// for a batch run (a snapshot, a screenshot), and not when
 /// the command line names a file rather than a folder.
 pub(crate) fn restores_filter(cli: &Cli) -> bool {
-    let batch = cli.snapshot.is_some() || cli.screenshot.is_some() || cli.export.is_some();
+    let batch = cli.snapshot.is_some() || cli.screenshot.is_some();
     let names_a_file = cli.path.as_deref().is_some_and(|p| !p.is_dir());
     !batch && !names_a_file
 }
@@ -1776,8 +1778,7 @@ pub(crate) fn remember_last_file(st: &State) {
     // `batch` as well: a snapshot's path is taken at the capture, and
     // a develop that lands after it (a `--menu` over another frame)
     // must not write the user's settings either.
-    if st.batch || st.screenshot.is_some() || st.snapshot.is_some() || st.export_then_quit.is_some()
-    {
+    if st.batch || st.screenshot.is_some() || st.snapshot.is_some() {
         return;
     }
     let Some(path) = st.current.and_then(|i| st.files.get(i)) else {
@@ -1820,7 +1821,7 @@ pub(crate) fn size_text(width: u32, height: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::panel::deliver::batch_settings;
+    use crate::headless::batch_settings;
     use crate::sheet::{ExportPreset, Sheet};
     use greycard_core::image::WorkingImage;
 

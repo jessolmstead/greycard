@@ -356,6 +356,9 @@ pub enum Outcome {
     Exported {
         path: PathBuf,
         seconds: f64,
+        /// What the edit names and the file was written without
+        /// (`left_out_of`, `finish_export`).
+        left_out: Vec<String>,
         /// What the policy made of a file of that name being there
         /// already; none when nothing was.
         note: Option<String>,
@@ -613,6 +616,17 @@ impl Worker {
                 LEAVING.as_secs()
             );
         }
+    }
+
+    /// Whether the worker's thread is still there to take a job: a
+    /// panic outside any job's guard ends it, and whoever waits on an
+    /// outcome would otherwise wait for ever.
+    pub fn running(&self) -> bool {
+        self.thread
+            .lock()
+            .expect("worker thread")
+            .as_ref()
+            .is_some_and(|t| !t.is_finished())
     }
 
     pub fn send(&self, job: Job) {
@@ -920,18 +934,62 @@ struct Last {
     /// Whether the base this picture came from had its CA corrected on the GPU.
     /// The export's picture must be from the CPU, not the GPU.
     ca_on_gpu: bool,
+    /// What the develop left out of what the edit asked for
+    /// ([`left_out_of`]), for an export that takes this picture.
+    left_out: Vec<String>,
 }
 
 impl Last {
-    /// The develop that just finished, from the base it ran on.
-    fn made(edit: Edit, base: &Base, image: Arc<WorkingImage>) -> Self {
+    /// The develop that just finished, from the base it ran on, and
+    /// its outcome.
+    fn made(edit: Edit, base: &Base, image: Arc<WorkingImage>, outcome: &Outcome) -> Self {
         Self {
             edit,
             turn: base.turn,
             image,
             ca_on_gpu: base.ca_on_gpu,
+            left_out: left_out_of(outcome, Some(base)),
         }
     }
+}
+
+/// What a develop left out of what its edit asked for, in words for a
+/// log line: a learned denoiser or a fill whose model is not in the
+/// store, or that could not run. An export writes the picture without
+/// them, as the window shows it, and says so. `base` is the base the
+/// develop ran on: one kept from an earlier develop reports `Kept`,
+/// and the stand-in it may be is said from what it carries.
+fn left_out_of(outcome: &Outcome, base: Option<&Base>) -> Vec<String> {
+    let Outcome::Developed { learned, fills, .. } = outcome else {
+        return Vec::new();
+    };
+    let learned = match (learned, base.and_then(|b| b.stand_in.as_ref())) {
+        (LearnedReport::Kept, Some(stood_in)) => stood_in,
+        (report, _) => report,
+    };
+    let mut out = Vec::new();
+    match learned {
+        LearnedReport::Missing(model) => out.push(format!(
+            "the learned denoiser: {} is not downloaded; the engine's denoise instead",
+            model.name
+        )),
+        LearnedReport::Failed(why) => out.push(format!(
+            "the learned denoiser failed ({why}); the engine's denoise instead"
+        )),
+        _ => {}
+    }
+    for name in &fills.missing {
+        out.push(format!(
+            "fill {name}: {} is not downloaded; left as it was",
+            greycard_ai::FILL.name
+        ));
+    }
+    for (name, why) in &fills.failed {
+        out.push(format!(
+            "fill {name}: the fill model failed ({why}); left as it was"
+        ));
+    }
+    out
 }
 
 fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::thumbpool::Pool>) {
@@ -1068,8 +1126,8 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                             lenses.as_deref(),
                             &deliver,
                         )
-                        .and_then(|image| {
-                            write_export(
+                        .and_then(|(image, mut left_out)| {
+                            left_out.extend(write_export(
                                 image,
                                 &edit,
                                 base.as_ref(),
@@ -1078,7 +1136,8 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                                 metadata.as_deref(),
                                 &set.settings,
                                 &path,
-                            )
+                            )?);
+                            Ok(left_out)
                         })
                     } else {
                         export_other(
@@ -1090,13 +1149,17 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                             &set.settings,
                             &path,
                         )
-                        .map(|edit| rendered = edit)
+                        .map(|(edit, left_out)| {
+                            rendered = edit;
+                            left_out
+                        })
                     };
                     match written {
-                        Ok(()) => crate::queue::Done::Exported {
+                        Ok(left_out) => crate::queue::Done::Exported {
                             path,
                             seconds: start.elapsed().as_secs_f64(),
                             note,
+                            left_out,
                         },
                         Err(message) => crate::queue::Done::Failed { message },
                     }
@@ -1220,7 +1283,8 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                         &mut gpu,
                         &deliver,
                     );
-                    last = image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i)));
+                    last =
+                        image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
                     deliver(outcome);
                 }
                 Err(e) => deliver(Outcome::Failed {
@@ -1248,7 +1312,8 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                         &mut gpu,
                         &deliver,
                     );
-                    last = image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i)));
+                    last =
+                        image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
                     deliver(outcome);
                 }
             }
@@ -1283,8 +1348,8 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                     lenses.as_deref(),
                     &deliver,
                 )
-                .and_then(|image| {
-                    write_export(
+                .and_then(|(image, mut left_out)| {
+                    left_out.extend(write_export(
                         image,
                         &edit,
                         base.as_ref(),
@@ -1293,16 +1358,18 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                         metadata.as_deref(),
                         &settings,
                         &path,
-                    )
+                    )?);
+                    Ok(left_out)
                 });
                 deliver(match written {
-                    Ok(()) => Outcome::Exported {
+                    Ok(left_out) => Outcome::Exported {
                         path,
                         seconds: start.elapsed().as_secs_f64(),
                         note,
                         source,
                         edit,
                         preset,
+                        left_out,
                     },
                     Err(message) => Outcome::ExportFailed { message },
                 });
@@ -1397,13 +1464,13 @@ fn open_picture(
     cache: Option<&greycard_ai::DenoiseCache>,
     lenses: Option<&greycard_lens::Database>,
     deliver: &Deliver,
-) -> Result<Arc<WorkingImage>, String> {
+) -> Result<(Arc<WorkingImage>, Vec<String>), String> {
     if let Some(l) = &*last
         && l.turn == turn
         && l.edit.same_develop(edit)
         && !l.ca_on_gpu
     {
-        return Ok(l.image.clone());
+        return Ok((l.image.clone(), l.left_out.clone()));
     }
     let Some(f) = input else {
         return Err("no file is open".into());
@@ -1411,11 +1478,11 @@ fn open_picture(
     match develop_job(
         f, edit, turn, 0, base, learned, ai, cache, lenses, &mut None, deliver,
     ) {
-        (_, Some(image)) => {
+        (outcome, Some(image)) => {
             *last = base
                 .as_ref()
-                .map(|b| Last::made(edit.clone(), b, image.clone()));
-            Ok(image)
+                .map(|b| Last::made(edit.clone(), b, image.clone(), &outcome));
+            Ok((image, left_out_of(&outcome, base.as_ref())))
         }
         (Outcome::Failed { message, .. }, None) => Err(message),
         _ => Err("the develop made no picture".into()),
@@ -1435,7 +1502,8 @@ fn seeded(edit: &Edit, seed: bool, input: Option<&Input>) -> Edit {
 /// A frame of a set that is not the open file: opened and developed
 /// here under its own edit, with a base and a learned pair of its
 /// own so the open file's are there as they were for the next
-/// develop, then written to `path`.
+/// develop, then written to `path`. The edit it was written under,
+/// and what of it was left out ([`left_out_of`]).
 fn export_other(
     frame: &crate::queue::Frame,
     ai: &mut Ai,
@@ -1444,12 +1512,12 @@ fn export_other(
     deliver: &Deliver,
     settings: &crate::export::Settings,
     path: &std::path::Path,
-) -> Result<Edit, String> {
+) -> Result<(Edit, Vec<String>), String> {
     let (input, metadata) = timed_open(&frame.source).map_err(|e| format!("{e:#}"))?;
     let edit = seeded(&frame.edit, frame.seed_blend, Some(&input));
     ai.forget(Some(frame.source.clone()));
     let (mut base, mut learned) = (None, None);
-    let image = match develop_job(
+    let (image, mut left_out) = match develop_job(
         &input,
         &edit,
         frame.turn % 4,
@@ -1462,11 +1530,11 @@ fn export_other(
         &mut None,
         deliver,
     ) {
-        (_, Some(image)) => image,
+        (outcome, Some(image)) => (image, left_out_of(&outcome, base.as_ref())),
         (Outcome::Failed { message, .. }, None) => return Err(message),
         _ => return Err("the develop made no picture".into()),
     };
-    write_export(
+    left_out.extend(write_export(
         image,
         &edit,
         base.as_ref(),
@@ -1475,14 +1543,15 @@ fn export_other(
         Some(&metadata),
         settings,
         path,
-    )?;
-    Ok(edit)
+    )?);
+    Ok((edit, left_out))
 }
 
 /// Finish `image`, the develop `base` was made for, under `edit` and
 /// the sheet's `settings`, and write it to `path`: the learned masks
 /// made now if they are not yet, the edit's geometry, the finish, the
-/// mark, and the file with the source's EXIF.
+/// mark, and the file with the source's EXIF. What of the edit's
+/// masks could not be made, and so was left out.
 #[allow(clippy::too_many_arguments)]
 fn write_export(
     image: Arc<WorkingImage>,
@@ -1493,8 +1562,8 @@ fn write_export(
     metadata: Option<&greycard_core::decode::RawMetadata>,
     settings: &crate::export::Settings,
     path: &std::path::Path,
-) -> Result<(), String> {
-    let mut rendered = finish_export(image, edit, base, ai, settings);
+) -> Result<Vec<String>, String> {
+    let (mut rendered, left_out) = finish_export(image, edit, base, ai, settings);
     let origin = crate::export::Origin {
         source_name: source_path
             .and_then(|s| s.file_name())
@@ -1505,37 +1574,78 @@ fn write_export(
     // the export rather than let an unmarked picture out.
     crate::export::mark(&mut rendered, settings)
         .and_then(|()| crate::export::write(&rendered, settings, path, metadata, &origin))
-        .map_err(|e| format!("{e:#}"))
+        .map_err(|e| format!("{e:#}"))?;
+    Ok(left_out)
 }
 
 /// `image`, the develop `base` was made for, finished under `edit` and
 /// `settings` as an export is: the learned masks made now if they are
 /// not yet, the edit's geometry, then the finish. No mark and no file.
+/// Beside it, what the edit names that could not be had, which the
+/// picture is finished without, as the window draws it without: a
+/// look not in the look directory, and each learned mask whose model
+/// is not downloaded or failed.
 fn finish_export(
     image: Arc<WorkingImage>,
     edit: &Edit,
     base: Option<&Base>,
     ai: &mut Ai,
     settings: &crate::export::Settings,
-) -> crate::export::Rendered {
+) -> (crate::export::Rendered, Vec<String>) {
     let source = (image.width as u32, image.height as u32);
     // The learned masks, made now if they are not yet.
     let mut rasters = std::collections::HashMap::new();
+    let mut left_out = Vec::new();
+    // A look the edit names that the export cannot have, not in the
+    // look directory or with no table for the picture's display curve:
+    // the picture is finished without it, as the window draws it
+    // without, and said in the Look section's own words.
+    if let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut
+        && edit.look_lut.strength > 0.0
+        && edit.look_lut.look_under(edit.display_curve).is_none()
+    {
+        let why = if edit.look_lut.is_there() {
+            greycard_edit::look::mismatch(&greycard_edit::look::list(), name, edit.display_curve)
+                .map(|(why, _)| why)
+                .unwrap_or_else(|| "its table would not read".into())
+        } else {
+            "not in the look directory".into()
+        };
+        left_out.push(format!(
+            "the look {name}: {}; written without it",
+            why.trim_end_matches(['.', ' '])
+        ));
+    }
     if let Some(b) = base {
         for a in &edit.adjustments {
+            // An adjustment switched off, or with nothing live in its
+            // mask, is not drawn (`finish::Local::of`): nothing of it
+            // is made, and nothing of it is missed.
+            if !a.enabled || a.mask.is_empty() {
+                continue;
+            }
             for (i, c) in a.mask.live() {
-                if c.shape.is_learned()
-                    && let Ok(made) = ai.raster(
-                        b.stamp,
-                        &b.image,
-                        &b.edit,
-                        b.source,
-                        (a.id, i),
-                        &c.shape,
-                        None,
-                    )
-                {
-                    rasters.insert((a.id, i), made.raster);
+                // An Object with nothing picked yet asks for nothing.
+                if !c.shape.is_learned() || !crate::ai::prompted(&c.shape) {
+                    continue;
+                }
+                match ai.raster(
+                    b.stamp,
+                    &b.image,
+                    &b.edit,
+                    b.source,
+                    (a.id, i),
+                    &c.shape,
+                    None,
+                ) {
+                    Ok(made) => {
+                        rasters.insert((a.id, i), made.raster);
+                    }
+                    Err(why) => left_out.push(format!(
+                        "{}'s {} shape: {why}; its mask written without it",
+                        a.name,
+                        c.shape.name()
+                    )),
                 }
             }
         }
@@ -1548,7 +1658,7 @@ fn finish_export(
         &framed
     };
     let clip_level = base.map(|b| b.clip_level).unwrap_or(f32::INFINITY);
-    crate::export::render(
+    let rendered = crate::export::render(
         image,
         edit,
         source,
@@ -1557,7 +1667,8 @@ fn finish_export(
         clip_level,
         base.map(|b| &*b.guide),
         base.map(|b| b.source).unwrap_or_default(),
-    )
+    );
+    (rendered, left_out)
 }
 
 /// A frame developed once on the CPU, as an export of a frame that is
@@ -1616,13 +1727,17 @@ impl FrameDevelop {
         edit: &Edit,
         settings: &crate::export::Settings,
     ) -> crate::export::Rendered {
-        finish_export(
+        let (rendered, left_out) = finish_export(
             self.image.clone(),
             edit,
             self.base.as_ref(),
             &mut self.ai,
             settings,
-        )
+        );
+        for item in left_out {
+            tracing::warn!("{item}");
+        }
+        rendered
     }
 }
 
@@ -1804,6 +1919,11 @@ struct Base {
     /// (unlike the sharpen, which the export re-runs), so an export
     /// makes a fresh base on the CPU when this is set.
     ca_on_gpu: bool,
+    /// The learned denoiser's report when this base is the engine's
+    /// stand-in for it (its model missing, or failing): a develop that
+    /// keeps the base reports `Kept`, and an export of it must still
+    /// say what it went without (`left_out_of`).
+    stand_in: Option<LearnedReport>,
 }
 
 /// The picture the sharpen reads, on the GPU, with what it was made
@@ -2041,6 +2161,7 @@ fn develop_job(
                 patched: None,
                 pre: None,
                 ca_on_gpu: false,
+                stand_in: None,
             }),
             (Input::Raw(frame), Some(model)) => {
                 match learned_base(
@@ -2093,6 +2214,8 @@ fn develop_job(
         match made {
             Ok(mut b) => {
                 b.ca_on_gpu |= ca_on_gpu;
+                b.stand_in = matches!(report, LearnedReport::Missing(_) | LearnedReport::Failed(_))
+                    .then(|| report.clone());
                 let corrects = !edit.lens.is_identity(lenses.is_some());
                 let defringe = edit.lens.defringe();
                 if corrects || defringe.is_some() {
@@ -2515,6 +2638,7 @@ fn engine_base(
         patched: None,
         pre: None,
         ca_on_gpu: false,
+        stand_in: None,
     })
 }
 
@@ -2573,6 +2697,7 @@ fn learned_base(
             patched: None,
             pre: None,
             ca_on_gpu: l.ca_on_gpu,
+            stand_in: None,
         },
         report,
     ))
@@ -3412,6 +3537,7 @@ mod tests {
                 patched: None,
                 pre: None,
                 ca_on_gpu: false,
+                stand_in: None,
             };
             turn_base(&mut b, &mut learned, 1, 2, None);
             let l = learned.as_ref().unwrap();
@@ -3450,6 +3576,7 @@ mod tests {
             patched: None,
             pre: None,
             ca_on_gpu: false,
+            stand_in: None,
         };
         turn_base(&mut b, &mut learned, 1, 2, None);
         let l = learned.as_ref().unwrap();
@@ -3576,6 +3703,9 @@ mod tests {
             Edit::default(),
             base.as_ref().unwrap(),
             wrong.clone(),
+            &Outcome::ExportSkipped {
+                path: PathBuf::new(),
+            },
         ));
         let mut learned = None;
         let mut ai = Ai::new();
@@ -3595,6 +3725,7 @@ mod tests {
                 &deliver,
             )
             .unwrap()
+            .0
         };
         let got = export(&mut last, &mut base, &mut ai);
         assert!(!Arc::ptr_eq(&got, &wrong), "the GPU develop was reused");
@@ -4244,5 +4375,186 @@ mod tests {
             painted.is_empty(),
             "sky painted on frames with none: {painted:?}"
         );
+    }
+
+    /// A learned mask the edit asks for whose model is not in the
+    /// store is left out of the picture, as the window draws it, and
+    /// said: the export does not pass over it in silence. An Object
+    /// with nothing picked asks for nothing and is not said, nor is a
+    /// shape switched off or one in an adjustment switched off, which
+    /// the finish never draws.
+    #[test]
+    fn an_export_says_which_learned_mask_it_went_without() {
+        use greycard_edit::mask::Component;
+        let frame = Arc::new(aberrated_frame(160, 120));
+        let mut base = None;
+        let (_, image) = develop_once(&frame, &mut base, &mut None);
+        let image = image.unwrap();
+        let empty = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/test-scratch")
+            .join(format!("left-out-{}/models", std::process::id()));
+        std::fs::create_dir_all(&empty).unwrap();
+        let mut ai = Ai::for_test(greycard_ai::Store::at(&empty), Vec::new());
+        let mut edit = Edit::default();
+        edit.adjustments.push(greycard_edit::Adjustment {
+            name: "Face".into(),
+            mask: greycard_edit::mask::Mask {
+                components: vec![
+                    Component {
+                        shape: Shape::Subject {},
+                        ..Component::default()
+                    },
+                    Component {
+                        shape: Shape::Object {
+                            picks: Vec::new(),
+                            boxes: Vec::new(),
+                        },
+                        ..Component::default()
+                    },
+                ],
+                invert: false,
+            },
+            ..greycard_edit::Adjustment::default()
+        });
+        // An adjustment switched off is not drawn, so its Subject is
+        // not missed; nor is a Subject shape switched off.
+        edit.adjustments.push(greycard_edit::Adjustment {
+            name: "Off".into(),
+            enabled: false,
+            mask: greycard_edit::mask::Mask {
+                components: vec![Component {
+                    shape: Shape::Subject {},
+                    ..Component::default()
+                }],
+                invert: false,
+            },
+            ..greycard_edit::Adjustment::default()
+        });
+        edit.adjustments.push(greycard_edit::Adjustment {
+            name: "Shape off".into(),
+            mask: greycard_edit::mask::Mask {
+                components: vec![Component {
+                    shape: Shape::Subject {},
+                    enabled: false,
+                    ..Component::default()
+                }],
+                invert: false,
+            },
+            ..greycard_edit::Adjustment::default()
+        });
+        let (_, left_out) = finish_export(
+            image,
+            &edit,
+            base.as_ref(),
+            &mut ai,
+            &crate::export::Settings::default(),
+        );
+        let _ = std::fs::remove_dir_all(empty.parent().unwrap());
+        assert_eq!(left_out.len(), 1, "{left_out:?}");
+        assert!(
+            left_out[0].starts_with("Face's Subject shape:"),
+            "{}",
+            left_out[0]
+        );
+    }
+
+    /// A develop whose learned denoiser or fill model is missing says
+    /// so for the export; one that asked for neither says nothing.
+    #[test]
+    fn a_develop_without_its_model_says_what_was_left_out() {
+        let developed = |learned, fills| Outcome::Developed {
+            generation: 0,
+            turn: 0,
+            image: Developed::Halves(Arc::new(Halves {
+                width: 1,
+                height: 1,
+                pixels: vec![half::f16::ZERO; 4],
+            })),
+            guide: Arc::new(crate::finish::Guide::NONE),
+            white: WhiteBase::IDENTITY,
+            seconds: 0.0,
+            detail: None,
+            sharpen: None,
+            dehaze: None,
+            sources: Vec::new(),
+            learned,
+            fills,
+        };
+        assert!(
+            left_out_of(&developed(LearnedReport::Off, FillReport::default()), None).is_empty()
+        );
+        let model = greycard_ai::denoiser(greycard_edit::Learned::Fast.tier().unwrap()).unwrap();
+        let said = left_out_of(
+            &developed(
+                LearnedReport::Missing(model),
+                FillReport {
+                    missing: vec!["Patch 1".into()],
+                    ..FillReport::default()
+                },
+            ),
+            None,
+        );
+        assert_eq!(said.len(), 2, "{said:?}");
+        assert!(said[0].contains(model.name), "{}", said[0]);
+        assert!(said[1].starts_with("fill Patch 1:"), "{}", said[1]);
+    }
+
+    /// A base made as the engine's stand-in for a learned denoiser
+    /// whose model is missing keeps saying so when a later develop
+    /// keeps it: that develop reports `Kept`, and the export of its
+    /// picture must still say what it went without.
+    #[test]
+    fn a_kept_stand_in_base_still_says_its_denoiser_was_missing() {
+        let frame = Arc::new(aberrated_frame(160, 120));
+        let empty = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../target/test-scratch")
+            .join(format!("stand-in-{}/models", std::process::id()));
+        std::fs::create_dir_all(&empty).unwrap();
+        let mut ai = Ai::for_test(greycard_ai::Store::at(&empty), Vec::new());
+        let mut edit = Edit::default();
+        edit.noise.enabled = true;
+        edit.noise.learned = greycard_edit::Learned::Fast;
+        let deliver: Deliver = Arc::new(|_| {});
+        let input = Input::Raw(frame);
+        let (mut base, mut learned) = (None, None);
+        let mut develop = |edit: &Edit, base: &mut Option<Base>| {
+            develop_job(
+                &input,
+                edit,
+                0,
+                1,
+                base,
+                &mut learned,
+                &mut ai,
+                None,
+                None,
+                &mut None,
+                &deliver,
+            )
+            .0
+        };
+        let first = develop(&edit, &mut base);
+        assert!(matches!(
+            &first,
+            Outcome::Developed {
+                learned: LearnedReport::Missing(_),
+                ..
+            }
+        ));
+        // A move that keeps the base: the exposure.
+        edit.light.exposure = 0.5;
+        let second = develop(&edit, &mut base);
+        let _ = std::fs::remove_dir_all(empty.parent().unwrap());
+        assert!(matches!(
+            &second,
+            Outcome::Developed {
+                learned: LearnedReport::Kept,
+                ..
+            }
+        ));
+        assert!(left_out_of(&second, None).is_empty(), "the outcome alone");
+        let said = left_out_of(&second, base.as_ref());
+        assert_eq!(said.len(), 1, "{said:?}");
+        assert!(said[0].starts_with("the learned denoiser:"), "{}", said[0]);
     }
 }

@@ -148,16 +148,6 @@ pub(crate) fn read_export_settings(app: &App) -> export::Settings {
     read_sheet(app).settings()
 }
 
-/// A batch export's settings: the sheet's, as remembered or as the
-/// preset named on the command line fills it, in the format the
-/// path's extension names, or the sheet's when it names none.
-pub(crate) fn batch_settings(path: &Path, sheet: export::Settings) -> export::Settings {
-    export::Settings {
-        format: export::Format::from_path(path).unwrap_or(sheet.format),
-        ..sheet
-    }
-}
-
 /// The sheet's answer to a file of that name being there already.
 pub(crate) fn read_on_exists(app: &App) -> export::OnExists {
     read_sheet(app).on_exists()
@@ -596,56 +586,6 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 // a turn to wait for): a capture may go.
                 st.awaiting_turn = false;
             }
-            if let Some(path) = st.export_then_quit.take() {
-                // `--export DIR`: the set, into the folder.
-                if st.export_into_folder {
-                    if let Err(e) = std::fs::create_dir_all(&path) {
-                        tracing::error!("export: {}: {e}", path.display());
-                        st.failed = true;
-                        let _ = slint::quit_event_loop();
-                        return;
-                    }
-                    let settings = read_export_settings(app);
-                    let on_exists = read_on_exists(app);
-                    let frames = set_frames(&mut st, app);
-                    // Each frame's own look, as the single run says its one.
-                    for (source, edit, ..) in &frames {
-                        warn_missing_look(edit, source);
-                    }
-                    let preset = preset_in_use(app);
-                    start_set(
-                        &mut st,
-                        app,
-                        frames,
-                        Some(path),
-                        settings,
-                        on_exists,
-                        preset,
-                    );
-                    return;
-                }
-                app.set_busy(true);
-                warn_missing_look(&st.edit, &path);
-                // The sheet's choices as remembered, the format from
-                // the path's extension.
-                let sheet = read_export_settings(app);
-                let settings = batch_settings(&path, sheet.clone());
-                // A format the path changed is not the preset's file.
-                let preset = preset_in_use(app).filter(|_| settings == sheet);
-                let source = st.current.map(|c| st.files[c].clone()).unwrap_or_default();
-                WORKER.with(|w| {
-                    if let Some(w) = &*w.borrow() {
-                        w.send(Job::Export {
-                            edit: st.edit.clone(),
-                            path,
-                            settings,
-                            on_exists: read_on_exists(app),
-                            source,
-                            preset,
-                        });
-                    }
-                });
-            }
         }
         Outcome::Filling { generation, name } => {
             // The outline on the viewport says where; this says why
@@ -688,6 +628,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             source,
             edit,
             preset,
+            left_out,
         } => {
             // Into the frame's history before a batch run quits below.
             crate::panel::history::record_export(
@@ -698,10 +639,18 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 &path,
                 preset,
             );
-            let said = match &note {
+            let mut said = match &note {
                 Some(note) => format!(" ({note})"),
                 None => String::new(),
             };
+            // What the edit asked for and the file went without: the
+            // status line says so, and the log says what.
+            for item in &left_out {
+                tracing::warn!("{}: {item}", file_name(&source));
+            }
+            if !left_out.is_empty() {
+                said.push_str(&format!(", without {}", left_out_words(left_out.len())));
+            }
             app.set_status(format!("exported {} in {seconds:.2} s{said}", file_name(&path)).into());
             tracing::info!("exported {} in {seconds:.2} s", path.display());
             // A rename or a file written over is worth the terminal.
@@ -709,9 +658,6 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 tracing::warn!("exported {}: {note}", path.display());
             }
             app.set_busy(false);
-            if state.borrow().screenshot.is_none() && std::env::args().any(|a| a == "--export") {
-                let _ = slint::quit_event_loop();
-            }
         }
         Outcome::ExportSkipped { path } => {
             app.set_status(
@@ -719,9 +665,6 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             );
             tracing::warn!("skipped {}: it is there already", path.display());
             app.set_busy(false);
-            if state.borrow().screenshot.is_none() && std::env::args().any(|a| a == "--export") {
-                let _ = slint::quit_event_loop();
-            }
         }
         Outcome::Mask {
             key,
@@ -907,10 +850,14 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     path,
                     seconds,
                     note,
+                    left_out,
                 } => {
                     tracing::info!("exported {at}: {} in {seconds:.2} s", path.display());
                     if let Some(note) = note {
                         tracing::warn!("exported {}: {note}", path.display());
+                    }
+                    for item in &left_out {
+                        tracing::warn!("{}: {item}", file_name(&source));
                     }
                     crate::panel::history::record_export(
                         &mut state.borrow_mut(),
@@ -955,23 +902,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // The queue's entry: what is left of it kept, and the next
             // begun unless the set was stopped.
             crate::panel::export_queue::set_done(&mut st, app, &set, &line);
-            // `--export DIR` is done: a frame that failed is a failure
-            // a script can see.
-            if st.batch && st.export_into_folder {
-                if !tally.failed.is_empty() {
-                    st.failed = true;
-                }
-                if st.screenshot.is_none() {
-                    let _ = slint::quit_event_loop();
-                }
-            }
         }
         Outcome::ExportFailed { message } => {
             app.set_status(format!("export failed: {message}").into());
             app.set_busy(false);
             tracing::error!("export failed: {message}");
-            // `--export` would otherwise wait for an Exported that is
-            // not coming.
+            // A capture whose keys pressed Export asked for a file that
+            // is not coming: a failure the exit code says.
             let mut st = state.borrow_mut();
             if st.batch {
                 st.failed = true;
@@ -985,12 +922,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
 /// its own edit, its turn and whether its blend is still to be seeded;
 /// the frame on screen under the panel's edit. One frame when the
 /// selection is one frame.
+#[cfg(test)]
 pub(crate) fn set_frames(st: &mut State, app: &App) -> SetFrames {
     let chosen = chosen_frames(st);
     set_frames_of(st, app, &chosen)
 }
 
-/// [`set_frames`] over `frames` rather than the selection: what an
+/// `set_frames` over `frames` rather than the selection: what an
 /// export pressed on a selection whose sidecars were still to be read
 /// takes when they are in.
 pub(crate) fn set_frames_of(st: &mut State, app: &App, frames: &[usize]) -> SetFrames {
@@ -1012,29 +950,12 @@ pub(crate) fn set_frames_of(st: &mut State, app: &App, frames: &[usize]) -> SetF
         .collect()
 }
 
-/// A batch run has no panel to read the warning off, so a look the
-/// edit names and the directory has not got, or one with no table for
-/// the picture's display curve, is said out loud, in the Look
-/// section's own words for the second. The file is still written,
-/// without it: an export is not worth failing over a look, but it is
-/// worth a line saying what came out.
-fn warn_missing_look(edit: &Edit, written: &Path) {
-    let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut else {
-        return;
-    };
-    if !edit.look_lut.is_there() {
-        tracing::warn!(
-            "look {name}: not in the look directory; {} is written without it",
-            written.display()
-        );
-    } else if edit.look_lut.look_under(edit.display_curve).is_none()
-        && let Some((why, _)) =
-            greycard_edit::look::mismatch(&greycard_edit::look::list(), name, edit.display_curve)
-    {
-        tracing::warn!(
-            "look {name}: {why} {} is written without it",
-            written.display()
-        );
+/// "one thing the edit names that ...", "2 things": what a status line
+/// says of an export's left-out items, the log having the list.
+pub(crate) fn left_out_words(n: usize) -> String {
+    match n {
+        1 => "one thing the edit names that this machine has not got (see the log)".into(),
+        n => format!("{n} things the edit names that this machine has not got (see the log)"),
     }
 }
 

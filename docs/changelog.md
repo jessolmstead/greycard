@@ -10,6 +10,14 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- `--export` opens no window and asks for no GPU, about twice as fast
+  a frame, and cannot stall on the compositor as a desktop run could;
+  it exits 0 when every frame is written as its edit asks, 1 when one
+  is not, 2 when one is written without a look or a learned model this
+  machine has not got, each named; a run that loaded a model no longer
+  crashes on its way out; `--xmp-sidecars` is honored, and a noted
+  export no longer writes over another tool's change to the `.xmp`
+  (§236)
 - A fitted look records the display curve it was fitted under and the
   body it is for, in its `.cube`'s header; the camera match fits under
   the open picture's curve (it fitted under per channel every time

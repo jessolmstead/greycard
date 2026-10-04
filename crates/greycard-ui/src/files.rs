@@ -18,6 +18,29 @@ pub fn never_developed(sidecar: &Sidecar) -> bool {
     sidecar.current == Edit::default() && sidecar.history.is_empty() && sidecar.snapshots.is_empty()
 }
 
+/// A sidecar from an older build brought up to date from the shape of
+/// `frame` as its file says it stands, its turn applied: what the
+/// window does with the frame it opens (`panel::browser::migrate_frame`),
+/// for a sidecar read with no window holding the frame. Left as it is
+/// when the file will not say its shape.
+pub(crate) fn migrate_from_file(sidecar: &mut Sidecar, frame: &Path) {
+    if !sidecar.needs_frame() {
+        return;
+    }
+    let shape = greycard_core::decode::stance_path(frame)
+        .ok()
+        .and_then(|s| s.shown_size(sidecar.turn))
+        .filter(|&(w, h)| w > 0 && h > 0);
+    match shape {
+        Some((w, h)) => sidecar.migrate_with_frame(w < h),
+        None => tracing::warn!(
+            "{}: nothing can say which way up it is, so its Original crop \
+             waits before it is brought up to date",
+            frame.display()
+        ),
+    }
+}
+
 /// Map a .gcd sidecar path to its raw: IMG.CR3.gcd -> IMG.CR3, and
 /// .greycard/IMG.CR3.gcd -> IMG.CR3 beside the folder, since a
 /// sidecar under the hidden folder belongs to the frame above it.

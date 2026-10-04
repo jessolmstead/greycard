@@ -111,13 +111,6 @@ pub(crate) fn record_export(
         preset,
         at: now(),
     };
-    let not_kept = || {
-        tracing::info!(
-            "{}: exported under an edit that is no state of its history \
-             (undone and replaced since, or the command line's); not recorded",
-            file_name(source)
-        );
-    };
     // A frame in the list whose sidecar stands in from its row (the
     // list replaced while the export ran) is recorded on disk below,
     // as a frame the window has let go of is: a stand-in is never
@@ -137,7 +130,7 @@ pub(crate) fn record_export(
             *seed = false;
         }
         if !st.sidecars[i].record_export(edit, exported) {
-            not_kept();
+            not_kept(source);
             return;
         }
         write_sidecar(st, i);
@@ -146,38 +139,79 @@ pub(crate) fn record_export(
         }
         return;
     }
-    if !st.write_sidecars {
-        return;
+    if st.write_sidecars
+        && record_export_on_disk(source, edit, exported, st.placement, st.xmp_sidecars)
+        && let Some(indexer) = &st.index
+    {
+        indexer.file(source.to_path_buf());
     }
-    let raw = !greycard_core::picture::is_picture_path(source);
-    let mut sidecar = match Sidecar::load(source) {
-        Ok(Some(s)) => s,
-        Ok(None) if !raw => Sidecar {
-            current: Edit::for_picture(),
-            ..Sidecar::default()
-        },
-        Ok(None) => Sidecar::default(),
-        Err(e) => {
-            tracing::warn!("{}: sidecar: {e}; export not recorded", file_name(source));
-            return;
-        }
-    };
+}
+
+fn not_kept(source: &Path) {
+    tracing::info!(
+        "{}: exported under an edit that is no state of its history \
+         (undone and replaced since, or the command line's); not recorded",
+        file_name(source)
+    );
+}
+
+/// [`record_export`] for a frame no window holds: its sidecar read
+/// from where it is and brought up to date as an open brings it, the
+/// export noted on the state that is `edit`, and written back where
+/// `placement` says, the frame's `.xmp` with it when `xmp` asks, as
+/// every sidecar write of the window's does (`write_sidecar`); true
+/// when it was written. The window's for a frame it has let go of,
+/// and the headless `--export`'s for every frame.
+pub(crate) fn record_export_on_disk(
+    source: &Path,
+    edit: &Edit,
+    exported: Exported,
+    placement: greycard_edit::Placement,
+    xmp: bool,
+) -> bool {
+    // Read as an open reads it (`load_sidecar_said`): the `.gcd`, a
+    // picture's own default where there is none, and what an `.xmp`
+    // beside the frame says that the sidecar has not taken yet. Read
+    // without the `.xmp`, the write below would put the `.gcd`'s old
+    // rating and turn over whatever another tool wrote there since.
+    let (mut sidecar, seed, trouble) = crate::panel::browser::load_sidecar_said(source, true);
+    if let Some(crate::rows::Trouble::Unreadable(e)) = trouble {
+        tracing::warn!("{}: sidecar: {e}; export not recorded", file_name(source));
+        return false;
+    }
+    // The edit was rendered from the sidecar as an open leaves it, so
+    // an older build's is brought up to date the same way before the
+    // two are compared; otherwise a version 3 Original crop is never
+    // the state its own export was made from.
+    crate::files::migrate_from_file(&mut sidecar, source);
     // The same seed for a frame the window has let go of, by the rule
     // a load decides it by.
-    if raw && crate::files::never_developed(&sidecar) {
+    if seed {
         take_seed(&mut sidecar, edit);
     }
     if !sidecar.record_export(edit, exported) {
-        not_kept();
-        return;
+        not_kept(source);
+        return false;
     }
-    match sidecar.save_in(source, st.placement) {
-        Ok(()) => {
-            if let Some(indexer) = &st.index {
-                indexer.file(source.to_path_buf());
-            }
+    if xmp {
+        // As `write_sidecar` writes it: the camera's tag and the
+        // frame's turns composed, or no orientation when the file
+        // will not say its tag.
+        let turn = greycard_core::decode::stance_path(source)
+            .ok()
+            .map(|s| xmp::Turn::new(s.orientation, sidecar.turn));
+        match xmp::save(source, &sidecar.meta, turn) {
+            Ok(Some(mark)) => sidecar.xmp = Some(mark),
+            Ok(None) => {}
+            Err(e) => tracing::warn!("{}: xmp not written: {e}", file_name(source)),
         }
-        Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(source)),
+    }
+    match sidecar.save_in(source, placement) {
+        Ok(()) => true,
+        Err(e) => {
+            tracing::warn!("{}: sidecar not saved: {e}", file_name(source));
+            false
+        }
     }
 }
 
@@ -710,6 +744,7 @@ mod tests {
                 source: source.clone(),
                 edit: sent.clone(),
                 preset: Some("Web".into()),
+                left_out: Vec::new(),
             },
         );
         {
@@ -837,6 +872,7 @@ mod tests {
             source: raw.clone(),
             edit: edit.clone(),
             preset: None,
+            left_out: Vec::new(),
         };
         crate::panel::deliver::deliver(&app, exported(&edit));
         let back = Sidecar::load(&raw).unwrap().unwrap();
@@ -948,6 +984,7 @@ mod tests {
                 source: raw.clone(),
                 edit: rendered,
                 preset: None,
+                left_out: Vec::new(),
             },
         );
         {
@@ -1078,6 +1115,7 @@ mod tests {
                         path: dir.join(format!("{i}.jpg")),
                         seconds: 1.0,
                         note: None,
+                        left_out: Vec::new(),
                     },
                 },
             );
@@ -1128,6 +1166,7 @@ mod tests {
                 path: PathBuf::from("/out/IMG_0000.jpg"),
                 seconds: 1.0,
                 note: None,
+                left_out: Vec::new(),
             },
             crate::queue::Done::Failed {
                 message: "no".into(),
@@ -1136,6 +1175,7 @@ mod tests {
                 path: PathBuf::from("/out/IMG_0002.jpg"),
                 seconds: 1.0,
                 note: None,
+                left_out: Vec::new(),
             },
         ]
         .into_iter()

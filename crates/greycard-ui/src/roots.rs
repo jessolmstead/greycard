@@ -4334,9 +4334,10 @@ mod tests {
     }
 
     /// B4, the review's repro: a filter kept from the last session
-    /// (picks only) over a batch export of a file named on the command
-    /// line, or a file double-clicked from the desktop. Neither puts
-    /// it back; a session opened on a folder does.
+    /// (picks only) over a capture of a folder, or a file named on the
+    /// command line or double-clicked from the desktop. None puts it
+    /// back; a session opened on a folder does. (An export from the
+    /// command line has no browser to filter: `headless`.)
     #[test]
     fn a_kept_filter_is_not_put_back_over_a_file_or_a_batch_run() {
         use crate::panel::startup::restores_filter;
@@ -4349,7 +4350,7 @@ mod tests {
             all.extend_from_slice(args);
             Cli::parse_from(all)
         };
-        assert!(!restores_filter(&cli(&[&x, "--export", "out.jpg"])));
+        assert!(!restores_filter(&cli(&[&d, "--screenshot", "s.png"])));
         assert!(!restores_filter(&cli(&[&x])), "a file named");
         assert!(!restores_filter(&cli(&[&d, "--snapshot", "s.png"])));
         assert!(restores_filter(&cli(&[&d])), "a session on a folder");
