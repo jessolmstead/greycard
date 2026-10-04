@@ -47,7 +47,7 @@ pub(crate) const PER_FOLDER: usize = 3;
 /// The long edge each frame is developed at, the trial's.
 pub(crate) const LONG_EDGE: u32 = 2048;
 /// Frames held out, one at a time, for the reported error.
-const HELD_OUT: usize = 4;
+pub(crate) const HELD_OUT: usize = 4;
 
 /// One frame of a group.
 #[derive(Debug, Clone, PartialEq)]
@@ -240,7 +240,7 @@ fn order(a: &Frame, b: &Frame) -> std::cmp::Ordering {
 
 /// `m` indices spread evenly through `0..n`, each in the middle of
 /// its share; all of them when `m >= n`.
-fn evenly(n: usize, m: usize) -> Vec<usize> {
+pub(crate) fn evenly(n: usize, m: usize) -> Vec<usize> {
     if m >= n {
         return (0..n).collect();
     }
@@ -768,7 +768,7 @@ struct Kept {
 /// The export settings a frame is developed under for the fit: a
 /// 16-bit sRGB picture at [`LONG_EDGE`], no output sharpening, no
 /// mark.
-fn settings() -> crate::export::Settings {
+pub(crate) fn settings() -> crate::export::Settings {
     crate::export::Settings {
         format: crate::export::Format::Tiff,
         long_edge: Some(LONG_EDGE),
@@ -781,7 +781,7 @@ fn settings() -> crate::export::Settings {
 }
 
 /// A rendered picture as the fit reads one: encoded sRGB in floats.
-fn picture_of(rendered: &crate::export::Rendered) -> Picture {
+pub(crate) fn picture_of(rendered: &crate::export::Rendered) -> Picture {
     let (w, h) = (rendered.width as usize, rendered.height as usize);
     let data = match &rendered.pixels {
         crate::export::Pixels::Sixteen(p) => p
@@ -802,7 +802,7 @@ fn picture_of(rendered: &crate::export::Rendered) -> Picture {
 
 /// The camera's own JPEG in the raw, turned by its orientation as the
 /// develop is.
-fn camera_jpeg(path: &Path) -> Result<Picture, String> {
+pub(crate) fn camera_jpeg(path: &Path) -> Result<Picture, String> {
     let (rgb, orientation) = greycard_core::decode::preview_path(path)
         .map_err(|e| e.to_string())?
         .ok_or("the file carries no camera JPEG")?;
@@ -824,7 +824,7 @@ fn camera_jpeg(path: &Path) -> Result<Picture, String> {
 /// the run's display curve. Before tables declared their curve this
 /// was the default edit alone, so every table fitted then was fitted
 /// under per channel whatever the open picture was on.
-fn fit_edit(curve: DisplayCurve) -> Edit {
+pub(crate) fn fit_edit(curve: DisplayCurve) -> Edit {
     Edit {
         display_curve: curve,
         ..Edit::default()
@@ -842,31 +842,12 @@ fn measure(
     curve: DisplayCurve,
     lenses: Option<&greycard_lens::Database>,
 ) -> Result<Kept, String> {
-    let edit = fit_edit(curve);
-    let settings = settings();
-    let mut developed = crate::worker::FrameDevelop::develop(&frame.path, &edit, lenses)?;
-    let render = picture_of(&developed.finish(&edit, &settings));
+    let mut developed =
+        crate::worker::FrameDevelop::develop(&frame.path, &fit_edit(curve), lenses)?;
     let jpeg = camera_jpeg(&frame.path)?;
-    let reg = register(&render, &jpeg);
-    if reg.ncc < NCC_MIN {
-        return Err(format!(
-            "the camera's JPEG does not lay over the develop (correlation {:.2})",
-            reg.ncc
-        ));
-    }
-    let (w, h) = (render.width, render.height);
-    let laid = jpeg.warp_to(w, h, reg.scale, reg.dy, reg.dx);
-    let coverage = jpeg.coverage(w, h, reg.scale, reg.dy, reg.dx);
-    let first = greycard_match::pairs::pairs(&render, &laid, &coverage);
-    let offset =
-        greycard_match::exposure::offset_stops(&first).ok_or("no flat, unclipped blocks")?;
-    let mut at = edit.clone();
-    at.light.exposure += offset;
-    let render = picture_of(&developed.finish(&at, &settings));
-    let pairs = greycard_match::pairs::pairs(&render, &laid, &coverage);
-    if pairs.pairs.is_empty() {
-        return Err("no flat, unclipped blocks".into());
-    }
+    let laid = lay(&mut developed, &jpeg, curve)?;
+    let (offset, pairs) = matched(&mut developed, &laid, curve)?;
+    let reg = laid.reg;
     tracing::info!(
         "camera match {}: scale {:.4}, shift ({:+.1}, {:+.1}), correlation {:.3}, \
          {} of {} blocks, {offset:+.2} stops",
@@ -882,6 +863,77 @@ fn measure(
         pairs,
         lens: frame.lens.clone(),
     })
+}
+
+/// The camera's JPEG laid over a frame finished under `curve` at the
+/// fit's edit: the registration, the JPEG warped onto the render's
+/// grid, which of its pixels the JPEG reaches, and the block pairs at
+/// the develop's own exposure. The exposure moves no pixel, so the
+/// registration holds for every finish of the same develop.
+pub(crate) struct Laid {
+    pub(crate) reg: greycard_match::Registration,
+    laid: Picture,
+    coverage: greycard_match::Plane,
+    pub(crate) first: Pairs,
+}
+
+/// Lay `jpeg` over `developed` finished under `curve`; an error when
+/// the two are not the same picture.
+pub(crate) fn lay(
+    developed: &mut crate::worker::FrameDevelop,
+    jpeg: &Picture,
+    curve: DisplayCurve,
+) -> Result<Laid, String> {
+    let render = picture_of(&developed.finish(&fit_edit(curve), &settings()));
+    let reg = register(&render, jpeg);
+    if reg.ncc < NCC_MIN {
+        return Err(format!(
+            "the camera's JPEG does not lay over the develop (correlation {:.2})",
+            reg.ncc
+        ));
+    }
+    let (w, h) = (render.width, render.height);
+    let laid = jpeg.warp_to(w, h, reg.scale, reg.dy, reg.dx);
+    let coverage = jpeg.coverage(w, h, reg.scale, reg.dy, reg.dx);
+    let first = greycard_match::pairs::pairs(&render, &laid, &coverage);
+    Ok(Laid {
+        reg,
+        laid,
+        coverage,
+        first,
+    })
+}
+
+/// The block pairs of `developed` finished under `curve` with
+/// `offset` stops on the Exposure slider, against the JPEG `laid`
+/// holds.
+pub(crate) fn pairs_at(
+    developed: &mut crate::worker::FrameDevelop,
+    laid: &Laid,
+    curve: DisplayCurve,
+    offset: f32,
+) -> Pairs {
+    let mut at = fit_edit(curve);
+    at.light.exposure += offset;
+    let render = picture_of(&developed.finish(&at, &settings()));
+    greycard_match::pairs::pairs(&render, &laid.laid, &laid.coverage)
+}
+
+/// The frame's exposure against the camera's, solved once on the
+/// first pairs, and the pairs again at it: the offset in stops and the
+/// pairs the fit takes.
+pub(crate) fn matched(
+    developed: &mut crate::worker::FrameDevelop,
+    laid: &Laid,
+    curve: DisplayCurve,
+) -> Result<(f32, Pairs), String> {
+    let offset =
+        greycard_match::exposure::offset_stops(&laid.first).ok_or("no flat, unclipped blocks")?;
+    let pairs = pairs_at(developed, laid, curve, offset);
+    if pairs.pairs.is_empty() {
+        return Err("no flat, unclipped blocks".into());
+    }
+    Ok((offset, pairs))
 }
 
 /// Every kept frame's pairs as the fit takes them: the render side,
@@ -1445,14 +1497,7 @@ mod tests {
     }
 
     fn scratch_store(what: &str) -> PathBuf {
-        std::env::temp_dir().join(format!(
-            "greycard-match-{what}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ))
+        crate::testing::scratch_dir(&format!("match-{what}"))
     }
 
     /// A run over `groups` whose every frame measures as a synthetic

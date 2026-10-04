@@ -204,12 +204,23 @@ ask for first.
       re-measured under it: sidecars written before the flip read as
       per channel (a schema rule, so no edited picture moves), a
       picture with no sidecar gets AgX; the viewport timed on an
-      integrated GPU and lavapipe first (§231). Waits on the one below
-- [ ] The camera match refitted on the library under AgX, each look
-      gaining its `.agx.cube` beside the per-channel table (§235), and
-      its fitted and held-out error set beside §181's per-channel fits:
-      a lower error is the number that confirms §230's call, and the
-      fitted reds are where AgX's pinks come back toward the camera's
+      integrated GPU and lavapipe first (§231). The match under AgX is
+      10 to 20 percent worse than under per channel on the same frames,
+      all of it per-frame lightness, and better than today's per channel
+      once the exposure match converges (§238). Waits on the one below
+      and a refit under it
+- [ ] The camera match's exposure match converged: a secant step from
+      the match's own two finishes, the slope held to a quarter to four
+      times as steep and a step to a stop, at most eight finishes, about
+      two more a frame than today (+0.5 s); held-out error 0.0161 to
+      0.0131 per channel and 0.0195 to 0.0154 under AgX (§238)
+- [ ] A per-frame contrast term in the camera match's fit, measured
+      first with `--match-compare`: the offset and slope oracle puts the
+      held-out ceiling at 0.0131 per channel and 0.0146 under AgX (§238)
+- [ ] The camera match's black cut on the camera's side only, or scaled
+      to the curve, so a table fitted under AgX sees the toe it crushes:
+      a quarter of the deep-shadow blocks per channel keeps are lost
+      under AgX (§238)
 - [ ] The comparison tool's baseline from one pipeline: render per
       channel from the same linear develop the OpenColorIO renders
       start from, so a difference is the transform's and not the
@@ -233,7 +244,8 @@ ask for first.
       floor or shape so the curves are stable at black, and lift the
       draw back to the panel's 0.01
 - [ ] Camera match follow-ups (§181): a group's error held out over
-      every frame rather than four, and that error deciding whether a
+      every frame rather than four (the four-frame figure is off by up
+      to 0.004 and too noisy to size a gap, §238), and that error deciding whether a
       new fit of the same body from another folder replaces the table
       there, where today more frames wins; the per-lens radial report fed
       into the vignetting line below; `style:` in the filter text;

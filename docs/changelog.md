@@ -10,6 +10,13 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The library refit under AgX, and `--match-compare DIR`: the camera
+  match's own sample, develop, registration and fit under both display
+  curves on the same frames, headless, writing no table, with a report
+  of the error with no look, fitted and held out, split into lightness
+  and color and by band; the match under AgX is worse by per-frame
+  lightness alone, which a converged exposure match more than makes
+  up (§238)
 - The camera match sheet has a box on each body and style, all ticked
   at first: Fit runs over the ticked ones and counts them, says when an
   unticked group is read for another's borrow, and the choice is kept

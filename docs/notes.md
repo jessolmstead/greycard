@@ -248,3 +248,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§235. A fitted look has a table per display curve, and knows its body](notes/235-a-fitted-look-has-a-table-per-display-curve.md) (2026-10-03)
 - [§236. A headless `--export`](notes/236-a-headless-export.md) (2026-10-03)
 - [§237. The match sheet's groups are chosen, and a look can be removed](notes/237-the-match-sheets-groups-chosen-and-a-look-removed.md) (2026-10-03)
+- [§238. The camera match under AgX, measured on the same frames](notes/238-the-camera-match-under-agx-measured-on-the-same-frames.md) (2026-10-04)

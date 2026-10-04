@@ -22,6 +22,11 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(log) = log::start(cli.verbose) {
         eprintln!("log: {}", log.display());
     }
+    // `--match-compare` measures the camera match and writes a report;
+    // no window, no device.
+    if let Some(out) = cli.match_compare.as_deref() {
+        return crate::match_compare::headless(&cli, out);
+    }
     // `--import` with no sheet asked for is a run with no window.
     let import_sheet = matches!(
         cli.sheet,

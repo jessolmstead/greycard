@@ -34,6 +34,7 @@ mod headless;
 mod import;
 mod library;
 mod log;
+mod match_compare;
 mod mounts;
 mod naming;
 mod outline;
@@ -199,6 +200,31 @@ struct Cli {
     /// written or the run could not begin
     #[arg(long)]
     export: Option<PathBuf>,
+    /// Measure the camera match under each display curve on the same
+    /// frames, with no window, and write a report (report.json and
+    /// report.md) into this folder: the library's groups (--library,
+    /// --roots), the sheet's sample of each, every frame developed once
+    /// and finished under per channel and under AgX, each curve fitted
+    /// and held out. Writes no look, no sidecar and nothing in the
+    /// library; a frame's numbers are kept under the folder, so a second
+    /// run redoes only the analysis
+    #[arg(long, value_name = "DIR")]
+    match_compare: Option<PathBuf>,
+    /// With --match-compare, sample each group down to this many frames
+    /// rather than the sheet's 40
+    #[arg(long, value_name = "N", requires = "match_compare")]
+    match_frames: Option<usize>,
+    /// With --match-compare, only the groups whose look name contains
+    /// this; repeatable
+    #[arg(long, value_name = "TEXT", requires = "match_compare")]
+    match_group: Vec<String>,
+    /// With --match-compare, take the frames' numbers kept by this
+    /// other build of the editor (as a report's "Build" line names it)
+    /// rather than develop them again; repeatable, and the report lists
+    /// the builds its records came from. Only for a change to the
+    /// analysis: after a change to the develop, let them be made again
+    #[arg(long, value_name = "BUILD", requires = "match_compare")]
+    match_reuse_records: Vec<String>,
     /// Fill the export sheet from this export preset, by name, for
     /// this run: its size, format, metadata and watermark. The format
     /// is still the --export path's extension when it names one, and

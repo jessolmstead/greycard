@@ -107,6 +107,20 @@ pub(crate) fn retouch_state(app: &App) -> (Rc<RefCell<State>>, Rc<Worker>) {
     state_for(app, Vec::new())
 }
 
+/// A path under the system's temporary directory no test has used,
+/// named for `what`, not yet made; a test makes it and removes it with
+/// [`remove_dir_retry`].
+pub(crate) fn scratch_dir(what: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "greycard-{what}-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ))
+}
+
 /// A folder of `count` frames nothing has ever written, named as a
 /// camera names them, in a directory that does not exist: the
 /// browser reads the sidecars it is given and never the disk.
