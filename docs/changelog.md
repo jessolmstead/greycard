@@ -10,6 +10,16 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A fitted look records the display curve it was fitted under and the
+  body it is for, in its `.cube`'s header; the camera match fits under
+  the open picture's curve (it fitted under per channel every time
+  before); a look has a table per curve, `<name>.agx.cube` beside the
+  per-channel `<name>.cube`, a picture takes the one for its curve and
+  goes without where there is none, the Look section saying so and
+  offering "Refit under AgX..."; someone else's `.cube` applies under
+  every curve as before. The look list is grouped by body, this
+  camera's first and marked, the others folded with a count, the
+  general looks apart (§235)
 - The Move rejects sheet takes the keys when it opens, from
   CULLING's button or the grid header's menu, so Return moves once and
   Escape closes it; a sheet closed from the command line gives the

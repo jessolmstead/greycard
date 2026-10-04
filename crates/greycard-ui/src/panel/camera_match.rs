@@ -4,6 +4,12 @@
 //! and Fit runs [`crate::camera_match::run`] on a thread of its own,
 //! its progress and each group's result coming back here, the look
 //! list read again when it is done.
+//!
+//! The run develops under the open picture's display curve, which the
+//! sheet says, and every table it writes is that curve's. Opened from
+//! the Look section's refit, the sheet runs over the chosen look's own
+//! group (and its donor, for a borrowed look) rather than the scope's
+//! every group.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -27,6 +33,51 @@ pub(crate) struct Sheet {
     /// The run under way, to stop it.
     cancel: Option<Arc<AtomicBool>>,
     results: Vec<String>,
+    /// The display curve the run develops under: the open picture's
+    /// when the sheet was opened.
+    curve: greycard_edit::DisplayCurve,
+    /// The look a refit is for, when the sheet was opened for one, and
+    /// its tables as the look list had them.
+    refit: Option<(String, Vec<greycard_edit::look::Entry>)>,
+}
+
+impl Sheet {
+    /// The groups the run is over: the scope's, or for a refit the
+    /// look's own and its donor's. A refit whose look no group in the
+    /// scope makes runs over none, so Fit is off, and
+    /// [`Sheet::curve_note`] says why: a run over every group is the
+    /// sheet's own job, not the refit's.
+    fn groups(&self) -> Option<Vec<Group>> {
+        let survey = self.survey.as_ref()?;
+        Some(match &self.refit {
+            Some((name, tables)) => {
+                let tables: Vec<&greycard_edit::look::Entry> = tables.iter().collect();
+                fit::refit_groups(&survey.groups, name, &tables).unwrap_or_default()
+            }
+            None => survey.groups.clone(),
+        })
+    }
+
+    /// The line that says which curve the run develops under, and
+    /// what a refit is for.
+    fn curve_note(&self) -> String {
+        let under = self.curve.phrase();
+        let mut out = format!(
+            "Fits under {under}, the open picture's display curve: a look fitted here \
+             applies to pictures on {under}, and is off under another."
+        );
+        if let Some((name, _)) = &self.refit {
+            match (&self.survey, self.groups().is_some_and(|g| !g.is_empty())) {
+                (Some(_), false) => out.push_str(&format!(
+                    " Nothing here makes {name}: no body and picture style in this scope has \
+                     its name, or the body and style its table declares, so there is nothing \
+                     to refit it from."
+                )),
+                _ => out.push_str(&format!(" Refitting {name}.")),
+            }
+        }
+        out
+    }
 }
 
 /// Where the library is and its roots, when one is indexed.
@@ -190,14 +241,14 @@ fn show(st: &State, app: &App) {
     let running = sheet.cancel.is_some();
     app.set_match_running(running);
     app.set_match_results(strings(&sheet.results));
-    match &sheet.survey {
-        Some(survey) => {
+    app.set_match_curve_note(sheet.curve_note().into());
+    match (&sheet.survey, sheet.groups()) {
+        (Some(survey), Some(groups)) => {
             let existing = greycard_edit::look::store_dir()
                 .map(|d| fit::existing_in(&d))
                 .unwrap_or_default();
-            let plans = fit::plan(&survey.groups, &existing, app.get_match_replace());
-            let lines: Vec<String> = survey
-                .groups
+            let plans = fit::plan(&groups, &existing, sheet.curve, app.get_match_replace());
+            let lines: Vec<String> = groups
                 .iter()
                 .zip(&plans)
                 .map(|(g, p)| group_line(g, p))
@@ -208,7 +259,7 @@ fn show(st: &State, app: &App) {
             // and a run is how the user finds out which frames register.
             app.set_match_can_fit(!plans.is_empty());
         }
-        None => {
+        _ => {
             app.set_match_groups(strings(&[]));
             app.set_match_can_fit(false);
         }
@@ -253,8 +304,11 @@ fn start_survey(st: &mut State, app: &App) {
     });
 }
 
-/// Open the sheet on the library when there is one, else the folder.
-fn open(st: &mut State, app: &App) {
+/// Open the sheet on the library when there is one, else the folder,
+/// to fit under the open picture's display curve; for a refit of the
+/// look named, over that look's group. A run under way keeps the sheet
+/// as it is.
+pub(crate) fn open(st: &mut State, app: &App, refit: Option<String>) {
     let library = library_of(st).is_some();
     let scopes: Vec<String> = if library {
         vec![LIBRARY.into(), FOLDER.into()]
@@ -272,6 +326,18 @@ fn open(st: &mut State, app: &App) {
         .into(),
     );
     if st.camera_match.cancel.is_none() {
+        // The LIGHT section's choice, which is the picture's even
+        // before the edit has recorded a switch just made.
+        st.camera_match.curve =
+            greycard_edit::DisplayCurve::from_name(app.get_display_curve().as_str())
+                .unwrap_or(st.edit.display_curve);
+        st.camera_match.refit = refit.map(|name| {
+            let tables = greycard_edit::look::tables_of(&st.looks, &name)
+                .into_iter()
+                .cloned()
+                .collect();
+            (name, tables)
+        });
         app.set_match_scope(if library { LIBRARY } else { FOLDER }.into());
         st.camera_match.results.clear();
         app.set_match_progress("".into());
@@ -284,17 +350,17 @@ fn open(st: &mut State, app: &App) {
 
 /// Run the fit over the surveyed groups on a thread of its own.
 fn start_run(st: &mut State, app: &App) {
-    let Some(survey) = &st.camera_match.survey else {
+    let Some(groups) = st.camera_match.groups() else {
         return;
     };
-    if st.camera_match.cancel.is_some() || survey.groups.is_empty() {
+    if st.camera_match.cancel.is_some() || groups.is_empty() {
         return;
     }
     let Some(store) = greycard_edit::look::store_dir() else {
         app.set_match_progress("There is no look directory on this machine.".into());
         return;
     };
-    let groups = survey.groups.clone();
+    let curve = st.camera_match.curve;
     let replace = app.get_match_replace();
     let cancel = Arc::new(AtomicBool::new(false));
     st.camera_match.cancel = Some(cancel.clone());
@@ -326,6 +392,7 @@ fn start_run(st: &mut State, app: &App) {
             fit::run(
                 &groups,
                 &store,
+                curve,
                 replace,
                 lenses.as_ref(),
                 &cancel,
@@ -387,7 +454,9 @@ fn heard(st: &mut State, app: &App, generation: u64, message: Message) {
             st.camera_match.cancel = None;
             app.set_match_progress(end.into());
             show(st, app);
-            // The new tables in the picker.
+            // The new tables in the picker, and the look resolved
+            // again: a refit replaces the table in place, and the
+            // picture that asked for it now takes it.
             st.looks = greycard_edit::look::list();
             st.look_for = None;
             show_looks(st, &st.edit.look_lut, app);
@@ -421,7 +490,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            open(&mut state.borrow_mut(), &app);
+            open(&mut state.borrow_mut(), &app, None);
         });
     }
     {
@@ -486,6 +555,8 @@ mod tests {
     fn group(camera: &str, folders: &[&str], n: usize, fixed: usize) -> Group {
         Group {
             camera: camera.into(),
+            make: "Canon".into(),
+            model: camera.into(),
             maker: "Canon".into(),
             style: "Canon Faithful".into(),
             frames: (0..n)
@@ -496,6 +567,7 @@ mod tests {
                     fixed: i < fixed,
                 })
                 .collect(),
+            look: None,
         }
     }
 
@@ -566,6 +638,55 @@ mod tests {
         assert_eq!(from_index(&db, &shoot), None);
         drop(lib);
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Opened for a refit, the sheet runs over the look's group and
+    /// says so and under which curve; a look nothing here makes leaves
+    /// the sheet with nothing to run, Fit off, and the line says why.
+    #[test]
+    fn a_refit_sheet_runs_over_the_looks_group_under_the_pictures_curve() {
+        let sheet = |refit: Option<&str>| Sheet {
+            survey: Some(Survey {
+                groups: vec![
+                    group("Canon EOS R6m2", &["a", "b"], 30, 30),
+                    group("Canon EOS R5m2", &["a"], 30, 30),
+                ],
+                unread: 0,
+                no_style: 0,
+            }),
+            curve: greycard_edit::DisplayCurve::Agx,
+            refit: refit.map(|name| (name.to_string(), Vec::new())),
+            ..Default::default()
+        };
+        let names = |s: &Sheet| {
+            s.groups()
+                .unwrap()
+                .iter()
+                .map(Group::name)
+                .collect::<Vec<_>>()
+        };
+        let all = sheet(None);
+        assert_eq!(names(&all).len(), 2);
+        assert!(
+            all.curve_note().starts_with("Fits under AgX"),
+            "{}",
+            all.curve_note()
+        );
+        let one = sheet(Some("Canon EOS R5m2 Faithful"));
+        assert_eq!(names(&one), ["Canon EOS R5m2 Faithful"]);
+        assert!(
+            one.curve_note()
+                .ends_with("Refitting Canon EOS R5m2 Faithful."),
+            "{}",
+            one.curve_note()
+        );
+        let gone = sheet(Some("Slide Warm"));
+        assert!(names(&gone).is_empty());
+        assert!(
+            gone.curve_note().contains("Nothing here makes Slide Warm"),
+            "{}",
+            gone.curve_note()
+        );
     }
 
     #[test]

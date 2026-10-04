@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, FolderTile, HistoryRow } from "structs.slint";
+import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -1031,8 +1031,14 @@ export component App inherits Window {
     // warning when the chosen table is not there or will not read.
     in-out property <string> look-name: "none";
     in-out property <float> look-strength: 1.0;
-    in property <[string]> look-names;
-    in property <[string]> look-labels;
+    in property <[LookRow]> look-rows;
+    /// The chosen table is off for this picture: what it was fitted
+    /// under, and the refit's button when the camera match fitted it.
+    in property <string> look-mismatch;
+    in property <string> look-refit;
+    callback look-refit-asked();
+    callback look-group-toggled(string);
+    callback look-curve-changed();
     in property <string> look-note;
     in property <string> look-warning;
     in property <string> look-fitted;
@@ -1043,6 +1049,7 @@ export component App inherits Window {
     in-out property <string> match-scope: "This folder";
     in property <[string]> match-scopes: ["This folder"];
     in property <string> match-scope-note;
+    in property <string> match-curve-note;
     in property <[string]> match-groups;
     in property <string> match-summary;
     in property <bool> match-can-fit;
@@ -1060,6 +1067,9 @@ export component App inherits Window {
     // opened, so a table dropped in while the editor is running is
     // listed without reopening the file.
     callback looks-wanted();
+    // The look list says which tables are off under the picture's
+    // display curve, so it is drawn again when the curve changes.
+    changed display-curve => { root.look-curve-changed(); }
     changed collapsed-look => {
         if (!root.collapsed-look) { root.looks-wanted(); }
     }
@@ -2134,8 +2144,11 @@ export component App inherits Window {
                             collapsed-look <=> root.collapsed-look;
                             look-name <=> root.look-name;
                             look-strength <=> root.look-strength;
-                            look-names: root.look-names;
-                            look-labels: root.look-labels;
+                            look-rows: root.look-rows;
+                            look-mismatch: root.look-mismatch;
+                            look-refit: root.look-refit;
+                            look-refit-asked => { root.look-refit-asked(); }
+                            look-group-toggled(key) => { root.look-group-toggled(key); }
                             look-note: root.look-note;
                             look-warning: root.look-warning;
                             look-fitted: root.look-fitted;
@@ -2807,6 +2820,7 @@ export component App inherits Window {
         match-scope <=> root.match-scope;
         match-scopes: root.match-scopes;
         match-scope-note: root.match-scope-note;
+        match-curve-note: root.match-curve-note;
         match-groups: root.match-groups;
         match-summary: root.match-summary;
         match-can-fit: root.match-can-fit;

@@ -191,6 +191,11 @@ pub struct Lut3d {
     /// The file was one-dimensional and was spread over a cube
     /// ([`Lut3d::from_cube`] says what that costs).
     pub from_1d: bool,
+    /// The comment lines above the table, the text after each `#`
+    /// trimmed, in order. This module reads the encoding and the
+    /// primaries out of them and nothing else; what any other line
+    /// means is a consumer's to say ([`declared`] reads one).
+    pub comments: Vec<String>,
 }
 
 /// What a listing says about a file without reading its table.
@@ -203,6 +208,8 @@ pub struct Info {
     /// Nodes per axis of the file as written: a HaldCLUT's level, a
     /// 1D table's length.
     pub kind: Kind,
+    /// The comment lines above the table, as [`Lut3d::comments`].
+    pub comments: Vec<String>,
 }
 
 /// Which sort of file a LUT came out of.
@@ -325,6 +332,40 @@ fn read_convention(
     }
 }
 
+/// How many comment lines a table keeps, and how long each may be: a
+/// header is a few lines, and a file with thousands above its table
+/// is not worth holding in every listing.
+const KEEP_COMMENTS: usize = 64;
+const COMMENT_CHARS: usize = 512;
+
+/// Keep a comment line for [`Lut3d::comments`], trimmed, while there
+/// is room.
+fn keep_comment(comment: &str, comments: &mut Vec<String>) {
+    let comment = comment.trim();
+    if !comment.is_empty() && comments.len() < KEEP_COMMENTS {
+        comments.push(comment.chars().take(COMMENT_CHARS).collect());
+    }
+}
+
+/// What a table's comments declare under `key`: the text after the
+/// first `key:` (or `key =`) line, trimmed, the key matched without
+/// regard to case. The last declaration wins, as it does for the
+/// encoding and the primaries.
+///
+/// This is the whole of what this module knows about such a line. A
+/// consumer gives the key its meaning: `# encoding:` and `#
+/// primaries:` are this module's own, and anything else is passed
+/// through as the text it is.
+pub fn declared<'a>(comments: &'a [String], key: &str) -> Option<&'a str> {
+    comments.iter().rev().find_map(|line| {
+        let (k, v) = line.split_once([':', '='])?;
+        k.trim()
+            .eq_ignore_ascii_case(key)
+            .then(|| v.trim())
+            .filter(|v| !v.is_empty())
+    })
+}
+
 /// A file's text without a byte order mark, which some editors put on
 /// the front of a `.cube` and which is not part of its first keyword.
 fn without_bom(text: &str) -> &str {
@@ -357,6 +398,7 @@ impl Lut3d {
             encoding: Encoding::default(),
             primaries: Primaries::default(),
             from_1d: false,
+            comments: Vec::new(),
         }
     }
 
@@ -412,6 +454,7 @@ impl Lut3d {
                     encoding: Encoding::default(),
                     primaries: Primaries::default(),
                     kind: Kind::Hald(level),
+                    comments: Vec::new(),
                 })
             }
             Some(other) => Err(lut_err(format!(
@@ -566,6 +609,10 @@ impl Lut3d {
     /// header read ([`Lut3d::info`], which stops at the first row)
     /// cannot disagree with this about what a file says it is.
     ///
+    /// Every comment above the table is also kept as text in
+    /// [`Lut3d::comments`], unread here, for a consumer's own
+    /// declarations ([`declared`]).
+    ///
     /// A keyword this build has no use for — `LUT_IN_VIDEO_RANGE` and
     /// whatever else a grading application writes — is passed over
     /// with a line in the debug log, and a byte order mark on the
@@ -583,6 +630,7 @@ impl Lut3d {
         let mut domain_max = [1.0f32; 3];
         let mut encoding = None;
         let mut primaries = None;
+        let mut comments = Vec::new();
         let mut rows: Vec<[f32; 3]> = Vec::new();
 
         for (n, raw) in without_bom(text).lines().enumerate() {
@@ -596,7 +644,8 @@ impl Lut3d {
                 // first row, and a header read and a full read must
                 // not disagree about what a file says it is.
                 Line::Comment(comment) if rows.is_empty() => {
-                    read_convention(comment, &mut encoding, &mut primaries)
+                    read_convention(comment, &mut encoding, &mut primaries);
+                    keep_comment(comment, &mut comments);
                 }
                 Line::Comment(_) => {}
                 Line::Keyword(word, rest) => match word.to_ascii_uppercase().as_str() {
@@ -672,6 +721,7 @@ impl Lut3d {
                 encoding,
                 primaries,
                 from_1d: false,
+                comments,
             });
         }
         if let Some(length) = size_1d {
@@ -686,9 +736,10 @@ impl Lut3d {
                     rows.len()
                 )));
             }
-            return Ok(Self::from_curve(
-                title, &rows, domain_min, domain_max, encoding, primaries,
-            ));
+            let mut table =
+                Self::from_curve(title, &rows, domain_min, domain_max, encoding, primaries);
+            table.comments = comments;
+            return Ok(table);
         }
         Err(lut_err(
             "no LUT_3D_SIZE or LUT_1D_SIZE line: the file does not say how big its table is",
@@ -733,6 +784,7 @@ impl Lut3d {
             encoding,
             primaries,
             from_1d: true,
+            comments: Vec::new(),
         }
     }
 
@@ -761,6 +813,7 @@ impl Lut3d {
             encoding: Encoding::default(),
             primaries: Primaries::default(),
             from_1d: false,
+            comments: Vec::new(),
         })
     }
 }
@@ -867,11 +920,15 @@ fn cube_header(text: &str) -> Result<Info> {
     let mut size_1d = None;
     let mut encoding = None;
     let mut primaries = None;
+    let mut comments = Vec::new();
     for (n, raw) in without_bom(text).lines().enumerate() {
         let line = raw.trim();
         match classify(line) {
             Line::Blank => {}
-            Line::Comment(comment) => read_convention(comment, &mut encoding, &mut primaries),
+            Line::Comment(comment) => {
+                read_convention(comment, &mut encoding, &mut primaries);
+                keep_comment(comment, &mut comments);
+            }
             Line::Keyword(word, rest) => match word.to_ascii_uppercase().as_str() {
                 "TITLE" => {
                     title =
@@ -898,6 +955,7 @@ fn cube_header(text: &str) -> Result<Info> {
             encoding,
             primaries,
             kind: Kind::Cube3d,
+            comments,
         });
     }
     if let Some(length) = size_1d {
@@ -907,6 +965,7 @@ fn cube_header(text: &str) -> Result<Info> {
             encoding,
             primaries,
             kind: Kind::Cube1d,
+            comments,
         });
     }
     Err(lut_err(
@@ -1153,6 +1212,42 @@ mod tests {
         let other =
             Lut3d::from_cube(&cube(2, "# Created by a grading application\n", |c| c)).unwrap();
         assert_eq!(other.encoding, Encoding::Srgb);
+    }
+
+    /// The comments above a table come through as text, for a
+    /// consumer to read its own declarations out of; the reader and
+    /// the listing keep the same ones, and one under the table is not
+    /// kept by either.
+    #[test]
+    fn the_comments_above_the_table_are_kept_as_written() {
+        let body = cube(2, "", |c| c);
+        let text = format!(
+            "TITLE \"t\"\n# encoding: srgb\n#  Display_Curve : agx \n# made by hand\n\
+             # style = Canon Faithful\n{body}# after: the table\n"
+        );
+        let lut = Lut3d::from_cube(&text).unwrap();
+        let info = cube_header(&text).unwrap();
+        assert_eq!(lut.comments, info.comments);
+        assert_eq!(
+            lut.comments,
+            [
+                "encoding: srgb",
+                "Display_Curve : agx",
+                "made by hand",
+                "style = Canon Faithful"
+            ]
+        );
+        assert_eq!(declared(&lut.comments, "display_curve"), Some("agx"));
+        assert_eq!(declared(&lut.comments, "style"), Some("Canon Faithful"));
+        assert_eq!(declared(&lut.comments, "after"), None);
+        assert_eq!(declared(&lut.comments, "made by hand"), None);
+        // The last declaration of a key wins, as the encoding's does.
+        let twice = Lut3d::from_cube(&cube(2, "# k: one\n# k: two\n", |c| c)).unwrap();
+        assert_eq!(declared(&twice.comments, "K"), Some("two"));
+        // A 1D table keeps its comments too; a HaldCLUT has none.
+        let one = Lut3d::from_cube("# k: v\nLUT_1D_SIZE 2\n0 0 0\n1 1 1\n").unwrap();
+        assert_eq!(declared(&one.comments, "k"), Some("v"));
+        assert!(Lut3d::identity(2).comments.is_empty());
     }
 
     /// A file written by a grading application carries keywords this

@@ -157,3 +157,25 @@ export struct HistoryRow {
     time: string,
     undone: bool,
 }
+
+/// One row of the LOOK section's list: a group's heading (a body, or
+/// the general looks) or a look. Rust builds them
+/// (`greycard_edit::look::grouped`).
+export struct LookRow {
+    heading: bool,
+    /// A look: what the edit stores. A heading: the group's key, which
+    /// a click toggles.
+    name: string,
+    label: string,
+    /// A look: the display curves it has a table for, "per channel ·
+    /// AgX", when it is made per curve. A heading: its count of looks.
+    note: string,
+    /// A look with no table for this picture's curve, drawn dimmed.
+    off: bool,
+    /// A heading folded.
+    folded: bool,
+    /// A heading for the open frame's own body.
+    own: bool,
+    /// A look under a heading, set in under its text.
+    indented: bool,
+}

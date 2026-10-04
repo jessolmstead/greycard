@@ -14,6 +14,9 @@ export component MatchSheet inherits Rectangle {
     in property <[string]> match-scopes;
     /// Why the library is not on offer, when it is not.
     in property <string> match-scope-note;
+    /// The display curve the run develops under, the open picture's,
+    /// and which look a refit is for when the sheet was opened for one.
+    in property <string> match-curve-note;
     /// One line a group: the body and style, its frames, and whether
     /// it will fit, borrow or be skipped and why.
     in property <[string]> match-groups;
@@ -83,6 +86,12 @@ export component MatchSheet inherits Rectangle {
                 text: root.match-scope-note;
                 font-size: Theme.font-xs;
                 color: Theme.text-muted;
+                wrap: word-wrap;
+            }
+            if root.match-curve-note != "": Text {
+                text: root.match-curve-note;
+                font-size: Theme.font-xs;
+                color: Theme.text-secondary;
                 wrap: word-wrap;
             }
             Rectangle {

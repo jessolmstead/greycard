@@ -1013,15 +1013,26 @@ pub(crate) fn set_frames_of(st: &mut State, app: &App, frames: &[usize]) -> SetF
 }
 
 /// A batch run has no panel to read the warning off, so a look the
-/// edit names and the directory has not got is said out loud. The file
-/// is still written, without it: an export is not worth failing over a
-/// look, but it is worth a line saying what came out.
+/// edit names and the directory has not got, or one with no table for
+/// the picture's display curve, is said out loud, in the Look
+/// section's own words for the second. The file is still written,
+/// without it: an export is not worth failing over a look, but it is
+/// worth a line saying what came out.
 fn warn_missing_look(edit: &Edit, written: &Path) {
-    if let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut
-        && edit.look_lut.look().is_none()
-    {
+    let greycard_edit::look::LutChoice::Named(name) = &edit.look_lut.lut else {
+        return;
+    };
+    if !edit.look_lut.is_there() {
         tracing::warn!(
             "look {name}: not in the look directory; {} is written without it",
+            written.display()
+        );
+    } else if edit.look_lut.look_under(edit.display_curve).is_none()
+        && let Some((why, _)) =
+            greycard_edit::look::mismatch(&greycard_edit::look::list(), name, edit.display_curve)
+    {
+        tracing::warn!(
+            "look {name}: {why} {} is written without it",
             written.display()
         );
     }

@@ -13,6 +13,11 @@
 //! pairs, solve the frame's exposure against the camera's and finish
 //! it again at that offset, then fit the shared model and write it.
 //!
+//! A run develops under one display curve, the open picture's, and
+//! every table it writes declares it in its header with the body it is
+//! for, so the finish applies it only to a picture on that curve and
+//! the look list can group it by body.
+//!
 //! A group with too few usable frames gets no table of its own. When
 //! another body in the same run has the same maker and style with a
 //! fit, the group borrows that table under its own name, the title
@@ -24,7 +29,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use greycard_core::image::WorkingImage;
-use greycard_edit::Edit;
+use greycard_edit::look::{Entry, MadeFor, variant_stem};
+use greycard_edit::{DisplayCurve, Edit};
 use greycard_match::fit::{LutParams, leave_one_out};
 use greycard_match::register::{NCC_MIN, register};
 use greycard_match::{Model, Pairs, Picture};
@@ -65,11 +71,18 @@ impl Frame {
 pub(crate) struct Group {
     /// Make and model as the panel names them.
     pub(crate) camera: String,
+    /// Make and model as the raw names them, which the table declares.
+    pub(crate) make: String,
+    pub(crate) model: String,
     /// The maker as the style reader names it.
     pub(crate) maker: String,
     /// The style's group key: the maker and the style.
     pub(crate) style: String,
     pub(crate) frames: Vec<Frame>,
+    /// The look the group's table is written under when it is not the
+    /// group's own name: a refit of a look the user renamed, or one
+    /// from before the names were the bodies'.
+    pub(crate) look: Option<String>,
 }
 
 impl Group {
@@ -79,7 +92,9 @@ impl Group {
 
     /// The look's name in the store.
     pub(crate) fn name(&self) -> String {
-        look_name(&self.camera, &self.maker, &self.style)
+        self.look
+            .clone()
+            .unwrap_or_else(|| look_name(&self.camera, &self.maker, &self.style))
     }
 
     /// Whether every frame is from one folder: one session, as a
@@ -139,9 +154,12 @@ pub(crate) fn survey_library(
             .collect();
         groups.push(Group {
             camera: g.camera,
+            make: g.make,
+            model: g.model,
             maker: g.maker,
             style: g.style,
             frames,
+            look: None,
         });
     }
     Ok(Survey {
@@ -189,9 +207,12 @@ pub(crate) fn survey_files(files: &[PathBuf]) -> Survey {
             .entry((exif.camera.clone(), key.clone()))
             .or_insert_with(|| Group {
                 camera: exif.camera.clone(),
+                make: exif.make.clone(),
+                model: exif.model.clone(),
                 maker: style.maker.name().to_string(),
                 style: key,
                 frames: Vec::new(),
+                look: None,
             })
             .frames
             .push(Frame {
@@ -331,23 +352,48 @@ impl Plan {
 /// A table already in the store under a group's name.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Existing {
-    /// Written by the camera match: the body it was fitted on, and the
-    /// frames the fit used where the title says.
-    Fitted { on: String, frames: Option<usize> },
+    /// Written by the camera match: the body it was fitted on, the
+    /// frames the fit used where the table says, and the display curve
+    /// it was fitted under.
+    Fitted {
+        on: String,
+        frames: Option<usize>,
+        made_for: MadeFor,
+    },
     /// Anything else: a table the user put there.
     Own,
 }
 
-/// The tables in the store by name, as the match would find them.
+/// The tables in the store by file stem, as the match would find them:
+/// a look's per-channel table under its name, another curve's under
+/// [`greycard_edit::look::variant_stem`].
+///
+/// A table the match wrote carries its line, and says the body it was
+/// fitted on and its frames in its header; one from before the header
+/// said them says them in its title, which is read when the header
+/// does not. A table without the line is the user's, whatever its
+/// title says.
 pub(crate) fn existing_in(store: &Path) -> HashMap<String, Existing> {
+    use greycard_core::lut::declared;
+    use greycard_edit::look::key;
     greycard_core::lut::list_dir(store)
         .into_iter()
         .map(|(name, _, info)| {
-            let title = info.ok().and_then(|i| i.title);
-            let found = match title.as_deref().and_then(greycard_edit::look::parse_fitted) {
-                Some((on, frames)) => Existing::Fitted {
+            let (title, comments) = info.map(|i| (i.title, i.comments)).unwrap_or_default();
+            let from_title = title.as_deref().and_then(greycard_edit::look::parse_fitted);
+            let marked = greycard_edit::look::is_fitted(&comments);
+            let on = declared(&comments, key::FITTED_ON)
+                .filter(|_| marked)
+                .or(from_title.map(|(on, _)| on));
+            let frames = declared(&comments, key::FRAMES)
+                .filter(|_| marked)
+                .and_then(|n| n.parse().ok())
+                .or(from_title.and_then(|(_, n)| n));
+            let found = match on.filter(|_| marked) {
+                Some(on) => Existing::Fitted {
                     on: on.to_string(),
                     frames,
+                    made_for: MadeFor::read(&comments),
                 },
                 None => Existing::Own,
             };
@@ -356,22 +402,33 @@ pub(crate) fn existing_in(store: &Path) -> HashMap<String, Existing> {
         .collect()
 }
 
-/// Whether a table for `camera` may be written over what is in the
-/// store under its name: a fit of this body's own replaces a fit of
-/// this body from no more frames, and anything written by a borrow or
-/// on another body; a borrow never replaces a fit of this body itself;
-/// nothing replaces a table the match did not write. With `replace`
-/// each refusal is a replacement with a warning instead. `Ok` carries
-/// that warning, `Err` the reason to leave the table alone.
+/// Whether a table for `camera`, fitted under `curve`, may be written
+/// over what is in the store where it would go (its look's table for
+/// that curve; another curve's is never where it would go): a fit of
+/// this body's own replaces a fit of this body from no more frames,
+/// and anything written by a borrow or on another body; a borrow never
+/// replaces a fit of this body itself; nothing replaces a table the
+/// match did not write, or one that declares another curve. With
+/// `replace` each refusal is a replacement with a warning instead.
+/// `Ok` carries that warning, `Err` the reason to leave the table
+/// alone.
 pub(crate) fn may_write(
     existing: Option<&Existing>,
     camera: &str,
     borrow: bool,
     frames: usize,
+    curve: DisplayCurve,
     replace: bool,
 ) -> Result<Option<String>, String> {
     let refused = match existing {
         None => return Ok(None),
+        Some(Existing::Fitted { made_for, .. }) if !made_for.applies(curve) => {
+            let under = made_for.phrase().unwrap_or_default();
+            (
+                format!("the table there was fitted under {under}"),
+                format!("replaces a table fitted under {under}"),
+            )
+        }
         Some(Existing::Own) => (
             "a table of that name that the camera match did not write is there".to_string(),
             "replaces a table of that name the camera match did not write".to_string(),
@@ -385,6 +442,7 @@ pub(crate) fn may_write(
         Some(Existing::Fitted {
             on,
             frames: Some(m),
+            ..
         }) if on == camera && frames < *m => (
             format!("the table there was fitted on this body from {m} frames, more than {frames}"),
             format!("replaces a table fitted on this body from {m} frames"),
@@ -405,6 +463,7 @@ pub(crate) fn may_write(
 pub(crate) fn plan(
     groups: &[Group],
     existing: &HashMap<String, Existing>,
+    curve: DisplayCurve,
     replace: bool,
 ) -> Vec<Plan> {
     let mut plans: Vec<Plan> = groups
@@ -414,7 +473,8 @@ pub(crate) fn plan(
             if n < MIN_FRAMES {
                 return Plan::Skip(too_few(n));
             }
-            match may_write(existing.get(&g.name()), &g.camera, false, n, replace) {
+            let at = existing.get(&variant_stem(&g.name(), curve));
+            match may_write(at, &g.camera, false, n, curve, replace) {
                 Ok(replaces) => Plan::Fit { replaces },
                 Err(why) => Plan::Skip(why),
             }
@@ -443,7 +503,8 @@ pub(crate) fn plan(
         if groups[donor].camera == g.camera {
             continue;
         }
-        plans[i] = match may_write(existing.get(&g.name()), &g.camera, true, 0, replace) {
+        let at = existing.get(&variant_stem(&g.name(), curve));
+        plans[i] = match may_write(at, &g.camera, true, 0, curve, replace) {
             Ok(replaces) => Plan::Borrow {
                 from: groups[donor].camera.clone(),
                 donor,
@@ -453,6 +514,64 @@ pub(crate) fn plan(
         };
     }
     plans
+}
+
+/// Whether `g` is the group that makes the look named `name`, whose
+/// tables are `tables`: the group's own name is the look's, or the name
+/// one of its tables' titles gives before "(fitted on", or a table
+/// declares the group's body and style. So a renamed look is still
+/// found by its header or its title, and a table whose body cannot be
+/// read is found by nothing.
+fn makes(g: &Group, name: &str, tables: &[&Entry]) -> bool {
+    use greycard_core::lut::declared;
+    use greycard_edit::look::key;
+    let own = g.name();
+    own == name
+        || tables.iter().any(|e| {
+            let titled = e
+                .title
+                .as_deref()
+                .and_then(|t| t.rsplit_once(" (fitted on "))
+                .is_some_and(|(n, _)| n == own);
+            let declared_body = e
+                .declared_body()
+                .is_some_and(|b| b.eq_ignore_ascii_case(&g.camera));
+            let declared_style = declared(&e.comments, key::STYLE) == Some(g.style.as_str());
+            e.is_fitted() && (titled || (declared_body && declared_style))
+        })
+}
+
+/// The groups a refit of the look named `name` (its tables `tables`)
+/// runs over: the group that makes it ([`makes`]) when it has the
+/// frames for a fit of its own; else that group and the donor a borrow
+/// would take, the body of the same style with the most frames that
+/// has enough (the plan's rule), since a borrowed table is refit by
+/// fitting its donor again. The look's group writes under the look's
+/// own name, so a renamed look gets its table for the curve beside the
+/// one it has. None when no group in the scope makes that look.
+pub(crate) fn refit_groups(groups: &[Group], name: &str, tables: &[&Entry]) -> Option<Vec<Group>> {
+    let target = groups.iter().position(|g| makes(g, name, tables))?;
+    let mut g = groups[target].clone();
+    if g.name() != name {
+        g.look = Some(name.to_string());
+    }
+    if g.candidates() >= MIN_FRAMES {
+        return Some(vec![g]);
+    }
+    let mut donor: Option<usize> = None;
+    for (i, d) in groups.iter().enumerate() {
+        if i == target || d.style != g.style || d.camera == g.camera || d.candidates() < MIN_FRAMES
+        {
+            continue;
+        }
+        if donor.is_none_or(|k| d.frames.len() > groups[k].frames.len()) {
+            donor = Some(i);
+        }
+    }
+    Some(match donor {
+        Some(d) => vec![groups[d].clone(), g],
+        None => vec![g],
+    })
 }
 
 /// Why a group of `n` frames is not fitted, before any is developed.
@@ -656,10 +775,29 @@ fn camera_jpeg(path: &Path) -> Result<Picture, String> {
     Ok(Picture::new(turned.width, turned.height, data))
 }
 
+/// The edit a frame is developed under for the fit: the default, on
+/// the run's display curve. Before tables declared their curve this
+/// was the default edit alone, so every table fitted then was fitted
+/// under per channel whatever the open picture was on.
+fn fit_edit(curve: DisplayCurve) -> Edit {
+    Edit {
+        display_curve: curve,
+        ..Edit::default()
+    }
+}
+
 /// A frame developed, its JPEG laid over it, and its pairs taken again
 /// at the exposure the camera's JPEG sits at.
-fn measure(frame: &Frame, lenses: Option<&greycard_lens::Database>) -> Result<Kept, String> {
-    let edit = Edit::default();
+///
+/// The frame is developed under [`fit_edit`] on `curve`: the table is
+/// fitted on what that curve renders, so it is that curve's table and
+/// is declared as such.
+fn measure(
+    frame: &Frame,
+    curve: DisplayCurve,
+    lenses: Option<&greycard_lens::Database>,
+) -> Result<Kept, String> {
+    let edit = fit_edit(curve);
     let settings = settings();
     let mut developed = crate::worker::FrameDevelop::develop(&frame.path, &edit, lenses)?;
     let render = picture_of(&developed.finish(&edit, &settings));
@@ -735,24 +873,40 @@ fn radial_lines(model: &Model, kept: &[Kept]) -> Vec<RadialLine> {
         .collect()
 }
 
-/// Write `model` into `dir` as `<name>.cube`, its title naming the body
-/// it was fitted on and the frames the fit used. Written beside,
-/// flushed to the disk and renamed, so the picker never reads half a
-/// table and a crash never leaves one.
+/// Write `model` into `dir` as `<name>.cube` for the body of `group`:
+/// its title naming the body it was fitted on and the frames the fit
+/// used, as before, and its header declaring the display curve the run
+/// developed under, the body and style it is for, and again the body
+/// and frames, so nothing has to be read back out of the title. Written
+/// beside, flushed to the disk and renamed, so the picker never reads
+/// half a table and a crash never leaves one.
 fn write_look(
     dir: &Path,
-    name: &str,
+    group: &Group,
     fitted_on: &str,
     frames: usize,
+    curve: DisplayCurve,
     model: &Model,
 ) -> std::io::Result<PathBuf> {
     use std::io::Write as _;
     std::fs::create_dir_all(dir)?;
-    let title = greycard_edit::look::fitted_title(name, fitted_on, Some(frames));
-    let path = dir.join(format!("{name}.cube"));
-    let part = dir.join(format!("{name}.cube.part"));
+    let name = group.name();
+    let title = greycard_edit::look::fitted_title(&name, fitted_on, Some(frames));
+    let declared = greycard_edit::look::fitted_declarations(
+        curve,
+        &group.make,
+        &group.model,
+        &group.style,
+        fitted_on,
+        frames,
+    );
+    let declared: Vec<(&str, &str)> = declared.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    // The look's table for this curve, beside any other curve's.
+    let stem = variant_stem(&name, curve);
+    let path = dir.join(format!("{stem}.cube"));
+    let part = dir.join(format!("{stem}.cube.part"));
     let mut file = std::fs::File::create(&part)?;
-    file.write_all(greycard_match::cube::cube_text(model, &title).as_bytes())?;
+    file.write_all(greycard_match::cube::cube_text(model, &title, &declared).as_bytes())?;
     file.sync_all()?;
     drop(file);
     std::fs::rename(&part, &path)?;
@@ -768,14 +922,21 @@ fn write_look(
 pub(crate) fn run(
     groups: &[Group],
     store: &Path,
+    curve: DisplayCurve,
     replace: bool,
     lenses: Option<&greycard_lens::Database>,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
 ) -> Vec<GroupResult> {
-    run_with(groups, store, replace, cancel, progress, &mut |frame| {
-        measure(frame, lenses)
-    })
+    run_with(
+        groups,
+        store,
+        curve,
+        replace,
+        cancel,
+        progress,
+        &mut |frame| measure(frame, curve, lenses),
+    )
 }
 
 /// [`run`], each frame measured by `measure`: the develop and the
@@ -783,13 +944,14 @@ pub(crate) fn run(
 fn run_with(
     groups: &[Group],
     store: &Path,
+    curve: DisplayCurve,
     replace: bool,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
     measure: &mut dyn FnMut(&Frame) -> Result<Kept, String>,
 ) -> Vec<GroupResult> {
     let existing = existing_in(store);
-    let plans = plan(groups, &existing, replace);
+    let plans = plan(groups, &existing, curve, replace);
     let mut results: Vec<Option<GroupResult>> = vec![None; groups.len()];
     // The models fitted and written, by group, with their frames.
     let mut fitted: HashMap<usize, (Model, usize)> = HashMap::new();
@@ -864,9 +1026,16 @@ fn run_with(
         // The store is asked again with the frames the fit really has:
         // the plan counted the candidates, some of which may not have
         // registered.
-        let allowed = plans[i]
-            .is_fit()
-            .then(|| may_write(existing.get(&name), &g.camera, false, kept.len(), replace));
+        let allowed = plans[i].is_fit().then(|| {
+            may_write(
+                existing.get(&variant_stem(&name, curve)),
+                &g.camera,
+                false,
+                kept.len(),
+                curve,
+                replace,
+            )
+        });
         if let Some(Ok(replaces)) = allowed.clone()
             && kept.len() >= MIN_FRAMES
         {
@@ -879,7 +1048,7 @@ fn run_with(
             let held_out = (!held.is_empty()).then(|| held.iter().sum::<f32>() / held.len() as f32);
             result.radial = radial_lines(&model, &kept);
             result.replaced = replaces;
-            result.outcome = match write_look(store, &name, &g.camera, kept.len(), &model) {
+            result.outcome = match write_look(store, g, &g.camera, kept.len(), curve, &model) {
                 Ok(path) => {
                     tracing::info!(
                         "camera match: {} from {} frames, ΔE {fitted_de:.4}",
@@ -940,7 +1109,7 @@ fn run_with(
             });
             result.radial = radial_lines(model, &kept);
             result.replaced = replaces.clone();
-            result.outcome = match write_look(store, &result.name, from, frames, model) {
+            result.outcome = match write_look(store, g, from, frames, curve, model) {
                 Ok(_) => Outcome::Borrowed {
                     from: from.clone(),
                     measured,
@@ -969,6 +1138,8 @@ fn run_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const CH: DisplayCurve = DisplayCurve::Channels;
 
     fn frame(folder: &str, day: usize, fixed: bool) -> Frame {
         Frame {
@@ -1029,9 +1200,12 @@ mod tests {
         assert!(s.iter().all(|f| f.fixed));
         let g = Group {
             camera: "Canon EOS R6m2".into(),
+            make: "Canon".into(),
+            model: "Canon EOS R6m2".into(),
             maker: "Canon".into(),
             style: "Canon Faithful".into(),
             frames,
+            look: None,
         };
         assert_eq!(g.left_out(), 30);
         assert!(g.one_folder());
@@ -1076,16 +1250,19 @@ mod tests {
     fn the_plan_fits_borrows_and_skips() {
         let group = |camera: &str, style: &str, n: usize| Group {
             camera: camera.into(),
+            make: "Canon".into(),
+            model: camera.into(),
             maker: "Canon".into(),
             style: style.into(),
             frames: (0..n).map(|i| frame(camera, i, true)).collect(),
+            look: None,
         };
         let groups = vec![
             group("Canon EOS R6m2", "Canon Faithful", 50),
             group("Canon EOS R5m2", "Canon Faithful", 8),
             group("Canon EOS R5m2", "Canon Standard", 8),
         ];
-        let p = plan(&groups, &HashMap::new(), false);
+        let p = plan(&groups, &HashMap::new(), DisplayCurve::Channels, false);
         assert_eq!(p[0], Plan::Fit { replaces: None });
         assert_eq!(
             p[1],
@@ -1105,14 +1282,18 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("greycard-match-run-{}", std::process::id()));
         let groups = vec![Group {
             camera: "Canon EOS R6m2".into(),
+            make: "Canon".into(),
+            model: "Canon EOS R6m2".into(),
             maker: "Canon".into(),
             style: "Canon Faithful".into(),
             frames: (0..3).map(|i| frame("a", i, true)).collect(),
+            look: None,
         }];
         let mut heard = Vec::new();
         let results = run(
             &groups,
             &dir,
+            DisplayCurve::Channels,
             false,
             None,
             &AtomicBool::new(false),
@@ -1174,6 +1355,8 @@ mod tests {
     fn synthetic_group(camera: &str, style: &str, n: usize) -> Group {
         Group {
             camera: camera.into(),
+            make: "Canon".into(),
+            model: camera.into(),
             maker: "Canon".into(),
             style: style.into(),
             frames: (0..n)
@@ -1182,6 +1365,7 @@ mod tests {
                     ..frame(if i % 2 == 0 { "a" } else { "b" }, i, true)
                 })
                 .collect(),
+            look: None,
         }
     }
 
@@ -1204,11 +1388,23 @@ mod tests {
         replace: bool,
         fails: &[usize],
     ) -> (Vec<GroupResult>, Vec<Progress>) {
+        run_synthetic_under(groups, store, DisplayCurve::Channels, replace, fails)
+    }
+
+    /// [`run_synthetic`] under a display curve.
+    fn run_synthetic_under(
+        groups: &[Group],
+        store: &Path,
+        curve: DisplayCurve,
+        replace: bool,
+        fails: &[usize],
+    ) -> (Vec<GroupResult>, Vec<Progress>) {
         let mut heard = Vec::new();
         let mut seed = 0;
         let results = run_with(
             groups,
             store,
+            curve,
             replace,
             &AtomicBool::new(false),
             &mut |p| heard.push(p),
@@ -1239,6 +1435,19 @@ mod tests {
             }
         }
         std::fs::write(store.join(format!("{name}.cube")), text).unwrap();
+    }
+
+    /// A table as an earlier run of the match wrote one: its line and
+    /// a title in its shape.
+    fn put_fitted(store: &Path, name: &str, title: &str) {
+        put_table(store, name, title);
+        let path = store.join(format!("{name}.cube"));
+        let text = std::fs::read_to_string(&path).unwrap().replacen(
+            "LUT_3D_SIZE",
+            &format!("# {}\nLUT_3D_SIZE", greycard_edit::look::FITTED),
+            1,
+        );
+        std::fs::write(path, text).unwrap();
     }
 
     fn title_in(store: &Path, name: &str) -> Option<String> {
@@ -1352,19 +1561,20 @@ mod tests {
         let own_fit = |frames| Existing::Fitted {
             on: "Canon EOS R6m2".into(),
             frames: Some(frames),
+            made_for: MadeFor::Curve(CH),
         };
         let r6 = "Canon EOS R6m2";
         // (a) A fit of this body replaces a fit of this body from no
         // more frames, and is refused over one from more.
         assert_eq!(
-            may_write(Some(&own_fit(30)), r6, false, 30, false),
+            may_write(Some(&own_fit(30)), r6, false, 30, CH, false),
             Ok(None)
         );
         assert_eq!(
-            may_write(Some(&own_fit(30)), r6, false, 40, false),
+            may_write(Some(&own_fit(30)), r6, false, 40, CH, false),
             Ok(None)
         );
-        let refused = may_write(Some(&own_fit(30)), r6, false, 24, false).unwrap_err();
+        let refused = may_write(Some(&own_fit(30)), r6, false, 24, CH, false).unwrap_err();
         assert!(
             refused.contains("from 30 frames, more than 24"),
             "{refused}"
@@ -1373,23 +1583,28 @@ mod tests {
         let untold = Existing::Fitted {
             on: r6.into(),
             frames: None,
+            made_for: MadeFor::Curve(CH),
         };
-        assert_eq!(may_write(Some(&untold), r6, false, 20, false), Ok(None));
+        assert_eq!(may_write(Some(&untold), r6, false, 20, CH, false), Ok(None));
         // A table borrowed from another body is replaced by a fit and
         // by another borrow.
         let borrowed = Existing::Fitted {
             on: "Canon EOS R5m2".into(),
             frames: Some(60),
+            made_for: MadeFor::Curve(CH),
         };
-        assert_eq!(may_write(Some(&borrowed), r6, false, 20, false), Ok(None));
-        assert_eq!(may_write(Some(&borrowed), r6, true, 0, false), Ok(None));
+        assert_eq!(
+            may_write(Some(&borrowed), r6, false, 20, CH, false),
+            Ok(None)
+        );
+        assert_eq!(may_write(Some(&borrowed), r6, true, 0, CH, false), Ok(None));
         // (b) A borrow never replaces this body's own fit.
-        let refused = may_write(Some(&own_fit(20)), r6, true, 0, false).unwrap_err();
+        let refused = may_write(Some(&own_fit(20)), r6, true, 0, CH, false).unwrap_err();
         assert!(refused.contains("fitted on this body itself"), "{refused}");
         // (c) Nothing replaces a table the match did not write.
-        let refused = may_write(Some(&Existing::Own), r6, false, 40, false).unwrap_err();
+        let refused = may_write(Some(&Existing::Own), r6, false, 40, CH, false).unwrap_err();
         assert!(refused.contains("did not write"), "{refused}");
-        assert!(may_write(Some(&Existing::Own), r6, true, 0, false).is_err());
+        assert!(may_write(Some(&Existing::Own), r6, true, 0, CH, false).is_err());
         // With "Replace existing looks" on, each refusal is a
         // replacement with its warning.
         for (existing, borrow, frames) in [
@@ -1397,11 +1612,255 @@ mod tests {
             (own_fit(20), true, 0),
             (Existing::Own, false, 40),
         ] {
-            let warned = may_write(Some(&existing), r6, borrow, frames, true).unwrap();
+            let warned = may_write(Some(&existing), r6, borrow, frames, CH, true).unwrap();
             assert!(warned.unwrap().starts_with("replaces"));
         }
         // Nothing there: write.
-        assert_eq!(may_write(None, r6, true, 0, false), Ok(None));
+        assert_eq!(may_write(None, r6, true, 0, CH, false), Ok(None));
+        // (d) A table that declares another curve where this curve's
+        // would go (one tagged by hand) is left alone, as a user's own
+        // is; a run never writes over another curve's table.
+        let agx = DisplayCurve::Agx;
+        for (borrow, frames) in [(false, 40), (true, 0)] {
+            let refused =
+                may_write(Some(&own_fit(30)), r6, borrow, frames, agx, false).unwrap_err();
+            assert!(
+                refused.starts_with("the table there was fitted under per channel"),
+                "{refused}"
+            );
+        }
+        assert!(may_write(Some(&Existing::Own), r6, false, 40, agx, false).is_err());
+    }
+
+    /// A run under a display curve develops every frame under it and
+    /// writes it into the table's header with the body the table is
+    /// for, its style, and the body and frames it was fitted on; the
+    /// finish then applies the table only under that curve. A borrow
+    /// says the body it is for and the body it was fitted on apart.
+    #[test]
+    fn a_table_declares_the_curve_and_the_body_it_was_fitted_for() {
+        use greycard_core::lut::declared;
+        use greycard_edit::look::key;
+        let groups = vec![
+            synthetic_group("Canon EOS R6m2", "Canon Faithful", 22),
+            synthetic_group("Canon EOS R5m2", "Canon Faithful", 5),
+        ];
+        let store = scratch_store("declared");
+        let (results, _) = run_synthetic_under(&groups, &store, DisplayCurve::Agx, false, &[]);
+        assert!(matches!(results[0].outcome, Outcome::Fitted { .. }));
+        let read = |name: &str| {
+            greycard_core::lut::Lut3d::load(&store.join(format!("{name}.cube")))
+                .unwrap()
+                .comments
+        };
+        // Under AgX each look's table goes beside its own file, as its
+        // AgX variant.
+        let own = read("Canon EOS R6m2 Faithful.agx");
+        assert!(!store.join("Canon EOS R6m2 Faithful.cube").exists());
+        assert!(greycard_edit::look::is_fitted(&own));
+        assert_eq!(declared(&own, key::DISPLAY_CURVE), Some("agx"));
+        assert_eq!(declared(&own, key::MAKE), Some("Canon"));
+        assert_eq!(declared(&own, key::MODEL), Some("Canon EOS R6m2"));
+        assert_eq!(declared(&own, key::STYLE), Some("Canon Faithful"));
+        assert_eq!(declared(&own, key::FITTED_ON), Some("Canon EOS R6m2"));
+        assert_eq!(declared(&own, key::FRAMES), Some("22"));
+        assert_eq!(MadeFor::read(&own), MadeFor::Curve(DisplayCurve::Agx));
+        let borrowed = read("Canon EOS R5m2 Faithful.agx");
+        assert_eq!(declared(&borrowed, key::MODEL), Some("Canon EOS R5m2"));
+        assert_eq!(declared(&borrowed, key::FITTED_ON), Some("Canon EOS R6m2"));
+        assert_eq!(declared(&borrowed, key::DISPLAY_CURVE), Some("agx"));
+        // The store reads the header back, not the title.
+        let existing = existing_in(&store);
+        assert_eq!(
+            existing.get("Canon EOS R5m2 Faithful.agx"),
+            Some(&Existing::Fitted {
+                on: "Canon EOS R6m2".into(),
+                frames: Some(22),
+                made_for: MadeFor::Curve(DisplayCurve::Agx),
+            })
+        );
+        // A run under per channel writes each look's own file beside
+        // its AgX table, and the AgX tables are as they were: one look
+        // name, a table per curve.
+        let p = plan(&groups, &existing, CH, false);
+        assert_eq!(p[0], Plan::Fit { replaces: None });
+        let before = std::fs::read(store.join("Canon EOS R6m2 Faithful.agx.cube")).unwrap();
+        let (results, _) = run_synthetic(&groups, &store, false, &[]);
+        assert!(matches!(results[0].outcome, Outcome::Fitted { .. }));
+        assert!(matches!(results[1].outcome, Outcome::Borrowed { .. }));
+        assert_eq!(
+            std::fs::read(store.join("Canon EOS R6m2 Faithful.agx.cube")).unwrap(),
+            before
+        );
+        let mut files: Vec<String> = greycard_core::lut::list_dir(&store)
+            .into_iter()
+            .map(|(stem, _, _)| stem)
+            .collect();
+        files.sort();
+        assert_eq!(
+            files,
+            [
+                "Canon EOS R5m2 Faithful",
+                "Canon EOS R5m2 Faithful.agx",
+                "Canon EOS R6m2 Faithful",
+                "Canon EOS R6m2 Faithful.agx",
+            ]
+        );
+        assert_eq!(
+            MadeFor::read(&read("Canon EOS R6m2 Faithful")),
+            MadeFor::Curve(CH)
+        );
+        // And the look list reads them as two looks of two tables.
+        let entries: Vec<Entry> = greycard_core::lut::list_dir(&store)
+            .into_iter()
+            .map(|(stem, path, info)| greycard_edit::look::entry_of(&stem, path, info.unwrap()))
+            .collect();
+        assert_eq!(
+            greycard_edit::look::curves_of(&entries, "Canon EOS R6m2 Faithful"),
+            [CH, DisplayCurve::Agx]
+        );
+        crate::testing::remove_dir_retry(&store);
+    }
+
+    /// The match writes the line that tells a fitted table apart, and
+    /// the edit crate, which cannot depend on the match, reads the
+    /// same text.
+    #[test]
+    fn the_fitted_line_is_the_same_text_on_both_sides() {
+        assert_eq!(greycard_match::cube::FITTED, greycard_edit::look::FITTED);
+    }
+
+    /// A table as the look list has it, from its title and header.
+    fn table(name: &str, title: &str, header: &[&str]) -> Entry {
+        greycard_edit::look::entry_of(
+            name,
+            PathBuf::new(),
+            greycard_core::lut::Info {
+                title: Some(title.into()),
+                size: 33,
+                encoding: Default::default(),
+                primaries: Default::default(),
+                kind: greycard_core::lut::Kind::Cube3d,
+                comments: std::iter::once(greycard_edit::look::FITTED)
+                    .chain(header.iter().copied())
+                    .map(str::to_string)
+                    .collect(),
+            },
+        )
+    }
+
+    /// A refit runs over the look's own group when it has the frames,
+    /// else over it and the donor it borrows from. The group is found
+    /// by the look's name, by the name in its title, or by the body and
+    /// style its header declares, and a look found by anything but its
+    /// name is written under its own name. A look nothing in the scope
+    /// makes has no refit there.
+    #[test]
+    fn a_refit_runs_over_the_looks_group_and_its_donor() {
+        let groups = vec![
+            synthetic_group("Canon EOS R5", "Canon Faithful", 21),
+            synthetic_group("Canon EOS R6m2", "Canon Faithful", 23),
+            synthetic_group("Canon EOS R6m2", "Canon Standard", 30),
+            synthetic_group("Canon EOS R5m2", "Canon Faithful", 5),
+            synthetic_group("Canon EOS R7", "Canon Standard", 5),
+        ];
+        let names =
+            |gs: Option<Vec<Group>>| gs.map(|gs| gs.iter().map(Group::name).collect::<Vec<_>>());
+        let old = |name: &str, camera: &str| {
+            table(
+                name,
+                &format!("{name} (fitted on {camera}, 40 frames)"),
+                &[],
+            )
+        };
+        let refit = |name: &str, tables: &[Entry]| {
+            let tables: Vec<&Entry> = tables.iter().collect();
+            names(refit_groups(&groups, name, &tables))
+        };
+        assert_eq!(
+            refit(
+                "Canon EOS R6m2 Faithful",
+                &[old("Canon EOS R6m2 Faithful", "Canon EOS R6m2")]
+            ),
+            Some(vec!["Canon EOS R6m2 Faithful".to_string()])
+        );
+        assert_eq!(
+            refit(
+                "Canon EOS R5m2 Faithful",
+                &[old("Canon EOS R5m2 Faithful", "Canon EOS R6m2")]
+            ),
+            Some(vec![
+                "Canon EOS R6m2 Faithful".to_string(),
+                "Canon EOS R5m2 Faithful".to_string()
+            ])
+        );
+        assert_eq!(
+            refit("Canon EOS R7 Standard", &[]),
+            Some(vec![
+                "Canon EOS R6m2 Standard".to_string(),
+                "Canon EOS R7 Standard".to_string()
+            ])
+        );
+        // Renamed: found by the name its title still gives, written
+        // under the name the user gave it.
+        let mut renamed = old("Canon EOS R6m2 Faithful", "Canon EOS R6m2");
+        renamed.name = "My R6".into();
+        assert_eq!(refit("My R6", &[renamed]), Some(vec!["My R6".to_string()]));
+        // Renamed and retitled: found by its header.
+        let declared = table(
+            "Warm R6",
+            "Warm R6",
+            &[
+                "make: Canon",
+                "model: Canon EOS R6m2",
+                "style: Canon Standard",
+            ],
+        );
+        assert_eq!(
+            refit("Warm R6", &[declared]),
+            Some(vec!["Warm R6".to_string()])
+        );
+        // An early trial's table: fitted, but its title names a body
+        // no group here has, and it declares nothing.
+        let trial = table("r6ii-faithful", "Canon EOS R6 Mark II Faithful", &[]);
+        assert_eq!(refit("r6ii-faithful", &[trial]), None);
+        assert_eq!(refit("Slide Warm", &[]), None);
+        // The pair plans as the donor's fit and the borrow.
+        let pair = refit_groups(&groups, "Canon EOS R5m2 Faithful", &[]).unwrap();
+        let p = plan(&pair, &HashMap::new(), DisplayCurve::Agx, false);
+        assert!(p[0].is_fit());
+        assert!(matches!(&p[1], Plan::Borrow { from, .. } if from == "Canon EOS R6m2"));
+    }
+
+    /// A refit of a renamed look under AgX writes the AgX table under
+    /// the look's own name, beside the table it had.
+    #[test]
+    fn a_refit_of_a_renamed_look_writes_beside_it() {
+        let store = scratch_store("renamed");
+        put_fitted(
+            &store,
+            "My R6",
+            "Canon EOS R6m2 Faithful (fitted on Canon EOS R6m2, 22 frames)",
+        );
+        let tables: Vec<Entry> = greycard_core::lut::list_dir(&store)
+            .into_iter()
+            .map(|(stem, path, info)| greycard_edit::look::entry_of(&stem, path, info.unwrap()))
+            .collect();
+        let tables: Vec<&Entry> = tables.iter().collect();
+        let all = vec![synthetic_group("Canon EOS R6m2", "Canon Faithful", 22)];
+        let groups = refit_groups(&all, "My R6", &tables).unwrap();
+        let (results, _) = run_synthetic_under(&groups, &store, DisplayCurve::Agx, false, &[]);
+        assert!(
+            matches!(results[0].outcome, Outcome::Fitted { .. }),
+            "{results:?}"
+        );
+        assert!(store.join("My R6.agx.cube").is_file());
+        assert!(!store.join("Canon EOS R6m2 Faithful.agx.cube").exists());
+        assert_eq!(
+            title_in(&store, "My R6").as_deref(),
+            Some("Canon EOS R6m2 Faithful (fitted on Canon EOS R6m2, 22 frames)")
+        );
+        crate::testing::remove_dir_retry(&store);
     }
 
     /// The plan reads the store: a user's own table under a group's
@@ -1411,9 +1870,20 @@ mod tests {
     #[test]
     fn a_users_own_table_is_left_alone_unless_replace_is_on() {
         let store = scratch_store("own");
+        // A title in the match's shape without the match's line is the
+        // user's too: only the line says the match wrote a table.
+        put_table(
+            &store,
+            "Canon EOS R6m2 Faithful",
+            "Canon EOS R6m2 Faithful (fitted on Canon EOS R6m2, 10 frames)",
+        );
+        assert_eq!(
+            existing_in(&store).get("Canon EOS R6m2 Faithful"),
+            Some(&Existing::Own)
+        );
         put_table(&store, "Canon EOS R6m2 Faithful", "My Faithful");
         let groups = vec![synthetic_group("Canon EOS R6m2", "Canon Faithful", 22)];
-        let p = plan(&groups, &existing_in(&store), false);
+        let p = plan(&groups, &existing_in(&store), CH, false);
         assert!(
             matches!(&p[0], Plan::Skip(why) if why.contains("did not write")),
             "{p:?}"
@@ -1425,7 +1895,7 @@ mod tests {
             title_in(&store, "Canon EOS R6m2 Faithful").as_deref(),
             Some("My Faithful")
         );
-        let p = plan(&groups, &existing_in(&store), true);
+        let p = plan(&groups, &existing_in(&store), CH, true);
         assert!(matches!(&p[0], Plan::Fit { replaces: Some(_) }), "{p:?}");
         let (results, _) = run_synthetic(&groups, &store, true, &[]);
         assert!(matches!(results[0].outcome, Outcome::Fitted { .. }));
@@ -1447,12 +1917,12 @@ mod tests {
     #[test]
     fn a_fit_from_more_frames_and_a_bodys_own_fit_stay() {
         let store = scratch_store("more");
-        put_table(
+        put_fitted(
             &store,
             "Canon EOS R6m2 Faithful",
             "Canon EOS R6m2 Faithful (fitted on Canon EOS R6m2, 24 frames)",
         );
-        put_table(
+        put_fitted(
             &store,
             "Canon EOS R5m2 Faithful",
             "Canon EOS R5m2 Faithful (fitted on Canon EOS R5m2, 30 frames)",
@@ -1463,7 +1933,7 @@ mod tests {
             synthetic_group("Canon EOS R6m2", "Canon Faithful", 26),
             synthetic_group("Canon EOS R5m2", "Canon Faithful", 5),
         ];
-        let p = plan(&groups, &existing_in(&store), false);
+        let p = plan(&groups, &existing_in(&store), CH, false);
         assert_eq!(p[0], Plan::Fit { replaces: None });
         assert!(
             matches!(&p[1], Plan::Skip(why) if why.contains("fitted on this body itself")),
@@ -1499,7 +1969,7 @@ mod tests {
             synthetic_group("Canon EOS R7", "Canon Faithful", 23),
             synthetic_group("Canon EOS R5m2", "Canon Faithful", 5),
         ];
-        let p = plan(&groups, &HashMap::new(), false);
+        let p = plan(&groups, &HashMap::new(), CH, false);
         assert_eq!(
             p[3],
             Plan::Borrow {
@@ -1554,6 +2024,44 @@ mod tests {
         );
     }
 
+    /// The fit develops under the run's curve: the edit carries it,
+    /// and the finish the export runs renders it, so a frame finished
+    /// under AgX is not the frame finished under per channel.
+    #[test]
+    fn the_fit_develops_under_the_runs_curve() {
+        let (w, h) = (32usize, 24usize);
+        let data = (0..w * h)
+            .flat_map(|i| {
+                let t = i as f32 / (w * h) as f32;
+                [0.02 + 1.5 * t, 0.3 * t, 0.9 * (1.0 - t)]
+            })
+            .collect();
+        let mut developed = crate::worker::FrameDevelop::of_image(WorkingImage {
+            width: w,
+            height: h,
+            data,
+        });
+        let mut pictures = Vec::new();
+        for curve in DisplayCurve::ALL {
+            let edit = fit_edit(curve);
+            assert_eq!(edit.display_curve, curve);
+            assert!(edit.look_lut.is_off(), "the fit develops with no look");
+            pictures.push(picture_of(&developed.finish(&edit, &settings())));
+        }
+        let moved = pictures[0]
+            .data
+            .iter()
+            .zip(&pictures[1].data)
+            .map(|(a, b)| (0..3).map(|k| (a[k] - b[k]).abs()).sum::<f32>() / 3.0)
+            .sum::<f32>()
+            / pictures[0].data.len() as f32;
+        eprintln!(
+            "per channel against AgX: {:.1} levels on average",
+            moved * 255.0
+        );
+        assert!(moved * 255.0 > 2.0, "{moved}");
+    }
+
     /// The develop, the JPEG and the registration on real raws: every
     /// raw in `GREYCARD_SAMPLES` whose maker's tags read, measured as
     /// a fit would measure it. Prints and asserts only that a frame
@@ -1583,7 +2091,7 @@ mod tests {
             .map(|(db, _)| db);
         for g in &survey.groups {
             let frame = &g.frames[0];
-            match measure(frame, lenses.as_ref()) {
+            match measure(frame, DisplayCurve::Channels, lenses.as_ref()) {
                 Ok(kept) => {
                     eprintln!(
                         "{} ({} frames): {} blocks of {} on {}",

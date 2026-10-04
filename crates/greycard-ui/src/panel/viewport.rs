@@ -553,6 +553,9 @@ pub(crate) enum Shown {
     /// The camera match's sheet with its Fit pressed once the scope is
     /// read, for a snapshot of the run's report.
     Matched,
+    /// The camera match's sheet as the Look section's refit opens it,
+    /// over the chosen look's group.
+    Refit,
     /// The root sheet over the library's first root, as its chip's
     /// Rename... opens it.
     RootName,
@@ -597,6 +600,7 @@ impl Shown {
             "imported" => Ok(Self::Imported),
             "match" => Ok(Self::Match),
             "matched" => Ok(Self::Matched),
+            "refit" => Ok(Self::Refit),
             "root-name" => Ok(Self::RootName),
             "delete" => Ok(Self::Delete),
             "archive" => Ok(Self::Archive),
@@ -604,7 +608,7 @@ impl Shown {
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, paste, pasted, import, imported, match, \
-                 matched, root-name, delete, archive or archive-rejects, not {name}"
+                 matched, refit, root-name, delete, archive or archive-rejects, not {name}"
             )),
         }
     }
@@ -678,6 +682,7 @@ impl Shown {
             }
             Self::Settings => app.invoke_settings_asked(),
             Self::Match => app.invoke_match_asked(),
+            Self::Refit => app.invoke_look_refit_asked(),
             Self::Matched => {
                 app.invoke_match_asked();
                 crate::panel::camera_match::fit_when_read(app, 100);

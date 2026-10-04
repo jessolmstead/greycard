@@ -1,7 +1,14 @@
 //! The model written as a `.cube` the engine's look slot reads: a
 //! 33³ table in encoded sRGB, red fastest, with the encoding and
 //! primaries declared in the comment lines `greycard-core/src/lut.rs`
-//! honors.
+//! honors, the line [`FITTED`] that says the match wrote it, and
+//! whatever else the caller declares about the fit as `# key: value`
+//! lines under it.
+//!
+//! What those other lines say (the display transform the frames were
+//! developed under, the body they came from) is the caller's: this
+//! crate fits numbers and knows nothing of an edit, so it writes the
+//! keys and values it is handed as they are.
 
 use std::fmt::Write as _;
 use std::path::Path;
@@ -9,13 +16,26 @@ use std::path::Path;
 use crate::LUT_SIZE;
 use crate::fit::Model;
 
-/// The `.cube` text for the model sampled on the lattice.
-pub fn cube_text(model: &Model, title: &str) -> String {
+/// The comment line every table the match writes carries, as a
+/// reader of the file's comments sees it (the text after the `#`,
+/// trimmed). It has been on every table since the first, so it is
+/// what tells a fitted table from any other.
+pub const FITTED: &str = "fitted from the camera's embedded JPEG by greycard-match";
+
+/// The `.cube` text for the model sampled on the lattice, with
+/// `declared` written as `# key: value` lines in the header. A line
+/// break in a key or a value would end the comment early, so it is
+/// written as a space.
+pub fn cube_text(model: &Model, title: &str, declared: &[(&str, &str)]) -> String {
     let n = LUT_SIZE;
     let mut s = String::with_capacity(n * n * n * 30);
     writeln!(s, "TITLE \"{}\"", title.replace('"', "'")).unwrap();
     s.push_str("# encoding: srgb\n# primaries: srgb\n");
-    s.push_str("# fitted from the camera's embedded JPEG by greycard-match\n");
+    writeln!(s, "# {FITTED}").unwrap();
+    let one_line = |t: &str| t.replace(['\n', '\r'], " ").trim().to_string();
+    for (key, value) in declared {
+        writeln!(s, "# {}: {}", one_line(key), one_line(value)).unwrap();
+    }
     writeln!(s, "LUT_3D_SIZE {n}").unwrap();
     s.push_str("DOMAIN_MIN 0 0 0\nDOMAIN_MAX 1 1 1\n");
     let last = (n - 1) as f32;
@@ -31,8 +51,13 @@ pub fn cube_text(model: &Model, title: &str) -> String {
 }
 
 /// Write the model to `path` as a `.cube`.
-pub fn write_cube(model: &Model, title: &str, path: &Path) -> std::io::Result<()> {
-    std::fs::write(path, cube_text(model, title))
+pub fn write_cube(
+    model: &Model,
+    title: &str,
+    declared: &[(&str, &str)],
+    path: &Path,
+) -> std::io::Result<()> {
+    std::fs::write(path, cube_text(model, title, declared))
 }
 
 #[cfg(test)]
@@ -40,7 +65,7 @@ mod tests {
     use super::*;
     use crate::color::decode3;
     use crate::fit::LutParams;
-    use greycard_core::lut::{Encoding, Lut3d};
+    use greycard_core::lut::{Encoding, Lut3d, declared};
 
     fn model() -> Model {
         let x: Vec<[f32; 3]> = (0..3000)
@@ -70,12 +95,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("greycard-match-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("test.cube");
-        write_cube(&m, "test look", &path).unwrap();
+        write_cube(&m, "test look", &[("display_curve", "agx")], &path).unwrap();
         let lut = Lut3d::load(&path).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
         assert_eq!(lut.size, LUT_SIZE);
         assert_eq!(lut.title.as_deref(), Some("test look"));
         assert_eq!(lut.encoding, Encoding::Srgb);
+        assert!(lut.comments.iter().any(|c| c == FITTED));
+        assert_eq!(declared(&lut.comments, "display_curve"), Some("agx"));
         let last = (LUT_SIZE - 1) as f32;
         for (r, g, b) in [
             (0, 0, 0),
@@ -107,8 +134,16 @@ mod tests {
 
     #[test]
     fn the_text_declares_what_the_reader_needs() {
-        let s = cube_text(&Model::identity(), "id");
-        assert!(s.starts_with("TITLE \"id\"\n# encoding: srgb\n# primaries: srgb\n"));
+        let s = cube_text(
+            &Model::identity(),
+            "id",
+            &[("display_curve", "channels"), ("model", "EOS\nR6m2")],
+        );
+        assert!(s.starts_with(
+            "TITLE \"id\"\n# encoding: srgb\n# primaries: srgb\n\
+             # fitted from the camera's embedded JPEG by greycard-match\n\
+             # display_curve: channels\n# model: EOS R6m2\nLUT_3D_SIZE 33\n"
+        ));
         assert!(s.contains("LUT_3D_SIZE 33\n"));
         assert_eq!(
             s.lines()

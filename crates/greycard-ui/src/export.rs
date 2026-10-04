@@ -426,7 +426,12 @@ pub fn render(
     // handed the same one (`edit::look` keeps it), so the two agree.
     // A look at no strength is no look, and skipping it here spares
     // the finish a branch a pixel.
-    let look = edit.look_lut.look().filter(|l| !l.is_off());
+    // A table fitted under another display curve is no look here, as
+    // it is none in the viewport (`LookLut::look_under`).
+    let look = edit
+        .look_lut
+        .look_under(edit.display_curve)
+        .filter(|l| !l.is_off());
     // The plane is only read where a shift asks for it; the pixel's
     // own luminance is the same answer when none does, and skipping it
     // spares the finish a lookup a pixel. A plane with nothing in it

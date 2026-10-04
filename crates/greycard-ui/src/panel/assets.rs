@@ -317,24 +317,94 @@ pub(crate) fn show_profiles(st: &State, chosen: &greycard_edit::camera::ProfileC
     );
 }
 
+/// The display curve the panel shows, which is the picture's: the
+/// LIGHT section's choice, read as the edit reads it.
+fn panel_curve(st: &State, app: &App) -> greycard_edit::DisplayCurve {
+    greycard_edit::DisplayCurve::from_name(app.get_display_curve().as_str())
+        .unwrap_or(st.edit.display_curve)
+}
+
 /// The look directory on the panel: None first, then the tables it
-/// holds, with the chosen one selected and a word under the list.
+/// holds grouped by the body they were fitted for, the open frame's
+/// own first (`look::grouped`), with the chosen one selected and a
+/// word under the list.
 ///
 /// A table the edit names and the directory has not got is still
 /// shown, and chosen, so the panel says what the edit says — the
 /// profile list's rule, and for the same reason: a preset or a
 /// sidecar from another machine.
+///
+/// A table fitted under another display curve than the picture's is
+/// off for it (`look::gate`): its row says the curve, and when it is
+/// the chosen one the section says so and offers the refit.
 pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app: &App) {
     let chosen_name = chosen.lut.name().to_string();
     let chosen_name = chosen_name.as_str();
-    let rows = greycard_edit::look::rows(&st.looks, chosen_name);
-    let names: Vec<slint::SharedString> = rows.iter().map(|(n, _)| n.as_str().into()).collect();
-    let labels: Vec<slint::SharedString> = rows.iter().map(|(_, l)| l.as_str().into()).collect();
-    app.set_look_names(ModelRc::new(VecModel::from(names)));
-    app.set_look_labels(ModelRc::new(VecModel::from(labels)));
+    let curve = panel_curve(st, app);
+    // The open frame's body as the index and the camera match name it:
+    // the decoder's make and model, joined as the panel joins them.
+    let camera = greycard_core::raw::camera_name(&st.camera.0, &st.camera.1);
+    let listing = greycard_edit::look::Listing {
+        chosen: chosen_name,
+        camera: &camera,
+        curve,
+        open: &st.look_groups_open,
+    };
+    let rows: Vec<LookRow> = greycard_edit::look::grouped(&st.looks, listing)
+        .into_iter()
+        .map(|r| match r {
+            greycard_edit::look::Row::Heading {
+                key,
+                label,
+                count,
+                folded,
+                own,
+                ..
+            } => LookRow {
+                heading: true,
+                name: key.into(),
+                label: label.into(),
+                note: count.to_string().into(),
+                off: false,
+                folded,
+                own,
+                indented: false,
+            },
+            greycard_edit::look::Row::Look {
+                name,
+                label,
+                curves,
+                off,
+                indented,
+            } => LookRow {
+                heading: false,
+                name: name.into(),
+                label: label.into(),
+                note: curves.into(),
+                off,
+                folded: false,
+                own: false,
+                indented,
+            },
+        })
+        .collect();
+    app.set_look_rows(ModelRc::new(VecModel::from(rows)));
+    let (mismatch, refit) = match greycard_edit::look::mismatch(&st.looks, chosen_name, curve) {
+        Some((text, true)) => (text, format!("Refit under {}…", curve.phrase())),
+        Some((text, false)) => (text, String::new()),
+        None => Default::default(),
+    };
+    app.set_look_mismatch(mismatch.into());
+    app.set_look_refit(refit.into());
     app.set_look_name(chosen_name.into());
     app.set_look_strength(chosen.strength);
-    let note = match st.looks.iter().find(|e| e.name == chosen_name) {
+    // The chosen look's table for the picture's curve, or its first.
+    let shown = greycard_edit::look::table_for(&st.looks, chosen_name, curve).or_else(|| {
+        greycard_edit::look::tables_of(&st.looks, chosen_name)
+            .first()
+            .copied()
+    });
+    let note = match shown {
         // What the chosen table is: its kind, its size, and what it
         // says it was made in when that is not the usual sRGB.
         Some(entry) => entry.described(),
@@ -349,7 +419,7 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
     };
     app.set_look_note(note.into());
     app.set_look_warning(greycard_edit::look::warning(&st.looks, chosen_name).into());
-    app.set_look_fitted(fitted_note(st, chosen_name).into());
+    app.set_look_fitted(fitted_note(st, shown).into());
 }
 
 /// "fitted on" a body when the chosen look was fitted by the camera
@@ -357,15 +427,13 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
 /// fitted on this one, names no body, or no frame is open. The look
 /// applies either way: a look is a preference, not a measurement, and
 /// is never swapped for this body's own.
-fn fitted_note(st: &State, chosen: &str) -> String {
+fn fitted_note(st: &State, shown: Option<&greycard_edit::look::Entry>) -> String {
     let (make, model) = (st.camera.0.as_str(), st.camera.1.as_str());
     if make.is_empty() && model.is_empty() {
         return String::new();
     }
     let camera = greycard_core::raw::camera_name(make, model);
-    st.looks
-        .iter()
-        .find(|e| e.name == chosen)
+    shown
         .and_then(|e| e.fitted_note(&camera))
         .unwrap_or_default()
 }
@@ -486,6 +554,69 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             st.look_for = None;
             show_looks(&st, &st.edit.look_lut, &app);
             app.window().request_redraw();
+        });
+    }
+    // A group of the look list folded or opened: remembered as open or
+    // folded for as long as the editor runs, whichever frame is open,
+    // and the list drawn again. A click on the group holding the
+    // chosen look, which is open whatever it was set to, changes
+    // nothing and is not kept.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_look_group_toggled(move |key| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let key = key.to_string();
+            let camera = greycard_core::raw::camera_name(&st.camera.0, &st.camera.1);
+            let listing = greycard_edit::look::Listing {
+                chosen: st.edit.look_lut.lut.name(),
+                camera: &camera,
+                curve: panel_curve(&st, &app),
+                open: &st.look_groups_open,
+            };
+            let shown = greycard_edit::look::grouped(&st.looks, listing)
+                .into_iter()
+                .find_map(|r| match r {
+                    greycard_edit::look::Row::Heading {
+                        key: k,
+                        folded,
+                        locked,
+                        ..
+                    } if k == key => Some((folded, locked)),
+                    _ => None,
+                });
+            let Some((folded, false)) = shown else {
+                return;
+            };
+            st.look_groups_open.insert(key, folded);
+            show_looks(&st, &st.edit.look_lut, &app);
+        });
+    }
+    // The display curve changed: which tables are off for the picture
+    // changed with it.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_look_curve_changed(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let st = state.borrow();
+            show_looks(&st, &st.edit.look_lut, &app);
+        });
+    }
+    // The refit the section offers for a table fitted under another
+    // curve: the camera match's sheet, over that look's group.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_look_refit_asked(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let name = st.edit.look_lut.lut.name().to_string();
+            crate::panel::camera_match::open(&mut st, &app, Some(name));
         });
     }
     // A look chosen in the panel: the edit says so, the note and the

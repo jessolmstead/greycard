@@ -333,6 +333,39 @@ impl DisplayCurve {
     pub fn from_name(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|c| c.name() == name)
     }
+
+    /// The name in a sentence: "fitted under per channel".
+    pub fn phrase(self) -> &'static str {
+        match self {
+            DisplayCurve::Channels => "per channel",
+            DisplayCurve::Agx => "AgX",
+        }
+    }
+
+    /// The word the sidecar writes for this curve, which is also what
+    /// a fitted look table declares it was made under: `channels`,
+    /// `agx`. Taken from the serde names so the two cannot drift.
+    pub fn key(self) -> String {
+        match serde_json::to_value(self) {
+            Ok(serde_json::Value::String(s)) => s,
+            _ => unreachable!("a unit variant serializes as a string"),
+        }
+    }
+
+    /// A curve from the word a sidecar or a table writes for it, its
+    /// aliases included (`norm` reads as per channel), or the words the
+    /// editor shows for it ("Per channel", "per channel"), case aside:
+    /// a table someone tags by hand is tagged in whichever they saw.
+    pub fn from_key(key: &str) -> Option<Self> {
+        let key = key.trim();
+        serde_json::from_value(serde_json::Value::String(key.to_ascii_lowercase()))
+            .ok()
+            .or_else(|| {
+                Self::ALL.into_iter().find(|c| {
+                    c.name().eq_ignore_ascii_case(key) || c.phrase().eq_ignore_ascii_case(key)
+                })
+            })
+    }
 }
 
 /// Brightness and the tone curve.
@@ -2646,7 +2679,19 @@ mod tests {
         );
         for c in DisplayCurve::ALL {
             assert_eq!(DisplayCurve::from_name(c.name()), Some(c));
+            assert_eq!(DisplayCurve::from_key(&c.key()), Some(c));
         }
+        // The key is the sidecar's word, which a fitted table also
+        // declares.
+        assert_eq!(DisplayCurve::Channels.key(), "channels");
+        assert_eq!(DisplayCurve::Agx.key(), "agx");
+        assert_eq!(DisplayCurve::from_key(" AgX "), Some(DisplayCurve::Agx));
+        assert_eq!(DisplayCurve::from_key("norm"), Some(DisplayCurve::Channels));
+        assert_eq!(DisplayCurve::from_key("aces"), None);
+        assert_eq!(
+            DisplayCurve::from_key("Per Channel"),
+            Some(DisplayCurve::Channels)
+        );
     }
 
     #[test]

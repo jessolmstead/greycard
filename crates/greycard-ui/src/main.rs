@@ -228,7 +228,9 @@ struct Cli {
     /// looked for), imported (the same, its import started once the
     /// source is read), match (the camera match's sheet, as the Look
     /// section's button opens it), matched (the same, its Fit
-    /// pressed once the scope is read), root-name (the library's
+    /// pressed once the scope is read), refit (the same sheet as the
+    /// Look section's refit opens it, over the chosen look's group),
+    /// root-name (the library's
     /// first root's name, as its row's Rename... opens it), delete
     /// (the delete sheet over the selection; never answered), archive
     /// (the grid header's Back up or Bring back; never answered) or
@@ -801,8 +803,14 @@ pub(crate) struct State {
     /// table is on the GPU already, and reading the section is a stat
     /// of the file. `None` for the section asks for it again, which
     /// is what a re-listing sets it to.
+    /// It is resolved through the gate for the picture's display
+    /// curve, so the curve is part of what it was resolved for: a
+    /// fitted table is no look under another curve.
     pub(crate) look: Option<greycard_core::lut::Look>,
-    pub(crate) look_for: Option<greycard_edit::LookLut>,
+    pub(crate) look_for: Option<(greycard_edit::LookLut, greycard_edit::DisplayCurve)>,
+    /// The look list's groups the user has opened (true) or folded,
+    /// by key (`greycard_edit::look::Listing::open`).
+    pub(crate) look_groups_open: std::collections::BTreeMap<String, bool>,
     /// The profile the white balance is solved through, and the name
     /// it was resolved for: the edit's DCP when it names one that
     /// reads, else the file's own. The develop converts temperature
@@ -1077,6 +1085,7 @@ impl State {
             looks: Vec::new(),
             look: None,
             look_for: None,
+            look_groups_open: Default::default(),
             white_profile: None,
             mask_handles: Rc::new(VecModel::default()),
             mask_boxes: Rc::new(VecModel::default()),

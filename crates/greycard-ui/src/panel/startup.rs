@@ -1087,10 +1087,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     );
                     // The look table, read once per choice and handed
                     // to the renderer; the export resolves the same
-                    // name through the same cache, so the two agree.
-                    if st.look_for.as_ref() != Some(&edit.look_lut) {
-                        st.look_for = Some(edit.look_lut.clone());
-                        st.look = edit.look_lut.look();
+                    // name through the same cache and the same gate,
+                    // so the two agree: a table fitted under another
+                    // display curve than the picture's is no look in
+                    // either.
+                    let look_key = (edit.look_lut.clone(), edit.display_curve);
+                    if st.look_for.as_ref() != Some(&look_key) {
+                        st.look = edit.look_lut.look_under(edit.display_curve);
+                        st.look_for = Some(look_key);
                     }
                     renderer.set_look(st.look.as_ref());
                     // The look's fields from `with_look`, the one place

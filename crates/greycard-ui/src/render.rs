@@ -3166,6 +3166,110 @@ mod tests {
         a_display_curve_on_the_gpu_is_the_cpus(greycard_edit::DisplayCurve::Agx, "the AgX curve");
     }
 
+    /// The gate between a fitted look table and a picture's display
+    /// curve, on both sides: a table fitted under AgX applies to a
+    /// picture on AgX and is no look at all on one on per channel, the
+    /// GPU's picture then being, level for level, its picture with no
+    /// look; a general table applies under both; and wherever a table
+    /// applies the GPU is the CPU's finish with it. The gate is one
+    /// decision (`look::gate`) made before either side is handed a
+    /// table, which is what the agreement rests on.
+    #[test]
+    fn a_fitted_table_is_off_under_another_curve_on_both_sides() {
+        use greycard_edit::DisplayCurve;
+        let Some((device, queue)) = device("the fitted table's gate") else {
+            return;
+        };
+        let image = parity_frame();
+        let (w, h) = (image.width, image.height);
+        let mut renderer = Renderer::new(&device, &queue);
+        renderer.upload(&crate::worker::Halves::from_image(&image, None));
+        let seen = WorkingImage {
+            width: w,
+            height: h,
+            data: image
+                .data
+                .iter()
+                .map(|v| half::f16::from_f32(*v).to_f32())
+                .collect(),
+        };
+        let to_out = crate::export::Space::Srgb.matrix();
+        let tagged = |comments: &[&str]| {
+            let mut t = (*look_tables()[0]).clone();
+            t.comments = comments.iter().map(|c| c.to_string()).collect();
+            Arc::new(t)
+        };
+        let fitted = tagged(&[greycard_edit::look::FITTED, "display_curve: agx"]);
+        let general = tagged(&["made by a grading application"]);
+        let mut render = |edit: &greycard_edit::Edit, look: Option<&lut::Look>| {
+            renderer.set_look(look);
+            renderer.set_output(to_out);
+            let view = View {
+                center: (w as f32 / 2.0, h as f32 / 2.0),
+                plane: (w as f32, h as f32),
+                frame_size: (w as f32, h as f32),
+                ..View::with_look(edit)
+            };
+            let target = renderer.render(w as u32, h as u32, &view).0;
+            let shown = renderer.read_back(&target).expect("read back");
+            let gpu: Vec<u8> = shown.pixels().flat_map(|p| [p[0], p[1], p[2]]).collect();
+            let cpu = crate::finish::finish_with(
+                &seen,
+                None,
+                &Baked::global(edit, Source::Scene),
+                &[],
+                |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
+                |_, _| (0.0, None),
+                None,
+                look.filter(|l| !l.is_off()),
+                &to_out,
+                |v: f32| v,
+            );
+            (cpu, gpu)
+        };
+        let worst = |cpu: &[f32], gpu: &[u8]| {
+            cpu.iter()
+                .zip(gpu)
+                .map(|(c, g)| (c - f32::from(*g) / 255.0).abs())
+                .fold(0.0f32, f32::max)
+        };
+        let mean_levels = |a: &[u8], b: &[u8]| {
+            a.iter()
+                .zip(b)
+                .map(|(x, y)| (f64::from(*x) - f64::from(*y)).abs())
+                .sum::<f64>()
+                / a.len() as f64
+        };
+        for curve in DisplayCurve::ALL {
+            let edit = greycard_edit::Edit {
+                display_curve: curve,
+                ..Default::default()
+            };
+            let (bare_cpu, bare_gpu) = render(&edit, None);
+            for (table, what) in [(&fitted, "fitted under AgX"), (&general, "general")] {
+                let resolved = lut::Look::new(table.clone(), 1.0).unwrap();
+                let look = greycard_edit::look::gate(Some(resolved), curve);
+                let applies = what == "general" || curve == DisplayCurve::Agx;
+                assert_eq!(look.is_some(), applies, "{what} under {curve:?}");
+                let (cpu, gpu) = render(&edit, look.as_ref());
+                let d = worst(&cpu, &gpu);
+                let moved = mean_levels(&gpu, &bare_gpu);
+                eprintln!(
+                    "{what} under {curve:?}: applied {applies}, GPU against CPU {:.2} levels, \
+                     {moved:.2} levels from no look on average",
+                    d * 255.0
+                );
+                assert!(d < 2.5 / 255.0, "{what} under {curve:?}: {d}");
+                if applies {
+                    assert!(moved > 1.0, "{what} under {curve:?} changed nothing");
+                } else {
+                    assert_eq!(gpu, bare_gpu, "{what} under {curve:?} on the GPU");
+                    assert_eq!(cpu, bare_cpu, "{what} under {curve:?} on the CPU");
+                }
+            }
+        }
+    }
+
     fn a_display_curve_on_the_gpu_is_the_cpus(curve: greycard_edit::DisplayCurve, what: &str) {
         let Some((device, queue)) = device(&format!("{what}'s check")) else {
             return;

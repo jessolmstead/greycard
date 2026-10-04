@@ -212,16 +212,12 @@ ask for first.
       re-measured under it: sidecars written before the flip read as
       per channel (a schema rule, so no edited picture moves), a
       picture with no sidecar gets AgX; the viewport timed on an
-      integrated GPU and lavapipe first (§231). Waits on the two below
-- [ ] The camera match table tagged with the display transform it was
-      fitted under, applied only to a picture on that transform, and
-      on a mismatch the Look section saying so and offering the refit;
-      untagged tables read as per channel (§230). Waits on the AgX port
-- [ ] The camera match refitted on the library under AgX and its
-      fitted and held-out error set beside §181's per-channel fits: a
-      lower error is the number that confirms §230's call, and the
-      fitted reds are where AgX's pinks come back toward the camera's.
-      Waits on the two above
+      integrated GPU and lavapipe first (§231). Waits on the one below
+- [ ] The camera match refitted on the library under AgX, each look
+      gaining its `.agx.cube` beside the per-channel table (§235), and
+      its fitted and held-out error set beside §181's per-channel fits:
+      a lower error is the number that confirms §230's call, and the
+      fitted reds are where AgX's pinks come back toward the camera's
 - [ ] The comparison tool's baseline from one pipeline: render per
       channel from the same linear develop the OpenColorIO renders
       start from, so a difference is the transform's and not the
@@ -276,14 +272,8 @@ ask for first.
       across the groups, with the group's name and the frame count
       under it, and the same bar on the fit itself where its iterations
       are counted
-- [ ] The look list by make and body, the open frame's body first:
-      the fitted looks carry the body they were fitted on in their
-      title (§181), so group the list under make and body headings,
-      put the group for the frame's own body at the top and mark it,
-      and fold the others the way the camera profile list hides
-      profiles for other cameras with a count; the general LUTs
-      (film presets and the like) in a group of their own
-- [ ] Rename a look from the Look section: the file renamed in the
+- [ ] Rename a look from the Look section: the look's own file and
+      every `<name>.<curve>.cube` of it (§235) renamed together in the
       looks folder and the name rewritten in the open folder's
       sidecars, in presets and in snapshots that carry it, so no edit
       goes "(missing)"; the TITLE line inside a .cube is the label and

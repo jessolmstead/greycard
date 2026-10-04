@@ -3,6 +3,7 @@
 // presets.slint.
 
 import { Theme } from "../theme.slint";
+import { LookRow } from "../structs.slint";
 import { Section, EditSlider, PanelButton } from "../controls.slint";
 
 export component CameraSection inherits Section {
@@ -84,8 +85,15 @@ export component LookSection inherits Section {
     in-out property <bool> collapsed-look;
     in-out property <string> look-name;
     in-out property <float> look-strength;
-    in property <[string]> look-names;
-    in property <[string]> look-labels;
+    /// The list: None, then the looks grouped by the body they were
+    /// fitted for, the open frame's first, then the general looks.
+    in property <[LookRow]> look-rows;
+    /// The chosen table is off for this picture, and why.
+    in property <string> look-mismatch;
+    /// The refit button's text, empty when there is no refit to offer.
+    in property <string> look-refit;
+    callback look-refit-asked();
+    callback look-group-toggled(string);
     in property <string> look-note;
     in property <string> look-warning;
     /// "fitted on" a body, when the chosen look was fitted on another
@@ -99,7 +107,8 @@ export component LookSection inherits Section {
     icon: @image-url("../icons/film.svg");
     collapsed <=> root.collapsed-look;
     // The list: no look first, then the tables
-    // the look directory holds.
+    // the look directory holds, grouped by the
+    // body they were fitted for when any was.
     Rectangle {
         border-radius: Theme.radius-md;
         background: Theme.base;
@@ -108,30 +117,95 @@ export component LookSection inherits Section {
         VerticalLayout {
             padding: 2px;
             spacing: 2px;
-            for label[i] in root.look-labels: Rectangle {
-                property <bool> on: root.look-names[i] == root.look-name;
+            for row in root.look-rows: Rectangle {
+                property <bool> on: !row.heading && row.name == root.look-name;
                 height: Theme.control-height;
                 border-radius: Theme.radius-sm;
                 background: on ? Theme.raised : (look-row.has-hover ? Theme.hover : transparent);
                 animate background { duration: Theme.quick; }
                 look-row := TouchArea {
                     mouse-cursor: MouseCursor.pointer;
+                    accessible-role: button;
+                    // Never a bare name: a look may be called anything,
+                    // "Fit" included, and the panel's tests find the
+                    // footer's Fit by its label.
+                    accessible-label: row.heading
+                        ? (row.folded ? "Unfold " : "Fold ") + row.label
+                        : "Look " + row.label;
                     clicked => {
-                        root.look-name = root.look-names[i];
-                        root.look-picked();
+                        if (row.heading) {
+                            root.look-group-toggled(row.name);
+                        } else {
+                            root.look-name = row.name;
+                            root.look-picked();
+                        }
                     }
                 }
-                HorizontalLayout {
-                    padding-left: Theme.space-2;
+                // A heading: the fold's triangle, the body, a mark
+                // for the open frame's own, and the count.
+                if row.heading: HorizontalLayout {
+                    padding-left: 2px;
                     padding-right: Theme.space-2;
+                    spacing: Theme.space-1;
+                    Rectangle {
+                        width: 14px;
+                        Image {
+                            source: @image-url("../icons/chevron-right.svg");
+                            colorize: look-row.has-hover ? Theme.text : Theme.text-muted;
+                            width: 10px;
+                            height: 10px;
+                            x: (parent.width - self.width) / 2;
+                            y: (parent.height - self.height) / 2;
+                            transform-rotation: row.folded ? 0deg : 90deg;
+                        }
+                    }
                     Text {
-                        text: label;
-                        color: on ? Theme.text : (look-row.has-hover ? Theme.text : Theme.text-secondary);
+                        text: row.label;
+                        color: look-row.has-hover ? Theme.text : Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        font-weight: Theme.weight-medium;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    if row.own: Text {
+                        text: "this camera";
+                        color: Theme.accent;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                    Text {
+                        text: row.note;
+                        color: Theme.text-muted;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                    }
+                }
+                // A look, set in under its heading's text when it has
+                // one; with the curves it has a table for, and dimmed
+                // when it has none for this picture's.
+                if !row.heading: HorizontalLayout {
+                    // The heading's own padding, its triangle's room
+                    // and its spacing, so the names line up with it.
+                    padding-left: row.indented ? 2px + 14px + Theme.space-1 : Theme.space-2;
+                    padding-right: Theme.space-2;
+                    spacing: Theme.space-2;
+                    Text {
+                        text: row.label;
+                        color: row.off
+                            ? Theme.text-muted
+                            : (on || look-row.has-hover ? Theme.text : Theme.text-secondary);
                         font-size: Theme.font-xs;
                         font-weight: on ? Theme.weight-medium : Theme.weight-regular;
                         vertical-alignment: center;
                         horizontal-stretch: 1;
                         overflow: elide;
+                    }
+                    if row.note != "": Text {
+                        text: row.note;
+                        color: Theme.text-muted;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
                     }
                 }
             }
@@ -154,6 +228,21 @@ export component LookSection inherits Section {
         color: Theme.label-yellow;
         font-size: Theme.font-xs;
         wrap: word-wrap;
+    }
+    if root.look-mismatch != "": Text {
+        text: root.look-mismatch;
+        color: Theme.label-yellow;
+        font-size: Theme.font-xs;
+        wrap: word-wrap;
+    }
+    if root.look-refit != "": HorizontalLayout {
+        alignment: end;
+        // The camera match's sheet, over this look's
+        // group, under the picture's display curve.
+        PanelButton {
+            text: root.look-refit;
+            clicked => { root.look-refit-asked(); }
+        }
     }
     if root.look-fitted != "": Text {
         text: root.look-fitted;
