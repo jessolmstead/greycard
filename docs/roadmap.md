@@ -259,6 +259,11 @@ ask for first.
       across the groups, with the group's name and the frame count
       under it, and the same bar on the fit itself where its iterations
       are counted
+- [ ] Remove a look from the Look section: every table of it (§235)
+      moved to the system trash together, as the delete sheet moves a
+      raw (§218), behind a sheet that says how many pictures in the
+      open folder name it; a picture naming a removed look shows it
+      "(missing)" and renders without it, as now
 - [ ] Rename a look from the Look section: the look's own file and
       every `<name>.<curve>.cube` of it (§235) renamed together in the
       looks folder and the name rewritten in the open folder's
