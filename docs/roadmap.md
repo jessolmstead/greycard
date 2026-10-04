@@ -472,6 +472,19 @@ clears or a tester asks for it.
       defaults
 
 
+#### Library
+
+- [ ] Folders opened outside every root looked at again as a root's
+      folders are: opening a folder indexes it, but nothing passes over
+      it afterwards, so when it is deleted its rows are never marked
+      missing and stay in the index for good (§160's rule covers only
+      what a pass reaches); a light look at those folders on the
+      launch pass or the network poll, a gone folder's rows marked
+      missing
+- [ ] "Forget missing frames" on the Settings sheet, with how many and
+      the oldest's date, so the missing rows go without the CLI's
+      `--prune` (§160)
+
 #### Engine
 
 - [ ] `stack.rs` and `register.rs` warps: rows written the way the lens
