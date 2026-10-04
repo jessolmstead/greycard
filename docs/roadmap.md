@@ -54,9 +54,12 @@ History, and the Masks tab reads at a glance.
 
 - [ ] One frame in two places, what is left after §224 listed a frame
       from the copy that is there: its sidecar written to both copies
-      when both are there, with the reconciliation design below, and
-      the frame on screen following to the archive's copy when its
-      local root goes
+      when both are there, and the frame on screen following to the
+      archive's copy when its local root goes; designed in §233, built
+      in two parts: the file's side in `greycard-edit` (state ids,
+      revisions, meta field times, the comparison and the join), then
+      the editor's (the queued write, the pending list, the catch-up
+      pass, the status line)
 
 ## Tracks
 
@@ -317,18 +320,10 @@ comes across with its ratings and collections.
   it stops showing under every chip (§168). The all-roots view and
   the filter remembered between sessions are there since §174
 - [ ] Edits synced between a shoot and its archive copy by the
-  sidecars alone, no database crossing machines: the two sidecars
-  compared by hash on the pool; one behind the other (its history a
-  prefix, or its `saved` count lower with its last state in the
-  other's history) copied over; two that diverged joined, the
-  histories in order, the higher count's state current and a labeled
-  step "Reconciled with the copy on Archive" so the other branch is
-  one undo away and nothing is lost; meta last writer wins by field;
-  snapshots by name; the XMP regenerated, not merged. Needs a host
-  and a time on each step, read loosely. Runs in Back up and Bring
-  back, as a write-through on save when both copies are online, and
-  as a pass when a root returns. No lock file, no checked-out flag,
-  no daemon. Waits on one frame in two places
+  sidecars alone, no database crossing machines: the comparison and
+  the join of §233 run in Back up and Bring back, behind every save
+  when both copies answer, and as a pass when a root returns. Waits
+  on one frame in two places
 - [ ] The network assumed slow and sometimes hung: a timeout on every
   read of a root over a network mount so a sleeping NAS does not hold
   the pool; the indexer's reads several at once on such a root,
