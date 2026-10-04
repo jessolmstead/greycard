@@ -1417,6 +1417,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         settings.network_poll_minutes = kept.network_poll_minutes;
         settings.import = kept.import;
         settings.update = kept.update;
+        settings.match_unchecked = kept.match_unchecked;
         // A run opened with `--hide-panels` was a look at the picture
         // alone: the panes stay as the run before it left them.
         if cli.hide_panels {
@@ -1768,6 +1769,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         filter: filter::Saved::default(),
         // Written as the check answers and as the switch flips.
         update: crate::update::Kept::default(),
+        // Written as the match sheet's boxes are ticked.
+        match_unchecked: Vec::new(),
     }
 }
 

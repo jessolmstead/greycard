@@ -126,6 +126,50 @@ pub struct Settings {
     /// GitHub and what it found, and a release the pane was told not
     /// to offer. Written as each changes, not gathered at the close.
     pub update: crate::update::Kept,
+    /// The groups the camera match's sheet was left with unchecked,
+    /// by the scope it was opened on, the most recent scope first.
+    /// Written as a box is ticked. A group not named here, seen for
+    /// the first time, is checked.
+    pub match_unchecked: Vec<MatchChoice>,
+}
+
+/// How many scopes' unchecked groups the match sheet remembers.
+pub const MATCH_SCOPES: usize = 40;
+
+/// The groups left unchecked on the camera match's sheet for one
+/// scope: `"library"`, or a folder's canonical path.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MatchChoice {
+    pub scope: String,
+    /// The groups' look names.
+    pub unchecked: Vec<String>,
+}
+
+/// The groups left unchecked for `scope`; none when it was never
+/// seen, which checks every group.
+pub fn unchecked_for(list: &[MatchChoice], scope: &str) -> Vec<String> {
+    list.iter()
+        .find(|c| c.scope == scope)
+        .map(|c| c.unchecked.clone())
+        .unwrap_or_default()
+}
+
+/// Keep `unchecked` as the choice for `scope`: moved to the front, the
+/// list cut to [`MATCH_SCOPES`]; a scope with everything checked keeps
+/// nothing, since that is what an unseen one is.
+pub fn remember_unchecked(list: &mut Vec<MatchChoice>, scope: &str, unchecked: Vec<String>) {
+    list.retain(|c| c.scope != scope);
+    if !unchecked.is_empty() {
+        list.insert(
+            0,
+            MatchChoice {
+                scope: scope.to_string(),
+                unchecked,
+            },
+        );
+    }
+    list.truncate(MATCH_SCOPES);
 }
 
 /// What the import sheet keeps for next time. The source is not
@@ -188,6 +232,7 @@ impl Default for Settings {
             import: ImportChoices::default(),
             filter: crate::filter::Saved::default(),
             update: crate::update::Kept::default(),
+            match_unchecked: Vec::new(),
         }
     }
 }
@@ -203,11 +248,33 @@ pub fn push_recent(list: &mut Vec<String>, folder: &str) {
     list.truncate(RECENT_FOLDERS);
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The settings file this thread's test uses, none by default.
+    static TEST_PATH: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Point this thread's settings at `path` (`None` for no file).
+#[cfg(test)]
+pub(crate) fn use_file(path: Option<PathBuf>) {
+    TEST_PATH.with(|p| *p.borrow_mut() = path);
+}
+
 /// `$XDG_CONFIG_HOME/greycard/settings.json` when that is set, else
 /// `greycard/settings.json` under the platform's configuration
 /// directory: `~/.config` on Linux, `~/Library/Application Support` on
 /// macOS, `%APPDATA%` on Windows.
 pub fn path() -> Option<PathBuf> {
+    // A test never reads or writes the user's settings: no file, so
+    // the defaults, unless the test sets a scratch path of its own.
+    #[cfg(test)]
+    return TEST_PATH.with(|p| p.borrow().clone());
+    #[cfg(not(test))]
+    real_path()
+}
+
+fn real_path() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CONFIG_HOME")
         .map(PathBuf::from)
         .filter(|p| p.is_absolute())
@@ -355,6 +422,10 @@ mod tests {
                 url: "https://github.com/jessolmstead/greycard/releases/tag/v0.1.4".into(),
                 dismissed: "v0.1.3".into(),
             },
+            match_unchecked: vec![MatchChoice {
+                scope: "/home/x/Pictures/shoot".into(),
+                unchecked: vec!["Canon EOS R6m2 Standard".into()],
+            }],
         };
         let text = serde_json::to_string(&mine).unwrap();
         assert_eq!(serde_json::from_str::<Settings>(&text).unwrap(), mine);
@@ -384,6 +455,30 @@ mod tests {
         // A file from before the update check has it on.
         assert!(read.update.check);
         assert_eq!(read.update.checked_at, 0);
+    }
+
+    #[test]
+    fn the_match_sheet_remembers_what_was_unchecked_a_scope_at_a_time() {
+        let mut list = Vec::new();
+        // Never seen: everything is checked.
+        assert!(unchecked_for(&list, "library").is_empty());
+        remember_unchecked(&mut list, "library", vec!["A Faithful".into()]);
+        remember_unchecked(&mut list, "/p/a", vec!["B Standard".into()]);
+        assert_eq!(unchecked_for(&list, "library"), ["A Faithful"]);
+        assert_eq!(unchecked_for(&list, "/p/a"), ["B Standard"]);
+        // Checking everything again forgets the scope.
+        remember_unchecked(&mut list, "library", Vec::new());
+        assert!(unchecked_for(&list, "library").is_empty());
+        assert_eq!(list.len(), 1);
+        // The list is bounded, the newest kept.
+        for i in 0..(MATCH_SCOPES + 5) {
+            remember_unchecked(&mut list, &format!("/p/{i}"), vec!["x".into()]);
+        }
+        assert_eq!(list.len(), MATCH_SCOPES);
+        assert!(unchecked_for(&list, "/p/a").is_empty());
+        // A file from before the choice has none.
+        let read: Settings = serde_json::from_str("{}").unwrap();
+        assert!(read.match_unchecked.is_empty());
     }
 
     #[test]
@@ -441,7 +536,7 @@ mod tests {
 
     #[test]
     fn the_path_is_under_the_configuration_directory() {
-        let path = path().expect("a configuration directory in the test environment");
+        let path = real_path().expect("a configuration directory in the test environment");
         assert!(path.ends_with("greycard/settings.json"), "{path:?}");
         assert!(path.is_absolute());
     }

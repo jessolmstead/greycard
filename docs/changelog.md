@@ -10,6 +10,13 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The camera match sheet has a box on each body and style, all ticked
+  at first: Fit runs over the ticked ones and counts them, says when an
+  unticked group is read for another's borrow, and the choice is kept
+  for the folder or the library. "Remove this look..." in the Look
+  section moves every table of the look to the system trash together,
+  behind a sheet that says how many pictures use it; a link is never
+  offered. Tests no longer read the user's settings file (§237)
 - The navigator heads the left pane, with Open folder, the folder open
   and the open root's folders under it, so the picture's thumbnail
   keeps the top left corner (2026-10-03)

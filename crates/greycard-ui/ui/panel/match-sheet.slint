@@ -6,6 +6,7 @@
 import { Theme } from "../theme.slint";
 import { PanelButton, Segmented, Toggle } from "../controls.slint";
 import { ScrollView } from "std-widgets.slint";
+import { MatchGroup } from "../structs.slint";
 
 export component MatchSheet inherits Rectangle {
     /// "Library" or "This folder".
@@ -19,11 +20,17 @@ export component MatchSheet inherits Rectangle {
     in property <string> match-curve-note;
     /// One line a group: the body and style, its frames, and whether
     /// it will fit, borrow or be skipped and why.
-    in property <[string]> match-groups;
+    in property <[MatchGroup]> match-groups;
     /// What the survey found beside the groups: frames not read yet,
     /// frames with no fixed style; or that it is still reading.
     in property <string> match-summary;
     in property <bool> match-can-fit;
+    /// The Fit button's words, counting the groups checked, and the
+    /// reason under it when it is off.
+    in property <string> match-fit-label: "Fit";
+    in property <string> match-fit-note;
+    /// A group's box pressed, by its place in the list.
+    callback match-group-toggled(int);
     /// Replace a table the run would otherwise leave alone: a user's
     /// own, a body's own fit under a borrow, a fit from more frames.
     in-out property <bool> match-replace;
@@ -102,18 +109,60 @@ export component MatchSheet inherits Rectangle {
                 // The list scrolls inside its box, as the snapshots do,
                 // so a library of many bodies keeps the buttons on
                 // screen.
-                preferred-height: min(group-list.preferred-height, 200px);
+                // A line a group wraps to two or three, which the list's own
+                // preferred height does not count until it is laid out at
+                // its width: room for that, so a box is never hidden.
+                preferred-height: min(max(group-list.preferred-height, root.match-groups.length * 40px + 16px), 200px);
                 max-height: self.preferred-height;
                 ScrollView {
                     group-list := VerticalLayout {
                         padding: Theme.space-2;
                         padding-right: Theme.space-2 + Theme.scrollbar-band;
                         spacing: Theme.space-1;
-                        for line in root.match-groups: Text {
-                            text: line;
-                            font-size: Theme.font-xs;
-                            color: Theme.text;
-                            wrap: word-wrap;
+                        for group[i] in root.match-groups: HorizontalLayout {
+                            spacing: Theme.space-2;
+                            // The box: a group's own, checked at first.
+                            Rectangle {
+                                width: 16px;
+                                box := Rectangle {
+                                    y: 1px;
+                                    width: 16px;
+                                    height: 16px;
+                                    border-radius: Theme.radius-sm;
+                                    border-width: 1px;
+                                    border-color: box-ta.has-hover ? Theme.focus-ring : Theme.border-strong;
+                                    background: group.checked ? Theme.accent : Theme.base;
+                                    // The tick, drawn: a short stroke down and a long one up.
+                                    if group.checked: Path {
+                                        x: 0;
+                                        y: 0;
+                                        width: 14px;
+                                        height: 14px;
+                                        viewbox-width: 14;
+                                        viewbox-height: 14;
+                                        commands: "M 3 7.5 L 6 10.5 L 11 3.5";
+                                        stroke: #101010;
+                                        stroke-width: 2px;
+                                        stroke-line-cap: round;
+                                        stroke-line-join: round;
+                                    }
+                                    accessible-role: checkbox;
+                                    accessible-checkable: true;
+                                    accessible-checked: group.checked;
+                                    accessible-label: "Fit " + group.name;
+                                    box-ta := TouchArea {
+                                        enabled: !root.match-running;
+                                        mouse-cursor: MouseCursor.pointer;
+                                        clicked => { root.match-group-toggled(i); }
+                                    }
+                                }
+                            }
+                            Text {
+                                text: group.text;
+                                font-size: Theme.font-xs;
+                                color: group.checked ? Theme.text : Theme.text-muted;
+                                wrap: word-wrap;
+                            }
                         }
                         if root.match-groups.length == 0: Text {
                             text: "No body with a fixed picture style here.";
@@ -128,6 +177,12 @@ export component MatchSheet inherits Rectangle {
                 checked <=> root.match-replace;
                 enabled: !root.match-running;
                 toggled => { root.match-replace-toggled(); }
+            }
+            if root.match-fit-note != "": Text {
+                text: root.match-fit-note;
+                font-size: Theme.font-xs;
+                color: Theme.label-yellow;
+                wrap: word-wrap;
             }
             if root.match-summary != "": Text {
                 text: root.match-summary;
@@ -160,7 +215,7 @@ export component MatchSheet inherits Rectangle {
                     }
                 }
                 PanelButton {
-                    text: "Fit";
+                    text: root.match-fit-label;
                     icon: @image-url("../icons/film.svg");
                     primary: true;
                     enabled: root.match-can-fit && !root.match-running;

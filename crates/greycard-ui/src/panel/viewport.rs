@@ -556,6 +556,10 @@ pub(crate) enum Shown {
     /// The camera match's sheet as the Look section's refit opens it,
     /// over the chosen look's group.
     Refit,
+    /// The remove-a-look sheet, as the Look section's Remove opens it,
+    /// over the first look in the directory when none is chosen. Never
+    /// answered: a capture never touches the files.
+    LookRemove,
     /// The root sheet over the library's first root, as its chip's
     /// Rename... opens it.
     RootName,
@@ -601,6 +605,7 @@ impl Shown {
             "match" => Ok(Self::Match),
             "matched" => Ok(Self::Matched),
             "refit" => Ok(Self::Refit),
+            "look-remove" => Ok(Self::LookRemove),
             "root-name" => Ok(Self::RootName),
             "delete" => Ok(Self::Delete),
             "archive" => Ok(Self::Archive),
@@ -608,7 +613,7 @@ impl Shown {
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, paste, pasted, import, imported, match, \
-                 matched, refit, root-name, delete, archive or archive-rejects, not {name}"
+                 matched, refit, look-remove, root-name, delete, archive or archive-rejects, not {name}"
             )),
         }
     }
@@ -683,6 +688,18 @@ impl Shown {
             Self::Settings => app.invoke_settings_asked(),
             Self::Match => app.invoke_match_asked(),
             Self::Refit => app.invoke_look_refit_asked(),
+            Self::LookRemove => {
+                if app.get_look_name() == "none"
+                    && let Some(state) = STATE.with(|s| s.borrow().clone())
+                {
+                    let mut st = state.borrow_mut();
+                    st.looks = greycard_edit::look::list();
+                    if let Some(first) = st.looks.first().map(|e| e.name.clone()) {
+                        app.set_look_name(first.into());
+                    }
+                }
+                app.invoke_look_remove_asked();
+            }
             Self::Matched => {
                 app.invoke_match_asked();
                 crate::panel::camera_match::fit_when_read(app, 100);

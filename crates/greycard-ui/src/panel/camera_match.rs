@@ -5,6 +5,11 @@
 //! its progress and each group's result coming back here, the look
 //! list read again when it is done.
 //!
+//! Each body-and-style line has a box, every one checked at first; Fit
+//! runs over the checked groups, and the choice is kept for the
+//! scope's next run (`settings::match_unchecked`). A refit's sheet
+//! lists only the look's own groups, all checked, and keeps nothing.
+//!
 //! The run develops under the open picture's display curve, which the
 //! sheet says, and every table it writes is that curve's. Opened from
 //! the Look section's refit, the sheet runs over the chosen look's own
@@ -39,6 +44,12 @@ pub(crate) struct Sheet {
     /// The look a refit is for, when the sheet was opened for one, and
     /// its tables as the look list had them.
     refit: Option<(String, Vec<greycard_edit::look::Entry>)>,
+    /// What the unchecked groups are remembered under: "library", or
+    /// the folder's path.
+    scope_key: String,
+    /// The groups left unchecked, by their look names. A group not
+    /// here is checked, so one seen for the first time is.
+    unchecked: std::collections::BTreeSet<String>,
 }
 
 impl Sheet {
@@ -56,6 +67,28 @@ impl Sheet {
             }
             None => survey.groups.clone(),
         })
+    }
+
+    /// One flag a group of [`Sheet::groups`]: whether it is checked.
+    fn chosen(&self, groups: &[Group]) -> Vec<bool> {
+        groups
+            .iter()
+            .map(|g| !self.unchecked.contains(&g.name()))
+            .collect()
+    }
+
+    /// The box of group `i` pressed: the scope's groups now unchecked,
+    /// to keep. None for a group the sheet does not list, and while a
+    /// run is under way.
+    fn toggle(&mut self, i: usize) -> Option<Vec<String>> {
+        if self.cancel.is_some() {
+            return None;
+        }
+        let name = self.groups()?.get(i)?.name();
+        if !self.unchecked.remove(&name) {
+            self.unchecked.insert(name);
+        }
+        Some(self.unchecked.iter().cloned().collect())
     }
 
     /// The line that says which curve the run develops under, and
@@ -102,6 +135,36 @@ struct Where {
     scope: String,
     library: Option<(PathBuf, Vec<PathBuf>)>,
     folder: Option<PathBuf>,
+}
+
+/// What a scope's choice is kept under: "library", or the folder as the
+/// disk spells it.
+fn scope_key(at: &Where) -> String {
+    if at.scope == LIBRARY {
+        return "library".to_string();
+    }
+    // The folder as the browser spells it: no call to the disk on the
+    // window's thread, which a root that does not answer would hang.
+    match &at.folder {
+        Some(f) => f.display().to_string(),
+        None => String::new(),
+    }
+}
+
+/// Whether a tick is written to the settings file: not in a batch run,
+/// which leaves the user's settings alone. (A test has no settings file
+/// unless it sets one.) Reading is always done, so a capture shows the
+/// choice the scope was left with.
+fn persists(st: &State) -> bool {
+    !st.batch
+}
+
+/// The groups the scope was left with unchecked.
+fn remembered(key: &str) -> Vec<String> {
+    if key.is_empty() {
+        return Vec::new();
+    }
+    crate::settings::unchecked_for(&crate::settings::Settings::load().match_unchecked, key)
 }
 
 /// A scope's groups: the library's from the index; a folder's from
@@ -197,9 +260,55 @@ pub(crate) fn group_line(g: &Group, plan: &Plan) -> String {
                 out.push_str(&format!("; {warning}"));
             }
         }
+        Plan::Donor => out.push_str(
+            " — not being fitted; its frames are read for a body that borrows its look, \
+             and no table of its own is written",
+        ),
+        Plan::Skip(why) if why == fit::NOT_CHOSEN => out.push_str(" — not chosen, so not fitted"),
         Plan::Skip(why) => out.push_str(&format!(" — skipped: {why}")),
     }
     out
+}
+
+/// What a chosen group that borrows must also say: that the group it
+/// borrows from is not being fitted. Empty for anything else.
+fn donor_note(plan: &Plan, chosen: &[bool]) -> &'static str {
+    match plan {
+        Plan::Borrow { donor, .. } if !chosen.get(*donor).copied().unwrap_or(true) => {
+            "; that group is not being fitted, so its frames are read for this look and its \
+             own table is not written"
+        }
+        _ => "",
+    }
+}
+
+/// The Fit button's words, and the line under it: the groups checked
+/// are counted, the ones read only for a borrow are said, and when
+/// none is checked the reason it is off. `donors` is how many groups
+/// not checked are developed anyway because a checked one borrows from
+/// them.
+pub(crate) fn fit_label(checked: usize, have_groups: bool, donors: usize) -> (String, String) {
+    match (checked, have_groups) {
+        (0, true) => (
+            "Fit".into(),
+            "No group is checked: check at least one to fit.".into(),
+        ),
+        (0, false) => ("Fit".into(), String::new()),
+        (n, _) => {
+            let plural = |n: usize| if n == 1 { "" } else { "s" };
+            let note = if donors > 0 {
+                format!(
+                    "Also reads {donors} group{} that {} not checked, for a borrow: its \
+                     frames are developed and nothing of it is written.",
+                    plural(donors),
+                    if donors == 1 { "is" } else { "are" }
+                )
+            } else {
+                String::new()
+            };
+            (format!("Fit {n} group{}", plural(n)), note)
+        }
+    }
 }
 
 /// The line under the groups: what the survey left out of them.
@@ -247,20 +356,40 @@ fn show(st: &State, app: &App) {
             let existing = greycard_edit::look::store_dir()
                 .map(|d| fit::existing_in(&d))
                 .unwrap_or_default();
-            let plans = fit::plan(&groups, &existing, sheet.curve, app.get_match_replace());
-            let lines: Vec<String> = groups
+            let chosen = sheet.chosen(&groups);
+            let plans = fit::plan_chosen(
+                &groups,
+                &existing,
+                sheet.curve,
+                app.get_match_replace(),
+                &chosen,
+            );
+            let rows: Vec<MatchGroup> = groups
                 .iter()
                 .zip(&plans)
-                .map(|(g, p)| group_line(g, p))
+                .zip(&chosen)
+                .map(|((g, p), &checked)| MatchGroup {
+                    name: g.name().into(),
+                    text: format!("{}{}", group_line(g, p), donor_note(p, &chosen)).into(),
+                    checked,
+                })
                 .collect();
-            app.set_match_groups(strings(&lines));
+            app.set_match_groups(ModelRc::new(VecModel::from(rows)));
             app.set_match_summary(summary(survey).into());
-            // Any group: one that will be skipped is still reported,
-            // and a run is how the user finds out which frames register.
-            app.set_match_can_fit(!plans.is_empty());
+            // Any checked group: one that will be skipped is still
+            // reported, and a run is how the user finds out which
+            // frames register.
+            let n = chosen.iter().filter(|c| **c).count();
+            let donors = plans.iter().filter(|p| matches!(p, Plan::Donor)).count();
+            let (label, note) = fit_label(n, !groups.is_empty(), donors);
+            app.set_match_fit_label(label.into());
+            app.set_match_fit_note(note.into());
+            app.set_match_can_fit(n > 0);
         }
         _ => {
-            app.set_match_groups(strings(&[]));
+            app.set_match_groups(ModelRc::new(VecModel::from(Vec::<MatchGroup>::new())));
+            app.set_match_fit_label("Fit".into());
+            app.set_match_fit_note("".into());
             app.set_match_can_fit(false);
         }
     }
@@ -275,6 +404,14 @@ fn start_survey(st: &mut State, app: &App) {
         scope: app.get_match_scope().to_string(),
         library: library_of(st),
         folder: folder_of(st),
+    };
+    // What the scope's last run left unchecked; a refit's sheet starts
+    // with everything of its look's checked and keeps nothing.
+    st.camera_match.scope_key = scope_key(&at);
+    st.camera_match.unchecked = if st.camera_match.refit.is_some() {
+        Default::default()
+    } else {
+        remembered(&st.camera_match.scope_key).into_iter().collect()
     };
     show(st, app);
     app.set_match_summary("reading the frames' picture styles...".into());
@@ -360,6 +497,10 @@ fn start_run(st: &mut State, app: &App) {
         app.set_match_progress("There is no look directory on this machine.".into());
         return;
     };
+    let chosen = st.camera_match.chosen(&groups);
+    if !chosen.iter().any(|c| *c) {
+        return;
+    }
     let curve = st.camera_match.curve;
     let replace = app.get_match_replace();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -392,8 +533,11 @@ fn start_run(st: &mut State, app: &App) {
             fit::run(
                 &groups,
                 &store,
-                curve,
-                replace,
+                fit::Choices {
+                    curve,
+                    replace,
+                    chosen: &chosen,
+                },
                 lenses.as_ref(),
                 &cancel,
                 &mut |p| post(Message::Progress(p)),
@@ -509,6 +653,33 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
                 return;
             };
             show(&state.borrow(), &app);
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_match_group_toggled(move |i| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let Some(unchecked) = st.camera_match.toggle(i.max(0) as usize) else {
+                return;
+            };
+            // Kept as it is ticked, for the scope's next run; a refit's
+            // narrowed list is not the scope's choice.
+            if persists(&st) && st.camera_match.refit.is_none() {
+                let key = st.camera_match.scope_key.clone();
+                if !key.is_empty() {
+                    let mut settings = crate::settings::Settings::load();
+                    crate::settings::remember_unchecked(
+                        &mut settings.match_unchecked,
+                        &key,
+                        unchecked,
+                    );
+                    settings.save();
+                }
+            }
+            show(&st, &app);
         });
     }
     {
@@ -687,6 +858,199 @@ mod tests {
             "{}",
             gone.curve_note()
         );
+    }
+
+    fn two_bodies_two_styles() -> Sheet {
+        let mut other = group("Canon EOS R5m2", &["a"], 30, 30);
+        other.style = "Canon Standard".into();
+        Sheet {
+            survey: Some(Survey {
+                groups: vec![
+                    group("Canon EOS R6m2", &["a", "b"], 30, 30),
+                    other,
+                    group("Canon EOS R5m2", &["a"], 5, 5),
+                ],
+                unread: 0,
+                no_style: 0,
+            }),
+            curve: greycard_edit::DisplayCurve::Channels,
+            ..Default::default()
+        }
+    }
+
+    /// Every group is checked at first; a press flips one, and what is
+    /// unchecked is what the next sheet on the scope starts without.
+    #[test]
+    fn every_group_is_checked_at_first_and_the_choice_is_what_is_kept() {
+        let mut sheet = two_bodies_two_styles();
+        let groups = sheet.groups().unwrap();
+        assert_eq!(sheet.chosen(&groups), [true, true, true]);
+        let kept = sheet.toggle(1).unwrap();
+        assert_eq!(kept, ["Canon EOS R5m2 Standard"]);
+        assert_eq!(sheet.chosen(&groups), [true, false, true]);
+        // The scope's next sheet: the same choice read back, and a group
+        // never seen before is checked.
+        let mut list = Vec::new();
+        crate::settings::remember_unchecked(&mut list, "library", kept);
+        let mut next = two_bodies_two_styles();
+        next.unchecked = crate::settings::unchecked_for(&list, "library")
+            .into_iter()
+            .collect();
+        let mut more = group("Sony ILCE-7M4", &["a"], 30, 30);
+        more.style = "Sony Standard".into();
+        let mut all = next.groups().unwrap();
+        all.push(more);
+        assert_eq!(next.chosen(&all), [true, false, true, true]);
+        // Pressed again it is checked, and nothing is kept for the scope.
+        assert!(sheet.toggle(1).unwrap().is_empty());
+        // A press past the list, or while a run is under way, is nothing.
+        assert!(sheet.toggle(9).is_none());
+        sheet.cancel = Some(Arc::new(AtomicBool::new(false)));
+        assert!(sheet.toggle(0).is_none());
+    }
+
+    /// Tick, save, reopen: a box unchecked on a scope is unchecked when
+    /// the sheet is opened on it again, and a group not seen before is
+    /// checked. The settings file is a scratch one.
+    #[test]
+    fn a_tick_is_saved_and_the_next_sheet_on_the_scope_has_it() {
+        use crate::testing::{click, labeled, state_for, window};
+        let dir = std::env::temp_dir().join(format!(
+            "greycard-match-keep-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        crate::settings::use_file(Some(dir.join("settings.json")));
+        let app = window(3);
+        let (state, _worker) = state_for(&app, crate::testing::folder(3));
+        let mut sheet = two_bodies_two_styles();
+        sheet.scope_key = "/shoot/a".into();
+        state.borrow_mut().camera_match = sheet;
+        app.set_match_open(true);
+        show(&state.borrow(), &app);
+        let (at, size) = labeled(&app, "Fit Canon EOS R5m2 Standard");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        let kept = crate::settings::Settings::load().match_unchecked;
+        assert_eq!(
+            crate::settings::unchecked_for(&kept, "/shoot/a"),
+            ["Canon EOS R5m2 Standard"]
+        );
+        // Reopened: the scope's choice is read back, another scope's is
+        // not touched, and a group the file never saw is checked.
+        assert_eq!(remembered("/shoot/a"), ["Canon EOS R5m2 Standard"]);
+        assert!(remembered("/shoot/b").is_empty());
+        let mut next = two_bodies_two_styles();
+        next.unchecked = remembered("/shoot/a").into_iter().collect();
+        let groups = next.groups().unwrap();
+        assert_eq!(next.chosen(&groups), [true, false, true]);
+        crate::settings::use_file(None);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    #[test]
+    fn the_button_counts_the_groups_checked_and_says_why_it_is_off() {
+        assert_eq!(fit_label(3, true, 0).0, "Fit 3 groups");
+        assert_eq!(fit_label(3, true, 0).1, "");
+        let (label, note) = fit_label(2, true, 1);
+        assert_eq!(label, "Fit 2 groups");
+        assert!(
+            note.starts_with("Also reads 1 group that is not checked"),
+            "{note}"
+        );
+        assert_eq!(fit_label(1, true, 0).0, "Fit 1 group");
+        let (label, note) = fit_label(0, true, 0);
+        assert_eq!(label, "Fit");
+        assert!(note.contains("No group is checked"), "{note}");
+        assert_eq!(fit_label(0, false, 0), ("Fit".to_string(), String::new()));
+    }
+
+    #[test]
+    fn a_group_that_borrows_from_one_not_fitted_says_so() {
+        let borrow = Plan::Borrow {
+            from: "Canon EOS R6m2".into(),
+            donor: 0,
+            replaces: None,
+        };
+        assert!(donor_note(&borrow, &[false, true]).contains("not being fitted"));
+        assert_eq!(donor_note(&borrow, &[true, true]), "");
+        let few = group("Canon EOS R5m2", &["a"], 5, 5);
+        let line = group_line(&few, &Plan::Skip(fit::NOT_CHOSEN.into()));
+        assert!(line.ends_with("not chosen, so not fitted"), "{line}");
+        let donor = group_line(&few, &Plan::Donor);
+        assert!(donor.contains("no table of its own is written"), "{donor}");
+    }
+
+    /// The window: a box a group, found by its label and clicked inside
+    /// its bounds; the Fit button counts the checked ones and goes off
+    /// at none, with the reason under it.
+    #[test]
+    fn the_sheet_has_a_box_a_group_and_the_button_counts_them() {
+        use crate::testing::{click, labeled, state_for, window};
+        let app = window(3);
+        let (state, _worker) = state_for(&app, crate::testing::folder(3));
+        // The donor, and a body of the same style with too few frames
+        // to fit on its own, which borrows from it.
+        let mut sheet = two_bodies_two_styles();
+        sheet.survey.as_mut().unwrap().groups = vec![
+            group("Canon EOS R6m2", &["a", "b"], 30, 30),
+            group("Canon EOS R5m2", &["a"], 5, 5),
+        ];
+        state.borrow_mut().camera_match = sheet;
+        app.set_match_open(true);
+        show(&state.borrow(), &app);
+        assert_eq!(app.get_match_groups().row_count(), 2);
+        assert!(app.get_match_groups().iter().all(|g| g.checked));
+        assert_eq!(app.get_match_fit_label(), "Fit 2 groups");
+        assert!(app.get_match_can_fit());
+        let press = |name: &str| {
+            let (at, size) = labeled(&app, name);
+            click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        };
+        // Unchecking the donor: the button counts one, its borrower says
+        // the donor is not being fitted, and the donor's line says its
+        // frames are read for the borrow and nothing of it is written.
+        press("Fit Canon EOS R6m2 Faithful");
+        assert_eq!(app.get_match_fit_label(), "Fit 1 group");
+        assert!(
+            app.get_match_fit_note()
+                .starts_with("Also reads 1 group that is not checked"),
+            "{}",
+            app.get_match_fit_note()
+        );
+        let rows: Vec<_> = app.get_match_groups().iter().collect();
+        assert!(!rows[0].checked && rows[1].checked);
+        assert!(
+            rows[1].text.contains("not being fitted"),
+            "{}",
+            rows[1].text
+        );
+        assert!(
+            rows[0].text.contains("no table of its own is written"),
+            "{}",
+            rows[0].text
+        );
+        // Unchecking the borrower too: nothing to fit, the button off with
+        // its reason, and the donor is simply skipped.
+        press("Fit Canon EOS R5m2 Faithful");
+        assert_eq!(app.get_match_fit_label(), "Fit");
+        assert!(!app.get_match_can_fit());
+        assert!(app.get_match_fit_note().contains("No group is checked"));
+        let rows: Vec<_> = app.get_match_groups().iter().collect();
+        assert!(
+            rows[0].text.ends_with("not chosen, so not fitted"),
+            "{}",
+            rows[0].text
+        );
+        // Fit does nothing at zero.
+        app.invoke_match_fit();
+        assert!(state.borrow().camera_match.cancel.is_none());
+        // Checked again, one press back.
+        press("Fit Canon EOS R6m2 Faithful");
+        assert_eq!(app.get_match_fit_label(), "Fit 1 group");
+        assert!(app.get_match_can_fit());
     }
 
     #[test]

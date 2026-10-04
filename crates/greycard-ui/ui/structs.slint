@@ -158,6 +158,14 @@ export struct HistoryRow {
     undone: bool,
 }
 
+/// One group on the camera match sheet: its look's name, the line that
+/// says what the fit will do with it, and whether it is checked.
+export struct MatchGroup {
+    name: string,
+    text: string,
+    checked: bool,
+}
+
 /// One row of the LOOK section's list: a group's heading (a body, or
 /// the general looks) or a look. Rust builds them
 /// (`greycard_edit::look::grouped`).

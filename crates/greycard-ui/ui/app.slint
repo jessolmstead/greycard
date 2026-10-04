@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow } from "structs.slint";
+import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -28,6 +28,7 @@ import { PanelHead } from "panel/scopes.slint";
 import { ModelSheet } from "panel/model-sheet.slint";
 import { RejectsSheet } from "panel/rejects-sheet.slint";
 import { DeleteSheet } from "panel/delete-sheet.slint";
+import { LookRemoveSheet } from "panel/look-remove-sheet.slint";
 import { ArchiveSheet, ArchiveCard } from "panel/archive-sheet.slint";
 import { ArchiveRejectsSheet } from "panel/archive-rejects-sheet.slint";
 import { MatchSheet } from "panel/match-sheet.slint";
@@ -1043,6 +1044,19 @@ export component App inherits Window {
     in property <string> look-warning;
     in property <string> look-fitted;
     callback look-picked();
+    /// The chosen look has files in the look folder to remove.
+    in property <bool> look-removable: false;
+    callback look-remove-asked();
+    /// The remove-a-look sheet: what goes, who names it, and what it
+    /// offers, until answered: 0 no, 1 the trash, 2 permanently.
+    in-out property <bool> look-remove-open: false;
+    in property <string> look-remove-title: "";
+    in property <[string]> look-remove-files;
+    in property <string> look-remove-uses: "";
+    in property <string> look-remove-note: "";
+    in property <bool> look-remove-trash: true;
+    in property <bool> look-remove-permanent: false;
+    callback look-remove-answered(int);
     // The camera match's sheet, from the Look section: the scope, the
     // groups found in it, the run's progress and its results.
     in-out property <bool> match-open: false;
@@ -1050,9 +1064,14 @@ export component App inherits Window {
     in property <[string]> match-scopes: ["This folder"];
     in property <string> match-scope-note;
     in property <string> match-curve-note;
-    in property <[string]> match-groups;
+    in property <[MatchGroup]> match-groups;
     in property <string> match-summary;
     in property <bool> match-can-fit;
+    /// The Fit button's words, which count the groups checked, and why
+    /// it is off when it is.
+    in property <string> match-fit-label: "Fit";
+    in property <string> match-fit-note;
+    callback match-group-toggled(int);
     in-out property <bool> match-replace: false;
     callback match-replace-toggled();
     in property <bool> match-running;
@@ -1469,7 +1488,7 @@ export component App inherits Window {
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
-            || root.delete-open || root.archive-open || root.archive-rejects-open
+            || root.delete-open || root.look-remove-open || root.archive-open || root.archive-rejects-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
             || root.root-sheet-open;
     }
@@ -1486,6 +1505,7 @@ export component App inherits Window {
     // as the next one opened would otherwise take the keys from it.
     changed rejects-open => { if (!root.rejects-open && !root.sheet-open()) { keys.focus(); } }
     changed delete-open => { if (!root.delete-open && !root.sheet-open()) { keys.focus(); } }
+    changed look-remove-open => { if (!root.look-remove-open && !root.sheet-open()) { keys.focus(); } }
     changed archive-open => { if (!root.archive-open && !root.sheet-open()) { keys.focus(); } }
     changed archive-rejects-open => {
         if (!root.archive-rejects-open && !root.sheet-open()) { keys.focus(); }
@@ -1509,6 +1529,7 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
             if (e.text == Key.Escape && root.delete-open) { root.delete-answered(0); return accept; }
+            if (e.text == Key.Escape && root.look-remove-open) { root.look-remove-answered(0); return accept; }
             if (e.text == Key.Escape && root.archive-open) { root.archive-answered(false); return accept; }
             if (e.text == Key.Escape && root.archive-rejects-open) { root.archive-rejects-answered(0); return accept; }
             if (e.text == Key.Escape && root.match-open && !root.match-running) { root.match-close(); return accept; }
@@ -2153,6 +2174,8 @@ export component App inherits Window {
                             look-warning: root.look-warning;
                             look-fitted: root.look-fitted;
                             look-picked => { root.look-picked(); }
+                            look-removable: root.look-removable;
+                            look-remove-asked => { root.look-remove-asked(); }
                             match-asked => { root.match-asked(); }
                             view-changed => { root.view-changed(); }
                         }
@@ -2774,6 +2797,22 @@ export component App inherits Window {
         }
     }
 
+    // The remove-a-look sheet: the files, the pictures that name the
+    // look, and to the trash or for good. The keys go back to the
+    // window after.
+    if root.look-remove-open: LookRemoveSheet {
+        remove-title: root.look-remove-title;
+        remove-files: root.look-remove-files;
+        remove-uses: root.look-remove-uses;
+        remove-note: root.look-remove-note;
+        remove-trash: root.look-remove-trash;
+        remove-permanent: root.look-remove-permanent;
+        remove-answered(a) => {
+            root.look-remove-answered(a);
+            keys.focus();
+        }
+    }
+
     if root.archive-open: ArchiveSheet {
         title: root.archive-title;
         text: root.archive-text;
@@ -2827,6 +2866,9 @@ export component App inherits Window {
         match-groups: root.match-groups;
         match-summary: root.match-summary;
         match-can-fit: root.match-can-fit;
+        match-fit-label: root.match-fit-label;
+        match-fit-note: root.match-fit-note;
+        match-group-toggled(i) => { root.match-group-toggled(i); }
         match-replace <=> root.match-replace;
         match-replace-toggled => { root.match-replace-toggled(); }
         match-running: root.match-running;

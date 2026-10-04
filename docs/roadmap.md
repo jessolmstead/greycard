@@ -26,6 +26,11 @@ the reasoning lives in `docs/notes.md`.
       further out on both drivers, find what the failing edits share,
       and fix the divergence or justify the bound
 - [ ] Auto white balance seems to lean way too warm. (tbf lightroom does too)
+- [ ] The Settings sheet's previews cap can show the file's value, not
+      the live one: `on_settings_asked` takes the thumbnail cache with
+      `try_lock` and falls back to `Settings::load()` while the cache's
+      count thread holds it; the prefs test of the field fails under load
+      for the same reason
 
 ## Next: 0.4.0
 
@@ -247,23 +252,12 @@ ask for first.
       which frames to refine with. Never a nudge of the table toward
       one frame: a refined table is still one fit over a sample, so
       the replacement rule still counts frames
-- [ ] The match sheet's groups chosen: a checkbox on each body and
-      style line, all on at first, the run over the checked ones and
-      the Run button counting them, an unchecked group skipped as a
-      small one is, and the choice remembered for the folder's next
-      run; a folder of two bodies and five styles is ten fits of forty
-      frames each, when one style is all that is wanted
 - [ ] A progress bar on the camera match run: the sheet shows only a
       line of words today ("starting...", then the group in hand); give
       it §192's bar, filled by frames developed over frames to fit
       across the groups, with the group's name and the frame count
       under it, and the same bar on the fit itself where its iterations
       are counted
-- [ ] Remove a look from the Look section: every table of it (§235)
-      moved to the system trash together, as the delete sheet moves a
-      raw (§218), behind a sheet that says how many pictures in the
-      open folder name it; a picture naming a removed look shows it
-      "(missing)" and renders without it, as now
 - [ ] Rename a look from the Look section: the look's own file and
       every `<name>.<curve>.cube` of it (§235) renamed together in the
       looks folder and the name rewritten in the open folder's

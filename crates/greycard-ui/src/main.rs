@@ -237,6 +237,8 @@ struct Cli {
     /// section's button opens it), matched (the same, its Fit
     /// pressed once the scope is read), refit (the same sheet as the
     /// Look section's refit opens it, over the chosen look's group),
+    /// look-remove (the remove-a-look sheet over the chosen look, or
+    /// the first in the directory; never answered),
     /// root-name (the library's
     /// first root's name, as its row's Rename... opens it), delete
     /// (the delete sheet over the selection; never answered), archive
@@ -516,6 +518,12 @@ pub(crate) struct State {
     /// session: the sheet offers the permanent delete beside the
     /// trash for these, as a choice.
     pub(crate) trash_refused: std::collections::HashSet<PathBuf>,
+    /// The remove-a-look sheet's question while it is up, how many
+    /// have been asked (so a late count is dropped), and a removal out
+    /// on its thread.
+    pub(crate) look_remove: Option<panel::look_remove::Asked>,
+    pub(crate) look_remove_generation: u64,
+    pub(crate) look_removing: bool,
     /// Whether anything may be deleted from disk: only in a session
     /// someone is at. A snapshot, a screenshot, an export or a timing
     /// run never deletes, whatever it is asked, and a test's state
@@ -969,6 +977,9 @@ impl State {
             move_rejects: false,
             delete_asked: None,
             trash_refused: std::collections::HashSet::new(),
+            look_remove: None,
+            look_remove_generation: 0,
+            look_removing: false,
             deletes_allowed: false,
             deleting: None,
             snapshot_placeholder: false,
@@ -1141,6 +1152,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     entry::install(app);
     panel::cull::install(app, &state, &worker);
     panel::delete::install(app, &state, &worker);
+    panel::look_remove::install(app, &state);
     panel::archive::install(app, &state, &worker);
     panel::mask::install(app, &state, &worker);
     panel::browser::install(app, &state, &worker);

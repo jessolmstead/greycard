@@ -1,0 +1,108 @@
+// The remove-a-look sheet: the look's name, every file of it that will
+// go, and how many pictures in the open folder name it. The trash is
+// the default wherever there is one, and Enter's; the permanent delete
+// is red, is never the default, cannot take the focus, and so is never
+// Enter's: only a click reaches it (the delete sheet's rule).
+
+import { Theme } from "../theme.slint";
+import { PanelButton } from "../controls.slint";
+import { DangerButton } from "delete-sheet.slint";
+
+export component LookRemoveSheet inherits Rectangle {
+    in property <string> remove-title;
+    /// The files that will go, one a line, as named in the look folder.
+    in property <[string]> remove-files;
+    /// How many pictures in the open folder name the look.
+    in property <string> remove-uses;
+    in property <string> remove-note;
+    in property <bool> remove-trash;
+    in property <bool> remove-permanent;
+    /// 0 no, 1 the trash, 2 permanently.
+    callback remove-answered(int);
+
+    background: #000000a0;
+    TouchArea { clicked => { root.remove-answered(0); } }
+    Rectangle {
+        width: 460px;
+        height: sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        // The sheet takes the keys while it is up (§234): Escape is its
+        // no, Enter its default, which is the trash and never the
+        // permanent delete. Nothing else is anybody's until it goes.
+        keys := FocusScope {
+            init => { self.focus(); }
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.remove-answered(0);
+                    return accept;
+                }
+                if (e.text == Key.Return && !e.repeat) {
+                    if (root.remove-trash) { root.remove-answered(1); }
+                    return accept;
+                }
+                return accept;
+            }
+            sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                Text {
+                    text: root.remove-title;
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.remove-files.length == 1 ? "This file goes:" : "These files go:";
+                    font-size: Theme.font-sm;
+                    color: Theme.text-secondary;
+                }
+                VerticalLayout {
+                    spacing: Theme.space-1;
+                    for file in root.remove-files: Text {
+                        text: file;
+                        font-size: Theme.font-xs;
+                        color: Theme.text;
+                        overflow: elide;
+                    }
+                }
+                Text {
+                    text: root.remove-uses;
+                    font-size: Theme.font-sm;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.remove-note;
+                    font-size: Theme.font-sm;
+                    color: root.remove-trash ? Theme.text-secondary : Theme.label-red;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: Theme.space-2; }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.remove-answered(0); }
+                    }
+                    if root.remove-permanent: DangerButton {
+                        text: "Delete permanently";
+                        clicked => { root.remove-answered(2); }
+                    }
+                    if root.remove-trash: PanelButton {
+                        text: "Move to the trash";
+                        icon: @image-url("../icons/trash-2.svg");
+                        primary: true;
+                        clicked => { root.remove-answered(1); }
+                    }
+                }
+            }
+        }
+    }
+}

@@ -100,6 +100,10 @@ export component LookSection inherits Section {
     /// body than the open frame's.
     in property <string> look-fitted;
     callback look-picked();
+    /// The chosen look has files in the look folder to remove; None
+    /// has none.
+    in property <bool> look-removable;
+    callback look-remove-asked();
     callback view-changed();
     callback match-asked();
 
@@ -255,6 +259,16 @@ export component LookSection inherits Section {
         color: Theme.text-muted;
         font-size: Theme.font-xs;
         wrap: word-wrap;
+    }
+    // The chosen look's files to the trash, behind a sheet: a row of
+    // its own, the three buttons not fitting the panel's width.
+    if root.look-removable: HorizontalLayout {
+        alignment: end;
+        PanelButton {
+            text: "Remove this look…";
+            icon: @image-url("../icons/trash-2.svg");
+            clicked => { root.look-remove-asked(); }
+        }
     }
     HorizontalLayout {
         spacing: Theme.space-2;

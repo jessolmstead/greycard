@@ -12,6 +12,7 @@ pub(crate) mod edit;
 pub(crate) mod export_queue;
 pub(crate) mod history;
 pub(crate) mod import;
+pub(crate) mod look_remove;
 pub(crate) mod mask;
 pub(crate) mod menu;
 pub(crate) mod prefs;

@@ -340,6 +340,10 @@ pub(crate) enum Plan {
         donor: usize,
         replaces: Option<String>,
     },
+    /// A group the user did not choose that a chosen group borrows
+    /// from: its frames are developed and a table fitted in memory for
+    /// the borrower, and nothing of its own is written.
+    Donor,
     Skip(String),
 }
 
@@ -348,6 +352,9 @@ impl Plan {
         matches!(self, Plan::Fit { .. })
     }
 }
+
+/// Why a group the user unchecked is left alone.
+pub(crate) const NOT_CHOSEN: &str = "not chosen";
 
 /// A table already in the store under a group's name.
 #[derive(Debug, Clone, PartialEq)]
@@ -456,16 +463,40 @@ pub(crate) fn may_write(
     }
 }
 
-/// The plan for every group against the tables in the store. The
-/// groups with enough frames fit; for each style, the one of those
-/// with the most frames in the run (the first, on a tie) is the donor
-/// a body without enough borrows from, and the run uses the same one.
+/// The plan for every group against the tables in the store, every
+/// group chosen: [`plan_chosen`].
+#[cfg(test)]
 pub(crate) fn plan(
     groups: &[Group],
     existing: &HashMap<String, Existing>,
     curve: DisplayCurve,
     replace: bool,
 ) -> Vec<Plan> {
+    plan_chosen(groups, existing, curve, replace, &vec![true; groups.len()])
+}
+
+/// The plan for every group against the tables in the store, `chosen`
+/// saying which groups the user wants fitted (one flag a group; a
+/// missing flag is a yes). The groups with enough frames fit; for each
+/// style, the one of those with the most frames in the run (the
+/// first, on a tie) is the donor a body without enough borrows from,
+/// and the run uses the same one.
+///
+/// A group that is not chosen is skipped as a small one is: never
+/// developed for itself, never written. The donor is chosen on merit
+/// among every group that could fit, chosen or not, so unchecking a
+/// body does not move a borrower to another donor; when a chosen group
+/// borrows from one that is not chosen, that group is [`Plan::Donor`]:
+/// its frames are read and a table fitted in memory for the borrower,
+/// and its own table is not written.
+pub(crate) fn plan_chosen(
+    groups: &[Group],
+    existing: &HashMap<String, Existing>,
+    curve: DisplayCurve,
+    replace: bool,
+    chosen: &[bool],
+) -> Vec<Plan> {
+    let is_chosen = |i: usize| chosen.get(i).copied().unwrap_or(true);
     let mut plans: Vec<Plan> = groups
         .iter()
         .map(|g| {
@@ -493,8 +524,9 @@ pub(crate) fn plan(
             donors.insert(&g.style, i);
         }
     }
+    let mut needed: Vec<usize> = Vec::new();
     for (i, g) in groups.iter().enumerate() {
-        if g.candidates() >= MIN_FRAMES {
+        if g.candidates() >= MIN_FRAMES || !is_chosen(i) {
             continue;
         }
         let Some(&donor) = donors.get(g.style.as_str()) else {
@@ -505,12 +537,25 @@ pub(crate) fn plan(
         }
         let at = existing.get(&variant_stem(&g.name(), curve));
         plans[i] = match may_write(at, &g.camera, true, 0, curve, replace) {
-            Ok(replaces) => Plan::Borrow {
-                from: groups[donor].camera.clone(),
-                donor,
-                replaces,
-            },
+            Ok(replaces) => {
+                needed.push(donor);
+                Plan::Borrow {
+                    from: groups[donor].camera.clone(),
+                    donor,
+                    replaces,
+                }
+            }
             Err(why) => Plan::Skip(why),
+        };
+    }
+    for (i, p) in plans.iter_mut().enumerate() {
+        if is_chosen(i) {
+            continue;
+        }
+        *p = if needed.contains(&i) {
+            Plan::Donor
+        } else {
+            Plan::Skip(NOT_CHOSEN.to_string())
         };
     }
     plans
@@ -913,6 +958,16 @@ fn write_look(
     Ok(path)
 }
 
+/// What a run is under: the display curve it develops and writes for,
+/// whether it replaces what it would leave alone, and which groups the
+/// user chose (one flag a group; a missing flag is a yes).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Choices<'a> {
+    pub(crate) curve: DisplayCurve,
+    pub(crate) replace: bool,
+    pub(crate) chosen: &'a [bool],
+}
+
 /// Run the camera match over `groups`, writing into the look store at
 /// `store`: each group with enough frames developed, fitted and
 /// written, then each without enough given a borrowed table or a
@@ -922,21 +977,14 @@ fn write_look(
 pub(crate) fn run(
     groups: &[Group],
     store: &Path,
-    curve: DisplayCurve,
-    replace: bool,
+    choices: Choices,
     lenses: Option<&greycard_lens::Database>,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
 ) -> Vec<GroupResult> {
-    run_with(
-        groups,
-        store,
-        curve,
-        replace,
-        cancel,
-        progress,
-        &mut |frame| measure(frame, curve, lenses),
-    )
+    run_with(groups, store, choices, cancel, progress, &mut |frame| {
+        measure(frame, choices.curve, lenses)
+    })
 }
 
 /// [`run`], each frame measured by `measure`: the develop and the
@@ -944,14 +992,18 @@ pub(crate) fn run(
 fn run_with(
     groups: &[Group],
     store: &Path,
-    curve: DisplayCurve,
-    replace: bool,
+    choices: Choices,
     cancel: &AtomicBool,
     progress: &mut dyn FnMut(Progress),
     measure: &mut dyn FnMut(&Frame) -> Result<Kept, String>,
 ) -> Vec<GroupResult> {
+    let Choices {
+        curve,
+        replace,
+        chosen,
+    } = choices;
     let existing = existing_in(store);
-    let plans = plan(groups, &existing, curve, replace);
+    let plans = plan_chosen(groups, &existing, curve, replace, chosen);
     let mut results: Vec<Option<GroupResult>> = vec![None; groups.len()];
     // The models fitted and written, by group, with their frames.
     let mut fitted: HashMap<usize, (Model, usize)> = HashMap::new();
@@ -967,9 +1019,10 @@ fn run_with(
         replaced: None,
     };
     // The groups a fit is planned for, first: a borrower needs them.
+    let reads = |i: usize| matches!(plans[i], Plan::Fit { .. } | Plan::Donor);
     let order: Vec<usize> = (0..groups.len())
-        .filter(|&i| plans[i].is_fit())
-        .chain((0..groups.len()).filter(|&i| !plans[i].is_fit()))
+        .filter(|&i| reads(i))
+        .chain((0..groups.len()).filter(|&i| !reads(i)))
         .collect();
     let mut kept_for: HashMap<usize, Vec<Kept>> = HashMap::new();
     for &i in &order {
@@ -993,7 +1046,7 @@ fn run_with(
         // its donor was fitted, to measure the borrowed table on its
         // own frames.
         let develop = match &plans[i] {
-            Plan::Fit { .. } => true,
+            Plan::Fit { .. } | Plan::Donor => true,
             Plan::Borrow { donor, .. } => fitted.contains_key(donor),
             Plan::Skip(_) => false,
         };
@@ -1022,6 +1075,24 @@ fn run_with(
                 results[i] = Some(canceled(g));
                 break;
             }
+        }
+        // A group that is not chosen, read for a borrower: its table
+        // is fitted in memory and nothing of it is written.
+        if matches!(plans[i], Plan::Donor) {
+            if kept.len() >= MIN_FRAMES {
+                let (x, y, _) = stacked(&kept);
+                let model = Model::fit(&x, &y, LutParams::default());
+                fitted.insert(i, (model, kept.len()));
+                result.outcome = Outcome::Skipped(
+                    "not chosen; its frames were read for the look a chosen body borrows, \
+                     and no table of its own was written"
+                        .to_string(),
+                );
+            } else {
+                result.outcome = Outcome::Skipped(under(kept.len()));
+            }
+            results[i] = Some(result);
+            continue;
         }
         // The store is asked again with the frames the fit really has:
         // the plan counted the candidates, some of which may not have
@@ -1124,6 +1195,7 @@ fn run_with(
                     too_few(g.candidates()),
                 )),
                 Plan::Fit { .. } => Outcome::Skipped(too_few(g.candidates())),
+                Plan::Donor => Outcome::Skipped(NOT_CHOSEN.to_string()),
             };
         }
         progress(Progress::Done(result.clone()));
@@ -1293,8 +1365,11 @@ mod tests {
         let results = run(
             &groups,
             &dir,
-            DisplayCurve::Channels,
-            false,
+            Choices {
+                curve: DisplayCurve::Channels,
+                replace: false,
+                chosen: &[],
+            },
             None,
             &AtomicBool::new(false),
             &mut |p| heard.push(p),
@@ -1399,13 +1474,28 @@ mod tests {
         replace: bool,
         fails: &[usize],
     ) -> (Vec<GroupResult>, Vec<Progress>) {
+        run_synthetic_chosen(groups, store, curve, replace, &[], fails)
+    }
+
+    /// [`run_synthetic_under`], with the groups the user chose.
+    fn run_synthetic_chosen(
+        groups: &[Group],
+        store: &Path,
+        curve: DisplayCurve,
+        replace: bool,
+        chosen: &[bool],
+        fails: &[usize],
+    ) -> (Vec<GroupResult>, Vec<Progress>) {
         let mut heard = Vec::new();
         let mut seed = 0;
         let results = run_with(
             groups,
             store,
-            curve,
-            replace,
+            Choices {
+                curve,
+                replace,
+                chosen,
+            },
             &AtomicBool::new(false),
             &mut |p| heard.push(p),
             &mut |_| {
@@ -1551,6 +1641,85 @@ mod tests {
         for c in 0..3 {
             assert!((got[c] - want[c]).abs() < 0.01, "{got:?} against {want:?}");
         }
+        crate::testing::remove_dir_retry(&store);
+    }
+
+    /// An unchecked group is skipped as a small one is: not developed,
+    /// not written, and said. A checked group that borrows from an
+    /// unchecked donor still borrows, the donor read and fitted in
+    /// memory and its own table not written.
+    #[test]
+    fn an_unchecked_group_is_neither_fitted_nor_written() {
+        let groups = vec![
+            synthetic_group("Canon EOS R5m2", "Canon Faithful", 5),
+            synthetic_group("Canon EOS R6m2", "Canon Faithful", 24),
+            synthetic_group("Canon EOS R6m2", "Canon Standard", 30),
+        ];
+        let none = HashMap::new();
+        let ch = DisplayCurve::Channels;
+        // Everything checked: as before.
+        let p = plan_chosen(&groups, &none, ch, false, &[true, true, true]);
+        assert!(matches!(p[0], Plan::Borrow { donor: 1, .. }));
+        assert!(p[1].is_fit() && p[2].is_fit());
+        // The Standard group unchecked is skipped; nothing else moves.
+        let p = plan_chosen(&groups, &none, ch, false, &[true, true, false]);
+        assert!(matches!(&p[2], Plan::Skip(why) if why == NOT_CHOSEN));
+        assert!(p[1].is_fit());
+        // The donor unchecked: the borrower still borrows from it, and
+        // the donor is read only.
+        let p = plan_chosen(&groups, &none, ch, false, &[true, false, true]);
+        assert!(matches!(p[0], Plan::Borrow { donor: 1, .. }), "{p:?}");
+        assert_eq!(p[1], Plan::Donor);
+        // Nobody borrows from it: it is skipped, not read.
+        let p = plan_chosen(&groups, &none, ch, false, &[false, false, true]);
+        assert!(matches!(&p[0], Plan::Skip(w) if w == NOT_CHOSEN));
+        assert!(matches!(&p[1], Plan::Skip(w) if w == NOT_CHOSEN));
+        // A borrower unchecked borrows nothing.
+        let p = plan_chosen(&groups, &none, ch, false, &[false, true, true]);
+        assert!(matches!(&p[0], Plan::Skip(w) if w == NOT_CHOSEN));
+
+        // Run it: only the checked group's table is written, the frames
+        // of the skipped ones are never developed.
+        let store = scratch_store("chosen");
+        let (results, heard) =
+            run_synthetic_chosen(&groups, &store, ch, false, &[false, true, false], &[]);
+        assert!(matches!(results[1].outcome, Outcome::Fitted { .. }));
+        assert!(matches!(&results[0].outcome, Outcome::Skipped(w) if w == NOT_CHOSEN));
+        assert!(matches!(&results[2].outcome, Outcome::Skipped(w) if w == NOT_CHOSEN));
+        let developed = heard
+            .iter()
+            .filter(|p| matches!(p, Progress::Frame { .. }))
+            .count();
+        assert_eq!(developed, 24);
+        let names: Vec<String> = greycard_core::lut::list_dir(&store)
+            .into_iter()
+            .map(|(n, _, _)| n)
+            .collect();
+        assert_eq!(names, ["Canon EOS R6m2 Faithful"]);
+        crate::testing::remove_dir_retry(&store);
+
+        // The donor unchecked, its borrower checked: the borrower's
+        // table is written, from the donor's frames, and the donor's
+        // is not.
+        let store = scratch_store("donor");
+        let (results, heard) =
+            run_synthetic_chosen(&groups, &store, ch, false, &[true, false, false], &[]);
+        assert!(
+            matches!(&results[0].outcome, Outcome::Borrowed { from, .. } if from == "Canon EOS R6m2"),
+            "{:?}",
+            results[0]
+        );
+        assert!(matches!(&results[1].outcome, Outcome::Skipped(w) if w.contains("not chosen")));
+        let developed = heard
+            .iter()
+            .filter(|p| matches!(p, Progress::Frame { .. }))
+            .count();
+        assert_eq!(developed, 24 + 5);
+        let names: Vec<String> = greycard_core::lut::list_dir(&store)
+            .into_iter()
+            .map(|(n, _, _)| n)
+            .collect();
+        assert_eq!(names, ["Canon EOS R5m2 Faithful"]);
         crate::testing::remove_dir_retry(&store);
     }
 
