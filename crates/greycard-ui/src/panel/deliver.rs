@@ -1757,7 +1757,7 @@ mod tests {
             .collect();
         // Two of the three are there already.
         for i in [0, 2] {
-            std::fs::write(dir.join(format!("export/IMG_{i:04}.jpg")), b"").unwrap();
+            std::fs::write(dir.join("export").join(format!("IMG_{i:04}.jpg")), b"").unwrap();
         }
         let app = crate::testing::window(3);
         let (state, _worker) = crate::testing::state_for(&app, files);
@@ -1784,8 +1784,14 @@ mod tests {
         assert_eq!(
             listed,
             vec![
-                dir.join("export/IMG_0000.jpg").display().to_string(),
-                dir.join("export/IMG_0002.jpg").display().to_string(),
+                dir.join("export")
+                    .join("IMG_0000.jpg")
+                    .display()
+                    .to_string(),
+                dir.join("export")
+                    .join("IMG_0002.jpg")
+                    .display()
+                    .to_string(),
             ]
         );
         // Another Export waits for the answer.
@@ -1815,7 +1821,7 @@ mod tests {
 
         // Nothing there: no question.
         for i in [0, 2] {
-            std::fs::remove_file(dir.join(format!("export/IMG_{i:04}.jpg"))).unwrap();
+            std::fs::remove_file(dir.join("export").join(format!("IMG_{i:04}.jpg"))).unwrap();
         }
         app.invoke_export();
         assert!(!app.get_overwrite_open());
