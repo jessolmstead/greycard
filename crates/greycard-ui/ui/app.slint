@@ -2513,9 +2513,10 @@ export component App inherits Window {
         archive-rejects-asked(i) => { root.archive-rejects-asked(i); }
     }
 
-    // The left pane: the folder open and Recently opened, then the
-    // navigator, the presets, the snapshots and the history, as an
-    // editor keeps them on its left; with the grid up, what is browsed
+    // The left pane: the navigator, then the folder open and Recently
+    // opened and the open root's folders, then the presets, the
+    // snapshots and the history, as an editor keeps them on its left;
+    // with the grid up, what is browsed
     // in its place: Import, the roots and the open root's folders. At
     // its foot, the way to report a problem, found where it is looked
     // for and nowhere near the work. Drawn over its room in the layout
@@ -2554,6 +2555,21 @@ export component App inherits Window {
                 padding: Theme.space-4;
                 padding-top: Theme.space-2;
                 spacing: Theme.space-2;
+                // The frame's, and so the loupe's alone: first, so
+                // it keeps the pane's top left corner whatever the
+                // folder sections below it hold.
+                if !root.grid-open: NavigatorSection {
+                    zoom-text: root.zoom-text;
+                    collapsed-navigator <=> root.collapsed-navigator;
+                    navigator: root.navigator;
+                    nav-partial: root.nav-partial;
+                    nav-left: root.nav-left;
+                    nav-top: root.nav-top;
+                    nav-width: root.nav-width;
+                    nav-height: root.nav-height;
+                    navigate(a, b) => { root.navigate(a, b); }
+                    focus-keys => { keys.focus(); }
+                }
                 // The button, and under it the folder it
                 // opened, which offers the ones before it.
                 VerticalLayout {
@@ -2626,19 +2642,6 @@ export component App inherits Window {
                     picked(p) => { root.folder-tree-picked(p); }
                     folded(p) => { root.folder-tree-folded(p); }
                     subfolders-changed => { root.folder-tree-subfolders-changed(); }
-                    focus-keys => { keys.focus(); }
-                }
-                // The frame's, and so the loupe's alone.
-                if !root.grid-open: NavigatorSection {
-                    zoom-text: root.zoom-text;
-                    collapsed-navigator <=> root.collapsed-navigator;
-                    navigator: root.navigator;
-                    nav-partial: root.nav-partial;
-                    nav-left: root.nav-left;
-                    nav-top: root.nav-top;
-                    nav-width: root.nav-width;
-                    nav-height: root.nav-height;
-                    navigate(a, b) => { root.navigate(a, b); }
                     focus-keys => { keys.focus(); }
                 }
                 // The presets: a click lays one over the edit, the

@@ -10,6 +10,9 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The navigator heads the left pane, with Open folder, the folder open
+  and the open root's folders under it, so the picture's thumbnail
+  keeps the top left corner (2026-10-03)
 - `--export` opens no window and asks for no GPU, about twice as fast
   a frame, and cannot stall on the compositor as a desktop run could;
   it exits 0 when every frame is written as its edit asks, 1 when one
