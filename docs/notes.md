@@ -242,3 +242,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§229. Hot pixels on by default: the other colors decide](notes/229-hot-pixels-on-by-default-the-other-colors-decide.md) (2026-10-03)
 - [§230. AgX over ACES 2.0: the call from two sets, frame by frame](notes/230-agx-over-aces-the-call-from-two-sets.md) (2026-10-03)
 - [§231. AgX ported as a display transform: Blender's formation with Punchy, behind the switch](notes/231-agx-ported-as-a-display-transform.md) (2026-10-03)
+- [§232. Hold hue to white taken out, unreleased](notes/232-hold-hue-to-white-taken-out.md) (2026-10-03)

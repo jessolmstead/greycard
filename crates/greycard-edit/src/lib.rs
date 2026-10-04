@@ -90,10 +90,9 @@ pub struct Edit {
     /// Schema version of the struct as written.
     pub version: u32,
     pub light: Light,
-    /// The display curve under the light: per channel, as it always
-    /// has been, on a norm with the hue held, or AgX. Global, as the
-    /// curve is; left out of a sidecar at its default, so a picture
-    /// nobody switched writes what it always wrote.
+    /// The display curve under the light: per channel, as it always has
+    /// been, or AgX. Global, as the curve is; left out of a sidecar at its
+    /// default, so a picture nobody switched writes what it always wrote.
     #[serde(skip_serializing_if = "DisplayCurve::is_channels")]
     pub display_curve: DisplayCurve,
     pub white_balance: WhiteBalance,
@@ -302,12 +301,12 @@ pub enum DisplayCurve {
     /// The curve on each channel on its own: a bright saturated color
     /// turns as its channels reach the shoulder at different points,
     /// blue toward magenta and red toward yellow.
+    ///
+    /// `norm`, the curve on the mean of the channels that Hold hue to
+    /// white was before it was taken out unreleased, reads as this.
     #[default]
+    #[serde(alias = "norm")]
     Channels,
-    /// The curve on the mean of the channels, every channel scaled by
-    /// the one gain so the hue holds, and the way to white a step in
-    /// chroma at a constant Oklab hue.
-    Norm,
     /// AgX, Blender's wide-gamut formation with its Punchy look: the
     /// primaries inset toward white and rotated, a sigmoid per channel
     /// in a log encoding, part of the per-channel hue shift kept and
@@ -317,11 +316,7 @@ pub enum DisplayCurve {
 }
 
 impl DisplayCurve {
-    pub const ALL: [DisplayCurve; 3] = [
-        DisplayCurve::Channels,
-        DisplayCurve::Norm,
-        DisplayCurve::Agx,
-    ];
+    pub const ALL: [DisplayCurve; 2] = [DisplayCurve::Channels, DisplayCurve::Agx];
 
     pub fn is_channels(&self) -> bool {
         *self == DisplayCurve::Channels
@@ -331,7 +326,6 @@ impl DisplayCurve {
     pub fn name(self) -> &'static str {
         match self {
             DisplayCurve::Channels => "Per channel",
-            DisplayCurve::Norm => "Hold hue to white",
             DisplayCurve::Agx => "AgX",
         }
     }
@@ -2624,34 +2618,32 @@ mod tests {
     /// The display curve's switch is left out of a sidecar at its
     /// default, so a picture nobody switched writes what it always
     /// did, and read back either way; a preset or a copy of the light
-    /// leaves it as it is on the picture, and the history names it.
+    /// leaves it as it is on the picture, and the history names it. A
+    /// sidecar from before Hold hue to white was taken out, `norm`,
+    /// reads as per channel.
     #[test]
     fn the_display_curve_switch_is_written_only_when_thrown() {
         let edit = Edit::default();
         assert!(!edit.to_json().contains("display_curve"));
-        let mut norm = edit.clone();
-        norm.display_curve = DisplayCurve::Norm;
-        let json = norm.to_json();
-        assert!(json.contains(r#""display_curve": "norm""#), "{json}");
-        assert_eq!(Edit::from_json(&json).unwrap(), norm);
-        let mut onto = norm.clone();
-        Section::Light.copy(&edit, &mut onto);
-        assert_eq!(onto.display_curve, DisplayCurve::Norm);
-        let mut onto = Edit::default();
-        Section::Light.copy(&norm, &mut onto);
-        assert_eq!(onto.display_curve, DisplayCurve::Channels);
-        assert!(Section::Light.same(&edit, &norm));
-        assert_eq!(
-            describe(&edit, &norm, &[]),
-            "Display curve: Hold hue to white"
-        );
-        assert_eq!(describe(&norm, &edit, &[]), "Display curve: Per channel");
         let mut agx = edit.clone();
         agx.display_curve = DisplayCurve::Agx;
         let json = agx.to_json();
         assert!(json.contains(r#""display_curve": "agx""#), "{json}");
         assert_eq!(Edit::from_json(&json).unwrap(), agx);
+        let mut onto = agx.clone();
+        Section::Light.copy(&edit, &mut onto);
+        assert_eq!(onto.display_curve, DisplayCurve::Agx);
+        let mut onto = Edit::default();
+        Section::Light.copy(&agx, &mut onto);
+        assert_eq!(onto.display_curve, DisplayCurve::Channels);
+        assert!(Section::Light.same(&edit, &agx));
         assert_eq!(describe(&edit, &agx, &[]), "Display curve: AgX");
+        assert_eq!(describe(&agx, &edit, &[]), "Display curve: Per channel");
+        let old = agx.to_json().replace(r#""agx""#, r#""norm""#);
+        assert_eq!(
+            Edit::from_json(&old).unwrap().display_curve,
+            DisplayCurve::Channels
+        );
         for c in DisplayCurve::ALL {
             assert_eq!(DisplayCurve::from_name(c.name()), Some(c));
         }

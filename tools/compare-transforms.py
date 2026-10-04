@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""Render a raw through greycard's display curve both ways and through
-ACES 2.0 and AgX, at matched exposure, for looking at side by side.
+"""Render a raw through greycard's display curve per channel and its AgX,
+and through ACES 2.0 and AgX, at matched exposure, for looking at side
+by side.
 
     python3 -m venv target/venv-ocio
     target/venv-ocio/bin/pip install opencolorio numpy tifffile imagecodecs imageio
@@ -9,47 +10,45 @@ ACES 2.0 and AgX, at matched exposure, for looking at side by side.
     cargo build --release -p greycard-cli -p greycard-ui
     target/venv-ocio/bin/python tools/compare-transforms.py OUT_DIR RAW...
 
-Writes, per raw, NAME-off.jpg (greycard, per channel), NAME-on.jpg
-(greycard, Hold hue to white), NAME-agx-port.jpg (greycard, AgX),
-NAME-aces2.jpg (ACES 2.0 SDR Rec.709 from OpenColorIO's built-in
-studio config), NAME-agx.jpg and NAME-agx-punchy.jpg (Sobotka's AgX
-config, sRGB-only), NAME-agx-blender.jpg and NAME-agx-blender-punchy.jpg
-(Blender's wide-gamut AgX, the view "AgX" on the sRGB display without
-and with the look "AgX - Punchy", which is what greycard's AgX ports),
-all at a 1600 long edge and sRGB. The ACES and AgX renders
-start from greycard's own scene-linear Rec.2020 develop (`greycard
-develop --output`) and are given the exposure that puts their median
-luminance at greycard's per-channel export's, so only the transform
-differs. NAME-agx-blender-punchy-same.jpg is Blender's AgX with Punchy
-as Blender ships it (white relative exposure 6.5), at the export's own
-exposure (the finish's baseline of 0.8 stops and the AgX mode's own
-gain, AGX_GAIN below, that puts mid grey where per channel has it);
-greycard's port sets its white at the sensor clip instead, so the two
-differ there by design, and the comparison that follows measures the
-port against Blender's view as shipped: the script prints, per
-frame, the median and 99th percentile of the difference between the
-two in 8-bit levels, once over a central 60 percent crop of each
-resampled to the same 320-pixel grid, and once between their
-per-channel quantiles. Blender's sRGB display encodes with sRGB's
-piecewise curve, as the export does, so the two files compare as
-written. Sobotka's config's sRGB display is a 2.2 power, and its two
-columns are written as OCIO gives them, which an sRGB viewer shows
-with the deep shadows lifted by up to eight levels; for the record a
-second line per frame compares Sobotka's Punchy with Blender's, both
-matched to the per-channel export's median and Sobotka's re-encoded
-for sRGB, by the same quantile method. The two are not one pipeline (the export applies
-the lens profile and the camera's crop and resizes with its output
-sharpen; the linear develop does none of that), so the crop figure is
-an upper bound that includes the misalignment and the quantile figure
-is blind to it. Nothing is written beside the raw: the greycard runs
-pass --no-sidecars and keep their settings under OUT_DIR. A raw already
-rendered is skipped, and a failed or stuck render (ten minutes) is
-printed and skipped, as is a greycard export already there. The
-binaries are the release build;
-GREYCARD_PROFILE=debug picks the debug one.
-"""
-import os, subprocess, sys
-import numpy as np, tifffile, imageio.v3 as iio, PyOpenColorIO as o
+Writes, per raw, NAME-off.jpg (greycard, per channel), NAME-agx-
+port.jpg (greycard, AgX), NAME-aces2.jpg (ACES 2.0 SDR Rec.709 from
+OpenColorIO's built-in studio config), NAME-agx.jpg and NAME-agx-
+punchy.jpg (Sobotka's AgX config, sRGB-only), NAME-agx-blender.jpg and
+NAME-agx-blender-punchy.jpg (Blender's wide-gamut AgX, the view "AgX"
+on the sRGB display without and with the look "AgX - Punchy", which is
+what greycard's AgX ports), all at a 1600 long edge and sRGB. The ACES
+and AgX renders start from greycard's own scene-linear Rec.2020
+develop (`greycard develop --output`) and are given the exposure that
+puts their median luminance at greycard's per-channel export's, so
+only the transform differs. NAME-agx-blender-punchy-same.jpg is
+Blender's AgX with Punchy as Blender ships it (white relative exposure
+6.5), at the export's own exposure (the finish's baseline of 0.8 stops
+and the AgX mode's own gain, AGX_GAIN below, that puts mid grey where
+per channel has it); greycard's port sets its white at the sensor clip
+instead, so the two differ there by design, and the comparison that
+follows measures the port against Blender's view as shipped: the
+script prints, per frame, the median and 99th percentile of the
+difference between the two in 8-bit levels, once over a central 60
+percent crop of each resampled to the same 320-pixel grid, and once
+between their per-channel quantiles. Blender's sRGB display encodes
+with sRGB's piecewise curve, as the export does, so the two files
+compare as written. Sobotka's config's sRGB display is a 2.2 power,
+and its two columns are written as OCIO gives them, which an sRGB
+viewer shows with the deep shadows lifted by up to eight levels; for
+the record a second line per frame compares Sobotka's Punchy with
+Blender's, both matched to the per-channel export's median and
+Sobotka's re-encoded for sRGB, by the same quantile method. The two
+are not one pipeline (the export applies the lens profile and the
+camera's crop and resizes with its output sharpen; the linear develop
+does none of that), so the crop figure is an upper bound that includes
+the misalignment and the quantile figure is blind to it. Nothing is
+written beside the raw: the greycard runs pass --no-sidecars and keep
+their settings under OUT_DIR. A raw already rendered is skipped, and a
+failed or stuck render (ten minutes) is printed and skipped, as is a
+greycard export already there. The binaries are the release build;
+GREYCARD_PROFILE=debug picks the debug one. """ import os, subprocess,
+sys import numpy as np, tifffile, imageio.v3 as iio, PyOpenColorIO as
+o
 
 out, raws = sys.argv[1], sys.argv[2:]
 profile = os.environ.get("GREYCARD_PROFILE", "release")
@@ -110,7 +109,7 @@ def matched(fn, target):
 
 def render(raw):
     name = os.path.splitext(os.path.basename(raw))[0]
-    for mode, flag in (("off", []), ("on", ["--hold-hue"]), ("agx-port", ["--agx"])):
+    for mode, flag in (("off", []), ("agx-port", ["--agx"])):
         if os.path.exists(f"{out}/{name}-{mode}.jpg"):
             continue
         subprocess.run([f"{root}/target/{profile}/greycard-ui", raw, "--no-sidecars", "--no-display-profile",

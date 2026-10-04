@@ -549,7 +549,7 @@ pub struct View {
     /// A raw's scene or a picture already rendered: whether the
     /// baseline and the display curve apply (`finish::Source`).
     pub source: Source,
-    /// The display curve per channel or on a norm, for a scene.
+    /// The display curve per channel or AgX, for a scene.
     pub display_curve: greycard_edit::DisplayCurve,
     /// Quarter turns clockwise the frame has been turned since the
     /// picture on the GPU was developed: the view is of the turned
@@ -1342,13 +1342,11 @@ impl Renderer {
             zoom: v.zoom,
             exposure: v.source.baseline() + v.light.exposure,
             // The shape, then 0 the display curve per channel, 1 a
-            // clip, for a picture that has had its curve, 2 the
-            // display curve on a norm, 3 AgX.
+            // clip, for a picture that has had its curve, 2 AgX.
             curve: match (v.source, v.display_curve) {
                 (Source::Scene, greycard_edit::DisplayCurve::Channels) => 0.0,
                 (Source::Display, _) => 1.0,
-                (Source::Scene, greycard_edit::DisplayCurve::Norm) => 2.0,
-                (Source::Scene, greycard_edit::DisplayCurve::Agx) => 3.0,
+                (Source::Scene, greycard_edit::DisplayCurve::Agx) => 2.0,
             },
             contrast: v.light.tone.contrast,
             highlights: v.light.tone.highlights,
@@ -3158,18 +3156,11 @@ mod tests {
         assert!(worst < 2.5 / 255.0, "{worst}");
     }
 
-    /// The display curve on a norm on the GPU is `tail::tone_norm` on
-    /// the CPU, over the parity frame's primaries, near blacks and
-    /// highlights past white, at exposures from three stops down to
-    /// four up: the switch reaches the shader through `with_look`,
-    /// and both sides read the same field of the edit.
-    #[test]
-    fn the_norm_curve_on_the_gpu_is_the_cpus() {
-        a_display_curve_on_the_gpu_is_the_cpus(greycard_edit::DisplayCurve::Norm, "the norm curve");
-    }
-
-    /// And AgX on the GPU is `agx::tone_agx` on the CPU, over the same
-    /// frame and exposures.
+    /// AgX on the GPU is `agx::tone_agx` on the CPU, over the parity
+    /// frame's primaries, near blacks and highlights past white, at
+    /// exposures from three stops down to four up: the switch reaches
+    /// the shader through `with_look`, and both sides read the same
+    /// field of the edit.
     #[test]
     fn the_agx_curve_on_the_gpu_is_the_cpus() {
         a_display_curve_on_the_gpu_is_the_cpus(greycard_edit::DisplayCurve::Agx, "the AgX curve");
@@ -4143,14 +4134,9 @@ mod tests {
         let guide = rng.chance(0.6);
         let coarse = rng.chance(0.5);
         let space = crate::export::Space::ALL[rng.below(crate::export::Space::ALL.len())];
-        // The display curve on a norm, half the time: drawn last, so
-        // the draws before it are the ones every seed had before.
+        // AgX half the time: drawn last, so the draws before it are
+        // the ones every seed had before.
         if rng.chance(0.5) && has("display curve") {
-            edit.display_curve = greycard_edit::DisplayCurve::Norm;
-        }
-        // And AgX a third of the time, drawn after the norm so every
-        // draw before it is what it was: a third each, then.
-        if rng.chance(1.0 / 3.0) && has("display curve") {
             edit.display_curve = greycard_edit::DisplayCurve::Agx;
         }
         Case {

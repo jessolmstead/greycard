@@ -99,7 +99,7 @@ export component LightSection inherits Section {
             font-size: Theme.font-sm;
         }
         Segmented {
-            options: ["Per channel", "Hold hue to white", "AgX"];
+            options: ["Per channel", "AgX"];
             current <=> root.display-curve;
             selected(v) => { root.view-changed(); }
         }

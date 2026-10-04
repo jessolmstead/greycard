@@ -16,7 +16,8 @@ the reasoning lives in `docs/notes.md`.
 ## Bugs
 
 - [ ] A `--export` run can stall on the desktop: twice in about
-      ninety runs on 2026-10-03 a hold-hue export of one frame sat
+      ninety runs on 2026-10-03 a Hold hue to white export (§226, taken
+      out in §232) of one frame sat
       for minutes at low CPU where the same export takes two
       seconds, once for eleven minutes; under a headless weston the
       same command ran forty times without one. The per-channel
@@ -27,20 +28,16 @@ the reasoning lives in `docs/notes.md`.
       something the export should not need. Catch it with the
       symbolized build under gdb on the desktop, or make the export
       headless (the pool's item) and it cannot happen
-- [ ] The random parity test fails past the seeds it was set from: with
-      the display curve left as it is, seed 29 edit 51 is 7.7 levels
-      apart on NVIDIA (the parts named: light, point curves, color,
-      locals), and seeds 16, 23 and 32 pass the 15 percent steep cap,
-      seed 32 at 29.7 percent; the cap and the tolerance were set from
-      seeds 1 to 10 (§221); with Hold hue to white drawn, seed 16 edit
-      43 is 3.9 levels apart on lavapipe at a channel at zero under
-      steep curves, where the chroma weight's slope sits (§226), and
-      seed 12 edit 28 passes the cap by CPU sensitivity at the white
-      face. Run the seeds further out, find what the failing edits
-      share, and fix the divergence or justify the bound. Two of the
-      three seeds fail at Hold hue to white's chroma weight, which goes
-      with the old curve (§230), so the fix waits on the AgX port and
-      runs against it
+- [ ] The random parity test fails past the seeds it was set from: the
+      cap and the tolerance were set from seeds 1 to 10 (§221), which
+      pass on NVIDIA and lavapipe; past them, with the draw per channel
+      or AgX since §232, seed 23 edit 69 fails the 15 percent steep cap
+      on NVIDIA at 15.49 percent, 0.6 levels apart. Seeds 12, 16, 29
+      and 32, which failed under the earlier draws (29 by 7.7 levels,
+      32 at 29.7 percent steep, and 16 and 12 at Hold hue to white's
+      chroma weight, which is gone), pass on NVIDIA. Run the seeds
+      further out on both drivers, find what the failing edits share,
+      and fix the divergence or justify the bound
 - [ ] CULLING's Move rejects button keeps the focus after its click, so
       Return while its sheet is up asks again and Escape does not close
       the sheet; the sheet wants a FocusScope of its own as the delete

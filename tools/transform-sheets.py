@@ -4,19 +4,16 @@
     target/venv-ocio/bin/python tools/transform-sheets.py OUT_DIR [--wide]
 
 Per frame one row, NAME-sheet.jpg: per channel (today's default), ACES
-2.0, AgX Punchy, then the two secondaries, AgX base and Hold hue to
-white, each labelled; and index.html with every row in the order the
-raws were given, so the set is judged by scrolling. --wide puts each
-render at 1000 px wide instead of 640.
-"""
-import glob, os, sys
-from PIL import Image, ImageDraw, ImageFont
+2.0, AgX Punchy, then AgX base, each labeled; and index.html with
+every row in the order the raws were given, so the set is judged by
+scrolling. --wide puts each render at 1000 px wide instead of 640. """
+import glob, os, sys from PIL import Image, ImageDraw, ImageFont
 
 out = sys.argv[1]
 w = 1000 if "--wide" in sys.argv else 640
 cols = [("off", "per channel (today)"), ("aces2", "ACES 2.0"), ("agx-punchy", "AgX Punchy"),
-        ("agx", "AgX base"), ("on", "Hold hue to white")]
-# The columns as "key=label,key=label": SHEET_BASE replaces the five above,
+        ("agx", "AgX base")]
+# The columns as "key=label,key=label": SHEET_BASE replaces the four above,
 # SHEET_COLUMNS adds to them, e.g. a second config's renders.
 if os.environ.get("SHEET_BASE"):
     cols = []

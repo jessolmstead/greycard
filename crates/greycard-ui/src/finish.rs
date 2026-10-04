@@ -34,7 +34,7 @@ pub struct Baked {
     /// the look is, which decides the baseline and the display curve.
     pub source: Source,
     /// Global only, as the source is: the display curve per channel,
-    /// on a norm or AgX. Read only when the source is a scene.
+    /// or AgX. Read only when the source is a scene.
     pub display_curve: DisplayCurve,
 }
 
@@ -61,7 +61,7 @@ impl Source {
         }
     }
 
-    /// The display curve, per channel, on a norm or AgX as `how` says,
+    /// The display curve, per channel or AgX as `how` says,
     /// or a clip at white for a picture that has been through one
     /// already.
     #[inline]
@@ -69,7 +69,6 @@ impl Source {
         match (self, how) {
             (Source::Display, _) => c.map(|x| x.clamp(0.0, 1.0)),
             (Source::Scene, DisplayCurve::Channels) => c.map(tone),
-            (Source::Scene, DisplayCurve::Norm) => crate::tail::tone_norm(c),
             (Source::Scene, DisplayCurve::Agx) => crate::agx::tone_agx(c),
         }
     }
@@ -740,7 +739,7 @@ const RESIDUE: f32 = 1e-6;
 /// `c` with every channel under [`RESIDUE`] of its largest at zero, as
 /// the shader's `mix_color` ends.
 #[inline]
-pub(crate) fn snap_residue(c: [f32; 3]) -> [f32; 3] {
+fn snap_residue(c: [f32; 3]) -> [f32; 3] {
     let top = c[0].abs().max(c[1].abs()).max(c[2].abs());
     c.map(|v| if v.abs() < RESIDUE * top { 0.0 } else { v })
 }
@@ -1034,30 +1033,6 @@ pub(crate) fn tone(x: f32) -> f32 {
     let u = (x / MID_GREY).log2();
     let gain = 1.0 + (SHOULDER_GAIN - 1.0) * smoothstep(0.0, DISPLAY_WHITE_STOPS, u);
     (aces(x) * gain).min(1.0)
-}
-
-/// The display curve's slope in stops, `d ln tone / d ln x`: how much
-/// a curve per channel multiplies a small departure from grey by, so
-/// the chroma the curve on a norm puts back (`tail::tone_norm`). The
-/// fit's own, and over mid grey the shoulder gain's added; nothing at
-/// and past display white, where the curve is flat. The shader's
-/// `tone_slope` is this.
-pub(crate) fn tone_slope(x: f32) -> f32 {
-    if x <= 0.0 {
-        return 1.0;
-    }
-    if x >= DISPLAY_WHITE {
-        return 0.0;
-    }
-    let fit = 1.0 + 2.51 * x / (2.51 * x + 0.03)
-        - (4.86 * x * x + 0.59 * x) / (2.43 * x * x + 0.59 * x + 0.14);
-    if x <= MID_GREY {
-        return fit;
-    }
-    let t = ((x / MID_GREY).log2() / DISPLAY_WHITE_STOPS).clamp(0.0, 1.0);
-    let gain = 1.0 + (SHOULDER_GAIN - 1.0) * t * t * (3.0 - 2.0 * t);
-    let rise = (SHOULDER_GAIN - 1.0) * 6.0 * t * (1.0 - t) / DISPLAY_WHITE_STOPS;
-    fit + rise / gain / std::f32::consts::LN_2
 }
 
 pub fn encode(v: f32) -> f32 {

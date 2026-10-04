@@ -10,15 +10,15 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
-- AgX as a third display curve behind the per-picture switch, beside
-  per channel and Hold hue to white: Blender's wide-gamut formation
+- AgX as a display curve behind a per-picture switch at the foot of
+  LIGHT, beside per channel: Blender's wide-gamut formation
   (Eary Chow's, as darktable's module parametrizes it) with the "AgX -
   Punchy" look, the inset in Rec.2020 with guard rails in place of any
   clamp, mid grey held where per channel puts it and white at the
   sensor's clip; on the CPU and in the shader, checked against
   OpenColorIO's render of Blender's own config and in the random parity
   test; `--agx` on the command line; per channel stays the default
-  (§231)
+  (§231, §232)
 - `tools/compare-transforms.py` on the release binaries, resuming a
   run and skipping a render that fails or stalls; `tools/transform-sheets.py`
   lays its renders out one row a frame for judging; the two sets
@@ -40,19 +40,9 @@ note a first tester reads.
   viewport's plate; the Move rejects sheet now points at Move back
   instead of saying there is no undo (§228)
 - `tools/compare-transforms.py`: a raw rendered through greycard's
-  display curve both ways and through ACES 2.0 and AgX from greycard's
+  display curve per channel and its AgX, and through ACES 2.0 and AgX from greycard's
   own scene-linear develop, at matched exposure, for looking at side by
   side (§227)
-- Hold hue to white, a toggle at the foot of LIGHT, off by default: the
-  display curve on a norm with one gain on the three channels, the hue
-  held through the roll-off to white and the step toward white an
-  explicit chroma compression in Oklab, ported from darktable's
-  sigmoid; a neutral is today's curve exactly, the per-channel curve's
-  saturation given back by the curve's slope; on the viewport and the
-  export alike, checked by the random parity test; a bright saturated
-  color's hue turn at the top goes from a median of 7 degrees to 1 on
-  the test set, with the honest cost that a lit red lantern goes to
-  white through pink (§226)
 - Move back, the inverse of Move rejects, on the frame menu and in
   CULLING for frames in a rejects folder: each goes to the folder above
   with its sidecars, placement kept, its reject flag taken off; a name

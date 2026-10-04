@@ -49,7 +49,6 @@ mod selection;
 mod settings;
 mod sheet;
 mod tags;
-mod tail;
 #[cfg(test)]
 pub(crate) mod testing;
 mod thumbpool;
@@ -132,15 +131,10 @@ struct Cli {
     /// Exposure to open with, in stops
     #[arg(long, default_value_t = 0.0)]
     exposure: f32,
-    /// Open with the display curve on a norm, the hue held as a color
-    /// rolls off to white, in place of the curve per channel: the
-    /// LIGHT section's switch, for a comparison from the command line;
-    /// on the first file only, as --exposure is
-    #[arg(long, conflicts_with = "agx")]
-    hold_hue: bool,
     /// Open with AgX as the display curve, Blender's formation with
-    /// its Punchy look, in place of the curve per channel: the same
-    /// switch's third choice; on the first file only, as --exposure is
+    /// its Punchy look, in place of the curve per channel: the LIGHT
+    /// section's switch, for a comparison from the command line; on
+    /// the first file only, as --exposure is
     #[arg(long)]
     agx: bool,
     /// Set the panel's temperature after opening, without a develop: the

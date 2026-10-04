@@ -1067,13 +1067,6 @@ mod tests {
             acc += p.map(crate::finish::tone)[1];
         }
         let channels = start.elapsed().as_nanos() as f64 / n as f64;
-        let start = std::time::Instant::now();
-        for p in &px {
-            acc += crate::tail::tone_norm(*p)[1];
-        }
-        let norm = start.elapsed().as_nanos() as f64 / n as f64;
-        eprintln!(
-            "AgX Punchy {agx:.1} ns a pixel; per channel {channels:.1}; norm {norm:.1} ({acc})"
-        );
+        eprintln!("AgX Punchy {agx:.1} ns a pixel; per channel {channels:.1} ({acc})");
     }
 }

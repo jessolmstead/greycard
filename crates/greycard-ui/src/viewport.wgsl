@@ -7,21 +7,17 @@
 // them to a non-sRGB surface unchanged, so an sRGB-format target would
 // be decoded on the way in and shown a gamma too dark.
 //
-// `chroma_kept` and `tone_norm`, the display curve on a norm, are
-// ported from darktable's sigmoid module, `src/iop/sigmoid.c`, its RGB
-// ratio processing (`process_loglogistic_rgb_ratio`),
-// GPL-3.0-or-later, written by Jakob Dove for darktable 4.0, copyright
-// (C) 2020-2026 darktable developers; `tail.rs` says what was taken and
-// what departs. `tone_agx` and the `agx_` functions, Blender's AgX
-// with its Punchy look, are ported from darktable's AgX module,
-// `src/iop/agx.c`, GPL-3.0-or-later, written by Kofa in 2025, copyright
-// (C) 2025-2026 darktable developers, with Blender's parameters (Eary
-// Chow's formation on Troy Sobotka's AgX), and `agx_shadows` from
-// OpenColorIO's GradingToneTransform, BSD-3-Clause, copyright
-// Contributors to the OpenColorIO Project, whose notice `agx.rs`
-// carries and which covers that function here; the two rails are Eary
-// Chow's method written from its description and darktable's GPL
-// code; `agx.rs` says what was taken and what departs.
+// `tone_agx` and the `agx_` functions, Blender's AgX with its Punchy
+// look, are ported from darktable's AgX module, `src/iop/agx.c`,
+// GPL-3.0-or-later, written by Kofa in 2025, copyright (C) 2025-2026
+// darktable developers, with Blender's parameters (Eary Chow's formation
+// on Troy Sobotka's AgX), and `agx_shadows` from OpenColorIO's
+// GradingToneTransform, BSD-3-Clause, copyright Contributors to the
+// OpenColorIO Project, whose notice `agx.rs` carries and which covers
+// that function here; the two rails are darktable's GPL
+// `_compress_into_gamut`, Eary Chow's method as darktable ported it, and
+// nothing is taken from his own repository; `agx.rs` says what was taken
+// and what departs.
 
 struct Params {
     view: vec2<f32>,
@@ -49,8 +45,7 @@ struct Params {
     exposure: f32,
     // After the shape: 0 the display curve per channel, for a raw; 1 a
     // clip, for a picture already rendered for a display
-    // (`finish::Source`); 2 the display curve on a norm, for a raw
-    // (`tail.rs`); 3 AgX (`agx.rs`).
+    // (`finish::Source`); 2 AgX, for a raw (`agx.rs`).
     curve: f32,
     // Slope at mid grey relative to the base curve's.
     contrast: f32,
@@ -451,11 +446,9 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     let shaped = shape(c, look, g, has_guide);
     // 1: a picture already rendered for a display, which takes the
     // shape and a clip at white, not a second curve.
-    // 2: the curve on a norm, the hue held. 3: AgX.
-    if (p.curve > 2.5) {
+    // 2: AgX.
+    if (p.curve > 1.5) {
         c = tone_agx(shaped);
-    } else if (p.curve > 1.5) {
-        c = tone_norm(shaped);
     } else if (p.curve > 0.5) {
         c = clamp(shaped, vec3<f32>(0.0), vec3<f32>(1.0));
     } else {
@@ -479,7 +472,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // Under AgX the output's guard rail in place of the clip's zeroing,
     // its luminance weights in the output rows' fourth lane, as
     // `finish_pixel_with` has it.
-    if (p.curve > 2.5) {
+    if (p.curve > 1.5) {
         s = agx_output_rail(s, vec3<f32>(p.m0.w, p.m1.w, p.m2.w));
     }
     var e = encode(clamp(s, vec3<f32>(0.0), vec3<f32>(1.0)));
@@ -1238,100 +1231,6 @@ fn tone(scene: vec3<f32>) -> vec3<f32> {
     let u = log2(max(x, vec3<f32>(1e-9)) / MID_GREY);
     let gain = 1.0 + (SHOULDER_GAIN - 1.0) * smoothstep(vec3<f32>(0.0), vec3<f32>(DISPLAY_WHITE_STOPS), u);
     return clamp(fit * gain, vec3<f32>(0.0), vec3<f32>(1.0));
-}
-
-// The share of a color's chroma about the mapped neutral `grey` that
-// is kept, as `chroma_kept` in `tail.rs`: darktable's sigmoid, its RGB
-// ratio processing, with a white target of one and a black of zero,
-// in the reciprocals that need no epsilon.
-fn chroma_kept(q: vec3<f32>, grey: f32) -> f32 {
-    let lo = min(min(q.x, q.y), q.z);
-    let hi = max(max(q.x, q.y), q.z);
-    // The lowest channel as a share of the mean, so a channel at zero
-    // makes `a` zero exactly.
-    let t = min(lo / grey, 1.0);
-    let r = max(max(hi - grey, 0.0) / (1.0 - grey), 1.0 - t);
-    let a = 0.5 * t * (2.0 - t);
-    // Past the black face, on it.
-    // A room with no reciprocal, `r` zero, is a neutral, which keeps
-    // what it has; said outright, not left to an infinity's `min`.
-    let cap = select(1.0 / r, 1.0, r <= 0.0);
-    return min(1.0 / (a + sqrt(a * a + r * r)), cap);
-}
-
-// The display curve's slope in stops, as `tone_slope` in `finish.rs`:
-// the fit's, and over mid grey the shoulder gain's added.
-fn tone_slope(x: f32) -> f32 {
-    if (x <= 0.0) {
-        return 1.0;
-    }
-    if (x >= DISPLAY_WHITE) {
-        return 0.0;
-    }
-    let fit = 1.0 + 2.51 * x / (2.51 * x + 0.03)
-        - (4.86 * x * x + 0.59 * x) / (2.43 * x * x + 0.59 * x + 0.14);
-    if (x <= MID_GREY) {
-        return fit;
-    }
-    let t = clamp(log2(x / MID_GREY) / DISPLAY_WHITE_STOPS, 0.0, 1.0);
-    let gain = 1.0 + (SHOULDER_GAIN - 1.0) * t * t * (3.0 - 2.0 * t);
-    let rise = (SHOULDER_GAIN - 1.0) * 6.0 * t * (1.0 - t) / DISPLAY_WHITE_STOPS;
-    return fit + rise / gain / 0.6931472;
-}
-
-// The display curve on a norm, as `tone_norm` in `tail.rs`: the
-// channels' mean through `tone`, every channel scaled by the one gain,
-// the chroma scaled in Oklab by the curve's slope in stops, both ways,
-// and the color's lightness and chroma moved toward the mapped
-// neutral's in Oklab, at its own hue, by the share `chroma_kept` says.
-// A NaN anywhere, found by its bits as `tone` finds one, is white, and
-// so is a mean at or past display white, an infinity's included.
-fn tone_norm(scene: vec3<f32>) -> vec3<f32> {
-    let bits = bitcast<vec3<u32>>(scene) & vec3<u32>(0x7fffffffu);
-    if (any(bits > vec3<u32>(0x7f800000u))) {
-        return vec3<f32>(1.0);
-    }
-    let c = max(scene, vec3<f32>(0.0));
-    let norm = (c.x + c.y + c.z) / 3.0;
-    if (norm >= DISPLAY_WHITE) {
-        return vec3<f32>(1.0);
-    }
-    let grey = tone(vec3<f32>(norm)).x;
-    if (grey >= 1.0) {
-        return vec3<f32>(1.0);
-    }
-    if (grey <= 0.0) {
-        return vec3<f32>(0.0);
-    }
-    let q = c * (grey / norm);
-    let lab = LMS_TO_LAB * signed_cbrt(vec3<f32>(dot(p.ok_in0.xyz, q), dot(p.ok_in1.xyz, q), dot(p.ok_in2.xyz, q)));
-    let lms0 = LAB_TO_LMS * lab;
-    let lin0 = lms0 * lms0 * lms0;
-    let back = vec3<f32>(dot(p.ok_out0.xyz, lin0), dot(p.ok_out1.xyz, lin0), dot(p.ok_out2.xyz, lin0));
-    // The chroma the curve per channel gives a color near grey, its
-    // slope in stops both ways, less for a saturated color by a floored
-    // square root of its lowest channel's share, as `chroma_boost` in
-    // `tail.rs`.
-    let t = clamp(min(min(q.x, q.y), q.z) / grey, 0.0, 1.0);
-    let near_grey = (sqrt(t + 0.01) - 0.1) / (sqrt(1.01) - 0.1);
-    let boost = 1.0 + (tone_slope(norm) - 1.0) * near_grey;
-    let lmsb = LAB_TO_LMS * vec3<f32>(lab.x, boost * lab.yz);
-    let linb = lmsb * lmsb * lmsb;
-    let boosted = vec3<f32>(dot(p.ok_out0.xyz, linb), dot(p.ok_out1.xyz, linb), dot(p.ok_out2.xyz, linb));
-    let kept = chroma_kept(q + (boosted - back), grey);
-    let g = vec3<f32>(grey);
-    let light = (LMS_TO_LAB * signed_cbrt(vec3<f32>(dot(p.ok_in0.xyz, g), dot(p.ok_in1.xyz, g), dot(p.ok_in2.xyz, g)))).x;
-    let lab2 = vec3<f32>(light + kept * (lab.x - light), kept * boost * lab.yz);
-    // The step's change added to the color, the round trip's rounding
-    // taken off, as `tone_norm` does it: a color the step leaves alone
-    // comes back as it went in, and what rounding is left on a channel
-    // at zero is held to zero, as `snap_residue` in `finish.rs`.
-    let lms = LAB_TO_LMS * lab2;
-    let lin = lms * lms * lms;
-    let stepped = vec3<f32>(dot(p.ok_out0.xyz, lin), dot(p.ok_out1.xyz, lin), dot(p.ok_out2.xyz, lin));
-    let out = q + (stepped - back);
-    let top = max(max(abs(out.x), abs(out.y)), abs(out.z));
-    return select(out, vec3<f32>(0.0), abs(out) < vec3<f32>(RESIDUE * top));
 }
 
 // AgX, Blender's wide-gamut formation with its Punchy look, as
