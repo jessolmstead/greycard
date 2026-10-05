@@ -35,12 +35,12 @@ fn require_gpu(why: &str) {
 /// A context on a device of our own with `limits`, for driving the op
 /// into a device's refusals; none without an adapter.
 fn context_with(limits: wgpu::Limits) -> Option<Context> {
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))
+    let adapter = pollster::block_on(greycard_gpu::instance().request_adapter(
+        &wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            ..Default::default()
+        },
+    ))
     .inspect_err(|e| require_gpu(&format!("the CA limits test has no adapter ({e})")))
     .ok()?;
     let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {

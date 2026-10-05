@@ -15,7 +15,7 @@
 //! the lateral chromatic aberration correction
 //! ([`Context::correct_ca`]).
 
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use greycard_core::image::WorkingImage;
 
@@ -50,6 +50,27 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// 8192 wide and more, over the 8192 default.
 const WANTED_TEXTURE_DIMENSION: u32 = 16384;
 
+/// A wgpu instance of the caller's own, made one at a time across the
+/// process. Two made at once on two threads can kill it: NVIDIA's
+/// Vulkan driver (libGLX_nvidia, seen on 615.71) sets its
+/// initialized flag on entering the loader's interface negotiation,
+/// before it has opened its X display and filled the table the
+/// negotiation jumps through, so a second thread negotiating meanwhile
+/// jumps to a null pointer. The loader negotiates on every load of the
+/// driver, which is every instance made while no other is alive. Test
+/// binaries make one a test, a test a thread; every instance this crate
+/// and greycard-ui make comes here (Slint's, the WebGPU probe's and
+/// ONNX Runtime's are their own). One instance shared would not do: the GL
+/// backend's adapter enumeration on a shared instance from two threads
+/// fails with EGL_BAD_ACCESS.
+pub fn instance() -> wgpu::Instance {
+    static MAKING: Mutex<()> = Mutex::new(());
+    let _one_at_a_time = MAKING
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env())
+}
+
 /// A device, its queue, and the ops' pipelines built for it.
 pub struct Context {
     device: wgpu::Device,
@@ -74,13 +95,12 @@ impl Context {
     /// On an adapter of our own, the fastest the machine has, or
     /// [`Error::NoAdapter`] when it has none.
     pub fn own() -> Result<Self> {
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            ..Default::default()
-        }))
-        .map_err(|_| Error::NoAdapter)?;
+        let adapter =
+            pollster::block_on(instance().request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                ..Default::default()
+            }))
+            .map_err(|_| Error::NoAdapter)?;
         let limits = adapter.limits();
         let required_limits = wgpu::Limits {
             max_texture_dimension_2d: WANTED_TEXTURE_DIMENSION.min(limits.max_texture_dimension_2d),

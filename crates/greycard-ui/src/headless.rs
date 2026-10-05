@@ -626,8 +626,7 @@ mod tests {
     /// none without one.
     fn device() -> Option<(greycard_gpu::wgpu::Device, greycard_gpu::wgpu::Queue)> {
         use greycard_gpu::wgpu;
-        let instance =
-            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let instance = greycard_gpu::instance();
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
             ..Default::default()

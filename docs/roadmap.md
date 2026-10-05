@@ -15,11 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A GPU test binary now and then dies with SIGSEGV mid-run
-      (`greycard-gpu` `tests/ca.rs`, `greycard-ui` as `render::tests`
-      start) and passes on a rerun; seen in local runs while §244 was
-      reviewed, in crates it does not touch
-
 ## Next: 0.4.0
 
 A large archive on a NAS opens at once, is browsed by folder from
