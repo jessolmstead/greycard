@@ -3021,6 +3021,55 @@ mod tests {
         assert_eq!(*steps.borrow(), vec![(-1, 0), (1, 0), (0, -1), (0, 1)]);
     }
 
+    /// A mouse's back and forward buttons step the grid as the left
+    /// and right arrows do, over a cell and over the sheet between the
+    /// cells; the left button there still steps nothing.
+    #[test]
+    fn the_mouse_side_buttons_step_the_grid() {
+        use i_slint_backend_testing::ElementHandle;
+        use slint::platform::{PointerEventButton, WindowEvent};
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let files = crate::testing::folder(3);
+        let (_state, _worker) = crate::testing::state_for(&app, files);
+        let steps = Rc::new(RefCell::new(Vec::new()));
+        let seen = steps.clone();
+        app.on_grid_step(move |dx, dy, _, extend| seen.borrow_mut().push((dx, dy, extend)));
+        app.set_grid_open(true);
+        app.invoke_grid_range(0.0, 773.0, 8, 0.0);
+        let press = |at: slint::LogicalPosition, button| {
+            for event in [
+                WindowEvent::PointerMoved { position: at },
+                WindowEvent::PointerPressed {
+                    position: at,
+                    button,
+                },
+                WindowEvent::PointerReleased {
+                    position: at,
+                    button,
+                },
+            ] {
+                app.window().dispatch_event(event);
+            }
+        };
+        let cell = ElementHandle::find_by_element_id(&app, "GridSheet::ct")
+            .next()
+            .expect("a cell on the sheet");
+        let (at, size) = (cell.absolute_position(), cell.size());
+        let middle = slint::LogicalPosition::new(at.x + size.width / 2.0, at.y + size.height / 2.0);
+        press(middle, PointerEventButton::Forward);
+        press(middle, PointerEventButton::Back);
+        // Below the one row of three: the sheet, no cell.
+        let below = slint::LogicalPosition::new(middle.x, 900.0);
+        press(below, PointerEventButton::Forward);
+        press(below, PointerEventButton::Left);
+        assert_eq!(
+            *steps.borrow(),
+            [(1, 0, false), (-1, 0, false), (1, 0, false)]
+        );
+    }
+
     #[test]
     fn g_at_a_sized_window_reads_the_sheet_it_is_born_at() {
         // Opened by G with the window already at its size, the sheet

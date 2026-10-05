@@ -1836,7 +1836,8 @@ mod tests {
     /// tree and the grid's tiles show at once: the move is told to the
     /// index, which says so, and the tree is built again although the
     /// root's count has not moved and the folder passes after the move
-    /// find nothing to report.
+    /// find nothing to report. Delete rejects folder takes it out of
+    /// both again.
     #[test]
     fn the_rejects_folder_a_move_makes_shows_in_the_tree_and_the_tiles() {
         use crate::library::{Indexer, Told};
@@ -1892,6 +1893,27 @@ mod tests {
         app.invoke_folder_tree_folded(row as i32);
         let names: Vec<String> = rows(&app).into_iter().map(|r| r.0).collect();
         assert_eq!(names, ["archive", "day", "more", "rejects"]);
+
+        // Delete rejects folder takes it out of the tree and the tiles
+        // as soon as the index has forgotten its rows.
+        // No trash in a test: the folder refuses it, so the sheet
+        // offers the permanent delete.
+        {
+            let mut st = state.borrow_mut();
+            st.deletes_allowed = true;
+            st.trash_refused
+                .insert(std::fs::canonicalize(day.join("rejects")).unwrap());
+        }
+        app.invoke_delete_asked("rejects".into());
+        app.invoke_delete_answered(2);
+        crate::panel::delete::tests::land_all(&state, &app, &worker);
+        assert!(!day.join("rejects").exists(), "{}", app.get_status());
+        let forgotten = wait(&|t| matches!(t, Told::Forgotten(..)));
+        crate::library::told(&app, forgotten);
+        land_sent(&state, &app, &worker);
+        assert_eq!(tiles(&app), [("more".into(), 1)], "{:?}", rows(&app));
+        let names: Vec<String> = rows(&app).into_iter().map(|r| r.0).collect();
+        assert_eq!(names, ["archive", "day", "more"]);
 
         let indexer = state.borrow_mut().index.take().unwrap();
         indexer.stop(Duration::from_secs(20));

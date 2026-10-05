@@ -10,6 +10,8 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A mouse's back and forward buttons step through the grid, as the
+  left and right arrows do ([§249](https://github.com/jessolmstead/greycard/blob/master/docs/notes/249-the-mouse-side-buttons-and-a-deleted-rejects-folder.md))
 - The loading bar says "Reading sidecars… 3,400 of 11,711" rather than
   two bare numbers, and when the count stands still for a second it
   names the root it is waiting on: "Waiting on Archive…" (2026-10-04)

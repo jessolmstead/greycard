@@ -23,6 +23,22 @@ export component GridSheet inherits Rectangle {
     /// Whether the frame menu is up: a press that closes it reaches
     /// the cell under it too, and is not a click there.
     pure callback menu-shown() -> bool;
+    /// A mouse's back or forward button: a step to the frame before
+    /// or after, as the left and right arrows step.
+    callback side-step(int);
+    /// Whether `e` is a press of a mouse's back or forward button,
+    /// stepping if no menu is up. Every press is the topmost
+    /// TouchArea's, so a cell, a tile, the bar and the sheet between
+    /// them each ask this first, and the button works wherever the
+    /// pointer is over the frames.
+    function side-press(e: PointerEvent) -> bool {
+        if (e.kind != PointerEventKind.down
+            || (e.button != PointerEventButton.back && e.button != PointerEventButton.forward)) {
+            return false;
+        }
+        if (!root.menu-shown()) { root.side-step(e.button == PointerEventButton.back ? -1 : 1); }
+        return true;
+    }
     in property <bool> ctrl-click-menu;
     /// For a snapshot (`--menu`): the row to open the menu over, as
     /// if right-clicked in its cell's middle; -1 for none.
@@ -175,6 +191,7 @@ export component GridSheet inherits Rectangle {
     // over the header least of all: it would zoom a picture that
     // is not on screen, or size the brush in hand.
     TouchArea {
+        pointer-event(e) => { root.side-press(e); }
         scroll-event(e) => { return accept; }
     }
     VerticalLayout {
@@ -384,6 +401,7 @@ export component GridSheet inherits Rectangle {
                 // the folder is short: what can be scrolled past
                 // is exactly how far it scrolls.
                 height: parent.height + root.grid-max;
+                pointer-event(e) => { root.side-press(e); }
                 scroll-event(e) => {
                     // A sideways wheel is nobody's here, and with
                     // Ctrl it would zoom out on a delta of zero.
@@ -413,7 +431,7 @@ export component GridSheet inherits Rectangle {
                         property <bool> skip;
                         mouse-cursor: MouseCursor.pointer;
                         pointer-event(e) => {
-                            if (e.kind != PointerEventKind.down) { return; }
+                            if (e.kind != PointerEventKind.down || root.side-press(e)) { return; }
                             let closing = root.menu-shown();
                             let ctrl-menu = root.ctrl-click-menu && e.button == PointerEventButton.left
                                 && e.modifiers.meta;
@@ -588,6 +606,7 @@ export component GridSheet inherits Rectangle {
                         property <bool> menu;
                         mouse-cursor: MouseCursor.pointer;
                         pointer-event(e) => {
+                            if (root.side-press(e)) { return; }
                             if (e.kind == PointerEventKind.down) {
                                 let closing = root.menu-shown();
                                 self.menu = closing || e.button == PointerEventButton.right
@@ -669,6 +688,7 @@ export component GridSheet inherits Rectangle {
                 accessible-action-increment => { root.grid-scroll-to(root.grid-scroll + self.height); }
                 accessible-action-decrement => { root.grid-scroll-to(root.grid-scroll - self.height); }
                 pointer-event(e) => {
+                    if (root.side-press(e)) { return; }
                     // A press that closes a menu is nothing more, and
                     // leaves the focus to the menu's closing; any other
                     // press in the band gives the keys theirs back, as

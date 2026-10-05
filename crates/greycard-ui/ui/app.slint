@@ -2510,6 +2510,7 @@ export component App inherits Window {
         frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
         frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
         menu-shown => { return root.menu-shown(); }
+        side-step(by) => { root.grid-step(by, 0, root.grid-cols, false); }
         ctrl-click-menu: root.ctrl-click-menu;
         menu-at: root.menu-at;
         set-count: root.set-count;

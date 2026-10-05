@@ -638,7 +638,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::library::{Indexer, Told};
     use crate::testing::{press, state_for, window};
@@ -653,7 +653,7 @@ mod tests {
 
     /// Run the deletes sent off and land them, as the thread and the
     /// event loop would; how many there were.
-    fn land_all(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
+    pub(crate) fn land_all(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
         let jobs: Vec<Job> = SENT.with(|s| s.borrow_mut().drain(..).collect());
         let n = jobs.len();
         for job in jobs {
@@ -793,8 +793,11 @@ mod tests {
             assert!(st.picked.is_empty());
         }
         // The rows went with the files, and the neighbors' stayed.
-        match wait(&|t| matches!(t, Told::Forgotten(_))) {
-            Told::Forgotten(n) => assert_eq!(n, 2),
+        match wait(&|t| matches!(t, Told::Forgotten(..))) {
+            Told::Forgotten(n, folders) => {
+                assert_eq!(n, 2);
+                assert_eq!(folders, std::slice::from_ref(&shoot_dir));
+            }
             other => panic!("{other:?}"),
         }
         let reader = Library::open_read_only(&db).unwrap();

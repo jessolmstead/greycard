@@ -163,8 +163,11 @@ pub(crate) enum Told {
     /// inside a root moves no root's count, and the folder passes
     /// after it find the rows already where they are.
     Moved(Vec<PathBuf>),
-    /// The rows of files the window deleted are gone, this many.
-    Forgotten(usize),
+    /// The rows of files the window deleted are gone, this many, and
+    /// the folders they were in, so a root's tree over them is built
+    /// again: a rejects folder deleted whole leaves no row to be a
+    /// node, and a delete inside a root need not move its count.
+    Forgotten(usize, Vec<PathBuf>),
     /// A pass in the background is done: a root's tree for the
     /// launch pass (`launch`), or a folder or a tree the watcher saw
     /// change. `error` as for `Indexed`.
@@ -1000,7 +1003,15 @@ fn serve(
         // written for a file that is gone, and this takes it away.
         if !forget.is_empty() {
             match lib.forget(&forget) {
-                Ok(n) => told(Told::Forgotten(n)),
+                Ok(n) => {
+                    let mut folders: Vec<PathBuf> = Vec::new();
+                    for dir in forget.iter().filter_map(|f| f.parent()) {
+                        if !folders.iter().any(|d| d == dir) {
+                            folders.push(dir.to_path_buf());
+                        }
+                    }
+                    told(Told::Forgotten(n, folders));
+                }
                 Err(e) => tracing::warn!("index: rows of deleted files not forgotten: {e}"),
             }
         }
@@ -2104,8 +2115,15 @@ pub(crate) fn told(app: &App, told: Told) {
             }
             crate::tree::want(&mut st, app);
         }
-        Told::Forgotten(n) => {
+        Told::Forgotten(n, folders) => {
             tracing::debug!("index: {n} rows of deleted files forgotten");
+            {
+                let mut st = state.borrow_mut();
+                for folder in &folders {
+                    crate::tree::passed(&mut st, folder);
+                }
+                crate::tree::want(&mut st, app);
+            }
             reread(&state, app, false);
         }
     }
