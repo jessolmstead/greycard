@@ -242,10 +242,10 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
         }
         .plane_size(preview.source.0 as f32, preview.source.1 as f32);
         let shown = (plane.0.round() as u32, plane.1.round() as u32);
-        let (small, local) = (preview.small(), preview.local);
+        let (small, local, own) = (preview.small(), preview.local, preview.own_size());
         st.placeholder = Some(placeholder::Wait::held(c, st.generation));
         show_overlays(st, app, true);
-        say_placeholder(app, shown, small, local);
+        say_placeholder(app, shown, small, local, (st.zoom, own));
     }
     app.set_status("developing...".into());
     app.set_busy(true);
@@ -532,9 +532,11 @@ pub(crate) fn standing_in(st: &State) -> Option<usize> {
 /// what it is not, and the panel takes its shapes, its navigator and
 /// its scopes off a picture they do not belong to.
 ///
-/// Fitted, whatever the view was at: the develop this stands in for
-/// arrives fitted, and a magnified screen-size copy in between would
-/// be a blur that jumps twice.
+/// Fitted, whatever the view was at: a file chosen opens fitted, and
+/// a magnified screen-size copy in between would be a blur that jumps
+/// twice. The one exception is the session's first open
+/// (`zoom_stands`), where the zoom is the command line's and stands
+/// into the develop, so `--zoom 1` opens at 1:1.
 fn placeholder_arrived(st: &mut State, app: &App, file: usize) {
     let Some(preview) = st.hold.as_ref().and_then(|h| h.cache.best(file)) else {
         return;
@@ -547,10 +549,12 @@ fn placeholder_arrived(st: &mut State, app: &App, file: usize) {
     }
     .plane_size(preview.source.0 as f32, preview.source.1 as f32);
     let shown = (plane.0.round() as u32, plane.1.round() as u32);
-    let (small, local) = (preview.small(), preview.local);
-    st.zoom = 0.0;
+    let (small, local, own) = (preview.small(), preview.local, preview.own_size());
+    if !st.zoom_stands {
+        st.zoom = 0.0;
+    }
     st.image_size = (0, 0);
-    say_placeholder(app, shown, small, local);
+    say_placeholder(app, shown, small, local, (st.zoom, own));
     show_overlays(st, app, true);
     app.window().request_redraw();
 }
@@ -565,8 +569,14 @@ fn placeholder_arrived(st: &mut State, app: &App, file: usize) {
 /// yet, so the word over the picture and the line under it would
 /// disagree for as long as it took the next frame to put them right.
 /// One property, set where the picture is, and they cannot.
-pub(crate) fn say_placeholder(app: &App, shown: (u32, u32), small: bool, local: bool) {
-    let line = placeholder::status(shown, small, local);
+pub(crate) fn say_placeholder(
+    app: &App,
+    shown: (u32, u32),
+    small: bool,
+    local: bool,
+    at: (f32, bool),
+) {
+    let line = placeholder::status(shown, small, local, at);
     if app.get_placeholder_status() != line.as_str() {
         app.set_placeholder_status(line.into());
     }
@@ -955,7 +965,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     // turned since, and then the size in the line is the other way
     // round.
     if holding && let Some(n) = names.iter().find(|n| n.file == c) {
-        say_placeholder(app, n.size, n.small, n.local);
+        say_placeholder(app, n.size, n.small, n.local, (st.zoom, n.own));
     }
     // The frame that shows it is the one a timing hook measures to.
     if holding
@@ -1177,17 +1187,24 @@ pub(crate) fn cull_status(
         return format!("{mode}: decoding the camera JPEG...");
     }
     let what = picture_words(named.size, named.small, named.local);
-    let at = if zoom <= 0.0 {
+    let at = zoom_words(zoom, named.own);
+    format!("{mode}: {what}, {at}; Enter develops")
+}
+
+/// At what a camera's picture is shown, in the status line: fitted,
+/// or the zoom, and while the copy on screen is the view-size one
+/// (`own` false), that it is until the full one decodes.
+pub(crate) fn zoom_words(zoom: f32, own: bool) -> String {
+    if zoom <= 0.0 {
         "fitted".to_string()
-    } else if named.own {
+    } else if own {
         format!("{}%", (zoom * 100.0).round() as i32)
     } else {
         format!(
             "{}%, screen-size copy until the full one decodes",
             (zoom * 100.0).round() as i32
         )
-    };
-    format!("{mode}: {what}, {at}; Enter develops")
+    }
 }
 
 /// `--time-cull`, on each frame that showed a stepped-to picture:
@@ -2277,6 +2294,102 @@ mod tests {
             state.borrow().hold.as_ref().unwrap().cache.get(1).is_some(),
             "the picture is kept for the arrow back"
         );
+    }
+
+    /// The command line's zoom stands through the first file's camera
+    /// picture, as it does into the develop, and the line under it
+    /// says so; a frame opened from one that is on screen still opens
+    /// fitted.
+    #[test]
+    fn the_command_lines_zoom_stands_through_the_first_placeholder() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        state.borrow_mut().zoom = 1.0;
+        app.invoke_select(1);
+        let loaded = camera_picture(&state.borrow(), 1, (8192, 5464));
+        deliver_preview(&app, loaded);
+        assert_eq!(standing_in(&state.borrow()), Some(1));
+        assert_eq!(state.borrow().zoom, 1.0, "the command line's zoom");
+        assert_eq!(
+            app.get_placeholder_status(),
+            "camera preview: the camera JPEG, 8192 \u{d7} 5464, 100%, \
+             screen-size copy until the full one decodes; developing..."
+        );
+
+        // Its develop lands at that zoom, and the user moves on from
+        // it: the next frame is fitted.
+        let generation = state.borrow().generation;
+        crate::panel::deliver::deliver(&app, developed(generation, (6000, 4000)));
+        assert_eq!(state.borrow().zoom, 1.0, "the develop keeps it");
+        state.borrow_mut().base_white = Some(crate::worker::WhiteBase::IDENTITY);
+        app.invoke_select(2);
+        assert!(
+            state.borrow().held.is_some(),
+            "the picture on screen is held"
+        );
+        let loaded = camera_picture(&state.borrow(), 2, (8192, 5464));
+        deliver_preview(&app, loaded);
+        assert_eq!(standing_in(&state.borrow()), Some(2));
+        assert_eq!(state.borrow().zoom, 0.0, "a later frame opens fitted");
+        assert!(
+            app.get_placeholder_status()
+                .ends_with("fitted; developing...")
+        );
+    }
+
+    /// A run started in culling (`--cull`) opens its first file in the
+    /// loupe, where no mask is painted: the command line's mask and
+    /// patch go with that open, and are not left for a frame opened
+    /// later.
+    #[test]
+    fn a_first_open_in_culling_leaves_no_mask_for_a_later_frame() {
+        let app = window(4);
+        let (state, _worker) = state_for(&app, folder(4));
+        {
+            let mut st = state.borrow_mut();
+            st.show_mask = Some(0);
+            st.show_patch = Some(0);
+            st.cull_at_start = Some(1);
+        }
+        app.invoke_select(1);
+        let st = state.borrow();
+        assert!(st.cull.is_some());
+        assert!(st.opened);
+        assert_eq!((st.show_mask, st.show_patch), (None, None));
+        assert!(!st.zoom_stands, "no develop for the zoom to stand into");
+    }
+
+    /// The frame on screen deleted, zoomed in: the nearest frame left
+    /// opens fitted, as a click on it would, and not at the zoom the
+    /// deleted one was at. With no frame current there is nothing to
+    /// leave, so only the open's being the session's first or not can
+    /// say the zoom is the command line's.
+    #[test]
+    fn a_frame_after_one_deleted_while_zoomed_opens_fitted() {
+        let app = window(4);
+        let (state, worker) = state_for(&app, folder(4));
+        app.invoke_select(1);
+        let generation = state.borrow().generation;
+        crate::panel::deliver::deliver(&app, developed(generation, (6000, 4000)));
+        {
+            let mut st = state.borrow_mut();
+            st.base_white = Some(crate::worker::WhiteBase::IDENTITY);
+            st.zoom = 2.0;
+        }
+        drop_files(&mut state.borrow_mut(), &app, &worker, &[1], "gone".into());
+        assert_eq!(state.borrow().current, None);
+        app.invoke_select(1);
+        let loaded = camera_picture(&state.borrow(), 1, (8192, 5464));
+        deliver_preview(&app, loaded);
+        assert_eq!(standing_in(&state.borrow()), Some(1));
+        assert_eq!(
+            state.borrow().zoom,
+            0.0,
+            "fitted under the camera's picture"
+        );
+        let generation = state.borrow().generation;
+        crate::panel::deliver::deliver(&app, developed(generation, (6000, 4000)));
+        assert_eq!(state.borrow().zoom, 0.0, "and under the develop");
     }
 
     /// A develop as the worker delivers one: a picture of `size` and

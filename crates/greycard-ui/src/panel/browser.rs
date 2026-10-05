@@ -1670,6 +1670,18 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
 pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     let row = row_of(st, i).map_or(-1, |r| r as i32);
     let offline = !crate::rows::is_loaded(st, i);
+    // The session's first open, whichever way it goes, is the one
+    // the command line's mask, patch and zoom are for. A first file
+    // the index stands in is current before this open, from its
+    // pick, so the current frame cannot say so; and a first open
+    // that cannot take them (culling, an offline root) leaves none
+    // for a later frame.
+    let first = !std::mem::replace(&mut st.opened, true);
+    st.zoom_stands = first && st.cull.is_none() && !offline;
+    if first && (st.cull.is_some() || offline) {
+        st.show_mask = None;
+        st.show_patch = None;
+    }
     // In culling nothing is developed: the frame's JPEG shows.
     if st.cull.is_some() {
         crate::rows::pick_over(st, app);
@@ -1738,7 +1750,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     }
     // A mask asked for on the command line is the first file's
     // target, so a screenshot can show the panel's block for it.
-    st.target = if st.current.is_none() {
+    st.target = if first {
         let m = st.show_mask.take().filter(|&m| m < edit.adjustments.len());
         if m.is_some() {
             app.set_show_mask(true);

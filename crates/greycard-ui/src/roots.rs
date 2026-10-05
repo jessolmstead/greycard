@@ -5704,6 +5704,39 @@ pub(crate) mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// `--show-mask` reaches the first file when the index stands it
+    /// in: the open waits for its sidecar (`pick_pending`), the frame
+    /// is current by the time the read lands and opens it, and that
+    /// open is still the first.
+    #[test]
+    fn the_command_lines_mask_reaches_a_first_file_read_after_its_pick() {
+        let (dir, files, writer, app, state, worker) = rated_under_a_root("rows-pick-show-mask");
+        let mut s = Sidecar::load(&files[1]).unwrap().unwrap();
+        let mut e = s.current.clone();
+        e.adjustments.push(greycard_edit::Adjustment::default());
+        s.record(e);
+        s.save(&files[1]).unwrap();
+        state.borrow_mut().show_mask = Some(0);
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
+        assert_eq!(state.borrow().current, None, "nothing opened at the start");
+        crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
+        assert_eq!(state.borrow().pick_pending, Some(files[1].clone()));
+        assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
+        {
+            let st = state.borrow();
+            assert_eq!(st.current, Some(1));
+            assert_eq!(st.edit.adjustments.len(), 1, "the sidecar's own edit");
+            assert_eq!(st.target, Some(0), "the mask asked for is chosen");
+            assert_eq!(st.show_mask, None, "and taken");
+        }
+        assert!(app.get_show_mask());
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// An export pressed on a frame whose sidecar is being read, the
     /// user moving on to another before it lands, exports the pressed
     /// frame, as a set of one under its own edit, and not the frame on

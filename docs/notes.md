@@ -257,3 +257,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§244. One frame in two places, part 2: the editor's side](notes/244-one-frame-in-two-places-part-2-the-editors-side.md) (2026-10-04)
 - [§245. Auto white balance from edges](notes/245-auto-white-balance-from-edges.md) (2026-10-04)
 - [§246. The rejects folders a view shows, and deletes](notes/246-the-rejects-folders-a-view-shows.md) (2026-10-04)
+- [§247. The command line's zoom and mask on the first file](notes/247-the-command-lines-zoom-and-mask-on-the-first-file.md) (2026-10-04)

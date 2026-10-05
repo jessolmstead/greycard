@@ -15,10 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] `--zoom 1 --screenshot` opens fitted: the camera's JPEG standing in
-      for the develop resets the zoom (`cull::placeholder_arrived`) (§241)
-- [ ] `--show-mask` is dropped when the first file is opened a second
-      time at startup (§241)
 - [ ] A GPU test binary now and then dies with SIGSEGV mid-run
       (`greycard-gpu` `tests/ca.rs`, `greycard-ui` as `render::tests`
       start) and passes on a rerun; seen in local runs while §244 was

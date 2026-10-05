@@ -762,6 +762,13 @@ pub(crate) struct State {
     pub(crate) show_mask: Option<usize>,
     /// A patch to choose on the first file, for a screenshot.
     pub(crate) show_patch: Option<usize>,
+    /// A file has been opened this session (`open_frame`): what the
+    /// command line asks of the first file is for that open alone.
+    pub(crate) opened: bool,
+    /// The open the camera's picture stands in for is the session's
+    /// first, so the command line's zoom stands through it rather
+    /// than the picture fitting the view (`cull::placeholder_arrived`).
+    pub(crate) zoom_stands: bool,
     /// A shape's handle being dragged.
     pub(crate) mask_drag: Option<MaskDrag>,
     /// The brushes' rasters, by adjustment id and component index,
@@ -1108,6 +1115,8 @@ impl State {
             picking: None,
             show_mask: None,
             show_patch: None,
+            opened: false,
+            zoom_stands: false,
             mask_drag: None,
             rasters: HashMap::new(),
             retouching: None,
