@@ -1,8 +1,10 @@
 # Changelog
 
-What shipped, under the version it shipped in, newest first. An item
-moves here from `docs/roadmap.md` when it lands, with its notes
-section and its date; the reasoning stays in `docs/notes.md`. The
+What changed for the user, under the version it shipped in, newest
+first. A version opens with a short paragraph and groups its items
+under headings; each item is a line or two linking its notes section,
+where the detail and the reasoning are. Fixes are listed only for bugs
+a released version had. An item is written here when it is merged to master; the
 release workflow puts a version's section into the GitHub release.
 Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
@@ -10,290 +12,160 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+Sweeping improvements, especially to the library.
+A root's folders show as a tree, the grid keeps
+the library on its left, and a shoot on a NAS is culled from local
+previews without reading a raw over the wire. A root can be an
+archive: a shoot is backed up to it and brought back, and one frame
+kept in both places stays one frame, its edits joined rather than
+written over. AgX comes in as a second display curve, a mask has a
+white balance of its own, and exports gain a queue, a subfolder and a
+headless command line. Read the
+[guide for testers](https://github.com/jessolmstead/greycard/blob/master/docs/user-guide.md)
+for installing on each system, the hotkeys, and how to report a problem.
+
+### Library
+
+- A root's folders as a tree in the left pane, each with its count,
+  shown for an offline root too; a click opens that folder alone, or
+  everything under it with With subfolders ([§209](https://github.com/jessolmstead/greycard/blob/master/docs/notes/209-a-roots-folders-as-a-tree.md))
+- The grid keeps the left pane (Open folder, Recently opened, Import,
+  the roots and the tree), and its header drops to the selection, the
+  filter and the facets, Camera and Lens on a row of their own ([§211](https://github.com/jessolmstead/greycard/blob/master/docs/notes/211-the-grid-with-the-library-on-the-left.md))
+- A folder's subfolders show as tiles at the top of the grid with
+  their counts, a folder opened from outside the roots included
+  ([§212](https://github.com/jessolmstead/greycard/blob/master/docs/notes/212-a-folders-folders-as-tiles-in-the-grid.md), [§246](https://github.com/jessolmstead/greycard/blob/master/docs/notes/246-the-rejects-folders-a-view-shows.md))
+- The open folder is named in the pane and the grid's header, and a
+  click on its name offers the last ten folders opened ([§206](https://github.com/jessolmstead/greycard/blob/master/docs/notes/206-the-open-folder-named-and-recently-opened.md))
+- A folder the index knows opens from the index without reading its
+  sidecars first; an offline root stays in view, dimmed, its pictures
+  from the cache and the filter working ([§207](https://github.com/jessolmstead/greycard/blob/master/docs/notes/207-the-index-as-the-sidecars-cache.md))
+- A local preview of each frame, kept in the cache, so the culling
+  loupe and compare view work under an offline root and don't wait on
+  a network one ([§210](https://github.com/jessolmstead/greycard/blob/master/docs/notes/210-local-previews-by-content-hash.md))
+- The Settings sheet sets the network roots' poll in minutes and the
+  local previews' own cache cap, 8 GB by default ([§215](https://github.com/jessolmstead/greycard/blob/master/docs/notes/215-the-rest-of-the-network-off-the-windows-thread.md))
+- The loading bar says what it is reading, and names the root it is
+  waiting on when the count stands still (2026-10-04)
+
+### Archives and backup
+
+- A root can be marked as an archive. Back up copies a folder's or a
+  selection's frames not yet on it, found by content hash, with their
+  sidecars; each copy is verified before it lands, and nothing on the
+  archive is ever written over or deleted. Bring back is the reverse
+  ([§216](https://github.com/jessolmstead/greycard/blob/master/docs/notes/216-archive-roots-revised-at-the-desk.md), [§217](https://github.com/jessolmstead/greycard/blob/master/docs/notes/217-archive-roots-part-one-the-mark-back-up-and-bring-back.md), [§219](https://github.com/jessolmstead/greycard/blob/master/docs/notes/219-the-backup-pairing-is-the-folders-not-the-roots.md))
+- Remove rejects from an archive: the open folder's rejects are found
+  on the archive and moved to a rejects folder there, or deleted;
+  a move asked for while the archive is offline waits until it answers
+  ([§218](https://github.com/jessolmstead/greycard/blob/master/docs/notes/218-archive-roots-part-two-remove-rejects-and-its-queue.md))
+- One frame in two places: All roots lists a frame from its archive
+  copy when the local one is gone; every save goes to the archive's
+  copy too; a copy edited elsewhere is joined edit by edit; and the
+  status line says how many edits are waiting for an offline archive
+  ([§224](https://github.com/jessolmstead/greycard/blob/master/docs/notes/224-one-frame-in-two-places-listed-from-the-copy-that-is-there.md), [§243](https://github.com/jessolmstead/greycard/blob/master/docs/notes/243-one-frame-in-two-places-part-1-the-files-side.md), [§244](https://github.com/jessolmstead/greycard/blob/master/docs/notes/244-one-frame-in-two-places-part-2-the-editors-side.md))
+- A library opened by this build is schema 5, which an older build
+  refuses and leaves untouched ([§217](https://github.com/jessolmstead/greycard/blob/master/docs/notes/217-archive-roots-part-one-the-mark-back-up-and-bring-back.md))
+
+### Culling and the grid
+
+- Move back, the inverse of Move rejects, on the frame menu and in
+  CULLING ([§225](https://github.com/jessolmstead/greycard/blob/master/docs/notes/225-move-back-the-inverse-of-move-rejects.md))
+- A Rejects menu in the grid's header with the count: Move rejects,
+  Move back, Delete rejects folder and Remove rejects from each archive
+  ([§228](https://github.com/jessolmstead/greycard/blob/master/docs/notes/228-the-rejects-actions-on-the-grids-header.md))
+- Delete rejects folder works over all the roots, a root or a folder
+  with its subfolders, taking every rejects folder the view lists; an
+  archive's rejects are left to the archive's own view ([§246](https://github.com/jessolmstead/greycard/blob/master/docs/notes/246-the-rejects-folders-a-view-shows.md))
+- A color label tints the whole grid tile and the strip's cell ([§205](https://github.com/jessolmstead/greycard/blob/master/docs/notes/205-a-color-label-tints-the-grids-plate.md))
+- The grid has a scroll bar ([§214](https://github.com/jessolmstead/greycard/blob/master/docs/notes/214-a-scroll-bar-on-the-grid.md))
 - A mouse's back and forward buttons step through the grid, as the
   left and right arrows do ([§249](https://github.com/jessolmstead/greycard/blob/master/docs/notes/249-the-mouse-side-buttons-and-a-deleted-rejects-folder.md))
-- The loading bar says "Reading sidecars… 3,400 of 11,711" rather than
-  two bare numbers, and when the count stands still for a second it
-  names the root it is waiting on: "Waiting on Archive…" (2026-10-04)
-- The Settings sheet's two cache caps show the value last set, even
-  while a count or an eviction holds the cache, and a field typed wrong
-  goes back to that value rather than to the settings file's
-  (2026-10-04)
-- One frame in two places: every save goes to the frame's copy on the
-  archive too, behind the save and off the window's thread; a copy
-  edited elsewhere is joined edit by edit, never written over; what
-  could not go waits in the library and goes when the archive answers,
-  the status line saying "3 edits waiting for Archive"; Back up and
-  Bring back compare and join the two sidecars instead of counting
-  saves; and the frame on screen follows to the archive's copy when its
-  own drive goes (§244)
-- A sidecar keeps an id on every state, a line for every save (its
-  hash, time and machine) and the time each rating, flag, label,
-  keyword, title, caption and turn was set, and two copies of one can
-  be compared and joined without losing an edit, a record or a
-  snapshot; an older build still reads it, and one it wrote is read
-  back. The editor does not sync with it yet (§243)
-- The export sheet has a Subfolder: typed, Export writes each frame
-  into that folder beside its raw, made if it is not there, with no
-  chooser; a preset and a queued set carry it. Under Overwrite, an
-  export that would write over files first names every one of them,
-  with Keep both the default (§242)
-- A mask has a white balance of its own on the Masks tab: a switch,
-  Temperature, Tint and Neutral, absolute, so the light it names stays
-  put when the global white moves; it starts at the global's white,
-  blends by the mask's weight before the rest of the mask's look, and
-  the export makes the same picture as the viewport (§241)
-- Improvements to Camera Match (§240)
-- A channel pushed past 2^64 under AgX exported black (a NaN); it is
-  white, as every color past 2^6 already was. A color shift at black
-  (a shadows wheel, a color curve's end) no longer turns light under
-  2e-6 into a cast of whole levels that differed between the screen
-  and the export; renders change only in near-black under a strong
-  shift there, by at most 3 levels for a wheel and up to black's full
-  cast across a crushed toe. The random parity test passes seeds 1 to
-  150 on NVIDIA and lavapipe and 1 to 40 on RADV (§239)
-- The library refit under AgX, and `--match-compare DIR`: the camera
-  match's own sample, develop, registration and fit under both display
-  curves on the same frames, headless, writing no table, with a report
-  of the error with no look, fitted and held out, split into lightness
-  and color and by band; the match under AgX is worse by per-frame
-  lightness alone, which a converged exposure match more than makes
-  up (§238)
-- The camera match sheet has a box on each body and style, all ticked
-  at first: Fit runs over the ticked ones and counts them, says when an
-  unticked group is read for another's borrow, and the choice is kept
-  for the folder or the library. "Remove this look..." in the Look
-  section moves every table of the look to the system trash together,
-  behind a sheet that says how many pictures use it; a link is never
-  offered. Tests no longer read the user's settings file (§237)
-- The navigator heads the left pane, with Open folder, the folder open
-  and the open root's folders under it, so the picture's thumbnail
-  keeps the top left corner (2026-10-03)
-- `--export` opens no window and asks for no GPU, about twice as fast
-  a frame, and cannot stall on the compositor as a desktop run could;
-  it exits 0 when every frame is written as its edit asks, 1 when one
-  is not, 2 when one is written without a look or a learned model this
-  machine has not got, each named; a run that loaded a model no longer
-  crashes on its way out; `--xmp-sidecars` is honored, and a noted
-  export no longer writes over another tool's change to the `.xmp`
-  (§236)
-- A fitted look records the display curve it was fitted under and the
-  body it is for, in its `.cube`'s header; the camera match fits under
-  the open picture's curve (it fitted under per channel every time
-  before); a look has a table per curve, `<name>.agx.cube` beside the
-  per-channel `<name>.cube`, a picture takes the one for its curve and
-  goes without where there is none, the Look section saying so and
-  offering "Refit under AgX..."; someone else's `.cube` applies under
-  every curve as before. The look list is grouped by body, this
-  camera's first and marked, the others folded with a count, the
-  general looks apart (§235)
-- The Move rejects sheet takes the keys when it opens, from
-  CULLING's button or the grid header's menu, so Return moves once and
-  Escape closes it; a sheet closed from the command line gives the
-  window its keys back (§234, 2026-10-03)
-- AgX as a display curve behind a per-picture switch at the foot of
-  LIGHT, beside per channel: Blender's wide-gamut formation
-  (Eary Chow's, as darktable's module parametrizes it) with the "AgX -
-  Punchy" look, the inset in Rec.2020 with guard rails in place of any
-  clamp, mid grey held where per channel puts it and white at the
-  sensor's clip; on the CPU and in the shader, checked against
-  OpenColorIO's render of Blender's own config and in the random parity
-  test; `--agx` on the command line; per channel stays the default
-  (§231, §232)
-- `tools/compare-transforms.py` on the release binaries, resuming a
-  run and skipping a render that fails or stalls; `tools/transform-sheets.py`
-  lays its renders out one row a frame for judging; the two sets
-  judged and the call for AgX with Punchy's look, over ACES 2.0,
-  recorded (§230)
-- The hot pixel repair on by default: a candidate (darktable's rule,
-  six sigmas and three times its same-color neighbors) is repaired only
-  when none of the other three colors' sites round it is lit, since a
-  defect is one color where a glint, a star or a catchlight lights
-  every color; a floor under the noise so clamped black is not read as
-  defects; the catchlight portrait identical to repair off, the point
-  lights kept, the backlit couple's blue dot gone; `--no-hot-pixels`
-  and `--hot-others` on the CLI, `--hot-pixels` kept hidden for a
-  release (§229)
-- A Rejects menu in the grid's header, with the count on its button:
-  Move rejects, Move back, Delete rejects folder and Remove rejects
-  from each archive, the same callbacks and sheets as CULLING's; the
-  status line shown in the header too, since the grid covers the
-  viewport's plate; the Move rejects sheet now points at Move back
-  instead of saying there is no undo (§228)
-- `tools/compare-transforms.py`: a raw rendered through greycard's
-  display curve per channel and its AgX, and through ACES 2.0 and AgX from greycard's
-  own scene-linear develop, at matched exposure, for looking at side by
-  side (§227)
-- Move back, the inverse of Move rejects, on the frame menu and in
-  CULLING for frames in a rejects folder: each goes to the folder above
-  with its sidecars, placement kept, its reject flag taken off; a name
-  taken there leaves it whole and said. On the way: the index is told
-  of every move the editor makes, so a rejects folder emptied no longer
-  leaves a ghost row; an orphaned sidecar under either placement is
-  seen; a JPEG's short XMP is never written over, and a raw and its
-  JPEG move together with their shared XMP (§225)
-- All roots lists a frame from its archive copy when the local copy's
-  folder is gone or its root offline, in place of a dimmed stand-in for
-  a file that cannot be opened; the two copies are still one frame, and
-  the hidden copies' folders are still never looked at (§224)
-- A raw dragged by hand to another folder, or renamed, keeps its edits
-  and its flag: the index pass that sees the move carries the sidecar
-  it left behind to the new place, in the placement it had, never over
-  a file there (§223)
-- The archive sheet is up from the press, saying it is looking, while
-  an archive over the wire takes its second to answer, so a second
-  click no longer cancels the sheet as it appears; a look that fails is
-  logged (§222)
-- The viewport shader is checked against the CPU finish over 400
-  random edits a run, every slider at its panel range with the corners
-  weighted, locals of every shape with looks of their own, a look table
-  and a guide plane, each pixel held within 2.5/255 of a CPU answer at
-  rest or under small nudges of its inputs; seeds 1 to 10 pass on
-  NVIDIA, RADV and lavapipe. Five divergences it found are fixed on
-  both sides: the display curve overflowing to a black pixel under
-  stacked gains, a summed contrast of zero, rounding residue on
-  exact-zero channels out of the Oklab pass, the masks' rasters and
-  the guide plane read through the sampler's filter rather than by
-  texel, and the Oklab pass rebuilding a and b through sine and cosine
-  (§221)
-- The GPU tests run in CI, on lavapipe on the Linux runner, Vulkan
-  only, and fail there rather than skip when no adapter is found;
-  before, every GPU test passed green on a runner with no GPU without
-  running. The GPU instances read `WGPU_BACKEND` (§221)
-- The backup pairing is the folder's, not the root's: a root paired to
-  the archive's year folder no longer claims every shoot under that
-  year as its own on Bring back; the next Back up from a root opens
-  beside the last destination when that was named for its shoot and
-  inside it otherwise, Bring back unwinds only an exact pairing or one
-  whose source has the same subfolder here, a trailing slash in the
-  field is dropped, and a pairing whose archive folder is gone is
-  forgotten and said once while one whose local folder is gone is kept
-  for Bring back (§219)
+
+### Color and editing
+
+- AgX as a display curve, Blender's wide-gamut formation with the
+  "AgX - Punchy" look, behind a per-picture switch at the foot of
+  LIGHT; per channel stays the default ([§230](https://github.com/jessolmstead/greycard/blob/master/docs/notes/230-agx-over-aces-the-call-from-two-sets.md), [§231](https://github.com/jessolmstead/greycard/blob/master/docs/notes/231-agx-ported-as-a-display-transform.md))
+- A mask has a white balance of its own on the Masks tab: Temperature,
+  Tint and Neutral, absolute, so it holds when the global white moves
+  ([§241](https://github.com/jessolmstead/greycard/blob/master/docs/notes/241-a-white-balance-in-a-mask.md))
+- A Background shape: the complement of the Subject matte ([§204](https://github.com/jessolmstead/greycard/blob/master/docs/notes/204-a-background-shape.md))
+- The Masks tab is laid out to be read at a glance: one card for the
+  mask, one row a shape with its own invert ([§203](https://github.com/jessolmstead/greycard/blob/master/docs/notes/203-the-masks-tab-laid-out-to-be-read-at-a-glance.md))
+- A crop can be drawn by dragging outside the current rectangle ([§200](https://github.com/jessolmstead/greycard/blob/master/docs/notes/200-draw-a-crop-by-dragging-outside-todays-rectangle.md))
+- Hot pixel repair is on by default, and only repairs a pixel lit in
+  one color, so stars, glints and catchlights are kept ([§229](https://github.com/jessolmstead/greycard/blob/master/docs/notes/229-hot-pixels-on-by-default-the-other-colors-decide.md))
+- Auto white balance reads the light off the picture's edges, so a
+  frame full of sky or sea no longer comes out amber ([§245](https://github.com/jessolmstead/greycard/blob/master/docs/notes/245-auto-white-balance-from-edges.md))
+
+### Camera match
+
+- A fitted look keeps a table per display curve, records the curve and
+  the body it was fitted for, and the Look section offers "Refit under
+  AgX..." where a look has none; the look list is grouped by body
+  ([§235](https://github.com/jessolmstead/greycard/blob/master/docs/notes/235-a-fitted-look-has-a-table-per-display-curve.md))
+- The match sheet has a box on each body and style to choose what Fit
+  runs over, and "Remove this look..." moves a look's tables to the
+  trash ([§237](https://github.com/jessolmstead/greycard/blob/master/docs/notes/237-the-match-sheets-groups-chosen-and-a-look-removed.md))
+- The match converges its exposure match, a smaller error under both
+  curves ([§238](https://github.com/jessolmstead/greycard/blob/master/docs/notes/238-the-camera-match-under-agx-measured-on-the-same-frames.md), [§240](https://github.com/jessolmstead/greycard/blob/master/docs/notes/240-the-camera-match-converges-its-exposure-match.md))
+
+### Export
+
+- An export queue: Add to queue keeps a set with its edits, preset and
+  destination, kept across a restart, and Export the queue runs it
+  later ([§213](https://github.com/jessolmstead/greycard/blob/master/docs/notes/213-an-export-queue.md))
+- A Subfolder field writes each frame into a folder beside its raw;
+  under Overwrite, the files about to be replaced are named first, with
+  Keep both the default ([§242](https://github.com/jessolmstead/greycard/blob/master/docs/notes/242-an-export-into-a-subfolder.md))
+- An export is a line in History, so a click goes back to the look
+  that was sent out ([§198](https://github.com/jessolmstead/greycard/blob/master/docs/notes/198-an-export-as-a-line-in-history.md))
+- `--export` is headless: no window, no GPU, about twice as fast a
+  frame, and exit codes that say whether every frame came out as its
+  edit asked ([§236](https://github.com/jessolmstead/greycard/blob/master/docs/notes/236-a-headless-export.md))
+
+### Speed
+
+- The window no longer redraws sixty times a second at rest, and
+  femtovg's pipelines are no longer rebuilt every frame, about 30 ms
+  back on every frame with layers ([§208](https://github.com/jessolmstead/greycard/blob/master/docs/notes/208-a-pick-from-a-sub-menu-froze-the-window.md))
+- The grid and strip make cells only for the rows on screen: a
+  20,000-frame folder shows in half a second instead of two and
+  scrolls about seven times faster ([§202](https://github.com/jessolmstead/greycard/blob/master/docs/notes/202-the-strip-and-the-grid-with-cells-for-the-screen-alone.md))
+- The rest of the network reads are off the window's thread, and a
+  share that goes quiet is set aside while the other roots carry on
+  ([§215](https://github.com/jessolmstead/greycard/blob/master/docs/notes/215-the-rest-of-the-network-off-the-windows-thread.md))
+
+### Fixes
+
+- A rating or label picked from the frame menu's sub-menus with the
+  pointer no longer leaves the window unresponsive ([§208](https://github.com/jessolmstead/greycard/blob/master/docs/notes/208-a-pick-from-a-sub-menu-froze-the-window.md))
+- A frame exported from the screen is the same picture as the same
+  frame exported in a set ([§199](https://github.com/jessolmstead/greycard/blob/master/docs/notes/199-the-export-s-picture-and-the-gpu-s-ca-twice-over.md))
+- The viewport and the export agree over a much wider range of edits:
+  divergences under stacked gains, at exact-zero channels, in masks
+  and guide planes, and in near-black under a strong color shift are
+  fixed on both sides ([§221](https://github.com/jessolmstead/greycard/blob/master/docs/notes/221-the-shader-checked-against-the-cpu-at-random-edits.md), [§239](https://github.com/jessolmstead/greycard/blob/master/docs/notes/239-the-random-parity-test-past-its-seeds.md))
+- A raw moved or renamed by hand keeps its edits and its flag ([§223](https://github.com/jessolmstead/greycard/blob/master/docs/notes/223-a-move-seen-by-the-index-carries-the-sidecar-along.md))
 - Move rejects no longer refuses a frame whose sidecar from an earlier
-  cull is still in the rejects folder after the raw was dragged back
-  out by hand: a sidecar there with no raw of its name beside it is an
-  orphan of that frame, and the frame's own sidecar goes over it; a raw
-  of the name there still keeps the frame whole where it is (§220)
-- Remove rejects from <archive>, under Delete rejects folder in the
-  CULLING section, one entry an archive: the open folder's rejects are
-  found on the archive by content hash and confirmed on disk, the
-  pairs shown, and the default button moves each copy into a rejects
-  folder beside it with its sidecars, as Move rejects does here, while
-  a red click-only button deletes them, trash or permanent; both act
-  on the copies the sheet listed and nothing else. A move confirmed
-  while the archive does not answer is queued beside roots.json and
-  run when it answers again; a delete is never queued (§197, §216,
-  §218)
-- A root can be marked as an archive from its chip's menu, and a shoot
-  backed up to it: Back up, on the grid's header and the frame menu,
-  copies the folder's or the selection's frames not yet on the archive
-  (found by hash wherever they sit there) and their newer sidecars,
-  judged a file at a time, to a folder under the archive the sheet
-  shows and remembers per root, the rejects folder left out unless its
-  checkbox is ticked; each copy lands under a temporary name, hashed as
-  it streams and read back before it is renamed in, and nothing on the
-  archive is ever written over or deleted; Bring back is the inverse
-  from the archive's view; the copy runs with the roots' look and a
-  beat so a share that hangs sets it aside, with a bar by bytes and a
-  Cancel; the header counts the frames not on the archive, the Delete
-  sheet says which of its frames are on one, and All roots hides an
-  archive's rows whose hash is also under a local root. A library
-  opened by this build is schema 5, which an older build refuses and
-  leaves untouched (§197, §216, §217)
-- The grid header's facets sit on two rows, Camera and Lens on the
-  first and the short facets on the second, so the lens chips are no
-  longer lost down a sideways line after the bodies (§211)
-- The rest of the network reads are off the window's thread: the
-  indexer's passes get the roots' look and a pass that goes quiet on a
-  share is set aside while the other roots' reports carry on, a batch
-  reads its sidecars before the index's write lock, a folder's open
-  and a root's add or remove are bounded and made canonical off the
-  window's thread, and a share mounted below a local root is left out
-  of its watch and polled, an automount mounted on purpose (§215)
-- The Settings sheet has the network roots' poll in minutes and a cap
-  of the local previews' own, 8 GB by default, so an archive's
-  previews no longer evict the thumbnails (§215)
-- The grid has a scroll bar: a thin bar at the sheet's right edge,
-  shown while scrolling or hovered and faded at rest, draggable, a
-  press in its track paging, on the same offset the wheel and the keys
-  drive (§214)
-- An export queue: Add to queue on the export sheet keeps the set
-  with its edits, its preset and its destination in a list shown with
-  its count, kept across a restart, and Export the queue runs it all
-  later in order, each frame a line in History; frames, folders and
-  watermarks not there at run time leave their entry queued (§213)
-- A folder's folders show as tiles at the top of the grid, each with
-  its count, a click opening it as the tree's row does, so a folder
-  with nothing of its own is never a blank grid and an export folder's
-  files never join the raws; Reveal on a tile opens the folder itself
-  (§212)
-- The grid keeps the left pane: Open folder, Recently opened, Import,
-  the roots as rows with their counts and the folder tree, so the
-  header drops from five rows to the selection line, the filter's
-  chips and the facets; the tree shows too for a disk folder under a
-  root, unfolded to it (§211)
-- A local preview of each frame under a root, the camera's JPEG at
-  2048 on the long edge in the thumbnail cache, made by the pool behind
-  the thumbnails: the culling loupe and the compare view show it alone
-  under an offline root and first under a network one, so a shoot on a
-  NAS is culled without reading the raw over the wire (§210)
-- A root's folders as a tree in the left pane, built from the index so
-  an offline root still shows its shape, each folder with its count; a
-  click opens that folder's own frames, or everything under it with the
-  With subfolders switch, the root's chip staying lit, and a folder of
-  twelve opens as twelve rows whatever the root holds (§209)
-- A snapshot's --keys were sent twice when a click opened a list whose
-  frame developed; they go once (§209)
-- A rating or a label picked from the frame menu's sub-menus with the
-  pointer no longer leaves the window deaf to every key and click: the
-  keys get their focus back once the two popups have closed (§208)
-- The window no longer redraws sixty times a second at rest: the
-  viewport draws only for a changed view or source and the scopes'
-  bins go out once per readback, so an idle editor costs no frame
-  (§208)
-- femtovg's render pipelines are kept across a frame's flushes instead
-  of being compiled again every frame, about thirty milliseconds of
-  the window's thread back on every frame with layers; a fork pinned
-  by revision, proposed upstream as femtovg/femtovg#371 (§208)
-- Snapshot flags --press and --keys drive a key, or a sequence of keys
-  and pointer events, into the window before the capture (§208)
-- A root or a folder the index knows opens from the index's rows, no
-  sidecar read until a frame needs the whole of it, off the window's
-  thread; an offline root stays in the view, dimmed, its pictures from
-  the cache, with the filter working, and nothing is written under it
-  (§207)
-- The open folder is named under the Open folder button and in the
-  grid's header, with its root and its path as the hover text, and a
-  click on the name offers the last ten folders opened, the open one
-  checked; a folder gone from the disk stays listed and says so when
-  chosen (§206)
-- A color label shows on the whole tile: the grid tile's plate takes a
-  quarter of the label's color, the strip's cell a band under its
-  picture, and the small icon stays (§205)
-- The Masks tab reads at a glance: one card for the mask, one row per
-  shape with its own invert, the chosen shape's settings under the
-  rows, and one Add-a-shape group, with New mask a separate action;
-  a new mask's first shape is always Add (§203)
-- A Background shape beside Subject: the complement of the Subject
-  matte from the same model run, so a look goes on everything but the
-  subject without drawing it (§204)
-- The grid and the strip make cells only for the rows on screen: a
-  20,000-frame folder shows its first frame in half a second instead
-  of two, a fast scroll draws a frame in about 13 ms instead of about
-  95, and the window holds a quarter less memory (§202)
-- A crop can be drawn: in crop mode a drag that starts outside the
-  rectangle draws a new one from the press point, held to the chosen
-  aspect and clamped to the picture; a press in the letterbox starts
-  from the nearest point of the picture (§200)
-- An export is a line in History: the file, its preset and the time,
-  as a row above the state it was rendered from, so a click goes back
-  to the look that was sent out; failed, skipped and canceled exports
-  record nothing, a set records one per frame, and a command-line
-  exposure or temperature override never reaches the sidecar (§198)
-- A frame exported from the screen is the same picture as the frame
-  exported in a set: the last develop and the learned denoiser's kept
-  pair both say when their CA correction was the GPU's, and an export
-  develops those afresh on the CPU (§199)
+  cull was left in the rejects folder ([§220](https://github.com/jessolmstead/greycard/blob/master/docs/notes/220-the-folder-is-the-truth-and-the-sidecar-it-leaves-behind.md))
+- The Move rejects sheet takes the keys when it opens, so Return and
+  Escape work ([§234](https://github.com/jessolmstead/greycard/blob/master/docs/notes/234-the-rejects-sheet-takes-the-keys.md))
+- `--export` honors `--xmp-sidecars`, no longer writes over another
+  tool's change to the `.xmp`, and no longer crashes on exit after
+  loading a model ([§236](https://github.com/jessolmstead/greycard/blob/master/docs/notes/236-a-headless-export.md))
+
+### For developers
+
+- The GPU tests run in CI on lavapipe and fail rather than skip
+  without an adapter, and a random parity test checks the shader
+  against the CPU over hundreds of edits a run ([§221](https://github.com/jessolmstead/greycard/blob/master/docs/notes/221-the-shader-checked-against-the-cpu-at-random-edits.md), [§239](https://github.com/jessolmstead/greycard/blob/master/docs/notes/239-the-random-parity-test-past-its-seeds.md))
+- `--match-compare DIR`, `tools/compare-transforms.py` and
+  `tools/transform-sheets.py` for comparing display curves on the
+  same frames ([§227](https://github.com/jessolmstead/greycard/blob/master/docs/notes/227-aces-2-and-agx-on-our-frames.md), [§230](https://github.com/jessolmstead/greycard/blob/master/docs/notes/230-agx-over-aces-the-call-from-two-sets.md), [§238](https://github.com/jessolmstead/greycard/blob/master/docs/notes/238-the-camera-match-under-agx-measured-on-the-same-frames.md))
+- Snapshot flags `--press` and `--keys` drive input into the window
+  before a capture ([§208](https://github.com/jessolmstead/greycard/blob/master/docs/notes/208-a-pick-from-a-sub-menu-froze-the-window.md))
 
 ## 0.3.0, 2026-09-27
 

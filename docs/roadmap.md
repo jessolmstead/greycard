@@ -23,6 +23,8 @@ is backed up to it and brought back by hash, and the last folders
 opened are a click away; a crop can be drawn, an export is a line in
 History, and the Masks tab reads at a glance.
 
+- [ ] Make a more complete user guide
+
 
 ## Tracks
 
@@ -359,13 +361,14 @@ clears or a tester asks for it.
 
 #### Editor
 
+- [ ] A horizontal scroll bar in the filmstrip
+- [ ] Camera metadata should be shown in cull mode too
 - [ ] The learned mask and fill caches keyed by the develop they were
       made from: the window's Export reuses the mask its viewport made
       from a base whose CA ran on the GPU, where `--export` makes it
       from the export's CPU base (AE 174 on a Subject frame), and the
       disk cache of masks is keyed by file, model and shape, so the
       first run to make one decides it for every later edit (§236)
-
 - [ ] Home and end should go to the beginning/end of the grid/filmstrip
       when it is selected.
 - [ ] The panel's look, refined as the editor grows (§14); in develop

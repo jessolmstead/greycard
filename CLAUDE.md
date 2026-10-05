@@ -36,10 +36,14 @@
 - `docs/roadmap.md` is the plan: a release is one sentence a tester can
   verify and the short list under it; the pool and the tracks hold the
   rest. One line an item, checkboxes, and for a blocked item what it
-  waits on. When something lands, move its line to `docs/changelog.md`
-  under the version it will ship in, with its notes section and date;
-  the reasoning goes in the notes. The release workflow puts a
-  version's changelog section into the GitHub release.
+  waits on. When something lands, take its line off the roadmap and
+  write one or two lines for a tester in `docs/changelog.md`, under
+  the right heading of the version it will ship in, linking its notes
+  section by full GitHub URL (the release copies the text, so a
+  relative link breaks). A fix to something not yet released gets no
+  line; its notes section is the record. At the cut, write the
+  version's opening paragraph and tidy the headings. The release
+  workflow puts a version's changelog section into the GitHub release.
 - `docs/where-greycard-fits.md` is the positioning against the other
   editors, written to become the README and website. Its last section
   separates built from planned; move an item across when it lands.
