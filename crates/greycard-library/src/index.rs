@@ -2098,9 +2098,11 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    /// A save that changes one digit changes neither the sidecar's
+    /// A write that changes one digit changes neither the sidecar's
     /// length nor, within one filesystem tick, its mtime. The hash
-    /// of its bytes still sees it.
+    /// of its bytes still sees it. The digit is changed in place: a
+    /// save by this build adds a revision line (§233) and so grows
+    /// the file, but a build from before, or a hand, does not.
     #[test]
     fn a_same_size_save_in_the_same_tick_is_still_seen() {
         let dir = scratch("tick");
@@ -2109,9 +2111,9 @@ pub(crate) mod tests {
         lib.index_folder(&dir, &mut quiet()).unwrap();
         let gcd = Sidecar::find(&r5).unwrap();
         let before = std::fs::metadata(&gcd).unwrap();
-        let mut s = Sidecar::load(&r5).unwrap().unwrap();
-        s.meta.rating = 3;
-        s.save(&r5).unwrap();
+        let text = std::fs::read_to_string(&gcd).unwrap();
+        assert!(text.contains("\"rating\": 4"), "{text}");
+        std::fs::write(&gcd, text.replacen("\"rating\": 4", "\"rating\": 3", 1)).unwrap();
         // The same mtime as before, to the nanosecond, and the same
         // length.
         std::fs::File::options()

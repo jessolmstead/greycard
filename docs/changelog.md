@@ -10,6 +10,12 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- A sidecar keeps an id on every state, a line for every save (its
+  hash, time and machine) and the time each rating, flag, label,
+  keyword, title, caption and turn was set, and two copies of one can
+  be compared and joined without losing an edit, a record or a
+  snapshot; an older build still reads it, and one it wrote is read
+  back. The editor does not sync with it yet (§243)
 - The export sheet has a Subfolder: typed, Export writes each frame
   into that folder beside its raw, made if it is not there, with no
   chooser; a preset and a queued set carry it. Under Overwrite, an

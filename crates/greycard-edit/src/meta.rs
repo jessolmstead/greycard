@@ -261,6 +261,351 @@ impl Meta {
     }
 }
 
+/// When a field was last set, by which save, and from what: the time
+/// in seconds since the Unix epoch, 0 for never; the hash of the
+/// revision the save made ([`crate::sync::Revision`]), empty when it
+/// is not known; and a short hash of the value the field had before
+/// ([`Field::value_hash`]), empty when it is not known. The revision
+/// is what orders two copies' writes without trusting their clocks: a
+/// write whose revision the other copy carries in its lineage is known
+/// there, and loses to one that is not. The previous value is what
+/// tells a copy that merely carries the old value from one that
+/// changed it, where that copy has no revision to say so: a build from
+/// before §233, or a file whose time a copy refreshed ([`join`]).
+/// Written as one line, `"<seconds>"`, `"<seconds> <revision>"` or
+/// `"<seconds> <revision> <was>"`, and read loosely: a number alone is
+/// a time, anything else is never.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Set {
+    pub at: u64,
+    pub rev: String,
+    pub was: String,
+}
+
+impl Set {
+    /// Never set.
+    pub fn is_unset(&self) -> bool {
+        self.at == 0 && self.rev.is_empty()
+    }
+
+    /// A time with no save behind it: never set, or pinned from a
+    /// file's time ([`Times::pin`]). A write a save stamped has its
+    /// revision.
+    fn is_weak(&self) -> bool {
+        self.rev.is_empty()
+    }
+}
+
+impl Serialize for Set {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mut line = self.at.to_string();
+        if !self.rev.is_empty() {
+            line.push(' ');
+            line.push_str(&self.rev);
+            if !self.was.is_empty() {
+                line.push(' ');
+                line.push_str(&self.was);
+            }
+        }
+        s.serialize_str(&line)
+    }
+}
+
+impl<'de> Deserialize<'de> for Set {
+    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        Ok(match serde_json::Value::deserialize(d)? {
+            serde_json::Value::Number(n) => Set {
+                at: n.as_u64().unwrap_or(0),
+                ..Set::default()
+            },
+            serde_json::Value::String(line) => {
+                let mut words = line.split_whitespace();
+                let at = words.next().and_then(|w| w.parse().ok()).unwrap_or(0);
+                let mut hex = || {
+                    words
+                        .next()
+                        .filter(|w| w.chars().all(|c| c.is_ascii_hexdigit()))
+                        .unwrap_or("")
+                        .to_string()
+                };
+                let rev = hex();
+                let was = if rev.is_empty() { String::new() } else { hex() };
+                Set { at, rev, was }
+            }
+            _ => Set::default(),
+        })
+    }
+}
+
+/// What a frame's sidecar says about the frame outside the edit, and
+/// what the times are kept for: the meta and the quarter turns. A
+/// save stamps each field of it that changed against the copy read
+/// from the file ([`Times::stamp`]).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Facts {
+    pub meta: Meta,
+    pub turn: u8,
+}
+
+/// When each field of the [`Facts`] was last set, and by which save:
+/// the sidecar's `meta_at`, beside the meta rather than inside it so
+/// that two metas saying the same thing are equal whenever they were
+/// said. The keywords are one field, so a keyword taken off on one
+/// machine stays off when the two copies of a frame are joined
+/// (§233), and the turn is a field of its own, so a frame turned on
+/// one machine and edited on the other comes out turned. Stamped by
+/// the save, against the facts the file held when it was read, so
+/// nothing that sets a field has to know the time or the revision.
+///
+/// A sidecar from before this has none; its first read pins a time
+/// on every field that says something ([`Times::pin`]), and a field
+/// that says nothing is never stamped. Read loosely, a field at a
+/// time.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Times {
+    #[serde(deserialize_with = "loose", skip_serializing_if = "Set::is_unset")]
+    pub rating: Set,
+    #[serde(deserialize_with = "loose", skip_serializing_if = "Set::is_unset")]
+    pub flag: Set,
+    #[serde(deserialize_with = "loose", skip_serializing_if = "Set::is_unset")]
+    pub label: Set,
+    #[serde(deserialize_with = "loose", skip_serializing_if = "Set::is_unset")]
+    pub keywords: Set,
+    #[serde(deserialize_with = "loose", skip_serializing_if = "Set::is_unset")]
+    pub title: Set,
+    #[serde(deserialize_with = "loose", skip_serializing_if = "Set::is_unset")]
+    pub caption: Set,
+    #[serde(deserialize_with = "loose", skip_serializing_if = "Set::is_unset")]
+    pub turn: Set,
+}
+
+/// The fields of the facts, in one place, so that stamping, pinning
+/// and joining walk the same list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    Rating,
+    Flag,
+    Label,
+    Keywords,
+    Title,
+    Caption,
+    Turn,
+}
+
+impl Field {
+    pub const ALL: [Field; 7] = [
+        Field::Rating,
+        Field::Flag,
+        Field::Label,
+        Field::Keywords,
+        Field::Title,
+        Field::Caption,
+        Field::Turn,
+    ];
+
+    /// Whether `a` and `b` say the same for this field.
+    fn same(self, a: &Facts, b: &Facts) -> bool {
+        match self {
+            Field::Rating => a.meta.rating == b.meta.rating,
+            Field::Flag => a.meta.flag == b.meta.flag,
+            Field::Label => a.meta.label == b.meta.label,
+            Field::Keywords => a.meta.keywords == b.meta.keywords,
+            Field::Title => a.meta.title == b.meta.title,
+            Field::Caption => a.meta.caption == b.meta.caption,
+            Field::Turn => a.turn == b.turn,
+        }
+    }
+
+    /// Whether `facts` says nothing for this field.
+    fn is_default(self, facts: &Facts) -> bool {
+        self.same(facts, &Facts::default())
+    }
+
+    /// Put `from`'s value of this field into `into`.
+    fn copy(self, from: &Facts, into: &mut Facts) {
+        match self {
+            Field::Rating => into.meta.rating = from.meta.rating,
+            Field::Flag => into.meta.flag = from.meta.flag,
+            Field::Label => into.meta.label = from.meta.label,
+            Field::Keywords => into.meta.keywords = from.meta.keywords.clone(),
+            Field::Title => into.meta.title = from.meta.title.clone(),
+            Field::Caption => into.meta.caption = from.meta.caption.clone(),
+            Field::Turn => into.turn = from.turn,
+        }
+    }
+
+    /// A short hash of this field's value in `facts`, as it is
+    /// written: blake3 of the value's JSON, the first eight hex
+    /// characters. [`Set::was`] holds it for the value a stamp
+    /// replaced.
+    pub fn value_hash(self, facts: &Facts) -> String {
+        let json = match self {
+            Field::Rating => serde_json::to_string(&facts.meta.rating),
+            Field::Flag => serde_json::to_string(&facts.meta.flag),
+            Field::Label => serde_json::to_string(&facts.meta.label),
+            Field::Keywords => serde_json::to_string(&facts.meta.keywords),
+            Field::Title => serde_json::to_string(&facts.meta.title),
+            Field::Caption => serde_json::to_string(&facts.meta.caption),
+            Field::Turn => serde_json::to_string(&facts.turn),
+        }
+        .expect("a value serializes");
+        blake3::hash(json.as_bytes()).to_hex()[..8].to_string()
+    }
+
+    fn of(self, times: &Times) -> &Set {
+        match self {
+            Field::Rating => &times.rating,
+            Field::Flag => &times.flag,
+            Field::Label => &times.label,
+            Field::Keywords => &times.keywords,
+            Field::Title => &times.title,
+            Field::Caption => &times.caption,
+            Field::Turn => &times.turn,
+        }
+    }
+
+    fn of_mut(self, times: &mut Times) -> &mut Set {
+        match self {
+            Field::Rating => &mut times.rating,
+            Field::Flag => &mut times.flag,
+            Field::Label => &mut times.label,
+            Field::Keywords => &mut times.keywords,
+            Field::Title => &mut times.title,
+            Field::Caption => &mut times.caption,
+            Field::Turn => &mut times.turn,
+        }
+    }
+}
+
+impl Times {
+    /// No field ever stamped.
+    pub fn is_empty(&self) -> bool {
+        *self == Times::default()
+    }
+
+    /// Stamp every field of `after` that differs from `before` with
+    /// the time `at`, the revision `rev`, and the value it had in
+    /// `before`.
+    pub fn stamp(&mut self, before: &Facts, after: &Facts, at: u64, rev: &str) {
+        for field in Field::ALL {
+            if !field.same(before, after) {
+                *field.of_mut(self) = Set {
+                    at,
+                    rev: rev.to_string(),
+                    was: field.value_hash(before),
+                };
+            }
+        }
+    }
+
+    /// Give every field of `facts` that says something and has never
+    /// been stamped the time `at`, with no revision: a sidecar from
+    /// before the times, taken as set when its file was last written.
+    /// Done once, on the first read, and kept from then on, so the
+    /// time does not move. A field that says nothing stays unstamped,
+    /// so that it loses to any value set on another copy. True when
+    /// anything was pinned.
+    pub fn pin(&mut self, facts: &Facts, at: u64) -> bool {
+        let mut pinned = false;
+        for field in Field::ALL {
+            let set = field.of_mut(self);
+            if set.is_unset() && !field.is_default(facts) {
+                *set = Set {
+                    at,
+                    ..Set::default()
+                };
+                pinned = true;
+            }
+        }
+        pinned
+    }
+
+    /// These times with every field of `facts` that differs from
+    /// `other` and has no save behind it given the time `at`: for a
+    /// copy with no revisions, one a build from before §233 wrote
+    /// last, whose file's time is all it has to say when its fields
+    /// were set. A field that says nothing takes the time only where
+    /// the other copy's has a save behind it (`other_times`), so that
+    /// a clear by an older build is a change against this build's
+    /// stamp; against another copy with no save behind its value,
+    /// the value survives over none, since nothing says the field was
+    /// ever cleared rather than never set. Made for a join and not
+    /// written.
+    pub fn as_of(&self, facts: &Facts, other: &Facts, other_times: &Times, at: u64) -> Times {
+        let mut times = self.clone();
+        for field in Field::ALL {
+            let set = field.of_mut(&mut times);
+            if !set.is_weak() || field.same(facts, other) {
+                continue;
+            }
+            if !field.is_default(facts) || !field.of(other_times).rev.is_empty() {
+                set.at = set.at.max(at);
+            }
+        }
+        times
+    }
+}
+
+/// One side of a [`join`]: what a copy says, when each field was set,
+/// and which revisions the copy carries.
+pub struct Side<'a> {
+    pub facts: &'a Facts,
+    pub times: &'a Times,
+    /// The hashes of the copy's revisions.
+    pub knows: &'a [&'a str],
+}
+
+/// Two copies' facts joined field by field (§233). For each field,
+/// in order: the same value on both is kept. A value a save stamped,
+/// against which the other copy's value has no save behind it and is
+/// exactly the value the stamp replaced, wins: the other copy carries
+/// the old value, whatever its file's time says. A value whose
+/// stamping revision the other copy carries is known there, and loses
+/// to the other copy's, since that copy went on from it. Otherwise,
+/// both having set the field since they were last the same, or
+/// neither side knowing which save set it, the later time wins; on a
+/// tie a value over none, and then `a`'s, so the caller puts the
+/// newer copy first. The joined times are the winner's.
+pub fn join(a: Side, b: Side) -> (Facts, Times) {
+    let mut facts = a.facts.clone();
+    let mut times = a.times.clone();
+    for field in Field::ALL {
+        if field.same(a.facts, b.facts) {
+            continue;
+        }
+        let (sa, sb) = (field.of(a.times), field.of(b.times));
+        let b_carries_old = sb.is_weak()
+            && !sa.rev.is_empty()
+            && !sa.was.is_empty()
+            && sa.was == field.value_hash(b.facts);
+        let a_carries_old = sa.is_weak()
+            && !sb.rev.is_empty()
+            && !sb.was.is_empty()
+            && sb.was == field.value_hash(a.facts);
+        let a_knows_b = !sb.rev.is_empty() && a.knows.contains(&sb.rev.as_str());
+        let b_knows_a = !sa.rev.is_empty() && b.knows.contains(&sa.rev.as_str());
+        let b_wins = match (b_carries_old, a_carries_old, a_knows_b, b_knows_a) {
+            (true, _, _, _) => false,
+            (false, true, _, _) => true,
+            (false, false, true, false) => false,
+            (false, false, false, true) => true,
+            _ => match sa.at.cmp(&sb.at) {
+                std::cmp::Ordering::Greater => false,
+                std::cmp::Ordering::Less => true,
+                std::cmp::Ordering::Equal => {
+                    field.is_default(a.facts) && !field.is_default(b.facts)
+                }
+            },
+        };
+        if b_wins {
+            field.copy(b.facts, &mut facts);
+            *field.of_mut(&mut times) = sb.clone();
+        }
+    }
+    (facts, times)
+}
+
 /// What one key press does to the meta of the frames it is aimed at.
 ///
 /// A press carries a whole selection, even where there is only one

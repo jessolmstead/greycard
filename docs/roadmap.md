@@ -37,11 +37,10 @@ History, and the Masks tab reads at a glance.
 - [ ] One frame in two places, what is left after §224 listed a frame
       from the copy that is there: its sidecar written to both copies
       when both are there, and the frame on screen following to the
-      archive's copy when its local root goes; designed in §233, built
-      in two parts: the file's side in `greycard-edit` (state ids,
-      revisions, meta field times, the comparison and the join), then
-      the editor's (the queued write, the pending list, the catch-up
-      pass, the status line)
+      archive's copy when its local root goes; designed in §233, the
+      file's side (state ids, revisions, field times, the comparison
+      and the join) built in §243; left is the editor's (the queued
+      write, the pending list, the catch-up pass, the status line)
 
 ## Tracks
 

@@ -34,6 +34,7 @@ pub mod meta;
 pub mod mixer;
 pub mod preset;
 pub mod retouch;
+pub mod sync;
 pub mod tint;
 pub mod vignette;
 pub mod white;
@@ -1183,7 +1184,7 @@ pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
 /// developing a picture. Nothing in [`Sidecar::record`],
 /// [`Sidecar::undo`], [`Sidecar::redo`] or a snapshot touches it,
 /// and setting it is not a state to undo.
-#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Sidecar {
     pub current: Edit,
@@ -1209,6 +1210,16 @@ pub struct Sidecar {
         deserialize_with = "loose_exports"
     )]
     pub current_exports: Vec<Exported>,
+    /// The id of the current state: see [`Step::id`]. Written as `id`
+    /// after `exported`, left out when the state has none yet, and
+    /// read loosely.
+    #[serde(
+        rename = "id",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "meta::loose"
+    )]
+    pub current_id: Option<String>,
     /// The rating, the flag, the label, the keywords and the words:
     /// see [`meta`]. Absent from every sidecar written before it
     /// existed, and the default there; left out again when it says
@@ -1220,6 +1231,33 @@ pub struct Sidecar {
         deserialize_with = "meta::loose_meta"
     )]
     pub meta: Meta,
+    /// When each field of [`Self::meta`] was last set: see
+    /// [`meta::Times`]. Stamped by the save against the meta the file
+    /// held when it was read. Left out while nothing has been stamped,
+    /// and read loosely.
+    #[serde(
+        rename = "meta_at",
+        default,
+        skip_serializing_if = "meta::Times::is_empty",
+        deserialize_with = "meta::loose"
+    )]
+    pub meta_at: meta::Times,
+    /// The meta and the turn as the file had them when it was read or
+    /// last saved, which is what the save stamps [`Self::meta_at`]
+    /// against; none for a sidecar that was never read from a file,
+    /// whose every set field is then new. Not written, not part of
+    /// equality, and public only so a struct update from
+    /// `Sidecar::default()` works outside this crate; nothing else
+    /// should set it.
+    #[serde(skip)]
+    pub baseline: Option<meta::Facts>,
+    /// When the file this was read from was last written, seconds
+    /// since the Unix epoch, as [`Self::read`] found it: the time a
+    /// copy from before revisions is taken to have been saved at
+    /// ([`Self::written_at`], [`Self::pin_times`]). Not written, not
+    /// part of equality, public as [`Self::baseline`] is.
+    #[serde(skip)]
+    pub modified: Option<u64>,
     /// Quarter turns clockwise on top of the camera's orientation
     /// tag, 0 to 3: the frames a camera got wrong (shot straight
     /// down, a body with no sensor for it, a scan).
@@ -1270,6 +1308,30 @@ pub struct Sidecar {
     /// integer reads as 0 rather than failing the whole sidecar.
     #[serde(default, deserialize_with = "meta::loose")]
     pub saved: u64,
+    /// Every save of this sidecar, oldest first, the last
+    /// [`sync::REVISIONS`] of them: see [`sync::Revision`]. What tells
+    /// two copies of one frame's sidecar apart when one has only
+    /// undone, or only changed a rating, since neither makes a state
+    /// (§233). Each save makes one ([`Self::save_in`]); left out while
+    /// there are none, and read loosely, a line at a time.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "sync::loose_revisions"
+    )]
+    pub revisions: Vec<sync::Revision>,
+    /// The latest revisions of the copies a join took in
+    /// ([`sync::join`]), the hashes alone, the last [`sync::ABSORBED`]
+    /// of them. A copy left stale, its latest revision long since
+    /// dropped from [`Self::revisions`] by the cap, is still known to
+    /// be behind by this; a save never ages it. Left out while empty,
+    /// and read loosely.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "sync::loose_hashes"
+    )]
+    pub absorbed: Vec<String>,
     /// Earlier states, oldest first, each one a whole edit and the
     /// words it was recorded with, if any.
     pub history: Vec<Step>,
@@ -1283,6 +1345,48 @@ pub struct Sidecar {
 
 fn is_no_turn(turn: &u8) -> bool {
     turn.rem_euclid(4) == 0
+}
+
+/// Everything the file holds, and the redo stack: not the baseline
+/// the save stamps the meta's times against, nor the file's time,
+/// which are notes about when the struct was read rather than a part
+/// of what it says. Every field is named, so a field added later has
+/// to be placed here on purpose.
+impl PartialEq for Sidecar {
+    fn eq(&self, other: &Self) -> bool {
+        let Sidecar {
+            current,
+            current_label,
+            current_exports,
+            current_id,
+            meta,
+            meta_at,
+            baseline: _,
+            modified: _,
+            turn,
+            xmp,
+            saved,
+            revisions,
+            absorbed,
+            history,
+            redo,
+            snapshots,
+        } = self;
+        *current == other.current
+            && *current_label == other.current_label
+            && *current_exports == other.current_exports
+            && *current_id == other.current_id
+            && *meta == other.meta
+            && *meta_at == other.meta_at
+            && *turn == other.turn
+            && *xmp == other.xmp
+            && *saved == other.saved
+            && *revisions == other.revisions
+            && *absorbed == other.absorbed
+            && *history == other.history
+            && *redo == other.redo
+            && *snapshots == other.snapshots
+    }
 }
 
 /// One state of the history: a whole edit, and the words the step
@@ -1317,6 +1421,16 @@ pub struct Step {
     /// state that goes (undone and then replaced, or past the cap)
     /// takes its records with it.
     pub exports: Vec<Exported>,
+    /// The state's id: blake3 of its parent state's id, the edit as
+    /// compact JSON and the label ([`sync::state_id`]), computed once
+    /// when the state is recorded and carried with it through undo
+    /// and redo. The same state reached on two machines from the same
+    /// parent has the same id, which is how two copies of one frame's
+    /// sidecar find the states they share (§233). None only on a
+    /// state from a sidecar written before ids, until its first read
+    /// fills it ([`Sidecar::fill_ids`]). Written as `id` beside
+    /// `step` and `exported`, and read loosely.
+    pub id: Option<String>,
 }
 
 impl Step {
@@ -1326,6 +1440,7 @@ impl Step {
             edit,
             label: None,
             exports: Vec::new(),
+            id: None,
         }
     }
 
@@ -1443,11 +1558,14 @@ impl Serialize for Step {
             step: &'a Option<String>,
             #[serde(skip_serializing_if = "Vec::is_empty")]
             exported: &'a Vec<Exported>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            id: &'a Option<String>,
         }
         Written {
             edit: &self.edit,
             step: &self.label,
             exported: &self.exports,
+            id: &self.id,
         }
         .serialize(serializer)
     }
@@ -1470,11 +1588,19 @@ impl<'de> Deserialize<'de> for Step {
             .and_then(|o| o.remove("exported"))
             .map(exports_from)
             .unwrap_or_default();
+        let id = value
+            .as_object_mut()
+            .and_then(|o| o.remove("id"))
+            .and_then(|s| match s {
+                serde_json::Value::String(s) => Some(s),
+                _ => None,
+            });
         let edit = Edit::deserialize(value).map_err(serde::de::Error::custom)?;
         Ok(Self {
             edit,
             label,
             exports,
+            id,
         })
     }
 }
@@ -1640,10 +1766,27 @@ impl Sidecar {
 
     /// The sidecar `raw` has, if there is one, wherever it is.
     pub fn load(raw: &Path) -> Result<Option<Self>> {
-        let Some(path) = Self::find(raw) else {
-            return Ok(None);
-        };
-        let json = std::fs::read_to_string(&path)?;
+        match Self::find(raw) {
+            Some(path) => Self::read(&path).map(Some),
+            None => Ok(None),
+        }
+    }
+
+    /// The sidecar at `path`, the file itself and not the frame's:
+    /// for a copy found elsewhere, on an archive. Every state is
+    /// brought up to the current schema; a state with no id gets one,
+    /// the first read of a sidecar from before ids being the one time
+    /// an id is computed from a file; a meta field with no time gets
+    /// the file's ([`Self::pin_times`]); and the meta and the turn as
+    /// read are kept to stamp their times against at the next save.
+    pub fn read(path: &Path) -> Result<Self> {
+        let modified = path
+            .metadata()
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map(|d| d.as_secs());
+        let json = std::fs::read_to_string(path)?;
         let mut value: serde_json::Value = serde_json::from_str(&json)?;
         if let Some(obj) = value.as_object_mut() {
             if let Some(current) = obj.remove("current") {
@@ -1662,7 +1805,12 @@ impl Sidecar {
                 obj.insert("snapshots".into(), serde_json::Value::Array(snapshots));
             }
         }
-        Ok(Some(serde_json::from_value(value)?))
+        let mut sidecar: Self = serde_json::from_value(value)?;
+        sidecar.modified = modified;
+        sidecar.fill_ids();
+        sidecar.pin_times();
+        sidecar.baseline = Some(sidecar.facts());
+        Ok(sidecar)
     }
 
     /// Record `edit` as the current state, keeping the one it replaces;
@@ -1684,17 +1832,20 @@ impl Sidecar {
         }
         // Blank words are none, so nothing writes an empty `step`.
         let label = label.filter(|l| !l.trim().is_empty());
+        // The new state's id hangs off the current state's, which a
+        // sidecar from before ids gets here if nothing filled it yet.
+        self.fill_ids();
+        let parent = self.current_id.as_deref().unwrap_or(sync::ZERO_ID);
+        let id = sync::state_id(parent, &edit, label.as_deref());
         let previous = Step {
             edit: std::mem::replace(&mut self.current, edit),
             label: std::mem::replace(&mut self.current_label, label),
             exports: std::mem::take(&mut self.current_exports),
+            id: self.current_id.replace(id),
         };
         self.history.push(previous);
-        if self.history.len() > HISTORY {
-            // The earliest stays; what follows it goes.
-            let extra = self.history.len() - HISTORY;
-            self.history.drain(1..1 + extra);
-        }
+        // The earliest stays; what follows it goes.
+        self.cap_history();
         self.redo.clear();
         true
     }
@@ -1909,6 +2060,7 @@ impl Sidecar {
             edit: std::mem::replace(&mut self.current, previous.edit),
             label: std::mem::replace(&mut self.current_label, previous.label),
             exports: std::mem::replace(&mut self.current_exports, previous.exports),
+            id: std::mem::replace(&mut self.current_id, previous.id),
         };
         self.redo.push(undone);
         true
@@ -1943,6 +2095,7 @@ impl Sidecar {
             let same = later.edit == earlier.edit;
             if same {
                 earlier.exports.append(&mut later.exports);
+                earlier.id = later.id.take();
             }
             same
         });
@@ -1980,6 +2133,7 @@ impl Sidecar {
             edit: std::mem::replace(&mut self.current, next.edit),
             label: std::mem::replace(&mut self.current_label, next.label),
             exports: std::mem::replace(&mut self.current_exports, next.exports),
+            id: std::mem::replace(&mut self.current_id, next.id),
         };
         self.history.push(current);
         true
@@ -2063,24 +2217,57 @@ impl Sidecar {
     ///
     /// [`Self::saved`] is incremented before the write, so the copy
     /// that lands is always the one [`Self::find`] will prefer over
-    /// whatever it replaces.
+    /// whatever it replaces. The save is stamped with this machine
+    /// and the time: see [`Self::save_in_stamped`].
     pub fn save_in(&mut self, raw: &Path, placement: Placement) -> Result<()> {
+        self.save_in_stamped(raw, placement, &sync::Stamp::now())
+    }
+
+    /// [`Self::save_in`] as made at `stamp`'s time on `stamp`'s host:
+    /// every state has its id, the save is a revision
+    /// ([`Self::revisions`]) of that time and host, and every field of
+    /// the meta and the turn that differs from the file as read is
+    /// stamped with the time and that revision ([`Self::meta_at`]), so
+    /// the copy written can be told from the one it replaces and from
+    /// a copy elsewhere (§233).
+    pub fn save_in_stamped(
+        &mut self,
+        raw: &Path,
+        placement: Placement,
+        stamp: &sync::Stamp,
+    ) -> Result<()> {
         self.saved = self.saved.saturating_add(1);
+        self.fill_ids();
+        self.revise(stamp);
         let path = Self::path_in(raw, placement);
         if placement == Placement::Folder
             && let Some(folder) = path.parent()
         {
             Self::folder_under(folder.parent().unwrap_or(Path::new("")))?;
         }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_string_pretty(self)?)?;
-        std::fs::rename(&tmp, &path)?;
+        self.write_to(&path)?;
         let other = Self::path_in(raw, placement.other());
         if other.exists()
             && let Err(e) = std::fs::remove_file(&other)
         {
             log::warn!("{}: superseded but not removed: {e}", other.display());
         }
+        Ok(())
+    }
+
+    /// The sidecar as it is written: pretty-printed JSON.
+    pub fn to_json(&self) -> String {
+        serde_json::to_string_pretty(self).expect("a sidecar serializes")
+    }
+
+    /// Write the sidecar as it is to `path`, through a temporary file
+    /// beside it, with no new revision and nothing stamped: the same
+    /// file again in another place, a copy of one frame on an archive
+    /// (§233). [`Self::save_in`] is the save; this is only the write.
+    pub fn write_to(&self, path: &Path) -> Result<()> {
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, self.to_json())?;
+        std::fs::rename(&tmp, path)?;
         Ok(())
     }
 
@@ -3930,18 +4117,34 @@ mod tests {
         plain.record(exposed(1.0));
         let json = serde_json::to_string_pretty(&plain).unwrap();
         assert!(!json.contains("\"step\""), "{json}");
-        // Byte for byte what a history of bare edits wrote.
+        // Byte for byte what a history of bare edits wrote, but for
+        // each state's id beside it (§233).
+        #[derive(Serialize)]
+        struct State<'a> {
+            #[serde(flatten)]
+            edit: &'a Edit,
+            id: &'a Option<String>,
+        }
         #[derive(Serialize)]
         struct Before<'a> {
             current: &'a Edit,
+            id: &'a Option<String>,
             saved: u64,
-            history: Vec<&'a Edit>,
+            history: Vec<State<'a>>,
             snapshots: &'a [Snapshot],
         }
         let before = Before {
             current: &plain.current,
+            id: &plain.current_id,
             saved: plain.saved,
-            history: plain.history.iter().map(|s| &s.edit).collect(),
+            history: plain
+                .history
+                .iter()
+                .map(|s| State {
+                    edit: &s.edit,
+                    id: &s.id,
+                })
+                .collect(),
             snapshots: &plain.snapshots,
         };
         assert_eq!(json, serde_json::to_string_pretty(&before).unwrap());
@@ -4255,6 +4458,15 @@ mod tests {
         assert!(sidecar.take_sources(&done.retouch.patches));
         assert_eq!(sidecar.states(), 2);
         assert_eq!(sidecar.current, done);
+        // A state that merges into the one before it keeps the later
+        // id: the state is the completed one.
+        let mut stepped = Sidecar::default();
+        stepped.record(a_placed_spot().0);
+        stepped.record(done.clone());
+        let later = stepped.current_id.clone();
+        assert!(stepped.take_sources(&done.retouch.patches));
+        assert_eq!(stepped.states(), 2);
+        assert_eq!(stepped.current_id, later);
         // The save the develop's arrival would have made finds
         // nothing new.
         assert!(!sidecar.record(done.clone()));

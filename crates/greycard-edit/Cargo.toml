@@ -16,6 +16,11 @@ serde_json.workspace = true
 thiserror.workspace = true
 roxmltree.workspace = true
 dirs.workspace = true
+# State ids and revisions in the sidecar (§233); the hash the library
+# and the editor already use for a file's identity.
+blake3 = "1"
+# The host's name on a revision. Already in the tree through x11rb.
+gethostname = "1"
 
 [dev-dependencies]
 # A camera profile made by hand, for the local white balance's tests.
