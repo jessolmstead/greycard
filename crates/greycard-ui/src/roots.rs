@@ -174,11 +174,20 @@ pub(crate) struct Library {
     /// `loading_timer` to fill the bar.
     pub(crate) progress: Option<Arc<Progress>>,
     pub(crate) loading_timer: slint::Timer,
-    /// The count as the timer last saw it, and when it last moved: a
-    /// read past [`READ_GIVES_UP`] whose count has stood still for
-    /// [`LOADING_STALLED`] is given up on by the timer.
-    pub(crate) progress_seen: usize,
+    /// The count read and its total as the timer last saw them, and
+    /// when the count last moved: a read past [`READ_GIVES_UP`] whose
+    /// count has stood still for [`LOADING_STALLED`] is given up on by
+    /// the timer.
+    pub(crate) progress_seen: (usize, usize),
     pub(crate) progress_moved: Option<Instant>,
+    /// When the count or its total last moved: the bar says "Waiting"
+    /// only after both stand still, so a read that spent its first
+    /// seconds listing does not open on it.
+    pub(crate) progress_counted: Option<Instant>,
+    /// The one root the view's read is under, by its row's name: what
+    /// the bar names when the count stands still. `None` for a read
+    /// over several roots, or a folder under none.
+    pub(crate) loading_where: Option<String>,
     /// The list is being read again off the window's thread; a
     /// refresh asked for meanwhile is done once when it lands
     /// (`stale`).
@@ -855,6 +864,23 @@ pub(crate) fn root_name(roots: &Roots, root: &Path) -> String {
     roots.label(root)
 }
 
+/// The one root every path is under, named, or `None` when they are
+/// under several or none.
+pub(crate) fn one_root_named<'a>(
+    roots: &Roots,
+    paths: impl IntoIterator<Item = &'a Path>,
+) -> Option<String> {
+    let mut one: Option<&Path> = None;
+    for path in paths {
+        let root = roots.root_of(path)?;
+        match one {
+            Some(r) if r != root => return None,
+            _ => one = Some(root),
+        }
+    }
+    one.map(|r| root_name(roots, r))
+}
+
 /// A root as the status line says it: its path, after its name when
 /// it has one, so a root named alike to another is still told apart.
 pub(crate) fn said(roots: &Roots, root: &Path) -> String {
@@ -1283,6 +1309,10 @@ const READ_GIVES_UP: Duration = Duration::from_secs(60);
 /// How long a view's read runs before its bar is shown: a root on a
 /// local disk is in before this, and never flashes one.
 pub(crate) const LOADING_SHOWN_AFTER: Duration = Duration::from_millis(200);
+
+/// How long the count stands still before the bar names the root it
+/// waits on instead: a sidecar on a local disk is read in far less.
+pub(crate) const LOADING_WAITING_AFTER: Duration = Duration::from_secs(1);
 
 /// How often the window looks at a view's read's count while it runs.
 const LOADING_TICK: Duration = Duration::from_millis(100);
@@ -2227,6 +2257,10 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
     };
     let asked = Instant::now();
     let (roots, only) = view.listed(st.library.roots.list());
+    let at = match roots.as_slice() {
+        [one] => one_root_named(&st.library.roots, [one.as_path()]),
+        _ => None,
+    };
     // The rows are read off the window's thread, on a connection of the
     // read's own, when the window knows where the index is; here only
     // their count, for the status line, from the folder index's range.
@@ -2298,7 +2332,7 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         },
     };
     drop(st);
-    loading_started(state, app, progress);
+    loading_started(state, app, progress, at);
     if !send_off(app, look) {
         let mut st = state.borrow_mut();
         st.library.awaiting = false;
@@ -2340,6 +2374,13 @@ pub(crate) fn open_listing(
         }
     };
     app.set_status(format!("opening {what}...").into());
+    let at = match &source {
+        Source::Folder(dir) => one_root_named(&st.library.roots, [dir.as_path()]),
+        Source::Files(files) => {
+            one_root_named(&st.library.roots, files.iter().map(PathBuf::as_path))
+        }
+        _ => None,
+    };
     // The bar's count, until the read says how many sidecars it reads
     // from disk: every file given might be one; a folder's are not
     // known until it is listed.
@@ -2369,7 +2410,7 @@ pub(crate) fn open_listing(
         },
     };
     drop(st);
-    loading_started(state, app, progress);
+    loading_started(state, app, progress, at);
     if !send_off(app, look) {
         let mut st = state.borrow_mut();
         loading_done(&mut st.library, app);
@@ -2380,15 +2421,29 @@ pub(crate) fn open_listing(
 /// A view's read sent: `loading` set, and the window's timer started
 /// on its count. The bar shows once the read has run past
 /// [`LOADING_SHOWN_AFTER`], and goes when it lands or is given up on.
-fn loading_started(state: &Rc<RefCell<State>>, app: &App, progress: Arc<Progress>) {
+/// `at` is the one root the read is under, named, for the bar to say
+/// when the count stands still.
+fn loading_started(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    progress: Arc<Progress>,
+    at: Option<String>,
+) {
     let mut st = state.borrow_mut();
     let lib = &mut st.library;
     let now = Instant::now();
     lib.loading = true;
     lib.loading_since = Some(now);
+    // The count as it starts, so the first tick does not take the
+    // total it was sent with for movement.
+    lib.progress_seen = (
+        progress.read.load(Ordering::Relaxed),
+        progress.total.load(Ordering::Relaxed),
+    );
     lib.progress = Some(progress);
-    lib.progress_seen = 0;
     lib.progress_moved = Some(now);
+    lib.progress_counted = Some(now);
+    lib.loading_where = at;
     app.set_loading_shown(false);
     let (state_weak, app_weak) = (Rc::downgrade(state), app.as_weak());
     lib.loading_timer
@@ -2413,12 +2468,16 @@ pub(crate) fn loading_tick(st: &mut State, app: &App, now: Instant) {
     };
     let total = progress.total.load(Ordering::Relaxed);
     let read = progress.read.load(Ordering::Relaxed).min(total);
-    if read != lib.progress_seen {
-        lib.progress_seen = read;
-        lib.progress_moved = Some(now);
+    if (read, total) != lib.progress_seen {
+        if read != lib.progress_seen.0 {
+            lib.progress_moved = Some(now);
+        }
+        lib.progress_seen = (read, total);
+        lib.progress_counted = Some(now);
     }
     let out = now.saturating_duration_since(since);
     let still = now.saturating_duration_since(lib.progress_moved.unwrap_or(since));
+    let settled = now.saturating_duration_since(lib.progress_counted.unwrap_or(since));
     if out > READ_GIVES_UP && still > LOADING_STALLED {
         give_up_view(st, app);
         return;
@@ -2432,7 +2491,10 @@ pub(crate) fn loading_tick(st: &mut State, app: &App, now: Instant) {
         read as f32 / total as f32
     };
     app.set_loading_fraction(fraction);
-    app.set_loading_line(loading_words(read, total).into());
+    let waiting = (settled >= LOADING_WAITING_AFTER && read < total)
+        .then_some(lib.loading_where.as_deref())
+        .flatten();
+    app.set_loading_line(loading_words(read, total, waiting).into());
     if !app.get_loading_shown() {
         tracing::info!(
             "library: the view's bar shown {:.0} ms after it was asked for, {read} of {total} read",
@@ -2449,6 +2511,8 @@ pub(crate) fn loading_done(lib: &mut Library, app: &App) {
     lib.loading_since = None;
     lib.progress = None;
     lib.progress_moved = None;
+    lib.progress_counted = None;
+    lib.loading_where = None;
     lib.loading_timer.stop();
     app.set_loading_shown(false);
 }
@@ -2463,15 +2527,18 @@ fn give_up_view(st: &mut State, app: &App) {
     app.set_status("the library's frames did not come in; the list is as it was".into());
 }
 
-/// The bar's words: "Reading 11,711 sidecars… 3,400".
-pub(crate) fn loading_words(read: usize, total: usize) -> String {
+/// The bar's words: "Reading sidecars… 3,400 of 11,711", or "Waiting
+/// on Archive…" when `waiting` names the root a stalled read is under.
+pub(crate) fn loading_words(read: usize, total: usize, waiting: Option<&str>) -> String {
     if total == 0 {
         // Nothing read from disk: the roots and the folders being
         // looked at, up to their wait each.
         return "Looking at the library's folders…".to_string();
     }
-    let word = if total == 1 { "sidecar" } else { "sidecars" };
-    format!("Reading {} {word}… {}", grouped(total), grouped(read))
+    if let Some(root) = waiting {
+        return format!("Waiting on {root}…");
+    }
+    format!("Reading sidecars… {} of {}", grouped(read), grouped(total))
 }
 
 /// A count with its thousands set apart by commas.
@@ -5111,8 +5178,12 @@ pub(crate) mod tests {
 
     #[test]
     fn the_bar_s_words_group_the_thousands() {
-        assert_eq!(loading_words(3400, 11711), "Reading 11,711 sidecars… 3,400");
-        assert_eq!(loading_words(0, 1), "Reading 1 sidecar… 0");
+        assert_eq!(
+            loading_words(3400, 11711, None),
+            "Reading sidecars… 3,400 of 11,711"
+        );
+        assert_eq!(loading_words(0, 1, None), "Reading sidecars… 0 of 1");
+        assert_eq!(loading_words(0, 1, Some("Archive")), "Waiting on Archive…");
         assert_eq!(grouped(0), "0");
         assert_eq!(grouped(999), "999");
         assert_eq!(grouped(1000), "1,000");
@@ -5151,11 +5222,20 @@ pub(crate) mod tests {
         tick_on(LOADING_TICK + Duration::from_millis(1));
         assert!(app.get_loading_shown());
         assert!((app.get_loading_fraction() - 1.0 / 3.0).abs() < 1e-6);
-        assert_eq!(app.get_loading_line(), "Reading 3 sidecars… 1");
+        assert_eq!(app.get_loading_line(), "Reading sidecars… 1 of 3");
         read_so_far(&state, 2);
         tick_on(LOADING_TICK + Duration::from_millis(1));
         assert!((app.get_loading_fraction() - 2.0 / 3.0).abs() < 1e-6);
-        assert_eq!(app.get_loading_line(), "Reading 3 sidecars… 2");
+        assert_eq!(app.get_loading_line(), "Reading sidecars… 2 of 3");
+        // The count standing still names the root the read waits on,
+        // and the count is back as soon as it moves.
+        let moved = state.borrow().library.progress_counted.unwrap();
+        let later = moved + LOADING_WAITING_AFTER + Duration::from_millis(500);
+        loading_tick(&mut state.borrow_mut(), &app, later);
+        assert_eq!(app.get_loading_line(), "Waiting on a…");
+        read_so_far(&state, 3);
+        loading_tick(&mut state.borrow_mut(), &app, later);
+        assert_eq!(app.get_loading_line(), "Reading sidecars… 3 of 3");
         // The read itself counts: what it brings is all three.
         land(&state, &app, &worker, look.run());
         {
@@ -5223,7 +5303,7 @@ pub(crate) mod tests {
         tick(READ_GIVES_UP + LOADING_STALLED);
         assert!(state.borrow().library.loading, "still moving: kept");
         assert!(app.get_loading_shown());
-        assert_eq!(app.get_loading_line(), "Reading 3 sidecars… 2");
+        assert_eq!(app.get_loading_line(), "Waiting on a…", "ten seconds still");
         // Stopped: the count at 2 for longer than LOADING_STALLED.
         tick(READ_GIVES_UP + Duration::from_secs(5) + LOADING_STALLED + Duration::from_secs(1));
         {
@@ -5250,6 +5330,31 @@ pub(crate) mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// A total that arrives after a slow listing is movement: the bar
+    /// shows the count first, and names the root only once both have
+    /// stood still.
+    #[test]
+    fn a_late_total_shows_the_count_before_waiting() {
+        let (dir, writer, app, state, worker) = three_under_a_root("loading-late-total");
+        open_three(&state, &app, &worker, &dir);
+        let look = SENT.with(|s| s.borrow_mut().pop()).unwrap();
+        let since = state.borrow().library.loading_since.unwrap();
+        let tick = |at: Duration| loading_tick(&mut state.borrow_mut(), &app, since + at);
+        tick(Duration::from_secs(2));
+        assert_eq!(app.get_loading_line(), "Waiting on a…", "nothing moved");
+        let progress = state.borrow().library.progress.clone().unwrap();
+        progress.total.store(2, Ordering::Relaxed);
+        tick(Duration::from_millis(2100));
+        assert_eq!(app.get_loading_line(), "Reading sidecars… 0 of 2");
+        tick(Duration::from_millis(3200));
+        assert_eq!(app.get_loading_line(), "Waiting on a…");
+        drop(look);
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// A view's read given up on takes its bar with it, and the status
     /// line says why; a folder opened over a view's read does too.
     #[test]
@@ -5261,7 +5366,7 @@ pub(crate) mod tests {
             Some(Instant::now() - READ_GIVES_UP - Duration::from_secs(1));
         tick_on(LOADING_TICK + Duration::from_millis(1));
         assert!(app.get_loading_shown(), "still reading, and said so");
-        assert_eq!(app.get_loading_line(), "Reading 3 sidecars… 0");
+        assert_eq!(app.get_loading_line(), "Reading sidecars… 0 of 3");
         refresh_view(&state, &app, &worker);
         assert!(!app.get_loading_shown());
         assert!(!state.borrow().library.loading_timer.running());
@@ -6811,7 +6916,10 @@ pub(crate) mod tests {
         assert!(state.borrow().loads.timer.running());
         crate::rows::bar_tick(&state, &app, &worker, since + Duration::from_millis(300));
         assert!(app.get_loading_shown(), "the frames' bar, after the moment");
-        assert_eq!(app.get_loading_line(), "Reading 1 sidecar… 0");
+        assert_eq!(app.get_loading_line(), "Reading sidecars… 0 of 1");
+        let waited = since + LOADING_WAITING_AFTER + Duration::from_millis(500);
+        crate::rows::bar_tick(&state, &app, &worker, waited);
+        assert_eq!(app.get_loading_line(), "Waiting on a…");
         assert!(!state.borrow().library.loading, "not the view's read");
         // The list replaced: the request goes, the bar with it.
         open_listing(

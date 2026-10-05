@@ -382,8 +382,13 @@ pub(crate) struct Loads {
     pub(crate) progress: Option<Arc<Progress>>,
     /// Since when a read has been out.
     pub(crate) since: Option<Instant>,
-    seen: usize,
+    /// The count read and its total as the timer last saw them, when
+    /// the count last moved (for the give-up), and when either did: a
+    /// request joining a read out adds to the total, and is not
+    /// "Waiting" from its first tick.
+    seen: (usize, usize),
     moved: Option<Instant>,
+    counted: Option<Instant>,
     pub(crate) timer: slint::Timer,
 }
 
@@ -786,11 +791,13 @@ fn bar_started(st: &mut State, app: &App, n: usize) {
         .loads
         .progress
         .get_or_insert_with(|| Arc::new(Progress::default()));
-    progress.total.fetch_add(n, Ordering::Relaxed);
+    let total = progress.total.fetch_add(n, Ordering::Relaxed) + n;
+    let read = progress.read.load(Ordering::Relaxed);
     if st.loads.since.is_none() {
         st.loads.since = Some(now);
         st.loads.moved = Some(now);
-        st.loads.seen = 0;
+        st.loads.counted = Some(now);
+        st.loads.seen = (read, total);
         let app_weak = app.as_weak();
         st.loads.timer.start(
             slint::TimerMode::Repeated,
@@ -822,12 +829,16 @@ pub(crate) fn bar_tick(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker
         };
         let total = progress.total.load(Ordering::Relaxed);
         let read = progress.read.load(Ordering::Relaxed).min(total);
-        if read != st.loads.seen {
-            st.loads.seen = read;
-            st.loads.moved = Some(now);
+        if (read, total) != st.loads.seen {
+            if read != st.loads.seen.0 {
+                st.loads.moved = Some(now);
+            }
+            st.loads.seen = (read, total);
+            st.loads.counted = Some(now);
         }
         let out = now.saturating_duration_since(since);
         let still = now.saturating_duration_since(st.loads.moved.unwrap_or(since));
+        let settled = now.saturating_duration_since(st.loads.counted.unwrap_or(since));
         if out > FRAMES_GIVE_UP && still > FRAMES_STALLED {
             // Every request is dropped, those waiting on the read and
             // those queued behind them alike, and said by name; a pick
@@ -854,7 +865,16 @@ pub(crate) fn bar_tick(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker
                     read as f32 / total as f32
                 };
                 app.set_loading_fraction(fraction);
-                app.set_loading_line(crate::roots::loading_words(read, total).into());
+                let waiting = (settled >= crate::roots::LOADING_WAITING_AFTER && read < total)
+                    .then(|| {
+                        let out = st.loads.queue.iter().filter(|p| !p.landed);
+                        let paths = out.flat_map(|p| &p.paths);
+                        crate::roots::one_root_named(&st.library.roots, paths.map(PathBuf::as_path))
+                    })
+                    .flatten();
+                app.set_loading_line(
+                    crate::roots::loading_words(read, total, waiting.as_deref()).into(),
+                );
                 app.set_loading_shown(true);
             }
             false
@@ -871,7 +891,8 @@ pub(crate) fn bar_done(st: &mut State, app: &App) {
     st.loads.since = None;
     st.loads.progress = None;
     st.loads.moved = None;
-    st.loads.seen = 0;
+    st.loads.counted = None;
+    st.loads.seen = (0, 0);
     st.loads.timer.stop();
     if !st.library.loading {
         app.set_loading_shown(false);

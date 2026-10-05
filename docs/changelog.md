@@ -10,6 +10,9 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The loading bar says "Reading sidecars… 3,400 of 11,711" rather than
+  two bare numbers, and when the count stands still for a second it
+  names the root it is waiting on: "Waiting on Archive…" (2026-10-04)
 - The Settings sheet's two cache caps show the value last set, even
   while a count or an eviction holds the cache, and a field typed wrong
   goes back to that value rather than to the settings file's
