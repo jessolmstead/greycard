@@ -1807,6 +1807,16 @@ pub(crate) mod tests {
         (state, worker)
     }
 
+    /// A window closed in a test that opens another over the same
+    /// index: its reader let go, since the app's callbacks keep the
+    /// state alive past the drop, and Windows will not remove a folder
+    /// holding an open database.
+    fn close(state: Rc<RefCell<State>>, worker: Rc<Worker>) {
+        state.borrow_mut().index_reader = None;
+        drop(worker);
+        drop(state);
+    }
+
     fn exposed(stops: f32) -> greycard_edit::Edit {
         let mut e = greycard_edit::Edit::default();
         e.light.exposure = stops;
@@ -1883,8 +1893,14 @@ pub(crate) mod tests {
         assert_eq!(check(&dest, Some(&later)), Check::Changed);
         // A stat that fails other than by the file being away is a
         // failure, not an absence: a file where a folder should be.
+        // Windows reports a path under a file as not found, so there it
+        // reads as away, and the write that follows fails instead.
         let under_file = dest.join("x.gcd");
-        assert!(matches!(check(&under_file, None), Check::Failed(_)));
+        if cfg!(windows) {
+            assert_eq!(check(&under_file, None), Check::Absent);
+        } else {
+            assert!(matches!(check(&under_file, None), Check::Failed(_)));
+        }
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1965,7 +1981,8 @@ pub(crate) mod tests {
         let lib = Library::open_read_only(&db).unwrap();
         let p = pair(&lib, &bare, &a2).unwrap();
         assert_eq!(p.copies.len(), 1);
-        std::fs::remove_dir_all(&dir).unwrap();
+        drop(lib);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// The write itself, off any window: a copy with no sidecar gets
@@ -2145,8 +2162,7 @@ pub(crate) mod tests {
         land_sent(&state, &app, &worker);
         assert_eq!(app.get_sync_note(), "2 edits waiting for Archive");
         // The window closes and opens again: the launch says it.
-        drop(worker);
-        drop(state);
+        close(state, worker);
         let app = window(2);
         let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
         assert_eq!(app.get_sync_note(), "2 edits waiting for Archive");
@@ -2278,8 +2294,7 @@ pub(crate) mod tests {
             1,
             "the save that never reached the archive is pending"
         );
-        drop(worker);
-        drop(state);
+        close(state, worker);
         // Opened again, the archive answering.
         crate::roots::tests::NOT_ANSWERING.with(|n| n.borrow_mut().clear());
         let app = window(2);
@@ -2575,8 +2590,7 @@ pub(crate) mod tests {
             assert!(!st.sync.checking.contains(&files[1]));
             assert_eq!(st.files[1], files[1], "a write waits: it stays");
         }
-        drop(worker2);
-        drop(state2);
+        close(state2, worker2);
         crate::testing::remove_scratch(state, &dir);
     }
 
