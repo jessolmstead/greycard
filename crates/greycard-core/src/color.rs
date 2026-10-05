@@ -434,10 +434,11 @@ fn weighted_mean(pixels: &[[f32; 3]], weight: impl Fn([f32; 3]) -> f32) -> Optio
 /// pixel to hand to [`neutral_gains`] the way a neutral dropper hands
 /// it the pixel it picked.
 ///
-/// `pixels` are the developed picture, linear, in the working space
-/// at the white it was developed at: `gains` and `matrix` as for
-/// [`neutral_gains`], and `clip` the working-space value its channels
-/// were clipped at. `as_shot` are the camera's own gains for the frame.
+/// `pixels` are the developed picture on a grid `width` points across,
+/// row after row, linear, in the working space at the white it was
+/// developed at: `gains` and `matrix` as for [`neutral_gains`], and
+/// `clip` the working-space value its channels were clipped at.
+/// `as_shot` are the camera's own gains for the frame.
 ///
 /// The estimate is made in camera space, each pixel taken back through
 /// the matrix and the gains to what the sensor saw, so it does not
@@ -445,32 +446,41 @@ fn weighted_mean(pixels: &[[f32; 3]], weight: impl Fn([f32; 3]) -> f32) -> Optio
 /// any white the same frame gives the same light, and the answer run
 /// on the picture developed at its own answer is that answer again.
 ///
-/// Grey-world, the idea of RawTherapee's "automatic, RGB grey", made
-/// harder to drag:
+/// Grey-edge (van de Weijer, Gevers and Gijsenij, "Edge-based color
+/// constancy", 2007; darktable color calibration's detection from
+/// image edges is the same idea): the mean difference between
+/// neighboring surfaces is grey, where grey-world takes the mean
+/// surface to be. A big smooth sky or wall is a lot of pixels but few
+/// and faint edges, so it no longer decides the answer by its area.
 ///
 /// 1. Only the pixels that can say something: every channel above
 ///    [`AUTO_FLOOR`] of the sensor's white (below it is noise) and
 ///    none above [`AUTO_CLIP`] of where that channel clipped, the
 ///    sensor's white or `clip` over its gain, whichever is lower (a
 ///    clipped channel has lost the ratio).
-/// 2. Their mean, each pixel weighted `1 / (1 + (d / 0.25)^2)` by its
-///    distance `d` from the as-shot white, `d` the log ratios of red
-///    and blue to green: a pixel far off grey under the camera's own
-///    white, a blue sky, a red wall, counts for less. Among pixels
-///    that all share a cast every weight is the same and this is
-///    plain grey-world.
-/// 3. One re-weighting: the mean again, each pixel weighted
+/// 2. At each point whose right and lower neighbors are usable too,
+///    each channel's gradient: the length of its two differences.
+///    These are the samples; with fewer than [`AUTO_MIN_PIXELS`] of
+///    them (a picture with no structure, or no rows) the usable
+///    pixels themselves are, and this is grey-world.
+/// 3. Their mean, each sample weighted `1 / (1 + (d / 0.25)^2)` by
+///    its distance `d` from the as-shot white, `d` the log ratios of
+///    red and blue to green: a sample far off grey under the
+///    camera's own white counts for less. Among samples that all
+///    share a cast every weight is the same.
+/// 4. One re-weighting: the mean again, each sample weighted
 ///    `exp(-d^2 / (2 * 0.1^2))` by its distance from the first
-///    estimate, so the result settles on the pixels that estimate
-///    calls grey. When no pixel is near enough to weigh anything the
+///    estimate, so the result settles on the samples that estimate
+///    calls grey. When none is near enough to weigh anything the
 ///    first estimate stands.
 ///
-/// The means are of the pixels themselves, not of their chromaticity,
-/// so a bright pixel counts for more than a dark one, as in
-/// grey-world. `None` when fewer than [`AUTO_MIN_PIXELS`] pixels are
-/// usable, or the matrix will not invert.
+/// The means are of the samples themselves, not of their
+/// chromaticity, so a strong edge counts for more than a faint one,
+/// as in grey-edge. `None` when fewer than [`AUTO_MIN_PIXELS`] pixels
+/// are usable, or the matrix will not invert.
 pub fn auto_neutral(
     pixels: &[[f32; 3]],
+    width: usize,
     gains: [f32; 3],
     matrix: Matrix3,
     clip: f32,
@@ -481,27 +491,62 @@ pub fn auto_neutral(
     // not rebuild its highlights clipped each lower, at `clip` over
     // its gain.
     let top: [f32; 3] = std::array::from_fn(|c| (clip / gains[c]).min(1.0));
-    let usable: Vec<[f32; 3]> = pixels
+    let camera: Vec<Option<[f32; 3]>> = pixels
         .iter()
-        .map(|&p| to_camera(p, gains, &inv))
-        .filter(|v| {
-            (0..3).all(|c| v[c].is_finite() && v[c] > AUTO_FLOOR && v[c] <= top[c] * AUTO_CLIP)
+        .map(|&p| {
+            let v = to_camera(p, gains, &inv);
+            (0..3)
+                .all(|c| v[c].is_finite() && v[c] > AUTO_FLOOR && v[c] <= top[c] * AUTO_CLIP)
+                .then_some(v)
         })
         .collect();
+    let usable: Vec<[f32; 3]> = camera.iter().flatten().copied().collect();
     if usable.len() < AUTO_MIN_PIXELS {
         return None;
     }
+    let edges = edges(&camera, width);
+    let samples = if edges.len() >= AUTO_MIN_PIXELS {
+        &edges
+    } else {
+        &usable
+    };
     // The as-shot white as the sensor sees it.
     let shot = as_shot.map(|g| 1.0 / g);
     let prior = AUTO_PRIOR_SPREAD * AUTO_PRIOR_SPREAD;
-    let first = weighted_mean(&usable, |p| 1.0 / (1.0 + chroma2(p, shot) / prior))?;
+    let first = weighted_mean(samples, |p| 1.0 / (1.0 + chroma2(p, shot) / prior))?;
     let spread = 2.0 * AUTO_GREY_SPREAD * AUTO_GREY_SPREAD;
-    let light = weighted_mean(&usable, |p| (-chroma2(p, first) / spread).exp()).unwrap_or(first);
+    let light = weighted_mean(samples, |p| (-chroma2(p, first) / spread).exp()).unwrap_or(first);
     // Forward again, to the pixel the develop made of that light.
     Some(apply3(
         &matrix,
         std::array::from_fn(|c| light[c] * gains[c]),
     ))
+}
+
+/// Each channel's gradient on a grid `width` across, at every point
+/// whose right and lower neighbors are there (`Some`) as well: the
+/// length of its two differences. A point where a channel does not
+/// change at all says nothing of the light's color and is left out.
+fn edges(grid: &[Option<[f32; 3]>], width: usize) -> Vec<[f32; 3]> {
+    if width < 2 {
+        return Vec::new();
+    }
+    let rows = grid.len() / width;
+    let mut out = Vec::new();
+    for y in 0..rows.saturating_sub(1) {
+        for x in 0..width - 1 {
+            let i = y * width + x;
+            let (Some(a), Some(right), Some(below)) = (grid[i], grid[i + 1], grid[i + width])
+            else {
+                continue;
+            };
+            let g: [f32; 3] = std::array::from_fn(|c| (right[c] - a[c]).hypot(below[c] - a[c]));
+            if g.iter().all(|&v| v > 0.0) {
+                out.push(g);
+            }
+        }
+    }
+    out
 }
 
 /// sRGB's transfer curve, encoded to linear.
@@ -608,9 +653,9 @@ pub(crate) mod tests {
 
     /// [`auto_neutral`] on a picture developed with no gains and no
     /// matrix, the camera's own white at one: working space is
-    /// camera space.
+    /// camera space. One column, so no edges: the pixels' own path.
     fn plain(pixels: &[[f32; 3]], clip: f32) -> Option<[f32; 3]> {
-        auto_neutral(pixels, [1.0; 3], IDENTITY3, clip, [1.0; 3])
+        auto_neutral(pixels, 1, [1.0; 3], IDENTITY3, clip, [1.0; 3])
     }
 
     /// A grey ramp from dark to bright under a light of color `cast`,
@@ -667,6 +712,77 @@ pub(crate) mod tests {
         assert!(!within(mean, cast, 0.2), "{mean:?}");
     }
 
+    /// The light as the sensor sees it in [`textured_land_under_sky`].
+    const DAYLIGHT: [f32; 3] = [0.5, 1.0, 0.7];
+
+    /// A frame 64 points across as the sensor saw it under
+    /// [`DAYLIGHT`]: the lower 20 rows grey ground of every lightness,
+    /// changing from point to point, and above it a pale sky, brighter
+    /// and most of the frame, smooth but for a faint fall from the
+    /// horizon up. The shape of a seascape or an air show, where the
+    /// sky's area is what grey-world reads.
+    fn textured_land_under_sky() -> Vec<[f32; 3]> {
+        let mut frame = Vec::new();
+        for y in 0..64 {
+            for x in 0..64 {
+                if y < 44 {
+                    let level = 0.45 + 0.1 * y as f32 / 44.0;
+                    let sky = [0.85, 1.0, 1.35];
+                    frame.push(std::array::from_fn(|c| DAYLIGHT[c] * sky[c] * level));
+                } else {
+                    let level = 0.05 + 0.25 * ((x * 7 + y * 13) % 11) as f32 / 10.0;
+                    frame.push(DAYLIGHT.map(|c| c * level));
+                }
+            }
+        }
+        frame
+    }
+
+    /// [`auto_neutral`] on `frame` read `width` across, at no gains
+    /// and no matrix, with an as-shot white a little off [`DAYLIGHT`].
+    fn on_land(frame: &[[f32; 3]], width: usize) -> [f32; 3] {
+        auto_neutral(frame, width, [1.0; 3], IDENTITY3, 1.0, [2.1, 1.0, 1.35]).unwrap()
+    }
+
+    #[test]
+    fn auto_neutral_reads_the_light_off_edges_not_a_big_sky() {
+        let frame = textured_land_under_sky();
+        // On the grid, the ground's edges name the light.
+        let got = on_land(&frame, 64);
+        assert!(within(got, DAYLIGHT, 0.02), "{got:?}");
+        // Read as pixels alone, grey-world even with both passes, the
+        // sky drags it blue: the light taken for bluer than it is, a
+        // white set higher, a picture warmer than the scene.
+        let pixels = on_land(&frame, 1);
+        assert!(!within(pixels, DAYLIGHT, 0.05), "{pixels:?}");
+        assert!(ratios(pixels)[1] > ratios(DAYLIGHT)[1], "{pixels:?}");
+    }
+
+    #[test]
+    fn auto_neutral_leaves_out_edges_at_clipped_and_black_pixels() {
+        // Glints dotted through the ground, the light itself a little
+        // brighter than the sensor holds: green clipped at one, red
+        // and blue still under. Off the ground each makes a strong
+        // edge near grey but too red and too blue, close enough to
+        // the light to pass both passes; with black noise beside
+        // them. A point beside either has no edge to give, so the
+        // answer is the rest of the ground's.
+        let mut frame = textured_land_under_sky();
+        let alone = on_land(&frame, 64);
+        assert!(within(alone, DAYLIGHT, 0.02), "{alone:?}");
+        for y in 44..64 {
+            for x in (y % 3..64).step_by(6) {
+                frame[y * 64 + x] = if x % 4 == 1 {
+                    [0.004, 0.002, 0.003]
+                } else {
+                    [DAYLIGHT[0] * 1.15, 1.0, DAYLIGHT[2] * 1.15]
+                };
+            }
+        }
+        let got = on_land(&frame, 64);
+        assert!(within(got, alone, 0.01), "{got:?} {alone:?}");
+    }
+
     #[test]
     fn auto_neutral_leaves_out_clipped_and_black_pixels() {
         let cast = [0.8f32, 1.0, 1.3];
@@ -710,6 +826,10 @@ pub(crate) mod tests {
         assert!(plain(&[], 1.0).is_none());
     }
 
+    /// How wide [`camera_scene`] is: the patches are its first 30
+    /// rows, the sky the 50 after.
+    const SCENE_WIDTH: usize = 40;
+
     /// A scene as the sensor saw it: grey patches under a light the
     /// camera reads as (0.5, 1, 0.7), and a sky that is most of it.
     fn camera_scene() -> Vec<[f32; 3]> {
@@ -743,7 +863,7 @@ pub(crate) mod tests {
         let scene = camera_scene();
         let answer = |gains: [f32; 3], matrix: Matrix3| {
             let (pixels, clip) = developed(&scene, gains, matrix);
-            let px = auto_neutral(&pixels, gains, matrix, clip, AS_SHOT).unwrap();
+            let px = auto_neutral(&pixels, SCENE_WIDTH, gains, matrix, clip, AS_SHOT).unwrap();
             neutral_gains(px, gains, matrix).unwrap().map(|g| g as f32)
         };
         // A tungsten white and a shade white: the same light.
@@ -761,13 +881,13 @@ pub(crate) mod tests {
     fn auto_neutral_on_its_own_answer_is_neutral() {
         let scene = camera_scene();
         let (pixels, clip) = developed(&scene, AS_SHOT, WARM_MATRIX);
-        let px = auto_neutral(&pixels, AS_SHOT, WARM_MATRIX, clip, AS_SHOT).unwrap();
+        let px = auto_neutral(&pixels, SCENE_WIDTH, AS_SHOT, WARM_MATRIX, clip, AS_SHOT).unwrap();
         let gains = neutral_gains(px, AS_SHOT, WARM_MATRIX)
             .unwrap()
             .map(|g| g as f32);
         // Developed at the white it found, it finds grey.
         let (again, clip) = developed(&scene, gains, WARM_MATRIX);
-        let px = auto_neutral(&again, gains, WARM_MATRIX, clip, AS_SHOT).unwrap();
+        let px = auto_neutral(&again, SCENE_WIDTH, gains, WARM_MATRIX, clip, AS_SHOT).unwrap();
         assert!(within(px, [1.0; 3], 0.01), "{px:?}");
     }
 

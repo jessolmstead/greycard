@@ -1902,10 +1902,10 @@ impl Renderer {
     /// The developed picture on a grid about `across` pixels wide, a
     /// pixel at each point of it (not a mean), in the working space
     /// at the white it was developed at, as [`Self::sample`] reads
-    /// it: the whole frame, small, for the auto white balance. Only
-    /// the rows on the grid come back from the GPU. `None` with no
-    /// picture.
-    pub fn sample_grid(&self, across: u32) -> Result<Option<Vec<[f32; 3]>>> {
+    /// it: the whole frame, small, for the auto white balance, row
+    /// after row, and how many points a row has. Only the rows on the
+    /// grid come back from the GPU. `None` with no picture.
+    pub fn sample_grid(&self, across: u32) -> Result<Option<(Vec<[f32; 3]>, usize)>> {
         let Some(source) = &self.source else {
             return Ok(None);
         };
@@ -1978,7 +1978,8 @@ impl Renderer {
         }
         drop(data);
         buffer.unmap();
-        Ok(Some(out))
+        let width = (step / 2..w).step_by(step as usize).count();
+        Ok(Some((out, width)))
     }
 
     fn guide_texture(device: &gpu::Device, width: u32, height: u32) -> gpu::Texture {
@@ -3531,8 +3532,9 @@ mod tests {
         let mut renderer = Renderer::new(&device, &queue);
         assert!(renderer.sample_grid(64).unwrap().is_none());
         renderer.upload(&crate::worker::Halves::from_image(&image, None));
-        let grid = renderer.sample_grid(64).unwrap().unwrap();
+        let (grid, width) = renderer.sample_grid(64).unwrap().unwrap();
         let step = w / 64;
+        assert_eq!(width, (step / 2..w).step_by(step).count());
         let mut want = Vec::new();
         for y in (step / 2..h).step_by(step) {
             for x in (step / 2..w).step_by(step) {

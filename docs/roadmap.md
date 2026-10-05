@@ -15,7 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] Auto white balance seems to lean way too warm. (tbf lightroom does too)
 - [ ] `--zoom 1 --screenshot` opens fitted: the camera's JPEG standing in
       for the develop resets the zoom (`cull::placeholder_arrived`) (§241)
 - [ ] `--show-mask` is dropped when the first file is opened a second

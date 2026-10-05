@@ -144,14 +144,15 @@ pub(crate) const AUTO_WHITE_TOO_LITTLE: &str =
 #[cfg(test)]
 thread_local! {
     /// The picture the Auto white balance reads in a test, which has
-    /// no GPU to read one back from.
-    pub(crate) static AUTO_WHITE_GRID: std::cell::RefCell<Option<Vec<[f32; 3]>>> =
+    /// no GPU to read one back from, and its width.
+    pub(crate) static AUTO_WHITE_GRID: std::cell::RefCell<Option<(Vec<[f32; 3]>, usize)>> =
         const { std::cell::RefCell::new(None) };
 }
 
 /// The whole developed picture, small, in the working space at the
-/// white it was developed at: what the Auto white balance reads.
-fn auto_white_grid(st: &State) -> Option<Vec<[f32; 3]>> {
+/// white it was developed at, and how many points across: what the
+/// Auto white balance reads.
+fn auto_white_grid(st: &State) -> Option<(Vec<[f32; 3]>, usize)> {
     #[cfg(test)]
     if let Some(grid) = AUTO_WHITE_GRID.with(|g| g.borrow_mut().take()) {
         return Some(grid);
@@ -182,9 +183,10 @@ pub(crate) fn auto_white(mut st: std::cell::RefMut<'_, State>, app: &App) {
         let as_shot = resolve_white_balance(frame, &profile, WhitePoint::AsShot)
             .map_err(|e| NeutralMiss::Unresolved(e.to_string()))?
             .coefficients_f32();
-        let grid = auto_white_grid(&st).ok_or(NeutralMiss::Waiting)?;
+        let (grid, width) = auto_white_grid(&st).ok_or(NeutralMiss::Waiting)?;
         Ok(greycard_core::color::auto_neutral(
             &grid,
+            width,
             base.gains,
             base.matrix,
             base.clip,
@@ -1788,7 +1790,7 @@ mod tests {
         // The picture on the GPU is not this frame's develop yet (a
         // frame was chosen and its develop has not landed): neither
         // Auto nor the Neutral dropper reads it.
-        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some(vec![[0.3; 3]; 1000]));
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((vec![[0.3; 3]; 1000], 40)));
         app.invoke_wb_auto();
         assert_eq!(app.get_status(), "auto white balance: wait for the develop");
         assert_eq!(
@@ -1818,7 +1820,7 @@ mod tests {
         assert!(app.get_as_shot());
 
         // Too little to read: nothing moves, and the status says why.
-        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some(vec![[0.99; 3]; 1000]));
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((vec![[0.99; 3]; 1000], 40)));
         app.invoke_wb_auto();
         assert_eq!(app.get_status(), AUTO_WHITE_TOO_LITTLE);
         assert!(app.get_as_shot());
@@ -1829,7 +1831,7 @@ mod tests {
                 [1.25 * level, level, 0.7 * level]
             })
             .collect();
-        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some(grid));
+        AUTO_WHITE_GRID.with(|g| *g.borrow_mut() = Some((grid, 40)));
         app.invoke_wb_auto();
         wait();
         assert!(!app.get_as_shot());
