@@ -1954,6 +1954,9 @@ pub(crate) mod tests {
         assert!(p2.ambiguous.is_empty());
         // One candidate needs no pairing.
         std::fs::remove_file(nas.join("selects").join("a.tif")).unwrap();
+        // Each reader closed before the next opens: a shadowed one
+        // stays open, and Windows will not remove the folder under it.
+        drop(lib);
         let mut w = Library::open(&db).unwrap();
         w.forget(&[nas.join("selects").join("a.tif")]).unwrap();
         drop(w);
@@ -1975,6 +1978,7 @@ pub(crate) mod tests {
         assert!(p.copies.is_empty(), "{p:?}");
         // The shoot's frame gone, the selects frame is the hash's one
         // local frame, and the sole hit is its own.
+        drop(lib);
         let mut w = Library::open(&db).unwrap();
         w.forget(std::slice::from_ref(&a)).unwrap();
         drop(w);

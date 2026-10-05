@@ -1166,7 +1166,10 @@ pub(crate) mod tests {
     /// but the archive's left, the status line says where to go.
     #[test]
     fn over_every_root_an_archives_rejects_are_left_to_its_own_view() {
-        let dir = scratch("archived");
+        // Canonical, as the roots hold theirs: the archive is found by
+        // the frames' paths starting with it, and Windows' temporary
+        // folder is not spelled canonically.
+        let dir = dunce::canonicalize(scratch("archived")).unwrap();
         let (local, nas) = (dir.join("local"), dir.join("nas"));
         let (here, there) = (
             cull::rejects_dir(&local.join("shoot")).join("x.tif"),

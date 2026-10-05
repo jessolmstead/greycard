@@ -1909,9 +1909,18 @@ mod tests {
         crate::panel::delete::tests::land_all(&state, &app, &worker);
         assert!(!day.join("rejects").exists(), "{}", app.get_status());
         let forgotten = wait(&|t| matches!(t, Told::Forgotten(..)));
+        let said = format!("{forgotten:?}");
         crate::library::told(&app, forgotten);
         land_sent(&state, &app, &worker);
-        assert_eq!(tiles(&app), [("more".into(), 1)], "{:?}", rows(&app));
+        let held =
+            greycard_library::Library::open_read_only(&dir.join("index").join("library.sqlite"))
+                .and_then(|l| l.folder_counts_under_canonical(&root));
+        assert_eq!(
+            tiles(&app),
+            [("more".into(), 1)],
+            "{:?}; {said}; the index holds {held:?}",
+            rows(&app)
+        );
         let names: Vec<String> = rows(&app).into_iter().map(|r| r.0).collect();
         assert_eq!(names, ["archive", "day", "more"]);
 
