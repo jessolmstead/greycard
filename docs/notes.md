@@ -256,3 +256,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§243. One frame in two places, part 1: the file's side](notes/243-one-frame-in-two-places-part-1-the-files-side.md) (2026-10-04)
 - [§244. One frame in two places, part 2: the editor's side](notes/244-one-frame-in-two-places-part-2-the-editors-side.md) (2026-10-04)
 - [§245. Auto white balance from edges](notes/245-auto-white-balance-from-edges.md) (2026-10-04)
+- [§246. The rejects folders a view shows, and deletes](notes/246-the-rejects-folders-a-view-shows.md) (2026-10-04)

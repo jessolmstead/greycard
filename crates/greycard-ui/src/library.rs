@@ -158,6 +158,11 @@ pub(crate) enum Told {
     },
     /// Rows after saves are up to date.
     FilesIndexed,
+    /// The window's own moves are in the rows: the folders they left
+    /// and went to, so a root's tree over them is built again. A move
+    /// inside a root moves no root's count, and the folder passes
+    /// after it find the rows already where they are.
+    Moved(Vec<PathBuf>),
     /// The rows of files the window deleted are gone, this many.
     Forgotten(usize),
     /// A pass in the background is done: a root's tree for the
@@ -964,15 +969,24 @@ fn serve(
         }
         // The window's own moves first, so the saves after them find
         // each row at its new path; each read again there.
+        let mut moved_through: Vec<PathBuf> = Vec::new();
         for (from, to) in &moves {
             match lib.file_moved(from, to) {
                 Ok(_) => {
                     if !files.contains(to) {
                         files.push(to.clone());
                     }
+                    for dir in [from.parent(), to.parent()].into_iter().flatten() {
+                        if !moved_through.iter().any(|d| d == dir) {
+                            moved_through.push(dir.to_path_buf());
+                        }
+                    }
                 }
                 Err(e) => tracing::warn!("index: {} moved, its row not: {e}", from.display()),
             }
+        }
+        if !moved_through.is_empty() {
+            told(Told::Moved(moved_through));
         }
         if !files.is_empty() {
             for f in &files {
@@ -2083,6 +2097,13 @@ pub(crate) fn told(app: &App, told: Told) {
             app.window().request_redraw();
         }
         Told::FilesIndexed => reread(&state, app, false),
+        Told::Moved(folders) => {
+            let mut st = state.borrow_mut();
+            for folder in &folders {
+                crate::tree::passed(&mut st, folder);
+            }
+            crate::tree::want(&mut st, app);
+        }
         Told::Forgotten(n) => {
             tracing::debug!("index: {n} rows of deleted files forgotten");
             reread(&state, app, false);

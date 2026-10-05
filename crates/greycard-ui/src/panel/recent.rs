@@ -58,6 +58,9 @@ pub(crate) fn opened(st: &mut State, app: &App) {
         crate::roots::View::Branch { folder, .. } => Some(folder.clone()),
         crate::roots::View::Roots(_) => None,
     };
+    // A folder under no root opened again has its own folders read
+    // again for its tiles: nothing watches it.
+    crate::tree::loose_changed(st, app);
     if let Some(dir) = st.recent.open.clone() {
         let dir = dir.to_string_lossy().into_owned();
         match &st.settings_file {

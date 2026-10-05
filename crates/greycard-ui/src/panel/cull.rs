@@ -1661,6 +1661,9 @@ pub(crate) fn drop_files(
         .map(|&i| st.index_passed.get(i).copied().unwrap_or(true))
         .collect();
     crate::library::index_open_folder(st, None);
+    // A rejects folder made or emptied under a folder of no root: its
+    // tiles read again, as the index tells the tree for a root's.
+    crate::tree::loose_changed(st, app);
     // The indices the previews and the worker's thumbnails were
     // keyed by have moved: the previews are decoded again (cheap),
     // and a thumbnail still owed is asked for again.

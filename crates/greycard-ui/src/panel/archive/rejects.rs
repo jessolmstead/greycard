@@ -124,16 +124,36 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, choice: usize) {
         return;
     };
     let label = st.library.roots.label(&archive);
-    if st.view != View::Folder {
-        app.set_status("a rejects folder is a folder's: open the folder first".into());
-        return;
-    }
+    // One folder's rejects folder: the open folder's, or the one a
+    // folder of the tree shows alone. A view over many folders has
+    // many, and each is weighed against the archive on its own.
+    let branch = match &st.view {
+        View::Folder => None,
+        View::Branch {
+            folder,
+            deep: false,
+            ..
+        } => Some(folder.clone()),
+        _ => {
+            app.set_status(
+                "Remove rejects works on one folder: pick one in the tree with With \
+                 subfolders off"
+                    .into(),
+            );
+            return;
+        }
+    };
     // The same folder §190's Delete rejects folder takes, in the
     // spelling the reads kept (no disk asked here: the open folder may
     // be on a share that hangs), without the `\\?\` Windows puts on a
     // canonical path, so the guard below and the look's own folder
     // compare with the index's paths.
-    let Some(open) = super::open_folder(&st) else {
+    // The open folder with every frame moved out has no first frame
+    // to say where it is; Recently opened still has it.
+    let Some(open) = branch
+        .or_else(|| super::open_folder(&st))
+        .or_else(|| st.recent.open.clone())
+    else {
         app.set_status("nothing is open".into());
         return;
     };
@@ -1409,6 +1429,39 @@ mod tests {
             c.app.get_status().contains("is nas's own"),
             "{}",
             c.app.get_status()
+        );
+        c.done();
+    }
+
+    /// A folder of the tree shown alone is one folder, as the open
+    /// folder is, even with nothing of its own in the list; a view over
+    /// many folders says to pick one.
+    #[test]
+    fn a_folder_of_the_tree_alone_is_one_folder_and_a_view_of_many_is_not() {
+        let c = culled("branch");
+        let shoot = c.rejects.parent().unwrap().to_path_buf();
+        {
+            let mut st = c.state.borrow_mut();
+            st.view = View::Branch {
+                root: c.dir.join("local"),
+                folder: shoot,
+                deep: false,
+            };
+            st.files.clear();
+        }
+        c.sheet();
+        assert!(
+            c.app
+                .get_archive_rejects_text()
+                .starts_with("2 rejects here have 2 copies on nas")
+        );
+        c.app.invoke_archive_rejects_answered(0);
+        c.state.borrow_mut().view = View::Roots(None);
+        c.app.invoke_archive_rejects_asked(0);
+        assert_eq!(c.land(), 0);
+        assert_eq!(
+            c.app.get_status(),
+            "Remove rejects works on one folder: pick one in the tree with With subfolders off"
         );
         c.done();
     }

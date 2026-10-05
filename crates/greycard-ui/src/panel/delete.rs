@@ -9,6 +9,7 @@ use crate::delete::{self, Deleted, How, Offer, Plan, TRASH_SUPPORTED};
 use crate::panel::browser::{chosen_frames, file_name};
 use crate::panel::cull::{drop_files, shoot_rejects_dir};
 use crate::panel::edit::{read_edit, save_edit};
+use crate::roots::View;
 use crate::*;
 
 /// What the sheet was opened for.
@@ -16,7 +17,8 @@ use crate::*;
 pub(crate) enum Which {
     /// The frames chosen: the set, or the frame on screen alone.
     Selection,
-    /// The frames in the rejects folder beside the open folder.
+    /// The frames in the rejects folder beside the open folder, or
+    /// in every rejects folder a view over many folders lists.
     Rejects,
 }
 
@@ -70,7 +72,7 @@ pub(crate) struct Done {
 impl Job {
     /// The delete itself, off the window's thread: the thumbnails'
     /// keys first (a hash of each frame's head), then the files, then
-    /// the rejects folder when it is left empty.
+    /// each rejects folder left empty.
     pub(crate) fn run(self) -> Done {
         let keys = self
             .plan
@@ -79,10 +81,10 @@ impl Job {
             .map(|d| (d.frame.clone(), crate::worker::thumb_key(&d.frame)))
             .collect();
         let deleted = delete::delete(&self.plan, self.how, &self.allowed, delete::system_trash);
-        if self.which == Which::Rejects
-            && let Some(dir) = self.allowed.first()
-        {
-            delete::remove_if_empty(dir);
+        if self.which == Which::Rejects {
+            for dir in &self.allowed {
+                delete::remove_if_empty(dir);
+            }
         }
         Done {
             which: self.which,
@@ -173,7 +175,7 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
         app.set_status("a delete is still under way".into());
         return;
     }
-    let (frames, allowed) = match which {
+    let over = match which {
         Which::Selection => {
             let chosen = chosen_frames(st);
             // A frame under a root that is offline is not there to
@@ -205,16 +207,50 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
             let mut dirs = crate::library::folders_of(&frames);
             let rejects: Vec<PathBuf> = dirs.iter().map(|d| cull::rejects_dir(d)).collect();
             dirs.extend(rejects);
-            (frames, delete::allowed(&dirs))
+            Over {
+                frames,
+                allowed: delete::allowed(&dirs),
+                links: 0,
+                archived: 0,
+            }
         }
         Which::Rejects => {
-            if st.view != crate::roots::View::Folder {
-                app.set_status("a rejects folder is a folder's: open the folder first".into());
-                return;
-            }
-            // Beside the first frame's folder, which is the open
-            // folder; the sheet names it whatever else is open.
-            let Some(dir) = shoot_rejects_dir(st) else {
+            // A view of one folder takes the rejects folder beside it,
+            // read from the disk; a view over many folders takes every
+            // rejects folder it lists frames in.
+            let one = match &st.view {
+                // Beside the first frame's folder, which is the open
+                // folder; the sheet names it whatever else is open.
+                // With every frame moved out there is no first frame,
+                // and Recently opened still has the folder.
+                View::Folder => shoot_rejects_dir(st).or_else(|| {
+                    let dir = st.recent.open.as_deref()?;
+                    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+                    Some(cull::rejects_dir(&dir))
+                }),
+                View::Branch {
+                    folder,
+                    deep: false,
+                    ..
+                } => {
+                    if let Some(root) = st.library.offline.iter().find(|r| folder.starts_with(r)) {
+                        let name = crate::roots::root_name(&st.library.roots, root);
+                        app.set_status(format!("{name} is offline: nothing to delete").into());
+                        return;
+                    }
+                    let folder =
+                        std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+                    Some(cull::rejects_dir(&folder))
+                }
+                _ => {
+                    let Some(over) = rejects_listed(st, app) else {
+                        return;
+                    };
+                    ask_sheet(st, app, which, over);
+                    return;
+                }
+            };
+            let Some(dir) = one else {
                 app.set_status("nothing is open".into());
                 return;
             };
@@ -242,9 +278,110 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
                 app.set_status(format!("{} has no frames in it", shown(&dir)).into());
                 return;
             }
-            (frames, delete::allowed(&[dir]))
+            Over {
+                frames,
+                allowed: delete::allowed(&[dir]),
+                links: 0,
+                archived: 0,
+            }
         }
     };
+    ask_sheet(st, app, which, over);
+}
+
+/// What a delete is over: the frames, the folders it may reach, how
+/// many rejects folders were left out for being links, and how many
+/// frames for being on an archive the view is not of.
+struct Over {
+    frames: Vec<PathBuf>,
+    allowed: Vec<PathBuf>,
+    links: usize,
+    archived: usize,
+}
+
+/// Every rejects folder a view over many folders lists frames in, and
+/// those frames: from the list, not the disk, so nothing goes that the
+/// view has not counted, and no folder is read on the window's thread
+/// but each rejects folder looked at once. Frames under a root that is
+/// offline are left out, and a rejects folder that is a link with its
+/// frames. So are frames on an archive, unless the view is of that
+/// archive: Remove rejects puts an archive's copies of the rejects in
+/// its own rejects folders, and one delete over every root would take
+/// a reject and its copy together. None, said, when nothing is left.
+fn rejects_listed(st: &State, app: &App) -> Option<Over> {
+    let of_view = match &st.view {
+        View::Roots(Some(root)) | View::Branch { root, .. } => Some(root.as_path()),
+        _ => None,
+    };
+    let roots = &st.library.roots;
+    let elsewhere = |f: &Path| {
+        roots
+            .archive_of(f)
+            .is_some_and(|a| of_view.is_none_or(|v| !v.starts_with(a)))
+    };
+    let (archived, in_rejects): (Vec<usize>, Vec<usize>) = (0..st.files.len())
+        .filter(|&i| {
+            st.files[i].parent().and_then(Path::file_name)
+                == Some(std::ffi::OsStr::new(cull::REJECTS))
+        })
+        .partition(|&i| elsewhere(&st.files[i]));
+    let (offline, here): (Vec<usize>, Vec<usize>) = in_rejects
+        .into_iter()
+        .partition(|&i| crate::rows::is_offline(st, i));
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut links: Vec<PathBuf> = Vec::new();
+    let mut frames: Vec<PathBuf> = Vec::new();
+    for i in here {
+        let file = &st.files[i];
+        let Some(dir) = file.parent() else {
+            continue;
+        };
+        if links.iter().any(|l| l == dir) {
+            continue;
+        }
+        if !dirs.iter().any(|d| d == dir) {
+            if std::fs::symlink_metadata(dir).is_ok_and(|m| m.file_type().is_symlink()) {
+                links.push(dir.to_path_buf());
+                continue;
+            }
+            dirs.push(dir.to_path_buf());
+        }
+        frames.push(file.clone());
+    }
+    if frames.is_empty() {
+        if let Some(&i) = offline.first() {
+            crate::rows::say_offline_for(st, app, i, ": nothing to delete");
+        } else if let Some(link) = links.first() {
+            app.set_status(
+                format!("{} is a link; nothing is deleted through one", shown(link)).into(),
+            );
+        } else if !archived.is_empty() {
+            app.set_status(
+                "the rejects here are all on an archive: delete them from the archive's own view"
+                    .into(),
+            );
+        } else {
+            app.set_status("no frame here is in a rejects folder".into());
+        }
+        return None;
+    }
+    Some(Over {
+        frames,
+        allowed: delete::allowed(&dirs),
+        links: links.len(),
+        archived: archived.len(),
+    })
+}
+
+/// The sheet over `over`'s frames, or the status line's word for why
+/// none of them can go.
+fn ask_sheet(st: &mut State, app: &App, which: Which, over: Over) {
+    let Over {
+        frames,
+        allowed,
+        links,
+        archived,
+    } = over;
     let plan = delete::plan(&frames, &allowed);
     if plan.frames.is_empty() {
         let why = plan
@@ -263,10 +400,18 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
     let title = match which {
         Which::Selection if n == 1 => format!("Delete {}?", file_name(&planned[0])),
         Which::Selection => format!("Delete {n} frames?"),
-        Which::Rejects => format!("Delete the rejects folder's {}?", delete::count(n, "frame")),
+        Which::Rejects if folders.len() == 1 => {
+            format!("Delete the rejects folder's {}?", delete::count(n, "frame"))
+        }
+        Which::Rejects => format!(
+            "Delete {} from {} rejects folders?",
+            delete::count(n, "frame"),
+            folders.len()
+        ),
     };
     let place = match folders.as_slice() {
         [one] => shown(one),
+        many if which == Which::Rejects => format!("{} rejects folders", many.len()),
         many => format!("{} folders", many.len()),
     };
     let mut text = format!(
@@ -283,6 +428,24 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
             } else {
                 "they are"
             }
+        ));
+    }
+    if links > 0 {
+        text.push_str(&format!(
+            " {} left alone: {}.",
+            delete::count(links, "rejects folder"),
+            if links == 1 {
+                "it is a link"
+            } else {
+                "they are links"
+            }
+        ));
+    }
+    if archived > 0 {
+        text.push_str(&format!(
+            " {} on an archive left alone: delete {} from the archive's own view.",
+            delete::count(archived, "frame"),
+            if archived == 1 { "it" } else { "them" }
         ));
     }
     app.set_delete_title(title.into());
@@ -898,6 +1061,210 @@ mod tests {
             app.get_status()
                 .starts_with("deleted permanently: 2 frames and 2 sidecars")
         );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A view over many folders deletes every rejects folder it lists
+    /// frames in, the sheet counting them; a rejects folder that is a
+    /// link is left alone and said, and the frames out of the rejects
+    /// folders are untouched. With no frame in a rejects folder it says
+    /// so.
+    #[test]
+    fn a_view_over_many_folders_deletes_each_rejects_folder_it_lists() {
+        let dir = scratch("many");
+        let (one, two) = (dir.join("one"), dir.join("two"));
+        std::fs::create_dir_all(&one).unwrap();
+        let mut listed = shoot(&one);
+        std::fs::create_dir_all(&two).unwrap();
+        let kept = two.join("k.tif");
+        write_frame(&kept, &R5, 20);
+        listed.push(kept.clone());
+        let mut rejected = Vec::new();
+        for (shoot, names) in [(&one, &["x.tif", "y.tif"][..]), (&two, &["z.tif"][..])] {
+            let rejects = cull::rejects_dir(shoot);
+            std::fs::create_dir_all(&rejects).unwrap();
+            for (i, n) in names.iter().enumerate() {
+                let f = rejects.join(n);
+                write_frame(&f, &A7, 30 + i as u16);
+                Sidecar::default().save(&f).unwrap();
+                rejected.push(f);
+            }
+        }
+        listed.extend(rejected.iter().cloned());
+        // A third folder whose rejects folder is a link to elsewhere.
+        #[cfg(unix)]
+        let target = {
+            let target = dir.join("elsewhere");
+            std::fs::create_dir_all(&target).unwrap();
+            write_frame(&target.join("w.tif"), &R6, 40);
+            let three = dir.join("three");
+            std::fs::create_dir_all(&three).unwrap();
+            std::os::unix::fs::symlink(&target, cull::rejects_dir(&three)).unwrap();
+            listed.push(cull::rejects_dir(&three).join("w.tif"));
+            target
+        };
+        let app = window(listed.len());
+        let (state, worker) = opened(&app, listed.clone());
+        state.borrow_mut().view = View::Roots(None);
+        refused(&state, &cull::rejects_dir(&one));
+        refused(&state, &cull::rejects_dir(&two));
+        app.invoke_delete_asked("rejects".into());
+        assert_eq!(
+            app.get_delete_title(),
+            "Delete 3 frames from 2 rejects folders?",
+            "{}",
+            app.get_status()
+        );
+        let text = app.get_delete_text().to_string();
+        assert!(
+            text.starts_with("3 frames and 3 sidecars, from 2 rejects folders."),
+            "{text}"
+        );
+        #[cfg(unix)]
+        assert!(
+            text.ends_with(" 1 rejects folder left alone: it is a link."),
+            "{text}"
+        );
+        app.invoke_delete_answered(2);
+        land_all(&state, &app, &worker);
+        assert!(!cull::rejects_dir(&one).exists());
+        assert!(!cull::rejects_dir(&two).exists());
+        #[cfg(unix)]
+        assert!(target.join("w.tif").exists(), "nothing through the link");
+        assert!(listed[..6].iter().all(|f| f.exists()));
+        assert!(
+            app.get_status()
+                .starts_with("deleted permanently: 3 frames and 3 sidecars"),
+            "{}",
+            app.get_status()
+        );
+        assert!(rejected.iter().all(|f| !state.borrow().files.contains(f)));
+
+        // Nothing left in a rejects folder but the link's.
+        #[cfg(unix)]
+        {
+            app.invoke_delete_asked("rejects".into());
+            assert!(!app.get_delete_open());
+            assert!(
+                app.get_status()
+                    .ends_with("is a link; nothing is deleted through one"),
+                "{}",
+                app.get_status()
+            );
+        }
+        drop(state);
+        drop(worker);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Over every root, a reject on an archive is left out and said:
+    /// it may be the archive's copy of a reject here, and one delete
+    /// would take both. The archive's own view takes it; with nothing
+    /// but the archive's left, the status line says where to go.
+    #[test]
+    fn over_every_root_an_archives_rejects_are_left_to_its_own_view() {
+        let dir = scratch("archived");
+        let (local, nas) = (dir.join("local"), dir.join("nas"));
+        let (here, there) = (
+            cull::rejects_dir(&local.join("shoot")).join("x.tif"),
+            cull::rejects_dir(&nas.join("shoot")).join("x.tif"),
+        );
+        for f in [&here, &there] {
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            write_frame(f, &R5, 3);
+        }
+        let ask = |files: Vec<PathBuf>, view: View| {
+            let app = window(files.len());
+            let (state, worker) = opened(&app, files);
+            {
+                let mut st = state.borrow_mut();
+                st.library.roots.add(&local).unwrap();
+                st.library.roots.add(&nas).unwrap();
+                st.library.roots.set_archive(&nas, true);
+                st.view = view;
+            }
+            app.invoke_delete_asked("rejects".into());
+            (app, state, worker)
+        };
+        let (app, ..) = ask(vec![here.clone(), there.clone()], View::Roots(None));
+        assert_eq!(
+            app.get_delete_title(),
+            "Delete the rejects folder's 1 frame?"
+        );
+        let text = app.get_delete_text().to_string();
+        assert!(
+            text.ends_with(
+                " 1 frame on an archive left alone: delete it from the archive's own view."
+            ),
+            "{text}"
+        );
+        let (app, state, _) = ask(vec![there.clone()], View::Roots(None));
+        assert!(!app.get_delete_open());
+        assert_eq!(
+            app.get_status(),
+            "the rejects here are all on an archive: delete them from the archive's own view"
+        );
+        drop(state);
+        let (app, ..) = ask(vec![there.clone()], View::Roots(Some(nas.clone())));
+        assert_eq!(
+            app.get_delete_title(),
+            "Delete the rejects folder's 1 frame?"
+        );
+        assert!(
+            !app.get_delete_text().contains("left alone"),
+            "{}",
+            app.get_delete_text()
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A folder of a root's tree shown alone takes the rejects folder
+    /// beside it, as the folder's own view does, though the list holds
+    /// only the folder's own frames.
+    #[test]
+    fn a_folder_of_the_tree_shown_alone_takes_its_rejects_folder() {
+        let dir = scratch("branch");
+        let shoot_dir = dir.join("day");
+        std::fs::create_dir_all(&shoot_dir).unwrap();
+        let files = shoot(&shoot_dir);
+        let rejects = cull::rejects_dir(&shoot_dir);
+        std::fs::create_dir_all(&rejects).unwrap();
+        write_frame(&rejects.join("x.tif"), &A7, 9);
+        let app = window(files.len());
+        let (state, worker) = opened(&app, files.clone());
+        state.borrow_mut().view = View::Branch {
+            root: dir.clone(),
+            folder: shoot_dir.clone(),
+            deep: false,
+        };
+        refused(&state, &rejects);
+        app.invoke_delete_asked("rejects".into());
+        assert_eq!(
+            app.get_delete_title(),
+            "Delete the rejects folder's 1 frame?"
+        );
+        app.invoke_delete_answered(2);
+        land_all(&state, &app, &worker);
+        assert!(!rejects.exists());
+        assert!(files.iter().all(|f| f.exists()));
+        drop(state);
+        drop(worker);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A view over many folders with no frame in a rejects folder
+    /// says so, and opens no sheet.
+    #[test]
+    fn a_view_over_many_folders_with_no_rejects_says_so() {
+        let dir = scratch("none");
+        let files = shoot(&dir);
+        let app = window(files.len());
+        let (state, _worker) = opened(&app, files);
+        state.borrow_mut().view = View::Roots(None);
+        app.invoke_delete_asked("rejects".into());
+        assert!(!app.get_delete_open());
+        assert_eq!(app.get_status(), "no frame here is in a rejects folder");
+        drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
 

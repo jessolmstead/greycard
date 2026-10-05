@@ -82,6 +82,15 @@ pub(crate) struct Tree {
     /// row's is.
     tiles: Rc<VecModel<FolderTile>>,
     tile_folders: RefCell<Vec<PathBuf>>,
+    /// A folder opened from the disk under no root has no tree; its
+    /// own folders are read from the disk for its tiles: the folder,
+    /// and each folder in it as a node.
+    loose: Option<(PathBuf, Vec<Node>)>,
+    loose_token: u64,
+    loose_asked: Option<PathBuf>,
+    /// The folder's own folders may have changed: read again at the
+    /// next `want`.
+    loose_stale: bool,
 }
 
 /// The tree of `root`'s folders from the index's counts of the frames
@@ -185,6 +194,12 @@ fn children<'a>(nodes: &'a [Node], folder: &Path) -> Vec<&'a Node> {
 /// it, or the root's own view, which is everything under the root), for
 /// a view with no tree, or before the tree for its root has landed.
 pub(crate) fn tiles_for(st: &State) -> Vec<&Node> {
+    if let Some(dir) = loose_for(st) {
+        return match &st.tree.loose {
+            Some((have, nodes)) if have == dir => nodes.iter().collect(),
+            _ => Vec::new(),
+        };
+    }
     let Some((root, folder)) = shown_for(st) else {
         return Vec::new();
     };
@@ -255,6 +270,104 @@ pub(crate) fn shown_for(st: &State) -> Option<(&Path, &Path)> {
     }
 }
 
+/// The folder open from the disk when it lies under no root: its
+/// tiles are its own folders, read from the disk.
+fn loose_for(st: &State) -> Option<&Path> {
+    if st.view != View::Folder {
+        return None;
+    }
+    let dir = st.recent.open.as_deref()?;
+    st.library.roots.root_of(dir).is_none().then_some(dir)
+}
+
+/// The folders in `dir`, as tiles have them: each that is not hidden
+/// and not a link and has frames directly in it, by name as the tree
+/// sorts them, counted by those frames. What is further down is not
+/// walked, since the folder may be on a share; a folder with frames
+/// only further down has no tile, since Open folder would find nothing
+/// in it to open. Off the window's thread.
+fn loose_nodes(dir: &Path) -> std::io::Result<Vec<Node>> {
+    let mut nodes: Vec<((String, OsString), Node)> = Vec::new();
+    for entry in std::fs::read_dir(dir)?.flatten() {
+        if entry.file_name().to_string_lossy().starts_with('.')
+            || !entry.file_type().is_ok_and(|t| t.is_dir())
+        {
+            continue;
+        }
+        let path = entry.path();
+        let direct = crate::files::list_files(&path).map_or(0, |f| f.len());
+        if direct == 0 {
+            continue;
+        }
+        let os = entry.file_name();
+        let name = os.to_string_lossy().into_owned();
+        nodes.push((
+            (name.to_lowercase(), os),
+            Node {
+                path,
+                name,
+                depth: 1,
+                direct,
+                total: direct,
+                children: false,
+            },
+        ));
+    }
+    nodes.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(nodes.into_iter().map(|(_, n)| n).collect())
+}
+
+/// The folder open from the disk may have folders it did not have, or
+/// lost one: opened again, or a move or a delete in it. Its tiles read
+/// again, when the view is such a folder.
+pub(crate) fn loose_changed(st: &mut State, app: &App) {
+    st.tree.loose_stale = true;
+    want(st, app);
+}
+
+/// The tiles of a folder under no root asked for when they are not the
+/// ones held; dropped when the view is not such a folder.
+fn want_loose(st: &mut State, app: &App) {
+    let Some(dir) = loose_for(st).map(Path::to_path_buf) else {
+        if st.tree.loose.is_some() || st.tree.loose_asked.is_some() {
+            st.tree.loose = None;
+            st.tree.loose_asked = None;
+            st.tree.loose_token += 1;
+            show_tiles(st);
+        }
+        return;
+    };
+    let held = st.tree.loose.as_ref().is_some_and(|(d, _)| *d == dir);
+    let asked = st.tree.loose_asked.as_ref() == Some(&dir);
+    if (held || asked) && !st.tree.loose_stale {
+        return;
+    }
+    // A read still out is let finish, and asked again when it lands:
+    // a burst of moves on a slow share reads the folder twice, not
+    // once a move.
+    if asked {
+        return;
+    }
+    if !held {
+        st.tree.loose = None;
+        show_tiles(st);
+    }
+    st.tree.loose_stale = false;
+    st.tree.loose_token += 1;
+    st.tree.loose_asked = Some(dir.clone());
+    let build = Build {
+        token: st.tree.loose_token,
+        root: dir,
+        count: None,
+        index: None,
+        counts: None,
+        loose: true,
+    };
+    if !send(app, build) {
+        st.tree.loose_asked = None;
+    }
+}
+
 /// What the status line says for a folder of the tree opened empty:
 /// nothing directly in it, the switch off, or nothing under it at all.
 pub(crate) fn nothing_in(folder: &Path, deep: bool) -> String {
@@ -283,6 +396,7 @@ fn root_count(st: &State, root: &Path) -> Option<usize> {
 /// held is kept on screen until the new one lands, unless it is
 /// another root's.
 pub(crate) fn want(st: &mut State, app: &App) {
+    want_loose(st, app);
     reveal(st);
     let Some(root) = shown_for(st).map(|(r, _)| r.to_path_buf()) else {
         if st.tree.root.is_some() || st.tree.asked.is_some() {
@@ -334,6 +448,7 @@ pub(crate) fn want(st: &mut State, app: &App) {
         count,
         index: st.index_path.clone(),
         counts,
+        loose: false,
     };
     if !send(app, build) {
         st.tree.asked = None;
@@ -389,6 +504,9 @@ pub(crate) struct Build {
     index: Option<PathBuf>,
     /// The counts, already read on the window's thread.
     counts: Option<Vec<(PathBuf, usize)>>,
+    /// `root` is a folder under no root, its own folders read from the
+    /// disk rather than a tree from the index.
+    loose: bool,
 }
 
 /// A tree built.
@@ -399,6 +517,7 @@ pub(crate) struct Built {
     /// None when the index could not be read.
     nodes: Option<Vec<Node>>,
     seconds: f64,
+    loose: bool,
 }
 
 impl Build {
@@ -406,6 +525,23 @@ impl Build {
     /// window's.
     pub(crate) fn run(self) -> Built {
         let started = Instant::now();
+        if self.loose {
+            let nodes = match loose_nodes(&self.root) {
+                Ok(n) => Some(n),
+                Err(e) => {
+                    tracing::warn!("the folders in {}: {e}", self.root.display());
+                    None
+                }
+            };
+            return Built {
+                token: self.token,
+                root: self.root,
+                count: None,
+                nodes,
+                seconds: started.elapsed().as_secs_f64(),
+                loose: true,
+            };
+        }
         let counts = match self.counts {
             Some(c) => Ok(c),
             None => match &self.index {
@@ -427,6 +563,7 @@ impl Build {
             count: self.count,
             nodes,
             seconds: started.elapsed().as_secs_f64(),
+            loose: false,
         }
     }
 }
@@ -470,6 +607,20 @@ fn send(_app: &App, build: Build) -> bool {
 /// A tree built, on the window's thread: kept when it is the one asked
 /// for last, and shown.
 fn land(st: &mut State, app: &App, built: Built) {
+    if built.loose {
+        if built.token != st.tree.loose_token {
+            return;
+        }
+        st.tree.loose_asked = None;
+        // A folder that cannot be read (gone, or its share away) shows
+        // no tiles rather than the ones it had.
+        st.tree.loose = Some((built.root, built.nodes.unwrap_or_default()));
+        show_tiles(st);
+        if st.tree.loose_stale {
+            want_loose(st, app);
+        }
+        return;
+    }
     if built.token != st.tree.token {
         tracing::debug!("library: a folder tree asked for before another came in; dropped");
         return;
@@ -578,9 +729,19 @@ fn picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, row: i32) 
 /// A folder's tile in the grid clicked: opened as its row in the tree
 /// opens it.
 fn tile_picked(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, tile: i32) {
-    let Some(folder) = tile_folder(&state.borrow(), tile) else {
-        return;
+    let (folder, loose) = {
+        let st = state.borrow();
+        let Some(folder) = tile_folder(&st, tile) else {
+            return;
+        };
+        (folder, loose_for(&st).is_some())
     };
+    if loose {
+        // A folder under no root opens as Open folder opens it.
+        tracing::info!("{} opened from its tile", folder.display());
+        crate::panel::browser::open_folder(state, app, worker, &folder);
+        return;
+    }
     open(state, app, worker, &folder, "its tile");
 }
 
@@ -1390,14 +1551,16 @@ mod tests {
         land_sent(&state, &app, &worker);
         assert_eq!(state.borrow().view, View::Folder);
         assert_eq!(tiles(&app), [("more".into(), 1)]);
-        // A folder under no root: no tree, no tiles.
+        // A folder under no root: no tree, and its own folders' tiles
+        // from the disk.
         let elsewhere = dir.join("elsewhere");
         frames(&elsewhere, &["e.tif"]);
         frames(&elsewhere.join("sub"), &["s.tif"]);
         crate::panel::browser::open_folder(&state, &app, &worker, &elsewhere);
         land_sent(&state, &app, &worker);
         assert_eq!(listed(&state), ["e.tif"]);
-        assert!(tiles(&app).is_empty());
+        assert!(!app.get_folder_tree_shown());
+        assert_eq!(tiles(&app), [("sub".into(), 1)]);
         done(&dir, state);
     }
 
@@ -1666,6 +1829,172 @@ mod tests {
         click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         land_sent(&state, &app, &worker);
         assert_eq!(listed(&state), ["b1.tif", "b2.tif"]);
+        done(&dir, state);
+    }
+
+    /// Move rejects in a folder of the tree makes a rejects folder the
+    /// tree and the grid's tiles show at once: the move is told to the
+    /// index, which says so, and the tree is built again although the
+    /// root's count has not moved and the folder passes after the move
+    /// find nothing to report.
+    #[test]
+    fn the_rejects_folder_a_move_makes_shows_in_the_tree_and_the_tiles() {
+        use crate::library::{Indexer, Told};
+        use std::time::Duration;
+        let dir = scratch("moved");
+        let root = dir.join("archive");
+        let day = root.join("day");
+        frames(&root, &["r.tif"]);
+        let d = frames(&day, &["d1.tif", "d2.tif"]);
+        frames(&day.join("more"), &["m.tif"]);
+        let mut reject = greycard_edit::Sidecar::default();
+        reject.meta.flag = greycard_edit::meta::Flag::Reject;
+        reject.save(&d[0]).unwrap();
+        let (app, state, worker) = open_root(&dir, &root, None);
+        let db = dir.join("index").join("library.sqlite");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let indexer = Indexer::start(db, move |told| {
+            let _ = tx.send(told);
+        })
+        .expect("the indexer starts");
+        let wait = |want: &dyn Fn(&Told) -> bool| loop {
+            let told = rx
+                .recv_timeout(Duration::from_secs(20))
+                .expect("the indexer answers");
+            if want(&told) {
+                return told;
+            }
+        };
+        wait(&|t| matches!(t, Told::Opened(_)));
+        crate::STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
+        state.borrow_mut().index = Some(indexer);
+
+        pick(&app, "day");
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["d1.tif", "d2.tif"]);
+        assert_eq!(tiles(&app), [("more".into(), 1)]);
+        app.invoke_rejects_answered(true);
+        assert!(
+            day.join("rejects").join("d1.tif").exists(),
+            "{}",
+            app.get_status()
+        );
+        let moved = wait(&|t| matches!(t, Told::Moved(_)));
+        crate::library::told(&app, moved);
+        land_sent(&state, &app, &worker);
+        assert_eq!(
+            tiles(&app),
+            [("more".into(), 1), ("rejects".into(), 1)],
+            "{:?}",
+            rows(&app)
+        );
+        let row = rows(&app).iter().position(|r| r.0 == "day").unwrap();
+        app.invoke_folder_tree_folded(row as i32);
+        let names: Vec<String> = rows(&app).into_iter().map(|r| r.0).collect();
+        assert_eq!(names, ["archive", "day", "more", "rejects"]);
+
+        let indexer = state.borrow_mut().index.take().unwrap();
+        indexer.stop(Duration::from_secs(20));
+        crate::STATE.with(|s| *s.borrow_mut() = None);
+        drop(worker);
+        done(&dir, state);
+    }
+
+    /// A folder opened from the disk under no root has its own folders
+    /// as tiles, read from the disk: each with frames directly in it;
+    /// not one with frames only further down (Open folder would find
+    /// nothing to open), nor one empty, hidden or a link. Move rejects
+    /// there adds the rejects folder's tile; with every frame moved out
+    /// the rejects folder is still the folder's to delete; a tile
+    /// clicked opens its folder as Open folder does; a folder gone
+    /// shows no tiles.
+    #[test]
+    fn a_folder_under_no_root_has_its_own_folders_as_tiles() {
+        let dir = scratch("loose");
+        let (app, state, worker) = archive(&dir, None);
+        let loose = dir.join("elsewhere");
+        let shot = frames(&loose, &["a.tif", "b.tif"]);
+        frames(&loose.join("Birch"), &["x.tif"]);
+        frames(&loose.join("nested").join("deeper"), &["q.tif"]);
+        std::fs::create_dir_all(loose.join("empty")).unwrap();
+        frames(&loose.join(".hidden"), &["h.tif"]);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(loose.join("Birch"), loose.join("link")).unwrap();
+        let mut reject = greycard_edit::Sidecar::default();
+        reject.meta.flag = greycard_edit::meta::Flag::Reject;
+        reject.save(&shot[0]).unwrap();
+
+        crate::panel::browser::open_folder(&state, &app, &worker, &loose);
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["a.tif", "b.tif"]);
+        assert!(!app.get_folder_tree_shown(), "still no tree");
+        assert_eq!(tiles(&app), [("Birch".into(), 1)]);
+
+        app.invoke_rejects_answered(true);
+        assert!(
+            loose.join("rejects").join("a.tif").exists(),
+            "{}",
+            app.get_status()
+        );
+        land_sent(&state, &app, &worker);
+        assert_eq!(tiles(&app), [("Birch".into(), 1), ("rejects".into(), 1)]);
+
+        // The last frame out too: the list empty, the rejects folder
+        // still the open folder's.
+        reject.save(&shot[1]).unwrap();
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars[0].meta.flag = greycard_edit::meta::Flag::Reject;
+        }
+        app.invoke_rejects_answered(true);
+        land_sent(&state, &app, &worker);
+        assert!(listed(&state).is_empty(), "{}", app.get_status());
+        assert_eq!(tiles(&app), [("Birch".into(), 1), ("rejects".into(), 2)]);
+        {
+            let mut st = state.borrow_mut();
+            st.deletes_allowed = true;
+            st.trash_refused
+                .insert(std::fs::canonicalize(loose.join("rejects")).unwrap());
+        }
+        app.invoke_delete_asked("rejects".into());
+        assert_eq!(
+            app.get_delete_title(),
+            "Delete the rejects folder's 2 frames?",
+            "{}",
+            app.get_status()
+        );
+        app.invoke_delete_answered(0);
+
+        app.invoke_grid_tile_picked(1);
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().view, View::Folder);
+        assert_eq!(listed(&state), ["a.tif", "b.tif"]);
+        assert!(tiles(&app).is_empty(), "the rejects folder has none");
+
+        // The folder gone from under its view: read again, no tiles.
+        crate::panel::browser::open_folder(&state, &app, &worker, &loose.join("Birch"));
+        land_sent(&state, &app, &worker);
+        assert_eq!(listed(&state), ["x.tif"]);
+        std::fs::create_dir_all(loose.join("Birch").join("sub")).unwrap();
+        write_frame(&loose.join("Birch").join("sub").join("s.tif"), &R5, 7);
+        crate::tree::loose_changed(&mut state.borrow_mut(), &app);
+        land_sent(&state, &app, &worker);
+        assert_eq!(tiles(&app), [("sub".into(), 1)]);
+        crate::testing::rename_away(&loose.join("Birch"), &dir.join("birch-away"));
+        crate::tree::loose_changed(&mut state.borrow_mut(), &app);
+        land_sent(&state, &app, &worker);
+        assert!(tiles(&app).is_empty());
+
+        // A root's view again: no tiles of the loose folder's.
+        crate::roots::open_view(
+            &state,
+            &app,
+            &worker,
+            View::Roots(Some(dir.join("archive"))),
+        );
+        land_sent(&state, &app, &worker);
+        assert_eq!(tiles(&app), [("day".into(), 3)]);
+        drop(worker);
         done(&dir, state);
     }
 }
