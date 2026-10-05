@@ -481,12 +481,21 @@ pub const LEAVING: std::time::Duration = std::time::Duration::from_secs(5);
 /// clears it. `None` until the editor hands one over, and in tests.
 pub type ThumbCache = Arc<Mutex<Option<Thumbs>>>;
 
+/// The thumbnail cache's caps as last set, shared with the threads
+/// that apply them.
+pub(crate) type ThumbCaps = Arc<Mutex<Option<(u64, u64)>>>;
+
 pub struct Worker {
     queue: Arc<(Mutex<Queue>, Condvar)>,
     deliver: Deliver,
     /// The worker's thread, until it is joined on the way out.
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
     thumbs: ThumbCache,
+    /// The cache's two caps in bytes, thumbnails' then previews', as
+    /// last handed over or set: what the settings sheet shows without
+    /// waiting on the cache's lock, which a count or an eviction holds
+    /// for seconds. `None` while there is no cache.
+    caps: ThumbCaps,
     /// The thumbnails' own threads, shared with the worker's thread,
     /// which holds them back while the first develop runs.
     pool: Arc<crate::thumbpool::Pool>,
@@ -553,6 +562,7 @@ impl Worker {
             deliver,
             thread: Mutex::new(Some(thread)),
             thumbs,
+            caps: Arc::new(Mutex::new(None)),
             pool,
             previews,
         }
@@ -576,6 +586,8 @@ impl Worker {
     /// a thread of its own, so neither the window nor a thumbnail waits
     /// on it.
     pub fn set_thumb_cache(&self, cache: Option<Thumbs>) {
+        *self.caps.lock().expect("thumbnail caps") =
+            cache.as_ref().map(|c| (c.cap(), c.preview_cap()));
         *self.thumbs.lock().expect("thumbnail cache") = cache;
         count_thumb_cache(&self.thumbs, |_| {});
     }
@@ -583,6 +595,34 @@ impl Worker {
     /// The thumbnail cache, for the settings sheet.
     pub fn thumb_cache(&self) -> ThumbCache {
         self.thumbs.clone()
+    }
+
+    /// The cache's caps in bytes, thumbnails' then previews', as last
+    /// set, or `None` with no cache. Never waits on the cache.
+    pub(crate) fn thumb_caps(&self) -> Option<(u64, u64)> {
+        *self.caps.lock().expect("thumbnail caps")
+    }
+
+    /// The caps as last set, for a thread that applies them: one
+    /// that waited on the cache's lock applies the newest, not the one
+    /// it was started for.
+    pub(crate) fn thumb_caps_shared(&self) -> ThumbCaps {
+        self.caps.clone()
+    }
+
+    /// Record a new thumbnails' cap for the sheet to show, ahead of the
+    /// cache taking it on a thread of its own.
+    pub(crate) fn note_thumbs_cap(&self, bytes: u64) {
+        if let Some(caps) = self.caps.lock().expect("thumbnail caps").as_mut() {
+            caps.0 = bytes;
+        }
+    }
+
+    /// The same for the previews' cap.
+    pub(crate) fn note_previews_cap(&self, bytes: u64) {
+        if let Some(caps) = self.caps.lock().expect("thumbnail caps").as_mut() {
+            caps.1 = bytes;
+        }
     }
 
     /// Stop the worker and wait for it to put its GPU buffers down.

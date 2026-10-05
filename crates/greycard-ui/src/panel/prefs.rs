@@ -323,14 +323,21 @@ pub(crate) fn cap_typed(text: &str) -> Option<u64> {
     text.trim().parse().ok()
 }
 
-/// The previews' cap in megabytes as the cache has it, else as the
-/// settings keep it.
+/// The thumbnails' cap in megabytes as last handed over or set, else
+/// as the settings keep it. Never the cache's lock: a count or an
+/// eviction holds that, and the file can be behind the live value.
+fn thumb_cap_mb(worker: &Worker) -> u64 {
+    worker
+        .thumb_caps()
+        .map(|(cap, _)| cap / (1024 * 1024))
+        .unwrap_or_else(|| settings::Settings::load().thumb_cache_mb)
+}
+
+/// The previews' cap in megabytes, the same way.
 fn preview_cap_mb(worker: &Worker) -> u64 {
     worker
-        .thumb_cache()
-        .try_lock()
-        .ok()
-        .and_then(|c| c.as_ref().map(|c| c.preview_cap() / (1024 * 1024)))
+        .thumb_caps()
+        .map(|(_, cap)| cap / (1024 * 1024))
         .unwrap_or_else(|| settings::Settings::load().preview_cache_mb)
 }
 
@@ -398,12 +405,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            let kept = worker
-                .thumb_cache()
-                .try_lock()
-                .ok()
-                .and_then(|c| c.as_ref().map(|c| c.cap() / (1024 * 1024)))
-                .unwrap_or_else(|| settings::Settings::load().thumb_cache_mb);
+            let kept = thumb_cap_mb(&worker);
             let typed = app.get_thumb_cache_cap();
             let Some(mb) = cap_typed(&typed) else {
                 // Not a number: the field goes back to what is kept.
@@ -417,8 +419,16 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_thumb_cache_cap(mb.to_string().into());
             keep(&state.borrow(), |s| s.thumb_cache_mb = mb);
             tracing::info!("thumbnail cache cap {mb} MB");
+            worker.note_thumbs_cap(cap_bytes(mb));
             apply_thumb_cache(&app, CacheShown::Counting);
-            on_the_cache(&app, &worker, move |c| c.set_cap(cap_bytes(mb)));
+            // Two edits' threads can take the lock out of order: each
+            // applies the newest cap, so the last one typed wins.
+            let caps = worker.thumb_caps_shared();
+            on_the_cache(&app, &worker, move |c| {
+                if let Some((cap, _)) = *caps.lock().expect("thumbnail caps") {
+                    c.set_cap(cap);
+                }
+            });
         });
     }
     // How often the roots on a network mount are passed over: kept in
@@ -454,8 +464,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.set_preview_cache_cap(mb.to_string().into());
             keep(&state.borrow(), |s| s.preview_cache_mb = mb);
             tracing::info!("local previews' cap {mb} MB");
+            worker.note_previews_cap(cap_bytes(mb));
             apply_thumb_cache(&app, CacheShown::Counting);
-            on_the_cache(&app, &worker, move |c| c.set_preview_cap(cap_bytes(mb)));
+            let caps = worker.thumb_caps_shared();
+            on_the_cache(&app, &worker, move |c| {
+                if let Some((_, cap)) = *caps.lock().expect("thumbnail caps") {
+                    c.set_preview_cap(cap);
+                }
+            });
         });
     }
     // Ctrl+, or the gear: the count first, then the sheet.
@@ -466,12 +482,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             show_thumb_cache(&app, &worker);
-            let mb = worker
-                .thumb_cache()
-                .try_lock()
-                .ok()
-                .and_then(|c| c.as_ref().map(|c| c.cap() / (1024 * 1024)))
-                .unwrap_or_else(|| settings::Settings::load().thumb_cache_mb);
+            let mb = thumb_cap_mb(&worker);
             app.set_thumb_cache_cap(mb.to_string().into());
             app.set_preview_cache_cap(preview_cap_mb(&worker).to_string().into());
             let st = state.borrow();
@@ -890,6 +901,42 @@ mod tests {
         app.set_preview_cache_cap("0".into());
         app.invoke_preview_cache_cap_changed();
         until((300, 0));
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The caps the sheet shows are the ones last set, even while a
+    /// count or an eviction holds the cache: never the settings file,
+    /// which a held lock used to fall back to.
+    #[test]
+    fn the_caps_shown_are_live_while_the_cache_is_held() {
+        let dir = scratch("caps-held");
+        let app = crate::testing::window(0);
+        let (_state, worker) = crate::testing::state_for(&app, Vec::new());
+        let mb = 1024 * 1024;
+        let mut cache = greycard_library::Thumbs::at(dir.join("thumbs"), 300 * mb)
+            .with_previews(crate::previews::SIZE, 8192 * mb);
+        cache.seed_split(Default::default());
+        worker.set_thumb_cache(Some(cache));
+        app.set_preview_cache_cap("2048".into());
+        app.invoke_preview_cache_cap_changed();
+        app.set_thumb_cache_cap("500".into());
+        app.invoke_thumb_cache_cap_changed();
+        let shared = worker.thumb_cache();
+        let held = shared.lock().unwrap();
+        app.invoke_settings_asked();
+        assert_eq!(app.get_preview_cache_cap(), "2048");
+        assert_eq!(app.get_thumb_cache_cap(), "500");
+        app.set_preview_cache_cap("lots".into());
+        app.invoke_preview_cache_cap_changed();
+        assert_eq!(
+            app.get_preview_cache_cap(),
+            "2048",
+            "put back to the live cap"
+        );
+        app.set_thumb_cache_cap("lots".into());
+        app.invoke_thumb_cache_cap_changed();
+        assert_eq!(app.get_thumb_cache_cap(), "500", "put back to the live cap");
+        drop(held);
         crate::testing::remove_dir_retry(&dir);
     }
 

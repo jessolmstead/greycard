@@ -10,6 +10,10 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- The Settings sheet's two cache caps show the value last set, even
+  while a count or an eviction holds the cache, and a field typed wrong
+  goes back to that value rather than to the settings file's
+  (2026-10-04)
 - One frame in two places: every save goes to the frame's copy on the
   archive too, behind the save and off the window's thread; a copy
   edited elsewhere is joined edit by edit, never written over; what
@@ -29,20 +33,12 @@ note a first tester reads.
   chooser; a preset and a queued set carry it. Under Overwrite, an
   export that would write over files first names every one of them,
   with Keep both the default (§242)
-- The sheets, settings and status line say less: the notes under each
-  setting are a line, an unreachable drive "isn't reachable", a timed
-  out job "timed out", and every tool's hint ends "Esc to finish"
-  (2026-10-04)
 - A mask has a white balance of its own on the Masks tab: a switch,
   Temperature, Tint and Neutral, absolute, so the light it names stays
   put when the global white moves; it starts at the global's white,
   blends by the mask's weight before the rest of the mask's look, and
   the export makes the same picture as the viewport (§241)
-- The camera match lines each frame's brightness up with its JPEG
-  until it lands, not in one pass, about one more finish a frame
-  (+0.4 s per channel, +0.6 s under AgX); its held-out error is over
-  every frame, not four, and drops by up to two fifths where a group's
-  frames vary most (§240)
+- Improvements to Camera Match (§240)
 - A channel pushed past 2^64 under AgX exported black (a NaN); it is
   white, as every color past 2^6 already was. A color shift at black
   (a shadows wheel, a color curve's end) no longer turns light under
