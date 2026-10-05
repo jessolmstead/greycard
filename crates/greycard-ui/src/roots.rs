@@ -5737,6 +5737,29 @@ pub(crate) mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// A pick in culling whose sidecar is slow to come: the mode's own
+    /// line takes the status over meanwhile, and the bar still stops
+    /// when the read lands.
+    #[test]
+    fn a_pick_in_culling_stops_the_bar_when_its_read_lands() {
+        let (dir, files, writer, app, state, worker) = rated_under_a_root("rows-pick-cull-bar");
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
+        crate::panel::cull::enter_cull(&mut state.borrow_mut(), &app, 1);
+        crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 1, false);
+        assert_eq!(state.borrow().pick_pending, Some(files[1].clone()));
+        assert!(app.get_busy());
+        app.set_status("y.tif: waiting for its preview".into());
+        assert_eq!(crate::rows::land_pending(&state, &app, &worker), 1);
+        assert_eq!(state.borrow().current, Some(1));
+        assert!(state.borrow().pick_pending.is_none());
+        assert!(!app.get_busy(), "the bar stops with the read");
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// An export pressed on a frame whose sidecar is being read, the
     /// user moving on to another before it lands, exports the pressed
     /// frame, as a set of one under its own edit, and not the frame on

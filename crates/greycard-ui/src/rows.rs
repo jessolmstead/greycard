@@ -759,9 +759,17 @@ fn say_gone(app: &App, paths: &[PathBuf], at: &[Option<usize>], what: &str, pick
 /// pick pending, and the "reading X's sidecar..." line it put up goes
 /// with it, when it is still up (an undo that selected another frame,
 /// Escape out of culling, a click elsewhere, the read given up on).
+/// In culling the bar goes with it even when the line is gone: the
+/// mode's own line takes the status over while a slow read is out,
+/// and nothing else there puts the bar up.
 pub(crate) fn pick_over(st: &mut State, app: &App) {
-    if st.pick_pending.take().is_some() && app.get_status().starts_with("reading ") {
+    if st.pick_pending.take().is_none() {
+        return;
+    }
+    if app.get_status().starts_with("reading ") {
         app.set_status("".into());
+        app.set_busy(false);
+    } else if st.cull.is_some() {
         app.set_busy(false);
     }
 }
