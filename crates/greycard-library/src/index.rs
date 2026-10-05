@@ -4245,6 +4245,8 @@ pub(crate) mod tests {
         assert_eq!(lib.archive_write("abc", &dir, &dir).unwrap(), None);
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.unchanged, 3, "{report:?}");
+        // Windows holds the file while the library is open.
+        drop(lib);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -4336,8 +4338,8 @@ pub(crate) mod tests {
             .iter()
             .find(|p| p.hash == "h1" && p.copy == copy)
             .unwrap();
-        assert_eq!(first.archive, archive.canonicalize().unwrap());
-        assert_eq!(first.frame, frame.canonicalize().unwrap());
+        assert_eq!(first.archive, crate::canonical(&archive).unwrap());
+        assert_eq!(first.frame, crate::canonical(&frame).unwrap());
         assert_eq!((first.tries, first.reason.as_str()), (1, "offline"));
         let since = first.since;
         assert!(
@@ -4374,7 +4376,7 @@ pub(crate) mod tests {
             .into_iter()
             .find(|p| p.hash == "h1" && p.copy == copy)
             .unwrap();
-        assert_eq!(row.frame, moved.canonicalize().unwrap());
+        assert_eq!(row.frame, crate::canonical(&moved).unwrap());
         // A second frame of the same hash waits on a row of its own,
         // its copy unknown too; the first's rows are not touched.
         let twin = dir.join("selects").join("IMG_0001.CR3");
@@ -4386,12 +4388,12 @@ pub(crate) mod tests {
         counts.sort();
         let mut expect = vec![
             PendingCount {
-                archive: other.canonicalize().unwrap(),
+                archive: crate::canonical(&other).unwrap(),
                 total: 1,
                 unknown: 0,
             },
             PendingCount {
-                archive: archive.canonicalize().unwrap(),
+                archive: crate::canonical(&archive).unwrap(),
                 total: 4,
                 unknown: 2,
             },
@@ -4496,6 +4498,7 @@ pub(crate) mod tests {
             Library::open_current(&other, wait),
             Err(crate::Error::NotALibrary(_))
         ));
+        drop(lib);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
