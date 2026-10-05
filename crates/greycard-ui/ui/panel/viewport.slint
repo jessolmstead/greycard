@@ -70,6 +70,8 @@ export component Viewport inherits Rectangle {
     callback guide-stroke(length, length, length, length);
     in property <[Pt]> guide-kept;
     in property <string> status;
+    in property <string> sync-note;
+    callback sync-retry();
     in property <string> placeholder-status;
     /// The plate put away with the panels, by Tab.
     in property <bool> plate-hidden: false;
@@ -740,7 +742,8 @@ export component Viewport inherits Rectangle {
         visible: !root.plate-hidden;
         x: Theme.space-3;
         y: parent.height - self.height - Theme.space-3;
-        width: status-text.width + 2 * Theme.space-3 + (root.busy ? 72px : 0);
+        width: status-text.width + 2 * Theme.space-3 + (root.busy ? 72px : 0)
+            + (root.sync-note != "" ? sync-text.width + Theme.space-3 : 0);
         height: 24px;
         border-radius: Theme.radius-md;
         background: #00000099;
@@ -773,6 +776,18 @@ export component Viewport inherits Rectangle {
             vertical-alignment: center;
             x: Theme.space-3 + (root.busy ? 72px : 0);
             height: 100%;
+        }
+        sync-text := Text {
+            visible: root.sync-note != "";
+            text: root.sync-note;
+            color: Theme.text-secondary;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            x: status-text.x + status-text.width + Theme.space-3;
+            height: 100%;
+            TouchArea {
+                clicked => { root.sync-retry(); }
+            }
         }
     }
 }

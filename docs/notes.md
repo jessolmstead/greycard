@@ -254,3 +254,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§241. A white balance in a mask](notes/241-a-white-balance-in-a-mask.md) (2026-10-04)
 - [§242. An export into a subfolder, and a question before it writes over](notes/242-an-export-into-a-subfolder.md) (2026-10-04)
 - [§243. One frame in two places, part 1: the file's side](notes/243-one-frame-in-two-places-part-1-the-files-side.md) (2026-10-04)
+- [§244. One frame in two places, part 2: the editor's side](notes/244-one-frame-in-two-places-part-2-the-editors-side.md) (2026-10-04)

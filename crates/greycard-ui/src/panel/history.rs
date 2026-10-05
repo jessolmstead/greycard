@@ -141,9 +141,12 @@ pub(crate) fn record_export(
     }
     if st.write_sidecars
         && record_export_on_disk(source, edit, exported, st.placement, st.xmp_sidecars)
-        && let Some(indexer) = &st.index
     {
-        indexer.file(source.to_path_buf());
+        if let Some(indexer) = &st.index {
+            indexer.file(source.to_path_buf());
+        }
+        // The archive's copy, from the file (§233).
+        crate::sync::after_disk_save(st, source);
     }
 }
 
@@ -333,9 +336,9 @@ pub(crate) fn now() -> u64 {
 /// engine's part changed: what an undo, a redo or a preset does once
 /// the sidecar says what is current.
 pub(crate) fn take_current(st: &mut State, app: &App, worker: &Worker) {
-    let Some(c) = st.current else {
+    if st.current.is_none() {
         return;
-    };
+    }
     // The panel is the sidecar's again: the command line's overrides,
     // if they were on it, are done with (`panel_state`).
     st.overridden = None;
@@ -345,13 +348,25 @@ pub(crate) fn take_current(st: &mut State, app: &App, worker: &Worker) {
         leave_cull(st, app, worker, None);
         return;
     }
-    let edit = st.sidecars[c].current.clone();
+    take_current_settled(st, app, worker);
+}
+
+/// [`take_current`] for a sidecar that changed under the window (an
+/// archive's copy joined into it, §233) rather than by its hand: the
+/// panel shows the sidecar's current state, written and developed
+/// again as an undo's would be, but culling, when it is on, goes on;
+/// the leaving develops the current state as it always does.
+pub(crate) fn take_current_settled(st: &mut State, app: &App, worker: &Worker) {
+    let Some(c) = st.current else {
+        return;
+    };
     if crate::panel::edit::writable(st, c) {
-        match st.sidecars[c].save_in(&st.files[c], st.placement) {
-            Ok(_) => crate::library::sidecar_written(st, c),
-            Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),
-        }
+        crate::panel::edit::save_sidecar(st, c);
     }
+    if st.cull.is_some() {
+        return;
+    }
+    let edit = st.sidecars[c].current.clone();
     if st.target.is_some_and(|i| i >= edit.adjustments.len()) {
         st.target = None;
     }

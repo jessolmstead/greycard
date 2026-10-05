@@ -329,13 +329,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // Written only where a save would be (`writable`).
                     let placement = placement.filter(|_| crate::panel::edit::writable(st, i));
                     let st = &mut *st;
-                    preset_at_start(
+                    let saved = preset_at_start(
                         &mut st.sidecars[i],
                         &mut st.seed_blend[i],
                         &st.files[i],
                         &preset,
                         placement,
                     );
+                    // Written: the archive's copy is queued as any
+                    // save's is (§233).
+                    if saved {
+                        crate::sync::after_save(st, i);
+                    }
                 }
                 if !overrides.is_empty() {
                     st.overrides_at_start = Some((i, overrides));
@@ -1468,17 +1473,17 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
 /// target: the step makes the edit no longer the default, and once
 /// written the next launch would take that to mean the blend was
 /// seeded already. A preset that changes nothing records and writes
-/// nothing.
+/// nothing. True when the sidecar was written.
 pub(crate) fn preset_at_start(
     sidecar: &mut Sidecar,
     seed: &mut bool,
     file: &Path,
     preset: &Preset,
     placement: Option<greycard_edit::Placement>,
-) {
+) -> bool {
     let applied = preset.applied(&sidecar.current);
     if applied == sidecar.current {
-        return;
+        return false;
     }
     let mut over = sidecar.current.clone();
     if *seed
@@ -1491,12 +1496,15 @@ pub(crate) fn preset_at_start(
     }
     let label = greycard_edit::history::preset_label(&preset.name);
     if !sidecar.record_as(preset.applied(&over), Some(label)) {
-        return;
+        return false;
     }
-    if let Some(placement) = placement
-        && let Err(e) = sidecar.save_in(file, placement)
-    {
-        tracing::warn!("{}: sidecar not saved: {e}", file.display());
+    match placement.map(|p| sidecar.save_in(file, p)) {
+        Some(Ok(())) => true,
+        Some(Err(e)) => {
+            tracing::warn!("{}: sidecar not saved: {e}", file.display());
+            false
+        }
+        None => false,
     }
 }
 

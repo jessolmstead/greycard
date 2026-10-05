@@ -33,6 +33,12 @@ pub(crate) struct Plan {
     /// window's every sidecar write does (`--xmp-sidecars`, or the
     /// Settings sheet's choice).
     pub(crate) xmp: bool,
+    /// The user's library index, when the run may note in it the
+    /// archive copies its sidecar writes leave waiting (§233): the
+    /// editor's own, never one named on the command line, and None
+    /// in a test. It is opened only if it is there and at this
+    /// build's schema; a run never makes, migrates or rebuilds it.
+    pub(crate) index: Option<PathBuf>,
 }
 
 /// What came of a run.
@@ -83,7 +89,13 @@ impl Finished {
 pub(crate) fn export(cli: &Cli, target: &Path) -> Result<std::process::ExitCode> {
     let remembered = settings::Settings::load();
     let presets = preset::Store::user();
-    let plan = plan(cli, target, &remembered, presets.as_ref())?;
+    let plan = plan(
+        cli,
+        target,
+        &remembered,
+        presets.as_ref(),
+        greycard_library::Library::user_path(),
+    )?;
     let finished = run(plan);
     // The log is a file, and the terminal shows warnings up: the one
     // line a batch caller wants is said here whichever way it went.
@@ -134,6 +146,7 @@ pub(crate) fn plan(
     target: &Path,
     remembered: &settings::Settings,
     presets: Option<&preset::Store>,
+    index: Option<PathBuf>,
 ) -> Result<Plan> {
     refuse_window_flags(cli)?;
     // The files, and which of them is the one opened: as the window
@@ -267,6 +280,7 @@ pub(crate) fn plan(
         preset: preset_name,
         placement: write_sidecars.then_some(placement),
         xmp: cli.xmp_sidecars || remembered.xmp_sidecars,
+        index,
     })
 }
 
@@ -282,6 +296,7 @@ pub(crate) fn run(plan: Plan) -> Finished {
         preset,
         placement,
         xmp,
+        index,
     } = plan;
     if let Some(dir) = &folder
         && let Err(e) = std::fs::create_dir_all(dir)
@@ -323,6 +338,15 @@ pub(crate) fn run(plan: Plan) -> Finished {
     let mut written = Vec::new();
     let mut left_out = 0;
     let mut tally = None;
+    // The index and the roots kept beside it, when both are there and
+    // an archive is among the roots: an export's record on a sidecar
+    // is a save, and its archive copy is owed a write. The library is
+    // opened only as it is (`open_current`): a run never brings it up.
+    let archive_roots = index.filter(|p| p.is_file()).and_then(|index| {
+        let roots =
+            greycard_library::Roots::load(&greycard_library::Roots::path_beside(&index)).ok()?;
+        (!roots.archives().is_empty()).then_some((index, roots))
+    });
     loop {
         let outcome = match rx.recv_timeout(std::time::Duration::from_secs(1)) {
             Ok(outcome) => outcome,
@@ -368,9 +392,15 @@ pub(crate) fn run(plan: Plan) -> Finished {
                                 preset: set.preset.clone(),
                                 at: crate::panel::history::now(),
                             };
-                            crate::panel::history::record_export_on_disk(
+                            if crate::panel::history::record_export_on_disk(
                                 &source, &edit, exported, placement, xmp,
-                            );
+                            ) && let Some((index, roots)) = archive_roots.as_ref()
+                            {
+                                // The copy on the archive is not
+                                // written here: noted as waiting, for
+                                // the next window's catch-up (§233).
+                                crate::sync::note_disk_save(index, roots, &source);
+                            }
                         }
                         written.push(path);
                     }
@@ -437,8 +467,9 @@ pub(crate) fn run(plan: Plan) -> Finished {
 /// The flags that ask the window for something an export run has no
 /// window to give, refused rather than passed over: a capture of it;
 /// the browser's filter and roots, which would decide which frames
-/// the rows name; the index (`--library`), which the run neither
-/// reads nor writes; a turn pressed on the open frame and a
+/// the rows name; the index (`--library`), which the run reads only
+/// to note the archive copies its records leave waiting (§233), never
+/// one named on the command line; a turn pressed on the open frame and a
 /// temperature put on the panel alone, both for a capture, which
 /// change nothing an export writes (`--develop-temperature` is the
 /// one that does).
@@ -750,7 +781,7 @@ mod tests {
             out.as_os_str(),
         ]);
         let remembered = settings::Settings::default();
-        let plan = plan(&cli, &out, &remembered, None).unwrap();
+        let plan = plan(&cli, &out, &remembered, None, None).unwrap();
 
         // The window's edit: the sidecar's, the overrides over it; its
         // sheet: the remembered one with the flags over it, in the
@@ -815,6 +846,7 @@ mod tests {
             &out,
             &remembered,
             None,
+            None,
         )
         .unwrap();
         assert_eq!(planned.settings.format, export::Format::Png);
@@ -837,6 +869,7 @@ mod tests {
             ]),
             &off,
             &remembered,
+            None,
             None,
         )
         .unwrap();
@@ -885,6 +918,7 @@ mod tests {
             &target,
             &remembered,
             None,
+            None,
         )
         .unwrap();
         let sources: Vec<&Path> = planned.frames.iter().map(|f| f.source.as_path()).collect();
@@ -913,7 +947,7 @@ mod tests {
         let remembered = settings::Settings::default();
         let out = scratch.0.join("one.jpg");
         let refused = |args: &[&std::ffi::OsStr]| {
-            plan(&cli(args), &out, &remembered, None)
+            plan(&cli(args), &out, &remembered, None, None)
                 .err()
                 .map(|e| e.to_string())
                 .unwrap_or_default()
@@ -983,6 +1017,7 @@ mod tests {
             &out,
             &settings::Settings::default(),
             None,
+            None,
         )
         .unwrap();
         let finished = run(planned);
@@ -1016,6 +1051,7 @@ mod tests {
             &out,
             &settings::Settings::default(),
             None,
+            None,
         )
         .unwrap();
         assert!(!planned.frames[0].edit.needs_frame());
@@ -1046,7 +1082,7 @@ mod tests {
         let export = |args: &[&std::ffi::OsStr], out: &Path| {
             let mut all = vec![source.as_os_str(), "--export".as_ref(), out.as_os_str()];
             all.extend_from_slice(args);
-            let planned = plan(&cli(&all), out, &remembered, None).unwrap();
+            let planned = plan(&cli(&all), out, &remembered, None, None).unwrap();
             run(planned).code()
         };
         assert_eq!(export(&[], &scratch.0.join("a.png")), WRITTEN);
@@ -1105,7 +1141,7 @@ mod tests {
                 "--export".as_ref(),
                 out.as_os_str(),
             ];
-            run(plan(&cli(&all), out, &remembered, None).unwrap()).code()
+            run(plan(&cli(&all), out, &remembered, None, None).unwrap()).code()
         };
         assert_eq!(export(&scratch.0.join("a.png")), WRITTEN);
         let written = std::fs::read_to_string(&xmp).unwrap();
@@ -1160,7 +1196,7 @@ mod tests {
             let out = scratch.0.join(out);
             let all = [source.as_os_str(), "--export".as_ref(), out.as_os_str()];
             let finished =
-                run(plan(&cli(&all), &out, &settings::Settings::default(), None).unwrap());
+                run(plan(&cli(&all), &out, &settings::Settings::default(), None, None).unwrap());
             assert!(out.is_file());
             finished
         };

@@ -49,7 +49,9 @@ pub(crate) fn write_sidecar(st: &mut State, c: usize) {
     if !writable(st, c) {
         return;
     }
-    if st.xmp_sidecars {
+    // A frame followed to an archive's copy has its XMP written there
+    // by the archive write, from the sidecar, off the window's thread.
+    if st.xmp_sidecars && !crate::sync::followed(st, c) {
         // `tiff:Orientation` is the camera's tag and the frame's
         // quarter turns composed; with no tag to compose onto,
         // whatever the file says about the orientation is left
@@ -61,9 +63,31 @@ pub(crate) fn write_sidecar(st: &mut State, c: usize) {
             Err(e) => tracing::warn!("{}: xmp not written: {e}", file_name(&st.files[c])),
         }
     }
-    match st.sidecars[c].save_in(&st.files[c], st.placement) {
-        Ok(_) => crate::library::sidecar_written(st, c),
-        Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),
+    save_sidecar(st, c);
+}
+
+/// Write frame `c`'s sidecar where it lives: for a frame the window
+/// follows on an archive's copy (§233), the save is made in memory and
+/// the file written off the window's thread by the archive write, with
+/// its check against the copy; for every other frame, written here
+/// beside it, the index told and the archive's copy queued. True when
+/// the save was made.
+pub(crate) fn save_sidecar(st: &mut State, c: usize) -> bool {
+    if crate::sync::followed(st, c) {
+        st.sidecars[c].advance(&greycard_edit::sync::Stamp::now());
+        crate::sync::after_save(st, c);
+        return true;
+    }
+    let (path, placement) = (st.files[c].clone(), st.placement);
+    match st.sidecars[c].save_in(&path, placement) {
+        Ok(_) => {
+            crate::library::sidecar_written(st, c);
+            true
+        }
+        Err(e) => {
+            tracing::warn!("{}: sidecar not saved: {e}", file_name(&path));
+            false
+        }
     }
 }
 
@@ -242,10 +266,7 @@ pub(crate) fn save_edit(st: &mut State, edit: Edit) -> bool {
         return false;
     }
     if writable(st, c) {
-        match st.sidecars[c].save_in(&st.files[c], st.placement) {
-            Ok(_) => crate::library::sidecar_written(st, c),
-            Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),
-        }
+        save_sidecar(st, c);
     }
     false
 }
@@ -272,10 +293,7 @@ pub(crate) fn take_sources(st: &mut State, sources: &[greycard_edit::retouch::Pa
         return false;
     }
     if writable(st, c) {
-        match st.sidecars[c].save_in(&st.files[c], st.placement) {
-            Ok(_) => crate::library::sidecar_written(st, c),
-            Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&st.files[c])),
-        }
+        save_sidecar(st, c);
     }
     true
 }

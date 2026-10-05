@@ -1592,10 +1592,17 @@ fn unreject(st: &mut State, i: usize) {
             {
                 tracing::warn!("{}: xmp not written: {e}", file_name(&path));
             }
-            if let Err(e) = sidecar.save_in(&path, placement) {
-                tracing::warn!("{}: sidecar not saved: {e}", file_name(&path));
+            match sidecar.save_in(&path, placement) {
+                Ok(()) => {
+                    if let Some(indexer) = &st.index {
+                        indexer.file(path.clone());
+                    }
+                    // The archive's copy, from the file: the sidecar in
+                    // memory is the row standing in, not this.
+                    crate::sync::after_disk_save(st, &path);
+                }
+                Err(e) => tracing::warn!("{}: sidecar not saved: {e}", file_name(&path)),
             }
-            crate::library::sidecar_written(st, i);
         }
         Ok(_) => {}
         Err(e) => tracing::warn!("{}: sidecar not read: {e}", file_name(&path)),

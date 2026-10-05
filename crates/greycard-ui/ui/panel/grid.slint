@@ -136,6 +136,10 @@ export component GridSheet inherits Rectangle {
     /// header's actions answer ("there is no rejects folder", a move's
     /// clash) is seen from here as it is from the loupe.
     in property <string> status-line;
+    /// What waits to go to an archive, beside the status; a click on
+    /// it tries now.
+    in property <string> sync-note;
+    callback sync-retry();
     callback focus-keys();
     /// The header's Back up or Bring back (§216): its words ("3 frames
     /// not on Archive", "Back up...", "Bring back..."), empty for none;
@@ -228,6 +232,16 @@ export component GridSheet inherits Rectangle {
                         vertical-alignment: center;
                         horizontal-stretch: 2;
                         overflow: elide;
+                    }
+                    if root.import-line == "" && root.sync-note != "": Text {
+                        text: root.sync-note;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        vertical-alignment: center;
+                        overflow: elide;
+                        TouchArea {
+                            clicked => { root.sync-retry(); }
+                        }
                     }
                     Text {
                         text: root.thumbs.length + (root.thumbs.length == 1 ? " frame · " : " frames · ")

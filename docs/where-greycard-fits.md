@@ -280,8 +280,11 @@ folders as a tree in the left pane from the index, over the grid as
 over the loupe, a share that stops answering never holding the window
 or the other roots, and the filter remembered between sessions; a root
 marked as an archive, a shoot backed up to it by hash with each copy
-read back before it counts, its newer sidecars along and nothing there
-ever written over, brought back the same way, and its copies of the
+read back before it counts, brought back the same way, every save
+then written to the archive's copy too, a copy edited on another
+machine joined edit by edit rather than written over, what could not
+go sent when the archive answers, and the frame on screen following
+to the archive's copy when its own drive goes, and its copies of the
 culled rejects moved aside or deleted from the shoot's side; a library
 index that fills the grid's filter with chips for camera, lens, ISO,
 focal length, day and keyword, with a filter language behind the text

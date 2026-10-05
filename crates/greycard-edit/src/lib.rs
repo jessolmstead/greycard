@@ -2236,9 +2236,7 @@ impl Sidecar {
         placement: Placement,
         stamp: &sync::Stamp,
     ) -> Result<()> {
-        self.saved = self.saved.saturating_add(1);
-        self.fill_ids();
-        self.revise(stamp);
+        self.advance(stamp);
         let path = Self::path_in(raw, placement);
         if placement == Placement::Folder
             && let Some(folder) = path.parent()
@@ -2255,6 +2253,18 @@ impl Sidecar {
         Ok(())
     }
 
+    /// What a save does to the struct before the file is written: the
+    /// save count up by one, every state given its id, and this save's
+    /// revision made at `stamp`, the meta's fields that changed stamped
+    /// with it. For a save whose file is written elsewhere, on another
+    /// thread or to another place ([`Self::write_to`]): the editor's
+    /// write to an archive's copy (§233).
+    pub fn advance(&mut self, stamp: &sync::Stamp) {
+        self.saved = self.saved.saturating_add(1);
+        self.fill_ids();
+        self.revise(stamp);
+    }
+
     /// The sidecar as it is written: pretty-printed JSON.
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("a sidecar serializes")
@@ -2265,9 +2275,21 @@ impl Sidecar {
     /// file again in another place, a copy of one frame on an archive
     /// (§233). [`Self::save_in`] is the save; this is only the write.
     pub fn write_to(&self, path: &Path) -> Result<()> {
-        let tmp = path.with_extension("json.tmp");
+        // A temporary name of this write's own: two writes to one path
+        // at once (a write given up and going on alone, and the next
+        // one) must not share a file and rename a torn one into place.
+        static WRITES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = WRITES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let tmp = path.with_file_name(format!(".{name}.{}-{n}.tmp", std::process::id()));
         std::fs::write(&tmp, self.to_json())?;
-        std::fs::rename(&tmp, path)?;
+        if let Err(e) = std::fs::rename(&tmp, path) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.into());
+        }
         Ok(())
     }
 
@@ -3412,10 +3434,11 @@ mod tests {
         let under = dir.join(SIDECAR_FOLDER).join("IMG_0001.CR3.gcd");
         assert!(under.exists(), "{}", under.display());
         assert!(!Sidecar::path_for(&raw).exists());
+        // The write's temporary is gone with the rename.
         assert!(
-            !dir.join(SIDECAR_FOLDER)
-                .join("IMG_0001.CR3.json.tmp")
-                .exists()
+            std::fs::read_dir(dir.join(SIDECAR_FOLDER))
+                .unwrap()
+                .all(|e| e.unwrap().path().extension() != Some(std::ffi::OsStr::new("tmp")))
         );
         assert_eq!(Sidecar::load(&raw).unwrap().unwrap(), sidecar);
 

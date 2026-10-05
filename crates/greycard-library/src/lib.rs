@@ -87,7 +87,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 5;
+pub const SCHEMA_VERSION: i32 = 6;
 
 /// The steps a library is brought up by in place rather than rebuilt:
 /// from the version on the left to the next, the statements on the
@@ -101,7 +101,13 @@ pub const SCHEMA_VERSION: i32 = 5;
 /// so the next pass over its folder reads the sidecar again and fills
 /// them, and nothing else of the file is read. Schema 5 added the
 /// whole file's BLAKE3 (`whole_hash`, notes §216), which only a backup
-/// or a bring-back fills, so a schema 4 row simply has none.
+/// or a bring-back fills, so a schema 4 row simply has none. Schema 6
+/// added two tables beside `files` for a frame's sidecar on its
+/// archive copy (§233): `archive_writes`, what we last wrote there,
+/// and `pending`, the writes that could not be made yet. Both are
+/// keyed by the frame's content hash and the archive root, not by a
+/// row, so a row forgotten or pruned does not take them with it; a
+/// schema 5 library gains them empty.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -119,7 +125,49 @@ const MIGRATIONS: &[(i32, &str)] = &[
          UPDATE files SET sidecar_hash = NULL WHERE sidecar IS NOT NULL;",
     ),
     (4, "ALTER TABLE files ADD COLUMN whole_hash TEXT;"),
+    (5, SYNC_SCHEMA),
 ];
+
+/// The tables for a frame's sidecar on its archive copy (§233), part
+/// of [`SCHEMA`] and the step from schema 5. `archive_writes` keeps,
+/// per frame, archive and copy, the sidecar we last wrote to that copy:
+/// the revision we wrote, its size and its mtime, which is what a
+/// write-behind checks the copy against before it writes again, so
+/// that a copy another machine saved since is joined and not written
+/// over. `pending` keeps the writes that could not be made: the
+/// archive away, the write given up, a copy to compare, the window
+/// closed first; the catch-up pass takes them when the archive
+/// answers. The copy is part of both keys because one content hash
+/// can stand at two paths on one archive (a shoot and its selects),
+/// each the copy of its own local frame; a pending row whose copy is
+/// not known (more than one candidate) has an empty copy. The frame is
+/// part of `pending`'s key too: two local frames of one hash (a shoot
+/// and its selects) each wait on their own row, and one's write never
+/// clears the other's. Paths are stored as the `files` columns are.
+const SYNC_SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS archive_writes (
+    hash     TEXT NOT NULL,
+    archive  BLOB NOT NULL,
+    copy     BLOB NOT NULL,
+    path     BLOB NOT NULL,
+    revision TEXT NOT NULL,
+    size     INTEGER NOT NULL,
+    mtime    INTEGER NOT NULL,
+    written  INTEGER NOT NULL,
+    PRIMARY KEY (hash, archive, copy)
+);
+CREATE TABLE IF NOT EXISTS pending (
+    hash     TEXT NOT NULL,
+    archive  BLOB NOT NULL,
+    copy     BLOB NOT NULL,
+    frame    BLOB NOT NULL,
+    since    INTEGER NOT NULL,
+    tries    INTEGER NOT NULL DEFAULT 0,
+    reason   TEXT NOT NULL,
+    PRIMARY KEY (hash, archive, copy, frame)
+);
+CREATE INDEX IF NOT EXISTS pending_archive ON pending(archive);
+";
 
 /// `PRAGMA application_id`: "GRCY", so a SQLite file that is not a
 /// library is never rebuilt over.
@@ -175,6 +223,65 @@ CREATE TABLE IF NOT EXISTS keywords (
 );
 CREATE INDEX IF NOT EXISTS keywords_word ON keywords(word);
 ";
+
+/// What we last wrote to a frame's sidecar on an archive copy
+/// ([`Library::record_archive_write`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ArchiveWrite {
+    /// The archive-side sidecar's path as written.
+    pub path: PathBuf,
+    /// The revision written: `revisions.last().hash` of the sidecar.
+    pub revision: String,
+    /// The file's size as written.
+    pub size: u64,
+    /// The file's mtime after the write, nanoseconds since the epoch.
+    pub mtime: i64,
+    /// When, seconds since the epoch.
+    pub written: i64,
+}
+
+/// What waits for one archive ([`Library::pending_counts`]).
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct PendingCount {
+    pub archive: PathBuf,
+    /// Rows waiting, frames whose copy is not known among them.
+    pub total: usize,
+    pub unknown: usize,
+}
+
+/// A write to an archive copy that could not be made yet
+/// ([`Library::add_pending`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Pending {
+    /// The frame's content hash.
+    pub hash: String,
+    /// The archive root, canonical.
+    pub archive: PathBuf,
+    /// The frame's copy on the archive the write is for; empty when
+    /// which copy is this frame's is not known.
+    pub copy: PathBuf,
+    /// The local frame whose sidecar is to go, a hint for the pass.
+    pub frame: PathBuf,
+    /// When it was first queued, seconds since the epoch.
+    pub since: i64,
+    /// How many times a pass has tried.
+    pub tries: i64,
+    /// Why it waits: what the last attempt said.
+    pub reason: String,
+}
+
+/// A [`Pending`] from a row of its seven columns.
+fn pending(r: &rusqlite::Row<'_>) -> rusqlite::Result<Pending> {
+    Ok(Pending {
+        hash: r.get(0)?,
+        archive: path_from_bytes(&r.get::<_, Vec<u8>>(1)?),
+        copy: path_from_bytes(&r.get::<_, Vec<u8>>(2)?),
+        frame: path_from_bytes(&r.get::<_, Vec<u8>>(3)?),
+        since: r.get(4)?,
+        tries: r.get(5)?,
+        reason: r.get(6)?,
+    })
+}
 
 /// The columns [`Entry`] is read from, in the order `entry` reads
 /// them.
@@ -459,7 +566,9 @@ pub fn key_folder(dir: &Path) -> PathBuf {
 }
 
 /// A file's mtime as the index stores it.
-pub(crate) fn mtime_of(metadata: &std::fs::Metadata) -> i64 {
+/// A file's mtime as the index stores it: nanoseconds since the
+/// epoch, 0 when the file will not say.
+pub fn mtime_of(metadata: &std::fs::Metadata) -> i64 {
     metadata
         .modified()
         .ok()
@@ -630,6 +739,45 @@ impl Library {
         Self::prepare(conn, path.to_path_buf(), read_only)
     }
 
+    /// Open a library for writing only if it is there and already at
+    /// this build's schema: nothing is made, migrated or rebuilt. For
+    /// a caller that is not the editor and has no business changing
+    /// the user's library (a headless export noting a row, §233): an
+    /// older library is refused as `NeedsRebuild`, for the window to
+    /// bring up. Waits at most `busy` for the file's lock.
+    pub fn open_current(path: &Path, busy: std::time::Duration) -> Result<Library> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        conn.busy_timeout(busy)?;
+        Self::settle_connection(&conn)?;
+        let mut conn = conn;
+        let state = {
+            let tx = conn.transaction()?;
+            let state = State::read(&tx)?;
+            tx.commit()?;
+            state
+        };
+        match state.judge() {
+            Judgement::Ours => {
+                conn.pragma_update(None, "synchronous", "NORMAL")?;
+                Ok(Library {
+                    conn,
+                    path: path.to_path_buf(),
+                    read_only: false,
+                })
+            }
+            Judgement::NotOurs => Err(Error::NotALibrary(path.to_path_buf())),
+            Judgement::Newer => Err(Error::NewerSchema {
+                path: path.to_path_buf(),
+                found: state.version,
+                ours: SCHEMA_VERSION,
+            }),
+            Judgement::ToMake => Err(Error::NeedsRebuild(path.to_path_buf())),
+        }
+    }
+
     /// A library that lives only as long as the process: for tests
     /// and for a listing nobody wants kept.
     pub fn open_in_memory() -> Result<Library> {
@@ -640,8 +788,8 @@ impl Library {
         )
     }
 
-    fn prepare(conn: Connection, path: PathBuf, read_only: bool) -> Result<Library> {
-        // Per-connection settings, none of them a write to the file.
+    /// Per-connection settings, none of them a write to the file.
+    fn settle_connection(conn: &Connection) -> Result<()> {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.create_scalar_function(
             "ulower",
@@ -659,6 +807,11 @@ impl Library {
                 })
             },
         )?;
+        Ok(())
+    }
+
+    fn prepare(conn: Connection, path: PathBuf, read_only: bool) -> Result<Library> {
+        Self::settle_connection(&conn)?;
         // What the file is, read in one transaction so that the
         // three answers are from one moment: read one at a time, they
         // straddled another process's making of the schema and read
@@ -736,11 +889,15 @@ impl Library {
                             path.display(),
                             now.version
                         );
+                        // The sync tables are kept: a rebuild re-reads
+                        // the files, and a pending write is not a thing
+                        // the files say.
                         tx.execute_batch(
                             "DROP TABLE IF EXISTS keywords; DROP TABLE IF EXISTS files;",
                         )?;
                     }
                     tx.execute_batch(SCHEMA)?;
+                    tx.execute_batch(SYNC_SCHEMA)?;
                     tx.pragma_update(None, "application_id", APPLICATION_ID)?;
                     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
                 }
@@ -1030,6 +1187,216 @@ impl Library {
             params![whole, path_bytes(&canonical_file(path)), size as i64],
         )?;
         Ok(n > 0)
+    }
+
+    /// Keep what was just written to a frame's sidecar on `archive`'s
+    /// copy: the archive-side sidecar's path, the revision written,
+    /// and the file's size and mtime as it landed (`written` is set
+    /// here, to now). The stat check before the next write reads these
+    /// back.
+    pub fn record_archive_write(
+        &mut self,
+        hash: &str,
+        archive: &Path,
+        copy: &Path,
+        write: &ArchiveWrite,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO archive_writes (hash, archive, copy, path, revision, size, mtime, written)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(hash, archive, copy) DO UPDATE SET
+                 path = excluded.path, revision = excluded.revision,
+                 size = excluded.size, mtime = excluded.mtime, written = excluded.written",
+            params![
+                hash,
+                path_bytes(&nearest_canonical(archive)),
+                path_bytes(copy),
+                path_bytes(&write.path),
+                write.revision,
+                write.size as i64,
+                write.mtime,
+                now_secs()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// What was last written to a frame's sidecar on `archive`'s copy,
+    /// if anything was.
+    pub fn archive_write(
+        &self,
+        hash: &str,
+        archive: &Path,
+        copy: &Path,
+    ) -> Result<Option<ArchiveWrite>> {
+        Ok(self
+            .conn
+            .prepare_cached(
+                "SELECT path, revision, size, mtime, written FROM archive_writes
+                 WHERE hash = ? AND archive = ? AND copy = ?",
+            )?
+            .query_row(
+                params![
+                    hash,
+                    path_bytes(&nearest_canonical(archive)),
+                    path_bytes(copy)
+                ],
+                |r| {
+                    Ok(ArchiveWrite {
+                        path: path_from_bytes(&r.get::<_, Vec<u8>>(0)?),
+                        revision: r.get(1)?,
+                        size: r.get::<_, i64>(2)? as u64,
+                        mtime: r.get(3)?,
+                        written: r.get(4)?,
+                    })
+                },
+            )
+            .optional()?)
+    }
+
+    /// Note that a frame's sidecar is to go to `archive`'s copy and
+    /// could not yet: `reason` is what the attempt said. A frame
+    /// already pending keeps its first time and gains a try.
+    pub fn add_pending(
+        &mut self,
+        hash: &str,
+        archive: &Path,
+        copy: &Path,
+        frame: &Path,
+        reason: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO pending (hash, archive, copy, frame, since, tries, reason)
+             VALUES (?, ?, ?, ?, ?, 1, ?)
+             ON CONFLICT(hash, archive, copy, frame) DO UPDATE SET
+                 tries = tries + 1, reason = excluded.reason",
+            params![
+                hash,
+                path_bytes(&nearest_canonical(archive)),
+                path_bytes(copy),
+                path_bytes(&canonical_file(frame)),
+                now_secs(),
+                reason
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// What the latest try at a pending write said, without counting
+    /// it a try of its own.
+    pub fn note_pending(
+        &mut self,
+        hash: &str,
+        archive: &Path,
+        copy: &Path,
+        frame: &Path,
+        reason: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE pending SET reason = ?
+             WHERE hash = ? AND archive = ? AND copy = ? AND frame = ?",
+            params![
+                reason,
+                hash,
+                path_bytes(&nearest_canonical(archive)),
+                path_bytes(copy),
+                path_bytes(&canonical_file(frame))
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// A pending write's frame moved from `from` to `to`: the row says
+    /// where it is now. A row already waiting at `to` is replaced.
+    pub fn move_pending(
+        &mut self,
+        hash: &str,
+        archive: &Path,
+        copy: &Path,
+        from: &Path,
+        to: &Path,
+    ) -> Result<()> {
+        self.conn.execute(
+            "UPDATE OR REPLACE pending SET frame = ?
+             WHERE hash = ? AND archive = ? AND copy = ? AND frame = ?",
+            params![
+                path_bytes(&canonical_file(to)),
+                hash,
+                path_bytes(&nearest_canonical(archive)),
+                path_bytes(copy),
+                path_bytes(&canonical_file(from))
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// The write went: `frame` is no longer pending for this copy on
+    /// `archive`. True when it was.
+    pub fn clear_pending(
+        &mut self,
+        hash: &str,
+        archive: &Path,
+        copy: &Path,
+        frame: &Path,
+    ) -> Result<bool> {
+        let n = self.conn.execute(
+            "DELETE FROM pending WHERE hash = ? AND archive = ? AND copy = ? AND frame = ?",
+            params![
+                hash,
+                path_bytes(&nearest_canonical(archive)),
+                path_bytes(copy),
+                path_bytes(&canonical_file(frame))
+            ],
+        )?;
+        Ok(n > 0)
+    }
+
+    /// Every write waiting for `archive`, oldest first.
+    pub fn pending_for(&self, archive: &Path) -> Result<Vec<Pending>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT hash, archive, copy, frame, since, tries, reason FROM pending
+             WHERE archive = ? ORDER BY since, hash, copy",
+        )?;
+        let rows = stmt.query_map(params![path_bytes(&nearest_canonical(archive))], pending)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Every write waiting, for any archive, oldest first.
+    pub fn pending_all(&self) -> Result<Vec<Pending>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT hash, archive, copy, frame, since, tries, reason FROM pending
+             ORDER BY since, hash, copy",
+        )?;
+        let rows = stmt.query_map([], pending)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// How many writes wait for each archive that has any, and how
+    /// many of those are frames whose copy there is not known (an
+    /// empty copy).
+    pub fn pending_counts(&self) -> Result<Vec<PendingCount>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT archive, COUNT(*), SUM(copy = X'') FROM pending
+             GROUP BY archive ORDER BY archive",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(PendingCount {
+                archive: path_from_bytes(&r.get::<_, Vec<u8>>(0)?),
+                total: r.get::<_, i64>(1)? as usize,
+                unknown: r.get::<_, i64>(2)? as usize,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// Whether a frame has a write waiting for any archive.
+    pub fn is_pending(&self, hash: &str) -> Result<bool> {
+        Ok(self
+            .conn
+            .prepare_cached("SELECT 1 FROM pending WHERE hash = ? LIMIT 1")?
+            .query_row(params![hash], |_| Ok(()))
+            .optional()?
+            .is_some())
     }
 
     /// The whole file's BLAKE3 the row keeps, if a backup or a
@@ -1398,8 +1765,41 @@ impl Library {
         let mut gone = 0;
         {
             let mut stmt = tx.prepare_cached("DELETE FROM files WHERE path = ?")?;
+            // A frame the editor deleted has no archive write owed any
+            // more (§233): its pending rows go with its row.
+            let mut pending = tx.prepare_cached("DELETE FROM pending WHERE frame = ?")?;
             for p in paths {
-                gone += stmt.execute(params![path_bytes(&canonical_file(p))])?;
+                let key = path_bytes(&canonical_file(p));
+                gone += stmt.execute(params![key])?;
+                pending.execute(params![key])?;
+            }
+        }
+        tx.commit()?;
+        Ok(gone)
+    }
+
+    /// Drop the pending writes of frames under `root`, and those owed
+    /// to it as an archive: the root was taken out of the library, so
+    /// nothing is owed either way. How many rows went.
+    pub fn clear_pending_under(&mut self, root: &Path) -> Result<usize> {
+        let root = nearest_canonical(root);
+        let rows = self.pending_all()?;
+        let tx = self.conn.transaction()?;
+        let mut gone = 0;
+        {
+            let mut stmt = tx.prepare_cached(
+                "DELETE FROM pending WHERE hash = ? AND archive = ? AND copy = ? AND frame = ?",
+            )?;
+            for r in rows
+                .iter()
+                .filter(|r| r.frame.starts_with(&root) || r.archive == root)
+            {
+                gone += stmt.execute(params![
+                    r.hash,
+                    path_bytes(&r.archive),
+                    path_bytes(&r.copy),
+                    path_bytes(&r.frame)
+                ])?;
             }
         }
         tx.commit()?;

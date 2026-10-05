@@ -83,6 +83,9 @@ enum Ask {
     File(PathBuf),
     /// Forget these files' rows: the window deleted the files.
     Forget(Vec<PathBuf>),
+    /// Drop the archive writes owed by frames under this root, or to
+    /// it: the root was taken out of the library (§233).
+    ForgetPendingUnder(PathBuf),
     /// Take these files' rows from the first path to the second: the
     /// window moved the files itself (Move rejects, Move back).
     Moved(Vec<(PathBuf, PathBuf)>),
@@ -348,6 +351,13 @@ impl Indexer {
         if self.asks.send(Ask::Forget(paths)).is_err() {
             self.files_waiting.fetch_sub(1, Ordering::SeqCst);
         }
+    }
+
+    /// A root taken out of the library: the archive writes owed by the
+    /// frames under it, or to it, are dropped (§233). The files' rows
+    /// stay, as they always have.
+    pub(crate) fn forget_pending_under(&self, root: PathBuf) {
+        let _ = self.asks.send(Ask::ForgetPendingUnder(root));
     }
 
     /// Take the rows of files the window has moved, each from the
@@ -882,6 +892,16 @@ fn serve(
                     files_waiting.fetch_sub(1, Ordering::SeqCst);
                     forget.extend(paths);
                 }
+                Ask::ForgetPendingUnder(root) => match lib.clear_pending_under(&root) {
+                    Ok(n) if n > 0 => {
+                        tracing::info!(
+                            "index: {n} archive write(s) owed under {} dropped with the root",
+                            root.display()
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(e) => tracing::warn!("index: pending rows not dropped: {e}"),
+                },
                 Ask::Folders { dirs, generation } => {
                     waits.folders.store(false, Ordering::SeqCst);
                     pending = Some(Pass {
@@ -1419,17 +1439,19 @@ pub(crate) fn index_open_folder(st: &mut State, ids: Option<Vec<Option<i64>>>) {
 }
 
 /// A frame's sidecar was written: its row is brought up to date on
-/// the indexer's thread, and the window hears when it is.
-pub(crate) fn sidecar_written(st: &State, file: usize) {
+/// the indexer's thread, and the window hears when it is; and its
+/// write to the archive's copy is queued (§233, [`crate::sync`]).
+pub(crate) fn sidecar_written(st: &mut State, file: usize) {
     if let (Some(indexer), Some(path)) = (&st.index, st.files.get(file)) {
         indexer.file(path.clone());
     }
+    crate::sync::after_save(st, file);
 }
 
 /// The window's read-only connection, opened once the indexer has
 /// made the file, and tried again at each word from the indexer
 /// while it will not open.
-fn open_reader(st: &mut State) {
+pub(crate) fn open_reader(st: &mut State, app: &App) {
     let Some(path) = st.index_path.clone() else {
         return;
     };
@@ -1446,6 +1468,11 @@ fn open_reader(st: &mut State) {
             if st.index_error.as_deref() == Some(READER_UNAVAILABLE) {
                 st.index_error = None;
             }
+            // The saves made before the reader was open are queued
+            // now, and what waits for the archives is read from the
+            // list the index kept across the quit (§233).
+            crate::sync::reader_opened(st);
+            crate::sync::refresh_note(st, app);
         }
         Err(e) => {
             tracing::warn!("library index {}: {e}", path.display());
@@ -1849,13 +1876,13 @@ pub(crate) fn told(app: &App, told: Told) {
         return;
     };
     // A reader that would not open is tried again at every word.
-    open_reader(&mut state.borrow_mut());
+    open_reader(&mut state.borrow_mut(), app);
     match told {
         Told::Opened(path) => {
             tracing::info!("library index {}", path.display());
             let mut st = state.borrow_mut();
             st.index_path = Some(path);
-            open_reader(&mut st);
+            open_reader(&mut st, app);
             crate::roots::recount(&mut st);
             // The launch's folder, when it lies under a root, has its
             // root's tree once the index can be read.
@@ -1906,6 +1933,7 @@ pub(crate) fn told(app: &App, told: Told) {
                 let mut st = state.borrow_mut();
                 if let Some(archive) = st.library.roots.archive_of(&path).map(Path::to_path_buf) {
                     crate::panel::archive::rejects::heard_from(&mut st, app, &archive, true);
+                    crate::sync::heard_from(&mut st, app, &archive, true);
                 }
             }
         }
@@ -1928,6 +1956,7 @@ pub(crate) fn told(app: &App, told: Told) {
             first,
         } => {
             crate::panel::archive::rejects::heard_from(&mut state.borrow_mut(), app, &root, false);
+            crate::sync::heard_from(&mut state.borrow_mut(), app, &root, false);
             let words = skipped_words(&state.borrow().library.roots, &root);
             if first {
                 app.set_status(words.clone().into());

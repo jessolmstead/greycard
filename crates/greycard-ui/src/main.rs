@@ -50,6 +50,7 @@ mod scope;
 mod selection;
 mod settings;
 mod sheet;
+mod sync;
 mod tags;
 #[cfg(test)]
 pub(crate) mod testing;
@@ -974,6 +975,12 @@ pub(crate) struct State {
     /// The archive roots: the sheet's question, a copy under way, the
     /// header's count (`panel::archive`).
     pub(crate) archive: panel::archive::Archive,
+    /// The writes behind the saves to the archives' copies (§233):
+    /// see [`sync`].
+    pub(crate) sync: sync::Sync,
+    /// The window, for a job's end landing on its thread from a place
+    /// that has only the state in hand.
+    pub(crate) app: slint::Weak<App>,
 }
 
 impl State {
@@ -986,6 +993,8 @@ impl State {
     pub(crate) fn empty(files: Vec<PathBuf>, app: &App) -> Self {
         let count = files.len();
         Self {
+            sync: sync::Sync::default(),
+            app: app.as_weak(),
             files,
             current: None,
             picked: Vec::new(),
@@ -1191,6 +1200,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::delete::install(app, &state, &worker);
     panel::look_remove::install(app, &state);
     panel::archive::install(app, &state, &worker);
+    sync::install(app, &state);
     panel::mask::install(app, &state, &worker);
     panel::browser::install(app, &state, &worker);
     panel::color::install(app, &state, &worker);

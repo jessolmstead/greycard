@@ -129,6 +129,18 @@ pub(crate) struct SidecarCopy {
     pub(crate) replace: bool,
 }
 
+/// Two `.gcd`s of one frame that went their own ways, to be joined
+/// (§233) and the join written to both: `mine` is the frame on the side
+/// the copy is from, `theirs` the frame on the other side, each with
+/// the sidecar path found there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SidecarJoin {
+    pub(crate) mine: PathBuf,
+    pub(crate) mine_sidecar: PathBuf,
+    pub(crate) theirs: PathBuf,
+    pub(crate) theirs_sidecar: PathBuf,
+}
+
 /// What is to be done with one frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum What {
@@ -139,11 +151,13 @@ pub(crate) enum What {
     },
     /// There, at `there`, and some of its sidecars here are the newer:
     /// those alone copied. `held` when others there are the newer and
-    /// are left, which names the frame.
+    /// are left, which names the frame. `join` when the two `.gcd`s
+    /// went their own ways and are joined, the join written to both.
     Sidecars {
         there: PathBuf,
         sidecars: Vec<SidecarCopy>,
         held: bool,
+        join: Option<SidecarJoin>,
     },
     /// There, and the same: nothing to do. `elsewhere` when it is not
     /// at the path this frame would have gone to.
@@ -365,13 +379,20 @@ fn modified(p: &Path) -> Option<SystemTime> {
 /// The sidecars of `mine` to copy toward the same frame at `theirs`,
 /// each file judged on its own, and whether any of `theirs`' is left
 /// because it is the newer (or cannot be told from mine, or mine has
-/// no counterpart). The `.gcd` by §161's rule, going over the one
-/// `theirs` has wherever that is, so the copy never ends up with two;
-/// each XMP by its mtime against the one its name gives it there. The
-/// same bytes on both sides is nothing to do.
-pub(crate) fn compare_sidecars(mine: &Path, theirs: &Path) -> (Vec<SidecarCopy>, bool) {
+/// no counterpart). The `.gcd` by §233's comparison, as the archive
+/// write behind a save does it: the copy that is behind is written
+/// over whole, in either direction, over the one the other side has
+/// wherever that is, so the copy never ends up with two; two that went
+/// their own ways are joined and the join written to both (the third
+/// of the tuple); each XMP by its mtime against the one its name gives
+/// it there. The same bytes on both sides is nothing to do.
+pub(crate) fn compare_sidecars(
+    mine: &Path,
+    theirs: &Path,
+) -> (Vec<SidecarCopy>, bool, Option<SidecarJoin>) {
     let mut sends = Vec::new();
     let mut held = false;
+    let mut join = None;
     match (Sidecar::find(mine), Sidecar::find(theirs)) {
         (Some(m), None) => sends.push(SidecarCopy {
             to: sidecar_at(&m, mine, theirs),
@@ -380,14 +401,31 @@ pub(crate) fn compare_sidecars(mine: &Path, theirs: &Path) -> (Vec<SidecarCopy>,
         }),
         (None, Some(_)) => held = true,
         (Some(m), Some(t)) if bytes_of(&m) != bytes_of(&t) => {
-            if Sidecar::compare_copies(&m, &t) == std::cmp::Ordering::Greater {
-                sends.push(SidecarCopy {
-                    from: m,
-                    to: t,
-                    replace: true,
-                });
-            } else {
-                held = true;
+            use greycard_edit::sync::{Compared, Side, compare};
+            match (Sidecar::read(&m), Sidecar::read(&t)) {
+                (Ok(ours), Ok(other)) => match compare(&ours, &other) {
+                    Compared::Same => {}
+                    Compared::Behind(Side::Other) => sends.push(SidecarCopy {
+                        from: m,
+                        to: t,
+                        replace: true,
+                    }),
+                    Compared::Behind(Side::Local) => sends.push(SidecarCopy {
+                        from: t,
+                        to: m,
+                        replace: true,
+                    }),
+                    Compared::SameEdit | Compared::Diverged => {
+                        join = Some(SidecarJoin {
+                            mine: mine.to_path_buf(),
+                            mine_sidecar: m,
+                            theirs: theirs.to_path_buf(),
+                            theirs_sidecar: t,
+                        });
+                    }
+                },
+                // One that will not read is left as it is, and named.
+                _ => held = true,
             }
         }
         _ => {}
@@ -419,7 +457,37 @@ pub(crate) fn compare_sidecars(mine: &Path, theirs: &Path) -> (Vec<SidecarCopy>,
     if theirs_xmps.iter().any(|t| !answered.contains(t)) {
         held = true;
     }
-    (sends, held)
+    (sends, held, join)
+}
+
+/// Whether a sidecar path is a frame's `.gcd` (and not an XMP).
+fn is_gcd(path: &Path) -> bool {
+    path.extension() == Some(std::ffi::OsStr::new("gcd"))
+}
+
+/// Join the two `.gcd`s of one frame and write the join to both
+/// (§233): the side the copy is from gets the save, which makes the
+/// revision, and the other side the same bytes; the archive write
+/// behind a later save then finds the copies the same.
+pub(crate) fn join_sidecars(join: &SidecarJoin) -> Result<(), String> {
+    let ours = Sidecar::read(&join.mine_sidecar).map_err(|e| format!("reading it: {e}"))?;
+    let theirs =
+        Sidecar::read(&join.theirs_sidecar).map_err(|e| format!("reading the copy: {e}"))?;
+    let mut joined = greycard_edit::sync::join(&ours, &theirs);
+    let placement = if join.mine_sidecar.parent().and_then(Path::file_name)
+        == Some(std::ffi::OsStr::new(SIDECAR_FOLDER))
+    {
+        greycard_edit::Placement::Folder
+    } else {
+        greycard_edit::Placement::Beside
+    };
+    joined
+        .save_in(&join.mine, placement)
+        .map_err(|e| format!("writing it: {e}"))?;
+    joined
+        .write_to(&join.theirs_sidecar)
+        .map_err(|e| format!("writing the copy: {e}"))?;
+    Ok(())
 }
 
 /// The content key of `frame` (§72's), from its row when the row is of
@@ -720,12 +788,12 @@ pub(crate) fn plan(ask: &Ask, beat: &Beat) -> Plan {
         });
         let what = match found {
             Some(there) => {
-                let (sidecars, held) = if ask.sidecars {
+                let (sidecars, held, join) = if ask.sidecars {
                     compare_sidecars(&frame, &there)
                 } else {
-                    (Vec::new(), false)
+                    (Vec::new(), false, None)
                 };
-                match (sidecars.is_empty(), held) {
+                match (sidecars.is_empty() && join.is_none(), held) {
                     (true, false) => What::Same {
                         elsewhere: there != to,
                         there,
@@ -735,6 +803,7 @@ pub(crate) fn plan(ask: &Ask, beat: &Beat) -> Plan {
                         there,
                         sidecars,
                         held,
+                        join,
                     },
                 }
             }
@@ -981,8 +1050,44 @@ pub(crate) fn run(plan: &Plan, hooks: &Hooks<'_>) -> Report {
                     Err(why) => report.failed.push((item.frame.clone(), why)),
                 }
             }
-            What::Sidecars { sidecars, held, .. } => {
+            What::Sidecars {
+                there,
+                sidecars,
+                held,
+                join,
+            } => {
+                // The `.gcd`s compared again now: a save made here or
+                // there between the plan and the run (the sheet was up)
+                // is a copy the plan would write over, or a pair that is
+                // a join now. What goes is what the files say at this
+                // moment; the XMPs go as planned.
+                let fresh;
+                let (sidecars, join) = if sidecars.iter().any(|s| is_gcd(&s.from)) || join.is_some()
+                {
+                    fresh = compare_sidecars(&item.frame, there);
+                    let xmps: Vec<&SidecarCopy> =
+                        sidecars.iter().filter(|s| !is_gcd(&s.from)).collect();
+                    let mut gcds: Vec<&SidecarCopy> =
+                        fresh.0.iter().filter(|s| is_gcd(&s.from)).collect();
+                    gcds.extend(xmps);
+                    (gcds, fresh.2.as_ref())
+                } else {
+                    (sidecars.iter().collect(), join.as_ref())
+                };
                 let mut ok = true;
+                if let Some(join) = join {
+                    match join_sidecars(join) {
+                        Ok(()) => {
+                            report.sidecar_files += 2;
+                            note(&join.mine_sidecar, &mut written);
+                            note(&join.theirs_sidecar, &mut written);
+                        }
+                        Err(why) => {
+                            ok = false;
+                            report.failed.push((join.mine_sidecar.clone(), why));
+                        }
+                    }
+                }
                 for s in sidecars {
                     // Over the older copy only when this file was judged
                     // the newer; a new name never goes over one that
@@ -1484,11 +1589,12 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
-    /// A frame there already takes the newer sidecar across, in either
-    /// direction: here's when it is the newer, nothing (and named) when
-    /// the archive's is.
+    /// A frame there already takes the newer `.gcd` across, in either
+    /// direction (§233): here's when it is the newer, the archive's
+    /// home when it went on from this one; a frame with no sidecar of
+    /// its own against one there is left and named.
     #[test]
-    fn a_newer_sidecar_goes_across_alone_and_an_older_one_is_left_and_named() {
+    fn a_newer_sidecar_goes_across_in_either_direction_and_a_bare_frame_is_named() {
         let dir = scratch("sidecars");
         let (local, nas) = (dir.join("local"), dir.join("nas"));
         std::fs::create_dir_all(&nas).unwrap();
@@ -1508,12 +1614,10 @@ mod tests {
         index(&db, &[&local, &nas]);
         let plan = plan(&ask, &no_beat());
         assert_eq!(plan.copies().0, 0, "{plan:?}");
-        assert_eq!(plan.sidecars_only(), 1);
-        let mut named: Vec<&Path> = plan.theirs_newer();
-        named.sort();
-        assert_eq!(named, [files[0].as_path(), files[2].as_path()]);
+        assert_eq!(plan.sidecars_only(), 2, "{plan:?}");
+        assert_eq!(plan.theirs_newer(), [files[0].as_path()]);
         let report = run(&plan, &quiet_hooks(&cancel, &bytes));
-        assert_eq!((report.sidecars_only, report.sidecar_files), (1, 1));
+        assert_eq!((report.sidecars_only, report.sidecar_files), (2, 2));
         let read = |f: &Path| Sidecar::load(f).unwrap().unwrap().meta.rating;
         assert_eq!(read(&there.join("b.tif")), 5);
         assert_eq!(
@@ -1521,10 +1625,18 @@ mod tests {
             4,
             "the archive's newer edit kept"
         );
-        assert_eq!(read(&files[2]), 2, "and nothing written here");
+        assert_eq!(
+            read(&files[2]),
+            4,
+            "and brought home: it went on from this one"
+        );
+        assert!(
+            !files[2].with_file_name("c.tif.gcd").exists(),
+            "to where c keeps its own: the hidden folder"
+        );
 
-        // Bring back, the other way: c's newer sidecar comes home, and
-        // b, the same on both sides now, is skipped.
+        // Bring back, the other way: a's sidecar comes home, and b and
+        // c, the same on both sides now, are skipped.
         let back = Ask {
             direction: Direction::BringBack,
             frames: Frames::Folder(there.clone()),
@@ -1539,13 +1651,187 @@ mod tests {
         index(&db, &[&local, &nas]);
         let plan = super::plan(&back, &no_beat());
         assert_eq!(plan.copies().0, 0, "{plan:?}");
-        assert_eq!(plan.sidecars_only(), 2, "a and c: {plan:?}");
-        assert_eq!(plan.same(), (1, 0));
+        assert_eq!(plan.sidecars_only(), 1, "a: {plan:?}");
+        assert_eq!(plan.same(), (2, 0));
         run(&plan, &quiet_hooks(&cancel, &bytes));
         assert_eq!(read(&files[2]), 4);
         assert_eq!(read(&files[0]), 1);
-        // c's sidecar came back to where c keeps its own: the hidden folder.
-        assert!(!files[2].with_file_name("c.tif.gcd").exists());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Two `.gcd`s of one frame edited on both sides since the backup
+    /// (§233): Back up joins them and writes the join to both, so
+    /// neither side's edit is lost and the two read as the same; Bring
+    /// back then finds them the same. A copy that is simply behind is
+    /// written over whole, either way.
+    #[test]
+    fn a_pair_edited_on_both_sides_is_joined_by_back_up_and_the_same_to_bring_back() {
+        use greycard_edit::sync::{Compared, compare};
+        let dir = scratch("joined");
+        let (local, nas) = (dir.join("local"), dir.join("nas"));
+        std::fs::create_dir_all(&nas).unwrap();
+        let files = shoot(&local);
+        let db = dir.join("library.sqlite");
+        index(&db, &[&local, &nas]);
+        let ask = backup_ask(&local, &nas, &db, false);
+        let (cancel, bytes) = (AtomicBool::new(false), AtomicU64::new(0));
+        run(&plan(&ask, &no_beat()), &quiet_hooks(&cancel, &bytes));
+        let there = nas.join("local").join("shoot");
+        // b: rated 5 here, and 4 on the archive from another machine,
+        // each on from the backup's copy.
+        rate(&files[1], 5, 1, Placement::Beside);
+        {
+            let mut theirs = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+            theirs.meta.rating = 4;
+            theirs.meta.label = greycard_edit::meta::Label::Blue;
+            theirs
+                .save_in_stamped(
+                    &there.join("b.tif"),
+                    Placement::Beside,
+                    &greycard_edit::sync::Stamp {
+                        at: 1 << 40,
+                        host: "laptop".into(),
+                    },
+                )
+                .unwrap();
+        }
+        // c: edited here only; the archive's copy is behind.
+        rate(&files[2], 1, 2, Placement::Folder);
+        index(&db, &[&local, &nas]);
+        let plan = plan(&ask, &no_beat());
+        assert_eq!(plan.copies().0, 0, "{plan:?}");
+        assert_eq!(plan.sidecars_only(), 2, "{plan:?}");
+        assert!(plan.theirs_newer().is_empty(), "{plan:?}");
+        let item = plan.items.iter().find(|i| i.frame == files[1]).unwrap();
+        match &item.what {
+            What::Sidecars {
+                join,
+                sidecars,
+                held,
+                ..
+            } => {
+                assert!(join.is_some(), "{item:?}");
+                assert!(sidecars.is_empty() && !held);
+            }
+            other => panic!("{other:?}"),
+        }
+        let report = run(&plan, &quiet_hooks(&cancel, &bytes));
+        assert!(report.failed.is_empty(), "{report:?}");
+        assert_eq!((report.sidecars_only, report.sidecar_files), (2, 3));
+        let here = Sidecar::load(&files[1]).unwrap().unwrap();
+        let copy = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+        assert_eq!(compare(&here, &copy), Compared::Same, "{here:?}\n{copy:?}");
+        // The join holds both edits: the label set there alone, and
+        // the rating, set on both sides, the later save's.
+        assert_eq!(
+            (here.meta.rating, here.meta.label),
+            (4, greycard_edit::meta::Label::Blue)
+        );
+        assert_eq!(
+            here.revisions.len(),
+            4,
+            "both branches' revisions, and the join's"
+        );
+        assert_eq!(
+            Sidecar::load(&there.join("c.tif"))
+                .unwrap()
+                .unwrap()
+                .meta
+                .rating,
+            1,
+            "the copy behind written over whole"
+        );
+        // Bring back: nothing to do for either now.
+        let back = Ask {
+            direction: Direction::BringBack,
+            frames: Frames::Folder(there.clone()),
+            include_rejects: false,
+            sidecars: true,
+            base: nas.join("local"),
+            dest: local.clone(),
+            other_side: vec![local.clone()],
+            skip: vec![local.clone()],
+            index: Some(db.clone()),
+        };
+        index(&db, &[&local, &nas]);
+        let plan = super::plan(&back, &no_beat());
+        assert_eq!(plan.sidecars_only(), 0, "{plan:?}");
+        assert_eq!(plan.same(), (3, 0), "{plan:?}");
+        // Edited on both sides again: Bring back joins too, and the
+        // frame here is the saved side.
+        rate(&files[1], 2, 1, Placement::Beside);
+        {
+            let mut theirs = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+            theirs.meta.label = greycard_edit::meta::Label::Red;
+            theirs
+                .save_in_stamped(
+                    &there.join("b.tif"),
+                    Placement::Beside,
+                    &greycard_edit::sync::Stamp {
+                        at: 1 << 41,
+                        host: "laptop".into(),
+                    },
+                )
+                .unwrap();
+        }
+        let plan = super::plan(&back, &no_beat());
+        assert_eq!(plan.sidecars_only(), 1, "{plan:?}");
+        let report = run(&plan, &quiet_hooks(&cancel, &bytes));
+        assert!(report.failed.is_empty(), "{report:?}");
+        let here = Sidecar::load(&files[1]).unwrap().unwrap();
+        let copy = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+        assert_eq!(compare(&here, &copy), Compared::Same);
+        assert_eq!(
+            (here.meta.rating, here.meta.label),
+            (2, greycard_edit::meta::Label::Red)
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Probe L: Back up planned while the archive's copy is ahead (to
+    /// come home), and a rating made here while the sheet was up. The
+    /// run compares again: the two are a join now, and the rating is
+    /// kept with the archive's label.
+    #[test]
+    fn a_save_between_the_plan_and_the_run_is_kept() {
+        let dir = scratch("stale-plan");
+        let (local, nas) = (dir.join("local"), dir.join("nas"));
+        std::fs::create_dir_all(&nas).unwrap();
+        let files = shoot(&local);
+        let db = dir.join("library.sqlite");
+        index(&db, &[&local, &nas]);
+        let ask = backup_ask(&local, &nas, &db, false);
+        let (cancel, bytes) = (AtomicBool::new(false), AtomicU64::new(0));
+        run(&plan(&ask, &no_beat()), &quiet_hooks(&cancel, &bytes));
+        let there = nas.join("local").join("shoot");
+        {
+            let mut theirs = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+            theirs.meta.label = greycard_edit::meta::Label::Blue;
+            theirs
+                .save_in_stamped(
+                    &there.join("b.tif"),
+                    Placement::Beside,
+                    &greycard_edit::sync::Stamp {
+                        at: 1 << 40,
+                        host: "laptop".into(),
+                    },
+                )
+                .unwrap();
+        }
+        index(&db, &[&local, &nas]);
+        let planned = plan(&ask, &no_beat());
+        assert_eq!(planned.sidecars_only(), 1, "{planned:?}");
+        // The user rates b here while the sheet is up.
+        rate(&files[1], 5, 1, Placement::Beside);
+        let report = run(&planned, &quiet_hooks(&cancel, &bytes));
+        assert!(report.failed.is_empty(), "{report:?}");
+        let here = Sidecar::load(&files[1]).unwrap().unwrap();
+        assert_eq!(
+            (here.meta.rating, here.meta.label),
+            (5, greycard_edit::meta::Label::Blue)
+        );
+        let copy = Sidecar::load(&there.join("b.tif")).unwrap().unwrap();
+        assert_eq!(here, copy);
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -1968,7 +2254,7 @@ mod tests {
 
         // The other way, the same rule: the archive's newer XMP is the
         // one that would go home; the `.gcd`s are the same bytes now.
-        let (back, held) = compare_sidecars(&there, b);
+        let (back, held, _) = compare_sidecars(&there, b);
         assert!(!held);
         assert_eq!(back.len(), 1);
         assert_eq!(back[0].to, greycard_edit::xmp::paths_of(b)[0]);

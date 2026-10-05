@@ -1612,7 +1612,7 @@ fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
 pub(crate) mod tests {
     use super::*;
     use crate::fixture::{A7, R5, R6, write_frame};
-    use crate::{Entry, Filter, Library};
+    use crate::{ArchiveWrite, Entry, Filter, Library, PendingCount};
     use greycard_edit::meta::{Flag, Label};
     use std::time::SystemTime;
 
@@ -4215,6 +4215,287 @@ pub(crate) mod tests {
         std::fs::write(&r5, &bytes).unwrap();
         lib.index_tree(&local, &mut quiet()).unwrap();
         assert_eq!(lib.whole_hash(&r5).unwrap(), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A schema 5 library gains the two sync tables empty, in place,
+    /// and its rows are kept.
+    #[test]
+    fn a_schema_5_library_gains_the_sync_tables() {
+        let dir = scratch("schema5");
+        let (_, _, _) = shoot(&dir);
+        let db = dir.join("library.sqlite");
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&dir, &mut quiet()).unwrap();
+            lib.conn_mut()
+                .execute_batch(
+                    "DROP TABLE pending; DROP TABLE archive_writes;
+                     PRAGMA user_version = 5;",
+                )
+                .unwrap();
+        }
+        let mut lib = Library::open(&db).unwrap();
+        let version: i32 = lib
+            .conn_mut()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, crate::SCHEMA_VERSION);
+        assert!(lib.pending_all().unwrap().is_empty());
+        assert_eq!(lib.archive_write("abc", &dir, &dir).unwrap(), None);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.unchanged, 3, "{report:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// What we last wrote to an archive copy, and the writes that
+    /// wait: keyed by the frame's hash and the archive, a frame once
+    /// each, the archive's path as the index keeps roots.
+    #[test]
+    fn archive_writes_and_pending_are_kept_per_frame_archive_and_copy() {
+        let dir = scratch("sync-tables");
+        let archive = dir.join("nas");
+        let other = dir.join("disk");
+        std::fs::create_dir_all(&archive).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        let frame = dir.join("IMG_0001.CR3");
+        std::fs::write(&frame, b"raw").unwrap();
+        let copy = archive.join("shoot").join("IMG_0001.CR3");
+        let selects = archive.join("selects").join("IMG_0001.CR3");
+        let mut lib = Library::open_in_memory().unwrap();
+        assert_eq!(lib.archive_write("h1", &archive, &copy).unwrap(), None);
+        lib.record_archive_write(
+            "h1",
+            &archive,
+            &copy,
+            &ArchiveWrite {
+                path: copy.with_extension("CR3.gcd"),
+                revision: "r1".into(),
+                size: 10,
+                mtime: 100,
+                written: 0,
+            },
+        )
+        .unwrap();
+        let w = lib.archive_write("h1", &archive, &copy).unwrap().unwrap();
+        assert_eq!((w.revision.as_str(), w.size, w.mtime), ("r1", 10, 100));
+        assert_eq!(w.path, copy.with_extension("CR3.gcd"));
+        assert!(w.written > 0);
+        // Written again: one row, the latest. Another copy of the same
+        // hash on the same archive is its own row.
+        lib.record_archive_write(
+            "h1",
+            &archive,
+            &copy,
+            &ArchiveWrite {
+                path: copy.with_extension("CR3.gcd"),
+                revision: "r2".into(),
+                size: 12,
+                mtime: 200,
+                written: 0,
+            },
+        )
+        .unwrap();
+        lib.record_archive_write(
+            "h1",
+            &archive,
+            &selects,
+            &ArchiveWrite {
+                path: selects.with_extension("CR3.gcd"),
+                revision: "r9".into(),
+                size: 1,
+                mtime: 1,
+                written: 0,
+            },
+        )
+        .unwrap();
+        let w = lib.archive_write("h1", &archive, &copy).unwrap().unwrap();
+        assert_eq!((w.revision.as_str(), w.size, w.mtime), ("r2", 12, 200));
+        assert_eq!(
+            lib.archive_write("h1", &archive, &selects)
+                .unwrap()
+                .unwrap()
+                .revision,
+            "r9"
+        );
+        assert_eq!(lib.archive_write("h1", &other, &copy).unwrap(), None);
+
+        assert!(!lib.is_pending("h1").unwrap());
+        lib.add_pending("h1", &archive, &copy, &frame, "offline")
+            .unwrap();
+        lib.add_pending("h2", &archive, &copy, &frame, "offline")
+            .unwrap();
+        lib.add_pending("h1", &other, &copy, &frame, "quiet")
+            .unwrap();
+        lib.add_pending("h1", &archive, Path::new(""), &frame, "two copies")
+            .unwrap();
+        assert!(lib.is_pending("h1").unwrap());
+        let for_archive = lib.pending_for(&archive).unwrap();
+        assert_eq!(for_archive.len(), 3);
+        let first = for_archive
+            .iter()
+            .find(|p| p.hash == "h1" && p.copy == copy)
+            .unwrap();
+        assert_eq!(first.archive, archive.canonicalize().unwrap());
+        assert_eq!(first.frame, frame.canonicalize().unwrap());
+        assert_eq!((first.tries, first.reason.as_str()), (1, "offline"));
+        let since = first.since;
+        assert!(
+            for_archive
+                .iter()
+                .any(|p| p.copy.as_os_str().is_empty() && p.reason == "two copies")
+        );
+        // Queued again: the same row, one more try, the new reason.
+        lib.add_pending("h1", &archive, &copy, &frame, "diverged")
+            .unwrap();
+        let again = lib.pending_for(&archive).unwrap();
+        let row = again
+            .iter()
+            .find(|p| p.hash == "h1" && p.copy == copy)
+            .unwrap();
+        assert_eq!((row.tries, row.reason.as_str()), (2, "diverged"));
+        assert_eq!(row.since, since);
+        lib.note_pending("h1", &archive, &copy, &frame, "unreadable")
+            .unwrap();
+        let row = lib
+            .pending_for(&archive)
+            .unwrap()
+            .into_iter()
+            .find(|p| p.hash == "h1" && p.copy == copy)
+            .unwrap();
+        assert_eq!((row.tries, row.reason.as_str()), (2, "unreadable"));
+        let moved = dir.join("IMG_0002.CR3");
+        std::fs::write(&moved, b"raw").unwrap();
+        lib.move_pending("h1", &archive, &copy, &frame, &moved)
+            .unwrap();
+        let row = lib
+            .pending_for(&archive)
+            .unwrap()
+            .into_iter()
+            .find(|p| p.hash == "h1" && p.copy == copy)
+            .unwrap();
+        assert_eq!(row.frame, moved.canonicalize().unwrap());
+        // A second frame of the same hash waits on a row of its own,
+        // its copy unknown too; the first's rows are not touched.
+        let twin = dir.join("selects").join("IMG_0001.CR3");
+        std::fs::create_dir_all(twin.parent().unwrap()).unwrap();
+        std::fs::write(&twin, b"raw").unwrap();
+        lib.add_pending("h1", &archive, Path::new(""), &twin, "two copies")
+            .unwrap();
+        let mut counts = lib.pending_counts().unwrap();
+        counts.sort();
+        let mut expect = vec![
+            PendingCount {
+                archive: other.canonicalize().unwrap(),
+                total: 1,
+                unknown: 0,
+            },
+            PendingCount {
+                archive: archive.canonicalize().unwrap(),
+                total: 4,
+                unknown: 2,
+            },
+        ];
+        expect.sort();
+        assert_eq!(counts, expect);
+        assert_eq!(lib.pending_all().unwrap().len(), 5);
+        assert!(lib.clear_pending("h1", &archive, &copy, &moved).unwrap());
+        assert!(!lib.clear_pending("h1", &archive, &copy, &moved).unwrap());
+        assert!(lib.is_pending("h1").unwrap(), "still pending elsewhere");
+        assert!(lib.clear_pending("h1", &other, &copy, &frame).unwrap());
+        assert!(
+            lib.clear_pending("h1", &archive, Path::new(""), &frame)
+                .unwrap()
+        );
+        assert!(lib.is_pending("h1").unwrap(), "the twin's row is its own");
+        assert!(
+            lib.clear_pending("h1", &archive, Path::new(""), &twin)
+                .unwrap()
+        );
+        assert!(!lib.is_pending("h1").unwrap());
+        assert_eq!(lib.pending_for(&archive).unwrap().len(), 1);
+        // Moved onto a frame that waits already: one row, not two.
+        lib.add_pending("h2", &archive, &copy, &moved, "offline")
+            .unwrap();
+        lib.move_pending("h2", &archive, &copy, &frame, &moved)
+            .unwrap();
+        assert_eq!(lib.pending_for(&archive).unwrap().len(), 1);
+        // The frame deleted by the editor: its rows go with its row.
+        lib.add_pending("h2", &other, &copy, &moved, "offline")
+            .unwrap();
+        lib.forget(std::slice::from_ref(&moved)).unwrap();
+        assert!(!lib.is_pending("h2").unwrap());
+        // A root taken out of the library: the rows of frames under
+        // it, and the rows owed to it as an archive, go; the rest stay.
+        let kept = dir.join("kept").join("IMG_0003.CR3");
+        std::fs::create_dir_all(kept.parent().unwrap()).unwrap();
+        std::fs::write(&kept, b"raw").unwrap();
+        lib.add_pending("h3", &archive, &copy, &frame, "offline")
+            .unwrap();
+        lib.add_pending("h4", &other, &copy, &kept, "offline")
+            .unwrap();
+        lib.add_pending("h5", &archive, &copy, &kept, "offline")
+            .unwrap();
+        assert_eq!(lib.clear_pending_under(&archive).unwrap(), 2, "h3 and h5");
+        assert_eq!(
+            lib.clear_pending_under(dir.join("kept").as_path()).unwrap(),
+            1,
+            "h4"
+        );
+        assert!(!lib.is_pending("h3").unwrap() && !lib.is_pending("h5").unwrap());
+        assert!(!lib.is_pending("h4").unwrap());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// `open_current` opens a library at this build's schema for
+    /// writing and refuses anything else without a byte changed: an
+    /// older library (the window's to bring up), one that is not
+    /// there (nothing made), a file that is not a library.
+    #[test]
+    fn open_current_refuses_an_older_library_untouched_and_makes_nothing() {
+        let dir = scratch("open-current");
+        let db = dir.join("library.sqlite");
+        let wait = std::time::Duration::from_millis(50);
+        // Not there: nothing made.
+        assert!(Library::open_current(&db, wait).is_err());
+        assert!(!db.exists());
+        // At schema 5: refused, and the file is as it was.
+        {
+            let conn = rusqlite::Connection::open(&db).unwrap();
+            conn.execute_batch(crate::SCHEMA).unwrap();
+            conn.pragma_update(None, "application_id", crate::APPLICATION_ID)
+                .unwrap();
+            conn.pragma_update(None, "user_version", 5).unwrap();
+        }
+        let before = std::fs::read(&db).unwrap();
+        assert!(matches!(
+            Library::open_current(&db, wait),
+            Err(crate::Error::NeedsRebuild(_))
+        ));
+        assert_eq!(std::fs::read(&db).unwrap(), before, "not a byte changed");
+        let version: i32 = rusqlite::Connection::open(&db)
+            .unwrap()
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, 5);
+        // Brought up by the editor's open: then it opens, and writes.
+        drop(Library::open(&db).unwrap());
+        let mut lib = Library::open_current(&db, wait).unwrap();
+        let frame = dir.join("IMG_0001.CR3");
+        std::fs::write(&frame, b"raw").unwrap();
+        lib.add_pending("h1", &dir, Path::new(""), &frame, "x")
+            .unwrap();
+        assert!(lib.is_pending("h1").unwrap());
+        // Not a library at all.
+        let other = dir.join("other.sqlite");
+        rusqlite::Connection::open(&other)
+            .unwrap()
+            .execute_batch("CREATE TABLE t (x)")
+            .unwrap();
+        assert!(matches!(
+            Library::open_current(&other, wait),
+            Err(crate::Error::NotALibrary(_))
+        ));
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -1111,6 +1111,10 @@ export component App inherits Window {
     callback develop-changed();
 
     in property <string> status;
+    /// What waits to go to an archive ("3 edits waiting for Archive"),
+    /// beside the status while there is any; a click on it tries now.
+    in property <string> sync-note;
+    callback sync-retry();
     /// A view's sidecars being read on the pool, once the wait is
     /// longer than a fast root's: shown over the grid's sheet, or in
     /// the loupe over the viewport's bottom, above the strip.
@@ -1852,6 +1856,8 @@ export component App inherits Window {
                 guide-stroke(a, b, c, d) => { root.guide-stroke(a, b, c, d); }
                 guide-kept: root.guide-kept;
                 status: root.status;
+                sync-note: root.sync-note;
+                sync-retry => { root.sync-retry(); }
                 placeholder-status: root.placeholder-status;
                 canvas-choice <=> root.canvas-choice;
                 canvas-colors: root.canvas-colors;
@@ -2557,6 +2563,8 @@ export component App inherits Window {
         // put away.
         import-line: root.left-hidden ? root.import-status : "";
         status-line: root.status;
+        sync-note: root.sync-note;
+        sync-retry => { root.sync-retry(); }
         focus-keys => { keys.focus(); }
         loading-shown: root.loading-shown;
         loading-fraction: root.loading-fraction;

@@ -1166,6 +1166,10 @@ fn remove_listed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir
         dir.display()
     );
     app.set_status(format!("{was} is out of the library; its files are where they were").into());
+    // Nothing is owed to or by a root that is out (§233).
+    if let Some(indexer) = &st.index {
+        indexer.forget_pending_under(dir.to_path_buf());
+    }
     // The watcher there is kept until the one on the rest is ready, so
     // the other roots are not left unwatched while it is built (on a
     // large tree, many seconds). The timer is started again at once
@@ -2042,6 +2046,7 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
         // An archive that answered this look runs its queued moves.
         if let Some(offline) = &offline {
             crate::panel::archive::rejects::heard_over(&mut st, app, offline);
+            crate::sync::heard_over(&mut st, app, offline);
         }
         if let Some(offline) = offline
             && st.library.offline != offline
@@ -2051,6 +2056,9 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
             let was = std::mem::replace(&mut st.library.offline, offline);
             let now = st.library.offline.clone();
             rows::roots_changed(&mut st, worker, &was, &now);
+            // The frame on screen follows to the archive's copy when
+            // its own root went (§233).
+            crate::sync::follow_offline(&mut st, app);
             dimmed = true;
             show(&st, app);
         }
@@ -3212,7 +3220,7 @@ pub(crate) fn land_sent(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worke
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::testing::{state_for, window};
     use greycard_library::fixture::{A7, R5, R6, write_frame};
@@ -3240,7 +3248,7 @@ mod tests {
         /// Paths the test says do not answer a look, as a share gone
         /// away would not: each is taken for no answer at once, on this
         /// thread, with no look.
-        pub(super) static NOT_ANSWERING: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
+        pub(crate) static NOT_ANSWERING: RefCell<Vec<PathBuf>> = const { RefCell::new(Vec::new()) };
         /// The folders' looks for an add or a remove are queued, not
         /// run in place, while this is set.
         pub(super) static HOLD_CHECKS: RefCell<bool> = const { RefCell::new(false) };

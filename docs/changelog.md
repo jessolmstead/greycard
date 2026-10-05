@@ -10,6 +10,14 @@ note a first tester reads.
 
 ## 0.4.0, unreleased
 
+- One frame in two places: every save goes to the frame's copy on the
+  archive too, behind the save and off the window's thread; a copy
+  edited elsewhere is joined edit by edit, never written over; what
+  could not go waits in the library and goes when the archive answers,
+  the status line saying "3 edits waiting for Archive"; Back up and
+  Bring back compare and join the two sidecars instead of counting
+  saves; and the frame on screen follows to the archive's copy when its
+  own drive goes (§244)
 - A sidecar keeps an id on every state, a line for every save (its
   hash, time and machine) and the time each rating, flag, label,
   keyword, title, caption and turn was set, and two copies of one can

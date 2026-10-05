@@ -25,6 +25,10 @@ the reasoning lives in `docs/notes.md`.
       for the develop resets the zoom (`cull::placeholder_arrived`) (§241)
 - [ ] `--show-mask` is dropped when the first file is opened a second
       time at startup (§241)
+- [ ] A GPU test binary now and then dies with SIGSEGV mid-run
+      (`greycard-gpu` `tests/ca.rs`, `greycard-ui` as `render::tests`
+      start) and passes on a rerun; seen in local runs while §244 was
+      reviewed, in crates it does not touch
 
 ## Next: 0.4.0
 
@@ -34,13 +38,6 @@ is backed up to it and brought back by hash, and the last folders
 opened are a click away; a crop can be drawn, an export is a line in
 History, and the Masks tab reads at a glance.
 
-- [ ] One frame in two places, what is left after §224 listed a frame
-      from the copy that is there: its sidecar written to both copies
-      when both are there, and the frame on screen following to the
-      archive's copy when its local root goes; designed in §233, the
-      file's side (state ids, revisions, field times, the comparison
-      and the join) built in §243; left is the editor's (the queued
-      write, the pending list, the catch-up pass, the status line)
 
 ## Tracks
 
@@ -292,11 +289,6 @@ comes across with its ratings and collections.
   hand), and an error row in the index for a file whose hash fails so
   it stops showing under every chip (§168). The all-roots view and
   the filter remembered between sessions are there since §174
-- [ ] Edits synced between a shoot and its archive copy by the
-  sidecars alone, no database crossing machines: the comparison and
-  the join of §233 run in Back up and Bring back, behind every save
-  when both copies answer, and as a pass when a root returns. Waits
-  on one frame in two places
 - [ ] The network assumed slow and sometimes hung: a timeout on every
   read of a root over a network mount so a sleeping NAS does not hold
   the pool; the indexer's reads several at once on such a root,
