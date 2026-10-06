@@ -5,10 +5,10 @@ learn your camera's own color from your raws, and leaves your folders
 in charge.
 
 <a href="https://greycard.org"><img src="docs/images/develop.webp"
-  alt="The editor on a mountain landscape: the file browser and history
-  on the left, the picture in the middle, and on the right the histogram
-  and the Develop tab's Light and Color sliders, with the folder in a
-  filmstrip along the bottom."></a>
+  alt="The editor on a mountain landscape: the navigator, presets and
+  history on the left, the picture in the middle, and on the right the
+  histogram and the Develop tab's Light sliders, display curve switch
+  and Color sliders, with the folder in a filmstrip along the bottom."></a>
 
 Builds for Linux, Apple silicon Macs and Windows are on [the releases
 page](https://github.com/jessolmstead/greycard/releases/latest);
