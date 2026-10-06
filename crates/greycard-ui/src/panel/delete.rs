@@ -151,7 +151,7 @@ fn folders_of(frames: &[PathBuf]) -> Vec<PathBuf> {
         let Some(dir) = f.parent() else {
             continue;
         };
-        let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
         if !out.contains(&dir) {
             out.push(dir);
         }
@@ -225,7 +225,7 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
                 // and Recently opened still has the folder.
                 View::Folder => shoot_rejects_dir(st).or_else(|| {
                     let dir = st.recent.open.as_deref()?;
-                    let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+                    let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
                     Some(cull::rejects_dir(&dir))
                 }),
                 View::Branch {
@@ -239,7 +239,7 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
                         return;
                     }
                     let folder =
-                        std::fs::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
+                        dunce::canonicalize(folder).unwrap_or_else(|_| folder.to_path_buf());
                     Some(cull::rejects_dir(&folder))
                 }
                 _ => {
@@ -585,7 +585,7 @@ pub(crate) fn land(st: &mut State, app: &App, worker: &Worker, done: Done) {
     if let Some(r) = &done.deleted.trash_refused
         && let Some(dir) = r.frame.parent()
     {
-        let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
         st.trash_refused.insert(dir);
     }
     for (f, why) in done.refused.iter().chain(&done.deleted.failed) {
@@ -728,7 +728,7 @@ pub(crate) mod tests {
         state
             .borrow_mut()
             .trash_refused
-            .insert(std::fs::canonicalize(dir).unwrap());
+            .insert(dunce::canonicalize(dir).unwrap());
     }
 
     #[test]

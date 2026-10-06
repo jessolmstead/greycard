@@ -577,7 +577,7 @@ pub(crate) struct Deletes {
 /// canonical, and only those inside the archive as the disk has it, so
 /// a folder that is a link to somewhere else is not one of them.
 fn allowed_under(archive: &Path, copies: &[PathBuf]) -> Vec<PathBuf> {
-    let Ok(root) = std::fs::canonicalize(archive) else {
+    let Ok(root) = dunce::canonicalize(archive) else {
         return Vec::new();
     };
     let dirs: Vec<PathBuf> = copies
@@ -1245,7 +1245,7 @@ mod tests {
             &c.nas,
             &[c.nas.join("door").join("x.tif"), c.there.join("a.tif")],
         );
-        assert_eq!(allowed, [std::fs::canonicalize(&c.there).unwrap()]);
+        assert_eq!(allowed, [dunce::canonicalize(&c.there).unwrap()]);
         crate::testing::remove_dir_retry(&c.dir);
     }
 

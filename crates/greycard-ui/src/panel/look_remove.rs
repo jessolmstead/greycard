@@ -226,7 +226,7 @@ pub(crate) fn ask(st: &mut State, app: &App) {
         );
         return;
     }
-    let canonical = std::fs::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
+    let canonical = dunce::canonicalize(&dir).unwrap_or_else(|_| dir.clone());
     let offer = delete::offer(TRASH_SUPPORTED, st.trash_refused.contains(&canonical));
     let counted = uses(st, &name);
     let names: Vec<slint::SharedString> = files
@@ -513,7 +513,7 @@ pub(crate) fn land(st: &mut State, app: &App, done: Done) {
     if let Some(r) = &done.deleted.trash_refused
         && let Some(dir) = r.frame.parent()
     {
-        let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        let dir = dunce::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
         st.trash_refused.insert(dir);
     }
     let status = summary(&done);

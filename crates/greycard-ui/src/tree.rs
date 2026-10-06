@@ -1902,7 +1902,7 @@ mod tests {
             let mut st = state.borrow_mut();
             st.deletes_allowed = true;
             st.trash_refused
-                .insert(std::fs::canonicalize(day.join("rejects")).unwrap());
+                .insert(dunce::canonicalize(day.join("rejects")).unwrap());
         }
         app.invoke_delete_asked("rejects".into());
         app.invoke_delete_answered(2);
@@ -1985,7 +1985,7 @@ mod tests {
             let mut st = state.borrow_mut();
             st.deletes_allowed = true;
             st.trash_refused
-                .insert(std::fs::canonicalize(loose.join("rejects")).unwrap());
+                .insert(dunce::canonicalize(loose.join("rejects")).unwrap());
         }
         app.invoke_delete_asked("rejects".into());
         assert_eq!(

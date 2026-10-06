@@ -129,7 +129,7 @@ pub(crate) struct Refusal {
 pub(crate) fn allowed(dirs: &[PathBuf]) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = Vec::new();
     for d in dirs {
-        if let Ok(c) = std::fs::canonicalize(d)
+        if let Ok(c) = dunce::canonicalize(d)
             && !out.contains(&c)
         {
             out.push(c);
@@ -150,7 +150,7 @@ fn deletable(path: &Path, allowed: &[PathBuf]) -> Result<bool, String> {
     // here, and the answer is checked against the allowed folders'
     // own canonical spellings, so a hidden folder that is a link to
     // elsewhere is refused.
-    let Ok(folder) = std::fs::canonicalize(parent) else {
+    let Ok(folder) = dunce::canonicalize(parent) else {
         return Err(format!("{} cannot be read", parent.display()));
     };
     let hidden = std::ffi::OsStr::new(SIDECAR_FOLDER);

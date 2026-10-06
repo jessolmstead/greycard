@@ -1262,7 +1262,7 @@ pub(crate) fn time_cull(
 /// path, which is what a sheet should name.
 pub(crate) fn shoot_rejects_dir(st: &State) -> Option<PathBuf> {
     let shoot = st.files.first()?.parent()?;
-    let shoot = std::fs::canonicalize(shoot).unwrap_or_else(|_| shoot.to_path_buf());
+    let shoot = dunce::canonicalize(shoot).unwrap_or_else(|_| shoot.to_path_buf());
     Some(cull::rejects_dir(&shoot))
 }
 
@@ -1293,7 +1293,7 @@ fn rejects_where_of(st: &State, files: &[usize]) -> Option<String> {
     match folders.len() {
         0 => shoot_rejects_dir(st).map(|d| d.display().to_string()),
         1 => {
-            let shoot = std::fs::canonicalize(folders[0]).unwrap_or_else(|_| folders[0].into());
+            let shoot = dunce::canonicalize(folders[0]).unwrap_or_else(|_| folders[0].into());
             Some(cull::rejects_dir(&shoot).display().to_string())
         }
         n => Some(format!(
