@@ -192,6 +192,9 @@ jobs:
       # The release's text is the changelog's section for this version:
       # from its "## <version>" heading to the next "## ". A version with
       # no section fails here rather than shipping an empty release.
+      # GitHub renders every newline in a release body as a line break, so
+      # the second awk joins each wrapped paragraph and list item onto one
+      # line; a blank line, a heading or a list marker starts a new one.
       - name: Release notes from the changelog
         env:
           VERSION: ${{ needs.version.outputs.version }}
@@ -199,7 +202,17 @@ jobs:
           awk -v v="$VERSION" '
             /^## / { on = ($2 == v || $2 == v",") }
             on && !/^## / { print }
-          ' docs/changelog.md > target/dist/release-notes.md
+          ' docs/changelog.md | awk '
+            /^[[:space:]]*$/ { if (cur != "") print cur; print ""; cur = ""; next }
+            /^#/ || /^[[:space:]]*([-*+]|[0-9]+\.)[[:space:]]/ {
+              if (cur != "") print cur; cur = $0; next
+            }
+            {
+              line = $0; sub(/^[[:space:]]+/, "", line)
+              cur = (cur == "" ? line : cur " " line)
+            }
+            END { if (cur != "") print cur }
+          ' > target/dist/release-notes.md
           if ! grep -q '[^[:space:]]' target/dist/release-notes.md; then
             echo "docs/changelog.md has no section for $VERSION" >&2
             exit 1
