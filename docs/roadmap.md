@@ -15,16 +15,12 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-## Next: 0.4.0
+None open.
 
-A large archive on a NAS opens at once, is browsed by folder from
-the left pane and culled without reading a raw over the wire, a shoot
-is backed up to it and brought back by hash, and the last folders
-opened are a click away; a crop can be drawn, an export is a line in
-History, and the Masks tab reads at a glance.
+## Next: 0.5.0
 
-- [ ] Make a more complete user guide
-
+Not chosen yet: a sentence a tester can verify and the short list
+that makes it true, picked from the tracks.
 
 ## Tracks
 

@@ -4,9 +4,10 @@ A raw editor built to be correct, yet familiar, on Linux
 first and then everywhere.
 This document says what that means, how the other editors made their
 choices, and what greycard does differently. It is written for anyone
-deciding whether to use it, contribute to it, or wait. Written
-September 2026, when the engine is built and the library has begun;
-the last section says which is which.
+deciding whether to use it, contribute to it, or wait. Updated for
+0.4.0, October 2026: the engine and the library are built, and the
+tone controls are being tuned. The last section says what is built
+and what is planned.
 
 ## The short version
 
@@ -18,15 +19,18 @@ what people love and hate about each editor follows from those two
 answers.
 
 greycard answers: light in the scene, and your folders. It is
-scene-referred from the decoder to the display transform, color
-managed at every boundary, in physical units, with a CPU reference
-and a test for every operation. Its library indexes
-your directories without owning them. It is GPL-3.0-or-later so that
-the best published algorithms can be ported with attribution instead
-of reinvented worse, and it runs its learned tools on your machine.
+scene-referred from the decoder to the display and color managed at
+every step, so exposure moves in true stops and highlights keep their
+color. It can learn your camera's own rendering, such as Canon's
+Faithful or Fujifilm's Reala Ace, from the JPEG inside your raws, and
+lay it on as a look. Its library indexes your folders without owning
+them, and keeps working when a drive is unplugged or a shoot lives on
+a NAS. It is GPL-3.0-or-later so that the best published algorithms
+can be ported with attribution instead of reinvented worse, and its
+learned tools run on your machine.
 
-It is not the most complete editor and will not be for some time. It
-is the one whose foundations are right. It is developed on Linux,
+It is not yet the most complete editor. It is the one whose
+foundations are right. It is developed on Linux,
 where the alternatives are darktable and RawTherapee, and its stack
 carries to Windows and macOS, where the alternatives cost money and
 own your catalog.
@@ -95,8 +99,8 @@ for, which is why its sliders feel right even where they are
 physically wrong. Its color rendering is Adobe's own, fitted from
 chart shots under two illuminants and corrected by hand, and it is
 the source of the complaint that Lightroom's colors do not look like
-the camera's. Its AI denoise and masks are good and run in the cloud
-or on a large local model. Its catalog is the truth, with all that
+the camera's. Its AI denoise and masks are good and run on your
+machine; generative remove runs in the cloud. Its catalog is the truth, with all that
 brings. It needs a subscription, runs on Windows and macOS, and
 supports a new camera on the day it ships. It is a product with an
 ecosystem: presets, plugins, a phone, tutorials, and the muscle
@@ -147,12 +151,14 @@ darktable, with attribution in each file.
 ### RapidRAW
 
 A Rust and React editor with AI masks and a good-looking interface
-that gained a large following fast. Its pipeline assumes sRGB
-throughout, applies white balance in the wrong space, and has
-fourteen render paths that disagree with each other. Its license
-(AGPL, one owner) means its algorithms cannot come from darktable or
-RawTherapee and cannot go anywhere else. The lessons from its
-color path are the first design rules in greycard's notes.
+that gained a large following fast. Its pipeline is sRGB throughout,
+not wide-gamut, and applies white balance in the wrong space. Its
+[README](https://github.com/CyberTimon/RapidRAW/tree/b4b2bbeaa77f24c3bd54522171a4ed79d98b3a95)
+said it was "not for users who seek absolute, perfect color accuracy",
+its focus being "a fluid, creative process". Its license (AGPL, one
+owner) means its algorithms cannot come from darktable or RawTherapee
+and cannot go anywhere else. The lessons from its color path are the
+first design rules in greycard's notes.
 
 ### Others
 
@@ -173,17 +179,16 @@ is in `roadmap.md`; nothing planned is counted as done.
 | Color managed to the monitor | yes | yes | yes | yes | yes | yes, with soft proofing |
 | Camera color | Adobe's | in-house, the best | DxO's | matrix | matrix, DCP | matrix, DCP, and a look fitted from the camera's own JPEG |
 | Demosaic | Adobe's | proprietary | proprietary | RCD, AMaZE | AMaZE, RCD, dual | AMaZE, RCD, dual |
-| Denoise | AI, cloud or large local | conventional | DeepPRIME | profiled | profiled | profiled, and a raw-domain network that runs locally |
+| Denoise | AI, local | conventional | DeepPRIME | profiled | profiled | profiled, and a raw-domain network that runs locally |
 | Masks | AI people, sky, objects | layers | limited | parametric, drawn | local adjustments | gradient, radial, brush, by lightness and color; subject, object and sky by model |
 | Retouch | remove, generative | heal, clone | limited | retouch | spot removal | heal, clone, learned fill |
-| Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; collections planned |
-| Culling speed | fast, embedded previews | fast | slow | slow | slow | fast, from the embedded JPEG |
+| Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; browsable offline, archive backup; collections planned |
+| Culling speed | fast, embedded previews | fast | slow | slow | slow | fast, from the embedded JPEG, or a local preview for an offline or network drive |
 | Tethering | basic | the reference | none | gphoto2 | none | planned |
-| Stacking | HDR, panorama | none | none | none | none | HDR, focus, panorama; planned |
+| Stacking | HDR, panorama | none | none | none | none | focus, from the command line; HDR and panorama planned |
 | License | subscription | subscription or perpetual | perpetual | GPL | GPL | GPL-3.0-or-later |
 | Linux | no | no | no | yes | yes | yes, first |
 | Windows and macOS | yes | yes | yes | yes | yes | yes |
-| Tests per operation | unknown | unknown | unknown | some | some | every operation has a CPU reference and a test |
 
 ## What greycard is for
 
@@ -191,8 +196,8 @@ Photographers who want correct color without learning darktable, and
 who would rather their editor read their folders than own them. On
 Linux, where there is nothing else like it, and on Windows and macOS
 as an alternative that costs nothing and does not hold your catalog
-hostage. People who shoot Fujifilm GFX and Canon bodies, which are
-what it is developed against. Anyone who wants the camera's own
+hostage. It is tested with Canon, Fujifilm GFX, Sony, Panasonic and
+Nikon bodies. Anyone who wants the camera's own
 rendering as a starting point rather than Adobe's, which camera match
 fits from the JPEG already in every raw file. People who print, since
 the display path is color managed with soft proofing. And developers
@@ -234,8 +239,10 @@ published the answer, which is what the license is for.
 
 ## Where it stands
 
-Built, as of September 2026: decoding through rawler; the color
-pipeline from camera matrix to monitor profile with soft proofing;
+Built, as of October 2026: decoding through rawler; the color
+pipeline from camera matrix to monitor profile with soft proofing, and
+AgX, Blender's wide-gamut formation, as a second display curve beside
+the default;
 RCD, AMaZE and a dual demosaic; highlight reconstruction; chromatic
 aberration correction, on the GPU in the editor, and a defringe that
 acts on a fringe's hue; camera profiles from DCP files; a profiled
@@ -254,8 +261,8 @@ folder filter on all of them with a count on every chip, and read from
 and written to XMP sidecars so stars, labels and keywords travel to
 Lightroom and darktable (picks and rejects do not, since XMP has no
 field for them); culling from the camera's JPEG, or from a local preview of it
-when the frame's root is offline or on a network share, with compare
-and a rejects folder, a delete to the system trash behind a confirmation,
+when the frame's root is offline or on a network share, with compare,
+a rejects folder and a Move back out of it, a delete to the system trash behind a confirmation,
 and a quarter turn for a frame the camera got the wrong way up, in
 every view; the shot's settings under the file name, with its size;
 frame registration and a focus stack merged to a linear DNG from the
@@ -266,9 +273,12 @@ expects, with the file types registered; and a Report a problem button
 that opens the bug form with the version, the OS and the GPU filled in
 and the log beside it; several frames at once, with the settings of
 one synced across them, a preset laid over all of them and an export
-of all of them; export presets, a watermark and an export queue that
-waits for a quiet moment; masks by lightness and
-by color, and a white balance of a mask's own for mixed light; the Subject mask on the GPU; a Sky mask that refuses a frame
+of all of them; export presets, a watermark, a subfolder beside each raw and an
+export queue that runs when you choose and keeps a set across a
+restart, each export a line in History, and a headless `--export`
+for the command line; masks by lightness and
+by color, and a white balance of a mask's own for mixed light; the Subject mask on the GPU, and a
+Background shape that is its complement; a Sky mask that refuses a frame
 with no sky and takes its edge through hair and branches; a history
 that names a step by the preset, sync or snapshot that made it; a
 right-click menu on a frame, with copy and paste of settings onto the
@@ -278,7 +288,8 @@ renaming, a preset and a verified backup; roots, folders the library
 watches, with a view of every file under them, the roots and their
 folders as a tree in the left pane from the index, over the grid as
 over the loupe, a share that stops answering never holding the window
-or the other roots, and the filter remembered between sessions; a root
+or the other roots, the filter remembered between sessions, and the last ten folders
+opened a click away; a root
 marked as an archive, a shoot backed up to it by hash with each copy
 read back before it counts, brought back the same way, every save
 then written to the archive's copy too, a copy edited on another
@@ -289,10 +300,11 @@ culled rejects moved aside or deleted from the shoot's side; a library
 index that fills the grid's filter with chips for camera, lens, ISO,
 focal length, day and keyword, with a filter language behind the text
 field; a look fitted
-from the camera's own JPEG per body and picture style; an Auto white
+from the camera's own JPEG per body and picture style, with a table
+for each display curve; an Auto white
 balance beside Neutral; a value typed into any slider; scopes that can
 be read for the chosen mask alone; and a check at launch for a newer
-release, which can be turned off. Nine hundred tests.
+release, which can be turned off.
 
 Planned, in order: the tone controls made to feel right; people masks
 and a generative fill; the library's collections; a Lightroom catalog

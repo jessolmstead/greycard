@@ -1,7 +1,8 @@
 # greycard
 
-A raw photo editor that is scene-referred, fast, intuitive, ergonomic,
-accurate, and powerful.
+A raw photo editor that works on the light your camera caught, can
+learn your camera's own color from your raws, and leaves your folders
+in charge.
 
 <a href="https://greycard.org"><img src="docs/images/develop.webp"
   alt="The editor on a mountain landscape: the file browser and history
@@ -16,15 +17,25 @@ in 0.x are test builds.
 
 ## What that means
 
+**The camera's own look, if you want it.** Every raw carries the
+maker's JPEG of the same frame. Fit this camera's look, in the Look
+section, develops about forty of your frames per body and picture
+style, lays the camera's JPEG over each, and fits the maker's
+rendering as a look you can pick: Canon Standard or Fujifilm's Provia
+learned from your own files, with no license and no reverse
+engineering. [docs/camera-match.md](docs/camera-match.md) has how
+well it fits.
+
 **Accurate.** White balance is applied as gains in camera space, and
 the camera matrix is interpolated for the light you shot in. From
 the decoder to the display transform the image is linear Rec.2020,
 nothing clipped and nothing bent to fit a screen until the last
 step. A stop of exposure is a stop. Highlights above white are still
 there when you go looking for them. The monitor profile comes from
-colord and soft proofing is one click. Every operation has a CPU
-reference and a test, the GPU is checked against it, and the
-viewport and the export agree to a fraction of a percent.
+colord on Linux, or a profile you choose, and soft proofing is one
+click. Every operation has a CPU reference and a test, the GPU is
+checked against it, and the viewport and the export agree to a
+fraction of a percent.
 
 **Built on the best published work.** AMaZE and RCD demosaicing,
 deconvolution sharpening and defringe from RawTherapee. Highlight
@@ -39,15 +50,6 @@ Lightroom's presets load. The difference is underneath: each slider
 acts on the light in the scene rather than on a display curve, and
 that is what makes an edit predictable.
 
-**The camera's own look, if you want it.** Every raw carries the
-maker's JPEG of the same frame. Fit this camera's look, in the Look
-section, develops about forty of your frames per body and picture
-style, lays the camera's JPEG over each, and fits the maker's
-rendering as a look you can pick: Canon Standard or Fujifilm's Provia
-learned from your own files, with no license and no reverse
-engineering. [docs/camera-match.md](docs/camera-match.md) has how
-well it fits.
-
 **A shoot, start to finish.** Import from a card renames the files,
 lays a preset on each, and can write a backup copy, every file hashed
 and read back before it counts and nothing ever written to the card.
@@ -55,7 +57,15 @@ Culling is a keyboard job on the camera's own JPEG, with a side by
 side compare, and ratings, flags and labels travel to Lightroom and
 darktable through XMP. Select several frames and sync one's settings
 across them, lay a preset over all of them, or export them all with
-a saved export preset and a watermark.
+a saved export preset and a watermark, into a subfolder beside each
+raw, now or from a queue later, or from a script with no window.
+
+**Your library, wherever it is.** Your folders show as a tree with
+their counts. A shoot on a NAS is culled from local previews without
+reading a raw over the network, and a drive that is unplugged can
+still be browsed and filtered. Mark a drive as an archive and a shoot
+is backed up to it, each copy checked, with your edits kept in step
+on both copies.
 
 **Fast.** A slider shows in the viewport as it moves, drawn by the
 shader on the picture already on the GPU. The full develop runs on a
@@ -81,10 +91,8 @@ away and rebuilt. Move a shoot to another drive and nothing breaks.
 
 ## What it does not do yet
 
-- The library is young. It watches the folders you give it as roots,
-  indexes them, and filters the grid by camera, lens, ISO, focal
-  length, day and keyword. Collections and a Lightroom catalog import
-  are designed and not built.
+- Collections and a Lightroom catalog import are designed and not
+  built yet.
 - The tone controls are still being tuned: their ranges and response
   curves are being fitted so that a small move does what your hands
   expect. That work gets the same care as the color science under
@@ -113,9 +121,9 @@ way the scene would. That is what this project is for.
 
 ## Where it fits
 
-[docs/user-guide.md](docs/user-guide.md) is the guide for someone
-opening it for the first time: the basics, masks, several frames at
-once, culling and the keys.
+[docs/user-guide.md](docs/user-guide.md) is the user guide: installing,
+the basics and the keys, with a chapter for each part of the editor
+in [docs/guide/](docs/guide/).
 [docs/where-greycard-fits.md](docs/where-greycard-fits.md) sets it
 beside Lightroom, Capture One, DxO, darktable, RawTherapee and
 RapidRAW, and says what each got right.
@@ -262,8 +270,8 @@ line, `greycard`, has the same `-v` and no file: paste what it said.
 Say which build you are on: `greycard --version` for the command
 line, `greycard-ui --version` for the editor; the log's first line
 says too. The most useful thing you can send is a raw file that
-renders wrong, along with the camera model; it is developed against
-Canon and Fujifilm GFX bodies. [Open an
+renders wrong, along with the camera model; it is tested with Canon,
+Fujifilm GFX, Sony, Panasonic and Nikon bodies. [Open an
 issue](https://github.com/jessolmstead/greycard/issues/new/choose)
 and pick the bug report form.
 

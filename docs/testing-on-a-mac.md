@@ -11,8 +11,8 @@ after that. Nothing here needs a terminal unless you want one.
   Apple menu, About This Mac: the line that says **Chip**. If it
   says Intel, greycard has no build for it yet.
 - macOS 13.4 (Ventura) or newer. Same window, the **macOS** line.
-- A folder with some raw files in it. Canon `.CR3` and Fujifilm
-  `.RAF` are what it is developed against; most others open too.
+- A folder with some raw files in it. Canon, Fujifilm GFX, Sony,
+  Panasonic and Nikon raws are all tested.
 
 ## Getting it
 

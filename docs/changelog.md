@@ -10,7 +10,7 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
-## 0.4.0, unreleased
+## 0.4.0, 2026-10-05
 
 Sweeping improvements, especially to the library.
 A root's folders show as a tree, the grid keeps
@@ -20,9 +20,10 @@ archive: a shoot is backed up to it and brought back, and one frame
 kept in both places stays one frame, its edits joined rather than
 written over. AgX comes in as a second display curve, a mask has a
 white balance of its own, and exports gain a queue, a subfolder and a
-headless command line. Read the
-[guide for testers](https://github.com/jessolmstead/greycard/blob/master/docs/user-guide.md)
-for installing on each system, the hotkeys, and how to report a problem.
+headless command line. The
+[user guide](https://github.com/jessolmstead/greycard/blob/master/docs/user-guide.md)
+now has a chapter for each part of the editor, besides installing on
+each system, the hotkeys, and how to report a problem.
 
 ### Library
 
@@ -62,8 +63,8 @@ for installing on each system, the hotkeys, and how to report a problem.
   copy too; a copy edited elsewhere is joined edit by edit; and the
   status line says how many edits are waiting for an offline archive
   ([§224](https://github.com/jessolmstead/greycard/blob/master/docs/notes/224-one-frame-in-two-places-listed-from-the-copy-that-is-there.md), [§243](https://github.com/jessolmstead/greycard/blob/master/docs/notes/243-one-frame-in-two-places-part-1-the-files-side.md), [§244](https://github.com/jessolmstead/greycard/blob/master/docs/notes/244-one-frame-in-two-places-part-2-the-editors-side.md))
-- A library opened by this build is schema 5, which an older build
-  refuses and leaves untouched ([§217](https://github.com/jessolmstead/greycard/blob/master/docs/notes/217-archive-roots-part-one-the-mark-back-up-and-bring-back.md))
+- A library opened by this build is schema 6, which an older build
+  refuses and leaves untouched ([§217](https://github.com/jessolmstead/greycard/blob/master/docs/notes/217-archive-roots-part-one-the-mark-back-up-and-bring-back.md), [§244](https://github.com/jessolmstead/greycard/blob/master/docs/notes/244-one-frame-in-two-places-part-2-the-editors-side.md))
 
 ### Culling and the grid
 

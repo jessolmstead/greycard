@@ -1,22 +1,23 @@
-# greycard: a guide for testers
+# greycard user guide
 
-greycard is a raw photo editor for Linux, macOS and Windows. This is a
-test build, so some things are missing and some are wrong. What we need
-most from you is a report whenever a picture looks wrong or the editor
-does something you did not expect.
+greycard is a raw photo editor for Linux, macOS and Windows. This page
+gets you installed and started; the chapters below cover each part of
+the editor.
+
+It is a test build, so some things are missing. When a picture looks
+wrong, or the editor does something you didn't
+expect, please [report it](#reporting-a-problem).
 
 ## Before you start
 
-- **A GPU.** Vulkan on Linux and Windows, Metal on a Mac. There is no
-  software fallback.
-- **A Mac with an Apple chip**, if you are on a Mac. There is no build
-  for Intel Macs or for Windows on ARM.
-- **Raw files.** It is developed against Canon `.CR3` and Fujifilm
-  `.RAF`, and most other formats open too. Some don't open yet: X-Trans
-  Fujifilm bodies, and Nikon's High Efficiency raws, which are the
-  default setting on the Z9, Z8 and Z6 III.
-- Try it on copies of your raws, or on a shoot you have backed up.
-  greycard never changes a raw file, but it is a test build.
+- **A GPU.** Vulkan on Linux and Windows, Metal on a Mac.
+- **A Mac with an Apple chip**, if you're on a Mac. There is no build
+  for Intel Macs or Windows on ARM.
+- **Raw files.** Tested with Canon, Fujifilm GFX, Sony, Panasonic and
+  Nikon raws. Two kinds don't open yet: Fujifilm's X-Trans raws, and
+  Nikon's High Efficiency raws (TicoRAW).
+- **Copies or a backup.** greycard never changes a raw file, but it is
+  a test build.
 
 ## Installing
 
@@ -24,228 +25,59 @@ Download the file for your system from the
 [releases page](https://github.com/jessolmstead/greycard/releases) and
 unpack it.
 
-- **Linux:** in the unpacked folder, run `sh install.sh`. Everything
-  goes under `~/.local`, and `sh uninstall.sh` removes it.
-- **macOS:** follow [testing-on-a-mac.md](testing-on-a-mac.md). It
-  covers the security dialog you will see, since the app is not signed
-  by Apple yet.
-- **Windows:** double-click `install.cmd`. If you want greycard offered
-  in Open with for raw and `.gcd` files, also run `register.cmd`.
-  Windows may warn that the app is from an unknown publisher; click
-  **More info**, then **Run anyway**. `uninstall.cmd` removes it.
+- **Linux:** run `sh install.sh` in the unpacked folder. `sh
+  uninstall.sh` removes it.
+- **macOS:** follow [testing-on-a-mac.md](testing-on-a-mac.md), which
+  gets you past the security warning for an app not yet signed by Apple.
+- **Windows:** double-click `install.cmd`. Run `register.cmd` too if you
+  want greycard in **Open with** for raws. If Windows warns about an
+  unknown publisher, click **More info**, then **Run anyway**.
+  `uninstall.cmd` removes it.
 
 ## The basics
 
-1. **Open a folder** with Ctrl+O, or with the Open folder button in the
-   grid. The first frame is developed, and the filmstrip along the
-   bottom holds the rest of the folder.
-2. **Browse.** Use the arrow keys to move between frames, and **G** to
-   switch between the grid and the single frame. When you choose a
-   frame, you see the camera's own JPEG first (marked "camera
-   preview"), and greycard's develop replaces it a second or two later.
-3. **Edit.** The right panel has four tabs: **Develop**, **Crop**,
-   **Masks** and **Retouch**. Slider changes show up in the picture as
-   you make them. To type a value, click the number at a slider's right,
-   type it in the unit shown and press Enter; Escape leaves it as it
-   was. On the point curve, the point you last pressed stays selected,
-   and its **In** and **Out** fields below the curve (0 to 255) take a
-   typed position the same way.
-   In **White balance**, **Neutral** gives you a dropper to click
-   something that should be grey, and **Auto** reads the white from the
-   whole picture instead, leaving out clipped highlights and deep
-   shadows and trusting most what is near grey under the camera's own
-   white balance; it gives the same answer whatever the sliders were
-   set to.
-4. **Export** with the **Export…** button at the bottom of the panel, or
-   Ctrl+Shift+E. You can write a JPEG or a TIFF, in sRGB, Display P3 or
-   Rec.2020.
+1. **Open a folder** with **Ctrl+O** or **Open folder...**. The
+   filmstrip along the bottom holds the folder's frames.
+2. **Browse** with the arrow keys. **G** switches between the grid and
+   one frame. You see the camera's own preview first; greycard's
+   develop replaces it a moment later.
+3. **Edit** in the right panel's tabs: **Develop**, **Crop**,
+   **Masks** and **Retouch**.
+4. **Export** with **Export...** or **Ctrl+Shift+E**.
 
-The export sheet can lay a **watermark** over the export: a line of
-text in white or black, or a PNG with transparency. Its size and margin
-are a share of the export's long side, so it looks the same on a 2048 px
-export as on a full-size one; on a narrow crop it shrinks to stay
-inside its margins. Text is set in the system's sans-serif, with the
-system's fallback font for other scripts. If a character has no font
-that can draw it (a color emoji, for one), the export stops and names
-that character. A watermark with no text or no PNG also stops the
-export instead of writing an unmarked file. The **Metadata** row controls what the file
-carries: everything, everything except your edit, or nothing but the
-color profile.
+Your edits are saved as you go, in a `.gcd` file beside each raw. Copy
+those along with the raws to move a shoot.
 
-To keep a set of export choices, use **Save as...** at the top of the
-sheet and give it a name, then pick it from the **Preset** list next
-time. "(edited)" next to the name means the sheet no longer matches the
-saved preset. Presets are kept in the settings file. A preset can also
-drive an export from the command line:
-`greycard-ui IMG_0001.CR3 --export out.jpg --export-preset "Web 2048"`.
-That export opens no window, so it runs from a script or over SSH as
-well as from a desktop. It exits 0 when the file is written as the edit
-asks, 1 when it is not (with the reason), and 2 when it is written but
-without something the edit names that this machine has not got (a
-look, a learned model), such as a Subject mask whose model has not
-been downloaded yet; the terminal says what.
+## The chapters
 
-Your edits are saved beside each raw in a `.gcd` file, so
-`IMG_0001.CR3` keeps its edit in `IMG_0001.CR3.gcd`. To move a shoot to
-another folder or machine, copy the `.gcd` files along with the raws.
-Delete a `.gcd` file to start that frame's edit over.
+Working with your photos:
 
-If you would rather not see a `.gcd` beside every raw, open
-**Settings...** at the bottom of the left panel (or press Ctrl+,) and
-set **Edits go** to **Hidden folder**: edits then go into a hidden
-`.greycard` folder inside the shoot's folder, which travels with the
-shoot the same way. A sidecar in either place is read, and changing
-the setting moves nothing by itself: a frame's sidecar moves to the
-chosen place the next time it is saved, so a folder tidies itself as
-you work through it. To tidy the open frames at once, use **Move the
-open frames' sidecars** in the same sheet; it says how many are in
-the other place and moves them when you confirm.
+- [Folders and the library](guide/library.md): opening folders, library
+  roots, the folder tree, filtering, where edits are kept
+- [Importing from a card](guide/import.md)
+- [Culling and rating](guide/culling.md): ratings, flags, labels,
+  rejects and deleting
+- [Archives and backup](guide/archives.md)
 
-Ratings, flags and labels are kept in the `.gcd` too. To share ratings,
-labels and keywords with Lightroom or darktable, turn on **Also write
-an XMP** in Settings. With it on, greycard writes standard `.xmp`
-sidecars beside the raws; one that is there is read either way. Picks
-and rejects have no XMP field, so they stay in the `.gcd`.
+Editing:
 
-The strip's and the grid's thumbnails are kept on disk under
-`~/.cache/greycard/thumbs` (`~/Library/Caches` on a Mac,
-`%LOCALAPPDATA%` on Windows), named by what is in each file rather
-than where it is, so a folder you open again, or move or rename, fills
-in at once instead of reading every raw's preview. Turning a frame
-does not make its thumbnail again; copying a folder without keeping
-the files' dates makes each thumbnail once more. The cache keeps to
-300 MB by default, about thirty thousand frames at one size (the
-grid's larger sizes are kept as well, and take more), dropping the
-ones used longest ago. **Keep up to** in Settings changes that, or
-turns the cache off with 0, and **Clear** empties it.
+- [The Develop tab](guide/develop.md): every section of the panel
+- [Crop and retouch](guide/crop-and-retouch.md)
+- [Masks](guide/masks.md)
+- [Scopes and color](guide/scopes-and-color.md)
+- [Presets, history and several frames](guide/presets-and-history.md)
+- [Fitting your camera's look](guide/camera-match.md)
 
-### Masks by lightness and color
+Finishing and reference:
 
-On the Masks tab, **Luminance** and **Color** make a mask from the
-picture itself instead of from a shape you draw.
-
-A luminance mask takes everything between its **Low** and **High**
-lightness, fading out over **Low fade** below and **High fade** above.
-The scale is perceptual: 0 is black, about 57 is middle grey, and 100
-is the brightest the camera recorded, at a global exposure of 0. The
-picture on screen is shown a little brighter than that, so a bright sky
-can sit in the 70s. A High of 100 takes in everything above it too, and
-a Low of 0 everything below. High cannot go under Low: dragging one
-past the other pushes it along.
-
-A color mask takes one range of hues, set by **Hue** and **Width** and
-fading over **Hue fade**, and only colors at least as strong as its
-**Chroma**, fading out over **Chroma fade** below that, so greys stay
-out. When you add a color mask the dropper is in your hand: click a
-color in the picture to center the mask on it. **Pick** does the same
-later, and **Skin** sets the mask to skin tones (hair of the same hue
-comes with it).
-
-Both read the picture after the develop (white balance, noise
-reduction, lens corrections, the Detail section and capture
-sharpening) and the global exposure, but before any other adjustment:
-the tone and color sliders, the curves, the look and every mask's own
-sliders leave them where they are. Dehaze and clarity can move one a
-little. Put one in a mask with a drawn shape and **Intersect** to limit
-it to a place, such as the bright part of the top of the frame. **Show
-mask** paints what it takes in red.
-
-## Several frames at once
-
-Click a frame to open it. **Ctrl+click** adds a frame to the
-selection or takes it out again. **Shift+click** replaces the
-selection with every frame from the open one to the one you click;
-**Ctrl+Shift+click** adds that run to what is already selected.
-**Shift** with the arrow keys, in the filmstrip or the grid, moves one
-frame along and adds it to the selection. The selected frames are
-highlighted in the filmstrip and the grid, and the frame on screen
-has the brighter outline. A plain arrow or a plain click goes back to
-one frame, and so does **Esc**.
-
-Ratings, flags, labels and the [ ] turns act on every selected frame.
-
-**Sync settings** copies the open frame's edit onto the other
-selected frames. Edit one frame, Ctrl+click or Shift+click the
-others, then press **Sync…** under Presets in the left panel, or
-Ctrl+Shift+S. Choose which sections to copy: all are ticked except
-Adjustments, because masks are drawn around one picture's subject.
-Ticking Adjustments replaces each frame's own masks with the open
-frame's. Noise brings
-the learned denoiser and its blend along (a preset does not). A
-camera profile made for one camera is copied only onto frames from
-that camera; the status line names any frame it skipped. The crop,
-the straighten and the retouch are never copied. Each frame keeps the
-sync as one step in its history, named for what changed, so Ctrl+Z
-on that frame undoes it. While the sheet is open, the arrow keys and
-undo do nothing, so the frames it names are the frames it syncs.
-
-A preset click lands on every selected frame, one history step
-apiece. A preset naming a camera profile reaches only a frame of that
-camera — the frame on screen is no exception, whether or not others
-are selected — and the panel's "Made for X, not Y" warning is there
-for when you want the profile anyway.
-
-**Right-click** a frame in the filmstrip, the grid or the picture for
-a menu: copy and paste settings, a rating, a flag, a label, Reveal in
-file manager and Export. On a frame that is selected the menu acts on
-the whole selection; on one that is not, that frame is opened first
-and the menu acts on it alone. On a Mac, Control+click does the same.
-
-**Copy settings** in the menu takes the edit of the frame you
-right-clicked; Ctrl+C takes the open frame's. **Paste settings**
-(Ctrl+V) opens the sync's sheet over the selected frames,
-the sections checked as your last sync or paste left them, and lays
-the copied edit over each frame as a sync does: the crop, the
-straighten and the retouch stay each frame's own, and each frame gets
-one history step, "Paste from" the frame you copied, which Ctrl+Z
-undoes. The frame you copied from is left as it is. The copy is kept
-inside greycard until you quit, not on the system clipboard, so
-Ctrl+C in the filter's text field still copies text.
-
-With two or more frames selected, **Export** writes them all into a
-folder you choose, each frame under its own edit and its own name, with
-the sheet's settings for every one. **Stop export** (or Esc) finishes
-the frame in hand and leaves the rest.
-
-## Culling
-
-Press **C** to cull. In this mode greycard shows the camera's embedded
-JPEG without developing the raw, so moving from frame to frame is
-instant.
-
-- **Space** zooms to 1:1 so you can check focus.
-- **V** compares two or four frames side by side.
-- **Enter** or **Esc** leaves culling.
-- **Move rejects…** moves rejected frames and their sidecars into a
-  `rejects` folder beside the shoot. Nothing is deleted.
-- **Delete selection…** deletes the selected frames (the open frame
-  when only one is selected) from disk. **Delete** opens the same
-  sheet in the grid and while culling.
-- **Delete rejects folder…** deletes the frames in the `rejects`
-  folder beside the shoot, and the folder once it is empty.
-
-Both deletes ask first. The sheet says how many frames and sidecars,
-and from which folder. A frame's `.gcd` and its XMP go with it, and
-nothing else in the folder is touched. An XMP a raw shares with its
-JPEG (`IMG.xmp` beside `IMG.CR3` and `IMG.JPG`) is kept.
-
-**Move to the trash** is the default, and Enter presses it; the frames
-can be restored from the system trash. The delete runs in the
-background, and the status line says when it is done. A frame on
-another drive may be copied into your home trash, which takes a
-while for a large set.
-
-If the trash refuses a frame, the delete stops there. The frames
-before it are in the trash; that frame and the ones after it stay
-where they were, and the status line says which files went. The next
-time, the sheet also offers **Delete permanently**, which cannot be
-undone. Enter never presses that one.
+- [Exporting](guide/export.md)
+- [Settings](guide/settings.md)
 
 ## Keys
 
 | Key | Does |
 |---|---|
-| ← → | Previous or next frame |
+| ← → | Previous or next frame (in the grid, the mouse's back and forward buttons too) |
 | Shift+← → | Previous or next frame, added to the selection |
 | Ctrl+click | Add a frame to the selection, or take it out |
 | Shift+click, Ctrl+Shift+click | Select every frame from the open one to this one; with Ctrl, add them instead |
@@ -258,66 +90,21 @@ undone. Enter never presses that one.
 | P, X, U | Pick, reject, unflag |
 | 6 to 9 | Red, yellow, green or blue label (press again to clear) |
 | [ ] | Turn the frame a quarter left or right |
-| Delete | In the grid or culling: delete the selected frames, after a confirmation |
+| Delete | Delete the selected frames, after a confirmation |
 | J | Shadow and highlight clipping warnings |
 | S | Soft proof |
 | Ctrl+F or / | Filter the folder by rating, flag, label or words |
 | Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y | Undo, redo |
 | Ctrl+O | Open a folder |
+| Ctrl+Shift+I | Import from a card |
 | Ctrl+Shift+E | Export |
 | Ctrl+Shift+S | Sync settings onto the selected frames |
 | Ctrl+C, Ctrl+V | Copy the open frame's settings; paste them onto the selected frames |
 | Ctrl+, | Settings |
 | Esc | Close a dialog, drop the tool in hand, go back to one frame, or clear the filter |
 
-On a Mac, the Ctrl keys here are ⌘ (so ⌘C and ⌘V copy and paste
-settings, ⌘Z undoes), and ⌘+click adds a frame to the selection. The
-Control key with a click is a right-click. The key marked delete
-(⌫) opens the delete sheet, as Delete does elsewhere; ⌘⌫ does
-nothing.
-
-## Downloads on first use
-
-Some features download what they need the first time you use them, and
-each one shows you its license first:
-
-- the lens correction database, which is under a megabyte
-- the learned denoiser and the Subject and Object mask models, which are
-  5 to 200 MB each
-
-Each one is downloaded once. The first Subject mask of a session takes
-a few seconds.
-
-The lens database is the one greycard offers without being asked: the
-first time a picture opens and there are no lens profiles on the
-machine, it asks whether to download them, since without them no lens
-is corrected. Answer **Not now** and it will not ask again; the
-**Get lens profiles** button in the Lens section is there whenever you want
-them.
-
-## Camera profiles
-
-You do not need one. The **Camera** section's default, "embedded",
-uses the color matrix every raw file carries from its maker, and that
-is what most people develop with. A DCP profile is for when you want
-Adobe's rendering of your body, or a profile made for one particular
-camera. With none installed, the section names the folder they go in
-(`greycard/profiles` under your data directory), and a `.dcp` put
-there is listed the next time the section is opened.
-
-Where a profile comes from:
-
-- **Adobe's own**, which come free with the DNG Converter or Lightroom
-  and cover nearly every body. Their license does not allow anyone
-  else to redistribute them, so copy the ones for your cameras by
-  hand: on Windows from `C:\ProgramData\Adobe\CameraRaw\CameraProfiles`,
-  on a Mac from `/Library/Application Support/Adobe/CameraRaw/CameraProfiles`.
-  On Linux, the DNG Converter runs once under Wine to unpack them.
-- **RawTherapee's**, made by that project and published under the
-  GPL in its repository, for the bodies it covers.
-- **A chart shot**: a ColorChecker photographed under the light you
-  work in, run through dcamprof or a chart maker's own tool, gives a
-  profile for your own copy of the camera.
+On a Mac, Ctrl is ⌘ (⌘C, ⌘V, ⌘Z, ⌘+click). Control+click is a
+right-click, and delete (⌫) opens the delete sheet.
 
 ## Known rough edges
 
@@ -334,7 +121,7 @@ Where a profile comes from:
 
 ## Reporting a problem
 
-Click **Report a problem…** at the bottom of the left panel. It opens
+Click **Report a problem...** at the bottom of the left panel. It opens
 the bug form in your browser with the version, OS and GPU already
 filled in, and it shows the log file in your file manager so you can
 drag it into the form. In the report, include:
