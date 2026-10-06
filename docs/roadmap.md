@@ -422,6 +422,14 @@ clears or a tester asks for it.
       minus 15) against the 10 to 59 degrees a pale face measured
       (§158): widen it or not; a change to existing edits
 - [ ] Remember the last chosen export location when exporting again
+- [ ] A proper export queue (§213): a Destination row on the export
+      sheet (the folder, Change..., the last one remembered) that Export
+      and Add to queue both take, so queuing opens no chooser; and the
+      queue as a list, each set a line (frames, preset, folder, when
+      queued) that can be removed, reordered or sent elsewhere, with
+      Export the queue and Clear; the queued frames marked in the strip
+      and the grid. Covers the destination half of the naming-patterns
+      line (§157) and the last-location line above
 - [ ] Rebindable keys: a sheet in Settings to change any shortcut,
       saved in settings.json, with a conflict warning and a reset to
       defaults

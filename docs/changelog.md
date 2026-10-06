@@ -28,17 +28,15 @@ for installing on each system, the hotkeys, and how to report a problem.
 
 - A root's folders as a tree in the left pane, each with its count,
   shown for an offline root too; a click opens that folder alone, or
-  everything under it with With subfolders ([§209](https://github.com/jessolmstead/greycard/blob/master/docs/notes/209-a-roots-folders-as-a-tree.md))
-- The grid keeps the left pane (Open folder, Recently opened, Import,
-  the roots and the tree), and its header drops to the selection, the
-  filter and the facets, Camera and Lens on a row of their own ([§211](https://github.com/jessolmstead/greycard/blob/master/docs/notes/211-the-grid-with-the-library-on-the-left.md))
-- A folder's subfolders show as tiles at the top of the grid with
-  their counts, a folder opened from outside the roots included
+  everything under it with "With subfolders" enabled ([§209](https://github.com/jessolmstead/greycard/blob/master/docs/notes/209-a-roots-folders-as-a-tree.md))
+- Added a left pane for file browsing in the grid view
+  ([§211](https://github.com/jessolmstead/greycard/blob/master/docs/notes/211-the-grid-with-the-library-on-the-left.md))
+- Subfolders show as tiles at the top of the grid with their counts
   ([§212](https://github.com/jessolmstead/greycard/blob/master/docs/notes/212-a-folders-folders-as-tiles-in-the-grid.md), [§246](https://github.com/jessolmstead/greycard/blob/master/docs/notes/246-the-rejects-folders-a-view-shows.md))
 - The open folder is named in the pane and the grid's header, and a
   click on its name offers the last ten folders opened ([§206](https://github.com/jessolmstead/greycard/blob/master/docs/notes/206-the-open-folder-named-and-recently-opened.md))
-- A folder the index knows opens from the index without reading its
-  sidecars first; an offline root stays in view, dimmed, its pictures
+- A folder the index knows opens without reading its
+  sidecars first; an offline library root stays in view, dimmed, its pictures
   from the cache and the filter working ([§207](https://github.com/jessolmstead/greycard/blob/master/docs/notes/207-the-index-as-the-sidecars-cache.md))
 - A local preview of each frame, kept in the cache, so the culling
   loupe and compare view work under an offline root and don't wait on
@@ -52,7 +50,7 @@ for installing on each system, the hotkeys, and how to report a problem.
 
 - A root can be marked as an archive. Back up copies a folder's or a
   selection's frames not yet on it, found by content hash, with their
-  sidecars; each copy is verified before it lands, and nothing on the
+  sidecars; each copy is verified before it's marked done, and nothing on the
   archive is ever written over or deleted. Bring back is the reverse
   ([§216](https://github.com/jessolmstead/greycard/blob/master/docs/notes/216-archive-roots-revised-at-the-desk.md), [§217](https://github.com/jessolmstead/greycard/blob/master/docs/notes/217-archive-roots-part-one-the-mark-back-up-and-bring-back.md), [§219](https://github.com/jessolmstead/greycard/blob/master/docs/notes/219-the-backup-pairing-is-the-folders-not-the-roots.md))
 - Remove rejects from an archive: the open folder's rejects are found
@@ -88,7 +86,7 @@ for installing on each system, the hotkeys, and how to report a problem.
   "AgX - Punchy" look, behind a per-picture switch at the foot of
   LIGHT; per channel stays the default ([§230](https://github.com/jessolmstead/greycard/blob/master/docs/notes/230-agx-over-aces-the-call-from-two-sets.md), [§231](https://github.com/jessolmstead/greycard/blob/master/docs/notes/231-agx-ported-as-a-display-transform.md))
 - A mask has a white balance of its own on the Masks tab: Temperature,
-  Tint and Neutral, absolute, so it holds when the global white moves
+  Tint and Neutral, in absolute units, so it holds when the global white moves
   ([§241](https://github.com/jessolmstead/greycard/blob/master/docs/notes/241-a-white-balance-in-a-mask.md))
 - A Background shape: the complement of the Subject matte ([§204](https://github.com/jessolmstead/greycard/blob/master/docs/notes/204-a-background-shape.md))
 - The Masks tab is laid out to be read at a glance: one card for the
