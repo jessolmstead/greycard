@@ -39,9 +39,6 @@ scroll bar, and the camera match gets a progress bar.
       Texture or Clarity move costs about what a sharpen move does
       (~55 ms against ~0.3 s at 24 MP); an edit with the dehaze on
       stays on the CPU path (§251, §254)
-- [ ] A scroll bar under the film strip, as the grid has (§214): the
-      strip scrolls by wheel and keys since §89 but shows neither where
-      it is in the folder nor a handle to drag there
 - [ ] Rename a look from the Look section: the look's own file and
       every `<name>.<curve>.cube` of it (§235) renamed together in the
       looks folder and the name rewritten in the open folder's
@@ -54,8 +51,6 @@ scroll bar, and the camera match gets a progress bar.
       across the groups, with the group's name and the frame count
       under it, and the same bar on the fit itself where its iterations
       are counted
-- [ ] Home and end should go to the beginning/end of the grid/filmstrip
-      when it is selected.
 
 ## Tracks
 

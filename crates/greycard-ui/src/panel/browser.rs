@@ -2189,9 +2189,40 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     app.on_grid_max_scroll(grid::max_scroll);
     app.on_grid_reveal_to(grid::reveal);
     app.on_grid_tiles_top(grid::tiles_top);
-    app.on_grid_bar_length(grid::bar_length);
-    app.on_grid_bar_offset(grid::bar_offset);
-    app.on_grid_bar_drag(grid::bar_drag);
+    app.on_bar_length(grid::bar_length);
+    app.on_bar_offset(grid::bar_offset);
+    app.on_bar_drag(grid::bar_drag);
+    // Home and End, in the grid and the strip: the first frame or the
+    // last, landed on as an arrow lands. With Shift the set takes the
+    // whole run from the current frame there, as Shift held on an
+    // arrow to the end would, and as a Shift+click on that frame does.
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_step_end(move |end, extend| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let count = state.borrow().shown.len() as i32;
+            let next = grid::end(end, count);
+            if next >= 0 {
+                if extend {
+                    let mut st = state.borrow_mut();
+                    if let Some(current) = st.current {
+                        let run = selection::range(&st.shown, current, st.shown[next as usize]);
+                        st.picked = selection::union(&chosen_frames(&st), &run);
+                    }
+                }
+                step_to(
+                    &state,
+                    &app,
+                    &worker,
+                    next,
+                    next != app.get_selected(),
+                    extend,
+                );
+            }
+        });
+    }
     // An arrow in the grid: along the row, or by a whole row, and
     // the frame it lands on is opened as a click on it would.
     {
@@ -3721,5 +3752,328 @@ mod tests {
         // The next press pages.
         crate::testing::click(&app, at.x + 7.0, 950.0 - 20.0);
         assert_eq!(last_scroll(&seen), 805.0);
+    }
+
+    /// The strip's bar, if it is there: its top left, its size, the
+    /// scroll it reads and the scroll's maximum.
+    fn strip_bar(app: &App) -> Option<(slint::LogicalPosition, slint::LogicalSize, f32, f32)> {
+        use i_slint_backend_testing::ElementHandle;
+        press(app, Key::Shift);
+        let bar = ElementHandle::find_by_accessible_label(app, "Strip scroll").next()?;
+        let value = bar.accessible_value()?.parse().ok()?;
+        let max = bar.accessible_value_maximum()?;
+        Some((bar.absolute_position(), bar.size(), value, max))
+    }
+
+    /// What the strip reported, in order: its first frame and its last.
+    type StripReports = Rc<RefCell<Vec<(i32, i32)>>>;
+
+    /// The strip at 1500 by 950 over `count` frames, on the first, with
+    /// what it reports kept and its cells moved by them as the browser
+    /// moves them.
+    fn strip_with(count: usize) -> (App, StripReports) {
+        let app = window(count);
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        let (reports, app_weak) = (seen.clone(), app.as_weak());
+        app.on_strip_range(move |first, last| {
+            reports.borrow_mut().push((first, last));
+            let (at, wanted) = cells::strip_window(first as usize, last as usize);
+            cells::show(&app_weak.upgrade().unwrap(), cells::View::Strip, at, wanted);
+        });
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        app.set_selected(0);
+        press(&app, Key::Shift);
+        (app, seen)
+    }
+
+    /// The row the strip scrolls along: a pitch a frame and the pad at
+    /// either end.
+    fn strip_row(count: usize) -> f32 {
+        count as f32 * 186.0 + 2.0 * 12.0
+    }
+
+    #[test]
+    fn the_strips_bar_runs_along_its_foot_and_a_press_in_the_track_pages() {
+        let (app, reports) = strip_with(40);
+        let (at, size, value, max) = strip_bar(&app).expect("a bar on a long strip");
+        // The band along the strip's foot, the strip's width.
+        assert_eq!((at.y, size.height), (950.0 - 12.0, 12.0));
+        let w = size.width;
+        assert!(w > 1000.0, "{w}");
+        assert_eq!(max, (strip_row(40) - w).round());
+        assert_eq!(value, 0.0);
+        // Past the thumb: a strip's width along, then two, and the
+        // strip says what it shows from there.
+        let y = at.y + 6.0;
+        let past = at.x + w - 20.0;
+        crate::testing::click(&app, past, y);
+        assert_eq!(strip_bar(&app).unwrap().2, w.round());
+        crate::testing::click(&app, past, y);
+        assert_eq!(strip_bar(&app).unwrap().2, (2.0 * w).round());
+        let first = ((2.0 * w - 12.0) / 186.0).floor() as i32;
+        assert_eq!(reports.borrow().last().map(|r| r.0), Some(first));
+        // Before it: back a width, and no further than the start.
+        crate::testing::click(&app, at.x + 6.0, y);
+        assert_eq!(strip_bar(&app).unwrap().2, w.round());
+        crate::testing::click(&app, at.x + 6.0, y);
+        crate::testing::click(&app, at.x + 6.0, y);
+        assert_eq!(strip_bar(&app).unwrap().2, 0.0);
+        // To the end and held there.
+        for _ in 0..8 {
+            crate::testing::click(&app, past, y);
+        }
+        assert_eq!(strip_bar(&app).unwrap().2, max);
+        // None of it chose a frame.
+        assert_eq!(app.get_selected(), 0);
+    }
+
+    #[test]
+    fn the_strips_thumb_drags_and_the_wheel_over_the_bar_moves_it() {
+        let (app, _) = strip_with(40);
+        let clicks = Rc::new(RefCell::new(Vec::new()));
+        let c = clicks.clone();
+        app.on_frame_clicked(move |row, _, _| c.borrow_mut().push(row));
+        let (at, size, _, _) = strip_bar(&app).unwrap();
+        let w = size.width;
+        let max = strip_row(40) - w;
+        // Taken 10 px into the thumb and moved 150 px along: the thumb
+        // follows the pointer, and the strip comes to where the grid's
+        // arithmetic puts it.
+        let x = at.x + grid::bar_offset(w, max, 0.0) + 10.0;
+        let y = at.y + 6.0;
+        let path: Vec<(f32, f32)> = (0..=15).map(|k| (x + 10.0 * k as f32, y)).collect();
+        crate::testing::drag(&app, &path);
+        let to = grid::bar_drag(w, max, 0.0, 150.0);
+        assert!(to > 0.0 && to < max);
+        assert_eq!(strip_bar(&app).unwrap().2, to.round());
+        // Far past the end: held there.
+        let grab = at.x + grid::bar_offset(w, max, to) + 10.0;
+        crate::testing::drag(&app, &[(grab, y), (grab + 5000.0, y)]);
+        assert_eq!(strip_bar(&app).unwrap().2, max.round());
+        // A wheel notch over the band moves the strip back, as over
+        // the frames.
+        wheel(&app, at.x + w / 2.0, y, 120.0);
+        assert_eq!(strip_bar(&app).unwrap().2, (max - 120.0).round());
+        assert!(clicks.borrow().is_empty(), "{:?}", clicks.borrow());
+        assert_eq!(app.get_selected(), 0);
+        // The keys kept their focus: G opens the grid.
+        press(&app, "g");
+        assert!(app.get_grid_open());
+    }
+
+    #[test]
+    fn one_frame_has_no_strip_bar_and_a_folder_loaded_brings_one() {
+        use i_slint_backend_testing::ElementHandle;
+        let (app, _) = strip_with(1);
+        let clicks = Rc::new(RefCell::new(Vec::new()));
+        let c = clicks.clone();
+        app.on_frame_clicked(move |row, _, _| c.borrow_mut().push(row));
+        assert!(strip_bar(&app).is_none());
+        // The frame ends where the band begins, the strip's padding
+        // above the foot: its last pixel row is its own.
+        let cell = ElementHandle::find_by_element_id(&app, "Filmstrip::tt")
+            .next()
+            .expect("the frame's cell");
+        let foot = cell.absolute_position().y + cell.size().height;
+        assert_eq!(foot, 950.0 - 12.0);
+        crate::testing::click(&app, 100.0, foot - 1.0);
+        assert_eq!(*clicks.borrow(), vec![0]);
+        clicks.borrow_mut().clear();
+        // A folder of forty swapped in while the strip is on screen:
+        // the bar comes with the strip's new length, at the start.
+        let more: Vec<Thumb> = (0..40)
+            .map(|i| Thumb {
+                name: format!("n{i:02}.CR3").into(),
+                image: slint::Image::default(),
+                ..Default::default()
+            })
+            .collect();
+        cells::set_rows(&app, more);
+        let (_, size, value, max) = strip_bar(&app).expect("a bar for forty");
+        assert_eq!(max, (strip_row(40) - size.width).round());
+        assert_eq!(value, 0.0);
+        // With the bar there the frame's last row is still the frame's,
+        // and a press in the band below it is the bar's.
+        crate::testing::click(&app, 100.0, foot - 1.0);
+        assert_eq!(*clicks.borrow(), vec![0]);
+        clicks.borrow_mut().clear();
+        crate::testing::click(&app, 100.0, foot + 1.0);
+        assert!(clicks.borrow().is_empty(), "{:?}", clicks.borrow());
+        // Back to a folder that fits: gone again.
+        cells::set_rows(&app, Vec::new());
+        assert!(strip_bar(&app).is_none());
+    }
+
+    #[test]
+    fn the_strips_bar_follows_the_window_when_it_is_resized() {
+        let (app, _) = strip_with(40);
+        let (_, wide, _, wide_max) = strip_bar(&app).unwrap();
+        app.window()
+            .set_size(slint::LogicalSize::new(1000.0, 950.0));
+        let (at, size, value, max) = strip_bar(&app).unwrap();
+        assert_eq!(size.width, wide.width - 500.0);
+        assert_eq!(max, wide_max + 500.0);
+        assert_eq!(value, 0.0);
+        // The thumb is where the arithmetic puts it on the narrower
+        // strip: a press on its far end takes it, and one just past
+        // pages.
+        let (w, max) = (size.width, strip_row(40) - size.width);
+        let end = at.x + grid::bar_offset(w, max, 0.0) + grid::bar_length(w, max);
+        crate::testing::click(&app, end - 2.0, at.y + 6.0);
+        assert_eq!(strip_bar(&app).unwrap().2, 0.0);
+        crate::testing::click(&app, end + 2.0, at.y + 6.0);
+        assert_eq!(strip_bar(&app).unwrap().2, w.round());
+        // Taller, the band keeps to the foot.
+        app.window()
+            .set_size(slint::LogicalSize::new(1000.0, 1100.0));
+        let (at, _, _, _) = strip_bar(&app).unwrap();
+        assert_eq!(at.y, 1100.0 - 12.0);
+    }
+
+    #[test]
+    fn the_strips_bar_wakes_with_a_scroll_and_sleeps_at_rest() {
+        let (app, _) = strip_with(40);
+        assert!(!app.get_strip_bar_awake());
+        let (at, size, _, _) = strip_bar(&app).unwrap();
+        wheel(&app, 600.0, at.y - 60.0, -120.0);
+        assert_eq!(strip_bar(&app).unwrap().2, 120.0);
+        assert!(app.get_strip_bar_awake());
+        let tick = |ms: u64| {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(ms));
+            press(&app, Key::Shift);
+        };
+        tick(700);
+        tick(700);
+        assert!(!app.get_strip_bar_awake());
+        // A page wakes it too.
+        crate::testing::click(&app, at.x + size.width - 20.0, at.y + 6.0);
+        assert!(app.get_strip_bar_awake());
+    }
+
+    /// Shift held around a key, as a hand holds it.
+    fn press_shifted(app: &App, key: Key) {
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Shift.into(),
+        });
+        press(app, key);
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Shift.into(),
+        });
+    }
+
+    #[test]
+    fn home_and_end_go_to_the_ends_of_the_strip_and_choose_the_frame_there() {
+        let (app, _) = strip_with(40);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(40));
+        app.invoke_select(5);
+        press(&app, Key::Shift);
+        assert_eq!(app.get_selected(), 5);
+        let (_, _, _, max) = strip_bar(&app).unwrap();
+        press(&app, Key::End);
+        assert_eq!(app.get_selected(), 39);
+        assert_eq!(strip_bar(&app).unwrap().2, max);
+        press(&app, Key::Home);
+        assert_eq!(app.get_selected(), 0);
+        assert_eq!(strip_bar(&app).unwrap().2, 0.0);
+        // The first frame chosen and the strip wheeled away from it:
+        // Home still brings the strip back.
+        wheel(&app, 600.0, 860.0, -600.0);
+        assert!(strip_bar(&app).unwrap().2 > 0.0);
+        press(&app, Key::Home);
+        assert_eq!(strip_bar(&app).unwrap().2, 0.0);
+        assert_eq!(app.get_set_count(), 1);
+        // With Shift, from the sixth frame: the set takes the whole run
+        // to the last, as Shift held on the right arrow would, and the
+        // last is the current frame.
+        app.invoke_select(5);
+        press_shifted(&app, Key::End);
+        assert_eq!(app.get_selected(), 39);
+        assert_eq!(app.get_set_count(), 35);
+        assert_eq!(chosen_frames(&state.borrow()), (5..40).collect::<Vec<_>>());
+        assert_eq!(state.borrow().current, Some(39));
+        // And back with Shift+Home: the run to the first joins it.
+        press_shifted(&app, Key::Home);
+        assert_eq!(app.get_selected(), 0);
+        assert_eq!(app.get_set_count(), 40);
+    }
+
+    #[test]
+    fn home_and_end_under_a_filter_go_to_the_first_and_last_shown() {
+        let (app, _) = strip_with(0);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(40));
+        // The first two frames and the last two rejected, and only
+        // the rest shown: files 2 to 37 on rows 0 to 35.
+        {
+            let mut st = state.borrow_mut();
+            for i in [0, 1, 38, 39] {
+                st.sidecars[i].meta.flag = meta::Flag::Reject;
+            }
+            st.filter = filter::Filter::from_name("No rejects").expect("it parses");
+            rebuild_browser(&mut st, &app);
+            assert_eq!(st.shown, (2..38).collect::<Vec<_>>());
+        }
+        app.invoke_select(10);
+        press(&app, Key::End);
+        assert_eq!(app.get_selected(), 35);
+        assert_eq!(state.borrow().current, Some(37));
+        assert_eq!(strip_bar(&app).unwrap().2, strip_bar(&app).unwrap().3);
+        press(&app, Key::Home);
+        assert_eq!(app.get_selected(), 0);
+        assert_eq!(state.borrow().current, Some(2));
+        // In the grid the same.
+        press(&app, "g");
+        press(&app, Key::End);
+        assert_eq!(state.borrow().current, Some(37));
+        // The run Shift takes is of shown frames only.
+        press_shifted(&app, Key::Home);
+        assert_eq!(state.borrow().current, Some(2));
+        assert_eq!(chosen_frames(&state.borrow()), (2..38).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn home_and_end_go_to_the_ends_of_the_grid_and_choose_the_frame_there() {
+        // The browser's own handlers first, then the grid's reports
+        // kept over theirs.
+        let app = window(120);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(120));
+        let seen = cells_from_reports(&app);
+        app.invoke_select(0);
+        press(&app, "g");
+        let max = grid::max_scroll(805.0, 176.0, 6, 120, 0.0);
+        press(&app, Key::End);
+        assert_eq!(app.get_selected(), 119);
+        assert_eq!(last_scroll(&seen), max);
+        press(&app, Key::Home);
+        assert_eq!(app.get_selected(), 0);
+        assert_eq!(last_scroll(&seen), 0.0);
+        // Chosen already and scrolled away: Home brings the sheet back.
+        wheel(&app, 700.0, 500.0, -600.0);
+        assert!(last_scroll(&seen) > 0.0);
+        press(&app, Key::Home);
+        assert_eq!(last_scroll(&seen), 0.0);
+        assert!(app.get_grid_open(), "and the grid stays");
+    }
+
+    #[test]
+    fn home_and_end_in_the_filter_field_are_the_fields() {
+        let (app, seen) = grid_with_reports(120);
+        let ends = Rc::new(RefCell::new(Vec::new()));
+        let e = ends.clone();
+        app.on_step_end(move |end, _| e.borrow_mut().push(end));
+        // The field takes the focus as the filter key sends it there.
+        app.set_filter_focus(true);
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1));
+        press(&app, "a");
+        press(&app, Key::Home);
+        press(&app, "b");
+        press(&app, Key::End);
+        press(&app, "c");
+        assert!(ends.borrow().is_empty(), "{:?}", ends.borrow());
+        assert!(seen.borrow().iter().all(|r| r.0 == 0.0));
+        // Home put the cursor before the "a", End after it.
+        assert_eq!(app.get_filter_text(), "bac");
     }
 }

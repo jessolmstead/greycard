@@ -1,9 +1,10 @@
 // The filmstrip along the foot of the window: the folder's frames in a
-// row, scrolled sideways by the wheel.
+// row, scrolled sideways by the wheel, the keys and a bar along its
+// foot.
 
 import { Theme } from "../theme.slint";
 import { Thumb, ThumbCell } from "../structs.slint";
-import { ThumbBadges } from "../controls.slint";
+import { ScrollBand, ThumbBadges } from "../controls.slint";
 
 export component Filmstrip inherits Rectangle {
     /// Every row, for the strip's length; the cells are drawn from
@@ -44,9 +45,23 @@ export component Filmstrip inherits Rectangle {
     function strip-scroll(by: length) {
         strip.content-x = min(0px, max(strip.width - strip.content-width, strip.content-x + by));
     }
+    /// How far the strip can be scrolled: the row less what is on
+    /// screen, the bar's range.
+    property <length> strip-max: max(0px, strip.content-width - strip.width);
+    /// Scroll the strip to `to` along the row, held to its range: the
+    /// bar's drag and its track.
+    function strip-scroll-to(to: length) {
+        strip.content-x = -clamp(to, 0px, root.strip-max);
+    }
     callback strip-relay();
     callback strip-report();
     callback focus-keys();
+    /// The scroll bar's thumb, asked of the grid's arithmetic along
+    /// the strip's width, and whether it is awake after a scroll.
+    pure callback bar-length(length, length) -> length;
+    pure callback bar-offset(length, length, length) -> length;
+    pure callback bar-drag(length, length, length, length) -> length;
+    in-out property <bool> bar-awake;
     // The Flickable's scroll and extent, for App's reveal and report,
     // which read and set them through this component's id.
     in-out property <length> content-x <=> strip.content-x;
@@ -211,5 +226,27 @@ export component Filmstrip inherits Rectangle {
                 }
             }
         }
+    }
+    // The scroll bar, the grid's along the strip's foot: in the
+    // strip's padding below the cells rather than the grid's wider
+    // band, so its track never covers a frame's ring and a frame keeps
+    // every pixel of its click. The thumb keeps its 4 px from the foot.
+    ScrollBand {
+        horizontal: true;
+        y: parent.height - root.strip-pad;
+        width: parent.width;
+        height: root.strip-pad;
+        label: "Strip scroll";
+        scroll: -strip.content-x;
+        max: root.strip-max;
+        awake <=> root.bar-awake;
+        scroll-to(to) => { root.strip-scroll-to(to); }
+        // Either wheel moves the strip along, as over the frames.
+        wheel(dx, dy, ctrl) => { root.strip-scroll(dy != 0px ? dy : dx); }
+        bar-length(a, b) => { return root.bar-length(a, b); }
+        bar-offset(a, b, c) => { return root.bar-offset(a, b, c); }
+        bar-drag(a, b, c, d) => { return root.bar-drag(a, b, c, d); }
+        menu-shown => { return root.menu-shown(); }
+        focus-keys => { root.focus-keys(); }
     }
 }

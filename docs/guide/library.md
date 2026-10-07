@@ -37,8 +37,12 @@ clears the selection.)
 
 In the grid:
 
-- The arrow keys move the selection. A mouse's back and forward
-  buttons step through the frames too.
+- The arrow keys move the selection, and **Home** and **End** go to
+  the first and last frame. A mouse's back and forward buttons step
+  through the frames too.
+- The scroll bar down the right edge, and the one under the
+  filmstrip, show where you are in the folder; drag either, or click
+  its track to page.
 - **Ctrl+wheel**, or **+** and **−**, change the cell size. There are
   six sizes, from 96 to 512 px; the header shows the current one, and
   greycard remembers it.

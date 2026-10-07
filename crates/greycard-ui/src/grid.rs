@@ -133,6 +133,17 @@ pub fn step(selected: i32, dx: i32, dy: i32, columns: i32, count: i32) -> i32 {
     )
 }
 
+/// Where Home (`end` false) or End leaves the selection: the first
+/// frame or the last, in the grid and the strip alike. -1 when there
+/// is none.
+pub fn end(end: bool, count: i32) -> i32 {
+    match (count > 0, end) {
+        (false, _) => -1,
+        (true, false) => 0,
+        (true, true) => count - 1,
+    }
+}
+
 /// The frames on screen at `offset`, first and last, the partly shown
 /// rows at either edge included. `None` when there is nothing to
 /// show. This is what the grid reports so the worker makes those
@@ -253,7 +264,8 @@ pub fn max_scroll(height: f32, cell: f32, columns: i32, count: i32, top: f32) ->
 }
 
 /// The scroll bar's thumb keeps this far from the ends of its band,
-/// logical pixels.
+/// logical pixels. The strip's bar asks the same arithmetic along its
+/// width, which stands for the sheet's height throughout.
 pub const BAR_INSET: f32 = 4.0;
 /// The shortest the thumb gets, however long the folder: still
 /// something to take hold of.
@@ -586,6 +598,47 @@ mod tests {
         }
         assert_eq!(made_size(600), 600);
     }
+    #[test]
+    fn home_and_end_land_on_the_first_frame_and_the_last() {
+        assert_eq!(end(false, 40), 0);
+        assert_eq!(end(true, 40), 39);
+        assert_eq!(end(false, 1), 0);
+        assert_eq!(end(true, 1), 0);
+        assert_eq!(end(false, 0), -1);
+        assert_eq!(end(true, 0), -1);
+    }
+
+    #[test]
+    fn the_strips_bar_is_the_same_arithmetic_along_its_width() {
+        // A strip 1500 wide over forty frames at a 186 pitch and 12 of
+        // padding at each end: the row is 7464, so 5964 to scroll.
+        let (w, row) = (1500.0, 40.0 * 186.0 + 24.0);
+        let max = row - w;
+        let track = w - 2.0 * BAR_INSET;
+        let len = bar_length(w, max);
+        assert!((len - track * w / row).abs() < 1e-3, "{len}");
+        // At either end of the folder the thumb is at either end of
+        // the track.
+        assert_eq!(bar_offset(w, max, 0.0), BAR_INSET);
+        assert!((bar_offset(w, max, max) + len - (w - BAR_INSET)).abs() < 1e-3);
+        // A page is the strip's width, and a press past the thumb
+        // moves the strip one: two from the start is twice the width,
+        // and the thumb has moved by the track's share of it.
+        let paged = 2.0 * w;
+        assert!((bar_offset(w, max, paged) - BAR_INSET - (track - len) * paged / max).abs() < 1e-3);
+        // Dragged the whole room, the strip comes to its end.
+        assert_eq!(bar_drag(w, max, 0.0, track - len), max);
+        // One frame, or a folder that fits: no thumb, nothing to drag.
+        assert_eq!(bar_length(w, 0.0), 0.0);
+        assert_eq!(bar_drag(w, 0.0, 0.0, 100.0), 0.0);
+        // A window narrowed to 600 over the same row: a shorter thumb
+        // and more room, the end still at the far inset.
+        let (w, max) = (600.0, row - 600.0);
+        let len = bar_length(w, max);
+        assert!(len < bar_length(1500.0, row - 1500.0));
+        assert!((bar_offset(w, max, max) + len - (w - BAR_INSET)).abs() < 1e-3);
+    }
+
     #[test]
     fn the_bar_thumb_is_the_share_of_the_sheet_on_screen() {
         // An 837 px sheet that scrolls as far again: the thumb is half

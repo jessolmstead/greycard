@@ -161,6 +161,7 @@ export row goes away with its state if that state leaves the history.
 | Select every frame from the open one to another | **Shift+click** it |
 | Add that run to the selection | **Ctrl+Shift+click** |
 | Move one frame along and add it | **Shift** with an arrow key, in the filmstrip or the grid |
+| Select every frame from the open one to the first or last | **Shift+Home** or **Shift+End** |
 | Go back to one frame | A plain click, a plain arrow, or **Esc** |
 
 Selected frames are highlighted in the filmstrip and the grid. The

@@ -884,6 +884,8 @@ pub(crate) fn schedule_snapshot(
                         "enter" => Key::Return.into(),
                         "esc" => Key::Escape.into(),
                         "tab" => Key::Tab.into(),
+                        "home" => Key::Home.into(),
+                        "end" => Key::End.into(),
                         "f6" => Key::F6.into(),
                         "f7" => Key::F7.into(),
                         "f8" => Key::F8.into(),

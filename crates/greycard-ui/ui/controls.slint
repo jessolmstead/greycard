@@ -897,3 +897,180 @@ export component EdgeArrow inherits Rectangle {
         }
     }
 }
+
+// A scroll bar over the edge of something the window scrolls by an
+// offset of its own, the grid's sheet down its right edge and the
+// strip along its foot, in the band and the colors the pane's lists
+// have from the fluent style: a thin thumb that widens on a track
+// under the pointer. Not the widget: the offset stays the owner's, and
+// every move the bar makes goes through `scroll-to`. There whenever
+// anything scrolls, faded at rest, so a hover over the band finds it;
+// a press in the band is the bar's and never what is under it.
+export component ScrollBand inherits TouchArea {
+    /// Along the foot rather than down the right edge.
+    in property <bool> horizontal;
+    /// How far the owner is scrolled, and how far it can be.
+    in property <length> scroll;
+    in property <length> max;
+    /// What a screen reader calls the bar.
+    in property <string> label;
+    /// A drag of the thumb or a press in the track: the offset wanted,
+    /// which the owner holds to its range as it holds the wheel's.
+    callback scroll-to(length);
+    /// The wheel over the band: its two deltas, and whether Ctrl is
+    /// held.
+    callback wheel(length, length, bool);
+    /// The thumb's length and place, and where a drag lands, asked of
+    /// the grid's arithmetic, the band's length standing for the
+    /// sheet's height.
+    pure callback bar-length(length, length) -> length;
+    pure callback bar-offset(length, length, length) -> length;
+    pure callback bar-drag(length, length, length, length) -> length;
+    /// Whether the frame menu is up: a press that closes it is nothing
+    /// more.
+    pure callback menu-shown() -> bool;
+    /// A press of a mouse's back or forward button, which the owner may
+    /// take: true when it did, and the press is then nothing else.
+    callback side-press(PointerEvent) -> bool;
+    callback focus-keys();
+    /// Shown at full strength while the owner scrolls and a moment
+    /// after, then faded: every change of the scroll stamps it, and the
+    /// timer below lets it sleep once a tick has passed with no new
+    /// stamp. The timer runs only while it is awake, so a sheet at rest
+    /// asks for no frame.
+    in-out property <bool> awake;
+    property <int> stamp;
+    property <int> seen;
+    function wake() {
+        root.stamp += 1;
+        root.awake = true;
+    }
+    changed scroll => { root.wake(); }
+    Timer {
+        interval: 600ms;
+        running: root.awake;
+        triggered => {
+            if (root.seen == root.stamp && !root.pressed) {
+                root.awake = false;
+            }
+            root.seen = root.stamp;
+        }
+    }
+    /// The band's length, and the pointer along it.
+    property <length> span: root.horizontal ? root.width : root.height;
+    property <length> along: root.horizontal ? root.mouse-x : root.mouse-y;
+    // While the thumb is held it follows the pointer at once, ahead of
+    // the owner, which catches up at the next step below.
+    property <length> thumb-at: root.bar-offset(root.span, root.max,
+        root.dragging ? root.want : root.scroll);
+    property <length> thumb-len: root.bar-length(root.span, root.max);
+    property <bool> lit: root.has-hover || root.pressed;
+    property <bool> dragging;
+    property <length> from;
+    property <length> press-at;
+    property <bool> took;
+    /// Where the held thumb puts the owner, and whether it has yet to
+    /// be moved there. A fast mouse sends several moves a frame, and
+    /// each move that lands the grid more than a screen away re-makes
+    /// every cell and puts their pictures on again, 6 to 7 ms on a
+    /// 2,000-frame folder: the moves only note the scroll, and the
+    /// timer below applies the last of them, so the owner moves and
+    /// reports at most once a frame.
+    property <length> want;
+    property <bool> pending;
+    function apply() {
+        root.pending = false;
+        root.scroll-to(root.want);
+    }
+    visible: root.max > 0;
+    accessible-role: slider;
+    accessible-label: root.label;
+    accessible-value-minimum: 0;
+    accessible-value-maximum: root.max / 1px;
+    accessible-value: round(root.scroll / 1px);
+    // Lingers a moment after the pointer leaves, as after a scroll.
+    changed has-hover => {
+        if (!self.has-hover) { root.wake(); }
+    }
+    // A screen reader's step is a page, as a press in the track is.
+    accessible-action-increment => { root.scroll-to(root.scroll + root.span); }
+    accessible-action-decrement => { root.scroll-to(root.scroll - root.span); }
+    pointer-event(e) => {
+        if (root.side-press(e)) { return; }
+        // A press that closes a menu is nothing more, and leaves the
+        // focus to the menu's closing; any other press in the band
+        // gives the keys theirs back, as the pane's controls do.
+        if (e.kind == PointerEventKind.down) {
+            root.took = !root.menu-shown();
+            if (root.took) { root.focus-keys(); }
+        }
+        if (e.button != PointerEventButton.left) { return; }
+        if (e.kind == PointerEventKind.up) {
+            if (root.pending) { root.apply(); }
+            root.dragging = false;
+            // Again at the release, after a drag: only a release whose
+            // press was the bar's, so a press that closed a menu is
+            // still nothing.
+            if (root.took) { root.focus-keys(); }
+            return;
+        }
+        if (e.kind != PointerEventKind.down) { return; }
+        root.dragging = false;
+        if (!root.took) { return; }
+        // Before the thumb or past it, a page that way; on it, the
+        // thumb taken.
+        if (root.along < root.thumb-at) {
+            root.scroll-to(root.scroll - root.span);
+        } else if (root.along >= root.thumb-at + root.thumb-len) {
+            root.scroll-to(root.scroll + root.span);
+        } else {
+            root.dragging = true;
+            root.from = root.scroll;
+            root.want = root.scroll;
+            root.press-at = root.along;
+        }
+    }
+    moved => {
+        if (root.dragging && root.pressed) {
+            root.want = root.bar-drag(root.span, root.max, root.from, root.along - root.press-at);
+            root.pending = true;
+        }
+    }
+    // Runs only while a step waits, so a held thumb at rest asks for
+    // nothing.
+    Timer {
+        interval: 16ms;
+        running: root.pending;
+        triggered => { root.apply(); }
+    }
+    // The wheel over the bar scrolls as anywhere.
+    scroll-event(e) => {
+        if (e.delta-x != 0px || e.delta-y != 0px) {
+            root.wheel(e.delta-x, e.delta-y, e.modifiers.control);
+        }
+        return accept;
+    }
+    Rectangle {
+        opacity: root.awake || root.lit ? 1 : 0;
+        animate opacity { duration: 200ms; }
+        // Round ends, in a band narrower than the grid's too.
+        border-radius: min(7px, (root.horizontal ? root.height : root.width) / 2);
+        background: root.lit ? Theme.scrollbar-track : transparent;
+        Rectangle {
+            // On whole device pixels, so a 2 px thumb is crisp at a
+            // fractional scale: its thickness across the band, 4 px in
+            // from the outer edge, and its place and length along it.
+            property <length> thick: round((root.lit ? 6px : 2px) / 1phx) * 1phx;
+            property <length> at: round(root.thumb-at / 1phx) * 1phx;
+            property <length> long: round(root.thumb-len / 1phx) * 1phx;
+            property <length> edge: round(((root.horizontal ? parent.height : parent.width) - 4px) / 1phx) * 1phx;
+            animate thick { duration: 150ms; easing: ease-out; }
+            x: root.horizontal ? self.at : self.edge - self.thick;
+            y: root.horizontal ? self.edge - self.thick : self.at;
+            width: root.horizontal ? self.long : self.thick;
+            height: root.horizontal ? self.thick : self.long;
+            border-radius: self.thick / 2;
+            background: root.lit ? Theme.scrollbar-thumb-hover : Theme.scrollbar-thumb;
+        }
+    }
+}

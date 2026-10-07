@@ -12,6 +12,13 @@ note a first tester reads.
 
 ## 0.5.0, unreleased
 
+### Culling and the grid
+
+- A scroll bar under the filmstrip, as the grid has, showing where you
+  are in the folder and dragging there; Home and End go to the first
+  and last frame in the filmstrip and the grid, and Shift+Home and
+  Shift+End select the run to that end ([§255](https://github.com/jessolmstead/greycard/blob/master/docs/notes/255-the-strips-scroll-bar-and-home-and-end.md))
+
 ### Speed
 
 - Clarity takes half the time it did on a picture with a long edge of

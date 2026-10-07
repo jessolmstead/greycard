@@ -250,14 +250,17 @@ export component App inherits Window {
     property <length> grid-max:
         root.grid-max-scroll(root.grid-h, root.grid-cell, root.grid-cols, root.thumbs.length,
             root.grid-top);
-    /// The scroll bar's thumb, its length and its top on the sheet,
-    /// and the scroll a drag of it comes to: the same arithmetic.
-    pure callback grid-bar-length(length, length) -> length;
-    pure callback grid-bar-offset(length, length, length) -> length;
-    pure callback grid-bar-drag(length, length, length, length) -> length;
-    /// Whether the scroll bar is awake after a scroll: it fades once
-    /// the sheet has been still a moment. Out here for the tests.
+    /// The scroll bars' thumbs, the grid's and the strip's, their
+    /// length and their place along the bar, and the scroll a drag of
+    /// one comes to: the same arithmetic.
+    pure callback bar-length(length, length) -> length;
+    pure callback bar-offset(length, length, length) -> length;
+    pure callback bar-drag(length, length, length, length) -> length;
+    /// Whether the grid's scroll bar, and the strip's, are awake after
+    /// a scroll: each fades once its view has been still a moment. Out
+    /// here for the tests.
     in-out property <bool> grid-bar-awake;
+    in-out property <bool> strip-bar-awake;
     /// Move the selection a column along or a row down, told how many
     /// columns there are now.
     callback grid-step(int, int, int, bool);
@@ -1400,6 +1403,10 @@ export component App inherits Window {
     /// Move to the file `by` places along the strip; with Shift held,
     /// the set keeps what it had and takes that file as well.
     callback step(int, bool);
+    /// Home (false) or End (true): to the first file of the strip or
+    /// the grid, or the last, as an arrow lands; with Shift held the
+    /// set takes the whole run from the current frame to there.
+    callback step-end(bool, bool);
     /// Ask the desktop for a folder, and open it in place of the
     /// current file list.
     callback open-folder();
@@ -1591,6 +1598,15 @@ export component App inherits Window {
                 if (e.text == Key.RightArrow) { root.grid-step(1, 0, root.grid-cols, e.modifiers.shift); return accept; }
                 if (e.text == Key.UpArrow) { root.grid-step(0, -1, root.grid-cols, e.modifiers.shift); return accept; }
                 if (e.text == Key.DownArrow) { root.grid-step(0, 1, root.grid-cols, e.modifiers.shift); return accept; }
+                // The sheet's top or its foot, and the frame there
+                // chosen as an arrow chooses one; the scroll is set
+                // as well, since the frame may be chosen already.
+                if (e.text == Key.Home || e.text == Key.End) {
+                    let end = e.text == Key.End;
+                    root.step-end(end, e.modifiers.shift);
+                    root.grid-scroll-to(end ? root.grid-max : 0px);
+                    return accept;
+                }
                 if (e.text == "+" || e.text == "=") { root.grid-zoom(1); return accept; }
                 if (e.text == "-" || e.text == "_") { root.grid-zoom(-1); return accept; }
             }
@@ -1769,6 +1785,13 @@ export component App inherits Window {
             if (root.sheet-open()) { return reject; }
             if (e.text == Key.LeftArrow) { root.step(-1, e.modifiers.shift); return accept; }
             if (e.text == Key.RightArrow) { root.step(1, e.modifiers.shift); return accept; }
+            // The strip's ends, as the grid's above.
+            if (e.text == Key.Home || e.text == Key.End) {
+                let end = e.text == Key.End;
+                root.step-end(end, e.modifiers.shift);
+                strip.content-x = end ? min(0px, strip.width - strip.content-width) : 0px;
+                return accept;
+            }
             if (e.text == " " && !e.modifiers.control && !root.grid-open) { root.zoom-key(1); return accept; }
             if ((e.text == "z" || e.text == "Z") && !e.modifiers.control && !root.grid-open) { root.zoom-key(3); return accept; }
             if ((e.text == "s" || e.text == "S") && !e.modifiers.control && !root.grid-open) {
@@ -2447,6 +2470,10 @@ export component App inherits Window {
             strip-pad: root.strip-pad;
             strip-relay => { root.strip-relay(); }
             strip-report => { root.strip-report(); }
+            bar-length(a, b) => { return root.bar-length(a, b); }
+            bar-offset(a, b, c) => { return root.bar-offset(a, b, c); }
+            bar-drag(a, b, c, d) => { return root.bar-drag(a, b, c, d); }
+            bar-awake <=> root.strip-bar-awake;
             focus-keys => { keys.focus(); }
         }
     }
@@ -2535,9 +2562,9 @@ export component App inherits Window {
         grid-wheel(a, b) => { root.grid-wheel(a, b); }
         grid-relay => { root.grid-relay(); }
         grid-scroll-to(a) => { root.grid-scroll-to(a); }
-        bar-length(a, b) => { return root.grid-bar-length(a, b); }
-        bar-offset(a, b, c) => { return root.grid-bar-offset(a, b, c); }
-        bar-drag(a, b, c, d) => { return root.grid-bar-drag(a, b, c, d); }
+        bar-length(a, b) => { return root.bar-length(a, b); }
+        bar-offset(a, b, c) => { return root.bar-offset(a, b, c); }
+        bar-drag(a, b, c, d) => { return root.bar-drag(a, b, c, d); }
         bar-awake <=> root.grid-bar-awake;
         culling <=> root.culling;
         cull-toggled => { root.cull-toggled(); }

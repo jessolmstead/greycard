@@ -285,8 +285,8 @@ struct Cli {
     press: Option<char>,
     /// Keys sent to the window once what --sheet, --tool or --menu
     /// asked for is up, a fifth of a second apart, before the
-    /// snapshot: names (down, up, left, right, enter, esc, tab) or
-    /// single characters, separated by spaces
+    /// snapshot: names (down, up, left, right, home, end, enter, esc,
+    /// tab) or single characters, separated by spaces
     #[arg(long, value_name = "KEYS")]
     keys: Option<String>,
     /// Put this Crop-tab tool in hand once the picture is up, for a
