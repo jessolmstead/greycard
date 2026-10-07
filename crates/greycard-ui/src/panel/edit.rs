@@ -113,18 +113,39 @@ pub(crate) fn current_turn(st: &State) -> u8 {
 /// How long the sliders must rest before a develop starts.
 pub(crate) const DEBOUNCE_MS: u64 = 300;
 
-/// `--time-sharpen`, on each frame that brought a new picture: the
-/// time since the last move was sent, then the next move (the radius
-/// between two fixed values, the sharpen on) sent straight to the
-/// worker, past the debounce; after the last, the mean on the log and
-/// the terminal, and the editor quits.
-pub(crate) fn time_sharpen(st: &mut State, app: &App) {
-    let Some((left, sent, samples)) = st.time_sharpen.as_mut() else {
+/// The slider a timing run moves: `--time-sharpen` the sharpen's
+/// radius, `--time-clarity` the Detail section's Clarity.
+#[derive(Clone, Copy)]
+enum Timed {
+    Sharpen,
+    Clarity,
+}
+
+/// The moves left, when the last was sent, and the milliseconds each
+/// took to its frame.
+pub(crate) type Timing = (u32, Option<std::time::Instant>, Vec<f64>);
+
+/// `--time-sharpen` and `--time-clarity`, on each frame that brought
+/// a new picture: the time since the last move was sent, then the
+/// next move (the slider between two fixed values, its section on)
+/// sent straight to the worker, past the debounce; after the last,
+/// the mean on the log and the terminal, and the editor quits.
+pub(crate) fn time_moves(st: &mut State, app: &App) {
+    time_move(st, app, Timed::Sharpen);
+    time_move(st, app, Timed::Clarity);
+}
+
+fn time_move(st: &mut State, app: &App, which: Timed) {
+    let (name, timing) = match which {
+        Timed::Sharpen => ("sharpen", &mut st.time_sharpen),
+        Timed::Clarity => ("clarity", &mut st.time_clarity),
+    };
+    let Some((left, sent, samples)) = timing.as_mut() else {
         return;
     };
     if let Some(at) = sent.take() {
         let ms = at.elapsed().as_secs_f64() * 1e3;
-        tracing::info!("sharpen move to frame: {ms:.1} ms");
+        tracing::info!("{name} move to frame: {ms:.1} ms");
         samples.push(ms);
     }
     if *left == 0 {
@@ -133,21 +154,29 @@ pub(crate) fn time_sharpen(st: &mut State, app: &App) {
         let min = samples.iter().copied().fold(f64::INFINITY, f64::min);
         let max = samples.iter().copied().fold(0.0, f64::max);
         let line = format!(
-            "sharpen move to frame over {} moves: mean {mean:.1} ms, min {min:.1}, max {max:.1}",
+            "{name} move to frame over {} moves: mean {mean:.1} ms, min {min:.1}, max {max:.1}",
             samples.len()
         );
         tracing::info!("{line}");
         eprintln!("{line}");
-        st.time_sharpen = None;
+        *timing = None;
         let _ = slint::quit_event_loop();
         return;
     }
     *left -= 1;
-    let radius = if left.is_multiple_of(2) { 0.6 } else { 1.0 };
+    let low = left.is_multiple_of(2);
     *sent = Some(std::time::Instant::now());
-    st.edit.sharpen.enabled = true;
-    st.edit.sharpen.auto_radius = false;
-    st.edit.sharpen.radius = radius;
+    match which {
+        Timed::Sharpen => {
+            st.edit.sharpen.enabled = true;
+            st.edit.sharpen.auto_radius = false;
+            st.edit.sharpen.radius = if low { 0.6 } else { 1.0 };
+        }
+        Timed::Clarity => {
+            st.edit.detail.enabled = true;
+            st.edit.detail.clarity = if low { 0.3 } else { 0.6 };
+        }
+    }
     st.generation += 1;
     app.set_busy(true);
     let job = Job::Develop {

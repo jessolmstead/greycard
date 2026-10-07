@@ -11,9 +11,9 @@
 //! adapter of its own (the CLI and the tests). greycard-core never
 //! sees wgpu; that boundary is this crate's reason to exist.
 //!
-//! The ops so far: the capture sharpening ([`Context::sharpen`]) and
-//! the lateral chromatic aberration correction
-//! ([`Context::correct_ca`]).
+//! The ops so far: the capture sharpening ([`Context::sharpen`]), the
+//! lateral chromatic aberration correction ([`Context::correct_ca`])
+//! and the local contrast ([`Context::local_contrast`]).
 
 use std::sync::{Mutex, OnceLock};
 
@@ -22,6 +22,7 @@ use greycard_core::image::WorkingImage;
 pub use wgpu;
 
 mod ca;
+mod local_contrast;
 mod plumbing;
 mod sharpen;
 
@@ -45,6 +46,13 @@ pub enum Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+/// What [`Context::kept_bytes`] reports, per op.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeptBytes {
+    pub sharpen: u64,
+    pub local_contrast: u64,
+}
 
 /// The texture limit asked of an adapter of our own: 45 MP frames are
 /// 8192 wide and more, over the 8192 default.
@@ -81,6 +89,7 @@ pub struct Context {
     max_dimension: u32,
     sharpen: sharpen::Pipelines,
     ca: ca::Pipelines,
+    local_contrast: local_contrast::Pipelines,
 }
 
 impl Context {
@@ -89,7 +98,7 @@ impl Context {
     /// building the pipelines is returned, not raised.
     pub fn from_device(device: &wgpu::Device, queue: &wgpu::Queue) -> Result<Self> {
         let info = device.adapter_info();
-        Self::build(device.clone(), queue.clone(), info.name)
+        Self::build(device.clone(), queue.clone(), info)
     }
 
     /// On an adapter of our own, the fastest the machine has, or
@@ -112,17 +121,25 @@ impl Context {
             ..Default::default()
         }))
         .map_err(|e| Error::Device(e.to_string()))?;
-        let name = adapter.get_info().name;
-        Self::build(device, queue, name)
+        Self::build(device, queue, adapter.get_info())
     }
 
-    fn build(device: wgpu::Device, queue: wgpu::Queue, name: String) -> Result<Self> {
+    fn build(device: wgpu::Device, queue: wgpu::Queue, info: wgpu::AdapterInfo) -> Result<Self> {
+        let name = info.name;
         let max_dimension = device.limits().max_texture_dimension_2d;
         let sharpen = scoped(&device, "building the sharpen's pipelines", || {
             Ok(sharpen::Pipelines::new(&device))
         })?;
         let ca = scoped(&device, "building the CA correction's pipelines", || {
             Ok(ca::Pipelines::new(&device))
+        })?;
+        // A discrete GPU's memory is its own, so the local contrast's
+        // planes are kept there between runs; an integrated or
+        // unified-memory GPU (Apple's), a virtual one or the CPU
+        // shares the machine's, and the planes are made for a run.
+        let keep = info.device_type == wgpu::DeviceType::DiscreteGpu;
+        let local_contrast = scoped(&device, "building the local contrast's pipelines", || {
+            Ok(local_contrast::Pipelines::new(&device, keep))
         })?;
         log::info!("greycard-gpu on {name}, textures up to {max_dimension}");
         Ok(Self {
@@ -132,16 +149,57 @@ impl Context {
             max_dimension,
             sharpen,
             ca,
+            local_contrast,
         })
     }
 
     /// Let go of the working textures the ops keep between runs (the
     /// sharpen's four planes and its atlas, about 900 MB at 45 MP;
-    /// the CA correction keeps nothing, its 812 MiB at 45 MP being
-    /// made and dropped within a run). For when the op is switched
-    /// off or the picture is closed; the next run makes them again.
+    /// the local contrast's, up to five planes and its grid, about 950
+    /// MB, kept on a discrete GPU only; the CA correction keeps
+    /// nothing, its 812 MiB at 45 MP being made and dropped within a
+    /// run). For when the ops are switched off or the picture is
+    /// closed; the next run makes them again.
     pub fn release(&self) {
+        self.release_sharpen();
+        self.release_local_contrast();
+    }
+
+    /// Let go of the sharpen's working textures alone: for a develop
+    /// that runs the local contrast here with the sharpen off.
+    pub fn release_sharpen(&self) {
         self.sharpen.release();
+    }
+
+    /// Let go of the local contrast's working textures alone: for a
+    /// develop that runs the sharpen here without it, or with it on
+    /// the CPU.
+    pub fn release_local_contrast(&self) {
+        self.local_contrast.release();
+    }
+
+    /// The bytes of working textures and buffers the ops keep between
+    /// runs, the sharpen's and the local contrast's, from their sizes
+    /// and formats: what [`Context::release`] lets go.
+    pub fn kept_bytes(&self) -> KeptBytes {
+        KeptBytes {
+            sharpen: self.sharpen.kept_bytes(),
+            local_contrast: self.local_contrast.kept_bytes(),
+        }
+    }
+
+    /// Whether the local contrast keeps its planes between runs: on a
+    /// discrete GPU by default, else made for each run and let go.
+    pub fn keeps_local_contrast_planes(&self) -> bool {
+        self.local_contrast.keeps()
+    }
+
+    /// Keep the local contrast's planes between runs or make them for
+    /// each, against the device's default: for the tests and for
+    /// measuring what each costs. Turning it off lets the kept ones
+    /// go.
+    pub fn keep_local_contrast_planes(&self, keep: bool) {
+        self.local_contrast.set_keeps(keep);
     }
 
     pub fn device(&self) -> &wgpu::Device {

@@ -226,6 +226,21 @@ impl Pipelines {
     pub(crate) fn release(&self) {
         *self.work.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
+
+    /// The bytes the kept working textures and buffers take; see
+    /// [`Context::kept_bytes`].
+    pub(crate) fn kept_bytes(&self) -> u64 {
+        let guard = self.work.lock().unwrap_or_else(|e| e.into_inner());
+        guard.as_ref().map_or(0, |w| {
+            [&w.lum, &w.lstar, &w.blend, &w.tmp, &w.estimate, &w.ratio]
+                .into_iter()
+                .map(crate::plumbing::texture_bytes)
+                .sum::<u64>()
+                + w.settled.size()
+                + w.left.size()
+                + w.partials.size()
+        })
+    }
 }
 
 /// The working textures and buffers for a picture of one size: the

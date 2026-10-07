@@ -6,7 +6,7 @@ use crate::panel::color::{preview_white, white_key};
 use crate::panel::cull::{cull_frame, develop_landed, show_filter, standing_in};
 use crate::panel::curve::{PARAMETRIC, draw_curve};
 use crate::panel::deliver::{chosen_preset, deliver, read_sheet, show_presets_picker, show_sheet};
-use crate::panel::edit::{read_edit, read_folds, save_edit, show_folds, time_sharpen};
+use crate::panel::edit::{read_edit, read_folds, save_edit, show_folds, time_moves};
 use crate::panel::mask::{ask_for, bake_locals};
 use crate::panel::retouch::patch_outlines;
 use crate::panel::viewport::{
@@ -387,10 +387,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         deletes_allowed: cli.snapshot.is_none()
             && cli.screenshot.is_none()
             && cli.time_sharpen.is_none()
+            && cli.time_clarity.is_none()
             && cli.time_cull.is_none()
             && cli.time_select.is_none()
             && cli.time_scroll.is_none(),
         time_sharpen: cli.time_sharpen.map(|n| (n, None, Vec::new())),
+        time_clarity: cli.time_clarity.map(|n| (n, None, Vec::new())),
         time_cull: cli.time_cull.map(|n| (n, Vec::new())),
         time_select: cli.time_select.map(|n| (n, Vec::new(), Vec::new())),
         time_scroll: cli
@@ -1041,9 +1043,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // grid waits for the pictures the grid shows, or
                     // it would catch a sheet of empty cells.
                     let quiet = st.asked.is_empty() && grid_filled(st, &app);
-                    // A timed sharpen move is sent as its frame starts.
+                    // A timed slider move is sent as its frame starts.
                     if pending.is_some() {
-                        time_sharpen(st, &app);
+                        time_moves(st, &app);
                         // The frame that shows the frame the key
                         // landed on: the switch's time, for the log
                         // and `--time-select`.

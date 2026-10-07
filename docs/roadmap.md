@@ -41,10 +41,6 @@ scroll bar, and the camera match gets a progress bar.
       a picture the mask is pasted to, asking on a picture of several.
       Designed in §253; the model side built (§256), the editor side
       next
-- [ ] Local contrast on the GPU, the CPU op its reference, so a
-      Texture or Clarity move costs about what a sharpen move does
-      (~55 ms against ~0.3 s at 24 MP); an edit with the dehaze on
-      stays on the CPU path (§251, §254)
 
 ## Tracks
 
@@ -156,6 +152,13 @@ seconds.
       2.3), and it is the next second (§164). The whole 45 MP develop
       with the hybrid denoise is 12.7 s at six threads, the number a
       tester can watch
+- [ ] The dehaze on the GPU, at its quarter-scale grid, so an edit
+      with Dehaze on keeps Texture and Clarity on the GPU too; today
+      it takes the whole CPU path (§259)
+- [ ] The GPU's memory on an 8 GB Mac: the local contrast keeps the
+      patched picture on the device, 716 MB at 45 MP over 0.4.0; if
+      it presses, keep the picture before the sharpen only on a
+      discrete GPU. Waits on measuring it on the M-series (§259)
 - [ ] An AVX2-and-FMA path for the wavelet chain's taps behind a
       feature check: about as much again on a desktop, nothing on the
       Mac; the first x86 assumption, declined twice (§128, §164)

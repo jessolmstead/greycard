@@ -139,3 +139,14 @@ impl Uniforms {
 pub(crate) fn groups(n: u32, size: u32) -> u32 {
     n.div_ceil(size)
 }
+
+/// The bytes a single-sampled, single-level texture takes, from its
+/// size and format (as a driver lays it out, give or take its own
+/// padding).
+pub(crate) fn texture_bytes(texture: &wgpu::Texture) -> u64 {
+    let per_texel = texture
+        .format()
+        .block_copy_size(Some(wgpu::TextureAspect::All))
+        .unwrap_or(0);
+    u64::from(texture.width()) * u64::from(texture.height()) * u64::from(per_texel)
+}

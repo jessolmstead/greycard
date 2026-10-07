@@ -11,6 +11,7 @@ use crate::panel::viewport::picking_hint;
 use crate::queue;
 use crate::settings;
 use crate::sheet::{self, ExportPreset, Sheet};
+use crate::worker::DetailRan;
 use crate::*;
 use std::time::{Duration, Instant};
 
@@ -418,14 +419,17 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 return;
             }
             let detailed = match detail {
-                Some((s, Some(secs))) => format!(
-                    ", local contrast at {} and {} px in {secs:.2} s",
-                    s.texture_radius, s.clarity_radius
-                ),
-                Some((s, None)) => format!(
-                    ", local contrast at {} and {} px kept",
-                    s.texture_radius, s.clarity_radius
-                ),
+                Some((s, ran)) => {
+                    let how = match ran {
+                        DetailRan::Cpu(secs) => format!("in {secs:.2} s"),
+                        DetailRan::Gpu => "on the GPU".into(),
+                        DetailRan::Kept => "kept".into(),
+                    };
+                    format!(
+                        ", local contrast at {} and {} px {how}",
+                        s.texture_radius, s.clarity_radius
+                    )
+                }
                 None => String::new(),
             };
             // Sources the engine chose go into the edit, and into the

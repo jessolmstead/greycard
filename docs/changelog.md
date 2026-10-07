@@ -34,6 +34,10 @@ note a first tester reads.
 
 ### Speed
 
+- Texture and Clarity run on the GPU, so a move of either costs about
+  what a sharpen move does: about 60 ms at 24 MP, from about 330 on
+  the CPU; an edit with Dehaze on stays on the CPU
+  ([§259](https://github.com/jessolmstead/greycard/blob/master/docs/notes/259-local-contrast-on-the-gpu-as-built.md))
 - Clarity takes half the time it did on a picture with a long edge of
   2540 pixels or more, in the editor and the export alike, its filter
   found on a grid of four-pixel blocks; below that it is unchanged

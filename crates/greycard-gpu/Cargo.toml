@@ -1,7 +1,7 @@
 [package]
 name = "greycard-gpu"
 version.workspace = true
-description = "GPU implementations of greycard-core's engine ops (the sharpen and the CA correction), checked against its CPU references"
+description = "GPU implementations of greycard-core's engine ops (the sharpen, the CA correction and the local contrast), checked against its CPU references"
 license = "GPL-3.0-or-later"
 edition.workspace = true
 rust-version.workspace = true

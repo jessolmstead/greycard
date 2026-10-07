@@ -338,6 +338,11 @@ struct Cli {
     /// then quit with the mean
     #[arg(long, value_name = "N", hide = true)]
     time_sharpen: Option<u32>,
+    /// Once the first develop is on screen, move Clarity this many
+    /// times, logging the time from each move to its frame, then quit
+    /// with the mean
+    #[arg(long, value_name = "N", hide = true)]
+    time_clarity: Option<u32>,
     /// Once the first develop is on screen, step to the next frame
     /// this many times, a tenth of a second apart, logging the time
     /// from each step to the frame that develops it, then quit with
@@ -500,9 +505,10 @@ pub(crate) struct State {
     pub(crate) placement: greycard_edit::Placement,
     /// The developed image waiting to go to the GPU, if any.
     pub(crate) pending: Option<Landed>,
-    /// `--time-sharpen`: the moves left, when the last was sent, and
-    /// the milliseconds each took to its frame.
-    pub(crate) time_sharpen: Option<(u32, Option<std::time::Instant>, Vec<f64>)>,
+    /// `--time-sharpen` and `--time-clarity`: the moves left, when the
+    /// last was sent, and the milliseconds each took to its frame.
+    pub(crate) time_sharpen: Option<crate::panel::edit::Timing>,
+    pub(crate) time_clarity: Option<crate::panel::edit::Timing>,
     /// `--time-cull`: the steps left and the milliseconds each took
     /// from the key to the frame that showed the next picture.
     pub(crate) time_cull: Option<(u32, Vec<f64>)>,
@@ -1022,6 +1028,7 @@ impl State {
             placement: greycard_edit::Placement::Beside,
             pending: None,
             time_sharpen: None,
+            time_clarity: None,
             time_cull: None,
             time_select: None,
             time_scroll: None,

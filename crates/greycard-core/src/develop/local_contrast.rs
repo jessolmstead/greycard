@@ -35,13 +35,13 @@ use crate::image::WorkingImage;
 use rayon::prelude::*;
 
 /// Luminance weights of the working space, Rec.2020.
-const LUMA: [f32; 3] = [0.2627, 0.6780, 0.0593];
+pub const LUMA: [f32; 3] = [0.2627, 0.6780, 0.0593];
 
 /// Mid grey, where the stops are counted from.
-const MID_GREY: f32 = 0.18;
+pub const MID_GREY: f32 = 0.18;
 
 /// Below this a luminance is taken as this, so the log has a floor.
-const FLOOR: f32 = 1e-6;
+pub const FLOOR: f32 = 1e-6;
 
 /// Texture's radius as a fraction of the long edge: three pixels on a
 /// 6000-pixel picture, and never under [`MIN_TEXTURE_RADIUS`].
@@ -58,8 +58,8 @@ pub const MIN_CLARITY_RADIUS: usize = 8;
 /// 1505.00996): about a sixteenth of the filter's cost, which was half
 /// the op's at Clarity alone. Under it, a long edge under 2540, the
 /// filter is the exact one.
-const COARSE_FROM_RADIUS: usize = 64;
-const COARSE_STEP: usize = 4;
+pub const COARSE_FROM_RADIUS: usize = 64;
+pub const COARSE_STEP: usize = 4;
 
 /// The guided filter's epsilon at each scale, in stops squared: the
 /// window variance at which half the detail is protected as an edge.
@@ -72,15 +72,15 @@ const COARSE_STEP: usize = 4;
 /// depends on it (92 percent here); what a larger epsilon buys is
 /// more lift on structures of a stop or two (71 and 40 percent here),
 /// at the price of that halo.
-const TEXTURE_EPSILON: f32 = 0.05;
-const CLARITY_EPSILON: f32 = 0.25;
+pub const TEXTURE_EPSILON: f32 = 0.05;
+pub const CLARITY_EPSILON: f32 = 0.25;
 
 /// The band at an amount of one, as a multiple of itself: Texture at
 /// +1 doubles the fine band; Clarity at +1 adds this much of the
 /// middle one, which lost the fine energy the first cut let it keep,
 /// so it is set above one to read about as it did.
-const TEXTURE_GAIN: f32 = 1.0;
-const CLARITY_GAIN: f32 = 1.5;
+pub const TEXTURE_GAIN: f32 = 1.0;
+pub const CLARITY_GAIN: f32 = 1.5;
 
 /// Where Clarity's weight fades out, in stops about mid grey: full
 /// between the two inner values, nothing beyond the outer ones. Scene
@@ -90,15 +90,15 @@ const CLARITY_GAIN: f32 = 1.5;
 /// deep: a candle-lit interior at base exposure lives four stops
 /// under mid grey and is still detail, and what is left out is the
 /// noise floor.
-const CLARITY_SHADOW_FADE: (f32, f32) = (-8.0, -5.5);
-const CLARITY_HIGHLIGHT_FADE: (f32, f32) = (1.5, 2.5);
+pub const CLARITY_SHADOW_FADE: (f32, f32) = (-8.0, -5.5);
+pub const CLARITY_HIGHLIGHT_FADE: (f32, f32) = (1.5, 2.5);
 
 /// The gain fades to nothing over the top of the scale, from this
 /// fraction of the clip level (four tenths of a stop under it) to the
 /// clip, on the pixel's brightest channel: a clipped plateau is not
 /// detail, and the band would lift its inside edge past the clip and
 /// darken the ring around it.
-const CLIP_FADE: f32 = 0.75;
+pub const CLIP_FADE: f32 = 0.75;
 
 /// How much of each band to add: -1 to 1, zero for none.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -149,7 +149,7 @@ pub fn local_contrast(
 /// The step of the grid Clarity's guided filter takes its
 /// coefficients on, at its radius: one, the exact filter, under
 /// [`COARSE_FROM_RADIUS`].
-fn clarity_step(clarity_radius: usize) -> usize {
+pub fn clarity_step(clarity_radius: usize) -> usize {
     if clarity_radius >= COARSE_FROM_RADIUS {
         COARSE_STEP
     } else {
@@ -431,7 +431,7 @@ impl Scratch {
 /// The radius in blocks of `step` whose window, `(2r + 1) * step`
 /// pixels across, is nearest the full-size window of `2 * radius + 1`:
 /// 37 blocks for 150 pixels at a step of four, 300 pixels against 301.
-fn coarse_radius(radius: usize, step: usize) -> usize {
+pub fn coarse_radius(radius: usize, step: usize) -> usize {
     (((2 * radius + 1) as f32 / step as f32 - 1.0) / 2.0)
         .max(0.0)
         .round() as usize

@@ -268,3 +268,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§256. The Parts mask's model side, as built](notes/256-the-parts-masks-model-side-as-built.md) (2026-10-06)
 - [§257. Renaming a look](notes/257-renaming-a-look.md) (2026-10-07)
 - [§258. A bar on the camera match run](notes/258-a-bar-on-the-camera-match-run.md) (2026-10-07)
+- [§259. Local contrast on the GPU, as built](notes/259-local-contrast-on-the-gpu-as-built.md) (2026-10-07)

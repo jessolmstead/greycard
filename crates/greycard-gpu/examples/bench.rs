@@ -1,5 +1,5 @@
-//! Time the sharpen and the CA correction both ways on a raw, and say
-//! how far apart they land.
+//! Time the sharpen, the local contrast and the CA correction both
+//! ways on a raw, and say how far apart they land.
 //!
 //!     cargo run --release -p greycard-gpu --example bench -- FILE.CR3 [runs]
 //!
@@ -12,6 +12,7 @@
 use std::time::Instant;
 
 use greycard_core::develop::ca::{CaOptions, correct_ca};
+use greycard_core::develop::local_contrast::{LocalContrastOptions, local_contrast};
 use greycard_core::develop::sharpen::{SharpenOptions, sharpen_with_mask};
 use greycard_core::develop::{DevelopSettings, develop, prepare};
 use greycard_gpu::Context;
@@ -109,6 +110,59 @@ fn main() -> anyhow::Result<()> {
     let t = Instant::now();
     let (_, _) = ctx.sharpen_image(&mut gpu, &options, measured, clip)?;
     println!("gpu with read back: {:.3} s", t.elapsed().as_secs_f64());
+    println!("apart: {}", apart(&cpu.data, &gpu.data, 1e-4));
+
+    // The local contrast, Texture and Clarity both at half, from the
+    // upload kept above; on the GPU first with its planes made, then
+    // with them kept, as a slider sees it.
+    let options = LocalContrastOptions {
+        texture: 0.5,
+        clarity: 0.5,
+    };
+    println!(
+        "local contrast at texture {} clarity {}:",
+        options.texture, options.clarity
+    );
+    let mut cpu = image.clone();
+    for run in 0..runs {
+        cpu = image.clone();
+        let t = Instant::now();
+        let stats = local_contrast(&mut cpu, &options, clip);
+        println!(
+            "cpu run {run}: {:.3} s {stats:?}",
+            t.elapsed().as_secs_f64()
+        );
+    }
+    for run in 0..runs {
+        let t = Instant::now();
+        let (after, stats) = ctx.local_contrast(&uploaded, &options, clip)?;
+        ctx.device()
+            .poll(greycard_gpu::wgpu::PollType::wait_indefinitely())?;
+        println!(
+            "gpu run {run}: {:.3} s {stats:?}{}",
+            t.elapsed().as_secs_f64(),
+            if run == 0 { " (planes made)" } else { "" }
+        );
+        if run + 1 == runs {
+            // And the sharpen on the op's output, as a Detail move
+            // costs in the editor.
+            let t = Instant::now();
+            ctx.sharpen(&after, &SharpenOptions::default(), measured, clip, &out)?;
+            ctx.device()
+                .poll(greycard_gpu::wgpu::PollType::wait_indefinitely())?;
+            println!(
+                "gpu sharpen after it: {:.3} s (with the threshold search)",
+                t.elapsed().as_secs_f64()
+            );
+        }
+    }
+    let mut gpu = image.clone();
+    let t = Instant::now();
+    ctx.local_contrast_image(&mut gpu, &options, clip)?;
+    println!(
+        "gpu with upload and read back: {:.3} s",
+        t.elapsed().as_secs_f64()
+    );
     println!("apart: {}", apart(&cpu.data, &gpu.data, 1e-4));
 
     // The CA correction, on the mosaic as `prepare` hands it over.
