@@ -52,6 +52,15 @@ pub const MIN_TEXTURE_RADIUS: usize = 2;
 pub const CLARITY_RADIUS_FRACTION: f32 = 1.0 / 40.0;
 pub const MIN_CLARITY_RADIUS: usize = 8;
 
+/// From this radius up, Clarity's guided filter takes its coefficients
+/// on a grid of blocks [`COARSE_STEP`] pixels on a side and applies
+/// them at full size (He and Sun, "Fast Guided Filter", arXiv
+/// 1505.00996): about a sixteenth of the filter's cost, which was half
+/// the op's at Clarity alone. Under it, a long edge under 2540, the
+/// filter is the exact one.
+const COARSE_FROM_RADIUS: usize = 64;
+const COARSE_STEP: usize = 4;
+
 /// The guided filter's epsilon at each scale, in stops squared: the
 /// window variance at which half the detail is protected as an edge.
 /// Fine detail is a fraction of a stop, so Texture's is small and
@@ -133,6 +142,30 @@ pub fn local_contrast(
     options: &LocalContrastOptions,
     clip_level: f32,
 ) -> LocalContrastStats {
+    let (_, clarity_radius) = radii(image.width, image.height);
+    local_contrast_with_step(image, options, clip_level, clarity_step(clarity_radius))
+}
+
+/// The step of the grid Clarity's guided filter takes its
+/// coefficients on, at its radius: one, the exact filter, under
+/// [`COARSE_FROM_RADIUS`].
+fn clarity_step(clarity_radius: usize) -> usize {
+    if clarity_radius >= COARSE_FROM_RADIUS {
+        COARSE_STEP
+    } else {
+        1
+    }
+}
+
+/// [`local_contrast`] with Clarity's grid step given rather than
+/// chosen by its radius, so the coarse filter can be had on a small
+/// picture and the exact one on a large.
+pub(crate) fn local_contrast_with_step(
+    image: &mut WorkingImage,
+    options: &LocalContrastOptions,
+    clip_level: f32,
+    clarity_step: usize,
+) -> LocalContrastStats {
     let (w, h) = (image.width, image.height);
     let (texture_radius, clarity_radius) = radii(w, h);
     let stats = LocalContrastStats {
@@ -169,7 +202,11 @@ pub fn local_contrast(
             box_mean(&mut log, &mut scratch.tmp, w, h, texture_radius);
         }
         let k = options.clarity.clamp(-1.0, 1.0) * CLARITY_GAIN;
-        scratch.guided_filter(&log, w, h, clarity_radius, CLARITY_EPSILON);
+        if clarity_step > 1 {
+            scratch.coarse_guided_filter(&log, w, h, clarity_radius, CLARITY_EPSILON, clarity_step);
+        } else {
+            scratch.guided_filter(&log, w, h, clarity_radius, CLARITY_EPSILON);
+        }
         apply_shift(image, &log, &scratch.a, clip_level, |b| {
             k * midtone_weight(b)
         });
@@ -279,6 +316,149 @@ impl Scratch {
             .zip(input.par_iter())
             .for_each(|((o, &slope), &v)| *o += slope * v);
     }
+
+    /// [`Scratch::guided_filter`] with its coefficients taken on a grid
+    /// of `step` by `step` blocks: `input` and its square are each
+    /// reduced to their block sums, and every window's mean and mean
+    /// square are those sums over the pixels the window's blocks hold,
+    /// so they are the full-size ones to within the window's edge
+    /// snapped to the grid (squaring the reduced `input` instead would
+    /// drop the variance finer than a block from every window, and a
+    /// textured window would look flatter than it is). A last block
+    /// cut short by the picture's edge counts for the pixels it holds,
+    /// in the windows and in the averages of the slope and intercept
+    /// over them alike. The windows are those of [`coarse_radius`]
+    /// blocks; the averaged slope and intercept are taken back to full
+    /// size bilinearly, each block's at its center, and put on the
+    /// full-size `input`. The answer is left in `self.a`.
+    fn coarse_guided_filter(
+        &mut self,
+        input: &[f32],
+        width: usize,
+        height: usize,
+        radius: usize,
+        epsilon: f32,
+        step: usize,
+    ) {
+        let (cw, ch) = (width.div_ceil(step), height.div_ceil(step));
+        let r = coarse_radius(radius, step);
+        // Each block's sums and its share of a full block's pixels,
+        // all over a full block's count: a full block's sums are its
+        // means and its share one.
+        let area = (step * step) as f32;
+        let mut mean = vec![0.0f32; cw * ch];
+        let mut sq = vec![0.0f32; cw * ch];
+        let mut share = vec![0.0f32; cw * ch];
+        mean.par_chunks_mut(cw)
+            .zip(sq.par_chunks_mut(cw))
+            .zip(share.par_chunks_mut(cw))
+            .enumerate()
+            .for_each(|(by, ((mean, sq), share))| {
+                let (y0, y1) = (by * step, ((by + 1) * step).min(height));
+                for row in input[y0 * width..y1 * width].chunks_exact(width) {
+                    for ((m, q), block) in mean.iter_mut().zip(sq.iter_mut()).zip(row.chunks(step))
+                    {
+                        for &v in block {
+                            *m += v;
+                            *q += v * v;
+                        }
+                    }
+                }
+                for (bx, ((m, q), c)) in mean.iter_mut().zip(sq.iter_mut()).zip(share).enumerate() {
+                    *m /= area;
+                    *q /= area;
+                    *c = ((y1 - y0) * step.min(width - bx * step)) as f32 / area;
+                }
+            });
+        // A window's pixels as a share of its blocks: what each box
+        // mean over the grid is divided by to be a mean over pixels.
+        let mut tmp = vec![0.0f32; cw * ch];
+        let mut held = share.clone();
+        box_mean(&mut held, &mut tmp, cw, ch, r);
+        // The filter's first stages on the grid, as the exact one has
+        // them: sq the slope, mean the intercept, each averaged.
+        box_mean(&mut mean, &mut tmp, cw, ch, r);
+        box_mean(&mut sq, &mut tmp, cw, ch, r);
+        sq.par_iter_mut()
+            .zip(mean.par_iter_mut())
+            .zip(held.par_iter().zip(share.par_iter()))
+            .for_each(|((sq, mean), (&held, &share))| {
+                let (m, q) = (*mean / held, *sq / held);
+                let var = (q - m * m).max(0.0);
+                let slope = var / (var + epsilon);
+                *sq = slope * share;
+                *mean = (m - slope * m) * share;
+            });
+        box_mean(&mut sq, &mut tmp, cw, ch, r);
+        box_mean(&mut mean, &mut tmp, cw, ch, r);
+        sq.par_iter_mut()
+            .zip(mean.par_iter_mut())
+            .zip(held.par_iter())
+            .for_each(|((slope, intercept), &held)| {
+                *slope /= held;
+                *intercept /= held;
+            });
+        // Back to full size: each row's two grid rows blended down the
+        // column, then each pixel's two blocks along the row.
+        let across = bilinear_taps(width, step);
+        let down = bilinear_taps(height, step);
+        self.a
+            .par_chunks_mut(width)
+            .zip(input.par_chunks(width))
+            .zip(down.par_iter())
+            .for_each_init(
+                || (vec![0.0f32; cw], vec![0.0f32; cw]),
+                |(slope, intercept), ((out, row), &(j0, j1, t))| {
+                    let lerp = |dst: &mut [f32], grid: &[f32]| {
+                        let (g0, g1) =
+                            (&grid[j0 * cw..(j0 + 1) * cw], &grid[j1 * cw..(j1 + 1) * cw]);
+                        for ((d, &a), &b) in dst.iter_mut().zip(g0).zip(g1) {
+                            *d = a + t * (b - a);
+                        }
+                    };
+                    lerp(slope, &sq);
+                    lerp(intercept, &mean);
+                    for ((o, &v), &(i0, i1, t)) in out.iter_mut().zip(row).zip(&across) {
+                        let a = slope[i0] + t * (slope[i1] - slope[i0]);
+                        let b = intercept[i0] + t * (intercept[i1] - intercept[i0]);
+                        *o = a * v + b;
+                    }
+                },
+            );
+    }
+}
+
+/// The radius in blocks of `step` whose window, `(2r + 1) * step`
+/// pixels across, is nearest the full-size window of `2 * radius + 1`:
+/// 37 blocks for 150 pixels at a step of four, 300 pixels against 301.
+fn coarse_radius(radius: usize, step: usize) -> usize {
+    (((2 * radius + 1) as f32 / step as f32 - 1.0) / 2.0)
+        .max(0.0)
+        .round() as usize
+}
+
+/// For each of `len` pixels along an axis, the two blocks of `step`
+/// whose centers it lies between and how far it is from the first to
+/// the second, clamped to the first and the last block's centers. A
+/// last block cut short by the edge has its center in the middle of
+/// what is inside.
+fn bilinear_taps(len: usize, step: usize) -> Vec<(usize, usize, f32)> {
+    let blocks = len.div_ceil(step);
+    let center = |b: usize| (b * step) as f32 + (step.min(len - b * step) - 1) as f32 / 2.0;
+    let mut b = 0;
+    (0..len)
+        .map(|x| {
+            let x = x as f32;
+            while b + 1 < blocks && center(b + 1) <= x {
+                b += 1;
+            }
+            if b + 1 == blocks || x <= center(b) {
+                (b, b, 0.0)
+            } else {
+                (b, b + 1, (x - center(b)) / (center(b + 1) - center(b)))
+            }
+        })
+        .collect()
 }
 
 /// The mean over a window of `radius` each way, in place, the window
@@ -357,6 +537,11 @@ mod tests {
 
     /// No clip: what the tests run under unless they say.
     const NO_CLIP: f32 = f32::INFINITY;
+
+    /// Clarity's filter as the behaviors are tried through it: the
+    /// exact one, and the coarse grid forced on a picture too small to
+    /// choose it.
+    const STEPS: [usize; 2] = [1, COARSE_STEP];
 
     fn luminance(px: &[f32]) -> f32 {
         LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2]
@@ -531,10 +716,12 @@ mod tests {
                 clarity: 0.7,
             },
         ] {
-            local_contrast(&mut flat, &options, NO_CLIP);
-            for px in flat.pixels() {
-                for v in px {
-                    assert!((v - 0.3).abs() < 1e-5, "{options:?}: {px:?}");
+            for step in STEPS {
+                local_contrast_with_step(&mut flat, &options, NO_CLIP, step);
+                for px in flat.pixels() {
+                    for v in px {
+                        assert!((v - 0.3).abs() < 1e-5, "{options:?} step {step}: {px:?}");
+                    }
                 }
             }
         }
@@ -572,33 +759,36 @@ mod tests {
         assert_eq!(radii(w, h), (3, 125));
         let plain = grey(w, h, grating);
         let before = spread(&plain, h / 2, 2000, 3000);
-        for amount in [1.0, -1.0] {
+        for (amount, step) in [1.0, -1.0].into_iter().flat_map(|a| STEPS.map(|s| (a, s))) {
             let mut image = plain.clone();
-            local_contrast(&mut image, &clarity(amount), NO_CLIP);
+            local_contrast_with_step(&mut image, &clarity(amount), NO_CLIP, step);
             let after = spread(&image, h / 2, 2000, 3000);
             assert!(
                 (after - before).abs() < before * 0.05,
-                "clarity {amount}: {before} -> {after}"
+                "clarity {amount} step {step}: {before} -> {after}"
             );
         }
         let mut image = plain.clone();
         local_contrast(&mut image, &texture(1.0), NO_CLIP);
         let texture_alone = spread(&image, h / 2, 2000, 3000);
         assert!(texture_alone > before * 1.5, "{before} -> {texture_alone}");
-        let mut image = plain.clone();
-        local_contrast(
-            &mut image,
-            &LocalContrastOptions {
-                texture: 1.0,
-                clarity: 1.0,
-            },
-            NO_CLIP,
-        );
-        let both = spread(&image, h / 2, 2000, 3000);
-        assert!(
-            (both - texture_alone).abs() < before * 0.05,
-            "texture alone {texture_alone}, both {both}"
-        );
+        for step in STEPS {
+            let mut image = plain.clone();
+            local_contrast_with_step(
+                &mut image,
+                &LocalContrastOptions {
+                    texture: 1.0,
+                    clarity: 1.0,
+                },
+                NO_CLIP,
+                step,
+            );
+            let both = spread(&image, h / 2, 2000, 3000);
+            assert!(
+                (both - texture_alone).abs() < before * 0.05,
+                "step {step}: texture alone {texture_alone}, both {both}"
+            );
+        }
     }
 
     #[test]
@@ -618,32 +808,35 @@ mod tests {
                 0.18 * (1.0 + bump)
             }
         };
-        let mut image = grey(w, h, scene);
-        let before = spread(&image, h / 2, 360, 440);
-        let edge_before = spread(&image, h / 2, 80, 160);
-        local_contrast(&mut image, &clarity(1.0), NO_CLIP);
-        let up = spread(&image, h / 2, 360, 440);
-        assert!(up > before * 1.5, "{before} -> {up}");
-        // The hard edge is protected: neither side overshoots by more
-        // than a third of a stop, where the halo a plain unsharp mask
-        // at this radius would leave is two stops.
-        let edge_after = spread(&image, h / 2, 80, 160);
-        let at = |x: usize| luminance(&image.data[((h / 2) * w + x) * 3..]).log2();
-        let bright = (120..160)
-            .map(|x| at(x) - (0.18f32).log2())
-            .fold(0.0, f32::max);
-        let dark = (80..120)
-            .map(|x| (0.18f32 / 16.0).log2() - at(x))
-            .fold(0.0, f32::max);
-        assert!(
-            bright < 0.35 && dark < 0.35,
-            "halo {bright} stops bright, {dark} dark; edge {edge_before} -> {edge_after}"
-        );
+        for step in STEPS {
+            let mut image = grey(w, h, scene);
+            let before = spread(&image, h / 2, 360, 440);
+            let edge_before = spread(&image, h / 2, 80, 160);
+            local_contrast_with_step(&mut image, &clarity(1.0), NO_CLIP, step);
+            let up = spread(&image, h / 2, 360, 440);
+            assert!(up > before * 1.5, "step {step}: {before} -> {up}");
+            // The hard edge is protected: neither side overshoots by
+            // more than a third of a stop, where the halo a plain
+            // unsharp mask at this radius would leave is two stops.
+            let edge_after = spread(&image, h / 2, 80, 160);
+            let at = |x: usize| luminance(&image.data[((h / 2) * w + x) * 3..]).log2();
+            let bright = (120..160)
+                .map(|x| at(x) - (0.18f32).log2())
+                .fold(0.0, f32::max);
+            let dark = (80..120)
+                .map(|x| (0.18f32 / 16.0).log2() - at(x))
+                .fold(0.0, f32::max);
+            assert!(
+                bright < 0.35 && dark < 0.35,
+                "step {step}: halo {bright} stops bright, {dark} dark; \
+                 edge {edge_before} -> {edge_after}"
+            );
 
-        let mut image = grey(w, h, scene);
-        local_contrast(&mut image, &clarity(-1.0), NO_CLIP);
-        let down = spread(&image, h / 2, 360, 440);
-        assert!(down < before * 0.5, "{before} -> {down}");
+            let mut image = grey(w, h, scene);
+            local_contrast_with_step(&mut image, &clarity(-1.0), NO_CLIP, step);
+            let down = spread(&image, h / 2, 360, 440);
+            assert!(down < before * 0.5, "step {step}: {before} -> {down}");
+        }
     }
 
     #[test]
@@ -655,18 +848,26 @@ mod tests {
             let d = (x as f32 - 320.0) / 6.0;
             0.3 * (-d * d).exp()
         };
-        let moved = |level: f32| {
-            let mut image = grey(w, h, |x, _| level * (1.0 + bump(x)));
-            let before = spread(&image, h / 2, 280, 360);
-            local_contrast(&mut image, &clarity(1.0), NO_CLIP);
-            spread(&image, h / 2, 280, 360) - before
-        };
-        let mid = moved(0.18);
-        let bright = moved(0.9);
-        let dark = moved(0.0005);
-        assert!(mid > 0.15, "mid {mid}");
-        assert!(bright < mid * 0.2, "bright {bright} against mid {mid}");
-        assert!(dark < mid * 0.2, "dark {dark} against mid {mid}");
+        for step in STEPS {
+            let moved = |level: f32| {
+                let mut image = grey(w, h, |x, _| level * (1.0 + bump(x)));
+                let before = spread(&image, h / 2, 280, 360);
+                local_contrast_with_step(&mut image, &clarity(1.0), NO_CLIP, step);
+                spread(&image, h / 2, 280, 360) - before
+            };
+            let mid = moved(0.18);
+            let bright = moved(0.9);
+            let dark = moved(0.0005);
+            assert!(mid > 0.15, "step {step}: mid {mid}");
+            assert!(
+                bright < mid * 0.2,
+                "step {step}: bright {bright} against mid {mid}"
+            );
+            assert!(
+                dark < mid * 0.2,
+                "step {step}: dark {dark} against mid {mid}"
+            );
+        }
     }
 
     #[test]
@@ -704,6 +905,32 @@ mod tests {
             brightest > clip,
             "the guard was not what held it: {brightest}"
         );
+
+        // Clarity's the same, on either filter, with the clip in the
+        // mid-tones where its weight is whole.
+        let clip = 0.4;
+        let scene = |x: usize, y: usize| {
+            if (80..112).contains(&x) {
+                clip
+            } else {
+                grating(x, y)
+            }
+        };
+        let plain = grey(w, h, scene);
+        for step in STEPS {
+            let mut image = plain.clone();
+            local_contrast_with_step(&mut image, &clarity(1.0), clip, step);
+            for x in 80..112 {
+                let (a, b) = (image.pixel(x, h / 2), plain.pixel(x, h / 2));
+                assert_eq!(a, b, "step {step} at {x}: the plateau is not detail");
+            }
+            let brightest = image.data.iter().cloned().fold(0.0, f32::max);
+            assert!(brightest <= clip, "step {step}: over the clip: {brightest}");
+            let mut unguarded = plain.clone();
+            local_contrast_with_step(&mut unguarded, &clarity(1.0), NO_CLIP, step);
+            let brightest = unguarded.data.iter().cloned().fold(0.0, f32::max);
+            assert!(brightest > clip, "step {step}: not the guard: {brightest}");
+        }
     }
 
     #[test]
@@ -715,23 +942,166 @@ mod tests {
             px[2] *= 0.6;
         }
         let before = image.clone();
-        local_contrast(
-            &mut image,
-            &LocalContrastOptions {
-                texture: 0.8,
-                clarity: 0.6,
-            },
-            NO_CLIP,
+        for step in STEPS {
+            let mut image = before.clone();
+            local_contrast_with_step(
+                &mut image,
+                &LocalContrastOptions {
+                    texture: 0.8,
+                    clarity: 0.6,
+                },
+                NO_CLIP,
+                step,
+            );
+            let mut changed = 0;
+            for (a, b) in image.pixels().zip(before.pixels()) {
+                assert!((a[0] / a[1] - b[0] / b[1]).abs() < 1e-4, "{a:?} vs {b:?}");
+                assert!((a[2] / a[1] - b[2] / b[1]).abs() < 1e-4, "{a:?} vs {b:?}");
+                if (a[1] - b[1]).abs() > 1e-4 {
+                    changed += 1;
+                }
+            }
+            assert!(
+                changed > w * h / 4,
+                "step {step}: only {changed} pixels moved"
+            );
+        }
+    }
+
+    #[test]
+    fn the_coarse_grid_is_taken_from_a_radius_of_64_and_reports_the_full_one() {
+        assert_eq!(clarity_step(MIN_CLARITY_RADIUS), 1);
+        assert_eq!(clarity_step(63), 1);
+        assert_eq!(clarity_step(64), COARSE_STEP);
+        assert_eq!(radii(2540, 1440).1, 64);
+        assert_eq!(radii(2539, 1440).1, 63);
+        let mut tall = grey(8, 2540, |_, y| 0.18 + 0.05 * ((y / 40) % 2) as f32);
+        assert_eq!(
+            local_contrast(&mut tall, &clarity(0.5), NO_CLIP).clarity_radius,
+            64
         );
-        let mut changed = 0;
-        for (a, b) in image.pixels().zip(before.pixels()) {
-            assert!((a[0] / a[1] - b[0] / b[1]).abs() < 1e-4, "{a:?} vs {b:?}");
-            assert!((a[2] / a[1] - b[2] / b[1]).abs() < 1e-4, "{a:?} vs {b:?}");
-            if (a[1] - b[1]).abs() > 1e-4 {
-                changed += 1;
+        // The window on the grid is the nearest to the full-size one.
+        assert_eq!(coarse_radius(150, 4), 37);
+        assert_eq!(coarse_radius(205, 4), 51);
+        assert_eq!(coarse_radius(64, 4), 16);
+        assert_eq!(coarse_radius(16, 1), 16);
+        // The status line keeps the radius of the full-size picture.
+        let mut image = grey(2560, 8, |x, _| 0.18 + 0.05 * ((x / 40) % 2) as f32);
+        let stats = local_contrast(&mut image, &clarity(0.5), NO_CLIP);
+        assert_eq!((stats.texture_radius, stats.clarity_radius), (2, 64));
+    }
+
+    #[test]
+    fn the_taps_put_each_block_at_its_center_and_clamp_at_the_edges() {
+        // Ten pixels in blocks of four: centers at 1.5, 5.5 and 8.5,
+        // the last block two pixels wide.
+        let taps = bilinear_taps(10, 4);
+        assert_eq!(taps[0], (0, 0, 0.0));
+        assert_eq!(taps[1], (0, 0, 0.0));
+        assert_eq!(taps[2], (0, 1, 0.125));
+        assert_eq!(taps[5], (0, 1, 0.875));
+        assert_eq!(taps[6], (1, 2, 0.5 / 3.0));
+        assert_eq!(taps[8], (1, 2, 2.5 / 3.0));
+        assert_eq!(taps[9], (2, 2, 0.0));
+        assert_eq!(
+            bilinear_taps(3, 1),
+            vec![(0, 0, 0.0), (1, 1, 0.0), (2, 2, 0.0)]
+        );
+    }
+
+    /// A plane of log luminance with structure at every scale: a fine
+    /// grating, a soft bump, a long swell, a three-stop edge, a hash
+    /// of grain.
+    fn textured_log(w: usize, h: usize) -> Vec<f32> {
+        (0..w * h)
+            .map(|i| {
+                let (x, y) = ((i % w) as f32, (i / w) as f32);
+                let edge = if x > 1300.0 + 0.3 * y { 3.0 } else { 0.0 };
+                let d = ((x - 700.0).powi(2) + (y - 250.0).powi(2)) / (40.0 * 40.0);
+                0.15 * (x * std::f32::consts::TAU / 6.0).sin()
+                    + 0.4 * (-d).exp()
+                    + 0.8 * (x / 300.0).sin() * (y / 170.0).cos()
+                    + edge
+                    - 2.0
+                    + ((i * 2654435761) % 1000) as f32 / 1000.0 * 0.1
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_coarse_filter_is_the_exact_one_to_the_edges_at_any_size() {
+        // Sides that are not multiples of the step, so the last row
+        // and column of blocks are cut short, over the whole plane:
+        // a short block counts for the pixels it holds, or the edges
+        // are where it shows.
+        for (w, h) in [(2601, 501), (2603, 1001)] {
+            let r = radii(w, h).1;
+            assert_eq!(clarity_step(r), COARSE_STEP);
+            let input = textured_log(w, h);
+            let mut exact = Scratch::new(w * h);
+            exact.guided_filter(&input, w, h, r, CLARITY_EPSILON);
+            let mut coarse = Scratch::new(w * h);
+            coarse.coarse_guided_filter(&input, w, h, r, CLARITY_EPSILON, COARSE_STEP);
+            let worst = coarse
+                .a
+                .iter()
+                .zip(&exact.a)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0.0f32, f32::max);
+            assert!(worst < 0.006, "{w}x{h}: worst {worst} stops");
+        }
+    }
+
+    #[test]
+    fn the_coarse_filter_is_the_exact_one_away_from_the_edges() {
+        // A picture large enough to take the grid, filtered at its
+        // radius both ways.
+        let (w, h) = (2600, 500);
+        let r = radii(w, h).1;
+        assert_eq!(clarity_step(r), COARSE_STEP);
+        let input = textured_log(w, h);
+        let mut exact = Scratch::new(w * h);
+        exact.guided_filter(&input, w, h, r, CLARITY_EPSILON);
+        let mut coarse = Scratch::new(w * h);
+        coarse.coarse_guided_filter(&input, w, h, r, CLARITY_EPSILON, COARSE_STEP);
+        let (mut worst, mut sum, mut n) = (0.0f32, 0.0f64, 0);
+        for y in r..h - r {
+            for x in r..w - r {
+                let d = (coarse.a[y * w + x] - exact.a[y * w + x]).abs();
+                worst = worst.max(d);
+                sum += d as f64;
+                n += 1;
             }
         }
-        assert!(changed > w * h / 4, "only {changed} pixels moved");
+        let mean = sum / n as f64;
+        assert!(
+            worst < 0.01 && mean < 0.001,
+            "worst {worst} mean {mean} stops"
+        );
+
+        // And the picture: Clarity at either end, in stops of the
+        // luminance it comes out with.
+        let image = {
+            let mut im = WorkingImage::new(w, h);
+            for (px, &l) in im.pixels_mut().zip(&input) {
+                *px = [MID_GREY * l.exp2(); 3];
+            }
+            im
+        };
+        for amount in [1.0, -1.0] {
+            let mut exact = image.clone();
+            local_contrast_with_step(&mut exact, &clarity(amount), NO_CLIP, 1);
+            let mut coarse = image.clone();
+            local_contrast(&mut coarse, &clarity(amount), NO_CLIP);
+            let mut worst = 0.0f32;
+            for y in r..h - r {
+                for x in r..w - r {
+                    let (a, b) = (exact.pixel(x, y), coarse.pixel(x, y));
+                    worst = worst.max((luminance(&a) / luminance(&b)).log2().abs());
+                }
+            }
+            assert!(worst < 0.01, "clarity {amount}: {worst} stops");
+        }
     }
 
     #[test]

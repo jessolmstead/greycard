@@ -263,3 +263,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§251. Local contrast faster: a quarter grid, then the GPU](notes/251-local-contrast-faster-a-quarter-grid-and-the-gpu.md) (2026-10-05)
 - [§252. SAM 3 for the body's parts: a trial on portraits](notes/252-sam-3-for-the-bodys-parts-a-trial-on-portraits.md) (2026-10-05)
 - [§253. The Parts mask on SAM 3: the build](notes/253-the-parts-mask-on-sam-3-the-build.md) (2026-10-06)
+- [§254. Clarity on a quarter grid, as built](notes/254-clarity-on-a-quarter-grid-as-built.md) (2026-10-06)

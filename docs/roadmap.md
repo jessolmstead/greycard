@@ -35,14 +35,10 @@ scroll bar, and the camera match gets a progress bar.
       and found again by the colors of their hair, clothes and skin on
       a picture the mask is pasted to, asking when two people are too
       alike. Designed in §253, built in two parts
-- [ ] Clarity's coarse guided filter on a quarter grid, `I` and `I²`
-      reduced by block means so no window's variance is lost; the
-      CPU path and the export gain too, and §103's numbers are
-      measured again against it (§251)
 - [ ] Local contrast on the GPU, the CPU op its reference, so a
       Texture or Clarity move costs about what a sharpen move does
       (~55 ms against ~0.3 s at 24 MP); an edit with the dehaze on
-      stays on the CPU path. Waits on the quarter grid (§251)
+      stays on the CPU path (§251, §254)
 - [ ] A scroll bar under the film strip, as the grid has (§214): the
       strip scrolls by wheel and keys since §89 but shows neither where
       it is in the folder nor a handle to drag there

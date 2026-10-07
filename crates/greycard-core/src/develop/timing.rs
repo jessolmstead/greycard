@@ -38,7 +38,7 @@ fn time(name: &str, runs: usize, mut run: impl FnMut() -> (Duration, Vec<f32>)) 
         let (t, out) = run();
         let t = t.as_secs_f64();
         let bits = digest(&out);
-        println!("{name:>14} run {i}: {t:8.4} s  (load {at})  bits {bits:016x}");
+        println!("{name:>20} run {i}: {t:8.4} s  (load {at})  bits {bits:016x}");
         times.push(t);
     }
     if times.is_empty() {
@@ -46,7 +46,7 @@ fn time(name: &str, runs: usize, mut run: impl FnMut() -> (Duration, Vec<f32>)) 
     }
     times.sort_by(f64::total_cmp);
     println!(
-        "{name:>14}: min {:.4} s  median {:.4} s  over {runs}",
+        "{name:>20}: min {:.4} s  median {:.4} s  over {runs}",
         times[0],
         times[runs / 2]
     );
@@ -255,15 +255,38 @@ fn ops_alone() {
             (t.elapsed(), im.data)
         });
     }
-    if wants("local_contrast") {
+    // Clarity alone and with Texture beside it, each as its radius
+    // chooses and with the exact filter forced, which is the op as it
+    // was before the coarse grid, to the bit.
+    for (name, texture, step) in [
+        ("clarity", 0.0, None),
+        ("clarity_exact", 0.0, Some(1)),
+        ("local_contrast", 0.5, None),
+        ("local_contrast_exact", 0.5, Some(1)),
+    ] {
+        if !wants(name) {
+            continue;
+        }
         let options = local_contrast::LocalContrastOptions {
-            texture: 0.5,
+            texture,
             clarity: 0.5,
         };
-        time("local_contrast", runs, || {
+        time(name, runs, || {
             let mut im = image.clone();
             let t = Instant::now();
-            local_contrast::local_contrast(&mut im, &options, prepared.ceiling);
+            match step {
+                None => {
+                    local_contrast::local_contrast(&mut im, &options, prepared.ceiling);
+                }
+                Some(step) => {
+                    local_contrast::local_contrast_with_step(
+                        &mut im,
+                        &options,
+                        prepared.ceiling,
+                        step,
+                    );
+                }
+            }
             (t.elapsed(), im.data)
         });
     }

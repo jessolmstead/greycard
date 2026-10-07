@@ -10,6 +10,15 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
+## 0.5.0, unreleased
+
+### Speed
+
+- Clarity takes half the time it did on a picture with a long edge of
+  2540 pixels or more, in the editor and the export alike, its filter
+  found on a grid of four-pixel blocks; below that it is unchanged
+  ([§254](https://github.com/jessolmstead/greycard/blob/master/docs/notes/254-clarity-on-a-quarter-grid-as-built.md))
+
 ## 0.4.0, 2026-10-05
 
 Sweeping improvements, especially to the library.
