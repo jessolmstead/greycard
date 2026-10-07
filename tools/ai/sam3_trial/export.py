@@ -181,10 +181,10 @@ with torch.no_grad():
 if len(sys.argv) > 5:
     from tokenizers import Tokenizer
 
-    from prompts import EYE, FREE, PRESETS
+    from prompts import EYE, FREE, PRESETS, SHIPPED
     from sam3onnx import tokenize
 
     hf = Tokenizer.from_file(sys.argv[5])
-    phrases = list(dict.fromkeys(PRESETS + FREE + EYE))
+    phrases = list(dict.fromkeys(PRESETS + FREE + EYE + SHIPPED))
     bad = [ph for ph in phrases if not np.array_equal(tok([ph], context_length=32).numpy(), tokenize(hf, ph))]
     print(f"tokenizers agree on {len(phrases) - len(bad)} of {len(phrases)} phrases; differ on {bad}")

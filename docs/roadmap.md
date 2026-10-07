@@ -38,8 +38,9 @@ scroll bar, and the camera match gets a progress bar.
       of preset vectors, no text encoder; registry entries, the
       shapes and the menu; a person picked on a picture with several,
       and found again by the colors of their hair, clothes and skin on
-      a picture the mask is pasted to, asking when two people are too
-      alike. Designed in §253, built in two parts
+      a picture the mask is pasted to, asking on a picture of several.
+      Designed in §253; the model side built (§256), the editor side
+      next
 - [ ] Local contrast on the GPU, the CPU op its reference, so a
       Texture or Clarity move costs about what a sharpen move does
       (~55 ms against ~0.3 s at 24 MP); an edit with the dehaze on

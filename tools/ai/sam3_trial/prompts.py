@@ -8,6 +8,9 @@ computed once (presets.py) and the trial runs them without the
 language encoder. FREE are phrases a user might type into "Describe".
 Neither list says what each frame holds; absences (teeth with closed
 mouths, sky indoors, a dog nowhere) are read off the sheets per frame.
+
+SHIPPED is the editor's table (table.py): the Parts menu's phrases and
+the ones its routes ask on their own.
 """
 
 PRESETS = [
@@ -34,3 +37,17 @@ EYE = ["iris", "pupil", "eye whites", "eyelashes", "eyes",
 
 MOUTH = ["teeth", "lips", "upper lip", "lower lip", "mouth", "gums",
          "tongue", "smile", "white teeth"]
+
+# What the editor ships (table.py writes it to sam3_presets.bin): the
+# Parts menu's phrases, Face, Body and Clothing, then the phrases the
+# routes and the people ask for on their own.
+SHIPPED = [
+    # Face
+    "face", "facial skin", "eyebrows", "eyes", "iris of the eye", "lips", "teeth",
+    # Body
+    "skin", "hair", "hands",
+    # Clothing, by where it is worn
+    "upper body clothing", "lower body clothing", "shoes", "clothing",
+    # the routes and the people
+    "person", "mouth",
+]

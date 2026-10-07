@@ -17,6 +17,7 @@ pub mod refine;
 pub mod registry;
 pub mod runtime;
 pub mod sam;
+pub mod sam3;
 pub mod sky;
 pub mod store;
 pub mod subject;
@@ -27,11 +28,12 @@ pub use fill::Fill;
 pub use image::{Mask, Rgb8, Rgbf};
 pub use refine::refine;
 pub use registry::{
-    DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST, DENOISERS, FILL, MODELS, Model, SAM, SKY,
+    DENOISE_BALANCED, DENOISE_BEST, DENOISE_FAST, DENOISERS, FILL, MODELS, Model, SAM, SAM3, SKY,
     SUBJECT, SUBJECT_WEBGPU, denoiser, model, tier_of,
 };
 pub use runtime::Provider;
 pub use sam::{Prompt, Sam};
+pub use sam3::{Encodings, Person, Piece, Presets, Route, Sam3, Signature};
 pub use sky::Sky;
 pub use store::{Progress, Store};
 pub use subject::Subject;

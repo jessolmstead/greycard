@@ -84,3 +84,20 @@ resolution in `full/` for the iris and the mouth. The results are in
     python -s fp16.py models/ours/sam3_image_encoder.onnx models/ours/sam3_image_encoder_fp16.onnx
     python -s run.py models/ours/sam3_image_encoder_fp16.onnx models/ours/sam3_decoder.onnx presets-ours.npz out/ours16 img/*.jpg
     python -s compare.py out/ours out/ours16
+
+## What the editor ships
+
+The Parts mask (`crates/greycard-ai/src/sam3.rs`) runs the fp16 image
+encoder, the decoder, and a phrase table in place of the language
+encoder. `table.py` writes the table for the phrases in
+`prompts.SHIPPED`, `sam3_presets.bin` (the format is in its
+docstring), with `sam3_presets.json` beside it for reading by eye;
+`reference.py` writes what the editor's ignored test checks its own
+decode against. With a store laid out as the registry's `SAM3`
+(`STORE/sam3-fp16-top16-1/` holding the two graphs and the table):
+
+    python -s table.py models/ours STORE/sam3-fp16-top16-1
+    python -s reference.py models/ours STORE/sam3-fp16-top16-1/sam3_presets.bin img/DSCF0835.jpg ref/DSCF0835.json
+    GREYCARD_MODELS=STORE GREYCARD_SAM3_REFERENCE=ref/DSCF0835.json \
+    GREYCARD_SAM3_PICTURE=img/DSCF0835.jpg GREYCARD_SAM3_FRAMES=img \
+        cargo test -p greycard-ai --test sam3 -- --ignored --nocapture

@@ -201,6 +201,54 @@ pub const SAM: Model = Model {
     ],
 };
 
+/// The SAM License, which goes with every copy of SAM 3 and of what is
+/// made from it: Meta's copyright line, as its source files carry it,
+/// and the agreement as `facebookresearch/sam3` gives it.
+const SAM_LICENSE: &str = concat!(
+    "Copyright (c) Meta Platforms, Inc. and affiliates. All Rights Reserved\n\n",
+    include_str!("sam_license.txt"),
+);
+
+/// SAM 3 (Meta): segment by a phrase, for the Parts mask. Our export
+/// of Meta's `sam3.pt` (`tools/ai/sam3_trial/export.py` and
+/// `fp16.py`): the image encoder in fp16, once a picture or a crop;
+/// the decoder once a phrase; and the phrases' decoder inputs as a
+/// table (`table.py`), so no text encoder ships. See `sam3`.
+pub const SAM3: Model = Model {
+    id: "sam3-fp16-top16-1",
+    name: "SAM 3 (Meta), fp16 image encoder, ONNX export by greycard",
+    purpose: "the Parts mask: a part of a person, asked for by name",
+    source: "https://github.com/facebookresearch/sam3 and https://huggingface.co/facebook/sam3, exported by https://github.com/jessolmstead/greycard (tools/ai/sam3_trial/export.py, fp16.py, table.py)",
+    license: License {
+        name: "SAM License",
+        url: "https://github.com/facebookresearch/sam3/blob/main/LICENSE",
+    },
+    modified: Some(Modified {
+        what: "converted to ONNX (with Kentaro Wada's traceable rotary encoding, wkentaro/sam3 at 812de8a), the image encoder converted to fp16, the decoder made to return the sixteen best queries with the presence score apart, and a fixed set of phrases run through the language encoder once and stored as a table; the weights are otherwise untouched.",
+        notice: SAM_LICENSE,
+    }),
+    files: &[
+        File {
+            name: "sam3_image_encoder_fp16.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-sam3/resolve/main/sam3_image_encoder_fp16.onnx",
+            bytes: 908_762_234,
+            sha256: "dd4733a6882264d0ab00599acd6ece3dd700f9b61b7976369b956ce41d88c23d",
+        },
+        File {
+            name: "sam3_decoder.onnx",
+            url: "https://huggingface.co/jessolmstead/greycard-sam3/resolve/main/sam3_decoder.onnx",
+            bytes: 129_854_990,
+            sha256: "7c205232b0698d532731fd5fa206cdea694717de69c0d8e88997a14027425564",
+        },
+        File {
+            name: "sam3_presets.bin",
+            url: "https://huggingface.co/jessolmstead/greycard-sam3/resolve/main/sam3_presets.bin",
+            bytes: 524_962,
+            sha256: "a1c205ef7e4374a6a9072928339d957eb78f78efa01b5cf170fe0f6ff92d6917",
+        },
+    ],
+};
+
 /// EoMT's license, as its repository gives it
 /// (https://github.com/tue-mps/eomt/blob/master/LICENSE), for the note
 /// beside the export greycard publishes.
@@ -333,6 +381,7 @@ pub const MODELS: &[Model] = &[
     SUBJECT,
     SUBJECT_WEBGPU,
     SAM,
+    SAM3,
     SKY,
     FILL,
     DENOISE_FAST,
@@ -453,5 +502,17 @@ mod tests {
         assert!(note.contains("Copyright (c) 2025 Mobile Perception Systems Lab at TU/e"));
         assert!(note.contains("The above copyright notice and this permission notice"));
         assert!(note.contains("eomt_export.py"));
+
+        // The SAM License wants a copy of itself with every copy, not
+        // a link to it.
+        let note = SAM3.license_note();
+        assert!(note.contains("SAM License"));
+        assert!(note.contains("Copyright (c) Meta Platforms, Inc. and affiliates."));
+        assert!(note.contains("you shall provide a copy of this Agreement"));
+        assert!(note.contains("Modifications and Amendments"));
+        assert!(note.contains("sixteen best queries"));
+        for f in SAM3.files {
+            assert!(note.contains(f.sha256));
+        }
     }
 }
