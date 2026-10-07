@@ -60,7 +60,7 @@ pub(crate) struct Done {
 /// of their own.
 pub(crate) fn store() -> Option<PathBuf> {
     #[cfg(test)]
-    if let Some(dir) = tests::STORE.with(|s| s.borrow().clone()) {
+    if let Some(dir) = crate::testing::LOOK_STORE.with(|s| s.borrow().clone()) {
         return Some(dir);
     }
     look::store_dir()
@@ -527,7 +527,7 @@ pub(crate) fn land(st: &mut State, app: &App, done: Done) {
 }
 
 /// The look list, from the store the sheet works on.
-fn list_in(dir: Option<PathBuf>) -> Vec<Entry> {
+pub(crate) fn list_in(dir: Option<PathBuf>) -> Vec<Entry> {
     let Some(dir) = dir else {
         return Vec::new();
     };
@@ -561,12 +561,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testing::{click, press, state_for, window};
+    use crate::testing::{LOOK_STORE, click, press, state_for, window};
     use slint::platform::Key;
 
     thread_local! {
         pub(super) static SENT: RefCell<Vec<Job>> = const { RefCell::new(Vec::new()) };
-        pub(super) static STORE: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
     }
 
     fn scratch(what: &str) -> PathBuf {
@@ -815,7 +814,7 @@ mod tests {
     fn the_sheet_removes_a_look_and_takes_the_keys() {
         let dir = scratch("window");
         let store = store_of(&dir);
-        STORE.with(|s| *s.borrow_mut() = Some(store.clone()));
+        LOOK_STORE.with(|s| *s.borrow_mut() = Some(store.clone()));
         let app = window(3);
         let (state, _worker) = state_for(&app, crate::testing::folder(3));
         {
@@ -903,7 +902,7 @@ mod tests {
         assert!(!app.get_look_removable());
         assert!(state.borrow().look_for.is_none());
         assert_eq!(state.borrow().edit.look_lut.lut.name(), "Neon");
-        STORE.with(|s| *s.borrow_mut() = None);
+        LOOK_STORE.with(|s| *s.borrow_mut() = None);
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -914,7 +913,7 @@ mod tests {
     fn the_sheet_reads_the_folder_again() {
         let dir = scratch("stale");
         let store = store_of(&dir);
-        STORE.with(|s| *s.borrow_mut() = Some(store.clone()));
+        LOOK_STORE.with(|s| *s.borrow_mut() = Some(store.clone()));
         let app = window(2);
         let (state, _worker) = state_for(&app, crate::testing::folder(2));
         // The list the panel holds is from before the AgX table.
@@ -931,7 +930,7 @@ mod tests {
             .map(|s| s.to_string())
             .collect();
         assert_eq!(listed, ["Neon.cube", "Neon.agx.cube"]);
-        STORE.with(|s| *s.borrow_mut() = None);
+        LOOK_STORE.with(|s| *s.borrow_mut() = None);
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -948,7 +947,7 @@ mod tests {
         std::os::unix::fs::symlink(&target, store.join("Linky.cube")).unwrap();
         std::fs::remove_file(store.join("Neon.cube")).unwrap();
         std::os::unix::fs::symlink(&target, store.join("Neon.cube")).unwrap();
-        STORE.with(|s| *s.borrow_mut() = Some(store.clone()));
+        LOOK_STORE.with(|s| *s.borrow_mut() = Some(store.clone()));
         let app = window(2);
         let (state, _worker) = state_for(&app, crate::testing::folder(2));
         app.set_look_name("Linky".into());
@@ -991,7 +990,7 @@ mod tests {
             "{}",
             app.get_look_remove_note()
         );
-        STORE.with(|s| *s.borrow_mut() = None);
+        LOOK_STORE.with(|s| *s.borrow_mut() = None);
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -1031,7 +1030,7 @@ mod tests {
     fn none_cannot_be_removed() {
         let dir = scratch("none");
         let store = store_of(&dir);
-        STORE.with(|s| *s.borrow_mut() = Some(store));
+        LOOK_STORE.with(|s| *s.borrow_mut() = Some(store));
         let app = window(2);
         let (state, _worker) = state_for(&app, crate::testing::folder(2));
         show_looks(&state.borrow(), &Default::default(), &app);
@@ -1039,7 +1038,7 @@ mod tests {
         ask(&mut state.borrow_mut(), &app);
         assert!(!app.get_look_remove_open());
         assert!(app.get_status().contains("no look is chosen"));
-        STORE.with(|s| *s.borrow_mut() = None);
+        LOOK_STORE.with(|s| *s.borrow_mut() = None);
         crate::testing::remove_dir_retry(&dir);
     }
 }

@@ -266,3 +266,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§254. Clarity on a quarter grid, as built](notes/254-clarity-on-a-quarter-grid-as-built.md) (2026-10-06)
 - [§255. The strip's scroll bar, and Home and End](notes/255-the-strips-scroll-bar-and-home-and-end.md) (2026-10-06)
 - [§256. The Parts mask's model side, as built](notes/256-the-parts-masks-model-side-as-built.md) (2026-10-06)
+- [§257. Renaming a look](notes/257-renaming-a-look.md) (2026-10-07)

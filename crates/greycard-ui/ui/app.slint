@@ -29,6 +29,7 @@ import { ModelSheet } from "panel/model-sheet.slint";
 import { RejectsSheet } from "panel/rejects-sheet.slint";
 import { DeleteSheet } from "panel/delete-sheet.slint";
 import { LookRemoveSheet } from "panel/look-remove-sheet.slint";
+import { LookRenameSheet } from "panel/look-rename-sheet.slint";
 import { OverwriteSheet } from "panel/overwrite-sheet.slint";
 import { ArchiveSheet, ArchiveCard } from "panel/archive-sheet.slint";
 import { ArchiveRejectsSheet } from "panel/archive-rejects-sheet.slint";
@@ -1068,6 +1069,24 @@ export component App inherits Window {
     in property <bool> look-remove-trash: true;
     in property <bool> look-remove-permanent: false;
     callback look-remove-answered(int);
+    /// The chosen look has files in the look folder and none is a link.
+    in property <bool> look-renamable: false;
+    callback look-rename-asked();
+    /// The rename-a-look sheet: the new name, what the files become,
+    /// who names the look, and whether the name can be taken, until
+    /// answered.
+    in-out property <bool> look-rename-open: false;
+    in property <string> look-rename-title: "";
+    in-out property <string> look-rename-name: "";
+    in property <[string]> look-rename-files;
+    in property <string> look-rename-refusal: "";
+    in property <string> look-rename-uses: "";
+    in property <string> look-rename-note: "";
+    in property <bool> look-rename-ready: false;
+    in property <string> look-rename-warning: "";
+    in property <bool> look-rename-working: false;
+    callback look-rename-edited();
+    callback look-rename-answered(bool);
     /// An export about to write over files that are there, under the
     /// Overwrite policy: every one of them, until answered (0 no, 1
     /// keep both, 2 overwrite).
@@ -1518,7 +1537,7 @@ export component App inherits Window {
     /// a sheet up of its own accord.
     public pure function sheet-open() -> bool {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
-            || root.delete-open || root.look-remove-open || root.overwrite-open || root.archive-open || root.archive-rejects-open
+            || root.delete-open || root.look-remove-open || root.look-rename-open || root.overwrite-open || root.archive-open || root.archive-rejects-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
             || root.root-sheet-open;
     }
@@ -1536,6 +1555,7 @@ export component App inherits Window {
     changed rejects-open => { if (!root.rejects-open && !root.sheet-open()) { keys.focus(); } }
     changed delete-open => { if (!root.delete-open && !root.sheet-open()) { keys.focus(); } }
     changed look-remove-open => { if (!root.look-remove-open && !root.sheet-open()) { keys.focus(); } }
+    changed look-rename-open => { if (!root.look-rename-open && !root.sheet-open()) { keys.focus(); } }
     changed overwrite-open => { if (!root.overwrite-open && !root.sheet-open()) { keys.focus(); } }
     changed archive-open => { if (!root.archive-open && !root.sheet-open()) { keys.focus(); } }
     changed archive-rejects-open => {
@@ -1561,6 +1581,10 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
             if (e.text == Key.Escape && root.delete-open) { root.delete-answered(0); return accept; }
             if (e.text == Key.Escape && root.look-remove-open) { root.look-remove-answered(0); return accept; }
+            if (e.text == Key.Escape && root.look-rename-open) {
+                if (!root.look-rename-working) { root.look-rename-answered(false); }
+                return accept;
+            }
             if (e.text == Key.Escape && root.overwrite-open) { root.overwrite-answered(0); return accept; }
             if (e.text == Key.Escape && root.archive-open) { root.archive-answered(false); return accept; }
             if (e.text == Key.Escape && root.archive-rejects-open) { root.archive-rejects-answered(0); return accept; }
@@ -2243,6 +2267,8 @@ export component App inherits Window {
                             look-picked => { root.look-picked(); }
                             look-removable: root.look-removable;
                             look-remove-asked => { root.look-remove-asked(); }
+                            look-renamable: root.look-renamable;
+                            look-rename-asked => { root.look-rename-asked(); }
                             match-asked => { root.match-asked(); }
                             view-changed => { root.view-changed(); }
                         }
@@ -2884,6 +2910,25 @@ export component App inherits Window {
         remove-answered(a) => {
             root.look-remove-answered(a);
             keys.focus();
+        }
+    }
+
+    // The rename-a-look sheet: the new name, what the files become and
+    // who names the look. The keys go back to the window after.
+    if root.look-rename-open: LookRenameSheet {
+        rename-title: root.look-rename-title;
+        rename-name <=> root.look-rename-name;
+        rename-files: root.look-rename-files;
+        rename-refusal: root.look-rename-refusal;
+        rename-uses: root.look-rename-uses;
+        rename-note: root.look-rename-note;
+        rename-ready: root.look-rename-ready;
+        rename-warning: root.look-rename-warning;
+        rename-working: root.look-rename-working;
+        rename-edited => { root.look-rename-edited(); }
+        rename-answered(yes) => {
+            root.look-rename-answered(yes);
+            if (!root.look-rename-open) { keys.focus(); }
         }
     }
 

@@ -378,6 +378,10 @@ fn describe(dropped: &[Pending]) -> String {
 pub(crate) struct Loads {
     pub(crate) queue: VecDeque<Pending>,
     next: u64,
+    /// Every read out on its thread, by its request's id, with the
+    /// paths it reads: a request dropped from the queue still lands its
+    /// read, so this, not the queue, is what is in flight.
+    pub(crate) in_flight: std::collections::HashMap<u64, Vec<PathBuf>>,
     /// How many sidecars the reads out cover, and how many are in.
     pub(crate) progress: Option<Arc<Progress>>,
     /// Since when a read has been out.
@@ -568,6 +572,7 @@ fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
     let write = st.write_sidecars;
     let generation = st.view_generation;
     bar_started(st, app, to_read.len());
+    st.loads.in_flight.insert(id, to_read.clone());
     #[cfg(test)]
     {
         QUEUED.with(|q| q.borrow_mut().push((id, generation, to_read, write)));
@@ -603,6 +608,7 @@ fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
         if let Err(e) = spawned {
             // No thread to be had: read here, on the window's thread.
             tracing::warn!("{e}; the sidecars read on the window's thread");
+            st.loads.in_flight.remove(&id);
             let none = vec![None; paths.len()];
             let held = bring(&paths, &none, write, None);
             let results: Vec<(PathBuf, Held)> = paths.into_iter().zip(held).collect();
@@ -700,6 +706,8 @@ fn landed(
             Some(p) => p.landed = true,
             None => tracing::debug!("a sidecar read came in for a request since dropped"),
         }
+        st.loads.in_flight.remove(&id);
+        crate::panel::look_rename::read_landed(&mut st, app, id);
         if !st.loads.reading() {
             bar_done(&mut st, app);
         }
@@ -1000,6 +1008,17 @@ pub(crate) fn load_frames(st: &mut State, app: &App, frames: &[usize]) -> Vec<us
     kept
 }
 
+/// A read of frame `i`'s sidecar landing with `sidecar`, as a request's
+/// does: for a test of what comes in late.
+#[cfg(test)]
+pub(crate) fn land_read(st: &mut State, app: &App, i: usize, sidecar: Sidecar) -> bool {
+    let held = Held {
+        sidecar,
+        ..from_nothing()
+    };
+    take(st, app, i, held)
+}
+
 /// `held` becomes frame `i`'s: the sidecar, the seed, and the row no
 /// longer standing in. Badges follow the meta the read brought. A read
 /// that did not take is not taken over a frame standing in from its
@@ -1036,6 +1055,9 @@ fn take(st: &mut State, app: &App, i: usize, held: Held) -> bool {
     }
     let moved = st.sidecars[i].meta != sidecar.meta;
     st.sidecars[i] = sidecar;
+    // A read that was out when a look it names was renamed: it takes the
+    // new name, the open frame's too, before the panel is opened on it.
+    crate::panel::look_rename::caught_up(st, i);
     if let Some(s) = st.seed_blend.get_mut(i) {
         *s = seed;
     }

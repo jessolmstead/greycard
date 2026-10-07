@@ -106,6 +106,22 @@ impl LookLut {
         self.lut.is_none() || self.strength <= 0.0
     }
 
+    /// Whether this names the look `name`, exactly: `Neon` is not
+    /// `Neon Film`, `neon` or `Neon.agx`.
+    pub fn names(&self, name: &str) -> bool {
+        matches!(&self.lut, LutChoice::Named(n) if n == name)
+    }
+
+    /// Name the look `to` where this names `from`; true when it did.
+    /// The strength stays.
+    pub fn rename(&mut self, from: &str, to: &str) -> bool {
+        if !self.names(from) {
+            return false;
+        }
+        self.lut = LutChoice::Named(to.to_string());
+        true
+    }
+
     /// The engine's look for this choice: the table read and kept with
     /// its matrices solved, or `None` when no table is named. A table
     /// that will not read warns once and comes back `None`, which is
@@ -372,6 +388,132 @@ fn is_a_name(name: &str) -> bool {
         || name.contains(['/', '\\'])
         || name.contains("..")
         || Path::new(name).is_absolute())
+}
+
+/// The longest a look's name may be, in bytes: a file name is at most
+/// 255 on every system the editor runs on, and the longest file a look
+/// has, with the name a rename's copy is made under before it is put in
+/// place, is `<name>.channels.cube.part`.
+pub const NAME_BYTES: usize = 255 - ".channels.cube.part".len();
+
+/// Why `name` cannot be a look's name, in the rename sheet's words, or
+/// none when it can. The name is a file's on Windows, macOS and Linux
+/// alike, since a look folder is copied between them: no character any
+/// of them refuses, no name Windows keeps for a device, no ending in a
+/// dot. Nothing [`path_for`] would refuse, and nothing the list would
+/// read as something else: the word for no look, or a name ending in a
+/// display curve's word (`Neon.agx` would be the AgX table of a look
+/// called Neon). `name` is taken as given; the sheet trims it first.
+pub fn name_refusal(name: &str) -> Option<String> {
+    if name.is_empty() {
+        return Some("A look needs a name.".into());
+    }
+    if name.eq_ignore_ascii_case(NONE) {
+        return Some(format!("\"{NONE}\" is the word for no look."));
+    }
+    if let Some(c) = name.chars().find(|c| c.is_control()) {
+        return Some(format!(
+            "A look's name cannot hold a control character ({:?}).",
+            c
+        ));
+    }
+    if let Some(c) = name.chars().find(|c| is_format(*c)) {
+        return Some(format!(
+            "A look's name cannot hold an invisible character (U+{:04X}).",
+            u32::from(c)
+        ));
+    }
+    if let Some(c) = name
+        .chars()
+        .find(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|'))
+    {
+        let systems = match c {
+            '/' => "any system",
+            ':' => "Windows or macOS",
+            _ => "Windows",
+        };
+        return Some(format!("A file name cannot hold \"{c}\" on {systems}."));
+    }
+    if name.starts_with('.') {
+        return Some("A name that starts with a dot is a hidden file on macOS and Linux.".into());
+    }
+    if name.ends_with('.') {
+        return Some("A file name cannot end in a dot on Windows.".into());
+    }
+    if name.contains("..") {
+        return Some("A look's name cannot hold two dots in a row.".into());
+    }
+    // Windows keeps these for devices with any extension after them,
+    // so `CON.cube` is no file there either.
+    let device = name
+        .split('.')
+        .next()
+        .unwrap_or(name)
+        .trim_end()
+        .to_uppercase();
+    let port = device
+        .strip_prefix("COM")
+        .or_else(|| device.strip_prefix("LPT"))
+        .is_some_and(|n| {
+            matches!(
+                n,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        });
+    let reserved = port
+        || matches!(
+            device.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+        );
+    if reserved {
+        return Some(format!(
+            "\"{}\" is a device's name on Windows, not a file's.",
+            name.split('.').next().unwrap_or(name).trim_end()
+        ));
+    }
+    if let Some((stem, word)) = name.rsplit_once('.')
+        && let Some(curve) = DisplayCurve::ALL
+            .into_iter()
+            .find(|c| c.key().eq_ignore_ascii_case(word))
+    {
+        return Some(format!(
+            "A name ending in \".{word}\" is read as the {} table of a look called \"{stem}\".",
+            curve.phrase()
+        ));
+    }
+    if name.len() > NAME_BYTES {
+        return Some("That name is too long for a file name.".into());
+    }
+    None
+}
+
+/// Whether `c` is a format character (Unicode's Cf): zero-width and
+/// direction marks and the like, which a name shows nothing of and two
+/// names that look alike can differ by.
+fn is_format(c: char) -> bool {
+    matches!(
+        u32::from(c),
+        0xAD | 0x600..=0x605
+            | 0x61C
+            | 0x6DD
+            | 0x70F
+            | 0x890..=0x891
+            | 0x8E2
+            | 0x180E
+            | 0x200B..=0x200F
+            | 0x202A..=0x202E
+            | 0x2060..=0x2064
+            | 0x2066..=0x206F
+            | 0xFEFF
+            | 0xFFF9..=0xFFFB
+            | 0x110BD
+            | 0x110CD
+            | 0x13430..=0x1343F
+            | 0x1BCA0..=0x1BCA3
+            | 0x1D173..=0x1D17A
+            | 0xE0001
+            | 0xE0020..=0xE007F
+    )
 }
 
 /// [`path_for`] in the directory `dir`, the name already checked.
@@ -1692,6 +1834,48 @@ mod tests {
         assert!(path_for("sub/dir").is_none());
         assert!(path_for("/etc/passwd").is_none());
         assert!(path_for("").is_none());
+    }
+
+    /// A name for a look is a file's name on every system: each refusal
+    /// says why, and a name all of them take is taken.
+    #[test]
+    fn a_look_name_is_a_file_name_on_every_system() {
+        let refused = |n: &str| name_refusal(n).unwrap_or_else(|| panic!("{n:?} taken"));
+        assert_eq!(refused(""), "A look needs a name.");
+        assert!(refused("None").contains("no look"));
+        assert!(refused("a/b").contains("on any system"));
+        assert!(refused("a:b").contains("Windows or macOS"));
+        for c in ['\\', '*', '?', '"', '<', '>', '|'] {
+            assert!(refused(&format!("a{c}b")).ends_with("on Windows."), "{c}");
+        }
+        assert!(refused("a\tb").contains("control character"));
+        for c in ['\u{200B}', '\u{200E}', '\u{FEFF}', '\u{AD}', '\u{2066}'] {
+            assert!(refused(&format!("Ne{c}on")).contains("invisible"), "{c:?}");
+        }
+        assert!(refused(".hidden").contains("hidden file"));
+        assert!(refused("Neon.").contains("end in a dot"));
+        assert!(refused("A..B").contains("two dots"));
+        for device in [
+            "CON", "nul", "Com1", "LPT9", "aux.film", "COM¹", "lpt³", "CONIN$", "conout$",
+        ] {
+            assert!(refused(device).contains("device"), "{device}");
+        }
+        assert!(refused("Neon.agx").contains("AgX table of a look called \"Neon\""));
+        assert!(refused("Neon.channels").contains("per channel table"));
+        assert!(refused(&"x".repeat(NAME_BYTES + 1)).contains("too long"));
+        for fine in [
+            "Neon Film",
+            "Canon EOS R6 Mark II Faithful",
+            "Kodak 400 (warm)",
+            "COM0",
+            "Console",
+            "Neon.v2",
+            "Été",
+            &"x".repeat(NAME_BYTES),
+        ] {
+            assert_eq!(name_refusal(fine), None, "{fine}");
+            assert!(is_a_name(fine), "{fine}");
+        }
     }
 
     #[test]

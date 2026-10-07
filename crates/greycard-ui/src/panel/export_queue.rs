@@ -95,7 +95,7 @@ pub(crate) fn show_queue(st: &State, app: &App) {
 /// the file (not out of the entry, which the run still counts by
 /// place), so a window closed or a crash mid-entry does not send them
 /// again at the next run.
-fn keep(st: &State) {
+pub(crate) fn keep(st: &State) {
     let Some(path) = &st.export_queue_file else {
         return;
     };

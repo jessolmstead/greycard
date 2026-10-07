@@ -7,6 +7,13 @@ use slint::{ComponentHandle, ModelRc};
 use crate::worker::Worker;
 use crate::{App, State, Thumb, grid, install_callbacks};
 
+thread_local! {
+    /// The look folder a test's removal or rename works on, in place of
+    /// the user's (`panel::look_remove::store`).
+    pub(crate) static LOOK_STORE: RefCell<Option<std::path::PathBuf>> =
+        const { RefCell::new(None) };
+}
+
 /// An App with a folder of eleven frames on it, shown and
 /// focused, on a backend that opens no window.
 pub(crate) fn window(count: usize) -> App {

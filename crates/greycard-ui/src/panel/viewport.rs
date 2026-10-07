@@ -571,6 +571,10 @@ pub(crate) enum Shown {
     /// over the first look in the directory when none is chosen. Never
     /// answered: a capture never touches the files.
     LookRemove,
+    /// The rename-a-look sheet, as the Look section's Rename opens it,
+    /// over the first look in the directory when none is chosen. A
+    /// capture never renames, whatever `--keys` answers.
+    LookRename,
     /// The root sheet over the library's first root, as its chip's
     /// Rename... opens it.
     RootName,
@@ -617,6 +621,7 @@ impl Shown {
             "matched" => Ok(Self::Matched),
             "refit" => Ok(Self::Refit),
             "look-remove" => Ok(Self::LookRemove),
+            "look-rename" => Ok(Self::LookRename),
             "root-name" => Ok(Self::RootName),
             "delete" => Ok(Self::Delete),
             "archive" => Ok(Self::Archive),
@@ -624,7 +629,8 @@ impl Shown {
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, paste, pasted, import, imported, match, \
-                 matched, refit, look-remove, root-name, delete, archive or archive-rejects, not {name}"
+                 matched, refit, look-remove, look-rename, root-name, delete, archive or \
+                 archive-rejects, not {name}"
             )),
         }
     }
@@ -699,7 +705,7 @@ impl Shown {
             Self::Settings => app.invoke_settings_asked(),
             Self::Match => app.invoke_match_asked(),
             Self::Refit => app.invoke_look_refit_asked(),
-            Self::LookRemove => {
+            Self::LookRemove | Self::LookRename => {
                 if app.get_look_name() == "none"
                     && let Some(state) = STATE.with(|s| s.borrow().clone())
                 {
@@ -709,7 +715,11 @@ impl Shown {
                         app.set_look_name(first.into());
                     }
                 }
-                app.invoke_look_remove_asked();
+                if self == Self::LookRemove {
+                    app.invoke_look_remove_asked();
+                } else {
+                    app.invoke_look_rename_asked();
+                }
             }
             Self::Matched => {
                 app.invoke_match_asked();

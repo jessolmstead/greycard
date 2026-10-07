@@ -45,12 +45,6 @@ scroll bar, and the camera match gets a progress bar.
       Texture or Clarity move costs about what a sharpen move does
       (~55 ms against ~0.3 s at 24 MP); an edit with the dehaze on
       stays on the CPU path (§251, §254)
-- [ ] Rename a look from the Look section: the look's own file and
-      every `<name>.<curve>.cube` of it (§235) renamed together in the
-      looks folder and the name rewritten in the open folder's
-      sidecars, in presets and in snapshots that carry it, so no edit
-      goes "(missing)"; the TITLE line inside a .cube is the label and
-      can be changed by hand today without breaking anything
 - [ ] A progress bar on the camera match run: the sheet shows only a
       line of words today ("starting...", then the group in hand); give
       it §192's bar, filled by frames developed over frames to fit

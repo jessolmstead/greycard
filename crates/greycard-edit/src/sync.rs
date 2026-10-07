@@ -4032,4 +4032,144 @@ mod tests {
         assert_eq!(exposures(&j2), exposures(&js));
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    /// The states of a sidecar as (look, exposure, label) — what a
+    /// state is, without its id — oldest first, the current last.
+    fn looks(s: &Sidecar) -> Vec<(String, f32, Option<String>)> {
+        states_of(s)
+            .iter()
+            .map(|t| {
+                (
+                    t.edit.look_lut.lut.name().to_string(),
+                    t.edit.light.exposure,
+                    t.label.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// A look renamed on one copy and not on the other joins with no
+    /// state twice and none lost, whichever side the join is asked
+    /// from: the renamed states are new states (new ids made from their
+    /// content), so the rule that checks a chain by its content never
+    /// takes them for the other copy's, and the join keeps both.
+    #[test]
+    fn a_look_renamed_on_one_copy_joins_with_nothing_doubled_or_lost() {
+        use crate::look::{LookLut, LutChoice};
+        let dir = scratch("renamed-look");
+        let raw = dir.join("IMG_0001.CR3");
+        let named = |look: &str, stops: f32| Edit {
+            look_lut: LookLut {
+                lut: LutChoice::Named(look.into()),
+                strength: 1.0,
+            },
+            ..exposed(stops)
+        };
+        let mut s = Sidecar::default();
+        s.record(exposed(0.5));
+        s.record(named("Neon", 0.5));
+        s.record(named("Neon", 1.0));
+        save(&mut s, &raw, 100, "desk");
+        let plain = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+        let mut renamed = plain.clone();
+        assert!(renamed.rename_look("Neon", "Glow"));
+        save(&mut renamed, &raw, 200, "desk");
+        // The states before the first renamed one are the same states.
+        let (before, after) = (ids(&plain), ids(&renamed));
+        assert_eq!(before[..2], after[..2]);
+        assert!(after[2..].iter().all(|id| !before.contains(id)));
+        let no_doubles = |j: &Sidecar| {
+            let ids = ids(j);
+            let unique: HashSet<&String> = ids.iter().collect();
+            assert_eq!(unique.len(), ids.len(), "{:?}", looks(j));
+        };
+
+        // The copy that was not renamed is behind: the join is the
+        // renamed copy, from either side.
+        let j = join(&renamed, &plain);
+        assert_eq!(j, join(&plain, &renamed));
+        no_doubles(&j);
+        assert_eq!(looks(&j), looks(&renamed));
+        assert_eq!(j.current.look_lut.lut.name(), "Glow");
+
+        // The copy that was not renamed went on, later, elsewhere: both
+        // branches are kept, the shared past once, and every state of
+        // either copy is in the join.
+        let mut went_on = plain.clone();
+        went_on.record(named("Neon", 1.5));
+        let elsewhere = dir.join("elsewhere").join("IMG_0001.CR3");
+        std::fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+        save(&mut went_on, &elsewhere, 300, "laptop");
+        let j = join(&renamed, &went_on);
+        assert_eq!(j, join(&went_on, &renamed));
+        no_doubles(&j);
+        let joined = looks(&j);
+        for state in looks(&renamed).iter().chain(looks(&went_on).iter()) {
+            assert!(
+                joined
+                    .iter()
+                    .any(|(l, e, _)| (l, e) == (&state.0, &state.1)),
+                "{state:?} lost from {joined:?}"
+            );
+        }
+        let shared = joined
+            .iter()
+            .filter(|(l, e, _)| l == "none" && *e == 0.5)
+            .count();
+        assert_eq!(shared, 1, "{joined:?}");
+        assert!(joined.iter().any(|(l, e, _)| l == "Glow" && *e == 1.0));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A state after the first renamed one that does not name the look
+    /// takes a new id too, the ids being a chain: joined with a copy
+    /// that was not renamed and went on, it stands twice, once under
+    /// each id. Nothing is lost; the double is the price of the chain,
+    /// and only a renamed history joined with an unrenamed one pays it.
+    #[test]
+    fn a_renamed_state_after_which_the_look_changed_joins_with_nothing_lost() {
+        use crate::look::{LookLut, LutChoice};
+        let dir = scratch("renamed-then-other");
+        let raw = dir.join("IMG_0001.CR3");
+        let named = |look: &str, stops: f32| Edit {
+            look_lut: LookLut {
+                lut: LutChoice::Named(look.into()),
+                strength: 1.0,
+            },
+            ..exposed(stops)
+        };
+        let mut s = Sidecar::default();
+        s.record(exposed(0.5));
+        s.record(named("Neon", 1.0));
+        s.record(named("Mono", 2.0));
+        save(&mut s, &raw, 100, "desk");
+        let plain = Sidecar::read(&Sidecar::path_for(&raw)).unwrap();
+        let mut renamed = plain.clone();
+        assert!(renamed.rename_look("Neon", "Glow"));
+        save(&mut renamed, &raw, 200, "desk");
+        let mut went_on = plain.clone();
+        went_on.record(named("Mono", 3.0));
+        let elsewhere = dir.join("elsewhere").join("IMG_0001.CR3");
+        std::fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+        save(&mut went_on, &elsewhere, 300, "laptop");
+        let j = join(&renamed, &went_on);
+        assert_eq!(j, join(&went_on, &renamed));
+        let joined = looks(&j);
+        for state in looks(&renamed).iter().chain(looks(&went_on).iter()) {
+            assert!(
+                joined
+                    .iter()
+                    .any(|(l, e, _)| (l, e) == (&state.0, &state.1)),
+                "{state:?} lost from {joined:?}"
+            );
+        }
+        let ids = ids(&j);
+        assert_eq!(ids.iter().collect::<HashSet<_>>().len(), ids.len());
+        let mono_2 = joined
+            .iter()
+            .filter(|(l, e, _)| l == "Mono" && *e == 2.0)
+            .count();
+        assert_eq!(mono_2, 2, "{joined:?}");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 }

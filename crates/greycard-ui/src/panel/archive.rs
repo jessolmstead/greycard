@@ -60,6 +60,13 @@ pub(crate) struct Archive {
     pub(crate) rejects: rejects::Rejects,
 }
 
+impl Archive {
+    /// Whether a copy or a move to or from an archive is under way.
+    pub(crate) fn copying(&self) -> bool {
+        self.running.is_some()
+    }
+}
+
 /// The header's counts: the view's generation they were taken over,
 /// and each paired archive with how many frames are not on it and how
 /// many could not be told without reading them whole (none when it did

@@ -104,6 +104,10 @@ export component LookSection inherits Section {
     /// has none.
     in property <bool> look-removable;
     callback look-remove-asked();
+    /// The chosen look has files in the look folder and none is a
+    /// link, so it can be renamed.
+    in property <bool> look-renamable;
+    callback look-rename-asked();
     callback view-changed();
     callback match-asked();
 
@@ -260,11 +264,18 @@ export component LookSection inherits Section {
         font-size: Theme.font-xs;
         wrap: word-wrap;
     }
-    // The chosen look's files to the trash, behind a sheet: a row of
-    // its own, the three buttons not fitting the panel's width.
-    if root.look-removable: HorizontalLayout {
+    // The chosen look renamed, or its files to the trash, each behind
+    // a sheet: a row of their own, the three buttons below not leaving
+    // room for them.
+    if root.look-removable || root.look-renamable: HorizontalLayout {
+        spacing: Theme.space-2;
         alignment: end;
-        PanelButton {
+        if root.look-renamable: PanelButton {
+            text: "Rename…";
+            icon: @image-url("../icons/pencil.svg");
+            clicked => { root.look-rename-asked(); }
+        }
+        if root.look-removable: PanelButton {
             text: "Remove this look…";
             icon: @image-url("../icons/trash-2.svg");
             clicked => { root.look-remove-asked(); }

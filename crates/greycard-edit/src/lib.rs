@@ -1647,8 +1647,18 @@ impl Placement {
     /// back where it found it.
     pub fn of(raw: &Path) -> Self {
         match Sidecar::find(raw) {
-            Some(p) if under_folder(&p) => Self::Folder,
-            _ => Self::Beside,
+            Some(p) => Self::at(&p),
+            None => Self::Beside,
+        }
+    }
+
+    /// The placement of the sidecar at `sidecar`, a path
+    /// [`Sidecar::find`] gave.
+    pub fn at(sidecar: &Path) -> Self {
+        if under_folder(sidecar) {
+            Self::Folder
+        } else {
+            Self::Beside
         }
     }
 }
@@ -2185,6 +2195,76 @@ impl Sidecar {
             .chain(self.redo.iter().map(|s| &s.edit))
             .chain(self.snapshots.iter().map(|s| &s.edit))
             .any(Edit::placed)
+    }
+
+    /// Whether any state here names the look `name`: the current one,
+    /// the history, what was undone, or a snapshot.
+    pub fn names_look(&self, name: &str) -> bool {
+        std::iter::once(&self.current)
+            .chain(self.history.iter().map(|s| &s.edit))
+            .chain(self.redo.iter().map(|s| &s.edit))
+            .chain(self.snapshots.iter().map(|s| &s.edit))
+            .any(|e| e.look_lut.names(name))
+    }
+
+    /// Every look any state here names, `none` aside.
+    pub fn looks_named(&self) -> std::collections::BTreeSet<String> {
+        std::iter::once(&self.current)
+            .chain(self.history.iter().map(|s| &s.edit))
+            .chain(self.redo.iter().map(|s| &s.edit))
+            .chain(self.snapshots.iter().map(|s| &s.edit))
+            .filter(|e| !e.look_lut.lut.is_none())
+            .map(|e| e.look_lut.lut.name().to_string())
+            .collect()
+    }
+
+    /// Every state here that names the look `from` names `to` instead,
+    /// in place: nothing is recorded, nothing undone is dropped, and
+    /// undo never goes back to a name that is no longer there.
+    ///
+    /// A renamed state is a new state to the ids, though: from the
+    /// first renamed state on, each state's id is made again from its
+    /// new content and its parent's new id ([`sync::state_id`]), the
+    /// redo stack's too. A join checks a chain by making ids again from
+    /// content (§233's rule ii), so a renamed state under its old id
+    /// would fail that check, and a copy elsewhere that still has the
+    /// old name would take the renamed states for its own and lose
+    /// them to its newer branch. Under new ids the renamed run is a
+    /// branch of its own, and a join keeps both. The states before the
+    /// first renamed one keep theirs and stay shared. True when any
+    /// state changed.
+    pub fn rename_look(&mut self, from: &str, to: &str) -> bool {
+        let mut renamed = false;
+        for snapshot in &mut self.snapshots {
+            renamed |= snapshot.edit.look_lut.rename(from, to);
+        }
+        // The states oldest first: the history, the current one, then
+        // the redo stack from its end, each after the one before.
+        let mut parent = sync::ZERO_ID.to_string();
+        let mut chained = false;
+        let mut step = |edit: &mut Edit, label: Option<&str>, id: &mut Option<String>| {
+            chained |= edit.look_lut.rename(from, to);
+            // A state before the first renamed one keeps its id; one
+            // with none yet is chained on as `sync::state_ids` reads it.
+            let kept = id.clone().filter(|_| !chained);
+            let this = kept.unwrap_or_else(|| sync::state_id(&parent, edit, label));
+            if chained {
+                *id = Some(this.clone());
+            }
+            parent = this;
+        };
+        for s in &mut self.history {
+            step(&mut s.edit, s.label.as_deref(), &mut s.id);
+        }
+        step(
+            &mut self.current,
+            self.current_label.as_deref(),
+            &mut self.current_id,
+        );
+        for s in self.redo.iter_mut().rev() {
+            step(&mut s.edit, s.label.as_deref(), &mut s.id);
+        }
+        renamed | chained
     }
 
     /// The hidden folder under `shoot`, made and hidden: every time
@@ -4597,5 +4677,74 @@ mod tests {
         assert!(sidecar.redo());
         assert_eq!(sidecar.current, later);
         assert!(!sidecar.redo());
+    }
+
+    /// A rename reaches every state that names the look, the undone
+    /// and the snapshots too; a state naming another look, one whose
+    /// name starts with this one's included, is left as it was. The
+    /// states before the first renamed one keep their ids, and from it
+    /// on every id is made again from the state's content, as a join
+    /// checks a chain.
+    #[test]
+    fn a_look_renamed_reaches_every_state_and_chains_new_ids() {
+        use crate::look::{LookLut, LutChoice};
+        let named = |n: &str| LookLut {
+            lut: LutChoice::Named(n.into()),
+            strength: 0.6,
+        };
+        let mut sidecar = Sidecar::default();
+        let mut e = Edit {
+            look_lut: named("Neon"),
+            ..Edit::default()
+        };
+        sidecar.record(e.clone());
+        sidecar.take_snapshot("Glow", 1_700_000_000);
+        e.look_lut = named("Neon Film");
+        sidecar.record(e.clone());
+        e.look_lut = named("Neon.agx");
+        sidecar.record(e.clone());
+        e.look_lut = named("Neon");
+        e.light.exposure = 0.5;
+        sidecar.record(e.clone());
+        e.light.exposure = 1.0;
+        sidecar.record(e);
+        assert!(sidecar.undo());
+        sidecar.fill_ids();
+        let ids = sync::state_ids(&sidecar);
+        assert!(sidecar.names_look("Neon"));
+        assert!(!sidecar.names_look("neon"));
+
+        assert!(sidecar.rename_look("Neon", "Glow"));
+        assert!(!sidecar.names_look("Neon"));
+        let names: Vec<&str> = sidecar
+            .history
+            .iter()
+            .map(|s| s.edit.look_lut.lut.name())
+            .chain(std::iter::once(sidecar.current.look_lut.lut.name()))
+            .collect();
+        assert_eq!(names, ["none", "Glow", "Neon Film", "Neon.agx", "Glow"]);
+        assert_eq!(sidecar.redo[0].edit.look_lut.lut.name(), "Glow");
+        assert_eq!(sidecar.snapshots[0].edit.look_lut.lut.name(), "Glow");
+        assert_eq!(sidecar.current.look_lut.strength, 0.6);
+        let renamed = sync::state_ids(&sidecar);
+        assert_eq!(renamed[0], ids[0]);
+        assert!(renamed[1..].iter().all(|id| !ids.contains(id)));
+        // Every id is what its content and its parent make, the redo
+        // stack's chained on from the current state.
+        let mut fresh = sidecar.clone();
+        for s in &mut fresh.history {
+            s.id = None;
+        }
+        fresh.current_id = None;
+        assert_eq!(sync::state_ids(&fresh), renamed);
+        let redo = &sidecar.redo[0];
+        assert_eq!(
+            redo.id.as_deref(),
+            Some(sync::state_id(&renamed[4], &redo.edit, redo.label.as_deref()).as_str())
+        );
+        // Nothing to rename is said so, and changes nothing.
+        let before = sidecar.clone();
+        assert!(!sidecar.rename_look("Neon", "Other"));
+        assert_eq!(sidecar, before);
     }
 }

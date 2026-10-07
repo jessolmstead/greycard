@@ -305,6 +305,20 @@ pub(crate) fn followed(st: &State, c: usize) -> bool {
         .is_some_and(|f| st.sync.followed.contains_key(f))
 }
 
+/// Follow the frame at `copy`, an archive's copy of `local`, as an
+/// offline root does: for a test of what a save of it does.
+#[cfg(test)]
+pub(crate) fn follow_for_test(st: &mut State, copy: PathBuf, local: PathBuf, archive: PathBuf) {
+    st.sync.followed.insert(
+        copy,
+        Followed {
+            local,
+            archive,
+            homed: false,
+        },
+    );
+}
+
 /// A frame's sidecar was saved by the window: its write to the
 /// archive's copy is queued, the latest per frame, and sent unless one
 /// for the frame is out (which sends this one when it lands). A frame

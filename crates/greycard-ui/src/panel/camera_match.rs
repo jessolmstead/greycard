@@ -53,6 +53,11 @@ pub(crate) struct Sheet {
 }
 
 impl Sheet {
+    /// Whether a run is under way, writing looks.
+    pub(crate) fn running(&self) -> bool {
+        self.cancel.is_some()
+    }
+
     /// The groups the run is over: the scope's, or for a refit the
     /// look's own and its donor's. A refit whose look no group in the
     /// scope makes runs over none, so Fit is off, and

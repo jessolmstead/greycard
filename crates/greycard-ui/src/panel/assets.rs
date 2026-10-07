@@ -388,6 +388,7 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
     app.set_look_refit(refit.into());
     app.set_look_name(chosen_name.into());
     app.set_look_removable(crate::panel::look_remove::removable(&st.looks, chosen_name));
+    app.set_look_renamable(crate::panel::look_rename::renamable(&st.looks, chosen_name));
     app.set_look_strength(chosen.strength);
     // The chosen look's table for the picture's curve, or its first.
     let shown = greycard_edit::look::table_for(&st.looks, chosen_name, curve).or_else(|| {

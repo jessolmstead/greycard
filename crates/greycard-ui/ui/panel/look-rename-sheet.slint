@@ -1,0 +1,127 @@
+// The rename-a-look sheet: the new name, what each file of the look
+// becomes, who names it, and what the rename does not reach. A name a
+// file cannot have, or one the look folder has already, says why under
+// the field and leaves Rename off; Enter is Rename's only when it is on.
+// While the sidecars are rewritten on their thread the sheet stays up,
+// says so, and its one answer is Stop.
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { PanelButton } from "../controls.slint";
+
+export component LookRenameSheet inherits Rectangle {
+    in property <string> rename-title;
+    in-out property <string> rename-name;
+    /// The look's files, one a line, and what each becomes once the
+    /// name in the field is one it can take.
+    in property <[string]> rename-files;
+    /// Why the name in the field cannot be the look's; empty when it
+    /// can.
+    in property <string> rename-refusal;
+    in property <string> rename-uses;
+    in property <string> rename-note;
+    in property <bool> rename-ready;
+    /// Edits or presets that name the new name already, for a look
+    /// that is not there, and will take this one.
+    in property <string> rename-warning;
+    /// The rename is out: the sheet stays and answers nothing until it
+    /// lands.
+    in property <bool> rename-working;
+    callback rename-edited();
+    callback rename-answered(bool);
+
+    background: #000000a0;
+    TouchArea { clicked => { if (!root.rename-working) { root.rename-answered(false); } } }
+    Rectangle {
+        width: 480px;
+        height: sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        // The field has the focus, and a key goes up from it: Escape is
+        // taken here, on the card, as the root sheet takes it.
+        FocusScope {
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    if (!root.rename-working) { root.rename-answered(false); }
+                    return accept;
+                }
+                return reject;
+            }
+            sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                Text {
+                    text: root.rename-title;
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                LineEdit {
+                    text <=> root.rename-name;
+                    enabled: !root.rename-working;
+                    edited(t) => { root.rename-edited(); }
+                    accepted(t) => {
+                        if (root.rename-ready) { root.rename-answered(true); }
+                    }
+                    // The name there, chosen: typed over, or kept.
+                    init => { self.focus(); self.select-all(); }
+                }
+                if root.rename-refusal != "": Text {
+                    text: root.rename-refusal;
+                    font-size: Theme.font-sm;
+                    color: Theme.label-red;
+                    wrap: word-wrap;
+                }
+                if root.rename-warning != "": Text {
+                    text: root.rename-warning;
+                    font-size: Theme.font-sm;
+                    color: Theme.label-yellow;
+                    wrap: word-wrap;
+                }
+                VerticalLayout {
+                    spacing: Theme.space-1;
+                    for file in root.rename-files: Text {
+                        text: file;
+                        font-size: Theme.font-xs;
+                        color: Theme.text;
+                        overflow: elide;
+                    }
+                }
+                Text {
+                    text: root.rename-uses;
+                    font-size: Theme.font-sm;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.rename-note;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-muted;
+                    wrap: word-wrap;
+                }
+                Rectangle { height: Theme.space-2; }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    // While the rename is out, Stop: what is done lands,
+                    // and the old files stay for the rest.
+                    PanelButton {
+                        text: root.rename-working ? "Stop" : "Cancel";
+                        clicked => { root.rename-answered(false); }
+                    }
+                    PanelButton {
+                        text: root.rename-working ? "Renaming…" : "Rename";
+                        primary: true;
+                        enabled: root.rename-ready;
+                        clicked => { root.rename-answered(true); }
+                    }
+                }
+            }
+        }
+    }
+}

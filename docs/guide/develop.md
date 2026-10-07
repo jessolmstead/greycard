@@ -214,6 +214,11 @@ camera's JPEGs.
 - **Strength** blends the look in, from 0 to 100% (the default).
 - **Fit this camera's look…** opens the camera match. See
   [Fitting your camera's look](camera-match.md).
+- **Rename…** renames the chosen look. Every picture in the open
+  folder, every preset and every snapshot that uses it takes the new
+  name. Edits in other folders aren't reached: they show the old name
+  as missing, and the old name's files stay until nothing in reach
+  still needs them.
 - **Remove this look…** moves the chosen look's files to the trash,
   after you confirm.
 - **Reset** goes back to no look at full strength.

@@ -265,7 +265,8 @@ struct Cli {
     /// pressed once the scope is read), refit (the same sheet as the
     /// Look section's refit opens it, over the chosen look's group),
     /// look-remove (the remove-a-look sheet over the chosen look, or
-    /// the first in the directory; never answered),
+    /// the first in the directory; never answered), look-rename (the
+    /// rename-a-look sheet the same way; a capture never renames),
     /// root-name (the library's
     /// first root's name, as its row's Rename... opens it), delete
     /// (the delete sheet over the selection; never answered), archive
@@ -551,6 +552,12 @@ pub(crate) struct State {
     pub(crate) look_remove: Option<panel::look_remove::Asked>,
     pub(crate) look_remove_generation: u64,
     pub(crate) look_removing: bool,
+    /// The rename-a-look sheet's question while it is up, and how many
+    /// have been asked, so a late count is dropped.
+    pub(crate) look_rename: Option<panel::look_rename::Asked>,
+    pub(crate) look_rename_generation: u64,
+    /// A rename out on its thread, until it lands.
+    pub(crate) look_renaming: Option<panel::look_rename::Renaming>,
     /// Whether anything may be deleted from disk: only in a session
     /// someone is at. A snapshot, a screenshot, an export or a timing
     /// run never deletes, whatever it is asked, and a test's state
@@ -1031,6 +1038,9 @@ impl State {
             look_remove: None,
             look_remove_generation: 0,
             look_removing: false,
+            look_rename: None,
+            look_rename_generation: 0,
+            look_renaming: None,
             deletes_allowed: false,
             deleting: None,
             snapshot_placeholder: false,
@@ -1208,6 +1218,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::cull::install(app, &state, &worker);
     panel::delete::install(app, &state, &worker);
     panel::look_remove::install(app, &state);
+    panel::look_rename::install(app, &state);
     panel::archive::install(app, &state, &worker);
     sync::install(app, &state);
     panel::mask::install(app, &state, &worker);

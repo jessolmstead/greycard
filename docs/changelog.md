@@ -12,6 +12,13 @@ note a first tester reads.
 
 ## 0.5.0, unreleased
 
+### Color and editing
+
+- **Rename…** in the Look section renames a look's files and the name
+  in every edit, preset and snapshot that uses it, so nothing shows
+  "(missing)"; edits it can't reach keep the old files until they are
+  ([§257](https://github.com/jessolmstead/greycard/blob/master/docs/notes/257-renaming-a-look.md))
+
 ### Culling and the grid
 
 - A scroll bar under the filmstrip, as the grid has, showing where you
