@@ -19,8 +19,40 @@ None open.
 
 ## Next: 0.5.0
 
-Not chosen yet: a sentence a tester can verify and the short list
-that makes it true, picked from the tracks.
+On a portrait, the iris, the teeth, the lips or a person's top is
+picked from a menu and adjusted, and a mask pasted to the next frame
+finds the same person there; a look can be renamed, the film strip
+shows where it is, and the camera match says how far along it is.
+
+- [ ] The body's parts and clothing on SAM 3 (§252), each a shape a
+      look can go on: face, facial skin, skin, hair, eyebrows, the
+      iris (face, then eyes, then each eye's crop, asked as "iris of
+      the eye"), teeth and lips (the same through a mouth crop),
+      hands, and clothing by where it is worn (top, bottoms, shoes,
+      all clothing). Our export hosted under the SAM License: the
+      fp16 image encoder (909 MB), the decoder (130 MB) and a table
+      of preset vectors, no text encoder; registry entries, the
+      shapes and the menu; a person picked on a picture with several,
+      and found again by the colors of their hair, clothes and skin on
+      a picture the mask is pasted to, asking when two people are too
+      alike. Designed in §253, built in two parts
+- [ ] A scroll bar under the film strip, as the grid has (§214): the
+      strip scrolls by wheel and keys since §89 but shows neither where
+      it is in the folder nor a handle to drag there
+- [ ] Rename a look from the Look section: the look's own file and
+      every `<name>.<curve>.cube` of it (§235) renamed together in the
+      looks folder and the name rewritten in the open folder's
+      sidecars, in presets and in snapshots that carry it, so no edit
+      goes "(missing)"; the TITLE line inside a .cube is the label and
+      can be changed by hand today without breaking anything
+- [ ] A progress bar on the camera match run: the sheet shows only a
+      line of words today ("starting...", then the group in hand); give
+      it §192's bar, filled by frames developed over frames to fit
+      across the groups, with the group's name and the frame count
+      under it, and the same bar on the fit itself where its iterations
+      are counted
+- [ ] Home and end should go to the beginning/end of the grid/filmstrip
+      when it is selected.
 
 ## Tracks
 
@@ -161,20 +193,8 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       above it, a snowfield filling the frame); the bimodal WebGPU
       prior. Then Water, Mountain, Vegetation, Ground and Building
       shapes from the same label map
-- [ ] The body's parts and clothing on SAM 3 (§252), each a shape a
-      look can go on: face, facial skin, skin, hair, eyebrows, the
-      iris (face, then eyes, then each eye's crop, asked as "iris of
-      the eye"), teeth and lips (the same through a mouth crop),
-      hands, and clothing by where it is worn (top, bottoms, shoes,
-      all clothing). Our
-      export hosted under the SAM License: the fp16 image encoder
-      (909 MB), the decoder (130 MB) and a table of preset vectors,
-      no text encoder; registry entries, the shapes and the menu; a
-      person picked on a picture with several, and found again by
-      the colors of their hair, clothes and skin on a picture the
-      mask is pasted to, asking when two people are too alike.
-      Designed in §253, to be built in two parts. MediaPipe's iris
-      landmarks stay the CPU fallback for the iris
+- [ ] MediaPipe's iris landmarks as the CPU fallback for the Iris
+      part, where the crop cascade takes about 15 s (§252)
 - [ ] Describe your own mask: a free-text field beside the presets,
       fetching SAM 3's text encoder on first use (1.4 GB at fp32, its
       fp16 untried), the phrase and its vector kept in the sidecar,
@@ -253,18 +273,6 @@ ask for first.
       which frames to refine with. Never a nudge of the table toward
       one frame: a refined table is still one fit over a sample, so
       the replacement rule still counts frames
-- [ ] A progress bar on the camera match run: the sheet shows only a
-      line of words today ("starting...", then the group in hand); give
-      it §192's bar, filled by frames developed over frames to fit
-      across the groups, with the group's name and the frame count
-      under it, and the same bar on the fit itself where its iterations
-      are counted
-- [ ] Rename a look from the Look section: the look's own file and
-      every `<name>.<curve>.cube` of it (§235) renamed together in the
-      looks folder and the name rewritten in the open folder's
-      sidecars, in presets and in snapshots that carry it, so no edit
-      goes "(missing)"; the TITLE line inside a .cube is the label and
-      can be changed by hand today without breaking anything
 - [ ] Profile making from a chart shot, after dcamprof (§78)
 - [ ] RawTherapee's DCP profiles offered for a fetch: they are made by
       that project under the GPL, so they can be hosted by us as the
@@ -377,7 +385,6 @@ clears or a tester asks for it.
 
 #### Editor
 
-- [ ] A horizontal scroll bar in the filmstrip
 - [ ] Camera metadata should be shown in cull mode too
 - [ ] The learned mask and fill caches keyed by the develop they were
       made from: the window's Export reuses the mask its viewport made
@@ -385,8 +392,6 @@ clears or a tester asks for it.
       from the export's CPU base (AE 174 on a Subject frame), and the
       disk cache of masks is keyed by file, model and shape, so the
       first run to make one decides it for every later edit (§236)
-- [ ] Home and end should go to the beginning/end of the grid/filmstrip
-      when it is selected.
 - [ ] The panel's look, refined as the editor grows (§14); in develop
       order on Develop, Crop, Masks and Retouch tabs since 2026-09-14
 - [ ] Choose output color space/gamut for export: sRGB, Display P3 and
