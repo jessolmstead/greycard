@@ -165,17 +165,25 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       look can go on: face, facial skin, skin, hair, eyebrows, the
       iris (face, then eyes, then each eye's crop, asked as "iris of
       the eye"), teeth and lips (the same through a mouth crop),
-      hands, and garments the model tells apart (sweater, shirt,
-      jacket, coat, jeans, trousers, boots, shoes; not dress). Our
+      hands, and clothing by where it is worn (top, bottoms, shoes,
+      all clothing). Our
       export hosted under the SAM License: the fp16 image encoder
       (909 MB), the decoder (130 MB) and a table of preset vectors,
-      no text encoder; registry entries, the shapes and the menu.
-      MediaPipe's iris landmarks stay the CPU fallback for the iris
+      no text encoder; registry entries, the shapes and the menu; a
+      person picked on a picture with several, and found again by
+      the colors of their hair, clothes and skin on a picture the
+      mask is pasted to, asking when two people are too alike.
+      Designed in §253, to be built in two parts. MediaPipe's iris
+      landmarks stay the CPU fallback for the iris
 - [ ] Describe your own mask: a free-text field beside the presets,
       fetching SAM 3's text encoder on first use (1.4 GB at fp32, its
       fp16 untried), the phrase and its vector kept in the sidecar,
       and "not found" under the cut (§252: phrases for things absent
       topped out at 0.31). After the parts
+- [ ] Face recognition to find the same person across outfits and
+      days. Waits on a license search (the strong face-embedding
+      models are mostly non-commercial) and on whether a sidecar may
+      hold a face embedding, which is biometric data (§253)
 - [ ] Generative fill behind the patch layer
 
 ### Color
