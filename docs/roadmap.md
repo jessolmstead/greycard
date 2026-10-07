@@ -15,7 +15,12 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-None open.
+- [ ] Quitting while a develop is on the GPU can crash at exit
+      (SIGSEGV in NVIDIA's driver): the window gives the worker 5 s,
+      then leaves it waiting on a fence in `wgpu::Device::poll` as the
+      process tears down. Seen only in scripted runs so far, 17 times
+      since 2026-10-03; nothing unsaved is lost. Let the worker finish
+      or drop its GPU work before the device goes (§255)
 
 ## Next: 0.5.0
 
