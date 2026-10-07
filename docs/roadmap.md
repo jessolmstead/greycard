@@ -45,12 +45,6 @@ scroll bar, and the camera match gets a progress bar.
       Texture or Clarity move costs about what a sharpen move does
       (~55 ms against ~0.3 s at 24 MP); an edit with the dehaze on
       stays on the CPU path (§251, §254)
-- [ ] A progress bar on the camera match run: the sheet shows only a
-      line of words today ("starting...", then the group in hand); give
-      it §192's bar, filled by frames developed over frames to fit
-      across the groups, with the group's name and the frame count
-      under it, and the same bar on the fit itself where its iterations
-      are counted
 
 ## Tracks
 

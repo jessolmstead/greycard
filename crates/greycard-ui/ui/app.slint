@@ -1113,6 +1113,7 @@ export component App inherits Window {
     callback match-replace-toggled();
     in property <bool> match-running;
     in property <string> match-progress;
+    in property <float> match-fraction: -1;
     in property <[string]> match-results;
     callback match-asked();
     callback match-scope-picked(string);
@@ -2534,6 +2535,7 @@ export component App inherits Window {
     // bar is a develop's. Under the grid and the sheets; it takes no
     // clicks.
     if root.loading-shown && !root.grid-open: LoadingCard {
+        width: 280px;
         x: root.left-w + (root.width - root.left-w - root.right-w - self.width) / 2;
         // Above the plate's row (24px on a space-3 margin), so a long
         // status line on a narrow window runs under neither. In culling
@@ -3003,6 +3005,7 @@ export component App inherits Window {
         match-replace-toggled => { root.match-replace-toggled(); }
         match-running: root.match-running;
         match-progress: root.match-progress;
+        match-fraction: root.match-fraction;
         match-results: root.match-results;
         match-scope-picked(s) => { root.match-scope-picked(s); }
         match-fit => { root.match-fit(); }

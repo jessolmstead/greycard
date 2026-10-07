@@ -653,6 +653,7 @@ export component GridSheet inherits Rectangle {
                 }
             }
             if root.loading-shown: LoadingCard {
+                width: 280px;
                 x: (parent.width - self.width) / 2;
                 y: (parent.height - self.height) / 2;
                 fraction: root.loading-fraction;

@@ -10,17 +10,33 @@ export component LoadingCard inherits Rectangle {
     in property <float> fraction;
     /// What is being read, and how far along, in words.
     in property <string> line;
+    /// The dark plate under the bar and its words; off where the card
+    /// sits in a sheet that has its own ground.
+    in property <bool> plate: true;
+    in property <color> words-color: Theme.text-secondary;
+    in property <length> words-size: Theme.font-xs;
+    in property <TextHorizontalAlignment> words-align: center;
+    /// Wrap the words rather than cut them at the end.
+    in property <bool> wrap: false;
+    /// The space at each side of the bar and the words.
+    in property <length> side: Theme.space-3;
 
-    width: 280px;
-    height: 2 * Theme.space-3 + 3px + Theme.space-2 + words.preferred-height;
+    /// Lines of words to keep room for, cutting what runs past them; 0
+    /// for as many as there are.
+    in property <int> words-lines: 0;
+
+    height: 2 * Theme.space-3 + 3px + Theme.space-2 + words.height;
     border-radius: Theme.radius-md;
     // The status plate's ground: the frames under it stay visible,
     // the words readable over any of them.
-    background: #000000b3;
+    background: root.plate ? #000000b3 : transparent;
     track := Rectangle {
-        x: Theme.space-3;
+        // A fraction below nothing says there is nothing to count: the
+        // words stand and the bar's place is kept.
+        opacity: root.fraction < 0 ? 0 : 1;
+        x: root.side;
         y: Theme.space-3;
-        width: parent.width - 2 * Theme.space-3;
+        width: parent.width - 2 * root.side;
         height: 3px;
         border-radius: 1.5px;
         background: Theme.border-strong;
@@ -34,13 +50,17 @@ export component LoadingCard inherits Rectangle {
         }
     }
     words := Text {
-        x: Theme.space-3;
+        x: root.side;
         y: track.y + track.height + Theme.space-2;
-        width: parent.width - 2 * Theme.space-3;
-        text: root.line;
-        color: Theme.text-secondary;
-        font-size: Theme.font-xs;
-        horizontal-alignment: center;
+        width: parent.width - 2 * root.side;
+        height: root.words-lines > 0 ? root.words-lines * root.words-size * 1.35 : self.preferred-height;
+        vertical-alignment: top;
+        // A space keeps a line's height when there is nothing to say.
+        text: root.line == "" ? " " : root.line;
+        color: root.words-color;
+        font-size: root.words-size;
+        horizontal-alignment: root.words-align;
+        wrap: root.wrap ? word-wrap : no-wrap;
         overflow: elide;
     }
 }

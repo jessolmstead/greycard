@@ -12,6 +12,13 @@ note a first tester reads.
 
 ## 0.5.0, unreleased
 
+### Culling and the grid
+
+- A scroll bar under the filmstrip, as the grid has, showing where you
+  are in the folder and dragging there; Home and End go to the first
+  and last frame in the filmstrip and the grid, and Shift+Home and
+  Shift+End select the run to that end ([§255](https://github.com/jessolmstead/greycard/blob/master/docs/notes/255-the-strips-scroll-bar-and-home-and-end.md))
+
 ### Color and editing
 
 - **Rename…** in the Look section renames a look's files and the name
@@ -19,12 +26,11 @@ note a first tester reads.
   "(missing)"; edits it can't reach keep the old files until they are
   ([§257](https://github.com/jessolmstead/greycard/blob/master/docs/notes/257-renaming-a-look.md))
 
-### Culling and the grid
+### Camera match
 
-- A scroll bar under the filmstrip, as the grid has, showing where you
-  are in the folder and dragging there; Home and End go to the first
-  and last frame in the filmstrip and the grid, and Shift+Home and
-  Shift+End select the run to that end ([§255](https://github.com/jessolmstead/greycard/blob/master/docs/notes/255-the-strips-scroll-bar-and-home-and-end.md))
+- The run fills a bar across all its groups, with the count and the
+  group under it, and holds it while a group's look is fitted
+  ([§258](https://github.com/jessolmstead/greycard/blob/master/docs/notes/258-a-bar-on-the-camera-match-run.md))
 
 ### Speed
 

@@ -24,6 +24,71 @@ use crate::camera_match::{self as fit, Group, Plan, Progress, Survey};
 use crate::panel::assets::show_looks;
 use crate::*;
 
+/// How often the fit's held-out count is passed on to the window: it
+/// finishes several a second across the threads.
+const FIT_TICK: std::time::Duration = std::time::Duration::from_millis(100);
+
+/// Lets the fit's counts through at most once a [`FIT_TICK`], and the
+/// last of a group's always.
+#[derive(Default)]
+struct Throttle {
+    last: Option<std::time::Instant>,
+}
+
+impl Throttle {
+    fn pass(&mut self, now: std::time::Instant, last_of_group: bool) -> bool {
+        let due = self
+            .last
+            .is_none_or(|t| now.saturating_duration_since(t) >= FIT_TICK);
+        if due || last_of_group {
+            self.last = Some(now);
+        }
+        due || last_of_group
+    }
+}
+
+/// What the sheet shows of a run's progress: the bar's fill, where it
+/// moves (the run's frames developed over its total; the fit's own
+/// count says its words and leaves the bar where the frames left it,
+/// so the bar never goes back), and the words, the count first so a
+/// long group name is what the card cuts. Nothing once Stop has been
+/// pressed: "stopping" stands until the run ends.
+fn progress_view(stopped: bool, p: &Progress) -> Option<(Option<f32>, Option<String>)> {
+    if stopped {
+        return None;
+    }
+    match p {
+        Progress::Frame {
+            group,
+            index,
+            of,
+            done,
+            total,
+        } => Some((
+            Some((*done as f32 / (*total).max(1) as f32).clamp(0.0, 1.0)),
+            Some(format!("{index} of {of} frames \u{b7} {group}")),
+        )),
+        Progress::Bar { done, total } => Some((
+            Some((*done as f32 / (*total).max(1) as f32).clamp(0.0, 1.0)),
+            None,
+        )),
+        Progress::Fit { group, done, of } => Some((
+            None,
+            Some(format!("{done} of {of} held out \u{b7} {group}")),
+        )),
+        Progress::Done(_) => None,
+    }
+}
+
+/// What Stop says: a fit under way is not looked at until it is done.
+fn stopping_words(fitting: bool) -> &'static str {
+    if fitting {
+        "stopping after this group..."
+    } else {
+        "stopping after this frame..."
+    }
+}
+
 /// The scopes, as the sheet names them.
 pub(crate) const LIBRARY: &str = "Library";
 pub(crate) const FOLDER: &str = "This folder";
@@ -38,6 +103,8 @@ pub(crate) struct Sheet {
     /// The run under way, to stop it.
     cancel: Option<Arc<AtomicBool>>,
     results: Vec<String>,
+    /// The run is in a group's fit, which Stop does not cut short.
+    fitting: bool,
     /// The display curve the run develops under: the open picture's
     /// when the sheet was opened.
     curve: greycard_edit::DisplayCurve,
@@ -464,6 +531,7 @@ pub(crate) fn open(st: &mut State, app: &App, refit: Option<String>) {
         app.set_match_scope(if library { LIBRARY } else { FOLDER }.into());
         st.camera_match.results.clear();
         app.set_match_progress("".into());
+        app.set_match_fraction(-1.0);
         start_survey(st, app);
     } else {
         show(st, app);
@@ -481,6 +549,7 @@ fn start_run(st: &mut State, app: &App) {
     }
     let Some(store) = greycard_edit::look::store_dir() else {
         app.set_match_progress("There is no look directory on this machine.".into());
+        app.set_match_fraction(-1.0);
         return;
     };
     let chosen = st.camera_match.chosen(&groups);
@@ -492,10 +561,12 @@ fn start_run(st: &mut State, app: &App) {
     let cancel = Arc::new(AtomicBool::new(false));
     st.camera_match.cancel = Some(cancel.clone());
     st.camera_match.results.clear();
+    st.camera_match.fitting = false;
     st.camera_match.generation += 1;
     let generation = st.camera_match.generation;
     show(st, app);
     app.set_match_progress("starting...".into());
+    app.set_match_fraction(-1.0);
     let app_weak = app.as_weak();
     // Each message is handled on the window's thread, in order.
     let post = move |message: Message| {
@@ -509,6 +580,7 @@ fn start_run(st: &mut State, app: &App) {
             heard(&mut st, &app, generation, message);
         });
     };
+    let mut throttle = Throttle::default();
     std::thread::spawn(move || {
         let lenses = greycard_lens::Store::user()
             .ok()
@@ -526,7 +598,14 @@ fn start_run(st: &mut State, app: &App) {
                 },
                 lenses.as_ref(),
                 &cancel,
-                &mut |p| post(Message::Progress(p)),
+                &mut |p| {
+                    if let Progress::Fit { done, of, .. } = &p
+                        && !throttle.pass(std::time::Instant::now(), done == of)
+                    {
+                        return;
+                    }
+                    post(Message::Progress(p));
+                },
             )
         }));
         let end = match ran {
@@ -573,15 +652,35 @@ fn heard(st: &mut State, app: &App, generation: u64, message: Message) {
         return;
     }
     match message {
-        Message::Progress(Progress::Frame { group, index, of }) => {
-            app.set_match_progress(format!("frame {index} of {of} in {group}").into());
-        }
         Message::Progress(Progress::Done(result)) => {
             st.camera_match.results.push(result.line());
             app.set_match_results(strings(&st.camera_match.results));
         }
+        Message::Progress(p) => {
+            match p {
+                Progress::Fit { .. } => st.camera_match.fitting = true,
+                Progress::Frame { .. } | Progress::Bar { .. } => st.camera_match.fitting = false,
+                Progress::Done(_) => {}
+            }
+            let stopped = st
+                .camera_match
+                .cancel
+                .as_ref()
+                .is_some_and(|c| c.load(Ordering::Relaxed));
+            if let Some((fraction, words)) = progress_view(stopped, &p) {
+                if let Some(fraction) = fraction {
+                    app.set_match_fraction(fraction);
+                }
+                if let Some(words) = words {
+                    app.set_match_progress(words.into());
+                }
+            }
+        }
         Message::Finished(end) => {
+            // Whatever is still on its way is of a run that is over.
+            st.camera_match.generation += 1;
             st.camera_match.cancel = None;
+            app.set_match_fraction(-1.0);
             app.set_match_progress(end.into());
             show(st, app);
             // The new tables in the picker, and the look resolved
@@ -686,7 +785,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
             let st = state.borrow();
             if let Some(cancel) = &st.camera_match.cancel {
                 cancel.store(true, Ordering::Relaxed);
-                app.set_match_progress("stopping after this frame...".into());
+                app.set_match_progress(stopping_words(st.camera_match.fitting).into());
             }
         });
     }
@@ -708,6 +807,137 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
 mod tests {
     use super::*;
     use crate::camera_match::{Frame, MIN_FRAMES};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn the_bar_fills_by_frames_across_the_groups() {
+        let frame = |group: &str, index, of, done, total| Progress::Frame {
+            group: group.into(),
+            index,
+            of,
+            done,
+            total,
+        };
+        let (fraction, words) =
+            progress_view(false, &frame("Canon EOS R6m2 Faithful", 3, 24, 3, 29)).unwrap();
+        assert!((fraction.unwrap() - 3.0 / 29.0).abs() < 1e-6);
+        assert_eq!(
+            words.as_deref(),
+            Some("3 of 24 frames \u{b7} Canon EOS R6m2 Faithful")
+        );
+        // The second group carries on from where the first left off.
+        let (fraction, words) =
+            progress_view(false, &frame("Canon EOS R5 Faithful", 1, 5, 24, 29)).unwrap();
+        assert!((fraction.unwrap() - 24.0 / 29.0).abs() < 1e-6);
+        assert!(words.unwrap().starts_with("1 of 5 frames"));
+        // The last frame fills the bar, and a total of nothing does not
+        // divide by it.
+        assert_eq!(
+            progress_view(false, &frame("g", 5, 5, 29, 29)).unwrap().0,
+            Some(1.0)
+        );
+        assert_eq!(
+            progress_view(false, &frame("g", 0, 1, 0, 0)).unwrap().0,
+            Some(0.0)
+        );
+        // The fit's count changes the words and leaves the bar alone.
+        let fit = Progress::Fit {
+            group: "g".into(),
+            done: 6,
+            of: 24,
+        };
+        let (fraction, words) = progress_view(false, &fit).unwrap();
+        assert_eq!(fraction, None);
+        assert_eq!(words.as_deref(), Some("6 of 24 held out \u{b7} g"));
+        // The bar alone says no words.
+        let bar = Progress::Bar {
+            done: 53,
+            total: 53,
+        };
+        assert_eq!(progress_view(false, &bar), Some((Some(1.0), None)));
+    }
+
+    #[test]
+    fn nothing_heard_after_stop_changes_the_sheet() {
+        let frame = Progress::Frame {
+            group: "g".into(),
+            index: 2,
+            of: 5,
+            done: 2,
+            total: 5,
+        };
+        let fit = Progress::Fit {
+            group: "g".into(),
+            done: 2,
+            of: 5,
+        };
+        assert!(progress_view(false, &frame).is_some());
+        assert!(progress_view(true, &frame).is_none());
+        assert!(progress_view(true, &fit).is_none());
+        assert_eq!(stopping_words(false), "stopping after this frame...");
+        assert_eq!(stopping_words(true), "stopping after this group...");
+    }
+
+    /// The sheet as `heard` leaves it through a run that is stopped in
+    /// a fit: the words stand, the bar holds, the end text survives.
+    #[test]
+    fn a_stopped_run_keeps_its_words_through_late_messages() {
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let mut st = state.borrow_mut();
+        let cancel = Arc::new(AtomicBool::new(false));
+        st.camera_match.cancel = Some(cancel.clone());
+        st.camera_match.generation = 7;
+        let fit = |done| {
+            Message::Progress(Progress::Fit {
+                group: "g".into(),
+                done,
+                of: 25,
+            })
+        };
+        let frame = Message::Progress(Progress::Frame {
+            group: "g".into(),
+            index: 25,
+            of: 25,
+            done: 25,
+            total: 25,
+        });
+        heard(&mut st, &app, 7, frame);
+        assert_eq!(app.get_match_fraction(), 1.0);
+        heard(&mut st, &app, 7, fit(5));
+        assert!(st.camera_match.fitting);
+        assert_eq!(app.get_match_progress(), "5 of 25 held out \u{b7} g");
+        // Stop, as its button does.
+        cancel.store(true, Ordering::Relaxed);
+        app.set_match_progress(stopping_words(st.camera_match.fitting).into());
+        heard(&mut st, &app, 7, fit(6));
+        assert_eq!(app.get_match_progress(), "stopping after this group...");
+        assert_eq!(app.get_match_fraction(), 1.0, "the bar holds");
+        heard(
+            &mut st,
+            &app,
+            7,
+            Message::Finished("Stopped. 1 written.".into()),
+        );
+        assert_eq!(app.get_match_progress(), "Stopped. 1 written.");
+        // A message of the run that is over changes nothing.
+        heard(&mut st, &app, 7, fit(7));
+        assert_eq!(app.get_match_progress(), "Stopped. 1 written.");
+        assert!(st.camera_match.cancel.is_none());
+    }
+
+    #[test]
+    fn the_fit_counts_are_let_through_once_a_tick() {
+        let mut throttle = Throttle::default();
+        let t0 = Instant::now();
+        assert!(throttle.pass(t0, false), "the first goes through");
+        assert!(!throttle.pass(t0 + FIT_TICK / 4, false));
+        assert!(!throttle.pass(t0 + FIT_TICK / 2, false));
+        assert!(throttle.pass(t0 + FIT_TICK, false));
+        // The last of a group is never held back, and starts a tick.
+        assert!(throttle.pass(t0 + FIT_TICK + Duration::from_millis(1), true));
+        assert!(!throttle.pass(t0 + FIT_TICK * 3 / 2, false));
+    }
 
     fn group(camera: &str, folders: &[&str], n: usize, fixed: usize) -> Group {
         Group {

@@ -93,9 +93,11 @@ them anyway.
 
 Each frame is developed and compared several times, a few seconds a
 frame, so a group of 40 takes a few minutes and a library with many
-bodies and styles can take much longer. The sheet shows which frame of
-which group it is on. **Stop** ends the run after the frame in hand;
-the groups already done are kept.
+bodies and styles can take much longer. A bar fills across the whole
+run, with the count of frames done and the group under it; while a
+group's look is fitted, the bar holds and the words count the frames
+held out. **Stop** ends the run after the frame in hand, or after the
+group whose look is being fitted; the groups already done are kept.
 
 ### Reading the result
 

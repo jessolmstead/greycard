@@ -648,10 +648,28 @@ fn under(n: usize) -> String {
 /// Where a run is, and each group's result as it lands.
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Progress {
-    /// Frame `index` (from one) of `of` in the group named.
+    /// `index` of `of` frames of the group named developed, from none
+    /// (the group's start) up to all.
     Frame {
         group: String,
         index: usize,
+        of: usize,
+        /// Frames developed so far across every group, of `total` the
+        /// run will develop: the whole run's bar, full at its end.
+        done: usize,
+        total: usize,
+    },
+    /// The run's total came down (a borrower whose donor was not
+    /// fitted is not developed): the bar alone, no words.
+    Bar {
+        done: usize,
+        total: usize,
+    },
+    /// The fit of the group named, `done` of its `of` held-out fits
+    /// finished (the fit proper reports nothing as it runs).
+    Fit {
+        group: String,
+        done: usize,
         of: usize,
     },
     Done(GroupResult),
@@ -1066,6 +1084,18 @@ pub(crate) struct GroupFit {
 /// the editor's other work queued there (a preview's decode) can wait
 /// behind them that long, once a group.
 pub(crate) fn fit_group(x: &[[f32; 3]], y: &[[f32; 3]], ids: &[usize]) -> GroupFit {
+    fit_group_counted(x, y, ids, &|_| {})
+}
+
+/// [`fit_group`], calling `counted(of)` as each of the `of` held-out
+/// fits finishes, from whichever thread finished it. The caller keeps
+/// the count, so it can take it under its own lock and post in order.
+pub(crate) fn fit_group_counted(
+    x: &[[f32; 3]],
+    y: &[[f32; 3]],
+    ids: &[usize],
+    counted: &(dyn Fn(usize) + Sync),
+) -> GroupFit {
     use rayon::prelude::*;
     let params = LutParams::default();
     let model = Model::fit(x, y, params);
@@ -1073,9 +1103,14 @@ pub(crate) fn fit_group(x: &[[f32; 3]], y: &[[f32; 3]], ids: &[usize]) -> GroupF
     let mut frames = ids.to_vec();
     frames.sort_unstable();
     frames.dedup();
+    let of = frames.len();
     let held: Vec<f32> = frames
         .par_iter()
-        .map(|&f| leave_one_out(x, y, ids, &[f], params)[0])
+        .map(|&f| {
+            let d = leave_one_out(x, y, ids, &[f], params)[0];
+            counted(of);
+            d
+        })
         .collect();
     let held_out = (!held.is_empty()).then(|| held.iter().sum::<f32>() / held.len() as f32);
     GroupFit {
@@ -1181,7 +1216,7 @@ pub(crate) fn run(
     choices: Choices,
     lenses: Option<&greycard_lens::Database>,
     cancel: &AtomicBool,
-    progress: &mut dyn FnMut(Progress),
+    progress: &mut (dyn FnMut(Progress) + Send),
 ) -> Vec<GroupResult> {
     run_with(groups, store, choices, cancel, progress, &mut |frame| {
         measure(frame, choices.curve, lenses)
@@ -1195,7 +1230,7 @@ fn run_with(
     store: &Path,
     choices: Choices,
     cancel: &AtomicBool,
-    progress: &mut dyn FnMut(Progress),
+    progress: &mut (dyn FnMut(Progress) + Send),
     measure: &mut dyn FnMut(&Frame) -> Result<Kept, String>,
 ) -> Vec<GroupResult> {
     let Choices {
@@ -1226,6 +1261,15 @@ fn run_with(
         .chain((0..groups.len()).filter(|&i| !reads(i)))
         .collect();
     let mut kept_for: HashMap<usize, Vec<Kept>> = HashMap::new();
+    // Frames to develop across the run, for the bar: every group not
+    // skipped, less a borrower's when its donor turns out not to be
+    // fitted.
+    let mut total: usize = order
+        .iter()
+        .filter(|&&i| !matches!(plans[i], Plan::Skip(_)))
+        .map(|&i| groups[i].candidates())
+        .sum();
+    let mut developed = 0;
     for &i in &order {
         let g = &groups[i];
         if cancel.load(Ordering::Relaxed) {
@@ -1251,6 +1295,13 @@ fn run_with(
             Plan::Borrow { donor, .. } => fitted.contains_key(donor),
             Plan::Skip(_) => false,
         };
+        if !develop && !matches!(plans[i], Plan::Skip(_)) {
+            total -= g.candidates();
+            progress(Progress::Bar {
+                done: developed,
+                total,
+            });
+        }
         let mut kept = Vec::new();
         if develop {
             let frames = sample(&g.frames, SAMPLE);
@@ -1259,11 +1310,15 @@ fn run_with(
                 if cancel.load(Ordering::Relaxed) {
                     break;
                 }
-                progress(Progress::Frame {
-                    group: name.clone(),
-                    index: k + 1,
-                    of,
-                });
+                if k == 0 {
+                    progress(Progress::Frame {
+                        group: name.clone(),
+                        index: 0,
+                        of,
+                        done: developed,
+                        total,
+                    });
+                }
                 match measure(frame) {
                     Ok(m) => kept.push(m),
                     Err(why) => {
@@ -1271,6 +1326,14 @@ fn run_with(
                         result.dropped.push((frame.path.clone(), why));
                     }
                 }
+                developed += 1;
+                progress(Progress::Frame {
+                    group: name.clone(),
+                    index: k + 1,
+                    of,
+                    done: developed,
+                    total,
+                });
             }
             if cancel.load(Ordering::Relaxed) {
                 results[i] = Some(canceled(g));
@@ -1316,7 +1379,30 @@ fn run_with(
                 model,
                 fitted: fitted_de,
                 held_out,
-            } = fit_group(&x, &y, &ids);
+            } = {
+                // The count is taken under the lock that posts it, so
+                // the window hears 5 before 6.
+                let shared = std::sync::Mutex::new((&mut *progress, 0));
+                let of = ids.iter().collect::<BTreeSet<_>>().len();
+                if let Ok(mut held) = shared.lock() {
+                    (*held.0)(Progress::Fit {
+                        group: name.clone(),
+                        done: 0,
+                        of,
+                    });
+                }
+                fit_group_counted(&x, &y, &ids, &|of| {
+                    if let Ok(mut held) = shared.lock() {
+                        held.1 += 1;
+                        let done = held.1;
+                        (*held.0)(Progress::Fit {
+                            group: name.clone(),
+                            done,
+                            of,
+                        });
+                    }
+                })
+            };
             result.radial = radial_lines(&model, &kept);
             result.replaced = replaces;
             result.outcome = match write_look(store, g, &g.camera, kept.len(), curve, &model) {
@@ -1790,9 +1876,37 @@ mod tests {
         assert_eq!(done, 3);
         let frames_heard = heard
             .iter()
-            .filter(|p| matches!(p, Progress::Frame { .. }))
+            .filter(|p| matches!(p, Progress::Frame { index, .. } if *index > 0))
             .count();
         assert_eq!(frames_heard, 24 + 5);
+        // The bar counts across the groups: every frame's place from
+        // nothing up, over the one total the run set out with.
+        let counted: Vec<(usize, usize)> = heard
+            .iter()
+            .filter_map(|p| match p {
+                Progress::Frame { done, total, .. } => Some((*done, *total)),
+                _ => None,
+            })
+            .collect();
+        // Each group says where it starts, then each frame once it is
+        // developed; the bar ends full.
+        assert_eq!(counted.len(), 24 + 5 + 2);
+        assert!(counted.iter().all(|&(_, total)| total == 29));
+        assert!(counted.windows(2).all(|w| w[0].0 <= w[1].0));
+        assert_eq!(counted.first(), Some(&(0, 29)));
+        assert_eq!(counted.last(), Some(&(29, 29)));
+        // The fitted group's held-out fits are counted, nought to all.
+        let held: Vec<usize> = heard
+            .iter()
+            .filter_map(|p| match p {
+                Progress::Fit { done, of, .. } => {
+                    assert_eq!(*of, 24);
+                    Some(*done)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(held, (0..=24).collect::<Vec<_>>(), "in order, none lost");
         // The store holds two tables, each titled with where it was
         // fitted and from how many frames, and the fitted one renders
         // as the camera does.
@@ -1878,7 +1992,7 @@ mod tests {
         assert!(matches!(&results[2].outcome, Outcome::Skipped(w) if w == NOT_CHOSEN));
         let developed = heard
             .iter()
-            .filter(|p| matches!(p, Progress::Frame { .. }))
+            .filter(|p| matches!(p, Progress::Frame { index, .. } if *index > 0))
             .count();
         assert_eq!(developed, 24);
         let names: Vec<String> = greycard_core::lut::list_dir(&store)
@@ -1902,7 +2016,7 @@ mod tests {
         assert!(matches!(&results[1].outcome, Outcome::Skipped(w) if w.contains("not chosen")));
         let developed = heard
             .iter()
-            .filter(|p| matches!(p, Progress::Frame { .. }))
+            .filter(|p| matches!(p, Progress::Frame { index, .. } if *index > 0))
             .count();
         assert_eq!(developed, 24 + 5);
         let names: Vec<String> = greycard_core::lut::list_dir(&store)
@@ -1911,6 +2025,129 @@ mod tests {
             .collect();
         assert_eq!(names, ["Canon EOS R5m2 Faithful"]);
         crate::testing::remove_dir_retry(&store);
+    }
+
+    /// A borrower whose donor's frames all failed to register is not
+    /// developed, and the run's total comes down by its frames, so the
+    /// bar still ends full.
+    #[test]
+    fn the_total_comes_down_for_a_borrower_with_no_donor() {
+        let groups = vec![
+            synthetic_group("Canon EOS R5m2", "Canon Faithful", 5),
+            synthetic_group("Canon EOS R6m2", "Canon Faithful", 24),
+            synthetic_group("Canon EOS R7", "Canon Standard", 5),
+            synthetic_group("Canon EOS R6m2", "Canon Standard", 24),
+        ];
+        let store = scratch_store("no-donor");
+        // The run develops the fitting groups first: the Faithful
+        // donor's frames are the first 24 measured, and all fail.
+        let fails: Vec<usize> = (1..=24).collect();
+        let (results, heard) = run_synthetic(&groups, &store, false, &fails);
+        assert!(matches!(results[1].outcome, Outcome::Skipped(_)));
+        assert!(matches!(results[0].outcome, Outcome::Skipped(_)));
+        assert!(matches!(results[2].outcome, Outcome::Borrowed { .. }));
+        let counted: Vec<(usize, usize)> = heard
+            .iter()
+            .filter_map(|p| match p {
+                Progress::Frame { done, total, .. } => Some((*done, *total)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(counted.first(), Some(&(0, 58)));
+        // Once the first borrower is passed over, the second's frames
+        // are counted over what is left.
+        assert_eq!(counted.last(), Some(&(53, 53)));
+        assert!(counted.windows(2).all(|w| w[0].0 <= w[1].0));
+        crate::testing::remove_dir_retry(&store);
+    }
+
+    /// The donorless borrower last: the total comes down after every
+    /// frame is developed, and the bar is still told, so it ends full.
+    #[test]
+    fn the_bar_ends_full_when_the_last_group_is_passed_over() {
+        let groups = vec![
+            synthetic_group("Canon EOS R6m2", "Canon Faithful", 24),
+            synthetic_group("Canon EOS R5m2", "Canon Faithful", 5),
+            synthetic_group("Canon EOS R6m2", "Canon Standard", 24),
+            synthetic_group("Canon EOS R7", "Canon Standard", 5),
+        ];
+        let store = scratch_store("last-passed-over");
+        // The Standard donor's frames are the 25th to 48th measured.
+        let fails: Vec<usize> = (25..=48).collect();
+        let (results, heard) = run_synthetic(&groups, &store, false, &fails);
+        assert!(matches!(results[3].outcome, Outcome::Skipped(_)));
+        let last = heard
+            .iter()
+            .rev()
+            .find_map(|p| match p {
+                Progress::Frame { done, total, .. } | Progress::Bar { done, total } => {
+                    Some((*done, *total))
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(last, (53, 53));
+        assert!(matches!(heard.last(), Some(Progress::Done(_))));
+        crate::testing::remove_dir_retry(&store);
+    }
+
+    /// Stop pressed while frames are being developed ends the run
+    /// there, writing nothing; pressed during a fit, the fit finishes
+    /// and writes its look, as the sheet's words say it will.
+    #[test]
+    fn stop_during_frames_writes_nothing_and_during_a_fit_waits_for_it() {
+        let groups = vec![synthetic_group("Canon EOS R6m2", "Canon Faithful", 24)];
+        let run = |stop_in_fit: bool| {
+            let store = scratch_store(if stop_in_fit {
+                "stop-fit"
+            } else {
+                "stop-frames"
+            });
+            let cancel = AtomicBool::new(false);
+            let mut seed = 0;
+            let mut heard = Vec::new();
+            let results = run_with(
+                &groups,
+                &store,
+                Choices {
+                    curve: DisplayCurve::Channels,
+                    replace: false,
+                    chosen: &[],
+                },
+                &cancel,
+                &mut |p| {
+                    if stop_in_fit && matches!(p, Progress::Fit { .. }) {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                    heard.push(p);
+                },
+                &mut |_| {
+                    seed += 1;
+                    if !stop_in_fit && seed == 3 {
+                        cancel.store(true, Ordering::Relaxed);
+                    }
+                    Ok(Kept {
+                        pairs: synthetic_pairs(seed),
+                        lens: Some("RF50mm F1.2 L USM".into()),
+                    })
+                },
+            );
+            let written = greycard_core::lut::list_dir(&store).len();
+            crate::testing::remove_dir_retry(&store);
+            (results, heard, written)
+        };
+        let (results, heard, written) = run(false);
+        assert!(matches!(results[0].outcome, Outcome::Canceled));
+        assert_eq!(written, 0);
+        assert!(!heard.iter().any(|p| matches!(p, Progress::Fit { .. })));
+        let (results, heard, written) = run(true);
+        assert!(matches!(results[0].outcome, Outcome::Fitted { .. }));
+        assert_eq!(written, 1);
+        let held = heard
+            .iter()
+            .filter(|p| matches!(p, Progress::Fit { .. }))
+            .count();
+        assert_eq!(held, 25, "every held-out fit is still counted");
     }
 
     /// The store's rules, one case each: what is there, and whether a

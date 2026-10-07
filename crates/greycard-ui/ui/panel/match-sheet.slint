@@ -7,6 +7,7 @@ import { Theme } from "../theme.slint";
 import { PanelButton, Segmented, Toggle } from "../controls.slint";
 import { ScrollView } from "std-widgets.slint";
 import { MatchGroup } from "../structs.slint";
+import { LoadingCard } from "loading.slint";
 
 export component MatchSheet inherits Rectangle {
     /// "Library" or "This folder".
@@ -37,6 +38,10 @@ export component MatchSheet inherits Rectangle {
     callback match-replace-toggled();
     in property <bool> match-running;
     in property <string> match-progress;
+    /// How much of the run is done, 0 to 1; below 0 while there is
+    /// nothing to count (starting, done), and the words stand alone.
+    /// Stop holds it where it was.
+    in property <float> match-fraction: -1;
     /// One line a group as its result lands.
     in property <[string]> match-results;
     callback match-scope-picked(string);
@@ -190,11 +195,21 @@ export component MatchSheet inherits Rectangle {
                 color: Theme.text-secondary;
                 wrap: word-wrap;
             }
-            if root.match-running || root.match-progress != "": Text {
-                text: root.match-progress;
-                font-size: Theme.font-sm;
-                color: Theme.text;
-                wrap: word-wrap;
+            // The bar and its words, there whenever the sheet is, with
+            // two lines for the words, so the buttons stay where they
+            // are as it comes and goes; the end of a run is said in
+            // them, wrapped, and cut at the end of the second line.
+            LoadingCard {
+                visible: root.match-running || root.match-progress != "";
+                words-lines: 2;
+                plate: false;
+                side: 0px;
+                fraction: root.match-fraction;
+                line: root.match-progress;
+                words-color: Theme.text;
+                words-size: Theme.font-sm;
+                words-align: left;
+                wrap: !root.match-running;
             }
             for line in root.match-results: Text {
                 text: line;
