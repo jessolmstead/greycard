@@ -135,6 +135,14 @@ seconds.
 - [ ] An AVX2-and-FMA path for the wavelet chain's taps behind a
       feature check: about as much again on a desktop, nothing on the
       Mac; the first x86 assumption, declined twice (§128, §164)
+- [ ] Clarity's coarse guided filter on a quarter grid, `I` and `I²`
+      reduced by block means so no window's variance is lost; the
+      CPU path and the export gain too, and §103's numbers are
+      measured again against it (§251)
+- [ ] Local contrast on the GPU, the CPU op its reference, so a
+      Texture or Clarity move costs about what a sharpen move does
+      (~55 ms against ~0.3 s at 24 MP); an edit with the dehaze on
+      stays on the CPU path. Waits on the quarter grid (§251)
 
 ### AI masks and fill
 
@@ -158,12 +166,23 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       clothing by name (top, dress, coat, trousers, shoes, hat), on
       EasyPortrait's face parser, MediaPipe's landmarks and multiclass
       model, and SAM 2 from landmarks (the CelebAMask-HQ, LIP, ATR and
-      DeepFashion2 families are research-only; SAM 3 ruled out for
-      now, gated weights and a 1.4 GB text encoder, §34 addendum).
+      DeepFashion2 families are research-only; SAM 3 is on trial
+      for the parts, below).
       The parts wait on two calls of the user's: the ImageNet-backbone
       reading of the license rule, and hosting a converted
       EasyPortrait file ourselves rather than fetching from its
       publisher's bucket (SberDevices, a Sberbank company)
+- [ ] SAM 3 for the body's parts and clothing by name: presets from
+      prompt vectors computed once, so no text encoder ships; an fp16
+      image encoder of about 0.5 GB, converted and hosted ourselves
+      under the SAM License (its terms allow redistribution, so
+      Meta's gate is no obstacle). Waits on the portrait trial
+      against the MediaPipe and EasyPortrait route (branch `sam3-trial`)
+- [ ] Describe your own mask: a free-text field beside the presets,
+      fetching SAM 3's text encoder on first use, the phrase and its
+      vector kept in the sidecar, and "not found" when the presence
+      score says the thing is not there. Waits on the trial's
+      presence-score check on phrases absent from the frame
 - [ ] Generative fill behind the patch layer
 
 ### Color
