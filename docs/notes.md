@@ -261,3 +261,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§248. The GPU tests' stray SIGSEGV: NVIDIA's driver and instances made at once](notes/248-the-gpu-tests-stray-sigsegv.md) (2026-10-04)
 - [§249. The mouse's side buttons in the grid, and a deleted rejects folder in the tree](notes/249-the-mouse-side-buttons-and-a-deleted-rejects-folder.md) (2026-10-04)
 - [§251. Local contrast faster: a quarter grid, then the GPU](notes/251-local-contrast-faster-a-quarter-grid-and-the-gpu.md) (2026-10-05)
+- [§252. SAM 3 for the body's parts: a trial on portraits](notes/252-sam-3-for-the-bodys-parts-a-trial-on-portraits.md) (2026-10-05)

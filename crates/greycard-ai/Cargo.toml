@@ -41,7 +41,7 @@ pollster = { version = "0.4", optional = true }
 [dev-dependencies]
 image.workspace = true
 
-# Both compare or time a model on WebGPU, which a build without the
+# These compare or time a model on WebGPU, which a build without the
 # feature does not have.
 [[example]]
 name = "probe"
@@ -49,4 +49,8 @@ required-features = ["webgpu"]
 
 [[example]]
 name = "subject_bench"
+required-features = ["webgpu"]
+
+[[example]]
+name = "sam3_bench"
 required-features = ["webgpu"]

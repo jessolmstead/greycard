@@ -160,29 +160,22 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       for the gate (sky-blue walls, a lake reflecting sky with none
       above it, a snowfield filling the frame); the bimodal WebGPU
       prior. Then Water, Mountain, Vegetation, Ground and Building
-      shapes from the same label map; then the body's parts as shapes
-      of their own, each a mask to put a look on: facial skin, body
-      skin, hair, eyebrows, eyes and the iris, lips, teeth, and
-      clothing by name (top, dress, coat, trousers, shoes, hat), on
-      EasyPortrait's face parser, MediaPipe's landmarks and multiclass
-      model, and SAM 2 from landmarks (the CelebAMask-HQ, LIP, ATR and
-      DeepFashion2 families are research-only; SAM 3 is on trial
-      for the parts, below).
-      The parts wait on two calls of the user's: the ImageNet-backbone
-      reading of the license rule, and hosting a converted
-      EasyPortrait file ourselves rather than fetching from its
-      publisher's bucket (SberDevices, a Sberbank company)
-- [ ] SAM 3 for the body's parts and clothing by name: presets from
-      prompt vectors computed once, so no text encoder ships; an fp16
-      image encoder of about 0.5 GB, converted and hosted ourselves
-      under the SAM License (its terms allow redistribution, so
-      Meta's gate is no obstacle). Waits on the portrait trial
-      against the MediaPipe and EasyPortrait route (branch `sam3-trial`)
+      shapes from the same label map
+- [ ] The body's parts and clothing on SAM 3 (§252), each a shape a
+      look can go on: face, facial skin, skin, hair, eyebrows, the
+      iris (face, then eyes, then each eye's crop, asked as "iris of
+      the eye"), teeth and lips (the same through a mouth crop),
+      hands, and garments the model tells apart (sweater, shirt,
+      jacket, coat, jeans, trousers, boots, shoes; not dress). Our
+      export hosted under the SAM License: the fp16 image encoder
+      (909 MB), the decoder (130 MB) and a table of preset vectors,
+      no text encoder; registry entries, the shapes and the menu.
+      MediaPipe's iris landmarks stay the CPU fallback for the iris
 - [ ] Describe your own mask: a free-text field beside the presets,
-      fetching SAM 3's text encoder on first use, the phrase and its
-      vector kept in the sidecar, and "not found" when the presence
-      score says the thing is not there. Waits on the trial's
-      presence-score check on phrases absent from the frame
+      fetching SAM 3's text encoder on first use (1.4 GB at fp32, its
+      fp16 untried), the phrase and its vector kept in the sidecar,
+      and "not found" under the cut (§252: phrases for things absent
+      topped out at 0.31). After the parts
 - [ ] Generative fill behind the patch layer
 
 ### Color
