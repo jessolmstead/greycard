@@ -19,10 +19,9 @@ None open.
 
 ## Next: 0.5.0
 
-On a portrait, the iris, the teeth, the lips or a person's top is
-picked from a menu and adjusted, and a mask pasted to the next frame
-finds the same person there; a look can be renamed, the film strip
-shows where it is, and the camera match says how far along it is.
+More sophisticated masking (people parts!); Texture and Clarity as
+quick as the sharpen; a look can be renamed, the film strip gets a
+scroll bar, and the camera match gets a progress bar.
 
 - [ ] The body's parts and clothing on SAM 3 (§252), each a shape a
       look can go on: face, facial skin, skin, hair, eyebrows, the
@@ -36,6 +35,14 @@ shows where it is, and the camera match says how far along it is.
       and found again by the colors of their hair, clothes and skin on
       a picture the mask is pasted to, asking when two people are too
       alike. Designed in §253, built in two parts
+- [ ] Clarity's coarse guided filter on a quarter grid, `I` and `I²`
+      reduced by block means so no window's variance is lost; the
+      CPU path and the export gain too, and §103's numbers are
+      measured again against it (§251)
+- [ ] Local contrast on the GPU, the CPU op its reference, so a
+      Texture or Clarity move costs about what a sharpen move does
+      (~55 ms against ~0.3 s at 24 MP); an edit with the dehaze on
+      stays on the CPU path. Waits on the quarter grid (§251)
 - [ ] A scroll bar under the film strip, as the grid has (§214): the
       strip scrolls by wheel and keys since §89 but shows neither where
       it is in the folder nor a handle to drag there
@@ -167,14 +174,6 @@ seconds.
 - [ ] An AVX2-and-FMA path for the wavelet chain's taps behind a
       feature check: about as much again on a desktop, nothing on the
       Mac; the first x86 assumption, declined twice (§128, §164)
-- [ ] Clarity's coarse guided filter on a quarter grid, `I` and `I²`
-      reduced by block means so no window's variance is lost; the
-      CPU path and the export gain too, and §103's numbers are
-      measured again against it (§251)
-- [ ] Local contrast on the GPU, the CPU op its reference, so a
-      Texture or Clarity move costs about what a sharpen move does
-      (~55 ms against ~0.3 s at 24 MP); an edit with the dehaze on
-      stays on the CPU path. Waits on the quarter grid (§251)
 
 ### AI masks and fill
 
