@@ -26,7 +26,20 @@
 //! blur standing in for the reference's recursive Gaussian in the
 //! color-shift step, and a reduced-order fit (used with fewer than 32
 //! voting tiles) built from the right entries of the normal matrix, which
-//! the reference gets wrong.
+//! the reference gets wrong. And one in evaluation order: green at a red
+//! or blue site, the reference's weighted mean of its four green
+//! neighbors `(wtu*u + wtd*d + wtl*l + wtr*r) / W` with `W` the sum of
+//! the weights, is taken as `u + (wtd*(d - u) + wtl*(l - u) +
+//! wtr*(r - u)) / W`, which is the same mean (`wtu*u + wtd*d + wtl*l +
+//! wtr*r = W*u + wtd*(d - u) + wtl*(l - u) + wtr*(r - u)`). Rounded in
+//! floats the reference's form leaves a flat or clipped patch's greens
+//! within an ulp of their value, and its gradients rounding residues
+//! instead of zeros, and another implementation's rounding (a GPU's
+//! fused multiply-adds) leaves different ones: their energy straddles
+//! the vote's gate, so the two cast votes on different tiles and fit
+//! different corrections. In this form four equal greens give their
+//! value exactly, and the rounding of near-equal ones is a share of
+//! their differences rather than of their values.
 //!
 //! The pieces marked as shared (the tile constants, `reflect`,
 //! `origins`, `vote_of`, `fit_votes`, `resample_for`, `shift_factor`,
@@ -204,19 +217,8 @@ pub type Coefficients = [[[f32; 2]; 3]; 2];
 /// The vote from a tile's sums: the reference's scaling, then the
 /// quotient per color and direction. Shared.
 #[allow(clippy::needless_range_loop)]
-pub fn vote_of(mut coeff: Coefficients) -> BlockVote {
-    for dir in &mut coeff {
-        for (k, row) in dir.iter_mut().enumerate() {
-            for v in row.iter_mut() {
-                *v *= 0.25;
-                if k == 1 {
-                    *v *= 0.3125;
-                } else if k == 2 {
-                    *v *= 0.3125 * 0.3125;
-                }
-            }
-        }
-    }
+pub fn vote_of(coeff: Coefficients) -> BlockVote {
+    let coeff = scaled(coeff);
     let mut vote = BlockVote::default();
     for c in 0..2 {
         for dir in 0..2 {
@@ -232,6 +234,25 @@ pub fn vote_of(mut coeff: Coefficients) -> BlockVote {
         }
     }
     vote
+}
+
+/// A tile's sums as the vote reads them, after the reference's
+/// scaling: the third term is the gradient energy the vote's gate
+/// holds against [`EPS2`]. Shared.
+pub fn scaled(mut coeff: Coefficients) -> Coefficients {
+    for dir in &mut coeff {
+        for (k, row) in dir.iter_mut().enumerate() {
+            for v in row.iter_mut() {
+                *v *= 0.25;
+                if k == 1 {
+                    *v *= 0.3125;
+                } else if k == 2 {
+                    *v *= 0.3125 * 0.3125;
+                }
+            }
+        }
+    }
+    coeff
 }
 
 /// The bilinear resample's parameters for one tile's fitted shifts,
@@ -289,12 +310,37 @@ struct Scratch {
     grblpfh: Vec<f32>,
     grbdiff: Vec<f32>,
     gshift: Vec<f32>,
+    /// Each corrected sample's [`Conditioning`], kept when `trace` is set.
+    cond: Vec<Conditioning>,
+    /// When traced: the largest mosaic value a green here is made of (the
+    /// site's own and its four neighbors'), and the largest a shifted
+    /// green is made of (that at each of its bilinear corners).
+    around: Vec<f32>,
+    around_shift: Vec<f32>,
+    trace: bool,
+    /// Each green interpolated past the picture's edge moved by this
+    /// share of itself, for [`measure_coefficients_edged`]; zero in the
+    /// correction.
+    edge_nudge: f32,
 }
 
 impl Scratch {
     fn new() -> Self {
+        Self::tracing(false)
+    }
+
+    fn tracing(trace: bool) -> Self {
         let f = || vec![0.0f32; TS * TS];
         Self {
+            cond: if trace {
+                vec![Conditioning::default(); TS * TS]
+            } else {
+                Vec::new()
+            },
+            around: if trace { f() } else { Vec::new() },
+            around_shift: if trace { f() } else { Vec::new() },
+            trace,
+            edge_nudge: 0.0,
             cfa: f(),
             g: f(),
             rbhpfv: f(),
@@ -327,6 +373,12 @@ impl Scratch {
             |rr: usize, cc: usize| image.pattern.color_at(rr & 1, cc & 1) == CfaColor::Green;
         let cfa = &self.cfa;
         let at = |i: usize, o: isize| cfa[(i as isize + o) as usize];
+        let (width, height) = (image.width as isize, image.height as isize);
+        let nudge = self.edge_nudge;
+        let past_edge = |rr: usize, cc: usize| {
+            let (y, x) = (top + rr as isize, left + cc as isize);
+            y < 0 || x < 0 || y >= height || x >= width
+        };
         for rr in 3..rr1 - 3 {
             for cc in 3..cc1 - 3 {
                 if is_green(rr, cc) {
@@ -349,8 +401,16 @@ impl Scratch {
                     / sq(EPS + (s(1) - s(-1)).abs() + (s(0) - s(-2)).abs() + (s(-1) - s(-3)).abs());
                 let wtr = 1.0
                     / sq(EPS + (s(-1) - s(1)).abs() + (s(0) - s(2)).abs() + (s(1) - s(3)).abs());
-                self.g[i] = (wtu * s(-ts) + wtd * s(ts) + wtl * s(-1) + wtr * s(1))
-                    / (wtu + wtd + wtl + wtr);
+                // The weighted mean of the four greens as the upper one
+                // and the weighted differences from it (see the module
+                // doc): four equal greens give that green exactly.
+                let up = s(-ts);
+                self.g[i] = up
+                    + (wtd * (s(ts) - up) + wtl * (s(-1) - up) + wtr * (s(1) - up))
+                        / (wtu + wtd + wtl + wtr);
+                if nudge != 0.0 && past_edge(rr, cc) {
+                    self.g[i] *= 1.0 + nudge;
+                }
             }
         }
         (rr1, cc1)
@@ -359,6 +419,11 @@ impl Scratch {
     /// Pass one on a tile: the block's shift vote.
     #[allow(clippy::needless_range_loop)]
     fn measure(&mut self, image: &Image<'_>, top: isize, left: isize) -> BlockVote {
+        vote_of(self.coefficients(image, top, left))
+    }
+
+    /// A tile's quadratic-fit sums, which [`vote_of`] makes its vote of.
+    fn coefficients(&mut self, image: &Image<'_>, top: isize, left: isize) -> Coefficients {
         let (rr1, cc1) = self.load(image, top, left);
         let ts = TS as isize;
         let is_green =
@@ -435,7 +500,7 @@ impl Scratch {
                 coeff[1][2][k] += gradwt * gdiff * gdiff;
             }
         }
-        vote_of(coeff)
+        coeff
     }
 
     /// Pass two on a tile: resample red and blue by the fitted shift.
@@ -467,6 +532,19 @@ impl Scratch {
             dir_h,
         } = resample_for(shifts);
 
+        if self.trace {
+            let ts = TS;
+            for rr in 1..rr1 - 1 {
+                for cc in 1..cc1 - 1 {
+                    let i = rr * ts + cc;
+                    self.around[i] = [i, i - 1, i + 1, i - ts, i + ts]
+                        .map(|j| self.cfa[j].abs())
+                        .into_iter()
+                        .fold(0.0, f32::max);
+                }
+            }
+        }
+
         // Green at each red/blue site's optical position, and the color
         // difference there.
         for rr in 4..rr1 - 4 {
@@ -484,6 +562,19 @@ impl Scratch {
                 let gint = intp(vfrac[c], gint_ceil, gint_floor);
                 self.grbdiff[i] = gint - self.cfa[i];
                 self.gshift[i] = gint;
+                if self.trace {
+                    let a = |dr: isize, dc: isize| {
+                        self.around[((rr as isize + dr) * ts + cc as isize + dc) as usize]
+                    };
+                    self.around_shift[i] = [
+                        a(vfloor[c], hceil[c]),
+                        a(vfloor[c], hfloor[c]),
+                        a(vceil[c], hceil[c]),
+                        a(vceil[c], hfloor[c]),
+                    ]
+                    .into_iter()
+                    .fold(0.0, f32::max);
+                }
             }
         }
         let hfrac = hfrac.map(|f| f * 0.5);
@@ -512,6 +603,17 @@ impl Scratch {
                 let mut int = intp(vfrac[c], h_ceil, h_floor);
                 let rbint = g0 - int;
                 let cur = self.cfa[i];
+                if self.trace {
+                    let at = [(0, 0), (0, -dh), (-dv, 0), (-dv, -dh)];
+                    let shifted = at.map(|(r, c)| (gs(r, c), gd(r, c)));
+                    let around = at
+                        .map(|(r, c)| {
+                            self.around_shift[((rr as isize + r) * ts + cc as isize + c) as usize]
+                        })
+                        .into_iter()
+                        .fold(self.around[i], f32::max);
+                    self.cond[i] = Conditioning::of(g0, cur, int, shifted, around);
+                }
                 if (rbint - cur).abs() < 0.25 * (rbint + cur) {
                     if old.abs() > int.abs() {
                         self.cfa[i] = rbint;
@@ -533,15 +635,29 @@ impl Scratch {
                 if old * int < 0.0 {
                     self.cfa[i] = g0 - 0.5 * (old + int);
                 }
+                if self.trace {
+                    debug_assert_eq!(
+                        self.cond[i].value.to_bits(),
+                        self.cfa[i].to_bits(),
+                        "the conditioning's guards are these"
+                    );
+                }
             }
         }
 
         let rows = rr1.saturating_sub(2 * BORDER);
         let cols = cc1.saturating_sub(2 * BORDER);
         let mut data = vec![0.0f32; rows * cols];
+        let mut cond = Vec::new();
         for r in 0..rows {
-            let src = &self.cfa[(r + BORDER) * TS + BORDER..(r + BORDER) * TS + BORDER + cols];
-            data[r * cols..(r + 1) * cols].copy_from_slice(src);
+            let from = (r + BORDER) * TS + BORDER;
+            data[r * cols..(r + 1) * cols].copy_from_slice(&self.cfa[from..from + cols]);
+            if self.trace {
+                cond.extend_from_slice(&self.cond[from..from + cols]);
+            }
+        }
+        if self.trace {
+            self.cond.fill(Conditioning::default());
         }
         TileOut {
             row0: (top + BORDER as isize) as usize,
@@ -549,6 +665,7 @@ impl Scratch {
             rows,
             cols,
             data,
+            cond,
         }
     }
 }
@@ -559,6 +676,136 @@ struct TileOut {
     rows: usize,
     cols: usize,
     data: Vec<f32>,
+    /// The interior's conditioning, when traced; else empty.
+    cond: Vec<Conditioning>,
+}
+
+/// How a red or blue sample of a pass stands to rounding in the values
+/// it is resampled from (the green here and at the shifted points, and
+/// the color differences there), for a check of another
+/// implementation that rounds them differently. An error of `e` in
+/// each moves the sample by up to `gain * e` while no guard flips;
+/// `flips` holds, for each of the three guards (the branch between
+/// the bilinear and the weighted color difference, keeping or taking
+/// the correction, and desaturating an overshoot), how large an error
+/// would flip it and what the sample would be then. `scale` is the
+/// largest of those values and of the mosaic values the greens among
+/// them are interpolated from (an interpolated green is its upper
+/// neighbor plus weighted differences, and rounds as a share of
+/// those, which may be far larger than the green: a dark site by a
+/// bright one), what their rounding is a share of. A
+/// green sample, or one outside every tile's interior, has the
+/// default: no gain and no flip, so it is exact. Shared.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Conditioning {
+    pub scale: f32,
+    pub gain: f32,
+    pub flips: [Flip; 3],
+    /// The sample, before it is kept at or above zero.
+    pub value: f32,
+}
+
+/// One guard of a resampled sample taken the other way: how large an
+/// error in the sample's values would do it, and the sample then, with
+/// its own gain. Shared.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Flip {
+    pub margin: f32,
+    pub value: f32,
+    pub gain: f32,
+}
+
+impl Default for Conditioning {
+    fn default() -> Self {
+        let none = Flip {
+            margin: f32::INFINITY,
+            value: 0.0,
+            gain: 0.0,
+        };
+        Self {
+            scale: 0.0,
+            gain: 0.0,
+            flips: [none; 3],
+            value: 0.0,
+        }
+    }
+}
+
+impl Conditioning {
+    /// The sample `cur` resampled with green `g0` here, the bilinear
+    /// color difference `bilinear`, and the shifted greens and color
+    /// differences, each guard as the pass decides it or flipped.
+    fn of(g0: f32, cur: f32, bilinear: f32, shifted: [(f32, f32); 4], around: f32) -> Self {
+        let old = g0 - cur;
+        let weights = shifted.map(|(gs, _)| 1.0 / (EPS + (g0 - gs).abs()));
+        let total: f32 = weights.iter().sum();
+        let [(_, d0), (_, d1), (_, d2), (_, d3)] = shifted;
+        let weighted =
+            (weights[0] * d0 + weights[1] * d1 + weights[2] * d2 + weights[3] * d3) / total;
+        let rbint = g0 - bilinear;
+        let bilinear_branch = (rbint - cur).abs() < 0.25 * (rbint + cur);
+        // A weight moves by its square times an error in the greens it
+        // reads, here and shifted; the bilinear mean of the
+        // differences carries their error once.
+        let weighted_gain = 1.0
+            + 2.0
+                * weights
+                    .iter()
+                    .zip(&shifted)
+                    .map(|(p, (_, d))| p * p * (d - weighted).abs())
+                    .sum::<f32>()
+                / total;
+        let int_of = |bilinear_branch: bool| {
+            if bilinear_branch {
+                (bilinear, 1.0)
+            } else {
+                (weighted, weighted_gain)
+            }
+        };
+        // The sample and its gain with each guard as decided, or
+        // flipped.
+        let decide = |bilinear_branch: bool, flip_take: bool, flip_over: bool| {
+            let (int, int_gain) = int_of(bilinear_branch);
+            let take = (old.abs() > int.abs()) != flip_take;
+            if (old * int < 0.0) != flip_over {
+                (g0 - 0.5 * (old + int), 0.5 + 0.5 * int_gain)
+            } else if take {
+                (g0 - int, 1.0 + int_gain)
+            } else {
+                (cur, 0.0)
+            }
+        };
+        let flip = |margin: f32, (value, gain): (f32, f32)| Flip {
+            margin,
+            value,
+            gain,
+        };
+        let (int, int_gain) = int_of(bilinear_branch);
+        let (value, gain) = decide(bilinear_branch, false, false);
+        let scale = shifted
+            .iter()
+            .map(|&(gs, d)| gs.abs().max((gs - d).abs()))
+            .fold(g0.abs().max(cur.abs()).max(around), f32::max);
+        Self {
+            scale,
+            gain,
+            flips: [
+                flip(
+                    (0.25 * (rbint + cur) - (rbint - cur).abs()).abs() / 2.5,
+                    decide(!bilinear_branch, false, false),
+                ),
+                flip(
+                    (old.abs() - int.abs()).abs() / (1.0 + int_gain),
+                    decide(bilinear_branch, true, false),
+                ),
+                flip(
+                    (int.abs() / int_gain).min(old.abs()),
+                    decide(bilinear_branch, false, true),
+                ),
+            ],
+            value,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Default)]
@@ -863,6 +1110,79 @@ pub fn measure_votes(
         .collect())
 }
 
+/// [`measure_votes`]'s sums before the votes are made of them: a tile's
+/// [`Coefficients`] in the same order. Shared.
+pub fn measure_coefficients(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+) -> Result<Vec<Coefficients>> {
+    coefficients_of(samples, width, height, pattern, 0.0)
+}
+
+/// [`measure_coefficients`] with every green interpolated past the
+/// picture's edge moved by `nudge` of itself: for telling the votes that
+/// another implementation's rounding of those greens alone can move. A
+/// green past the edge mirrors one inside, made of the same samples,
+/// and the reference's rounding can leave the two exactly equal where
+/// another implementation's leaves them an ulp apart; the high-pass
+/// that weights a site's terms is then exactly zero on one path and a
+/// residue on the other, and a residue times a clipped edge's gradient
+/// moves a vote, or casts one. No change to the mosaic shows it, since
+/// a reflected read is the same sample, and an ulp either way does:
+/// the residue cancels for one sign, so a check takes both. Inside the
+/// picture it is the reference. Shared.
+pub fn measure_coefficients_edged(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    nudge: f32,
+) -> Result<Vec<Coefficients>> {
+    coefficients_of(samples, width, height, pattern, nudge)
+}
+
+fn coefficients_of(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    edge_nudge: f32,
+) -> Result<Vec<Coefficients>> {
+    if !is_bayer(pattern) {
+        return Err(Error::Unsupported(format!(
+            "CA correction needs a 2x2 Bayer pattern, got {pattern}"
+        )));
+    }
+    if samples.len() != width * height {
+        return Err(Error::Unsupported(format!(
+            "{width}x{height} mosaic with {} samples",
+            samples.len()
+        )));
+    }
+    let image = Image {
+        samples,
+        width,
+        height,
+        pattern,
+    };
+    let tiles: Vec<(isize, isize)> = origins(height)
+        .iter()
+        .flat_map(|&t| origins(width).into_iter().map(move |l| (t, l)))
+        .collect();
+    Ok(tiles
+        .par_iter()
+        .map_init(
+            || Scratch {
+                edge_nudge,
+                ..Scratch::new()
+            },
+            |scratch, &(t, l)| scratch.coefficients(&image, t, l),
+        )
+        .collect())
+}
+
 /// Measure, fit and correct once.
 fn one_pass(
     samples: &[f32],
@@ -909,26 +1229,8 @@ fn one_pass(
             ));
         }
     };
-    let shift_at = |v: usize, h: usize| fit.shift_at(v, h);
     let (blocks, polyord, max_shift) = (fit.blocks, fit.order, fit.max_shift);
-
-    let outs: Vec<TileOut> = tiles
-        .par_iter()
-        .map_init(Scratch::new, |scratch, &(t, l)| {
-            let (v, h) = block_of(t, l);
-            scratch.correct(&image, t, l, shift_at(v, h))
-        })
-        .collect();
-    let mut out = samples.to_vec();
-    for tile in outs {
-        for r in 0..tile.rows {
-            let y = tile.row0 + r;
-            let src = &tile.data[r * tile.cols..(r + 1) * tile.cols];
-            out[y * width + tile.col0..y * width + tile.col0 + tile.cols].copy_from_slice(src);
-        }
-    }
-    // The reference keeps corrected values at or above zero.
-    out.par_iter_mut().for_each(|v| *v = v.max(0.0));
+    let (out, _) = resample(&image, &fit, false);
     Ok((
         out,
         PassStats {
@@ -940,10 +1242,90 @@ fn one_pass(
     ))
 }
 
+/// A pass's resample of red and blue by the shifts `fit` gives each
+/// tile, kept at or above zero, and each sample's conditioning when
+/// `trace` is set.
+fn resample(image: &Image<'_>, fit: &Fit, trace: bool) -> (Vec<f32>, Vec<Conditioning>) {
+    let (width, height) = (image.width, image.height);
+    let block_of = |t: isize, l: isize| {
+        let v = (t + BORDER as isize) as usize / STEP + 1;
+        let h = (l + BORDER as isize) as usize / STEP + 1;
+        (v, h)
+    };
+    let (tops, lefts) = (origins(height), origins(width));
+    let tiles: Vec<(isize, isize)> = tops
+        .iter()
+        .flat_map(|&t| lefts.iter().map(move |&l| (t, l)))
+        .collect();
+    let outs: Vec<TileOut> = tiles
+        .par_iter()
+        .map_init(
+            || Scratch::tracing(trace),
+            |scratch, &(t, l)| {
+                let (v, h) = block_of(t, l);
+                scratch.correct(image, t, l, fit.shift_at(v, h))
+            },
+        )
+        .collect();
+    let mut out = image.samples.to_vec();
+    let mut cond = if trace {
+        vec![Conditioning::default(); width * height]
+    } else {
+        Vec::new()
+    };
+    // A last column of tiles starting within a margin of the right
+    // edge has no interior, and its offset is past the edge.
+    for tile in outs.into_iter().filter(|t| t.cols > 0) {
+        for r in 0..tile.rows {
+            let at = (tile.row0 + r) * width + tile.col0;
+            let from = r * tile.cols;
+            out[at..at + tile.cols].copy_from_slice(&tile.data[from..from + tile.cols]);
+            if trace {
+                cond[at..at + tile.cols].copy_from_slice(&tile.cond[from..from + tile.cols]);
+            }
+        }
+    }
+    // The reference keeps corrected values at or above zero.
+    out.par_iter_mut().for_each(|v| *v = v.max(0.0));
+    (out, cond)
+}
+
+/// One pass's resample of `samples` by `fit`, as the correction's own
+/// pass makes it from its fit, and each sample's [`Conditioning`]: for
+/// checking another implementation's resample on the fit it made.
+/// Shared.
+pub fn resample_with(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    fit: &Fit,
+) -> Result<(Vec<f32>, Vec<Conditioning>)> {
+    if !is_bayer(pattern) {
+        return Err(Error::Unsupported(format!(
+            "CA correction needs a 2x2 Bayer pattern, got {pattern}"
+        )));
+    }
+    if samples.len() != width * height {
+        return Err(Error::Unsupported(format!(
+            "{width}x{height} mosaic with {} samples",
+            samples.len()
+        )));
+    }
+    let image = Image {
+        samples,
+        width,
+        height,
+        pattern,
+    };
+    Ok(resample(&image, fit, true))
+}
+
 /// Keep the local average of each of red and blue what it was: the ratio
 /// of old to new at every red and blue site, blurred widely, multiplies
-/// the corrected value.
-fn avoid_color_shift(
+/// the corrected value. What [`correct_ca`] does after its passes when
+/// asked to avoid a color shift. Shared.
+pub fn avoid_color_shift(
     original: &[f32],
     corrected: &mut [f32],
     width: usize,
@@ -1266,6 +1648,134 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A width a few pixels past a tile origin: the last column of
+    /// tiles starts inside the mosaic but its interior lies wholly past
+    /// the right edge, and has nothing to write. Writing its empty rows
+    /// at their offsets ran past the end of the mosaic on the last row
+    /// and panicked, for any width 105 to 111 past a multiple of the
+    /// interior (112): a frame of such a width crashed the CPU
+    /// correction wherever it made a fit (the GPU's, which the editor
+    /// takes when it has a device, did not).
+    #[test]
+    fn a_last_tile_column_with_no_interior_writes_nothing() {
+        let p = CfaPattern::rggb();
+        for w in [STEP * 5 - BORDER + 1, STEP * 5 - 1, STEP * 6 - 3] {
+            let h = 320;
+            let last = *origins(w).last().unwrap() + BORDER as isize;
+            assert!(
+                last >= w as isize,
+                "{w}: the last tile's interior starts past the edge"
+            );
+            let (clean, shifted) = aberrated(w, h, 0.005, -0.004);
+            let (out, stats) = correct_ca(&shifted, w, h, &p, &CaOptions::default()).unwrap();
+            assert!(stats.corrected, "{w}: {stats:?}");
+            // Corrected as at any other width.
+            for color in [CfaColor::Red, CfaColor::Blue] {
+                let before = rms_error(&clean, &shifted, w, h, &p, color);
+                let after = rms_error(&clean, &out, w, h, &p, color);
+                assert!(after < 0.5 * before, "{w} {color:?}: {before} -> {after}");
+            }
+        }
+    }
+
+    /// The resample on its own, on the fit a pass makes, is that pass;
+    /// each sample's conditioning holds the value it took, and green
+    /// has none.
+    #[test]
+    fn the_traced_resample_is_the_pass() {
+        let (w, h) = (400, 320);
+        let p = CfaPattern::rggb();
+        let (_, shifted) = aberrated(w, h, 0.005, -0.004);
+        let one = CaOptions {
+            iterations: 1,
+            avoid_color_shift: false,
+        };
+        let (pass, _) = correct_ca(&shifted, w, h, &p, &one).unwrap();
+        let votes = measure_votes(&shifted, w, h, &p).unwrap();
+        let sums = measure_coefficients(&shifted, w, h, &p).unwrap();
+        assert_eq!(votes, sums.into_iter().map(vote_of).collect::<Vec<_>>());
+        let fit = fit_votes(&votes, origins(h).len(), origins(w).len()).unwrap();
+        let (out, cond) = resample_with(&shifted, w, h, &p, &fit).unwrap();
+        assert_eq!(out, pass);
+        for (i, c) in cond.iter().enumerate() {
+            if p.color_at(i / w, i % w) == CfaColor::Green {
+                assert_eq!(*c, Conditioning::default());
+            } else {
+                assert!(c.scale > 0.0 && c.value.max(0.0) == out[i], "{i}: {c:?}");
+            }
+        }
+    }
+
+    /// A flat mosaic, and a patch inside a textured one where green is
+    /// flat and red and blue are not (a highlight whose green channel
+    /// clipped first), have exactly zero gradient energy and cast no
+    /// vote: four equal green neighbors give their value as the green
+    /// between them, not that value rounded through weights that differ
+    /// from site to site with red and blue, so the green gradients the
+    /// energy is made of are zero. In RawTherapee's own order of
+    /// evaluation the patch's greens land an ulp either side of their
+    /// value, and its tiles have the residues' energy.
+    #[test]
+    #[allow(clippy::needless_range_loop)]
+    fn a_flat_patch_has_no_gradient_energy() {
+        let p = CfaPattern::rggb();
+        let (w, h) = (600, 520);
+        let level = 0.8137;
+        // The tiles kept, each checked to have no energy and no vote.
+        let silent = |sums: &[Coefficients], keep: &dyn Fn(usize) -> bool| -> usize {
+            let mut n = 0;
+            for (i, s) in sums.iter().enumerate().filter(|(i, _)| keep(*i)) {
+                n += 1;
+                let (energy, vote) = (scaled(*s), vote_of(*s));
+                for dir in 0..2 {
+                    for c in 0..2 {
+                        assert_eq!(energy[dir][2][c], 0.0, "tile {i}'s energy ({c}, {dir})");
+                        assert_eq!(vote.shift[c][dir], 17.0, "tile {i} voted ({c}, {dir})");
+                    }
+                }
+            }
+            n
+        };
+        let flat = vec![level; w * h];
+        let sums = measure_coefficients(&flat, w, h, &p).unwrap();
+        assert_eq!(silent(&sums, &|_| true), sums.len());
+        // A patch covering whole tiles, its green flat, the texture
+        // around it.
+        let (_, mut mosaic) = aberrated(w, h, 0.005, -0.004);
+        let (x0, y0, x1, y1) = (100, 90, 480, 430);
+        for y in y0..y1 {
+            for x in x0..x1 {
+                if p.color_at(y, x) == CfaColor::Green {
+                    mosaic[y * w + x] = level;
+                }
+            }
+        }
+        let (tops, lefts) = (origins(h), origins(w));
+        // A tile reads the mosaic from its origin over its side.
+        let inside = |i: usize| {
+            let (t, l) = (tops[i / lefts.len()], lefts[i % lefts.len()]);
+            let within =
+                |o: isize, lo: usize, hi: usize| o >= lo as isize && o + TS as isize <= hi as isize;
+            within(t, y0, y1) && within(l, x0, x1)
+        };
+        let sums = measure_coefficients(&mosaic, w, h, &p).unwrap();
+        assert_eq!(silent(&sums, &inside), 6, "the tiles inside the patch");
+        assert!(
+            mosaic
+                .chunks(w)
+                .skip(y0)
+                .take(y1 - y0)
+                .any(|row| row[x0..x1].iter().any(|&v| v != level)),
+            "red and blue inside the patch are not flat"
+        );
+        assert!(
+            sums.iter()
+                .enumerate()
+                .any(|(i, s)| !inside(i) && vote_of(*s).shift[0][0] != 17.0),
+            "the texture around the patch votes"
+        );
     }
 
     #[test]

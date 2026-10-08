@@ -8,10 +8,11 @@
 // tiles' quadratic-fit sums, the resample by the fitted shifts, and
 // the color-shift guard's factors, box blurs and multiply. The
 // constants are `greycard_core::develop::ca`'s, and every expression
-// takes the reference's operations in the reference's order. What the
-// reference decides between these stages (the median, the gate, the
-// polynomial fit, the solve) is read back and decided on the CPU with
-// the reference's own functions.
+// takes the reference's operations in the reference's order (which for
+// the interpolated green is not RawTherapee's: see the reference's
+// module doc). What the reference decides between these stages (the
+// median, the gate, the polynomial fit, the solve) is read back and
+// decided on the CPU with the reference's own functions.
 //
 // The reference works in tiles of 128 with a border of 8 it computes
 // and throws away, reflecting reads past the picture's edge. Every
@@ -177,8 +178,12 @@ fn interpolate_green(@builtin(global_invocation_id) gid: vec3<u32>) {
                 + abs(cfa(y, x - 1) - cfa(y, x + 1))
                 + abs(cfa(y, x) - cfa(y, x + 2))
                 + abs(cfa(y, x + 1) - cfa(y, x + 3)));
-        v = (wtu * cfa(y - 1, x) + wtd * cfa(y + 1, x) + wtl * cfa(y, x - 1) + wtr * cfa(y, x + 1))
-            / (wtu + wtd + wtl + wtr);
+        // The weighted mean as the upper green and the weighted
+        // differences from it, as the reference takes it.
+        let up = cfa(y - 1, x);
+        v = up
+            + (wtd * (cfa(y + 1, x) - up) + wtl * (cfa(y, x - 1) - up) + wtr * (cfa(y, x + 1) - up))
+                / (wtu + wtd + wtl + wtr);
     }
     textureStore(green, vec2<i32>(gid.xy), vec4<f32>(v, 0.0, 0.0, 0.0));
 }

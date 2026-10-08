@@ -220,6 +220,11 @@ ask for first.
       curves dropped once the curve's range is guaranteed, a final clamp
       to the encodable range kept. Each behind the comparison over the
       archive sets and its own notes section. Waits on the AgX port
+- [ ] The demosaic's direction choices flip on inputs a millionth
+      apart (AMaZE, RCD and VNG4 alike), so a frame's GPU and CPU
+      chromatic aberration outputs, equal to 1e-5, still export a few
+      single pixels dozens of levels apart, which the capture sharpen
+      doubles; decide whether a tie-break makes them stable (§264)
 - [ ] The color curves' lightness axis near black: the shift is looked
       up by Oklab lightness, a cube root whose slope is unbounded at
       zero, so a few parts in a billion of light at a clipped channel

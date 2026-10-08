@@ -76,6 +76,22 @@ note a first tester reads.
   frame's edit. Both now save everything and leave cleanly, and the
   last edit before quitting reaches the frame's archive copy at the
   next start ([§261](https://github.com/jessolmstead/greycard/blob/master/docs/notes/261-leaving-while-the-worker-is-in-a-job.md))
+- A raw whose width fell 105 to 111 pixels past a multiple of 112
+  crashed its export, and the command line and the camera match, in
+  the chromatic aberration correction; such a width now develops
+  ([§264](https://github.com/jessolmstead/greycard/blob/master/docs/notes/264-the-gpu-ops-checked-at-random-settings.md))
+- The viewport and the export agree beside blown highlights, where
+  the chromatic aberration correction could differ between the GPU
+  and the CPU by up to 37 levels on a few pixels; an export moves
+  from 0.4.0's on single pixels only ([§264](https://github.com/jessolmstead/greycard/blob/master/docs/notes/264-the-gpu-ops-checked-at-random-settings.md))
+
+### For developers
+
+- The GPU sharpen, chromatic aberration correction and Texture and
+  Clarity are each checked against the CPU at random settings, as the
+  shader is, with `GREYCARD_OP_PARITY_SEED`, `_CASES` and `_ONLY` to
+  replay a case, and an ignored test checks the correction on real
+  frames ([§264](https://github.com/jessolmstead/greycard/blob/master/docs/notes/264-the-gpu-ops-checked-at-random-settings.md))
 
 ## 0.4.0, 2026-10-05
 

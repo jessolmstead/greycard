@@ -273,3 +273,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§261. Leaving while the worker is in a job](notes/261-leaving-while-the-worker-is-in-a-job.md) (2026-10-07)
 - [§262. Export names and the subfolder button](notes/262-export-names-and-the-subfolder-button.md) (2026-10-07)
 - [§263. The People mask's editor side, as built](notes/263-the-people-masks-editor-side-as-built.md) (2026-10-08)
+- [§264. The GPU ops checked at random settings](notes/264-the-gpu-ops-checked-at-random-settings.md) (2026-10-08)

@@ -345,6 +345,22 @@ impl Context {
         height: usize,
         pattern: &CfaPattern,
     ) -> Result<Vec<BlockVote>> {
+        Ok(self
+            .ca_coefficients(samples, width, height, pattern)?
+            .into_iter()
+            .map(reference::vote_of)
+            .collect())
+    }
+
+    /// The reference's `measure_coefficients` on the GPU: the sums the
+    /// first pass's votes are made of, one a tile in row-major order.
+    pub fn ca_coefficients(
+        &self,
+        samples: &[f32],
+        width: usize,
+        height: usize,
+        pattern: &CfaPattern,
+    ) -> Result<Vec<Coefficients>> {
         if !reference::is_bayer(pattern) {
             return Err(Error::Unsupported(format!(
                 "CA correction needs a 2x2 Bayer pattern, got {pattern}"
@@ -363,7 +379,7 @@ impl Context {
             let uniforms = Uniforms::new(&self.device, "ca params", 1);
             let base = self.ca_params(&work, pattern);
             let bind = self.ca_pass_group(&work, &uniforms, &work.original, &work.planes[0]);
-            self.measure(&work, &bind, &uniforms, &base)
+            self.measure_sums(&work, &bind, &uniforms, &base)
         })
     }
 
@@ -441,6 +457,22 @@ impl Context {
         uniforms: &Uniforms,
         base: &Params,
     ) -> Result<Vec<BlockVote>> {
+        Ok(self
+            .measure_sums(work, bind, uniforms, base)?
+            .into_iter()
+            .map(reference::vote_of)
+            .collect())
+    }
+
+    /// The green and the tiles' sums on the mosaic `bind` reads, read
+    /// back.
+    fn measure_sums(
+        &self,
+        work: &Work,
+        bind: &wgpu::BindGroup,
+        uniforms: &Uniforms,
+        base: &Params,
+    ) -> Result<Vec<Coefficients>> {
         let (w, h) = (work.width, work.height);
         let tiles = work.tiles;
         let n_tiles = (tiles[0] * tiles[1]) as usize;
@@ -460,7 +492,7 @@ impl Context {
             .as_chunks::<12>()
             .0
             .iter()
-            .map(|s| reference::vote_of(coefficients_of(s)))
+            .map(|s| coefficients_of(s))
             .collect())
     }
 

@@ -8,6 +8,9 @@
 //! Without a GPU adapter each test says so and returns; it does not
 //! pass in silence. (`cargo test` shows the line with `--nocapture`.)
 
+mod common;
+
+use common::{Rng, Sweep};
 use greycard_core::develop::local_contrast::{
     self as reference, COARSE_FROM_RADIUS, LocalContrastOptions, LocalContrastStats,
     local_contrast, radii,
@@ -789,4 +792,246 @@ fn half_to_f32(h: u16) -> f32 {
         }
         e => sign * (1.0 + mantissa / 1024.0) * 2f32.powi(e - 15),
     }
+}
+
+/// The kinds of picture the random sweep draws, each with its numbers
+/// drawn from the case's own seed.
+#[derive(Debug, Clone, Copy)]
+enum Scene {
+    /// [`scene`] with its numbers drawn: a gradient, soft shapes, a
+    /// hard edge of some stops, bars, grain, a cast, a deep shadow and
+    /// a clipped patch, each present or not.
+    Soft,
+    /// Hard steps of a few stops either way across the picture, in
+    /// both directions: the guided filters' edges and Clarity's fades.
+    Steps,
+    /// Noise about one level, from deep shadow to past white.
+    Noise,
+    /// One value everywhere, black included.
+    Flat,
+    /// [`Scene::Soft`] deep in the shadows, through Clarity's shadow
+    /// fade and down to the log's floor.
+    Dark,
+    /// Blocks of pure primaries, black and bright: a channel at zero,
+    /// a luminance at zero.
+    Saturated,
+}
+
+/// A picture of `kind`, its numbers from `seed`.
+fn drawn_scene(kind: Scene, seed: u64, w: usize, h: usize) -> WorkingImage {
+    let mut r = Rng::new(seed, 0);
+    let mut noise = Rng::new(seed, 1);
+    let mut rand = move || noise.unit() - 0.5;
+    let mut image = WorkingImage::new(w, h);
+    let (pixels, _) = image.data.as_chunks_mut::<3>();
+    let (fw, fh) = (w as f32, h as f32);
+    // A rectangle somewhere in the picture, as fractions of it.
+    let rect = move |r: &mut Rng| {
+        let (x0, y0) = (r.range(0.0, 0.9), r.range(0.0, 0.9));
+        let (x1, y1) = (r.range(x0, 1.0), r.range(y0, 1.0));
+        move |x: f32, y: f32| x >= x0 * fw && x < x1 * fw && y >= y0 * fh && y < y1 * fh
+    };
+    match kind {
+        Scene::Soft | Scene::Dark => {
+            let slope = r.range(0.0, 0.5);
+            let base = r.range(0.0, 0.2);
+            let soft = r.range(0.0, 0.4);
+            let (fx, fy) = (r.range(5.0, 80.0), r.range(5.0, 80.0));
+            let edge = if r.chance(0.7) {
+                r.range(0.0, 4.0)
+            } else {
+                0.0
+            };
+            let edged = rect(&mut r);
+            let bars = r.range(0.0, 0.1);
+            let period = r.range(2.0, 8.0);
+            let shadow = r.pick(&[0.002, 1e-5, 1.0]);
+            let shadowed = rect(&mut r);
+            let clipped = if r.chance(0.6) {
+                r.range(1.0, 6.0)
+            } else {
+                0.0
+            };
+            let clipped_at = rect(&mut r);
+            let grain = r.range(0.0, 0.05);
+            let cast = r.range(0.0, 0.5);
+            let scale = if let Scene::Dark = kind {
+                10f32.powf(r.range(-5.0, -2.0))
+            } else {
+                1.0
+            };
+            let long = w.max(h) as f32;
+            for (i, px) in pixels.iter_mut().enumerate() {
+                let (x, y) = ((i % w) as f32, (i / w) as f32);
+                let mut v = base
+                    + slope * (x / fw)
+                    + soft * ((x / long * fx).sin() * (y / long * fy).cos() + 1.0)
+                    + if edged(x, y) { edge } else { 0.0 }
+                    + if ((x / period) as usize).is_multiple_of(2) {
+                        bars
+                    } else {
+                        0.0
+                    };
+                if shadowed(x, y) {
+                    v *= shadow;
+                }
+                if clipped_at(x, y) {
+                    v += clipped;
+                }
+                let v = v * (1.0 + grain * rand()) * scale;
+                let tint = 1.0 - cast / 2.0 + cast * (y / fh);
+                px[0] = v * tint;
+                px[1] = v;
+                px[2] = v * (2.0 - tint);
+            }
+        }
+        Scene::Steps => {
+            let level = r.range(0.01, 1.0);
+            let (across, down) = (r.between(1, 6), r.between(1, 6));
+            let stops: Vec<f32> = (0..across + down).map(|_| r.range(-8.0, 4.0)).collect();
+            let cuts: Vec<f32> = (0..across + down).map(|_| r.range(0.0, 1.0)).collect();
+            for (i, px) in pixels.iter_mut().enumerate() {
+                let (x, y) = ((i % w) as f32 / fw, (i / w) as f32 / fh);
+                let mut e = 0.0;
+                for k in 0..across + down {
+                    let t = if k < across { x } else { y };
+                    if t >= cuts[k] {
+                        e += stops[k] / (across + down) as f32;
+                    }
+                }
+                let v = level * 2f32.powf(e);
+                px.copy_from_slice(&[v, v, v]);
+            }
+        }
+        Scene::Noise => {
+            let level = 10f32.powf(r.range(-4.0, 0.7));
+            let amount = r.range(0.0, 0.5);
+            for px in pixels.iter_mut() {
+                let v = level * (1.0 + amount * rand());
+                px.copy_from_slice(&[v, v * 0.9, v * 1.1]);
+            }
+        }
+        Scene::Flat => {
+            let v = r.pick(&[0.0, 1e-7, 0.18, 1.0, 5.0]);
+            for px in pixels.iter_mut() {
+                px.copy_from_slice(&[v, v, v]);
+            }
+        }
+        Scene::Saturated => {
+            let block = r.between(1, 24);
+            let level = r.range(0.05, 3.0);
+            let colors: [[f32; 3]; 7] = [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+                [0.0, 0.0, 0.0],
+                [1.0, 1.0, 1.0],
+                [0.0, 0.6, 0.6],
+                [0.8, 0.0, 0.5],
+            ];
+            let across = w.div_ceil(block);
+            let choice: Vec<usize> = (0..across * h.div_ceil(block))
+                .map(|_| r.below(colors.len()))
+                .collect();
+            for (i, px) in pixels.iter_mut().enumerate() {
+                let (x, y) = (i % w, i / w);
+                let color = colors[choice[(y / block) * across + x / block]];
+                for c in 0..3 {
+                    px[c] = color[c] * level;
+                }
+            }
+        }
+    }
+    image
+}
+
+/// One random case: the picture and every input the op reads.
+#[derive(Debug)]
+struct Drawn {
+    width: usize,
+    height: usize,
+    scene: Scene,
+    scene_seed: u64,
+    options: LocalContrastOptions,
+    clip_level: f32,
+}
+
+fn draw(r: &mut Rng) -> Drawn {
+    let side = |r: &mut Rng| {
+        if r.chance(0.08) {
+            r.between(1, 12)
+        } else {
+            r.between(13, 640)
+        }
+    };
+    // Now and then a long edge either side of the grid's start (2539
+    // takes the exact filter, 2540 the grid) or of Texture's radius
+    // going from two to three (at 5000), or a very long one, each on
+    // a short side to keep the run quick.
+    let (long, short) = match r.below(50) {
+        0..=4 => {
+            let long = if r.chance(0.5) {
+                r.pick(&[2539, 2540])
+            } else {
+                r.between(2530, 2560)
+            };
+            (long, r.between(1, 120))
+        }
+        5 | 6 => (r.between(4990, 5010), r.between(1, 40)),
+        7 => (r.between(8000, 16384), r.between(1, 16)),
+        _ => (side(r), side(r)),
+    };
+    let (width, height) = if r.chance(0.5) {
+        (long, short)
+    } else {
+        (short, long)
+    };
+    let scene = r.pick(&[
+        Scene::Soft,
+        Scene::Soft,
+        Scene::Steps,
+        Scene::Noise,
+        Scene::Flat,
+        Scene::Dark,
+        Scene::Saturated,
+    ]);
+    let scene_seed = r.next();
+    // The panel's ranges, -1 to 1 each.
+    let options = LocalContrastOptions {
+        texture: r.signed(-1.0, 1.0),
+        clarity: r.signed(-1.0, 1.0),
+    };
+    // The clip level is the frame's ceiling's, at least 0.98, or none.
+    let clip_level = match r.below(20) {
+        0..=4 => NO_CLIP,
+        5..=7 => 0.98,
+        8 | 9 => 8.0,
+        _ => r.range(0.98, 8.0),
+    };
+    Drawn {
+        width,
+        height,
+        scene,
+        scene_seed,
+        options,
+        clip_level,
+    }
+}
+
+/// The GPU local contrast against the reference and the f64 port at
+/// random settings, on random pictures: Texture and Clarity over the
+/// panel's range with their ends, zero and small values weighted, the
+/// clip level or none, and the picture's size (both filters, the
+/// grid's start, Texture's radius steps, odd sides) and kind. Held to
+/// the fixed tests' `compare`.
+#[test]
+fn the_gpu_local_contrast_is_the_reference_over_random_settings() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let device = ctx.device().adapter_info().name;
+    Sweep::from_env(50).run("local contrast", &device, draw, |what, d| {
+        let image = drawn_scene(d.scene, d.scene_seed, d.width, d.height);
+        compare(&ctx, what, &image, &d.options, d.clip_level);
+    });
 }
