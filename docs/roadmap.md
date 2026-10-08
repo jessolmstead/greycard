@@ -21,6 +21,11 @@ the reasoning lives in `docs/notes.md`.
       process tears down. Seen only in scripted runs so far, 17 times
       since 2026-10-03; nothing unsaved is lost. Let the worker finish
       or drop its GPU work before the device goes (§255)
+- [ ] When exporting directly to a subfolder the blue button says
+      "Choose File" but it just exports directly with no file picker.
+      this should be clearer that in that mode it puts it in the
+      source parent directory under a subfolder.
+- [ ] Name increment should add a -1, not a space (2) etc
 
 ## Next: 0.5.0
 
@@ -506,10 +511,13 @@ clears or a tester asks for it.
 
 #### Nice-to-have
 
+- [ ] Maybe: Icons on grid/filmstrip showing edited and/or exported photos
 - [ ] Flexible dual monitor support
 - [ ] Reference view
 - [ ] Different frameline options when cropping
 - [ ] Camera tethering. Low priority.
+- [ ] Idea: Show the R, G, B, and W points on the histogram when hovering
+      over a point on the photo.
 - [ ] Idea: AI sharpening
 - [ ] Idea: AI color grade matching to a reference
 - [ ] Idea: AI highlight recovery
