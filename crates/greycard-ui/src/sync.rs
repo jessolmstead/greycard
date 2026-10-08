@@ -396,6 +396,52 @@ pub(crate) fn after_disk_save(st: &mut State, frame: &Path) {
 /// index is opened for writing here, on the caller's thread; nothing
 /// is created when there is no index. How many rows were noted.
 pub(crate) fn note_disk_save(index: &Path, roots: &greycard_library::Roots, frame: &Path) -> usize {
+    note_waiting(index, roots, frame, "saved with no window open")
+}
+
+/// The window is closing, its index reader and indexer gone: each
+/// save whose archive write never went out is noted waiting in the
+/// index, as a save made with no window open is, so the next window's
+/// catch-up writes it from the file. Those are the quit's own save of
+/// the open frame (deferred, the reader closed before it), a save
+/// made before the reader ever opened, and a write queued behind one
+/// still out for its frame. Each was saved to the frame's own sidecar
+/// first, which is what the catch-up reads. A bring-home or a settle
+/// is not a write of the file to the archive and is left; a frame on
+/// the archive (one followed there) is not noted (`note_disk_save`).
+/// How many rows were noted.
+pub(crate) fn note_unsent_at_quit(st: &mut State) -> usize {
+    let deferred = std::mem::take(&mut st.sync.deferred);
+    let queued = std::mem::take(&mut st.sync.queued);
+    let Some(index) = st.index_path.clone().filter(|_| st.write_sidecars) else {
+        return 0;
+    };
+    let frames: std::collections::BTreeSet<PathBuf> = deferred
+        .into_iter()
+        .chain(queued.into_values().map(|w| (w.frame, w.source)))
+        .filter(|(_, source)| matches!(source, Source::Memory(_) | Source::Disk))
+        .map(|(frame, _)| frame)
+        .collect();
+    frames
+        .iter()
+        .map(|frame| {
+            note_waiting(
+                &index,
+                &st.library.roots,
+                frame,
+                "saved as the window closed",
+            )
+        })
+        .sum()
+}
+
+/// [`note_disk_save`], the rows given `reason`.
+fn note_waiting(
+    index: &Path,
+    roots: &greycard_library::Roots,
+    frame: &Path,
+    reason: &'static str,
+) -> usize {
     if !index.is_file() || roots.archive_of(frame).is_some() {
         return 0;
     }
@@ -420,13 +466,7 @@ pub(crate) fn note_disk_save(index: &Path, roots: &greycard_library::Roots, fram
     let rows = paired
         .copies
         .iter()
-        .map(|c| {
-            (
-                c.archive.clone(),
-                c.copy.clone(),
-                "saved with no window open",
-            )
-        })
+        .map(|c| (c.archive.clone(), c.copy.clone(), reason))
         .chain(paired.ambiguous.iter().map(|(a, _)| {
             (
                 a.clone(),
@@ -2658,6 +2698,60 @@ pub(crate) mod tests {
         );
         assert!(pending_for(&db, &nas).is_empty());
         assert_eq!(app.get_sync_note(), "");
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// The quit's own save comes after the index reader is closed: its
+    /// archive write is noted waiting, not dropped, and the next
+    /// window's catch-up writes it. A write queued behind one still out
+    /// at the quit is noted the same way.
+    #[test]
+    fn a_save_at_the_quit_is_noted_and_the_next_window_writes_it() {
+        let dir = scratch("at-quit");
+        let (local, nas, files, db) = two_places(&dir);
+        let app = window(2);
+        let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
+        // Frame b: one write out, a newer one queued behind it, the
+        // quit before either lands.
+        state.borrow_mut().current = Some(1);
+        save(&state, 0.2);
+        save(&state, 0.3);
+        assert_eq!(state.borrow().sync.queued.len(), 1);
+        // Frame a: saved by the quit, the reader closed first, as
+        // `startup::main` closes it.
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(0);
+            st.index_reader = None;
+        }
+        save(&state, 0.7);
+        assert_eq!(state.borrow().sync.deferred.len(), 1);
+        assert_eq!(note_unsent_at_quit(&mut state.borrow_mut()), 2);
+        {
+            let st = state.borrow();
+            assert!(st.sync.deferred.is_empty() && st.sync.queued.is_empty());
+        }
+        let mut p = pending_for(&db, &nas);
+        p.sort_by(|x, y| x.frame.cmp(&y.frame));
+        assert_eq!(p.len(), 2);
+        assert!(p.iter().any(|r| r.reason == "saved as the window closed"));
+        close(state, worker);
+        // The next window: both frames reach the archive, each at its
+        // last save.
+        let app = window(2);
+        let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
+        heard_from(&mut state.borrow_mut(), &app, &nas, true);
+        land_sent(&state, &app, &worker);
+        let exposure = |name: &str| {
+            Sidecar::load(&nas.join("shoot").join(name))
+                .unwrap()
+                .unwrap()
+                .current
+                .light
+                .exposure
+        };
+        assert_eq!((exposure("a.tif"), exposure("b.tif")), (0.7, 0.3));
+        assert!(pending_for(&db, &nas).is_empty());
         crate::testing::remove_scratch(state, &dir);
     }
 

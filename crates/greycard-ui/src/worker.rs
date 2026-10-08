@@ -631,9 +631,21 @@ impl Worker {
     /// dies there rather than at its own hand: the buffers of a
     /// develop half way through go with a device the window has
     /// already torn down. So the editor asks the worker to stop as
-    /// its window closes and waits [`LEAVING`] for it to say it has;
-    /// longer than that and the run ends anyway, as it did before.
-    pub fn stop(&self) {
+    /// its window closes and waits [`LEAVING`] for it to say it has.
+    ///
+    /// True when it has, its thread joined. False when it is still in
+    /// a job after that: its thread is kept, so [`Worker::running`]
+    /// and [`Worker::finished`] still say so, and the caller must not
+    /// let the process go through the C library's exit with it there.
+    /// The exit handlers tear the GPU driver down under a worker that
+    /// may be waiting on a fence in it, and the process dies there
+    /// (`startup::main` leaves by `_exit` instead).
+    pub fn stop(&self) -> bool {
+        self.stop_within(LEAVING)
+    }
+
+    /// [`Worker::stop`], waiting `limit` rather than [`LEAVING`].
+    fn stop_within(&self, limit: std::time::Duration) -> bool {
         self.pool.stop();
         {
             let (lock, cv) = &*self.queue;
@@ -641,20 +653,38 @@ impl Worker {
             cv.notify_all();
         }
         let Some(thread) = self.thread.lock().expect("worker thread").take() else {
-            return;
+            return true;
         };
         let asked = std::time::Instant::now();
-        while !thread.is_finished() && asked.elapsed() < LEAVING {
+        while !thread.is_finished() && asked.elapsed() < limit {
             std::thread::sleep(std::time::Duration::from_millis(5));
         }
         if thread.is_finished() {
             let _ = thread.join();
             tracing::debug!("worker: stopped in {:.0} ms", asked.elapsed().as_millis());
+            true
         } else {
             tracing::warn!(
-                "worker: still busy after {} s; leaving it",
-                LEAVING.as_secs()
+                "worker: still busy after {:.1} s; leaving it",
+                limit.as_secs_f64()
             );
+            *self.thread.lock().expect("worker thread") = Some(thread);
+            false
+        }
+    }
+
+    /// Whether the worker's thread has ended: joined by
+    /// [`Worker::stop`], or ended since and joined here. False while
+    /// it is still in the job a stop left it in, or has not been asked
+    /// to stop.
+    pub fn finished(&self) -> bool {
+        let mut held = self.thread.lock().expect("worker thread");
+        match held.take_if(|t| t.is_finished()) {
+            Some(thread) => {
+                let _ = thread.join();
+                true
+            }
+            None => held.is_none(),
         }
     }
 
@@ -3513,6 +3543,66 @@ mod tests {
                 "done 0 exported, 2 failed, 2 canceled",
             ]
         );
+    }
+
+    /// A stop that finds the worker still in a job says so and keeps
+    /// its thread, so the quit can tell it is there and not run the C
+    /// library's exit under it; once out of the job the worker sees
+    /// the stop, ends, and is joined. The job held here is an open of
+    /// junk whose failure the deliver sits on, on the worker's thread,
+    /// as a develop sits in the driver.
+    #[test]
+    fn a_stop_that_finds_the_worker_in_a_job_keeps_it_until_it_ends() {
+        let dir = thumb_scratch("busystop");
+        let junk = dir.join("junk.CR3");
+        std::fs::write(&junk, vec![0x33u8; 4096]).unwrap();
+        let (entered, in_job) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel::<()>();
+        let (entered, released) = (Mutex::new(entered), Mutex::new(released));
+        let worker = Worker::new(move |o| {
+            if let Outcome::Failed { .. } = o {
+                entered.lock().unwrap().send(()).unwrap();
+                let _ = released.lock().unwrap().recv();
+            }
+        });
+        assert!(!worker.finished(), "a worker not asked to stop is there");
+        worker.send(Job::Open {
+            path: junk,
+            edit: Edit::default(),
+            generation: 1,
+            seed_blend: false,
+            turn: 0,
+        });
+        in_job
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .expect("the worker takes the open");
+        assert!(
+            !worker.stop_within(std::time::Duration::from_millis(50)),
+            "the stop finds it in its job"
+        );
+        assert!(worker.running(), "its thread is kept");
+        assert!(!worker.finished());
+        release.send(()).unwrap();
+        let asked = Instant::now();
+        while !worker.finished() {
+            assert!(
+                asked.elapsed() < std::time::Duration::from_secs(30),
+                "out of its job, the worker ends"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!worker.running());
+        assert!(worker.stop(), "a stop after the end has nothing to wait on");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A stop that finds the worker between jobs joins it at once.
+    #[test]
+    fn a_stop_between_jobs_joins_the_worker() {
+        let worker = Worker::new(|_| {});
+        assert!(worker.stop());
+        assert!(worker.finished());
+        assert!(!worker.running());
     }
 
     /// A develop asked for while a frame of a set is in hand goes

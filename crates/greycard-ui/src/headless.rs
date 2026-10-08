@@ -106,20 +106,28 @@ pub(crate) fn export(cli: &Cli, target: &Path) -> Result<std::process::ExitCode>
 /// End the process with `code`, the run's work all done and said.
 ///
 /// On unix by `_exit`, which skips the C library's exit handlers and
-/// the static destructors behind them. A run whose edit asked for a
-/// learned mask, a fill or the learned denoiser has loaded ONNX
-/// Runtime's WebGPU provider, Dawn, and Dawn's Vulkan instance is torn
-/// down by a static destructor that dies in libvulkan on the way out:
-/// SIGSEGV, exit 139, after the file was written. The window leaves
-/// the same way and always has; a batch caller reads the exit code,
-/// and must not read a written file as a crash. Nothing is lost by
-/// skipping them: the worker has been stopped and joined, every file
-/// written is closed, the log's file and stderr are written
-/// unbuffered, and stdout and the C library's streams are flushed
-/// first. On other systems the process returns as it otherwise
-/// would; the teardown has not been seen to crash there, and is
-/// unchecked.
-fn leave(code: u8) -> Result<std::process::ExitCode> {
+/// the static destructors behind them. Two callers, for two reasons.
+///
+/// The headless export, always. A run whose edit asked for a learned
+/// mask, a fill or the learned denoiser has loaded ONNX Runtime's
+/// WebGPU provider, Dawn, and Dawn's Vulkan instance is torn down by a
+/// static destructor that died in libvulkan on the way out: SIGSEGV,
+/// exit 139, after the file was written. A batch caller reads the exit
+/// code, and must not read a written file as a crash. Nothing is lost
+/// there: the set is done, the worker asked to stop (and joined, unless
+/// it outlasts the wait), every file written is closed.
+///
+/// The window, only when its worker is still in a job after the
+/// quit's wait (`startup::main`). The exit handlers would tear the GPU
+/// driver down under a worker that may be waiting on a fence in it.
+/// Its saves are all written by then; what the worker had in hand is
+/// lost, as a quit always lost it.
+///
+/// For both, the log's file and stderr are written unbuffered, and
+/// stdout and the C library's streams are flushed first. On other
+/// systems the process returns as it otherwise would; neither crash
+/// has been seen there, and that is unchecked.
+pub(crate) fn leave(code: u8) -> Result<std::process::ExitCode> {
     use std::io::Write;
     let _ = std::io::stdout().flush();
     let _ = std::io::stderr().flush();
@@ -127,8 +135,9 @@ fn leave(code: u8) -> Result<std::process::ExitCode> {
     // SAFETY: `fflush(NULL)` flushes every C stdio stream, so a C or
     // C++ library's buffered output is not lost with the exit
     // handlers that would have flushed it; `_exit` then ends the
-    // process at once and returns nothing to undo. Every thread with
-    // work in hand has been joined above.
+    // process at once and returns nothing to undo. No exit handler or
+    // destructor runs, on this thread or another, so none can run into
+    // a thread still at work: the kernel ends every thread where it is.
     unsafe {
         libc::fflush(std::ptr::null_mut());
         libc::_exit(i32::from(code))

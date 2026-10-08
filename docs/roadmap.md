@@ -15,12 +15,10 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] Quitting while a develop is on the GPU can crash at exit
-      (SIGSEGV in NVIDIA's driver): the window gives the worker 5 s,
-      then leaves it waiting on a fence in `wgpu::Device::poll` as the
-      process tears down. Seen only in scripted runs so far, 17 times
-      since 2026-10-03; nothing unsaved is lost. Let the worker finish
-      or drop its GPU work before the device goes (§255)
+- [ ] A frame followed onto its archive copy while its own root is
+      away loses its last edit at quit: its save goes out only as a
+      job, which the closing window never sends. A bounded write to
+      the copy at quit, or the reader closed after the last save (§261)
 - [ ] When exporting directly to a subfolder the blue button says
       "Choose File" but it just exports directly with no file picker.
       this should be clearer that in that mode it puts it in the

@@ -1387,7 +1387,14 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             });
         });
     }
-    app.run()?;
+    // An event loop that ends in an error (the compositor gone: a
+    // logout, the shell crashing) still quits as a closed window does,
+    // with every save below and the worker out of the driver, and the
+    // error is the run's at the end.
+    let ran = app.run();
+    if let Err(e) = &ran {
+        tracing::error!("the window's event loop: {e}");
+    }
     // An import running stops as Stop stops it, after the file in
     // hand, which lands whole rather than being cut off with the
     // process.
@@ -1397,6 +1404,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     );
     // The window is closed: the worker finishes what it is in the
     // middle of and puts its buffers down before the process goes.
+    // One still in a job after `LEAVING` is left in it, and the run
+    // ends below without the C library's exit.
     worker.stop();
     // And the index's two connections close, the indexer's pass
     // stopping at its next batch, so the write-ahead log and its
@@ -1452,9 +1461,31 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         read_edit(&app, &st.edit, st.target)
     };
     save_edit(&mut state.borrow_mut(), edit);
+    // That save's archive write, and any other that never went out,
+    // waits in the index for the next window: the reader is closed,
+    // and no job sent now would land.
+    crate::sync::note_unsent_at_quit(&mut state.borrow_mut());
     // A batch run whose picture never developed is a failure a script
-    // can see.
-    Ok(if state.borrow().failed {
+    // can see, as is a window lost under the run.
+    let failed = state.borrow().failed || ran.is_err();
+    // A worker still in a job (a develop of a large frame, a mask, the
+    // learned denoiser, each of which can outlast `LEAVING`) may be
+    // inside the GPU driver, waiting on a fence in `Device::poll`.
+    // Returning from here runs the C library's exit handlers, which
+    // tear NVIDIA's driver down under it, and the process dies with
+    // SIGSEGV on the worker's thread. So it ends by `_exit` instead,
+    // which runs none of them: the kernel ends every thread where it
+    // is. Everything this quit saves is written above (the import's
+    // file in hand, the index closed, the settings, the open frame's
+    // sidecar and its archive write noted), each by a write that has
+    // returned; what is lost is the job in hand, which leaving lost
+    // before too. A worker that has ended by now, the usual case,
+    // leaves the process to end as it always has.
+    if !worker.finished() {
+        return crate::headless::leave(u8::from(failed));
+    }
+    ran?;
+    Ok(if failed {
         std::process::ExitCode::FAILURE
     } else {
         std::process::ExitCode::SUCCESS

@@ -43,6 +43,15 @@ note a first tester reads.
   found on a grid of four-pixel blocks; below that it is unchanged
   ([§254](https://github.com/jessolmstead/greycard/blob/master/docs/notes/254-clarity-on-a-quarter-grid-as-built.md))
 
+### Fixes
+
+- Quitting while a picture was still developing on the GPU could crash
+  the editor on the way out; so could the desktop session ending
+  mid-develop, which also skipped saving settings and the open
+  frame's edit. Both now save everything and leave cleanly, and the
+  last edit before quitting reaches the frame's archive copy at the
+  next start ([§261](https://github.com/jessolmstead/greycard/blob/master/docs/notes/261-leaving-while-the-worker-is-in-a-job.md))
+
 ## 0.4.0, 2026-10-05
 
 Sweeping improvements, especially to the library.
