@@ -34,7 +34,7 @@ use greycard_edit::look::{Entry, MadeFor, variant_stem};
 use greycard_edit::{DisplayCurve, Edit};
 use greycard_match::fit::{LutParams, leave_one_out};
 use greycard_match::register::{NCC_MIN, register};
-use greycard_match::{Model, Pairs, Picture};
+use greycard_match::{FIT_VERSION, Model, Pairs, Picture};
 
 /// Frames a group is sampled down to.
 pub(crate) const SAMPLE: usize = 40;
@@ -370,12 +370,14 @@ pub(crate) const NOT_CHOSEN: &str = "not chosen";
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Existing {
     /// Written by the camera match: the body it was fitted on, the
-    /// frames the fit used where the table says, and the display curve
-    /// it was fitted under.
+    /// frames the fit used where the table says, the display curve it
+    /// was fitted under, and which fit wrote it
+    /// ([`greycard_edit::look::fit_version`]; 1 before tables said).
     Fitted {
         on: String,
         frames: Option<usize>,
         made_for: MadeFor,
+        fit: u32,
     },
     /// Anything else: a table the user put there.
     Own,
@@ -411,6 +413,7 @@ pub(crate) fn existing_in(store: &Path) -> HashMap<String, Existing> {
                     on: on.to_string(),
                     frames,
                     made_for: MadeFor::read(&comments),
+                    fit: greycard_edit::look::fit_version(&comments).unwrap_or(1),
                 },
                 None => Existing::Own,
             };
@@ -422,7 +425,8 @@ pub(crate) fn existing_in(store: &Path) -> HashMap<String, Existing> {
 /// Whether a table for `camera`, fitted under `curve`, may be written
 /// over what is in the store where it would go (its look's table for
 /// that curve; another curve's is never where it would go): a fit of
-/// this body's own replaces a fit of this body from no more frames,
+/// this body's own replaces a fit of this body from no more frames, or
+/// from any number when an earlier fit wrote it ([`FIT_VERSION`]),
 /// and anything written by a borrow or on another body; a borrow never
 /// replaces a fit of this body itself; nothing replaces a table the
 /// match did not write, or one that declares another curve. With
@@ -456,6 +460,7 @@ pub(crate) fn may_write(
                 .to_string(),
             "replaces the table fitted on this body itself with a borrowed one".to_string(),
         ),
+        Some(Existing::Fitted { fit, .. }) if *fit < FIT_VERSION => return Ok(None),
         Some(Existing::Fitted {
             on,
             frames: Some(m),
@@ -1180,6 +1185,7 @@ fn write_look(
         &group.style,
         fitted_on,
         frames,
+        FIT_VERSION,
     );
     let declared: Vec<(&str, &str)> = declared.iter().map(|(k, v)| (*k, v.as_str())).collect();
     // The look's table for this curve, beside any other curve's.
@@ -1407,10 +1413,14 @@ fn run_with(
             result.replaced = replaces;
             result.outcome = match write_look(store, g, &g.camera, kept.len(), curve, &model) {
                 Ok(path) => {
+                    let coupling = model.coupling();
                     tracing::info!(
-                        "camera match: {} from {} frames, ΔE {fitted_de:.4}",
+                        "camera match: {} from {} frames, ΔE {fitted_de:.4}, \
+                         lightness on chroma {:.2} (95th percentile {:.2})",
                         path.display(),
-                        kept.len()
+                        kept.len(),
+                        coupling.mean,
+                        coupling.p95
                     );
                     fitted.insert(i, (model, kept.len()));
                     Outcome::Fitted {
@@ -1805,14 +1815,21 @@ mod tests {
         std::fs::write(store.join(format!("{name}.cube")), text).unwrap();
     }
 
-    /// A table as an earlier run of the match wrote one: its line and
-    /// a title in its shape.
+    /// A table as an earlier run of this fit wrote one: its line, the
+    /// fit, and a title in its shape.
     fn put_fitted(store: &Path, name: &str, title: &str) {
+        put_fitted_by(store, name, title, Some(FIT_VERSION));
+    }
+
+    /// A table the match wrote, declaring `fit`, or nothing as tables
+    /// before the key did.
+    fn put_fitted_by(store: &Path, name: &str, title: &str, fit: Option<u32>) {
         put_table(store, name, title);
         let path = store.join(format!("{name}.cube"));
+        let fit = fit.map_or(String::new(), |f| format!("# fit: {f}\n"));
         let text = std::fs::read_to_string(&path).unwrap().replacen(
             "LUT_3D_SIZE",
-            &format!("# {}\nLUT_3D_SIZE", greycard_edit::look::FITTED),
+            &format!("# {}\n{fit}LUT_3D_SIZE", greycard_edit::look::FITTED),
             1,
         );
         std::fs::write(path, text).unwrap();
@@ -2158,6 +2175,7 @@ mod tests {
             on: "Canon EOS R6m2".into(),
             frames: Some(frames),
             made_for: MadeFor::Curve(CH),
+            fit: FIT_VERSION,
         };
         let r6 = "Canon EOS R6m2";
         // (a) A fit of this body replaces a fit of this body from no
@@ -2180,14 +2198,29 @@ mod tests {
             on: r6.into(),
             frames: None,
             made_for: MadeFor::Curve(CH),
+            fit: FIT_VERSION,
         };
         assert_eq!(may_write(Some(&untold), r6, false, 20, CH, false), Ok(None));
+        // An earlier fit's table is replaced by this fit from fewer
+        // frames; a borrow still does not replace it.
+        let earlier = Existing::Fitted {
+            on: r6.into(),
+            frames: Some(40),
+            made_for: MadeFor::Curve(CH),
+            fit: FIT_VERSION - 1,
+        };
+        assert_eq!(
+            may_write(Some(&earlier), r6, false, 24, CH, false),
+            Ok(None)
+        );
+        assert!(may_write(Some(&earlier), r6, true, 0, CH, false).is_err());
         // A table borrowed from another body is replaced by a fit and
         // by another borrow.
         let borrowed = Existing::Fitted {
             on: "Canon EOS R5m2".into(),
             frames: Some(60),
             made_for: MadeFor::Curve(CH),
+            fit: FIT_VERSION,
         };
         assert_eq!(
             may_write(Some(&borrowed), r6, false, 20, CH, false),
@@ -2260,6 +2293,7 @@ mod tests {
         assert_eq!(declared(&own, key::STYLE), Some("Canon Faithful"));
         assert_eq!(declared(&own, key::FITTED_ON), Some("Canon EOS R6m2"));
         assert_eq!(declared(&own, key::FRAMES), Some("22"));
+        assert_eq!(greycard_edit::look::fit_version(&own), Some(FIT_VERSION));
         assert_eq!(MadeFor::read(&own), MadeFor::Curve(DisplayCurve::Agx));
         let borrowed = read("Canon EOS R5m2 Faithful.agx");
         assert_eq!(declared(&borrowed, key::MODEL), Some("Canon EOS R5m2"));
@@ -2273,6 +2307,7 @@ mod tests {
                 on: "Canon EOS R6m2".into(),
                 frames: Some(22),
                 made_for: MadeFor::Curve(DisplayCurve::Agx),
+                fit: FIT_VERSION,
             })
         );
         // A run under per channel writes each look's own file beside
@@ -2550,6 +2585,39 @@ mod tests {
         assert_eq!(
             title_in(&store, "Canon EOS R5m2 Faithful").as_deref(),
             Some("Canon EOS R5m2 Faithful (fitted on Canon EOS R5m2, 30 frames)")
+        );
+        crate::testing::remove_dir_retry(&store);
+    }
+
+    /// A table an earlier fit wrote is refitted from fewer frames than
+    /// it was fitted on, since what it does to a picture is the old
+    /// fit's (notes §260); a borrow still does not replace it.
+    #[test]
+    fn an_earlier_fits_table_is_refitted_from_fewer_frames() {
+        let store = scratch_store("earlier");
+        put_fitted_by(
+            &store,
+            "Canon EOS R6m2 Faithful",
+            "Canon EOS R6m2 Faithful (fitted on Canon EOS R6m2, 40 frames)",
+            None,
+        );
+        let groups = vec![synthetic_group("Canon EOS R6m2", "Canon Faithful", 22)];
+        assert_eq!(
+            plan(&groups, &existing_in(&store), CH, false)[0],
+            Plan::Fit { replaces: None }
+        );
+        let (results, _) = run_synthetic(&groups, &store, false, &[]);
+        assert!(
+            matches!(results[0].outcome, Outcome::Fitted { frames: 22, .. }),
+            "{:?}",
+            results[0]
+        );
+        let comments = greycard_core::lut::Lut3d::load(&store.join("Canon EOS R6m2 Faithful.cube"))
+            .unwrap()
+            .comments;
+        assert_eq!(
+            greycard_edit::look::fit_version(&comments),
+            Some(FIT_VERSION)
         );
         crate::testing::remove_dir_retry(&store);
     }

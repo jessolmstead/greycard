@@ -258,6 +258,23 @@ pub mod key {
     pub const FITTED_ON: &str = "fitted_on";
     /// How many frames the fit used.
     pub const FRAMES: &str = "frames";
+    /// Which fit wrote the table (`greycard_match::FIT_VERSION`);
+    /// a fitted table without it is fit 1 ([`super::fit_version`]).
+    pub const FIT: &str = "fit";
+}
+
+/// Which fit of the camera match wrote a table, by its comments: what
+/// it declares, or 1 for a fitted table from before tables declared
+/// it. None for a table the match did not write, or one whose
+/// declaration does not read as a number.
+pub fn fit_version(comments: &[String]) -> Option<u32> {
+    if !is_fitted(comments) {
+        return None;
+    }
+    match lut::declared(comments, key::FIT) {
+        Some(word) => word.trim().parse().ok(),
+        None => Some(1),
+    }
 }
 
 /// The display transform a table may be applied under.
@@ -331,7 +348,9 @@ pub fn gate(look: Option<lut::Look>, curve: DisplayCurve) -> Option<lut::Look> {
 /// The declarations a fitted table's header carries, in the order they
 /// are written: the display curve the run developed under, the body
 /// the table is for (make and model as the raw names them), its style,
-/// the body whose frames fitted it, and how many.
+/// the body whose frames fitted it, how many, and which fit wrote it
+/// (`greycard_match::FIT_VERSION`, handed in, since this crate does
+/// not depend on the match).
 pub fn fitted_declarations(
     curve: DisplayCurve,
     make: &str,
@@ -339,6 +358,7 @@ pub fn fitted_declarations(
     style: &str,
     fitted_on: &str,
     frames: usize,
+    fit: u32,
 ) -> Vec<(&'static str, String)> {
     let mut out = vec![(key::DISPLAY_CURVE, curve.key())];
     for (k, v) in [
@@ -352,6 +372,7 @@ pub fn fitted_declarations(
         }
     }
     out.push((key::FRAMES, frames.to_string()));
+    out.push((key::FIT, fit.to_string()));
     out
 }
 
@@ -592,6 +613,11 @@ impl Entry {
     /// Whether the camera match fitted this table.
     pub fn is_fitted(&self) -> bool {
         is_fitted(&self.comments)
+    }
+
+    /// Which fit of the camera match wrote this table: [`fit_version`].
+    pub fn fit_version(&self) -> Option<u32> {
+        fit_version(&self.comments)
     }
 
     /// The body a fitted table declares it is for, as the panel names
@@ -1105,6 +1131,20 @@ pub fn mismatch(looks: &[Entry], chosen: &str, curve: DisplayCurve) -> Option<(S
     Some((text, fitted))
 }
 
+/// That the chosen look's table for `curve` was written by an earlier
+/// fit of the camera match than `current`, when it was: the line the
+/// Look section shows over its Refit button. Nothing for a table the
+/// match did not write, which no refit would touch, or for a look with
+/// no table for the curve, which [`mismatch`] speaks for.
+pub fn stale(looks: &[Entry], chosen: &str, curve: DisplayCurve, current: u32) -> Option<String> {
+    let fit = table_for(looks, chosen, curve)?.fit_version()?;
+    (fit < current).then(|| {
+        "Fitted by an earlier version of the camera match, which can turn a picture's color \
+         noise into blotches of lightness. Refit it to bring it up to date."
+            .to_string()
+    })
+}
+
 /// What is wrong with the chosen look, if anything: that the
 /// directory has not got it. A look that will not read says so in the
 /// log and the picture goes out without it.
@@ -1172,7 +1212,7 @@ mod tests {
         let mut e = entry(name, Some(&fitted_title(name, &camera, Some(40))));
         e.comments = std::iter::once(FITTED.to_string())
             .chain(
-                fitted_declarations(curve, make, model, "Canon Faithful", &camera, 40)
+                fitted_declarations(curve, make, model, "Canon Faithful", &camera, 40, 2)
                     .into_iter()
                     .map(|(k, v)| format!("{k}: {v}")),
             )
@@ -1187,6 +1227,53 @@ mod tests {
         let mut e = entry(name, Some(&fitted_title(name, camera, Some(40))));
         e.comments = lines(&["encoding: srgb", "primaries: srgb", FITTED]);
         e
+    }
+
+    /// Which fit wrote a table: what it declares; 1 for a fitted
+    /// table from before the key; nothing for anyone else's table, or
+    /// a declaration that is not a number.
+    #[test]
+    fn a_table_says_which_fit_wrote_it() {
+        let now = fitted(
+            "Canon EOS R6m2 Faithful",
+            DisplayCurve::Agx,
+            "Canon",
+            "EOS R6m2",
+        );
+        assert_eq!(now.fit_version(), Some(2));
+        assert_eq!(
+            fitted_before("Canon EOS R6m2 Faithful", "Canon EOS R6m2").fit_version(),
+            Some(1)
+        );
+        let mut film = entry("Portra", None);
+        film.comments = lines(&["encoding: srgb", "fit: 2"]);
+        assert_eq!(film.fit_version(), None);
+        let mut odd = fitted_before("Canon EOS R6m2 Faithful", "Canon EOS R6m2");
+        odd.comments.push("fit: two".into());
+        assert_eq!(odd.fit_version(), None);
+    }
+
+    /// The Look section's line over Refit: for the chosen look's table
+    /// under the picture's curve, when an earlier fit wrote it; never
+    /// for a table of the current fit or a later one, another curve's
+    /// table, or a table the match did not write.
+    #[test]
+    fn an_earlier_fits_table_is_called_stale_under_its_own_curve() {
+        let name = "Canon EOS R6m2 Faithful";
+        let agx = DisplayCurve::Agx;
+        let old = fitted_before(name, "Canon EOS R6m2");
+        let new = fitted(name, agx, "Canon", "EOS R6m2");
+        let looks = vec![old.clone(), new.clone()];
+        // The per-channel table is the old one, the AgX one the new.
+        assert!(stale(&looks, name, DisplayCurve::Channels, 2).is_some());
+        assert_eq!(stale(&looks, name, agx, 2), None);
+        // A later build's tables are not stale to this one.
+        assert_eq!(stale(&looks, name, agx, 1), None);
+        // No table for the curve: the mismatch line speaks.
+        assert_eq!(stale(&[new], name, DisplayCurve::Channels, 2), None);
+        let mut film = entry("Portra", None);
+        film.comments = lines(&["encoding: srgb"]);
+        assert_eq!(stale(&[film], "Portra", DisplayCurve::Channels, 2), None);
     }
 
     /// The listing's reading of a file: a stem ending in a curve's

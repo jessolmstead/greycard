@@ -664,6 +664,9 @@ pub(crate) struct Evaluation {
     /// blocks that share a render color, against their mean. What one
     /// frame's camera separates that the render does not.
     pub(crate) floor_within: Banded,
+    /// How much the fitted model's lightness moves with its input's
+    /// chroma ([`Model::coupling`]): the mean and 95th percentile.
+    pub(crate) coupling: [f32; 2],
     #[serde(skip)]
     pub(crate) model: Option<Model>,
 }
@@ -818,6 +821,10 @@ pub(crate) fn evaluate(d: &Data) -> Option<Evaluation> {
         per_frame,
         floor: floor(d, false),
         floor_within: floor(d, true),
+        coupling: {
+            let c = model.coupling();
+            [c.mean, c.p95]
+        },
         model: Some(model),
     })
 }
@@ -2019,13 +2026,15 @@ pub(crate) fn markdown(r: &Report) -> String {
         s,
         "\nThe sheet's figures by its own function (`fit_group`) on the converged match's own \
          blocks: fitted, held out over every frame, and the seconds the call took (the fit \
-         and a fit for each frame held out).\n"
+         and a fit for each frame held out); and how much the fitted look's lightness moves \
+         with its input's chroma, the mean and 95th percentile over the common colors \
+         (notes §260).\n"
     );
     let _ = writeln!(
         s,
-        "| group | curve | frames | fitted | held out | seconds |"
+        "| group | curve | frames | fitted | held out | seconds | lightness on chroma |"
     );
-    let _ = writeln!(s, "|---|---|---|---|---|---|");
+    let _ = writeln!(s, "|---|---|---|---|---|---|---|");
     for g in &fitted {
         for c in &g.curves {
             let (Some([f, h, t]), Some(e)) = (c.sheet, c.iterated.as_ref()) else {
@@ -2033,12 +2042,14 @@ pub(crate) fn markdown(r: &Report) -> String {
             };
             let _ = writeln!(
                 s,
-                "| {} | {} | {} | {} | {} | {t:.2} |",
+                "| {} | {} | {} | {} | {} | {t:.2} | {:.2} / {:.2} |",
                 cell(&g.name),
                 c.curve,
                 e.frames,
                 f4(f),
-                f4(h)
+                f4(h),
+                e.coupling[0],
+                e.coupling[1]
             );
         }
     }

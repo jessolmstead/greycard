@@ -31,6 +31,10 @@ note a first tester reads.
 - The run fills a bar across all its groups, with the count and the
   group under it, and holds it while a group's look is fitted
   ([§258](https://github.com/jessolmstead/greycard/blob/master/docs/notes/258-a-bar-on-the-camera-match-run.md))
+- A fitted look no longer turns a picture's color noise into blotches
+  of lightness, the "deep-fried" look on bark, fabric and skin; a look
+  fitted before says so in the Look section, with a Refit button
+  ([§260](https://github.com/jessolmstead/greycard/blob/master/docs/notes/260-the-camera-match-keeps-lightness-off-chroma.md))
 
 ### Export
 

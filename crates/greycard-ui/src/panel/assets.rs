@@ -379,10 +379,17 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
         })
         .collect();
     app.set_look_rows(ModelRc::new(VecModel::from(rows)));
+    // No table for the picture's curve, or one an earlier fit wrote:
+    // either way the line over the Refit button, which opens the
+    // camera match's sheet on the look's group.
     let (mismatch, refit) = match greycard_edit::look::mismatch(&st.looks, chosen_name, curve) {
         Some((text, true)) => (text, format!("Refit under {}…", curve.phrase())),
         Some((text, false)) => (text, String::new()),
-        None => Default::default(),
+        None => {
+            greycard_edit::look::stale(&st.looks, chosen_name, curve, greycard_match::FIT_VERSION)
+                .map(|text| (text, "Refit…".to_string()))
+                .unwrap_or_default()
+        }
     };
     app.set_look_mismatch(mismatch.into());
     app.set_look_refit(refit.into());

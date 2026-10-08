@@ -1,6 +1,6 @@
 //! sRGB in and out, Oklab, and the ΔE the fit is measured in.
 
-use greycard_core::color::{LMS_TO_LAB, SRGB_TO_LMS};
+use greycard_core::color::{LAB_TO_LMS, LMS_TO_LAB, SRGB_TO_LMS, invert3};
 pub use greycard_core::color::{srgb_decode, srgb_encode};
 
 /// Rec.709's luminance weights on linear sRGB.
@@ -27,6 +27,18 @@ pub fn mul3(m: &[[f32; 3]; 3], v: [f32; 3]) -> [f32; 3] {
 pub fn oklab(lin: [f32; 3]) -> [f32; 3] {
     let lms = mul3(&SRGB_TO_LMS, lin.map(|c| c.max(0.0)));
     mul3(&LMS_TO_LAB, lms.map(f32::cbrt))
+}
+
+/// Oklab back to linear sRGB, unclipped.
+pub fn from_oklab(lab: [f32; 3]) -> [f32; 3] {
+    let lms = mul3(&LAB_TO_LMS, lab).map(|v| v * v * v);
+    mul3(&lms_to_srgb(), lms)
+}
+
+/// The inverse of [`SRGB_TO_LMS`].
+fn lms_to_srgb() -> [[f32; 3]; 3] {
+    static INVERSE: std::sync::OnceLock<[[f32; 3]; 3]> = std::sync::OnceLock::new();
+    *INVERSE.get_or_init(|| invert3(SRGB_TO_LMS).expect("Oklab's matrix inverts"))
 }
 
 /// The distance in Oklab between two linear sRGB colors.
@@ -56,6 +68,21 @@ mod tests {
         assert!(w[1].abs() < 1e-3 && w[2].abs() < 1e-3, "{w:?}");
         let g = oklab([0.18, 0.18, 0.18]);
         assert!(g[1].abs() < 1e-3 && g[2].abs() < 1e-3, "{g:?}");
+    }
+
+    #[test]
+    fn oklab_goes_back() {
+        for c in [
+            [0.2, 0.5, 0.1],
+            [0.9, 0.05, 0.3],
+            [0.18, 0.18, 0.18],
+            [1.0, 1.0, 1.0],
+        ] {
+            let back = from_oklab(oklab(c));
+            for k in 0..3 {
+                assert!((back[k] - c[k]).abs() < 1e-5, "{c:?} came back {back:?}");
+            }
+        }
     }
 
     #[test]

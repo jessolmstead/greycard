@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 
 use greycard_match::Model;
+use greycard_match::color::{decode3, oklab};
 use greycard_match::fit::{CURVE_KNOTS, LutParams, leave_one_out};
 use serde::Deserialize;
 
@@ -67,11 +68,23 @@ fn held_out_mean(
     (held, mean)
 }
 
+/// The fit as the Python has it: the defaults without the flatness
+/// term, which the script never had. It trades fitted error for
+/// lightness kept off chroma, so with it on the fitted figure is not
+/// the script's; [`the_default_keeps_lightness_off_chroma`] holds what
+/// it does instead.
+fn reference() -> LutParams {
+    LutParams {
+        flatness: 0.0,
+        ..LutParams::default()
+    }
+}
+
 #[test]
 fn the_fit_reproduces_the_python_on_the_r6ii_faithful_set() {
     let (x, y, ids, py) = load();
     assert_eq!(x.len(), 12025);
-    let m = Model::fit(&x, &y, LutParams::default());
+    let m = Model::fit(&x, &y, reference());
 
     for i in 0..3 {
         for j in 0..3 {
@@ -117,7 +130,7 @@ fn the_fit_reproduces_the_python_on_the_r6ii_faithful_set() {
     );
 
     let chosen = chosen_frames(py.frames.len());
-    let (held, ours) = held_out_mean(&x, &y, &ids, &chosen, LutParams::default());
+    let (held, ours) = held_out_mean(&x, &y, &ids, &chosen, reference());
     let theirs = chosen
         .iter()
         .map(|&i| py.held_out_lut[&py.frames[i]])
@@ -144,7 +157,7 @@ fn the_fit_reproduces_the_python_on_the_r6ii_faithful_set() {
     // reproduces.
     let off = LutParams {
         pull: 1e6,
-        ..LutParams::default()
+        ..reference()
     };
     let (_, without) = held_out_mean(&x, &y, &ids, &chosen, off);
     eprintln!("held out without the table {without:.4}");
@@ -153,6 +166,68 @@ fn the_fit_reproduces_the_python_on_the_r6ii_faithful_set() {
     assert!(
         ours < without - 0.0003,
         "the table held out at {ours:.4} against {without:.4} without it"
+    );
+}
+
+/// What the flatness term is for (notes §260): on this set the table
+/// fitted without it lets the camera's lightness follow the render's
+/// chroma, two and three times over on the bark and skin colors, so
+/// chroma noise in a picture comes out as blotches of lightness. With
+/// it the table keeps lightness a matter of lightness, and held out
+/// it is no worse.
+#[test]
+fn the_default_keeps_lightness_off_chroma() {
+    let (x, y, ids, py) = load();
+    let free = Model::fit(&x, &y, reference()).coupling();
+    let model = Model::fit(&x, &y, LutParams::default());
+    let flat = model.coupling();
+    eprintln!("coupling without the term {free:?}, with it {flat:?}");
+    assert!(
+        free.mean > 0.3,
+        "the set no longer shows the coupling: {free:?}"
+    );
+    assert!(flat.mean < 0.15 && flat.p95 < 0.4, "{flat:?}");
+
+    // Past the common colors the term fades out, so a saturated color
+    // no frame showed keeps the lightness the matrix and curves give
+    // it, as the table without the term leaves it.
+    let off_base = |m: &Model| {
+        let mut base = m.clone();
+        base.lattice = None;
+        let lightness = |e: [f32; 3]| oklab(decode3(e))[0];
+        let (mut sum, mut count, mut worst) = (0.0f32, 0, 0.0f32);
+        let n = 25;
+        for b in 0..n {
+            for g in 0..n {
+                for r in 0..n {
+                    let e = [r, g, b].map(|v| v as f32 / (n - 1) as f32);
+                    let lab = oklab(decode3(e));
+                    if lab[1].hypot(lab[2]) > 0.2 {
+                        let d = (lightness(m.apply(e)) - lightness(base.apply(e))).abs();
+                        sum += d;
+                        count += 1;
+                        worst = worst.max(d);
+                    }
+                }
+            }
+        }
+        (sum / count as f32, worst)
+    };
+    let (mean_free, worst_free) = off_base(&Model::fit(&x, &y, reference()));
+    let (mean, worst) = off_base(&model);
+    eprintln!(
+        "saturated colors, lightness off the matrix and curves: without the term \
+         {mean_free:.4} mean, {worst_free:.4} at most; with it {mean:.4}, {worst:.4}"
+    );
+    assert!(mean < 0.002 && worst < 0.02, "{mean} {worst}");
+
+    let chosen = chosen_frames(py.frames.len());
+    let (_, without) = held_out_mean(&x, &y, &ids, &chosen, reference());
+    let (_, with) = held_out_mean(&x, &y, &ids, &chosen, LutParams::default());
+    eprintln!("held out without the term {without:.4}, with it {with:.4}");
+    assert!(
+        with < without + 0.0003,
+        "held out {with:.4} against {without:.4}"
     );
 }
 
@@ -173,6 +248,7 @@ fn sweep_the_lattice_regularization() {
             let params = LutParams {
                 smoothness,
                 pull,
+                flatness: 0.0,
                 iterations: 300,
             };
             let m = Model::fit(&x, &y, params);
@@ -184,5 +260,19 @@ fn sweep_the_lattice_regularization() {
                 "smoothness {smoothness} pull {pull}: fitted {fitted:.4} (py {PYTHON_FITTED:.4}) held {ours:.4} (py {theirs:.4})"
             );
         }
+    }
+    assert!([0.0, 8.0, 16.0, 32.0, 64.0].contains(&d.flatness));
+    for flatness in [0.0, 8.0, 16.0, 32.0, 64.0] {
+        let params = LutParams { flatness, ..d };
+        let m = Model::fit(&x, &y, params);
+        let fitted = m.mean_delta_e(&x, &y);
+        let all: Vec<usize> = (0..py.frames.len()).collect();
+        let held = leave_one_out(&x, &y, &ids, &all, params);
+        let ours = held.iter().sum::<f32>() / held.len() as f32;
+        let c = m.coupling();
+        eprintln!(
+            "flatness {flatness}: fitted {fitted:.4} held {ours:.4} coupling mean {:.3} p95 {:.3}",
+            c.mean, c.p95
+        );
     }
 }

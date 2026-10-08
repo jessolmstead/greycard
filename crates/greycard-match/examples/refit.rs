@@ -8,13 +8,16 @@
 //! Each `KEY=VALUE` after the output is declared in the table's header
 //! as `# KEY: VALUE`. A table that declares no `display_curve` reads in
 //! the editor as fitted under per channel, which the trial's pairs
-//! were; pairs from a develop under AgX want `display_curve=agx`.
+//! were; pairs from a develop under AgX want `display_curve=agx`. The
+//! fit that wrote it is declared as `fit` unless a `fit=` is given, so
+//! the editor does not take a table this build fitted for an earlier
+//! fit's.
 
 use std::path::Path;
 
-use greycard_match::Model;
 use greycard_match::cube::write_cube;
 use greycard_match::fit::LutParams;
+use greycard_match::{FIT_VERSION, Model};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -22,10 +25,14 @@ fn main() {
         eprintln!("usage: refit PAIRS.csv TITLE OUT.cube [KEY=VALUE...]");
         std::process::exit(2);
     }
-    let declared: Vec<(&str, &str)> = args[4..]
+    let mut declared: Vec<(&str, &str)> = args[4..]
         .iter()
         .map(|a| a.split_once('=').expect("a declaration is KEY=VALUE"))
         .collect();
+    let fit = FIT_VERSION.to_string();
+    if !declared.iter().any(|(k, _)| *k == "fit") {
+        declared.push(("fit", &fit));
+    }
     let text = std::fs::read_to_string(&args[1]).expect("read the pairs");
     let mut x = Vec::new();
     let mut y = Vec::new();

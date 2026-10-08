@@ -269,5 +269,6 @@ in its section; the roadmap and the changelog only point at it.
 - [§257. Renaming a look](notes/257-renaming-a-look.md) (2026-10-07)
 - [§258. A bar on the camera match run](notes/258-a-bar-on-the-camera-match-run.md) (2026-10-07)
 - [§259. Local contrast on the GPU, as built](notes/259-local-contrast-on-the-gpu-as-built.md) (2026-10-07)
+- [§260. The camera match keeps lightness off chroma](notes/260-the-camera-match-keeps-lightness-off-chroma.md) (2026-10-07)
 - [§261. Leaving while the worker is in a job](notes/261-leaving-while-the-worker-is-in-a-job.md) (2026-10-07)
 - [§262. Export names and the subfolder button](notes/262-export-names-and-the-subfolder-button.md) (2026-10-07)

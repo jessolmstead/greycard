@@ -46,3 +46,13 @@ pub const BLOCK: usize = 24;
 
 /// Nodes per axis of the fitted table.
 pub const LUT_SIZE: usize = 33;
+
+/// Which fit wrote a table, declared in its header (`# fit: 2`), so a
+/// table an earlier fit wrote can be told apart and refitted. A table
+/// the match wrote before the key was written is fit 1. Bump it with
+/// any change to the fit that changes what a table does to a picture,
+/// and say in the notes section what the bump was for:
+///
+/// 1. Everything before §260: the table's residual in encoded sRGB.
+/// 2. §260: the residual in Oklab, and lightness held off chroma.
+pub const FIT_VERSION: u32 = 2;

@@ -1,7 +1,7 @@
 //! The model: a matrix in linear light with a ridge toward identity,
 //! per-channel monotone curves kept only where they help, and a
-//! residual table on a lattice in the encoded domain, solved as a
-//! regularized least squares.
+//! residual table on a lattice over the encoded domain, its
+//! corrections in Oklab, solved as a regularized least squares.
 //!
 //! The reference is `tools/camera-match/fit.py`. The matrix and the
 //! curves are its stages as written. The table is not: the script
@@ -12,9 +12,24 @@
 //! pulls every node toward zero residual, which is what "identity
 //! where there is no data" means on a lattice. The system is sparse,
 //! symmetric and positive, and conjugate gradients solves it.
+//!
+//! The script's residual was in encoded sRGB; ours is in Oklab, so
+//! that the table's lightness is one of its three coordinates and can
+//! be held to a fourth term the script has not got (notes §260): the
+//! whole model's lightness asked not to change across the input's
+//! chroma. Without it the table puts small differences of lightness,
+//! a quarter of a visible step, across short distances in chroma,
+//! which held out over every frame buy nothing; but it is their slope
+//! a picture's chroma noise goes through, and it comes out as blotches
+//! of lightness. The term holds over the common colors and fades out
+//! past them ([`FLAT_CHROMA`]), so a saturated color no frame showed
+//! is still what the matrix and curves make of it, the table near
+//! identity there as before.
 
 use crate::LUT_SIZE;
-use crate::color::{decode3, delta_e, encode3, mean_delta_e, mul3, srgb_decode, srgb_encode};
+use crate::color::{
+    decode3, delta_e, encode3, from_oklab, mean_delta_e, mul3, oklab, srgb_decode, srgb_encode,
+};
 
 /// Knots of the per-channel curves, in linear light: zero and then
 /// 24 log-spaced from 0.001 to 1.
@@ -35,23 +50,30 @@ pub struct Curves {
     pub y: [[f32; CURVE_KNOTS]; 3],
 }
 
-/// The residual table: `size³` corrections in the encoded domain,
-/// red fastest.
+/// The residual table: `size³` corrections, indexed by the encoded
+/// color, red fastest, and added to the Oklab of what the matrix and
+/// curves give: lightness, a and b, so a correction to lightness is
+/// one number, fitted in the units ΔE is measured in.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Lattice {
     pub size: usize,
     pub data: Vec<[f32; 3]>,
 }
 
-/// How the table is regularized. Both are relative to a data term
-/// normalized to one vote per node on average, so they mean the same
-/// thing whatever the number of pairs.
+/// How the table is regularized. The weights are relative to a data
+/// term normalized to one vote per node on average, so they mean the
+/// same thing whatever the number of pairs.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LutParams {
     /// Weight on the second difference along each axis.
     pub smoothness: f32,
     /// Weight pulling each node's residual to zero.
     pub pull: f32,
+    /// Weight on the model's lightness changing across chroma: the
+    /// gradient of the whole model's output lightness, along the
+    /// lattice, with its part along the input's own lightness taken
+    /// off (notes §260).
+    pub flatness: f32,
     /// Conjugate gradient iterations.
     pub iterations: usize,
 }
@@ -61,6 +83,7 @@ impl Default for LutParams {
         LutParams {
             smoothness: 0.5,
             pull: 0.02,
+            flatness: 32.0,
             iterations: 300,
         }
     }
@@ -251,24 +274,52 @@ impl Model {
         let mut residual: Vec<[f32; 3]> = Vec::with_capacity(x_enc.len());
         for (x, y) in x_enc.iter().zip(y_enc) {
             corners.push(cell(*x, n));
-            let b = self.base(*x);
-            residual.push([y[0] - b[0], y[1] - b[1], y[2] - b[2]]);
+            let (b, t) = (self.base_lab(*x), oklab(decode3(*y)));
+            residual.push([t[0] - b[0], t[1] - b[1], t[2] - b[2]]);
         }
         // One vote per node on average: the data weight scales with
         // the nodes and against the pairs, so smoothness and pull mean
         // the same at any set size.
         let rho = nodes as f32 / x_enc.len().max(1) as f32;
+        // The flatness term, on lightness alone: at each node, the way
+        // the input's own lightness rises, along which the output's may
+        // change freely; the lightness the matrix and curves give it,
+        // which the table is asked to flatten along with its own; and
+        // the term's weight there, whole over the common colors and
+        // fading to none past them (`flat_reach`), so a saturated color
+        // no frame showed keeps what the matrix and curves make of it.
+        let (rises, base_lightness, weights) = if params.flatness > 0.0 {
+            let input: Vec<[f32; 3]> = (0..nodes)
+                .map(|i| oklab(decode3(node_color(i, n))))
+                .collect();
+            let lightness: Vec<f32> = input.iter().map(|lab| lab[0]).collect();
+            let base = (0..nodes)
+                .map(|i| self.base_lab(node_color(i, n))[0])
+                .collect();
+            let weights = input
+                .iter()
+                .map(|lab| params.flatness * flat_reach(lab[1].hypot(lab[2])))
+                .collect();
+            (rises(&lightness, n), base, weights)
+        } else {
+            (Vec::new(), Vec::new(), Vec::new())
+        };
         let mut data = vec![[0.0f32; 3]; nodes];
         for c in 0..3 {
-            let rhs: Vec<f32> = {
-                let mut r = vec![0.0f32; nodes];
-                for (cs, res) in corners.iter().zip(&residual) {
-                    for &(i, w) in cs {
-                        r[i] += rho * w * res[c];
-                    }
+            let flat = c == 0 && params.flatness > 0.0;
+            let mut rhs = vec![0.0f32; nodes];
+            for (cs, res) in corners.iter().zip(&residual) {
+                for &(i, w) in cs {
+                    rhs[i] += rho * w * res[c];
                 }
-                r
-            };
+            }
+            if flat {
+                let mut pushed = vec![0.0f32; nodes];
+                across_chroma_gram(&base_lightness, &mut pushed, n, &rises, &weights);
+                for (r, p) in rhs.iter_mut().zip(pushed) {
+                    *r -= p;
+                }
+            }
             let apply = |v: &[f32], out: &mut [f32]| {
                 out.iter_mut().for_each(|o| *o = 0.0);
                 for cs in &corners {
@@ -278,6 +329,9 @@ impl Model {
                     }
                 }
                 second_difference_gram(v, out, n, params.smoothness);
+                if flat {
+                    across_chroma_gram(v, out, n, &rises, &weights);
+                }
                 for (o, vi) in out.iter_mut().zip(v) {
                     *o += params.pull * vi;
                 }
@@ -291,9 +345,14 @@ impl Model {
         // model lands there exactly, whatever the matrix and curves
         // made of it. No pair reaches that node (the clipping cut
         // stops at 0.97), so nothing measured is overridden.
-        let white = self.base([1.0; 3]);
-        data[nodes - 1] = [1.0 - white[0], 1.0 - white[1], 1.0 - white[2]];
+        let (white, to) = (self.base_lab([1.0; 3]), oklab([1.0; 3]));
+        data[nodes - 1] = [0, 1, 2].map(|k| to[k] - white[k]);
         self.lattice = Some(Lattice { size: n, data });
+    }
+
+    /// Matrix and curves, encoded in, Oklab out.
+    fn base_lab(&self, x_enc: [f32; 3]) -> [f32; 3] {
+        oklab(self.base_linear(decode3(x_enc)))
     }
 
     /// The residual the table adds at an encoded color, trilinear.
@@ -313,9 +372,15 @@ impl Model {
     /// The whole model, encoded in and encoded out, clipped to the
     /// domain.
     pub fn apply(&self, x_enc: [f32; 3]) -> [f32; 3] {
-        let b = self.base(x_enc);
-        let r = self.correction(x_enc);
-        [0, 1, 2].map(|k| (b[k] + r[k]).clamp(0.0, 1.0))
+        let out = match &self.lattice {
+            None => self.base(x_enc),
+            Some(_) => {
+                let b = self.base_lab(x_enc);
+                let r = self.correction(x_enc);
+                encode3(from_oklab([0, 1, 2].map(|k| b[k] + r[k])))
+            }
+        };
+        out.map(|v| v.clamp(0.0, 1.0))
     }
 
     /// The full fit: matrix, curves, table.
@@ -327,6 +392,30 @@ impl Model {
         m.fit_curves(&x_lin, &y_lin);
         m.fit_lut(x_enc, y_enc, params);
         m
+    }
+
+    /// How much the model's output lightness moves with its input's
+    /// chroma: at each color of a grid over the common colors (Oklab
+    /// lightness 0.3 to 0.92, chroma under 0.12), the size of
+    /// ∂L_out/∂(a, b)_in, in Oklab on both sides. A look whose
+    /// lightness follows only its input's lightness scores zero, as
+    /// identity does. What a high score costs a picture is noise:
+    /// chroma noise the look is given comes out as lightness noise
+    /// this many times its size. It measures the model, base and table
+    /// as fitted; the `.cube` written from it is the model at the
+    /// nodes, interpolated in encoded sRGB, so scores close to this.
+    pub fn coupling(&self) -> Coupling {
+        let mut at: Vec<f32> = coupling_probes()
+            .into_iter()
+            .map(|e| {
+                let j = lab_jacobian(|x| self.apply(x), e);
+                (j[0][1] * j[0][1] + j[0][2] * j[0][2]).sqrt() as f32
+            })
+            .collect();
+        at.sort_by(f32::total_cmp);
+        let mean = at.iter().sum::<f32>() / at.len() as f32;
+        let p95 = at[(at.len() * 95 / 100).min(at.len() - 1)];
+        Coupling { mean, p95 }
     }
 
     /// Mean ΔE of the model's output against the camera's, over
@@ -385,6 +474,145 @@ fn second_difference_gram(v: &[f32], out: &mut [f32], n: usize, lambda: f32) {
                     out[idx - s] += lambda * d;
                     out[idx] -= 2.0 * lambda * d;
                     out[idx + s] += lambda * d;
+                }
+            }
+        }
+    }
+}
+
+/// [`Model::coupling`]: over the grid, the mean and the 95th
+/// percentile.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Coupling {
+    pub mean: f32,
+    pub p95: f32,
+}
+
+/// The grid [`Model::coupling`] is measured on: encoded colors eleven
+/// steps a side, those in the common range of lightness and chroma.
+fn coupling_probes() -> Vec<[f32; 3]> {
+    let n = 12;
+    let mut out = Vec::new();
+    for b in 1..n {
+        for g in 1..n {
+            for r in 1..n {
+                let e = [r, g, b].map(|v| v as f32 / n as f32);
+                let lab = oklab(decode3(e));
+                let chroma = (lab[1] * lab[1] + lab[2] * lab[2]).sqrt();
+                if chroma < FLAT_CHROMA && lab[0] > 0.3 && lab[0] < 0.92 {
+                    out.push(e);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The Jacobian of `f` (encoded in, encoded out) at `e`, taken into
+/// Oklab on both sides: rows the output's L, a, b, columns the
+/// input's.
+fn lab_jacobian(f: impl Fn([f32; 3]) -> [f32; 3], e: [f32; 3]) -> [[f64; 3]; 3] {
+    let jac = |f: &dyn Fn([f32; 3]) -> [f32; 3], at: [f32; 3], h: f32| {
+        let mut j = [[0.0f64; 3]; 3];
+        for k in 0..3 {
+            let (mut a, mut b) = (at, at);
+            a[k] += h;
+            b[k] -= h;
+            let (fa, fb) = (f(a), f(b));
+            for (i, row) in j.iter_mut().enumerate() {
+                row[k] = ((fa[i] - fb[i]) / (2.0 * h)) as f64;
+            }
+        }
+        j
+    };
+    let lab = |x: [f32; 3]| oklab(decode3(x));
+    let mul = |a: [[f64; 3]; 3], b: [[f64; 3]; 3]| {
+        let mut o = [[0.0f64; 3]; 3];
+        for i in 0..3 {
+            for j in 0..3 {
+                o[i][j] = (0..3).map(|k| a[i][k] * b[k][j]).sum();
+            }
+        }
+        o
+    };
+    // A step of a third of a lattice cell: across the table's own
+    // interpolation, not inside one cell's linear piece alone.
+    let through = jac(&f, e, 0.01);
+    let into_in = jac(&lab, e, 1e-3);
+    let into_out = jac(&lab, f(e), 1e-3);
+    let Some(from_in) = invert3(&into_in) else {
+        return [[0.0; 3]; 3];
+    };
+    mul(mul(into_out, through), from_in)
+}
+
+/// The encoded color at a lattice node, red fastest.
+fn node_color(i: usize, n: usize) -> [f32; 3] {
+    let last = (n - 1) as f32;
+    [i % n, (i / n) % n, i / (n * n)].map(|v| v as f32 / last)
+}
+
+/// The way `v` rises at each node of an `n³` lattice, red fastest,
+/// as a unit vector of its forward differences: the same differences
+/// [`across_chroma_gram`] takes, so `v` itself costs nothing there and
+/// a smooth function of it next to nothing, where the analytic
+/// gradient would leave the lattice's own discretization to be
+/// penalized (and Oklab's cube root bends hard enough near black for
+/// that to matter). Zero at the last node along any axis, which the
+/// penalty does not reach.
+fn rises(v: &[f32], n: usize) -> Vec<[f32; 3]> {
+    let strides = [1usize, n, n * n];
+    (0..v.len())
+        .map(|i| {
+            let at = [i % n, (i / n) % n, i / (n * n)];
+            if at.iter().any(|&a| a == n - 1) {
+                return [0.0; 3];
+            }
+            let d = strides.map(|s| v[i + s] - v[i]);
+            let m = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            if m > 0.0 { d.map(|x| x / m) } else { d }
+        })
+        .collect()
+}
+
+/// The input chroma (Oklab) up to which the flatness term holds
+/// whole: the range [`Model::coupling`] measures, where the fitted
+/// sets' blocks are (their 99th percentile was 0.11).
+pub const FLAT_CHROMA: f32 = 0.12;
+/// The input chroma past which it holds not at all.
+pub const FLAT_CHROMA_END: f32 = 0.15;
+
+/// The flatness term's share at a node of input chroma `c`: one up to
+/// [`FLAT_CHROMA`], none past [`FLAT_CHROMA_END`], a smoothstep between.
+fn flat_reach(c: f32) -> f32 {
+    let t = ((c - FLAT_CHROMA) / (FLAT_CHROMA_END - FLAT_CHROMA)).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
+}
+
+/// `out += DᵀWQD v`: D the forward difference along each axis of an
+/// `n³` lattice, red fastest, giving a gradient at every node with
+/// three forward neighbors; Q the projection off the node's own
+/// direction of rising lightness in `rises`; W each node's weight in
+/// `weights`. So it is the penalty on `v` changing across chroma, with
+/// its change along lightness left free. Q is symmetric and
+/// idempotent and the weights are not negative, so the operator is
+/// symmetric and positive semidefinite, as conjugate gradients needs.
+fn across_chroma_gram(v: &[f32], out: &mut [f32], n: usize, rises: &[[f32; 3]], weights: &[f32]) {
+    let strides = [1usize, n, n * n];
+    for b in 0..n - 1 {
+        for g in 0..n - 1 {
+            for r in 0..n - 1 {
+                let idx = r + n * (g + n * b);
+                let (u, lambda) = (rises[idx], weights[idx]);
+                if lambda == 0.0 {
+                    continue;
+                }
+                let d = strides.map(|s| v[idx + s] - v[idx]);
+                let along = u[0] * d[0] + u[1] * d[1] + u[2] * d[2];
+                for (k, s) in strides.into_iter().enumerate() {
+                    let q = lambda * (d[k] - along * u[k]);
+                    out[idx + s] += q;
+                    out[idx] -= q;
                 }
             }
         }
@@ -673,7 +901,8 @@ mod tests {
         );
         assert!(err < base_err * 0.5, "{err} against {base_err}");
         // Solid black is nowhere in the data (the set starts at 0.05):
-        // the correction there is near zero, pulled by the prior.
+        // the correction there, in Oklab, is near zero, held by the
+        // pull and, in lightness, the flatness term.
         let c = m.correction([0.0, 0.0, 0.0]);
         assert!(c.iter().all(|v| v.abs() < 0.01), "{c:?}");
     }
@@ -742,5 +971,60 @@ mod tests {
         let uav: f32 = u.iter().zip(&av).map(|(a, b)| a * b).sum();
         let vau: f32 = v.iter().zip(&au).map(|(a, b)| a * b).sum();
         assert!((uav - vau).abs() < 1e-3, "{uav} {vau}");
+    }
+
+    /// The flatness operator on a 9³ lattice with the input's own
+    /// lightness: symmetric, never negative, and nothing on that
+    /// lightness itself, so a model whose lightness is its input's is
+    /// not penalized; `rises` is zero on the last face, which the
+    /// operator does not reach.
+    #[test]
+    fn the_flatness_operator_is_symmetric_positive_and_free_along_lightness() {
+        let n = 9;
+        let nodes = n * n * n;
+        let lightness: Vec<f32> = (0..nodes)
+            .map(|i| oklab(decode3(node_color(i, n)))[0])
+            .collect();
+        let r = rises(&lightness, n);
+        let weights: Vec<f32> = (0..nodes).map(|i| 1.0 + (i % 5) as f32).collect();
+        let apply = |v: &[f32]| {
+            let mut out = vec![0.0; nodes];
+            across_chroma_gram(v, &mut out, n, &r, &weights);
+            out
+        };
+        let u: Vec<f32> = (0..nodes).map(|i| ((i * 7) % 11) as f32 / 11.0).collect();
+        let v: Vec<f32> = (0..nodes).map(|i| ((i * 3) % 13) as f32 / 13.0).collect();
+        let dot = |a: &[f32], b: &[f32]| a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>();
+        let (au, av) = (apply(&u), apply(&v));
+        assert!((dot(&u, &av) - dot(&v, &au)).abs() < 1e-3);
+        assert!(dot(&u, &au) >= 0.0 && dot(&v, &av) >= 0.0);
+        let along = apply(&lightness);
+        assert!(
+            along.iter().all(|x| x.abs() < 1e-5),
+            "{:?}",
+            along.iter().fold(0.0f32, |m, x| m.max(x.abs()))
+        );
+        for (i, ri) in r.iter().enumerate() {
+            let at = [i % n, (i / n) % n, i / (n * n)];
+            if at.contains(&(n - 1)) {
+                assert_eq!(*ri, [0.0; 3]);
+            }
+        }
+    }
+
+    /// The flatness term's share: whole up to [`FLAT_CHROMA`], none
+    /// past [`FLAT_CHROMA_END`], falling between.
+    #[test]
+    fn the_flatness_fades_out_past_the_common_colors() {
+        assert_eq!(flat_reach(0.0), 1.0);
+        assert_eq!(flat_reach(FLAT_CHROMA), 1.0);
+        assert_eq!(flat_reach(FLAT_CHROMA_END), 0.0);
+        assert_eq!(flat_reach(0.3), 0.0);
+        let mid = flat_reach((FLAT_CHROMA + FLAT_CHROMA_END) / 2.0);
+        assert!((mid - 0.5).abs() < 1e-5, "{mid}");
+        let steps: Vec<f32> = (0..=20)
+            .map(|k| flat_reach(0.1 + k as f32 * 0.005))
+            .collect();
+        assert!(steps.windows(2).all(|w| w[1] <= w[0]));
     }
 }
