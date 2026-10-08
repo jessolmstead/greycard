@@ -349,6 +349,9 @@ pub(crate) fn run(plan: Plan) -> Finished {
     });
     let mut written = Vec::new();
     let mut left_out = 0;
+    // Of those, the frames without something other than a People mask
+    // written empty, which the line words apart.
+    let mut missing_other = 0;
     let mut tally = None;
     // The index and the roots kept beside it, when both are there and
     // an archive is among the roots: an export's record on a sidecar
@@ -397,6 +400,10 @@ pub(crate) fn run(plan: Plan) -> Finished {
                         }
                         if !missing.is_empty() {
                             left_out += 1;
+                        }
+                        let (asks, nobody) = crate::ai::parts_left_out(&missing);
+                        if missing.len() > asks + nobody {
+                            missing_other += 1;
                         }
                         if let Some(placement) = placement {
                             let exported = greycard_edit::Exported {
@@ -460,10 +467,15 @@ pub(crate) fn run(plan: Plan) -> Finished {
         },
         (None, _) => queue::finished_line(&tally, total, &set.place(), seconds),
     };
-    match (left_out, &single) {
+    match (missing_other, &single) {
         (0, _) => {}
         (_, Some(_)) => line.push_str(&format!(", without {MISSING} (see above)")),
         (n, None) => line.push_str(&format!(", {n} without {MISSING} (see above)")),
+    }
+    // A set's line has its Parts written empty already
+    // (`queue::finished_line`); a frame's says them here.
+    if single.is_some() {
+        line.push_str(&crate::ai::parts_words(false, tally.parts));
     }
     // Into the log at info whichever way it went: `export` says it on
     // stderr itself, and a warning here would say it there twice. The

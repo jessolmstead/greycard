@@ -16,6 +16,7 @@ pub(crate) mod look_remove;
 pub(crate) mod look_rename;
 pub(crate) mod mask;
 pub(crate) mod menu;
+pub(crate) mod parts;
 pub(crate) mod prefs;
 pub(crate) mod recent;
 pub(crate) mod retouch;

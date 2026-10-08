@@ -13,9 +13,11 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use greycard_ai::sam::Embedding;
+use greycard_ai::sam3::{self, Choice, Encodings, Picture, Presets, Sam3};
 use greycard_ai::sky::{self, Prior};
 use greycard_ai::{
-    Denoiser, Fill, Model, Prompt, Provider, Rgb8, Rgbf, SAM, SKY, Sam, Sky, Store, Subject, refine,
+    Denoiser, Fill, Model, Prompt, Provider, Rgb8, Rgbf, SAM, SAM3, SKY, Sam, Sky, Store, Subject,
+    refine,
 };
 use greycard_core::develop::retouch::Region;
 use greycard_core::image::WorkingImage;
@@ -88,6 +90,7 @@ pub fn model_with(
         )),
         Shape::Sky { .. } => Some(sky_model(have, unavailable)),
         Shape::Object { .. } => Some(&SAM),
+        Shape::Part { .. } => Some(&SAM3),
         _ => None,
     }
 }
@@ -112,6 +115,16 @@ fn sky_model(have: impl Fn(&Model) -> bool, unavailable: &[&str]) -> &'static Mo
 /// and one made by an older pipeline once the pipeline changes.
 const SKY_PIPELINE: &str = "sky-1";
 
+/// What a Part raster was made by beside the file and the shape, in
+/// its disk cache's key: the routes' and the people's version, so a
+/// part made by an older rule is made again.
+const PART_PIPELINE: &str = "part-2";
+
+/// The crops' encodings kept beside the preview's, each about 117 MB:
+/// two faces and their four eyes, so Iris then Eyebrows then Lips on a
+/// couple costs only decodes.
+const PART_CROPS: usize = 6;
+
 /// A Background's own raster from the Subject matte it shares: one
 /// minus every byte. Any other shape reads it unchanged; the CPU
 /// reference the composed Background is checked against.
@@ -126,7 +139,7 @@ fn background_or_not(shape: &Shape, base: &[u8]) -> Vec<u8> {
 /// Whether the shape has anything for a model to go on.
 pub fn prompted(shape: &Shape) -> bool {
     match shape {
-        Shape::Subject {} | Shape::Background {} | Shape::Sky { .. } => true,
+        Shape::Subject {} | Shape::Background {} | Shape::Sky { .. } | Shape::Part { .. } => true,
         Shape::Object { picks, boxes } => !picks.is_empty() || !boxes.is_empty(),
         _ => false,
     }
@@ -157,8 +170,30 @@ pub struct Ai {
     /// The preview of base develop `stamp`, and its luma.
     preview: Option<(u64, Rgb8, Vec<f32>)>,
     embedding: Option<(u64, Embedding)>,
-    /// What has been made, with the shape it was made for.
-    cache: HashMap<Key, (Shape, Arc<Raster>)>,
+    /// The People model and its phrase table, loaded on the first part.
+    sam3: Option<Sam3>,
+    presets: Option<Presets>,
+    /// The People model's encodings of base develop `stamp`: the
+    /// preview's and its crops', dropped with the preview.
+    encodings: Encodings,
+    /// The people on the preview of base develop `stamp`, found once
+    /// for every part and pick made on it.
+    people: Option<(u64, Vec<sam3::Person>)>,
+    /// What the People model sees of base develop `stamp` made at
+    /// `turn`: the picture under no edit at all and turned back to the
+    /// camera's own orientation, and its luma. Look-neutral and
+    /// unturned, so a person's signature does not move with the
+    /// exposure, the look or a turn (`PartsView`).
+    parts_view: Option<PartsView>,
+    /// The open file's content hash (greycard-library's), the name a
+    /// Part's person records the picture they were picked on by.
+    picture: Option<(PathBuf, Option<String>)>,
+    /// What has been made, by component and the base's turn, with the
+    /// shape it was made for.
+    cache: HashMap<(Key, u8), (Shape, Arc<Raster>)>,
+    /// Whether made rasters are kept on disk (`cached_path`); never for
+    /// a test that runs the models.
+    disk: bool,
     /// The Subject matte at the raster's size, of base develop
     /// `stamp`, and the provider that made it: run once and read by a
     /// Background sharing it, so a mask with both costs the model one
@@ -184,8 +219,313 @@ pub struct Made {
     pub provider: Option<Provider>,
     pub seconds: f64,
     /// What the status line says in place of the usual: a Sky shape
-    /// on a frame with no sky, whose raster is empty.
+    /// on a frame with no sky, whose raster is empty; a Part whose
+    /// person is not settled.
     pub note: Option<String>,
+    /// A Part made empty because its person is not settled on this
+    /// picture: asked about, or not on it.
+    pub part: Option<Unresolved>,
+}
+
+/// Why a Part's raster is empty.
+#[derive(Debug, Clone)]
+pub enum Unresolved {
+    /// Which person is it? The people on the picture to pick from, the
+    /// one to highlight, and why it asks.
+    Ask(Ask),
+    /// No one is on this picture.
+    Nobody,
+}
+
+impl Unresolved {
+    /// What an export's log says of it: a part not sure of its person
+    /// needs one picked; one whose person is not found, whoever else
+    /// is on the picture, has no one here.
+    pub fn left_out(&self) -> &'static str {
+        match self {
+            Unresolved::Ask(Ask {
+                why: Asking::Unsure,
+                ..
+            }) => PART_ASKS,
+            Unresolved::Ask(Ask {
+                why: Asking::SomeoneElse,
+                ..
+            })
+            | Unresolved::Nobody => PART_NOBODY,
+        }
+    }
+}
+
+/// The people a Part could be of on a picture, for the panel to pick
+/// one from, the guess to highlight (never a pick), and why it asks.
+#[derive(Debug, Clone, Default)]
+pub struct Ask {
+    pub people: Vec<Candidate>,
+    pub guess: Option<usize>,
+    pub why: Asking,
+}
+
+/// Why a Part asks which person it is of.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Asking {
+    /// More than one could be the one, or the one here could be: the
+    /// likeliest the guess, when there is one.
+    #[default]
+    Unsure,
+    /// Its person is not on this picture, and whoever is here is
+    /// someone else: never a guess, but one of them can be picked to
+    /// have it.
+    SomeoneElse,
+}
+
+impl Ask {
+    /// The status line while it asks.
+    pub fn words(&self) -> &'static str {
+        match self.why {
+            Asking::Unsure => "which person? click one, or All people",
+            Asking::SomeoneElse => {
+                "this mask was made for someone else: click a person to use it for them, \
+                 or All people"
+            }
+        }
+    }
+}
+
+/// A person on a picture as the panel shows and picks them.
+#[derive(Debug, Clone)]
+pub struct Candidate {
+    /// The face's box, x0, y0, x1, y1, in the masks' units.
+    pub face: [f32; 4],
+    /// The face's center, in the masks' units.
+    pub at: [f32; 2],
+    pub signature: greycard_edit::mask::Signature,
+    /// Their body, over the picture in its fractions; none for a face
+    /// no body went with.
+    pub body: Option<Arc<greycard_ai::Mask>>,
+    /// The picture's content hash, for the shape to record.
+    pub picture: Option<String>,
+}
+
+impl Candidate {
+    /// A person the model found on the unturned view, on the picture
+    /// as it stands: turned `turn` quarters clockwise, `aspect` its
+    /// height over its width.
+    fn of(p: &sam3::Person, turn: u8, aspect: f32, picture: &Option<String>) -> Self {
+        let a = turn_frac(turn, [p.face[0], p.face[1]]);
+        let b = turn_frac(turn, [p.face[2], p.face[3]]);
+        let c = turn_frac(
+            turn,
+            [(p.face[0] + p.face[2]) / 2.0, (p.face[1] + p.face[3]) / 2.0],
+        );
+        Self {
+            face: [
+                a[0].min(b[0]),
+                a[1].min(b[1]) * aspect,
+                a[0].max(b[0]),
+                a[1].max(b[1]) * aspect,
+            ],
+            at: [c[0], c[1] * aspect],
+            signature: greycard_edit::mask::Signature {
+                kind: p.signature.kind().name().to_string(),
+                values: p.signature.values().to_vec(),
+            },
+            body: p.body.as_ref().map(|m| Arc::new(rotate_mask(m, turn))),
+            picture: picture.clone(),
+        }
+    }
+
+    /// The shape's person, as picked here.
+    pub fn person(&self) -> greycard_edit::mask::Person {
+        greycard_edit::mask::Person {
+            signature: self.signature.clone(),
+            at: self.at,
+            picture: self.picture.clone(),
+        }
+    }
+}
+
+/// Which of `people` is the face at `at` on the picture a person was
+/// picked on: the nearest within about its own face's width, all in
+/// the masks' units. A turn moves `at` with the shape, and nothing done
+/// to the picture's colors moves it at all.
+pub fn at_face(people: &[Candidate], at: [f32; 2]) -> Option<usize> {
+    let gap = |p: &Candidate| (p.at[0] - at[0]).hypot(p.at[1] - at[1]);
+    people
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| gap(p) <= (p.face[2] - p.face[0]).max(0.01))
+        .min_by(|a, b| gap(a.1).total_cmp(&gap(b.1)))
+        .map(|(i, _)| i)
+}
+
+/// A point in fractions of the camera's own picture, on the picture
+/// turned `turn` quarters clockwise.
+pub(crate) fn turn_frac(turn: u8, [x, y]: [f32; 2]) -> [f32; 2] {
+    match turn % 4 {
+        1 => [1.0 - y, x],
+        2 => [1.0 - x, 1.0 - y],
+        3 => [y, 1.0 - x],
+        _ => [x, y],
+    }
+}
+
+/// `data`, `w` by `h` of `ch` values a pixel, turned `turn` quarters
+/// clockwise, and its size after.
+fn rotate<T: Copy>(data: &[T], w: usize, h: usize, ch: usize, turn: u8) -> (Vec<T>, usize, usize) {
+    let turn = turn % 4;
+    if turn == 0 {
+        return (data.to_vec(), w, h);
+    }
+    let (nw, nh) = if turn % 2 == 1 { (h, w) } else { (w, h) };
+    let mut out = data.to_vec();
+    for y in 0..h {
+        for x in 0..w {
+            let (nx, ny) = match turn {
+                1 => (h - 1 - y, x),
+                2 => (w - 1 - x, h - 1 - y),
+                _ => (y, w - 1 - x),
+            };
+            let (from, to) = ((y * w + x) * ch, (ny * nw + nx) * ch);
+            out[to..to + ch].copy_from_slice(&data[from..from + ch]);
+        }
+    }
+    (out, nw, nh)
+}
+
+fn rotate_rgb(img: &Rgb8, turn: u8) -> Rgb8 {
+    let (data, w, h) = rotate(&img.data, img.width, img.height, 3, turn);
+    Rgb8::new(w, h, data)
+}
+
+fn rotate_mask(m: &greycard_ai::Mask, turn: u8) -> greycard_ai::Mask {
+    let (data, w, h) = rotate(&m.data, m.width, m.height, 1, turn);
+    greycard_ai::Mask::new(w, h, data)
+}
+
+/// A rectangle of the camera's own picture, `size` its pixels, as the
+/// same pixels on the picture turned `turn` quarters clockwise.
+fn turn_rect(turn: u8, (w, h): (usize, usize), r: sam3::Rect) -> sam3::Rect {
+    let (x0, y0, x1, y1) = (r.x0, r.y0, r.x1, r.y1);
+    let (x0, y0, x1, y1) = match turn % 4 {
+        1 => (h - y1, x0, h - y0, x1),
+        2 => (w - x1, h - y1, w - x0, h - y0),
+        3 => (y0, w - x1, y1, w - x0),
+        _ => (x0, y0, x1, y1),
+    };
+    sam3::Rect { x0, y0, x1, y1 }
+}
+
+/// What the People model sees of a base: see `Ai::parts_view`.
+struct PartsView {
+    stamp: u64,
+    turn: u8,
+    preview: Rgb8,
+    luma: Vec<f32>,
+}
+
+/// The edit the People model's pictures are rendered under: none, so
+/// the exposure, the curves and the look a picture is given are not in
+/// what a person is known by.
+fn neutral() -> Edit {
+    Edit::default()
+}
+
+/// Which of `people` a click at `at` (the masks' units, `aspect` the
+/// picture's height over its width) picks: the one whose face box is
+/// under it, else the one whose body is (the highest there, the
+/// smaller body on a tie, so a child held up is the child), else none.
+pub fn picked(people: &[Candidate], at: (f32, f32), aspect: f32) -> Option<usize> {
+    let inside = |b: [f32; 4]| at.0 >= b[0] && at.0 <= b[2] && at.1 >= b[1] && at.1 <= b[3];
+    if let Some(i) = people.iter().position(|p| inside(p.face)) {
+        return Some(i);
+    }
+    let (fx, fy) = (at.0, at.1 / aspect.max(1e-6));
+    if !(0.0..=1.0).contains(&fx) || !(0.0..=1.0).contains(&fy) {
+        return None;
+    }
+    let area = |m: &greycard_ai::Mask| m.data.iter().filter(|&&v| v > sam3::CUT).count();
+    people
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| {
+            let m = p.body.as_ref()?;
+            let x = ((fx * m.width as f32) as usize).min(m.width - 1);
+            let y = ((fy * m.height as f32) as usize).min(m.height - 1);
+            let v = m.at(x, y);
+            (v > sam3::CUT).then_some((i, v, area(m)))
+        })
+        .min_by(|a, b| {
+            if (a.1 - b.1).abs() < 0.01 {
+                a.2.cmp(&b.2)
+            } else {
+                b.1.total_cmp(&a.1)
+            }
+        })
+        .map(|(i, _, _)| i)
+}
+
+/// What an export's log says of a Part asking which person it is of.
+pub const PART_ASKS: &str = "a People mask needs a person picked";
+/// And of a Part whose person is not on the picture.
+pub const PART_NOBODY: &str = "a People mask's person isn't in this picture";
+
+/// Which of a frame's left-out items (`worker::write_export`'s) are
+/// People shapes written empty: (asking, nobody).
+pub fn parts_left_out(items: &[String]) -> (usize, usize) {
+    let n = |what: &str| items.iter().filter(|i| i.contains(what)).count();
+    (n(PART_ASKS), n(PART_NOBODY))
+}
+
+/// What a result line adds for a frame, or (`per_frame`) a set's frames, written
+/// with a People mask empty: asking which person, or with nobody, as
+/// `parts_left_out` counted them over the set; nothing for none.
+pub fn parts_words(per_frame: bool, (asks, nobody): (usize, usize)) -> String {
+    let lead = |n: usize| {
+        if per_frame {
+            format!(", {}: ", crate::queue::frames(n))
+        } else {
+            ", ".to_string()
+        }
+    };
+    let mut s = String::new();
+    if asks > 0 {
+        s.push_str(&lead(asks));
+        s.push_str(PART_ASKS);
+    }
+    if nobody > 0 {
+        s.push_str(&lead(nobody));
+        s.push_str(PART_NOBODY);
+    }
+    s
+}
+
+/// The status line while a part is made on the CPU, before the run:
+/// a part takes seconds there, an eye's or a mouth's about thirty (an
+/// Iris took 29.8 s and Lips 8.7 s in a release build).
+pub fn part_on_cpu(route: &greycard_edit::mask::Route) -> &'static str {
+    match route {
+        greycard_edit::mask::Route::Eye | greycard_edit::mask::Route::Mouth => {
+            "finding it on the CPU: an eye or mouth part takes about thirty seconds"
+        }
+        _ => "finding it on the CPU: this takes several seconds",
+    }
+}
+
+/// Whether the People model will run on the CPU on this machine: no
+/// WebGPU offered.
+pub fn parts_on_cpu() -> bool {
+    !providers().contains(&Provider::WebGpu)
+}
+
+fn route_of(route: &greycard_edit::mask::Route) -> Result<sam3::Route, String> {
+    match route {
+        greycard_edit::mask::Route::Whole => Ok(sam3::Route::Whole),
+        greycard_edit::mask::Route::Eye => Ok(sam3::Route::Eye),
+        greycard_edit::mask::Route::Mouth => Ok(sam3::Route::Mouth),
+        greycard_edit::mask::Route::Other(name) => {
+            Err(format!("the route \"{name}\" is not one this build knows"))
+        }
+    }
 }
 
 /// A Sky raster's making, stage by stage, in seconds.
@@ -241,7 +581,14 @@ impl Ai {
             fills: HashMap::new(),
             preview: None,
             embedding: None,
+            sam3: None,
+            presets: None,
+            encodings: Encodings::new(PART_CROPS),
+            people: None,
+            parts_view: None,
+            picture: None,
             cache: HashMap::new(),
+            disk: true,
             subject_matte: None,
         }
     }
@@ -259,6 +606,7 @@ impl Ai {
         Self {
             store: Some(store),
             providers,
+            disk: false,
             ..Self::new()
         }
     }
@@ -295,6 +643,43 @@ impl Ai {
         self.embedding = None;
         self.sky_prior = None;
         self.subject_matte = None;
+        self.encodings.clear();
+        self.people = None;
+        self.parts_view = None;
+    }
+
+    /// No Part is live on the open picture: the People model, its
+    /// encodings and its people go, about 2 GB with a picture's crops;
+    /// the next Part loads them again.
+    pub fn release_parts(&mut self) {
+        if self.sam3.is_some() {
+            tracing::debug!("the People model let go: no People shape on the picture");
+        }
+        self.sam3 = None;
+        self.presets = None;
+        self.encodings.clear();
+        self.people = None;
+        self.parts_view = None;
+    }
+
+    /// The People model lent to `other`, or back from it: the export of
+    /// a set's other frames runs its own `Ai` on the same thread, and
+    /// has the editor's model rather than a second copy of it.
+    pub fn lend_parts(&mut self, other: &mut Ai) {
+        if self.sam3.is_some() {
+            other.sam3 = self.sam3.take();
+            other.presets = self.presets.take();
+        }
+    }
+
+    /// The open file's content hash, read once.
+    fn picture_hash(&mut self) -> Option<String> {
+        let file = self.file.clone()?;
+        if self.picture.as_ref().is_none_or(|(f, _)| *f != file) {
+            let hash = greycard_library::hash_file(&file).ok();
+            self.picture = Some((file, hash));
+        }
+        self.picture.as_ref().and_then(|(_, h)| h.clone())
     }
 
     /// A Subject model just arrived in the store: drop the one
@@ -482,7 +867,15 @@ impl Ai {
     /// cache is keyed on the exact file it is about to load or has
     /// loaded, not a second, independent guess that can name a
     /// different file (notes, the Subject rewrite offer).
-    fn cached_path(&self, shape: &Shape, model: Option<&'static Model>) -> Option<PathBuf> {
+    fn cached_path(
+        &self,
+        shape: &Shape,
+        model: Option<&'static Model>,
+        turn: u8,
+    ) -> Option<PathBuf> {
+        if !self.disk {
+            return None;
+        }
         let file = self.file.as_ref()?;
         let model = match shape {
             Shape::Subject {} | Shape::Background {} => self.subject_model(model)?,
@@ -499,6 +892,15 @@ impl Ai {
         if matches!(shape, Shape::Sky { .. }) {
             SKY_PIPELINE.hash(&mut h);
             store.have(&SAM).hash(&mut h);
+        }
+        if matches!(shape, Shape::Part { .. }) {
+            PART_PIPELINE.hash(&mut h);
+        }
+        // A turned base is another picture to a raster: a half turn
+        // keeps the height a cached one is checked by. Only hashed when
+        // turned, so every raster made unturned keeps its slot.
+        if !turn.is_multiple_of(4) {
+            (turn % 4).hash(&mut h);
         }
         Some(root.join(format!("{:016x}.png", h.finish())))
     }
@@ -519,11 +921,12 @@ impl Ai {
         image: &WorkingImage,
         edit: &Edit,
         kind: crate::finish::Source,
+        turn: u8,
         key: Key,
         shape: &Shape,
         model: Option<&'static Model>,
     ) -> Result<Made, String> {
-        if let Some((s, r)) = self.cache.get(&key)
+        if let Some((s, r)) = self.cache.get(&(key, turn))
             && s == shape
         {
             return Ok(Made {
@@ -531,6 +934,7 @@ impl Ai {
                 raster: r.clone(),
                 provider: None,
                 seconds: 0.0,
+                part: None,
             });
         }
         if !prompted(shape) {
@@ -538,15 +942,17 @@ impl Ai {
         }
         let aspect = image.height as f32 / image.width as f32;
         let height = ((RASTER_WIDTH as f32 * aspect).round() as usize).max(1);
-        let cached = self.cached_path(shape, model);
+        let cached = self.cached_path(shape, model, turn);
         if let Some(data) = cached.as_deref().and_then(|p| read_raster(p, height)) {
             let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
-            self.cache.insert(key, (shape.clone(), raster.clone()));
+            self.cache
+                .insert((key, turn), (shape.clone(), raster.clone()));
             return Ok(Made {
                 note: self.sky_note(shape, &raster),
                 raster,
                 provider: None,
                 seconds: 0.0,
+                part: None,
             });
         }
         // A Background reads the Subject matte, the model run once
@@ -564,11 +970,13 @@ impl Ai {
                 write_raster(path, height, &data);
             }
             let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
-            self.cache.insert(key, (shape.clone(), raster.clone()));
+            self.cache
+                .insert((key, turn), (shape.clone(), raster.clone()));
             return Ok(Made {
                 raster,
                 provider: Some(*provider),
                 seconds: 0.0,
+                part: None,
                 note: None,
             });
         }
@@ -579,11 +987,40 @@ impl Ai {
         if self.providers.is_empty() {
             self.providers = Provider::available();
         }
-        if self.preview.as_ref().is_none_or(|p| p.0 != stamp) {
-            let rgb = preview(image, edit, kind);
-            let luma = rgb.luma();
-            self.preview = Some((stamp, rgb, luma));
-            self.embedding = None;
+        self.preview_of(stamp, image, edit, kind);
+        if let Shape::Part {
+            phrase,
+            route,
+            person,
+        } = shape
+        {
+            let start = Instant::now();
+            let (data, provider, part) = self.part(
+                (stamp, turn),
+                image,
+                kind,
+                (phrase, route, person.as_ref()),
+                (RASTER_WIDTH, height),
+                &store,
+            )?;
+            let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+            // Only a settled person's part is kept: an ask is asked
+            // again, so the panel can show it and an export can say it.
+            if part.is_none() {
+                if let Some(path) = &cached {
+                    write_raster(path, height, raster.data());
+                }
+                self.cache
+                    .insert((key, turn), (shape.clone(), raster.clone()));
+            }
+            let note = part.as_ref().map(|p| part_note(p, self.file.as_deref()));
+            return Ok(Made {
+                raster,
+                provider: Some(provider),
+                seconds: start.elapsed().as_secs_f64(),
+                note,
+                part,
+            });
         }
         if let Shape::Sky { picks } = shape {
             let start = Instant::now();
@@ -601,12 +1038,14 @@ impl Ai {
                 write_raster(path, height, &data);
             }
             let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
-            self.cache.insert(key, (shape.clone(), raster.clone()));
+            self.cache
+                .insert((key, turn), (shape.clone(), raster.clone()));
             return Ok(Made {
                 note,
                 raster,
                 provider: Some(provider),
                 seconds: start.elapsed().as_secs_f64(),
+                part: None,
             });
         }
         let (_, rgb, luma) = self.preview.as_ref().expect("a preview was just made");
@@ -636,11 +1075,13 @@ impl Ai {
                 write_raster(path, height, &data);
             }
             let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
-            self.cache.insert(key, (shape.clone(), raster.clone()));
+            self.cache
+                .insert((key, turn), (shape.clone(), raster.clone()));
             return Ok(Made {
                 raster,
                 provider: Some(provider),
                 seconds: start.elapsed().as_secs_f64(),
+                part: None,
                 note: None,
             });
         }
@@ -686,13 +1127,209 @@ impl Ai {
             write_raster(path, height, &data);
         }
         let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
-        self.cache.insert(key, (shape.clone(), raster.clone()));
+        self.cache
+            .insert((key, turn), (shape.clone(), raster.clone()));
         Ok(Made {
             raster,
             provider: Some(provider),
             seconds: start.elapsed().as_secs_f64(),
+            part: None,
             note: None,
         })
+    }
+
+    /// The preview of base develop `stamp`, made if it is not the one
+    /// kept; everything made on the one before goes with it.
+    fn preview_of(
+        &mut self,
+        stamp: u64,
+        image: &WorkingImage,
+        edit: &Edit,
+        kind: crate::finish::Source,
+    ) {
+        if self.preview.as_ref().is_none_or(|p| p.0 != stamp) {
+            let rgb = preview(image, edit, kind);
+            let luma = rgb.luma();
+            self.preview = Some((stamp, rgb, luma));
+            self.embedding = None;
+            self.encodings.clear();
+            self.people = None;
+        }
+    }
+
+    /// The People model and its table, loaded the first time.
+    fn parts_model(&mut self, store: &Store) -> Result<(), String> {
+        if self.providers.is_empty() {
+            self.providers = Provider::available();
+        }
+        if self.presets.is_none() {
+            self.presets = Some(Presets::of(store).map_err(|e| e.to_string())?);
+        }
+        if self.sam3.is_none() {
+            self.sam3 = Some(Sam3::load(store, &self.providers).map_err(|e| e.to_string())?);
+        }
+        Ok(())
+    }
+
+    /// The people on the unturned, look-neutral view of base develop
+    /// `stamp` of `image`, as the panel picks among them, the provider
+    /// the model ran on and the seconds it took: for a Part chosen from
+    /// the menu, which is of the person picked among them, or of the
+    /// one person when there is one.
+    pub fn people(
+        &mut self,
+        stamp: u64,
+        image: &WorkingImage,
+        kind: crate::finish::Source,
+        turn: u8,
+    ) -> Result<(Vec<Candidate>, Provider, f64), String> {
+        let store = self
+            .store
+            .clone()
+            .ok_or("no cache directory for the models")?;
+        let start = Instant::now();
+        self.parts_model(&store)?;
+        self.parts_view_of(stamp, turn, image, kind);
+        let hash = self.picture_hash();
+        let Ai {
+            sam3,
+            presets,
+            encodings,
+            parts_view,
+            people,
+            ..
+        } = self;
+        let sam = sam3.as_mut().expect("the People model was just loaded");
+        let presets = presets.as_ref().expect("the table was just read");
+        let view = parts_view.as_ref().expect("the view was just made");
+        let size = unturned_size(image, turn);
+        let mut region = |r: sam3::Rect| parts_region(image, kind, turn, size, r);
+        let mut picture = Picture {
+            preview: &view.preview,
+            luma: &view.luma,
+            size,
+            key: stamp,
+            region: &mut region,
+            encodings,
+        };
+        let found = people_of(sam, presets, &mut picture, people)?;
+        let aspect = image.height as f32 / image.width as f32;
+        let out = found
+            .iter()
+            .map(|p| Candidate::of(p, turn, aspect, &hash))
+            .collect();
+        Ok((out, sam.providers().0, start.elapsed().as_secs_f64()))
+    }
+
+    /// The People model's view of base develop `stamp`, made at `turn`
+    /// (`parts_view`), made if it is not the one kept; the encodings
+    /// and the people made on the one before go with it.
+    fn parts_view_of(
+        &mut self,
+        stamp: u64,
+        turn: u8,
+        image: &WorkingImage,
+        kind: crate::finish::Source,
+    ) {
+        if self
+            .parts_view
+            .as_ref()
+            .is_none_or(|v| v.stamp != stamp || v.turn != turn)
+        {
+            let shown = preview(image, &neutral(), kind);
+            let rgb = rotate_rgb(&shown, (4 - turn % 4) % 4);
+            let luma = rgb.luma();
+            self.parts_view = Some(PartsView {
+                stamp,
+                turn,
+                preview: rgb,
+                luma,
+            });
+            self.encodings.clear();
+            self.people = None;
+        }
+    }
+
+    /// A Part's raster at `raster` (width, height), on the preview of
+    /// base develop `stamp`, and the provider: of the person the
+    /// shape names, found again on this picture (`sam3::choose`), or
+    /// of everyone. Empty, and why, where the person is not settled.
+    fn part(
+        &mut self,
+        (stamp, turn): (u64, u8),
+        image: &WorkingImage,
+        kind: crate::finish::Source,
+        (phrase, route, person): PartAsked,
+        raster: (usize, usize),
+        store: &Store,
+    ) -> Result<(Vec<u8>, Provider, Option<Unresolved>), String> {
+        let route = route_of(route)?;
+        self.parts_model(store)?;
+        self.parts_view_of(stamp, turn, image, kind);
+        let hash = self.picture_hash();
+        let Ai {
+            sam3,
+            presets,
+            encodings,
+            parts_view,
+            people,
+            ..
+        } = self;
+        let sam = sam3.as_mut().expect("the People model was just loaded");
+        let presets = presets.as_ref().expect("the table was just read");
+        // Said before any model runs: a phrase not in the table is
+        // never asked of a text encoder.
+        if presets.phrase(phrase).is_none() {
+            return Err(format!("\"{phrase}\" is not in the People model's table"));
+        }
+        let provider = sam.providers().0;
+        let view = parts_view.as_ref().expect("the view was just made");
+        let size = unturned_size(image, turn);
+        let mut region = |r: sam3::Rect| parts_region(image, kind, turn, size, r);
+        let mut picture = Picture {
+            preview: &view.preview,
+            luma: &view.luma,
+            size,
+            key: stamp,
+            region: &mut region,
+            encodings,
+        };
+        let empty = || vec![0u8; raster.0 * raster.1];
+        // The picture as it stands: its height over its width, the
+        // masks' units' aspect.
+        let aspect = image.height as f32 / image.width as f32;
+        let who = match person {
+            None => None,
+            Some(p) => {
+                let found = people_of(sam, presets, &mut picture, people)?;
+                let candidates: Vec<Candidate> = found
+                    .iter()
+                    .map(|q| Candidate::of(q, turn, aspect, &hash))
+                    .collect();
+                let own = hash.is_some() && p.picture == hash;
+                let vaspect = view.preview.height as f32 / view.preview.width as f32;
+                let choice = settle(p, found, &candidates, own, turn, (aspect, vaspect));
+                match decided(choice, candidates) {
+                    Ok(i) => Some(found[i].clone()),
+                    Err(why) => return Ok((empty(), provider, Some(why))),
+                }
+            }
+        };
+        let pieces = sam3::find(sam, presets, &mut picture, route, phrase, who.as_ref())
+            .map_err(|e| e.to_string())?;
+        // Drawn on the unturned picture, then turned as the picture is.
+        let unturned = if turn % 2 == 1 {
+            (raster.1, raster.0)
+        } else {
+            raster
+        };
+        let drawn = sam3::draw(&pieces, picture.size, unturned);
+        let data: Vec<u8> = drawn
+            .iter()
+            .map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
+            .collect();
+        let (data, _, _) = rotate(&data, unturned.0, unturned.1, 1, turn);
+        Ok((data, provider, None))
     }
 
     /// What the status line says of a Sky raster that comes back from
@@ -849,6 +1486,139 @@ impl Ai {
     }
 }
 
+/// A Part as `Ai::part` takes it: the phrase, its route and the person.
+type PartAsked<'a> = (
+    &'a str,
+    &'a greycard_edit::mask::Route,
+    Option<&'a greycard_edit::mask::Person>,
+);
+
+/// The base's size turned back to the camera's own orientation.
+fn unturned_size(image: &WorkingImage, turn: u8) -> (usize, usize) {
+    if turn % 2 == 1 {
+        (image.height, image.width)
+    } else {
+        (image.width, image.height)
+    }
+}
+
+/// A rectangle of the unturned picture, `size` its pixels, rendered as
+/// the People model's view is: under no edit, at its own pixels, turned
+/// back to the camera's orientation.
+fn parts_region(
+    image: &WorkingImage,
+    kind: crate::finish::Source,
+    turn: u8,
+    size: (usize, usize),
+    rect: sam3::Rect,
+) -> Rgb8 {
+    let shown = region(image, &neutral(), kind, turn_rect(turn, size, rect));
+    rotate_rgb(&shown, (4 - turn % 4) % 4)
+}
+
+/// Who a Part's `person` is among `found`, the people on a picture's
+/// unturned view (`candidates`, the same people on the picture as it
+/// stands, turned `turn`), `own` when it is the picture they were
+/// picked on (by its hash), `aspect` the picture's height over its
+/// width as it stands and `vaspect` the view's. On their own picture,
+/// the face at `at`, whatever the picture's colors or turn have become
+/// since and however many faces are found there now, as long as it is
+/// still near their signature (look-neutral, so steady): a turn the
+/// shape did not follow, or two files that hash alike, fall through to
+/// the rule for other pictures, `sam3::choose`. A face at `at` that is
+/// no longer near their signature (its base changed: white balance,
+/// profile, lens, noise or demosaic) is not taken alone, but where the
+/// rule would not decide either, it asks with that face the guess
+/// rather than finding nobody. A person picked on a group and the one
+/// person of a portrait are settled alike.
+fn settle(
+    p: &greycard_edit::mask::Person,
+    found: &[sam3::Person],
+    candidates: &[Candidate],
+    own: bool,
+    turn: u8,
+    (aspect, vaspect): (f32, f32),
+) -> Choice {
+    let wanted = sam3::Signature::new(
+        sam3::SignatureKind::from_name(&p.signature.kind),
+        p.signature.values.clone(),
+    );
+    let near = |i: usize| {
+        wanted.as_ref().is_some_and(|w| {
+            let s = &found[i].signature;
+            sam3::same_render(w, s) || sam3::distance(w, s).is_some_and(|d| d <= sam3::BOUND)
+        })
+    };
+    let own_face = own.then(|| at_face(candidates, p.at)).flatten();
+    if let Some(i) = own_face.filter(|&i| near(i)) {
+        return Choice::Person(i, 0.0);
+    }
+    let there: Vec<(sam3::Signature, [f32; 2])> =
+        found.iter().map(|q| (q.signature.clone(), q.at)).collect();
+    // `at` in the unturned view's units, as the people's are.
+    let f = turn_frac((4 - turn % 4) % 4, [p.at[0], p.at[1] / aspect]);
+    let at = [f[0], f[1] * vaspect];
+    let choice = match &wanted {
+        Some(w) => sam3::choose(w, at, &there),
+        // A signature of a known kind that does not read (a value too
+        // many or too few) is anyone's.
+        None if found.is_empty() => Choice::Nobody,
+        None => Choice::Ask { guess: None },
+    };
+    match (choice, own_face) {
+        // On their own picture with a face where theirs was, but read
+        // apart from them now (a white balance, profile, lens or
+        // demosaic changed since moves the render the signatures are
+        // read from): asked, that face the guess, never nobody.
+        (Choice::Ask { .. } | Choice::Nobody, Some(i)) => Choice::Ask { guess: Some(i) },
+        (choice, _) => choice,
+    }
+}
+
+/// What `Ai::part` makes of a `choice` among `people`: the person
+/// at an index, or why the raster is empty. A person not found
+/// (`Choice::Nobody`) on a picture with people on it asks as an unsure
+/// choice does, with no guess and words of its own, so one of them can
+/// be picked to have the part; on a picture with no one, nobody.
+fn decided(choice: Choice, people: Vec<Candidate>) -> Result<usize, Unresolved> {
+    let (guess, why) = match choice {
+        Choice::Person(i, _) => return Ok(i),
+        Choice::Nobody if people.is_empty() => return Err(Unresolved::Nobody),
+        Choice::Ask { guess } => (guess, Asking::Unsure),
+        Choice::Nobody => (None, Asking::SomeoneElse),
+    };
+    Err(Unresolved::Ask(Ask { people, guess, why }))
+}
+
+/// The people on the preview `picture` shows, found once for its key.
+fn people_of<'p>(
+    sam: &mut Sam3,
+    presets: &Presets,
+    picture: &mut Picture,
+    kept: &'p mut Option<(u64, Vec<sam3::Person>)>,
+) -> Result<&'p [sam3::Person], String> {
+    if kept.as_ref().is_none_or(|k| k.0 != picture.key) {
+        let found = sam3::people(sam, presets, picture).map_err(|e| e.to_string())?;
+        *kept = Some((picture.key, found));
+    }
+    Ok(&kept.as_ref().expect("just found").1)
+}
+
+/// The status line for a Part whose person is not settled.
+fn part_note(part: &Unresolved, file: Option<&Path>) -> String {
+    match part {
+        Unresolved::Ask(ask) => ask.words().to_string(),
+        Unresolved::Nobody => {
+            let name = file
+                .and_then(|f| f.file_name())
+                .map_or("this picture".to_string(), |n| {
+                    n.to_string_lossy().into_owned()
+                });
+            format!("no one is in {name}")
+        }
+    }
+}
+
 /// The status line for a Sky shape on a frame with no sky.
 fn no_sky_note(file: Option<&Path>) -> String {
     let name = file
@@ -863,6 +1633,41 @@ fn no_sky_note(file: Option<&Path>) -> String {
 /// geometry, no vignette or grain, in sRGB, no more than `PREVIEW`
 /// on its long side.
 pub(crate) fn preview(image: &WorkingImage, edit: &Edit, kind: crate::finish::Source) -> Rgb8 {
+    display(image, edit, kind, Some(PREVIEW))
+}
+
+/// `preview`'s rendering of one rectangle of `image` (its pixels,
+/// clamped to it), at those pixels: what a crop the People model looks
+/// closer at is cut from, so an eye in a full-length frame is the
+/// sensor's pixels rather than a few dozen of the preview's.
+pub(crate) fn region(
+    image: &WorkingImage,
+    edit: &Edit,
+    kind: crate::finish::Source,
+    rect: sam3::Rect,
+) -> Rgb8 {
+    let x0 = rect.x0.min(image.width.saturating_sub(1));
+    let y0 = rect.y0.min(image.height.saturating_sub(1));
+    let x1 = rect.x1.clamp(x0 + 1, image.width.max(x0 + 1));
+    let y1 = rect.y1.clamp(y0 + 1, image.height.max(y0 + 1));
+    let (w, h) = (x1 - x0, y1 - y0);
+    let c = WorkingImage::CHANNELS;
+    let mut crop = WorkingImage::new(w, h);
+    for y in 0..h {
+        let from = ((y0 + y) * image.width + x0) * c;
+        crop.data[y * w * c..(y + 1) * w * c].copy_from_slice(&image.data[from..from + w * c]);
+    }
+    display(&crop, edit, kind, None)
+}
+
+/// The global look alone over `image`, in sRGB, at most `long_edge`
+/// on its long side.
+fn display(
+    image: &WorkingImage,
+    edit: &Edit,
+    kind: crate::finish::Source,
+    long_edge: Option<u32>,
+) -> Rgb8 {
     let mut edit = edit.clone();
     edit.adjustments.clear();
     edit.geometry = Default::default();
@@ -870,7 +1675,7 @@ pub(crate) fn preview(image: &WorkingImage, edit: &Edit, kind: crate::finish::So
     edit.grain = Default::default();
     let settings = crate::export::Settings {
         format: crate::export::Format::Jpeg,
-        long_edge: Some(PREVIEW),
+        long_edge,
         space: crate::export::Space::Srgb,
         // The models see the picture as it is, not sharpened for a
         // screen.
@@ -1052,6 +1857,7 @@ mod tests {
                 &image,
                 &edit,
                 crate::finish::Source::Scene,
+                0,
                 (1, 0),
                 &Shape::Background {},
                 None,
@@ -1072,6 +1878,7 @@ mod tests {
                 &image,
                 &edit,
                 crate::finish::Source::Scene,
+                0,
                 (1, 1),
                 &Shape::Subject {},
                 None,
@@ -1086,6 +1893,7 @@ mod tests {
             &image,
             &edit,
             crate::finish::Source::Scene,
+            0,
             (1, 2),
             &Shape::Background {},
             None,
@@ -1127,10 +1935,10 @@ mod tests {
         // that declines the rewrite must not land on its slot by
         // accident.
         let original_path = ai
-            .cached_path(&shape, Some(&greycard_ai::SUBJECT))
+            .cached_path(&shape, Some(&greycard_ai::SUBJECT), 0)
             .expect("a path with the original named");
         let rewrite_path = ai
-            .cached_path(&shape, Some(&greycard_ai::SUBJECT_WEBGPU))
+            .cached_path(&shape, Some(&greycard_ai::SUBJECT_WEBGPU), 0)
             .expect("a path with the rewrite named");
         assert_ne!(original_path, rewrite_path);
 
@@ -1145,6 +1953,7 @@ mod tests {
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
                 crate::finish::Source::Scene,
+                0,
                 (7, 0),
                 &shape,
                 Some(&greycard_ai::SUBJECT),
@@ -1178,7 +1987,7 @@ mod tests {
         ai.store = Some(store.clone());
         ai.file = Some(PathBuf::from("DSCF0153.RAF"));
         let shape = Shape::Sky { picks: Vec::new() };
-        let without_sam = ai.cached_path(&shape, None).expect("a path");
+        let without_sam = ai.cached_path(&shape, None, 0).expect("a path");
         write_raster(
             &without_sam,
             RASTER_WIDTH,
@@ -1190,6 +1999,7 @@ mod tests {
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
                 crate::finish::Source::Scene,
+                0,
                 (9, 0),
                 &shape,
                 None,
@@ -1203,6 +2013,7 @@ mod tests {
                 &WorkingImage::new(4, 4),
                 &Edit::default(),
                 crate::finish::Source::Scene,
+                0,
                 (9, 0),
                 &shape,
                 None,
@@ -1226,8 +2037,555 @@ mod tests {
                 .unwrap();
         }
         assert!(store.have(&SAM));
-        assert_ne!(ai.cached_path(&shape, None), Some(without_sam));
+        assert_ne!(ai.cached_path(&shape, None, 0), Some(without_sam));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A rectangle's rendering is the preview's rendering of the same
+    /// pixels: on a picture under the preview's size, where the
+    /// preview is the picture at its own pixels, the two agree byte
+    /// for byte; a rectangle past the edge is held to the picture.
+    #[test]
+    fn a_region_is_the_previews_rendering_of_its_pixels() {
+        let (w, h) = (64usize, 48usize);
+        let mut image = WorkingImage::new(w, h);
+        for (i, v) in image.data.iter_mut().enumerate() {
+            *v = ((i * 37) % 101) as f32 / 120.0;
+        }
+        let mut edit = Edit::default();
+        edit.light.exposure = 0.4;
+        let kind = crate::finish::Source::Scene;
+        let whole = preview(&image, &edit, kind);
+        assert_eq!((whole.width, whole.height), (w, h));
+        let rect = sam3::Rect {
+            x0: 10,
+            y0: 5,
+            x1: 30,
+            y1: 21,
+        };
+        let part = region(&image, &edit, kind, rect);
+        assert_eq!((part.width, part.height), (20, 16));
+        for y in 0..16 {
+            for x in 0..20 {
+                let a = &part.data[(y * 20 + x) * 3..][..3];
+                let b = &whole.data[((y + 5) * w + x + 10) * 3..][..3];
+                assert_eq!(a, b, "({x}, {y})");
+            }
+        }
+        let past = region(
+            &image,
+            &edit,
+            kind,
+            sam3::Rect {
+                x0: 50,
+                y0: 40,
+                x1: 90,
+                y1: 90,
+            },
+        );
+        assert_eq!((past.width, past.height), (14, 8));
+    }
+
+    /// The People model's view is the camera's own orientation: a crop
+    /// of the turned picture at `turn_rect`'s rectangle, turned back, is
+    /// that crop of the unturned picture; a point maps as its pixel
+    /// does; four quarter turns are none.
+    #[test]
+    fn the_unturned_view_maps_back_and_forth() {
+        let (w, h) = (7usize, 4usize);
+        let pic: Vec<u8> = (0..w * h * 3).map(|i| (i * 7 % 251) as u8).collect();
+        let crop = |data: &[u8], w: usize, r: sam3::Rect| -> Vec<u8> {
+            (r.y0..r.y1)
+                .flat_map(|y| (r.x0..r.x1).flat_map(move |x| (0..3).map(move |c| (y, x, c))))
+                .map(|(y, x, c)| data[(y * w + x) * 3 + c])
+                .collect()
+        };
+        let r = sam3::Rect {
+            x0: 1,
+            y0: 1,
+            x1: 4,
+            y1: 3,
+        };
+        for turn in 0..4u8 {
+            let (turned, tw, th) = rotate(&pic, w, h, 3, turn);
+            let t = turn_rect(turn, (w, h), r);
+            let (back, bw, bh) = rotate(
+                &crop(&turned, tw, t),
+                t.x1 - t.x0,
+                t.y1 - t.y0,
+                3,
+                (4 - turn) % 4,
+            );
+            assert_eq!((bw, bh), (3, 2), "turn {turn}");
+            assert_eq!(back, crop(&pic, w, r), "turn {turn}");
+            // A pixel's center lands where its rotation puts it.
+            let (x, y) = (5usize, 1usize);
+            let f = turn_frac(
+                turn,
+                [(x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32],
+            );
+            let (px, py) = ((f[0] * tw as f32) as usize, (f[1] * th as f32) as usize);
+            assert_eq!(
+                turned[(py * tw + px) * 3..][..3],
+                pic[(y * w + x) * 3..][..3],
+                "turn {turn}"
+            );
+            let (round, _, _) = rotate(&turned, tw, th, 3, (4 - turn) % 4);
+            assert_eq!(round, pic);
+        }
+    }
+
+    /// On the picture a person was picked on, the face at `at`: the
+    /// nearest within a face's width, and nobody farther.
+    #[test]
+    fn the_face_at_a_place_is_the_nearest_within_its_width() {
+        let people = [
+            candidate([0.2, 0.1, 0.3, 0.2], None),
+            candidate([0.32, 0.1, 0.42, 0.2], None),
+        ];
+        assert_eq!(at_face(&people, [0.26, 0.16]), Some(0));
+        assert_eq!(at_face(&people, [0.36, 0.14]), Some(1));
+        assert_eq!(at_face(&people, [0.6, 0.6]), None);
+    }
+
+    /// A person found on a picture's unturned view, `aspect` its height
+    /// over its width: the face's box, and a colors signature from each
+    /// band's lightness, head, upper and lower (none: not shown, as for
+    /// a face no body went with).
+    fn found_person(face: [f32; 4], bands: [Option<f32>; 3], aspect: f32) -> sam3::Person {
+        let band = |l: Option<f32>| {
+            l.map_or(sam3::Band::default(), |l| sam3::Band {
+                mean: [l, 5.0, -5.0],
+                std: [8.0, 3.0, 3.0],
+                fill: 0.5,
+            })
+        };
+        sam3::Person {
+            face,
+            score: 0.9,
+            body: None,
+            signature: sam3::Signature::colors(bands.map(band), 0.12).unwrap(),
+            at: [
+                (face[0] + face[2]) / 2.0,
+                (face[1] + face[3]) / 2.0 * aspect,
+            ],
+        }
+    }
+
+    /// The one person of a portrait, kept by the part made there as the
+    /// panel keeps her (`Candidate::person`), is settled as a person
+    /// picked on a group is: on her own picture she is the face where
+    /// hers was, however many faces are found there now and whichever
+    /// way it is turned; on her other frame, found by her colors; on a
+    /// stranger's portrait, nobody; on a group with her, asked, with her
+    /// as the guess only when she is clearly the nearest. A face no body
+    /// went with is settled on her own picture alone and asked about
+    /// everywhere else.
+    #[test]
+    fn a_portraits_one_person_is_settled_as_a_pick_is() {
+        let a = 0.75;
+        let hash = Some("portrait".to_string());
+        let on = |found: &[sam3::Person], turn: u8, aspect: f32| -> Vec<Candidate> {
+            found
+                .iter()
+                .map(|q| Candidate::of(q, turn, aspect, &hash))
+                .collect()
+        };
+        let face = [0.4, 0.2, 0.52, 0.36];
+        let her = found_person(face, [Some(60.0), Some(40.0), Some(30.0)], a);
+        let kept = Candidate::of(&her, 0, a, &hash).person();
+        assert_eq!(kept.picture, hash);
+        let settled = |kept: &greycard_edit::mask::Person, found: &[sam3::Person], own: bool| {
+            settle(kept, found, &on(found, 0, a), own, 0, (a, a))
+        };
+        // Someone found beside her later, as alike as a stranger in a
+        // group can be: the colors alone would ask.
+        let twin = found_person(
+            [0.1, 0.2, 0.22, 0.36],
+            [Some(60.0), Some(41.0), Some(30.0)],
+            a,
+        );
+
+        // Her own picture: her, alone or with the face found beside her,
+        // and with no hash to know it by, by her same render.
+        assert!(matches!(
+            settled(&kept, std::slice::from_ref(&her), true),
+            Choice::Person(0, _)
+        ));
+        let two = [twin.clone(), her.clone()];
+        assert!(matches!(settled(&kept, &two, true), Choice::Person(1, _)));
+        assert!(matches!(settled(&kept, &two, false), Choice::Person(1, _)));
+        // Turned a quarter, the shape turned with it: still her.
+        let t = greycard_edit::mask::Turned::new(1, 1.0 / a);
+        let mut turned = kept.clone();
+        turned.at = t.pos(kept.at);
+        assert!(matches!(
+            settle(&turned, &two, &on(&two, 1, 1.0 / a), true, 1, (1.0 / a, a)),
+            Choice::Person(1, _)
+        ));
+
+        // Her other frame: found by her colors.
+        let later = found_person(
+            [0.3, 0.1, 0.4, 0.24],
+            [Some(61.0), Some(42.0), Some(31.0)],
+            a,
+        );
+        assert!(matches!(
+            settled(&kept, std::slice::from_ref(&later), false),
+            Choice::Person(0, _)
+        ));
+        // A stranger's portrait: nobody, never the stranger.
+        let stranger = found_person(face, [Some(70.0), Some(80.0), Some(75.0)], a);
+        assert_eq!(
+            settled(&kept, std::slice::from_ref(&stranger), false),
+            Choice::Nobody
+        );
+        // Her own picture after its base changed (a white balance or a
+        // profile moves the render her signature is read from past
+        // BOUND): the face where hers was is asked about, the guess,
+        // never nobody.
+        assert_eq!(
+            settled(&kept, std::slice::from_ref(&stranger), true),
+            Choice::Ask { guess: Some(0) }
+        );
+        assert_eq!(
+            settled(&kept, &[twin.clone(), stranger.clone()], true),
+            Choice::Ask { guess: Some(1) }
+        );
+        // The stranger picked there, the part made for her once asked
+        // about (`decided`): hers on that picture from then on.
+        let picked = Candidate::of(&stranger, 0, a, &hash).person();
+        assert!(matches!(
+            settled(&picked, std::slice::from_ref(&stranger), true),
+            Choice::Person(0, _)
+        ));
+        // A group with her: asked, her the guess when clearly nearest.
+        let other = found_person(
+            [0.7, 0.2, 0.8, 0.34],
+            [Some(50.0), Some(10.0), Some(90.0)],
+            a,
+        );
+        let group = [stranger.clone(), later.clone(), other];
+        assert_eq!(
+            settled(&kept, &group, false),
+            Choice::Ask { guess: Some(1) }
+        );
+        let alike = found_person(
+            [0.7, 0.2, 0.8, 0.34],
+            [Some(60.0), Some(43.0), Some(32.0)],
+            a,
+        );
+        assert_eq!(
+            settled(&kept, &[later.clone(), alike], false),
+            Choice::Ask { guess: None }
+        );
+
+        // A face no body went with: hers on her own picture, by her
+        // same render, beside another face too; asked about elsewhere,
+        // where her head alone tells no one apart.
+        let head = found_person(face, [Some(60.0), None, None], a);
+        let kept = Candidate::of(&head, 0, a, &hash).person();
+        assert!(matches!(
+            settled(&kept, std::slice::from_ref(&head), true),
+            Choice::Person(0, _)
+        ));
+        assert!(matches!(
+            settled(&kept, &[twin, head.clone()], true),
+            Choice::Person(1, _)
+        ));
+        assert_eq!(
+            settled(&kept, std::slice::from_ref(&later), false),
+            Choice::Ask { guess: None }
+        );
+        assert_eq!(
+            settled(&kept, std::slice::from_ref(&stranger), false),
+            Choice::Ask { guess: None }
+        );
+    }
+
+    /// A person found on the unturned view, shown on the picture turned
+    /// a quarter clockwise: the face box and the place where the turn
+    /// puts them, the body turned with them.
+    #[test]
+    fn a_person_on_the_view_is_shown_where_the_turn_puts_them() {
+        let body = greycard_ai::Mask::new(
+            2,
+            2,
+            vec![1.0, 0.0, 0.0, 0.0], // the top left cell
+        );
+        let found = sam3::Person {
+            face: [0.1, 0.2, 0.3, 0.4],
+            score: 0.9,
+            body: Some(body),
+            signature: sam3::Signature::new(sam3::SignatureKind::Colors1, vec![0.0; 22]).unwrap(),
+            at: [0.2, 0.3],
+        };
+        let aspect = 0.5;
+        let c = Candidate::of(&found, 1, aspect, &Some("ab".into()));
+        // (x, y) -> (1 - y, x): the box from (0.6, 0.1) to (0.8, 0.3).
+        for (got, want) in c.face.iter().zip([0.6, 0.1 * aspect, 0.8, 0.3 * aspect]) {
+            assert!((got - want).abs() < 1e-6, "{:?}", c.face);
+        }
+        assert!((c.at[0] - 0.7).abs() < 1e-6 && (c.at[1] - 0.2 * aspect).abs() < 1e-6);
+        assert_eq!(c.body.as_ref().unwrap().data, [0.0, 1.0, 0.0, 0.0]);
+        assert_eq!(c.person().picture.as_deref(), Some("ab"));
+    }
+
+    fn candidate(face: [f32; 4], body: Option<[f32; 4]>) -> Candidate {
+        let body = body.map(|b| {
+            let n = 32;
+            Arc::new(greycard_ai::Mask::new(
+                n,
+                n,
+                (0..n * n)
+                    .map(|i| {
+                        let (u, v) = (
+                            (i % n) as f32 / n as f32 + 0.5 / n as f32,
+                            (i / n) as f32 / n as f32 + 0.5 / n as f32,
+                        );
+                        let inside = u >= b[0] && u < b[2] && v >= b[1] && v < b[3];
+                        if inside { 0.95 } else { 0.0 }
+                    })
+                    .collect(),
+            ))
+        });
+        Candidate {
+            face,
+            at: [(face[0] + face[2]) / 2.0, (face[1] + face[3]) / 2.0],
+            signature: greycard_edit::mask::Signature {
+                kind: "colors-1".into(),
+                values: vec![0.0; 22],
+            },
+            body,
+            picture: None,
+        }
+    }
+
+    /// A click picks the face under it, else the body (the smaller of
+    /// two that hold it, so a child held up is the child), else no one.
+    /// The bodies are in the picture's fractions, the click in the
+    /// masks' units.
+    #[test]
+    fn a_click_picks_the_face_then_the_body_under_it() {
+        let aspect = 0.5;
+        let people = [
+            // An adult, tall, holding the child's body in theirs.
+            candidate([0.2, 0.05, 0.3, 0.1], Some([0.1, 0.0, 0.5, 1.0])),
+            candidate([0.3, 0.2, 0.36, 0.24], Some([0.25, 0.4, 0.45, 0.7])),
+            // A face no body went with.
+            candidate([0.8, 0.1, 0.9, 0.2], None),
+        ];
+        assert_eq!(picked(&people, (0.25, 0.07), aspect), Some(0));
+        assert_eq!(picked(&people, (0.33, 0.22), aspect), Some(1));
+        assert_eq!(picked(&people, (0.85, 0.15), aspect), Some(2));
+        // On the child's body, inside the adult's: the child.
+        assert_eq!(picked(&people, (0.35, 0.55 * aspect), aspect), Some(1));
+        // On the adult's alone.
+        assert_eq!(picked(&people, (0.15, 0.9 * aspect), aspect), Some(0));
+        // Under the bodiless face, and off the picture: no one.
+        assert_eq!(picked(&people, (0.85, 0.4), aspect), None);
+        assert_eq!(picked(&people, (1.5, 0.1), aspect), None);
+    }
+
+    /// A raster made on the base unturned is not served for the base
+    /// turned, from memory or from disk, though the shape's JSON is the
+    /// same and a half turn keeps the raster's height; the unturned
+    /// slot is the one it always had.
+    #[test]
+    fn a_turned_base_is_not_served_the_unturned_raster() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../target/test-scratch/greycard-ai-turn-cache-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut ai = Ai::new();
+        ai.store = Some(Store::at(dir.join("models")));
+        ai.file = Some(PathBuf::from("square.CR3"));
+        let shape = Shape::Subject {};
+        let model = Some(&greycard_ai::SUBJECT);
+        let flat = ai.cached_path(&shape, model, 0).expect("a path");
+        assert_eq!(ai.cached_path(&shape, model, 4), Some(flat.clone()));
+        for turn in 1..4 {
+            assert_ne!(ai.cached_path(&shape, model, turn), Some(flat.clone()));
+        }
+        write_raster(&flat, RASTER_WIDTH, &vec![9u8; RASTER_WIDTH * RASTER_WIDTH]);
+        let ask = |ai: &mut Ai, turn: u8| {
+            ai.raster(
+                1,
+                &WorkingImage::new(4, 4),
+                &Edit::default(),
+                crate::finish::Source::Scene,
+                turn,
+                (3, 0),
+                &shape,
+                model,
+            )
+        };
+        assert!(ask(&mut ai, 0).is_ok(), "unturned: the disk's");
+        // Now in memory too, for the unturned base only: turned, the
+        // model is wanted, and there is none in this store.
+        assert!(ask(&mut ai, 2).is_err(), "a half turn is not served it");
+        assert!(ask(&mut ai, 0).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A Part's raster on disk is keyed by its person as well as its
+    /// phrase: one person's mask is never served for another's.
+    #[test]
+    fn a_parts_cache_slot_is_its_persons() {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+            "../../target/test-scratch/greycard-ai-part-cache-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let mut ai = Ai::new();
+        ai.store = Some(Store::at(dir.join("models")));
+        ai.file = Some(PathBuf::from("DSCF0835.RAF"));
+        let person = |x: f32| {
+            Some(greycard_edit::mask::Person {
+                signature: greycard_edit::mask::Signature {
+                    kind: "colors-1".into(),
+                    values: vec![1.0; 22],
+                },
+                at: [x, 0.3],
+                picture: None,
+            })
+        };
+        let part = |person| Shape::Part {
+            phrase: "lips".into(),
+            route: greycard_edit::mask::Route::Mouth,
+            person,
+        };
+        let everyone = ai.cached_path(&part(None), None, 0).expect("a path");
+        let her = ai.cached_path(&part(person(0.3)), None, 0).expect("a path");
+        let him = ai.cached_path(&part(person(0.7)), None, 0).expect("a path");
+        assert_ne!(everyone, her);
+        assert_ne!(her, him);
+        assert_eq!(
+            ai.cached_path(&part(person(0.3)), None, 0),
+            Some(her.clone())
+        );
+        // The whole person: a slot of its own for each person too.
+        let whole = |person| Shape::Part {
+            phrase: "person".into(),
+            route: greycard_edit::mask::Route::Whole,
+            person,
+        };
+        let whole_her = ai
+            .cached_path(&whole(person(0.3)), None, 0)
+            .expect("a path");
+        let whole_him = ai
+            .cached_path(&whole(person(0.7)), None, 0)
+            .expect("a path");
+        assert!(whole_her != whole_him && whole_her != her);
+        assert_eq!(
+            model_for(&whole(None), None, &[]).map(|m| m.id),
+            Some(SAM3.id)
+        );
+        assert_eq!(
+            model_for(&part(None), None, &[]).map(|m| m.id),
+            Some(SAM3.id)
+        );
+        assert!(prompted(&part(None)));
+    }
+
+    /// A choice as `Ai::part` takes it: the person not found asks, with
+    /// no guess and its own words, on a portrait and on a group alike;
+    /// on a picture of no one it is nobody, as before.
+    #[test]
+    fn a_person_not_found_asks_unless_no_one_is_there() {
+        let one = |n: usize| -> Vec<Candidate> {
+            (0..n)
+                .map(|i| {
+                    let x = 0.2 + 0.4 * i as f32;
+                    Candidate::of(
+                        &found_person(
+                            [x, 0.1, x + 0.1, 0.25],
+                            [Some(50.0), Some(20.0), Some(40.0)],
+                            1.0,
+                        ),
+                        0,
+                        1.0,
+                        &None,
+                    )
+                })
+                .collect()
+        };
+        for n in [1, 3] {
+            match decided(Choice::Nobody, one(n)) {
+                Err(Unresolved::Ask(ask)) => {
+                    assert_eq!(ask.people.len(), n);
+                    assert_eq!(ask.guess, None);
+                    assert_eq!(ask.why, Asking::SomeoneElse);
+                    assert!(
+                        ask.words()
+                            .starts_with("this mask was made for someone else")
+                    );
+                    let words = ask.words();
+                    assert_eq!(part_note(&Unresolved::Ask(ask), None), words);
+                }
+                other => panic!("{n} people: {other:?}"),
+            }
+        }
+        assert!(matches!(
+            decided(Choice::Nobody, Vec::new()),
+            Err(Unresolved::Nobody)
+        ));
+        match decided(Choice::Ask { guess: Some(1) }, one(3)) {
+            Err(Unresolved::Ask(ask)) => {
+                assert_eq!((ask.guess, ask.why), (Some(1), Asking::Unsure));
+                assert_eq!(ask.words(), "which person? click one, or All people");
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(decided(Choice::Person(2, 0.1), one(3)), Ok(2)));
+    }
+
+    /// An export of a part not settled writes it empty and says why:
+    /// one asked about needs a person picked; one whose person is not
+    /// found, whoever else is there, has its person not in the picture.
+    #[test]
+    fn an_export_says_a_part_made_for_someone_else_has_no_one_there() {
+        let ask = |why| {
+            Unresolved::Ask(Ask {
+                why,
+                ..Default::default()
+            })
+        };
+        assert_eq!(ask(Asking::Unsure).left_out(), PART_ASKS);
+        assert_eq!(ask(Asking::SomeoneElse).left_out(), PART_NOBODY);
+        assert_eq!(Unresolved::Nobody.left_out(), PART_NOBODY);
+        let items: Vec<String> = [ask(Asking::SomeoneElse), Unresolved::Nobody]
+            .iter()
+            .map(|u| {
+                format!(
+                    "Lips 1's Lips shape: {}; its mask written empty",
+                    u.left_out()
+                )
+            })
+            .collect();
+        assert_eq!(parts_left_out(&items), (0, 2));
+    }
+
+    #[test]
+    fn an_export_says_which_frames_went_with_a_parts_mask_empty() {
+        let items = vec![
+            format!("Lips 1's Lips shape: {PART_ASKS}; its mask written empty"),
+            "the look Kodak: not in the look directory; written without it".to_string(),
+            format!("Top 2's Top shape: {PART_NOBODY}; its mask written empty"),
+        ];
+        assert_eq!(parts_left_out(&items), (1, 1));
+        assert_eq!(parts_words(false, (0, 0)), "");
+        assert_eq!(
+            parts_words(false, (1, 0)),
+            ", a People mask needs a person picked"
+        );
+        assert_eq!(
+            parts_words(true, (1, 2)),
+            ", 1 frame: a People mask needs a person picked, \
+             2 frames: a People mask's person isn't in this picture"
+        );
     }
 
     #[test]

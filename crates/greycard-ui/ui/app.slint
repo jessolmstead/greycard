@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup } from "structs.slint";
+import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -786,6 +786,12 @@ export component App inherits Window {
     callback new-mask();
     callback delete-adjustment();
     callback add-shape(string, string);
+    // A part from the People menu by its label, and the mode it joins
+    // by; everyone's, while a person is to be picked; and the menu
+    // opened from Rust, for a snapshot.
+    callback add-part(string, string);
+    callback all-people();
+    in-out property <bool> parts-menu-shown: false;
     callback delete-shape-at(int);
     callback shape-toggled(int);
     callback invert-shape-toggled(int);
@@ -804,6 +810,8 @@ export component App inherits Window {
     // placed.
     in-out property <[MaskBox]> mask-boxes: [];
     in-out property <[MaskPick]> mask-picks: [];
+    // The people a part may be of, while one is to be picked.
+    in-out property <[PersonBox]> person-boxes: [];
     in-out property <float> mask-angle: 0;
     in-out property <float> mask-rx: 0;
     in-out property <float> mask-ry: 0;
@@ -1890,6 +1898,8 @@ export component App inherits Window {
                 mask-handles <=> root.mask-handles;
                 mask-boxes <=> root.mask-boxes;
                 mask-picks <=> root.mask-picks;
+                person-boxes <=> root.person-boxes;
+                all-people => { root.all-people(); }
                 mask-angle <=> root.mask-angle;
                 mask-rx <=> root.mask-rx;
                 mask-ry <=> root.mask-ry;
@@ -2088,6 +2098,8 @@ export component App inherits Window {
                             new-mask => { root.new-mask(); }
                             delete-adjustment => { root.delete-adjustment(); }
                             add-shape(a, b) => { root.add-shape(a, b); }
+                            add-part(a, b) => { root.add-part(a, b); }
+                            parts-menu-shown <=> root.parts-menu-shown;
                             delete-shape-at(a) => { root.delete-shape-at(a); }
                             shape-toggled(a) => { root.shape-toggled(a); }
                             invert-shape-toggled(a) => { root.invert-shape-toggled(a); }

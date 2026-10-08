@@ -270,9 +270,10 @@ struct Cli {
     /// root-name (the library's
     /// first root's name, as its row's Rename... opens it), delete
     /// (the delete sheet over the selection; never answered), archive
-    /// (the grid header's Back up or Bring back; never answered) or
+    /// (the grid header's Back up or Bring back; never answered),
     /// archive-rejects (Remove rejects from the first archive, over the
-    /// open folder's rejects folder; never answered)
+    /// open folder's rejects folder; never answered) or parts (the
+    /// masks panel's People menu, over the mask --show-mask chooses)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of
@@ -294,6 +295,13 @@ struct Cli {
     /// snapshot: crop, level or guide
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::tool)]
     tool: Option<panel::viewport::Shown>,
+    /// Choose this part from the masks panel's People menu (its label,
+    /// as Iris or Top) once the picture is up, into the mask
+    /// --show-mask chooses on the Masks tab, for a snapshot of what
+    /// follows it: the part made, or the people to pick among
+    #[arg(long, value_name = "LABEL", value_parser = panel::viewport::Shown::part,
+        conflicts_with_all = ["sheet", "tool", "menu"])]
+    part: Option<panel::viewport::Shown>,
     /// Paint the capture sharpening's mask over the picture, for a
     /// screenshot
     #[arg(long)]
@@ -769,6 +777,17 @@ pub(crate) struct State {
     pub(crate) fresh_mask: Option<u64>,
     /// A mask shape being drawn in the viewport.
     pub(crate) placing: Option<Placing>,
+    /// A part's person being picked on the picture.
+    pub(crate) choosing: Option<panel::parts::Choosing>,
+    /// A part chosen from the menu, waiting on the people (or its
+    /// model's download).
+    pub(crate) part_pending: Option<panel::parts::Pending>,
+    /// The open picture's placed parts that ask which person they are
+    /// of, by component.
+    pub(crate) part_asks: HashMap<Key, ai::Ask>,
+    /// The asks put down with Escape on the open picture: not brought
+    /// back by returning to the Masks tab, only by choosing their mask.
+    pub(crate) part_dismissed: std::collections::HashSet<Key>,
     /// A dropper's press, while the pointer is down.
     pub(crate) picking: Option<Picking>,
     /// A mask to paint whatever the panel says, for a screenshot.
@@ -893,6 +912,8 @@ pub(crate) struct State {
     /// An object's boxes and picks on the view.
     pub(crate) mask_boxes: Rc<VecModel<MaskBox>>,
     pub(crate) mask_picks: Rc<VecModel<MaskPick>>,
+    /// The people a part may be of, outlined while one is picked.
+    pub(crate) person_boxes: Rc<VecModel<PersonBox>>,
     pub(crate) screenshot: Option<PathBuf>,
     pub(crate) snapshot: Option<PathBuf>,
     /// How far down the panel is scrolled before the snapshot,
@@ -1129,6 +1150,10 @@ impl State {
             target: None,
             fresh_mask: None,
             placing: None,
+            choosing: None,
+            part_pending: None,
+            part_asks: HashMap::new(),
+            part_dismissed: Default::default(),
             picking: None,
             show_mask: None,
             show_patch: None,
@@ -1174,6 +1199,7 @@ impl State {
             mask_handles: Rc::new(VecModel::default()),
             mask_boxes: Rc::new(VecModel::default()),
             mask_picks: Rc::new(VecModel::default()),
+            person_boxes: Rc::new(VecModel::default()),
             screenshot: None,
             snapshot: None,
             panel_scroll: None,
@@ -1229,6 +1255,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::archive::install(app, &state, &worker);
     sync::install(app, &state);
     panel::mask::install(app, &state, &worker);
+    panel::parts::install(app, &state);
     panel::browser::install(app, &state, &worker);
     panel::color::install(app, &state, &worker);
     panel::viewport::install(app, &state, &worker);

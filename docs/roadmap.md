@@ -26,20 +26,6 @@ More sophisticated masking (people parts!); Texture and Clarity as
 quick as the sharpen; a look can be renamed, the film strip gets a
 scroll bar, and the camera match gets a progress bar.
 
-- [ ] The body's parts and clothing on SAM 3 (§252), each a shape a
-      look can go on: face, facial skin, skin, hair, eyebrows, the
-      iris (face, then eyes, then each eye's crop, asked as "iris of
-      the eye"), teeth and lips (the same through a mouth crop),
-      hands, and clothing by where it is worn (top, bottoms, shoes,
-      all clothing). Our export hosted under the SAM License: the
-      fp16 image encoder (909 MB), the decoder (130 MB) and a table
-      of preset vectors, no text encoder; registry entries, the
-      shapes and the menu; a person picked on a picture with several,
-      and found again by the colors of their hair, clothes and skin on
-      a picture the mask is pasted to, asking on a picture of several.
-      Designed in §253; the model side built (§256), the editor side
-      next
-
 ## Tracks
 
 A track is done when its sentence is true. None is ordered before
@@ -185,6 +171,12 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       fp16 untried), the phrase and its vector kept in the sidecar,
       and "not found" under the cut (§252: phrases for things absent
       topped out at 0.31). After the parts
+- [ ] People: Whole person's edge from Subject's matte inside the
+      picked person, for the hair Subject keeps (§263)
+- [ ] People: the solid fill Whole person has, for Top, Hair and the
+      other whole-picture parts (§263)
+- [ ] People: "use this person on all N pictures" after a paste or
+      sync onto many (§263)
 - [ ] Face recognition to find the same person across outfits and
       days. Waits on a license search (the strong face-embedding
       models are mostly non-commercial) and on whether a sidecar may

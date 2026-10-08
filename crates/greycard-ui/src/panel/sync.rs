@@ -2273,6 +2273,60 @@ mod tests {
         assert!(state.borrow().sidecars[0].current_label.is_none());
     }
 
+    /// A Part carries its person: pasted onto another frame it is the
+    /// same person, signature and place, for that frame's raster to
+    /// look for, and nothing here resolves it.
+    #[test]
+    fn a_pasted_part_keeps_its_person() {
+        use greycard_edit::mask::{Person, Route, Signature};
+        let app = window(3);
+        let (state, _worker) = state_for(&app, folder(3));
+        let part = Shape::Part {
+            phrase: "lips".into(),
+            route: Route::Mouth,
+            person: Some(Person {
+                signature: Signature {
+                    kind: "colors-1".into(),
+                    values: (0..22).map(|i| i as f32 * 0.5).collect(),
+                },
+                at: [0.42, 0.31],
+                picture: Some("5e1d".into()),
+            }),
+        };
+        app.invoke_select(0);
+        {
+            // On the panel's edit, as a part chosen there lands.
+            let mut st = state.borrow_mut();
+            st.edit.adjustments.push(greycard_edit::Adjustment {
+                id: 1,
+                name: "Lips 1".into(),
+                enabled: true,
+                mask: Mask {
+                    components: vec![Component {
+                        shape: part.clone(),
+                        ..Default::default()
+                    }],
+                    invert: false,
+                },
+                look: Default::default(),
+            });
+        }
+        app.invoke_copy_asked();
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        for (i, s) in Section::ALL.iter().enumerate() {
+            app.invoke_sync_section_toggled(i as i32, *s == Section::Adjustments);
+        }
+        app.invoke_sync_applied();
+        assert_eq!(
+            app.get_status(),
+            "pasted 1 section from IMG_0000.CR3 onto 1 frame"
+        );
+        let st = state.borrow();
+        let pasted = &st.sidecars[2].current.adjustments[0].mask.components[0].shape;
+        assert_eq!(pasted, &part);
+    }
+
     #[test]
     fn a_paste_in_culling_goes_onto_the_sidecars_and_stays_in_culling() {
         let dir = std::env::temp_dir().join(format!("greycard-paste-cull-{}", std::process::id()));

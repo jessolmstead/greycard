@@ -598,6 +598,10 @@ pub(crate) enum Shown {
     Level,
     /// A vertical perspective guide in hand, on the Crop tab.
     Guide,
+    /// The masks panel's People menu, open over the chosen mask.
+    Parts,
+    /// A part chosen from the People menu by its label (`--part`).
+    Part(&'static str),
 }
 
 impl Shown {
@@ -626,11 +630,27 @@ impl Shown {
             "delete" => Ok(Self::Delete),
             "archive" => Ok(Self::Archive),
             "archive-rejects" => Ok(Self::ArchiveRejects),
+            "parts" => Ok(Self::Parts),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, paste, pasted, import, imported, match, \
-                 matched, refit, look-remove, look-rename, root-name, delete, archive or \
-                 archive-rejects, not {name}"
+                 matched, refit, look-remove, look-rename, root-name, delete, archive, \
+                 archive-rejects or parts, not {name}"
+            )),
+        }
+    }
+
+    /// `--part`'s labels: the People menu's.
+    pub(crate) fn part(label: &str) -> Result<Self, String> {
+        match crate::panel::parts::by_label(label) {
+            Some(p) => Ok(Self::Part(p.label)),
+            None => Err(format!(
+                "want one of the People menu's labels ({}), not {label}",
+                greycard_edit::mask::PARTS
+                    .iter()
+                    .map(|p| p.label)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )),
         }
     }
@@ -746,6 +766,14 @@ impl Shown {
                 app.set_panel_tab("Crop".into());
                 app.set_guide_mode("Vertical".into());
             }
+            Self::Parts => {
+                app.set_panel_tab("Masks".into());
+                app.set_parts_menu_shown(true);
+            }
+            Self::Part(label) => {
+                app.set_panel_tab("Masks".into());
+                app.invoke_add_part(label.into(), "Add".into());
+            }
         }
         app.window().request_redraw();
     }
@@ -754,6 +782,22 @@ impl Shown {
 /// `--keys`, kept here since the snapshot is scheduled while the
 /// state is borrowed.
 pub(crate) static SNAPSHOT_KEYS: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// `then`, once no learned mask and no part's people are being waited
+/// on (or after `tries` looks a fifth of a second apart), and half a
+/// second later, for the frame that shows what came.
+fn when_quiet(state: Rc<RefCell<State>>, then: impl FnOnce() + 'static, tries: u32) {
+    let quiet = state
+        .try_borrow()
+        .is_ok_and(|st| st.asked.is_empty() && st.part_pending.is_none());
+    if quiet || tries == 0 {
+        slint::Timer::single_shot(std::time::Duration::from_millis(500), then);
+    } else {
+        slint::Timer::single_shot(std::time::Duration::from_millis(200), move || {
+            when_quiet(state, then, tries - 1)
+        });
+    }
+}
 
 pub(crate) fn schedule_snapshot(
     snapshot: &mut Option<PathBuf>,
@@ -788,6 +832,7 @@ pub(crate) fn schedule_snapshot(
         .map(|k| k.split_whitespace().map(str::to_owned).collect())
         .unwrap_or_default();
     let state = state.clone();
+    let waiting = state.clone();
     let scroll = panel_scroll.take();
     let shown = shown.take();
     let capture = move || {
@@ -908,7 +953,11 @@ pub(crate) fn schedule_snapshot(
                         .dispatch_event(WindowEvent::KeyReleased { text });
                 });
             }
-            slint::Timer::single_shot(step * (n + 1) + opened, capture);
+            // A mask or a part asked for by what was opened is waited
+            // for, so the capture shows it.
+            slint::Timer::single_shot(step * (n + 1) + opened, move || {
+                when_quiet(waiting, capture, 150)
+            });
         }
     };
     let open_then = {

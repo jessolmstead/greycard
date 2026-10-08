@@ -3,8 +3,8 @@
 // to the crop, the masks' shapes, the repairs and the status plate.
 
 import { Theme } from "../theme.slint";
-import { Pt, MaskBox, MaskPick, CompareTile } from "../structs.slint";
-import { CropHandle, ThumbBadges } from "../controls.slint";
+import { Pt, MaskBox, MaskPick, PersonBox, CompareTile } from "../structs.slint";
+import { CropHandle, ThumbBadges, PanelButton } from "../controls.slint";
 
 export component Viewport inherits Rectangle {
     callback zoom(float, length, length);
@@ -44,6 +44,9 @@ export component Viewport inherits Rectangle {
     in-out property <[Pt]> mask-handles;
     in-out property <[MaskBox]> mask-boxes;
     in-out property <[MaskPick]> mask-picks;
+    in-out property <[PersonBox]> person-boxes;
+    /// Everyone's, while a person is to be picked for a part.
+    callback all-people();
     in-out property <float> mask-angle;
     in-out property <float> mask-rx;
     in-out property <float> mask-ry;
@@ -593,6 +596,39 @@ export component Viewport inherits Rectangle {
             border-width: 1px;
             border-color: #000000a0;
         }
+    }
+    // The people a part may be of, while one is to be picked: each
+    // face outlined, the guess in the accent and heavier.
+    if !root.placeholder: Rectangle {
+        for b in root.person-boxes: Rectangle {
+            x: b.x * 1px - 4px;
+            y: b.y * 1px - 4px;
+            width: b.w * 1px + 8px;
+            height: b.h * 1px + 8px;
+            border-radius: 6px;
+            border-width: b.guess ? 3px : 1.5px;
+            border-color: b.guess ? Theme.accent : #ffffffd0;
+            Rectangle {
+                x: parent.border-width;
+                y: parent.border-width;
+                width: parent.width - 2 * parent.border-width;
+                height: parent.height - 2 * parent.border-width;
+                border-radius: 5px;
+                border-width: 1px;
+                border-color: #00000080;
+            }
+        }
+    }
+    // While a person is to be picked: everyone's instead, over the
+    // picture where the clicks go, never below the panel's fold.
+    if root.placing == "Part" && !root.placeholder: PanelButton {
+        x: (parent.width - self.width) / 2;
+        y: 12px;
+        width: 140px;
+        text: "All people";
+        icon: @image-url("../icons/users-round.svg");
+        primary: true;
+        clicked => { root.all-people(); }
     }
     if root.mask-kind != "" && !root.placeholder: Rectangle {
         for h[i] in root.mask-handles: CropHandle {

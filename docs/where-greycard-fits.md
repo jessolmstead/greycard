@@ -180,7 +180,7 @@ is in `roadmap.md`; nothing planned is counted as done.
 | Camera color | Adobe's | in-house, the best | DxO's | matrix | matrix, DCP | matrix, DCP, and a look fitted from the camera's own JPEG |
 | Demosaic | Adobe's | proprietary | proprietary | RCD, AMaZE | AMaZE, RCD, dual | AMaZE, RCD, dual |
 | Denoise | AI, local | conventional | DeepPRIME | profiled | profiled | profiled, and a raw-domain network that runs locally |
-| Masks | AI people, sky, objects | layers | limited | parametric, drawn | local adjustments | gradient, radial, brush, by lightness and color; subject, object and sky by model |
+| Masks | AI people, sky, objects | layers | limited | parametric, drawn | local adjustments | gradient, radial, brush, by lightness and color; subject, object, sky and people's parts by model |
 | Retouch | remove, generative | heal, clone | limited | retouch | spot removal | heal, clone, learned fill |
 | Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; browsable offline, archive backup; collections planned |
 | Culling speed | fast, embedded previews | fast | slow | slow | slow | fast, from the embedded JPEG, or a local preview for an offline or network drive |
@@ -279,7 +279,10 @@ restart, each export a line in History, and a headless `--export`
 for the command line; masks by lightness and
 by color, and a white balance of a mask's own for mixed light; the Subject mask on the GPU, and a
 Background shape that is its complement; a Sky mask that refuses a frame
-with no sky and takes its edge through hair and branches; a history
+with no sky and takes its edge through hair and branches; a People
+mask of a whole person or a part of one (an iris, lips, hair, a top),
+one person picked from a group and found again when the mask is
+pasted to another picture; a history
 that names a step by the preset, sync or snapshot that made it; a
 right-click menu on a frame, with copy and paste of settings onto the
 selection; thumbnails made in parallel on a pool of threads, a cold
@@ -306,8 +309,8 @@ balance beside Neutral; a value typed into any slider; scopes that can
 be read for the chosen mask alone; and a check at launch for a newer
 release, which can be turned off.
 
-Planned, in order: the tone controls made to feel right; people masks
-and a generative fill; the library's collections; a Lightroom catalog
+Planned, in order: the tone controls made to feel right; a generative
+fill; the library's collections; a Lightroom catalog
 import; HDR merge and panoramas, and the merges in the browser;
 tethering.
 

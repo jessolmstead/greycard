@@ -370,6 +370,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         snapshot_shown: cli
             .sheet
             .or(cli.tool)
+            .or(cli.part)
             .or(cli.menu.map(crate::panel::viewport::Shown::Menu))
             .or(cli.press.map(crate::panel::viewport::Shown::Key)),
         export_presets: remembered.export_presets.clone(),
@@ -620,6 +621,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_mask_handles(ModelRc::from(state.borrow().mask_handles.clone()));
     app.set_mask_boxes(ModelRc::from(state.borrow().mask_boxes.clone()));
     app.set_mask_picks(ModelRc::from(state.borrow().mask_picks.clone()));
+    app.set_person_boxes(ModelRc::from(state.borrow().person_boxes.clone()));
     app.set_patch_handles(ModelRc::from(state.borrow().patch_handles.clone()));
     app.set_guide_kept(ModelRc::from(state.borrow().guide_kept.clone()));
     install_callbacks(&app, state.clone(), worker.clone());
@@ -972,6 +974,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 | Shape::Background {}
                                 | Shape::Sky { .. }
                                 | Shape::Object { .. }
+                                | Shape::Part { .. }
                                 | Shape::Luminance { .. }
                                 | Shape::Color { .. }
                                 | Shape::Unknown => {}
@@ -1028,6 +1031,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     };
                     sync_rows(&st.mask_boxes, boxes);
                     sync_rows(&st.mask_picks, picks);
+                    let people = crate::panel::parts::boxes(st, &app);
+                    sync_rows(&st.person_boxes, people);
                     let st = &mut *st;
                     let shift = crate::panel::color::local_white_shift(st);
                     let (locals, wants) = bake_locals(
@@ -1042,7 +1047,8 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     // A snapshot waits for the develop; one of the
                     // grid waits for the pictures the grid shows, or
                     // it would catch a sheet of empty cells.
-                    let quiet = st.asked.is_empty() && grid_filled(st, &app);
+                    let quiet =
+                        st.asked.is_empty() && st.part_pending.is_none() && grid_filled(st, &app);
                     // A timed slider move is sent as its frame starts.
                     if pending.is_some() {
                         time_moves(st, &app);

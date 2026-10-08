@@ -51,6 +51,9 @@ export component AdjustmentsSection inherits Section {
     callback new-mask();
     callback delete-adjustment();
     callback add-shape(string, string);
+    // A part from the People menu, by its label, joined by the mode.
+    callback add-part(string, string);
+    in-out property <bool> parts-menu-shown;
     callback delete-shape-at(int);
     callback shape-toggled(int);
     callback invert-shape-toggled(int);
@@ -606,6 +609,52 @@ export component AdjustmentsSection inherits Section {
                             icon: @image-url("../icons/mouse-pointer-click.svg");
                             primary: root.placing == "Object" && root.placing-into;
                             clicked => { root.add-shape("Object", root.shape-mode); }
+                        }
+                        // A person whole, or a part of one by name, from
+                        // a menu in three groups under the whole person;
+                        // the labels are the Rust table's
+                        // (`greycard_edit::mask::PARTS`).
+                        parts-button := PanelButton {
+                            // Raised from Rust, for a snapshot of it.
+                            property <bool> want: root.parts-menu-shown;
+                            changed want => {
+                                if (self.want) {
+                                    root.parts-menu-shown = false;
+                                    parts-menu.show({ x: 0, y: self.height });
+                                }
+                            }
+                            text: "People";
+                            icon: @image-url("../icons/users-round.svg");
+                            primary: root.placing == "Part";
+                            clicked => { parts-menu.show({ x: 0, y: self.height }); }
+                            parts-menu := ContextMenuArea {
+                                width: 0px;
+                                height: 0px;
+                                enabled: false;
+                                Menu {
+                                    MenuItem { title: "Whole person"; activated => { root.add-part("Whole person", root.shape-mode); } }
+                                    MenuSeparator { }
+                                    MenuItem { title: "Face"; enabled: false; }
+                                    MenuItem { title: "Face"; activated => { root.add-part("Face", root.shape-mode); } }
+                                    MenuItem { title: "Facial skin"; activated => { root.add-part("Facial skin", root.shape-mode); } }
+                                    MenuItem { title: "Eyebrows"; activated => { root.add-part("Eyebrows", root.shape-mode); } }
+                                    MenuItem { title: "Eyes"; activated => { root.add-part("Eyes", root.shape-mode); } }
+                                    MenuItem { title: "Iris"; activated => { root.add-part("Iris", root.shape-mode); } }
+                                    MenuItem { title: "Lips"; activated => { root.add-part("Lips", root.shape-mode); } }
+                                    MenuItem { title: "Teeth"; activated => { root.add-part("Teeth", root.shape-mode); } }
+                                    MenuSeparator { }
+                                    MenuItem { title: "Body"; enabled: false; }
+                                    MenuItem { title: "Skin"; activated => { root.add-part("Skin", root.shape-mode); } }
+                                    MenuItem { title: "Hair"; activated => { root.add-part("Hair", root.shape-mode); } }
+                                    MenuItem { title: "Hands"; activated => { root.add-part("Hands", root.shape-mode); } }
+                                    MenuSeparator { }
+                                    MenuItem { title: "Clothing"; enabled: false; }
+                                    MenuItem { title: "Top"; activated => { root.add-part("Top", root.shape-mode); } }
+                                    MenuItem { title: "Bottoms"; activated => { root.add-part("Bottoms", root.shape-mode); } }
+                                    MenuItem { title: "Shoes"; activated => { root.add-part("Shoes", root.shape-mode); } }
+                                    MenuItem { title: "All clothing"; activated => { root.add-part("All clothing", root.shape-mode); } }
+                                }
+                            }
                         }
                     }
                     HorizontalLayout {

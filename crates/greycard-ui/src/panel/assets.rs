@@ -468,6 +468,15 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     st.fetching = true;
                     worker.send(Job::Fetch { model });
                 }
+                (Fetch::Model(model), false) if model.id == greycard_ai::SAM3.id => {
+                    st.declined.push(model.id);
+                    crate::panel::parts::model_answered(&mut st, &app, false);
+                    if st.part_pending.is_none() {
+                        app.set_status(
+                            "without the People model a People shape masks nothing".into(),
+                        );
+                    }
+                }
                 (Fetch::Model(model), false) => {
                     st.declined.push(model.id);
                     let lost = if model.id == greycard_ai::SUBJECT_WEBGPU.id {

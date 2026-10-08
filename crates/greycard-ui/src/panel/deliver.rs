@@ -650,9 +650,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             for item in &left_out {
                 tracing::warn!("{}: {item}", file_name(&source));
             }
-            if !left_out.is_empty() {
-                said.push_str(&format!(", without {}", left_out_words(left_out.len())));
+            let parts = crate::ai::parts_left_out(&left_out);
+            let missing = left_out.len() - parts.0 - parts.1;
+            if missing > 0 {
+                said.push_str(&format!(", without {}", left_out_words(missing)));
             }
+            said.push_str(&crate::ai::parts_words(false, parts));
             app.set_status(format!("exported {} in {seconds:.2} s{said}", file_name(&path)).into());
             tracing::info!("exported {} in {seconds:.2} s", path.display());
             // A rename or a file written over is worth the terminal.
@@ -671,13 +674,28 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         Outcome::Mask {
             key,
             shape,
+            file,
             raster,
             provider,
             seconds,
             note,
+            part,
         } => {
             let mut st = state.borrow_mut();
             st.asked.remove(&key);
+            // A Part asking which person it is of here: the picking,
+            // with the people outlined; settled, it asks no more. An
+            // ask made on a picture no longer open is that picture's.
+            let open = st.current.and_then(|c| st.files.get(c)).cloned();
+            match part {
+                Some(crate::ai::Unresolved::Ask(ask)) if file.is_none() || file == open => {
+                    crate::panel::parts::asked(&mut st, app, key, ask)
+                }
+                Some(crate::ai::Unresolved::Ask(_)) => {}
+                _ => {
+                    st.part_asks.remove(&key);
+                }
+            }
             let name = shape.name().to_lowercase();
             // A subject found is shown, so the find can be judged —
             // unless its shape was switched off while the model ran,
@@ -693,7 +711,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if live
                 && matches!(
                     shape,
-                    Shape::Subject {} | Shape::Background {} | Shape::Sky { .. }
+                    Shape::Subject {}
+                        | Shape::Background {}
+                        | Shape::Sky { .. }
+                        | Shape::Part { .. }
                 )
                 && provider.is_some()
                 && note.is_none()
@@ -709,6 +730,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 app.set_status(format!("{name} found on {p} in {seconds:.2} s").into());
             }
             app.window().request_redraw();
+        }
+        Outcome::People { file, people } => {
+            let changed =
+                crate::panel::parts::people_found(&mut state.borrow_mut(), app, file, people);
+            if changed {
+                app.invoke_view_changed();
+            }
         }
         Outcome::MaskFailed { key, message } => {
             let st = state.borrow();
@@ -735,6 +763,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             st.fetch_failed.retain(|id| *id != model.id);
             let short = model.name.split(',').next().unwrap_or(model.name);
             app.set_status(format!("{short} is ready").into());
+            if model.id == greycard_ai::SAM3.id {
+                crate::panel::parts::model_answered(&mut st, app, true);
+            }
             // Either Subject file arriving means the worker's loaded
             // one, if any, may no longer be the one to use: drop it,
             // so the next Subject mask picks up the new choice rather

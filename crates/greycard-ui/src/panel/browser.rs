@@ -1767,6 +1767,10 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     };
     st.placing = None;
     app.set_placing("".into());
+    // Its people are not the last picture's.
+    crate::panel::parts::stopped(st);
+    st.part_asks.clear();
+    st.part_dismissed.clear();
     // Another picture: a guide stroke drawn on the last one
     // means nothing here, and the source's size is not known
     // again until this frame's develop lands — a turn before

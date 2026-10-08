@@ -1,4 +1,4 @@
-//! Parts: SAM 3 (Meta, the SAM License) asked for a part of a person
+//! People: SAM 3 (Meta, the SAM License) asked for a person or a part of one
 //! by name, a phrase from a fixed table, and on a picture with more
 //! than one person, the person.
 //!
@@ -1094,8 +1094,11 @@ fn crop_piece<S: Segment>(
 /// The whole route: the instances over the cut united, refined at the
 /// preview as the Subject and Object masks are (radius a 256th of its
 /// width, ε 1e-3). With a who, kept to them: to their own mask (grown
-/// by three cells) where they have one; for a face no body went with,
-/// whole instances rather than cut pixels ([`near_face`]).
+/// by three cells) where they have one of their own; for a face no
+/// body went with, or whose body holds another face too (SAM merged
+/// two people into it), whole instances rather than cut pixels
+/// ([`near_face`]). The `person` phrase with a who is that person
+/// whole ([`person_mask`]).
 fn whole<S: Segment>(
     sam: &mut S,
     presets: &Presets,
@@ -1104,13 +1107,66 @@ fn whole<S: Segment>(
     who: Option<&Person>,
 ) -> Result<Piece> {
     let found = preview_found(sam, picture, phrase)?;
-    let mask = match who {
-        None => union(&found.instances, CUT),
+    if phrase.text == PERSON {
+        let mask = match who {
+            Some(person) => {
+                let faces = faces(sam, presets, picture)?;
+                person_mask(&found, &faces, person)
+            }
+            None => union(&found.instances, CUT),
+        };
+        let mask = harden(&fill_unsure(&mask));
+        let p = picture.preview;
+        let radius = (p.width / 256).max(2);
+        return Ok(Piece {
+            rect: picture.whole(),
+            mask: refine(&mask, picture.luma, p.width, p.height, radius, 1e-3),
+        });
+    }
+    // A body over more than one face is a merged one: kept to it, one
+    // person's Top would take the other's.
+    let merged = match who {
         Some(Person {
             body: Some(body), ..
         }) => {
-            let mut mask = union(&found.instances, CUT);
-            let body = body.resampled(MASK, MASK);
+            let faces = faces(sam, presets, picture)?;
+            holds(body, faces.iter().map(|f| f.bbox)) > 1
+        }
+        _ => false,
+    };
+    let mask = match who {
+        None => union(&found.instances, CUT),
+        Some(Person {
+            body: Some(body),
+            face,
+            ..
+        }) if !merged => {
+            // Whole instances first, each to the body that holds most
+            // of it: where two people overlap (one seated in front of
+            // the other), the pixels of a neighbor's top inside this
+            // body's outline are the neighbor's, not this person's. The
+            // neighbors are the bodies other faces took, less any that
+            // is this body found twice: an unpaired near-copy of her
+            // own would otherwise take her own top from her.
+            let own = body.resampled(MASK, MASK);
+            let others: Vec<Mask> = people(sam, presets, picture)?
+                .into_iter()
+                .filter(|p| p.face != *face)
+                .filter_map(|p| p.body)
+                .map(|b| b.resampled(MASK, MASK))
+                .filter(|b| mask_iou(b, &own) <= SAME_FACE)
+                .collect();
+            let kept: Vec<Instance> = found
+                .over(CUT)
+                .filter(|i| {
+                    let m = i.mask.resampled(MASK, MASK);
+                    let mine = overlap(&m, &own);
+                    mine > 0 && others.iter().all(|o| overlap(&m, o) <= mine)
+                })
+                .cloned()
+                .collect();
+            let mut mask = union(&kept, CUT);
+            let body = own;
             let on: Vec<bool> = body.data.iter().map(|&v| v > CUT).collect();
             let near = dilate(&on, MASK, MASK, 3);
             for (m, n) in mask.data.iter_mut().zip(near) {
@@ -1133,6 +1189,176 @@ fn whole<S: Segment>(
         rect: picture.whole(),
         mask: refine(&mask, picture.luma, p.width, p.height, radius, 1e-3),
     })
+}
+
+/// A whole person, of `found` (the `person` instances) and `faces`
+/// (every face on the picture): their own body, the instance paired
+/// with their face, where it holds no other face; else the instance
+/// over the cut that holds their face and no other; else, where SAM
+/// merged them with someone into one instance, their share of it
+/// ([`split`]); and for a face no instance holds, their face.
+fn person_mask(found: &Found, faces: &[Instance], who: &Person) -> Mask {
+    let boxes = || faces.iter().map(|f| f.bbox);
+    let [fx, fy] = center(who.face);
+    let at = |m: &Mask| sample(m, fx * m.width as f32 - 0.5, fy * m.height as f32 - 0.5);
+    if let Some(body) = &who.body
+        && holds(body, boxes()) <= 1
+    {
+        return body.clone();
+    }
+    let holding: Vec<&Instance> = found.over(CUT).filter(|i| at(&i.mask) > CUT).collect();
+    let alone = holding
+        .iter()
+        .filter(|i| holds(&i.mask, boxes()) <= 1)
+        .max_by(|a, b| at(&a.mask).total_cmp(&at(&b.mask)));
+    if let Some(alone) = alone {
+        return alone.mask.clone();
+    }
+    let merged = who.body.as_ref().or_else(|| {
+        holding
+            .iter()
+            .max_by(|a, b| at(&a.mask).total_cmp(&at(&b.mask)))
+            .map(|i| &i.mask)
+    });
+    if let Some(merged) = merged {
+        let merged = merged.resampled(MASK, MASK);
+        let held: Vec<[f32; 4]> = boxes()
+            .filter(|&f| holds(&merged, [f].into_iter()) > 0)
+            .collect();
+        return split(&merged, &held, who.face);
+    }
+    // No instance holds the face: the face as the model found it.
+    faces
+        .iter()
+        .max_by(|a, b| iou(a.bbox, who.face).total_cmp(&iou(b.bbox, who.face)))
+        .filter(|f| iou(f.bbox, who.face) > SAME_FACE)
+        .map_or_else(|| box_mask(who.face), |f| f.mask.clone())
+}
+
+/// A person's mask made solid: SAM 3's sigmoid over a body runs from
+/// about 0.7 to 0.95 inside, lower over dark glasses or a shadowed
+/// cheek, and the refine would carry that unevenness into the look. A
+/// ramp about the cut, nought at 0.3 to one at 0.7, keeps the outline
+/// where SAM put it and leaves the edge's softness to the refine.
+fn harden(mask: &Mask) -> Mask {
+    let mut out = mask.clone();
+    for v in &mut out.data {
+        *v = ((*v - CUT) / 0.4 + 0.5).clamp(0.0, 1.0);
+    }
+    out
+}
+
+/// A hole inside a mask, a region under the cut that the mask's cells
+/// over it enclose, is unsure ground when no cell of it is at
+/// `UNSURE` or under: dark glasses or a shadow in a face, which SAM 3
+/// leaves at 0.13 to 0.45. A gap between an arm and the body reaches
+/// background, 0.01 to 0.04 on the trial's frames, and stays.
+const UNSURE: f32 = 0.1;
+
+/// `mask` (`MASK` square) with each unsure hole and its rim filled.
+fn fill_unsure(mask: &Mask) -> Mask {
+    let (w, h) = (mask.width, mask.height);
+    let mut seen = vec![false; w * h];
+    let mut out = mask.clone();
+    for start in 0..w * h {
+        if seen[start] || mask.data[start] > CUT {
+            continue;
+        }
+        // One region under the cut, 4-connected.
+        let mut region = vec![start];
+        seen[start] = true;
+        let mut i = 0;
+        let mut edge = false;
+        while i < region.len() {
+            let c = region[i];
+            i += 1;
+            let (x, y) = (c % w, c / w);
+            edge |= x == 0 || y == 0 || x + 1 == w || y + 1 == h;
+            let near = [
+                (x > 0).then(|| c - 1),
+                (x + 1 < w).then(|| c + 1),
+                (y > 0).then(|| c - w),
+                (y + 1 < h).then(|| c + w),
+            ];
+            for n in near.into_iter().flatten() {
+                if !seen[n] && mask.data[n] <= CUT {
+                    seen[n] = true;
+                    region.push(n);
+                }
+            }
+        }
+        let least = region.iter().map(|&c| mask.data[c]).fold(1.0f32, f32::min);
+        if !edge && least > UNSURE {
+            // And its rim, two cells about it, which SAM leaves just
+            // over the cut: else a ring of glasses' frame shows.
+            for &c in &region {
+                let (x, y) = (c % w, c / w);
+                for ny in y.saturating_sub(2)..(y + 3).min(h) {
+                    for nx in x.saturating_sub(2)..(x + 3).min(w) {
+                        out.data[ny * w + nx] = 1.0;
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// `face`'s share of a `MASK` square instance SAM merged over the
+/// faces `held` (boxes, fractions; `face` among them): each cell goes
+/// to the face nearest it, across in face widths and down in a quarter
+/// of face heights, so a body's share runs down from its own face
+/// rather than across to a neighbor's, and a nearer, larger face
+/// claims more.
+fn split(merged: &Mask, held: &[[f32; 4]], face: [f32; 4]) -> Mask {
+    let near = |f: [f32; 4], x: f32, y: f32| {
+        let [cx, cy] = center(f);
+        let (fw, fh) = ((f[2] - f[0]).max(1e-3), (f[3] - f[1]).max(1e-3));
+        ((x - cx) / fw).hypot(0.25 * (y - cy) / fh)
+    };
+    let mut out = merged.clone();
+    for (i, v) in out.data.iter_mut().enumerate() {
+        let x = ((i % MASK) as f32 + 0.5) / MASK as f32;
+        let y = ((i / MASK) as f32 + 0.5) / MASK as f32;
+        let mine = near(face, x, y);
+        if held.iter().any(|&f| f != face && near(f, x, y) < mine) {
+            *v = 0.0;
+        }
+    }
+    out
+}
+
+/// Two masks' cells over the cut: their intersection over their union.
+fn mask_iou(a: &Mask, b: &Mask) -> f32 {
+    let both = overlap(a, b);
+    let on = |m: &Mask| m.data.iter().filter(|&&v| v > CUT).count();
+    let either = on(a) + on(b) - both;
+    if either > 0 {
+        both as f32 / either as f32
+    } else {
+        0.0
+    }
+}
+
+/// How many cells two masks of one size are both over the cut in.
+fn overlap(a: &Mask, b: &Mask) -> usize {
+    a.data
+        .iter()
+        .zip(&b.data)
+        .filter(|&(&x, &y)| x > CUT && y > CUT)
+        .count()
+}
+
+/// How many of `faces` (boxes, fractions) have their center inside
+/// `body`, over the cut.
+fn holds(body: &Mask, faces: impl Iterator<Item = [f32; 4]>) -> usize {
+    let (s, t) = (body.width as f32, body.height as f32);
+    faces
+        .filter(|&f| {
+            let [cx, cy] = center(f);
+            sample(body, cx * s - 0.5, cy * t - 0.5) > CUT
+        })
+        .count()
 }
 
 /// The instances over the cut that belong to a face no body went with,
@@ -3082,6 +3308,247 @@ mod tests {
             let v = m.at((x * 400.0) as usize, (y * 400.0) as usize);
             assert!(v > 0.8, "({x}, {y}): {v}");
         }
+    }
+
+    #[test]
+    fn a_merged_body_does_not_give_one_person_the_others_top() {
+        let (_, faces) = two_people();
+        // SAM merged both people into one body, which the first face
+        // took; each has a top of their own.
+        let merged = body([0.1, 0.05, 0.9, 0.95], [0.1, 0.05, 0.9, 0.95], 0.95);
+        let left = body([0.15, 0.3, 0.35, 0.8], [0.15, 0.3, 0.35, 0.8], 0.95);
+        let right = body([0.65, 0.3, 0.85, 0.8], [0.65, 0.3, 0.85, 0.8], 0.95);
+        let mut sam = Fixed(vec![
+            ("face", vec![face(faces[0], 0.9), face(faces[1], 0.85)]),
+            ("person", vec![merged]),
+            ("upper body clothing", vec![left, right]),
+        ]);
+        let tops = on_two(&mut sam, |sam, pic| {
+            let people = people(sam, &table(), pic).unwrap();
+            assert!(people[0].body.is_some() && people[1].body.is_none());
+            people
+                .iter()
+                .map(|p| {
+                    find(
+                        sam,
+                        &table(),
+                        pic,
+                        Route::Whole,
+                        "upper body clothing",
+                        Some(p),
+                    )
+                    .unwrap()
+                    .remove(0)
+                    .mask
+                })
+                .collect::<Vec<_>>()
+        });
+        let at = |m: &Mask, x: f32, y: f32| m.at((x * 400.0) as usize, (y * 400.0) as usize);
+        // Each keeps their own top, and not the other's.
+        assert!(at(&tops[0], 0.25, 0.55) > 0.8);
+        assert!(
+            at(&tops[0], 0.75, 0.55) < 0.2,
+            "{}",
+            at(&tops[0], 0.75, 0.55)
+        );
+        assert!(at(&tops[1], 0.75, 0.55) > 0.8);
+        assert!(at(&tops[1], 0.25, 0.55) < 0.2);
+        // A body of one's own still keeps them to it.
+        let own = body([0.15, 0.1, 0.35, 0.95], [0.15, 0.1, 0.35, 0.95], 0.95);
+        assert_eq!(holds(&own.mask, faces.into_iter()), 1);
+    }
+
+    #[test]
+    fn a_neighbors_top_inside_ones_body_stays_the_neighbors() {
+        let (_, faces) = two_people();
+        // Two bodies that overlap, one seated in front of the other;
+        // the second's top reaches into the first's outline.
+        let a = body([0.15, 0.1, 0.45, 0.95], [0.15, 0.1, 0.45, 0.95], 0.95);
+        let b = body([0.35, 0.1, 0.85, 0.95], [0.35, 0.1, 0.85, 0.95], 0.95);
+        let top_a = body([0.17, 0.3, 0.33, 0.6], [0.17, 0.3, 0.33, 0.6], 0.95);
+        let top_b = body([0.37, 0.3, 0.83, 0.6], [0.37, 0.3, 0.83, 0.6], 0.95);
+        let mut sam = Fixed(vec![
+            ("face", vec![face(faces[0], 0.9), face(faces[1], 0.85)]),
+            ("person", vec![a, b]),
+            ("upper body clothing", vec![top_a, top_b]),
+        ]);
+        let tops = on_two(&mut sam, |sam, pic| {
+            let people = people(sam, &table(), pic).unwrap();
+            assert!(people.iter().all(|p| p.body.is_some()));
+            people
+                .iter()
+                .map(|p| {
+                    find(
+                        sam,
+                        &table(),
+                        pic,
+                        Route::Whole,
+                        "upper body clothing",
+                        Some(p),
+                    )
+                    .unwrap()
+                    .remove(0)
+                    .mask
+                })
+                .collect::<Vec<_>>()
+        });
+        let at = |m: &Mask, x: f32, y: f32| m.at((x * 400.0) as usize, (y * 400.0) as usize);
+        assert!(at(&tops[0], 0.25, 0.45) > 0.8);
+        assert!(
+            at(&tops[0], 0.41, 0.45) < 0.2,
+            "{}",
+            at(&tops[0], 0.41, 0.45)
+        );
+        assert!(at(&tops[1], 0.6, 0.45) > 0.8);
+        assert!(at(&tops[1], 0.25, 0.45) < 0.2);
+    }
+
+    #[test]
+    fn a_near_copy_of_ones_own_body_does_not_take_ones_top() {
+        let (_, faces) = two_people();
+        // Her body found twice, the second a little larger and paired
+        // with no face; her top is wider than the first.
+        let a = body([0.15, 0.1, 0.35, 0.95], [0.15, 0.1, 0.35, 0.95], 0.95);
+        let again = body([0.12, 0.08, 0.38, 0.95], [0.12, 0.08, 0.38, 0.95], 0.95);
+        let b = body([0.65, 0.1, 0.85, 0.95], [0.65, 0.1, 0.85, 0.95], 0.95);
+        let top = body([0.13, 0.3, 0.37, 0.6], [0.13, 0.3, 0.37, 0.6], 0.95);
+        let mut sam = Fixed(vec![
+            ("face", vec![face(faces[0], 0.9), face(faces[1], 0.85)]),
+            ("person", vec![a, again, b]),
+            ("upper body clothing", vec![top]),
+        ]);
+        let mask = on_two(&mut sam, |sam, pic| {
+            let people = people(sam, &table(), pic).unwrap();
+            // She took the smaller of the two.
+            assert!(people[0].body.as_ref().unwrap().at(37, 150) < 0.5);
+            find(
+                sam,
+                &table(),
+                pic,
+                Route::Whole,
+                "upper body clothing",
+                Some(&people[0]),
+            )
+            .unwrap()
+            .remove(0)
+            .mask
+        });
+        let v = mask.at(100, 180);
+        assert!(v > 0.8, "her top kept: {v}");
+    }
+
+    /// Each person's Whole person mask on the two-person picture, and
+    /// everyone's, with `bodies` as SAM's `person` and the faces given.
+    fn whole_people(faces: Vec<Instance>, bodies: Vec<Instance>) -> (Vec<Mask>, Mask) {
+        let mut sam = Fixed(vec![("face", faces), ("person", bodies)]);
+        on_two(&mut sam, |sam, pic| {
+            let people = people(sam, &table(), pic).unwrap();
+            let mut ask = |who: Option<&Person>| {
+                find(sam, &table(), pic, Route::Whole, PERSON, who)
+                    .unwrap()
+                    .remove(0)
+                    .mask
+            };
+            let each = people.iter().map(|p| ask(Some(p))).collect();
+            (each, ask(None))
+        })
+    }
+
+    fn at(m: &Mask, x: f32, y: f32) -> f32 {
+        m.at((x * 400.0) as usize, (y * 400.0) as usize)
+    }
+
+    #[test]
+    fn a_whole_person_is_their_own_body() {
+        let (_, faces) = two_people();
+        let a = body([0.15, 0.05, 0.35, 0.95], [0.15, 0.05, 0.35, 0.95], 0.95);
+        let b = body([0.65, 0.05, 0.85, 0.95], [0.65, 0.05, 0.85, 0.95], 0.95);
+        // A body found twice, a little larger and no one's.
+        let again = body([0.12, 0.03, 0.38, 0.95], [0.12, 0.03, 0.38, 0.95], 0.95);
+        let (each, all) = whole_people(
+            vec![face(faces[0], 0.9), face(faces[1], 0.85)],
+            vec![a, b, again],
+        );
+        // Each is their own body, head to foot, and nothing of the
+        // other's, nor of the copy's larger outline.
+        for (m, (mine, theirs)) in each.iter().zip([(0.25, 0.75), (0.75, 0.25)]) {
+            for y in [0.1, 0.5, 0.9] {
+                assert!(at(m, mine, y) > 0.8, "{mine}, {y}: {}", at(m, mine, y));
+                assert!(at(m, theirs, y) < 0.1);
+            }
+        }
+        assert!(at(&each[0], 0.13, 0.5) < 0.2, "{}", at(&each[0], 0.13, 0.5));
+        // All people: both.
+        assert!(at(&all, 0.25, 0.5) > 0.8 && at(&all, 0.75, 0.5) > 0.8);
+    }
+
+    #[test]
+    fn a_body_merged_over_two_people_is_shared_between_them() {
+        let (_, faces) = two_people();
+        let merged = body([0.1, 0.05, 0.9, 0.95], [0.1, 0.05, 0.9, 0.95], 0.95);
+        let (each, all) = whole_people(
+            vec![face(faces[0], 0.9), face(faces[1], 0.85)],
+            vec![merged],
+        );
+        // Each their own side of it, the one with no body of their own
+        // too, and no cell in both.
+        assert!(at(&each[0], 0.25, 0.5) > 0.8 && at(&each[0], 0.75, 0.5) < 0.1);
+        assert!(at(&each[1], 0.75, 0.5) > 0.8 && at(&each[1], 0.25, 0.5) < 0.1);
+        assert!(at(&each[0], 0.25, 0.9) > 0.8 && at(&each[1], 0.75, 0.9) > 0.8);
+        let both = each[0]
+            .data
+            .iter()
+            .zip(&each[1].data)
+            .filter(|&(&a, &b)| a > 0.5 && b > 0.5)
+            .count();
+        assert!(both < 400, "{both} pixels in both");
+        assert!(at(&all, 0.5, 0.5) > 0.8);
+    }
+
+    #[test]
+    fn a_whole_person_of_a_face_alone_is_their_face() {
+        let (_, faces) = two_people();
+        // A body for the first; the second's head is all SAM saw.
+        let a = body([0.15, 0.05, 0.35, 0.95], [0.15, 0.05, 0.35, 0.95], 0.95);
+        let (each, _) = whole_people(vec![face(faces[0], 0.9), face(faces[1], 0.85)], vec![a]);
+        assert!(
+            at(&each[1], 0.75, 0.17) > 0.8,
+            "{}",
+            at(&each[1], 0.75, 0.17)
+        );
+        assert!(at(&each[1], 0.75, 0.5) < 0.1 && at(&each[1], 0.25, 0.5) < 0.1);
+    }
+
+    #[test]
+    fn a_persons_mask_is_solid_with_its_gaps_kept() {
+        // A body at 0.8, its glasses an unsure hole at 0.3 and a gap
+        // between an arm and the body that reaches background.
+        let m = mask_of(MASK, MASK, |x, y| {
+            let body = (100..190).contains(&x) && (40..280).contains(&y);
+            let glasses = (130..160).contains(&x) && (60..70).contains(&y);
+            let gap = (110..118).contains(&x) && (150..220).contains(&y);
+            body && !glasses && !gap
+        });
+        let mut m = m;
+        for (i, v) in m.data.iter_mut().enumerate() {
+            let (x, y) = (i % MASK, i / MASK);
+            if *v > 0.5 {
+                *v = 0.8;
+            } else if (130..160).contains(&x) && (60..70).contains(&y) {
+                *v = 0.3;
+            } else if (110..118).contains(&x) && (150..220).contains(&y) {
+                *v = if y == 185 { 0.02 } else { 0.3 };
+            } else {
+                *v = 0.0;
+            }
+        }
+        let solid = harden(&fill_unsure(&m));
+        let at = |x: usize, y: usize| solid.at(x, y);
+        assert_eq!(at(150, 150), 1.0, "the body, solid");
+        assert_eq!(at(145, 65), 1.0, "the glasses filled");
+        assert!(at(114, 185) < 1e-6, "the gap kept");
+        assert!(at(114, 160) < 1e-6, "all of it");
+        assert_eq!(at(50, 50), 0.0, "the background");
     }
 
     #[test]

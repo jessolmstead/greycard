@@ -272,3 +272,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§260. The camera match keeps lightness off chroma](notes/260-the-camera-match-keeps-lightness-off-chroma.md) (2026-10-07)
 - [§261. Leaving while the worker is in a job](notes/261-leaving-while-the-worker-is-in-a-job.md) (2026-10-07)
 - [§262. Export names and the subfolder button](notes/262-export-names-and-the-subfolder-button.md) (2026-10-07)
+- [§263. The People mask's editor side, as built](notes/263-the-people-masks-editor-side-as-built.md) (2026-10-08)

@@ -179,6 +179,21 @@ pub enum Shape {
         picks: Vec<Pick>,
         boxes: Vec<[Pos; 2]>,
     },
+    /// A part of a person, found by a model (greycard-ai's `sam3`)
+    /// from a phrase in its table ("iris of the eye", "upper body
+    /// clothing"), asked by `route`; of `person` alone when there is
+    /// one (the person picked, or the one person on the picture it was
+    /// made on), else of everyone (All people). The person is found
+    /// afresh on every picture the shape lands on, by their signature,
+    /// so a shape pasted to another frame looks for the same person
+    /// rather than whoever stands where they stood. Like a brush it has
+    /// no value of its own.
+    Part {
+        phrase: String,
+        route: Route,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        person: Option<Person>,
+    },
     /// A window on the picture's lightness: one where the [`Sample`]'s
     /// lightness lies from `low` to `high`, falling to nothing over
     /// `low_feather` below `low` and `high_feather` above `high`. All
@@ -407,8 +422,132 @@ impl Shape {
                     *b = [t.pos(b[0]), t.pos(b[1])];
                 }
             }
+            Shape::Part { person, .. } => {
+                if let Some(p) = person {
+                    p.at = t.pos(p.at);
+                }
+            }
         }
     }
+}
+
+/// How a part's phrase is asked: on the whole picture, or by a cascade
+/// of crops through a face to an eye or the mouth. greycard-ai's
+/// `sam3::Route`, by the same names. A route a later build added loads
+/// as `Other` and is written back as it came; the part it is in counts
+/// as a shape this build does not know ([`Shape::is_unknown`]).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(from = "String", into = "String")]
+pub enum Route {
+    Whole,
+    Eye,
+    Mouth,
+    Other(String),
+}
+
+impl Route {
+    pub fn name(&self) -> &str {
+        match self {
+            Route::Whole => "whole",
+            Route::Eye => "eye",
+            Route::Mouth => "mouth",
+            Route::Other(name) => name,
+        }
+    }
+}
+
+impl From<String> for Route {
+    fn from(name: String) -> Self {
+        match name.as_str() {
+            "whole" => Route::Whole,
+            "eye" => Route::Eye,
+            "mouth" => Route::Mouth,
+            _ => Route::Other(name),
+        }
+    }
+}
+
+impl From<Route> for String {
+    fn from(route: Route) -> Self {
+        route.name().to_string()
+    }
+}
+
+/// Who a Part is of: what they are known by, where their face was on
+/// the picture the shape was made on (in the masks' units, turned with
+/// the shape), and that picture, by its content hash (greycard-library's
+/// `hash_file`, the library's and the archive's name for a file
+/// whatever its path). On that picture the person is the face at `at`,
+/// whatever has been done to the picture since; elsewhere they are
+/// looked for by their signature.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Person {
+    pub signature: Signature,
+    pub at: Pos,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<String>,
+}
+
+/// A person's signature as stored: the kind by name and its values,
+/// as greycard-ai's `sam3::Signature` writes them. Kept here as it
+/// came, whatever the kind, so a kind this build does not know loads
+/// and is written back unchanged; what the values mean is the model
+/// side's, which compares them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Signature {
+    pub kind: String,
+    pub values: Vec<f32>,
+}
+
+/// One entry of the People menu: its label, the group it is under, the
+/// phrase it asks for and how.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartKind {
+    pub group: &'static str,
+    pub label: &'static str,
+    pub phrase: &'static str,
+    pub route: Route,
+}
+
+const fn part(
+    group: &'static str,
+    label: &'static str,
+    phrase: &'static str,
+    route: Route,
+) -> PartKind {
+    PartKind {
+        group,
+        label,
+        phrase,
+        route,
+    }
+}
+
+/// The People menu, in order: the whole person on their own at the
+/// top, then Face, Body, Clothing. Clothing is by where it is worn, so
+/// Top asks for "upper body clothing", which takes a coat and the top
+/// under it as one.
+pub const PARTS: &[PartKind] = &[
+    part("Person", "Whole person", "person", Route::Whole),
+    part("Face", "Face", "face", Route::Whole),
+    part("Face", "Facial skin", "facial skin", Route::Whole),
+    part("Face", "Eyebrows", "eyebrows", Route::Whole),
+    part("Face", "Eyes", "eyes", Route::Whole),
+    part("Face", "Iris", "iris of the eye", Route::Eye),
+    part("Face", "Lips", "lips", Route::Mouth),
+    part("Face", "Teeth", "teeth", Route::Mouth),
+    part("Body", "Skin", "skin", Route::Whole),
+    part("Body", "Hair", "hair", Route::Whole),
+    part("Body", "Hands", "hands", Route::Whole),
+    part("Clothing", "Top", "upper body clothing", Route::Whole),
+    part("Clothing", "Bottoms", "lower body clothing", Route::Whole),
+    part("Clothing", "Shoes", "shoes", Route::Whole),
+    part("Clothing", "All clothing", "clothing", Route::Whole),
+];
+
+/// The menu's entry for `phrase`, if it is one of the menu's.
+pub fn part_of(phrase: &str) -> Option<&'static PartKind> {
+    PARTS.iter().find(|p| p.phrase == phrase)
 }
 
 /// A click for an object: on it, or (not positive) on what is not it.
@@ -508,8 +647,17 @@ impl Mask {
 }
 
 impl Shape {
-    /// The shape a drag will draw, before it has a place.
+    /// The shape a drag will draw, before it has a place. A part is
+    /// `Part:` and its phrase, of everyone; its route is the menu's, or
+    /// the whole picture for a phrase the menu does not have.
     pub fn of_kind(kind: &str) -> Self {
+        if let Some(phrase) = kind.strip_prefix("Part:") {
+            return Shape::Part {
+                phrase: phrase.to_string(),
+                route: part_of(phrase).map_or(Route::Whole, |p| p.route.clone()),
+                person: None,
+            };
+        }
         match kind {
             "Brush" => Self::Brush {
                 strokes: Vec::new(),
@@ -547,6 +695,7 @@ impl Shape {
             | Shape::Background {}
             | Shape::Sky { .. }
             | Shape::Object { .. }
+            | Shape::Part { .. }
             | Shape::Luminance { .. }
             | Shape::Color { .. }
             | Shape::Unknown => Vec::new(),
@@ -581,6 +730,7 @@ impl Shape {
             | Shape::Background {}
             | Shape::Sky { .. }
             | Shape::Object { .. }
+            | Shape::Part { .. }
             | Shape::Luminance { .. }
             | Shape::Color { .. }
             | Shape::Unknown => self.clone(),
@@ -686,10 +836,25 @@ impl Shape {
             Shape::Background {} => "Background",
             Shape::Sky { .. } => "Sky",
             Shape::Object { .. } => "Object",
+            Shape::Part { phrase, .. } => part_of(phrase).map_or("People", |p| p.label),
             Shape::Luminance { .. } => "Luminance",
             Shape::Color { .. } => "Color",
             Shape::Unknown => "Unknown shape",
         }
+    }
+
+    /// Whether this build does not know the shape: one of a kind it
+    /// has not heard of, or a part asked by a route it has not. Neither
+    /// counts in the mask.
+    pub fn is_unknown(&self) -> bool {
+        matches!(
+            self,
+            Shape::Unknown
+                | Shape::Part {
+                    route: Route::Other(_),
+                    ..
+                }
+        )
     }
 
     pub fn is_brush(&self) -> bool {
@@ -706,6 +871,7 @@ impl Shape {
                 | Shape::Background {}
                 | Shape::Sky { .. }
                 | Shape::Object { .. }
+                | Shape::Part { .. }
         )
     }
 
@@ -713,7 +879,11 @@ impl Shape {
     pub fn is_learned(&self) -> bool {
         matches!(
             self,
-            Shape::Subject {} | Shape::Background {} | Shape::Sky { .. } | Shape::Object { .. }
+            Shape::Subject {}
+                | Shape::Background {}
+                | Shape::Sky { .. }
+                | Shape::Object { .. }
+                | Shape::Part { .. }
         )
     }
 
@@ -726,6 +896,7 @@ impl Shape {
             | Shape::Background {}
             | Shape::Sky { .. }
             | Shape::Object { .. }
+            | Shape::Part { .. }
             | Shape::Luminance { .. }
             | Shape::Color { .. }
             | Shape::Unknown => 0.0,
@@ -815,7 +986,7 @@ impl Mask {
         self.components
             .iter()
             .enumerate()
-            .filter(|(_, c)| c.enabled && c.shape != Shape::Unknown)
+            .filter(|(_, c)| c.enabled && !c.shape.is_unknown())
     }
 
     /// Whether a live shape reads the picture's color, so the caller
@@ -828,7 +999,7 @@ impl Mask {
     pub fn unknown(&self) -> usize {
         self.components
             .iter()
-            .filter(|c| c.shape == Shape::Unknown)
+            .filter(|c| c.shape.is_unknown())
             .count()
     }
 
@@ -1264,6 +1435,173 @@ mod tests {
             panic!("still a sky");
         };
         assert_eq!(picks[0].pos, t.pos([0.7, 0.2]));
+    }
+
+    fn lips_of(person: Option<Person>) -> Shape {
+        Shape::Part {
+            phrase: "lips".into(),
+            route: Route::Mouth,
+            person,
+        }
+    }
+
+    #[test]
+    fn a_part_is_learned_and_named_by_the_menu() {
+        let lips = Shape::of_kind("Part:lips");
+        assert_eq!(lips, lips_of(None));
+        assert!(lips.is_raster() && lips.is_learned());
+        assert!(lips.handles().is_empty());
+        assert_eq!(lips.at(0.5, 0.5), 0.0);
+        assert_eq!(lips.name(), "Lips");
+        assert_eq!(
+            Shape::of_kind("Part:iris of the eye"),
+            Shape::Part {
+                phrase: "iris of the eye".into(),
+                route: Route::Eye,
+                person: None,
+            }
+        );
+        assert_eq!(Shape::of_kind("Part:upper body clothing").name(), "Top");
+        // A phrase the menu does not have: the whole picture, by the
+        // kind's own name.
+        let other = Shape::of_kind("Part:dress");
+        assert!(matches!(
+            other,
+            Shape::Part {
+                route: Route::Whole,
+                ..
+            }
+        ));
+        assert_eq!(other.name(), "People");
+        // Every label is the menu's once, and every route is named.
+        for p in PARTS {
+            assert_eq!(PARTS.iter().filter(|q| q.label == p.label).count(), 1);
+            assert_eq!(
+                Shape::of_kind(&format!("Part:{}", p.phrase)).name(),
+                p.label
+            );
+            assert!(!p.route.name().is_empty());
+        }
+    }
+
+    #[test]
+    fn a_part_round_trips_with_and_without_its_person() {
+        let everyone = lips_of(None);
+        let json = serde_json::to_string(&everyone).unwrap();
+        assert_eq!(json, r#"{"kind":"part","phrase":"lips","route":"mouth"}"#);
+        assert_eq!(serde_json::from_str::<Shape>(&json).unwrap(), everyone);
+
+        let values: Vec<f32> = (0..22).map(|i| i as f32 * 1.25 - 3.0).collect();
+        let her = lips_of(Some(Person {
+            signature: Signature {
+                kind: "colors-1".into(),
+                values: values.clone(),
+            },
+            at: [0.31, 0.42],
+            picture: Some("9f2c".into()),
+        }));
+        let json = serde_json::to_string(&her).unwrap();
+        assert!(
+            json.contains(r#""person":{"signature":{"kind":"colors-1","values":["#),
+            "{json}"
+        );
+        assert!(
+            json.contains(r#""at":[0.31,0.42],"picture":"9f2c"}"#),
+            "{json}"
+        );
+        assert_eq!(serde_json::from_str::<Shape>(&json).unwrap(), her);
+
+        // A person's place turns with the picture.
+        let mut turned = her.clone();
+        let t = Turned::new(1, 1.5);
+        turned.turn(t);
+        let Shape::Part {
+            person: Some(p), ..
+        } = &turned
+        else {
+            panic!("still a part of her");
+        };
+        assert_eq!(p.at, t.pos([0.31, 0.42]));
+        assert_eq!(p.signature.values, values);
+    }
+
+    #[test]
+    fn the_whole_person_heads_the_menu_and_round_trips() {
+        let whole = &PARTS[0];
+        assert_eq!(
+            (whole.label, whole.phrase, &whole.route),
+            ("Whole person", "person", &Route::Whole)
+        );
+        assert!(PARTS[1..].iter().all(|p| p.group != whole.group));
+        let shape = Shape::of_kind("Part:person");
+        assert_eq!(shape.name(), "Whole person");
+        let her = Shape::Part {
+            phrase: "person".into(),
+            route: Route::Whole,
+            person: Some(Person {
+                signature: Signature {
+                    kind: "colors-1".into(),
+                    values: vec![0.5; 22],
+                },
+                at: [0.4, 0.3],
+                picture: Some("ab12".into()),
+            }),
+        };
+        let json = serde_json::to_string(&her).unwrap();
+        assert!(
+            json.starts_with(r#"{"kind":"part","phrase":"person","route":"whole","person":"#),
+            "{json}"
+        );
+        assert_eq!(serde_json::from_str::<Shape>(&json).unwrap(), her);
+        assert!(her.is_learned() && !her.is_unknown());
+    }
+
+    #[test]
+    fn a_part_with_an_unknown_route_loads_and_counts_as_nothing() {
+        // A route a later build added: the part loads, is written back
+        // as it came, and is a shape this build does not know.
+        let json = r#"{"kind":"part","phrase":"iris of the eye","route":"ear"}"#;
+        let shape: Shape = serde_json::from_str(json).unwrap();
+        assert!(matches!(
+            &shape,
+            Shape::Part { route: Route::Other(r), .. } if r == "ear"
+        ));
+        assert!(shape.is_unknown() && !Shape::of_kind("Part:lips").is_unknown());
+        assert_eq!(serde_json::to_string(&shape).unwrap(), json);
+        let mask = Mask {
+            components: vec![
+                Component {
+                    shape: shape.clone(),
+                    ..Default::default()
+                },
+                Component {
+                    shape: Shape::of_kind("Part:lips"),
+                    ..Default::default()
+                },
+            ],
+            invert: false,
+        };
+        assert_eq!(mask.live().map(|(i, _)| i).collect::<Vec<_>>(), [1]);
+        assert_eq!(mask.unknown(), 1);
+        let back: Mask = serde_json::from_str(&serde_json::to_string(&mask).unwrap()).unwrap();
+        assert_eq!(back, mask, "kept, not dropped, on the way out");
+        // With no route at all it is malformed: no build writes one.
+        assert!(serde_json::from_str::<Shape>(r#"{"kind":"part","phrase":"lips"}"#).is_err());
+    }
+
+    #[test]
+    fn a_signature_of_a_kind_this_build_does_not_know_is_kept() {
+        let json = r#"{"kind":"part","phrase":"hair","route":"whole","person":{"signature":{"kind":"face-embedding-9","values":[0.5,-1.0,2.25]},"at":[0.5,0.25]}}"#;
+        let shape: Shape = serde_json::from_str(json).unwrap();
+        let Shape::Part {
+            person: Some(p), ..
+        } = &shape
+        else {
+            panic!("a part with its person");
+        };
+        assert_eq!(p.signature.kind, "face-embedding-9");
+        assert_eq!(p.signature.values, [0.5, -1.0, 2.25]);
+        assert_eq!(serde_json::to_string(&shape).unwrap(), json);
     }
 
     #[test]

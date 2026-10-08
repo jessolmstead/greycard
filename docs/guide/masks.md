@@ -114,6 +114,73 @@ Click **Object**, then click the thing you want, right-click to
 exclude something, or drag a box around it. With an Object shape
 chosen, the button reads **Pick** and adds more clicks to it.
 
+### People
+
+**People** opens a menu: **Whole person** at the top, then a person's
+parts in three groups:
+
+| Group | Parts |
+|---|---|
+| Face | Face, Facial skin, Eyebrows, Eyes, Iris, Lips, Teeth |
+| Body | Skin, Hair, Hands |
+| Clothing | Top, Bottoms, Shoes, All clothing |
+
+**Whole person** takes one person head to foot: hair, skin, clothes,
+and usually what they hold. Where **Subject** takes everything that
+stands out, people and things alike, Whole person takes the one person
+you pick, so on a group you can brighten one person and leave the rest.
+Where two people stand so close that the model sees them as one, each
+takes their own side of the pair. Someone of whom only a head shows
+gets their face. Its edge is a little softer than Subject's, and loses
+the finest strands of hair against the sky; on a picture of one
+person, Subject gives the finer edge.
+
+Clothing goes by where it is worn: **Top** takes a coat and the shirt
+under it as one, **Bottoms** whatever is worn below the waist.
+**Iris**, **Lips** and **Teeth** look closer, at each face and then
+each eye or the mouth, so they take longer than the rest.
+
+On a picture of one person, the shape is made at once, as Subject
+is, and it is that person's. On a picture of more than one person,
+each face is outlined and the status line says "click the person, or
+All people". Click a person to make the shape theirs alone, click
+**All people** above the picture to take everyone's, or press **Esc**
+to make nothing. On a picture with no one in it, the shape is made at
+once and is everyone's.
+
+A People shape keeps who it is of, even when it was made on a portrait
+of one person and you were never asked. On the picture it was made on,
+that is the person whose face is where it was, however you turn or
+edit the picture afterwards; a change of white balance, camera
+profile, lens or noise reduction may ask you to click them once, the
+face where theirs was outlined more strongly. Pasted or synced onto
+another picture, it looks for the same person there by their clothes,
+hair and skin, not by where they stood: pasted onto another frame of
+the same person, it finds them, though someone dressed very like them
+can be taken for them.
+
+When it can't be sure, as on most pictures of several people, the mask
+stays empty and the faces are outlined again, the likeliest person
+outlined more strongly. When it doesn't find its person at all, as on
+a portrait of someone else, it never takes whoever is there: the faces
+are outlined, none more strongly, and the status line says "this mask
+was made for someone else". Either way, click a person to settle it
+for that picture, or **All people** to make that picture's copy
+everyone's; press **Esc**, or carry on, and the mask stays empty. If
+you were on another tab, the outlines come back when you return to
+**Masks**. On a picture with no one in it, the mask stays empty and
+the status line says so. Nothing stops a paste or sync onto many
+pictures: each one asks when you open it. An export with a People
+shape that hasn't found its person writes the mask empty and says so
+in its result line and the log ("a People mask needs a person picked",
+or "a People mask's person isn't in this picture").
+
+A People shape made with **All people** stays everyone's wherever it
+goes: pasted onto another picture, it takes everyone there.
+
+On a machine without a GPU, a People shape takes several seconds,
+and an iris, lips or teeth about thirty.
+
 ### Luminance
 
 A luminance shape takes everything between its **Low** and **High**
@@ -175,7 +242,7 @@ can tint them if you pull exposure well down.
 
 ## Models download on first use
 
-Subject, Background, Sky and Object use learned models that greycard
+Subject, Background, Sky, Object and People use learned models that greycard
 downloads the first time you need one. A sheet names the model, its
 size, where it comes from and its license before anything downloads;
 choose **Download** or **Not now**.
@@ -185,6 +252,7 @@ choose **Download** or **Not now**.
 | Subject, Background | about 114 MB |
 | Sky | about 96 MB, plus the Object model for a finer edge |
 | Object | about 184 MB |
+| People | about 1.04 GB |
 
 Each is downloaded once. The first Subject or Background mask of a
 session takes a few seconds while the model loads; after that, masks

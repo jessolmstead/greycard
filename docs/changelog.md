@@ -26,6 +26,16 @@ note a first tester reads.
   "(missing)"; edits it can't reach keep the old files until they are
   ([§257](https://github.com/jessolmstead/greycard/blob/master/docs/notes/257-renaming-a-look.md))
 
+### Masks
+
+- **People**: a mask of a whole person or a part of one, picked from a
+  menu: face, facial skin, eyebrows, eyes, iris, lips, teeth, skin,
+  hair, hands, and clothing by where it is worn. On a picture of
+  several people you click the one you mean, or All people; pasted
+  onto another picture, the mask finds the same person by their
+  clothes, hair and skin, and asks when it isn't sure or they aren't
+  there. The model, about 1 GB, downloads on first use ([§263](https://github.com/jessolmstead/greycard/blob/master/docs/notes/263-the-people-masks-editor-side-as-built.md))
+
 ### Camera match
 
 - The run fills a bar across all its groups, with the count and the

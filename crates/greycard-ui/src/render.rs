@@ -288,7 +288,8 @@ impl ShapeGpu {
             | Shape::Subject {}
             | Shape::Background {}
             | Shape::Sky { .. }
-            | Shape::Object { .. } => match raster {
+            | Shape::Object { .. }
+            | Shape::Part { .. } => match raster {
                 Some(r) => Self {
                     kind: 2,
                     flags,

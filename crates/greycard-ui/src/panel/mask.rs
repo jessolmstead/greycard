@@ -200,7 +200,7 @@ fn placeholder_name(id: u64) -> String {
 /// renamed by hand is left alone. Says whether it renamed anything,
 /// so a caller only refreshes the panel's own copy of the name when
 /// it would otherwise go stale.
-fn name_first_shape(a: &mut Adjustment, shape_name: &str) -> bool {
+pub(crate) fn name_first_shape(a: &mut Adjustment, shape_name: &str) -> bool {
     if a.name == placeholder_name(a.id) {
         a.name = format!("{shape_name} {}", a.id);
         true
@@ -380,6 +380,11 @@ pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
             continue;
         };
         if let Step::Ask(model) = next {
+            if let Shape::Part { route, .. } = &shape
+                && crate::ai::parts_on_cpu()
+            {
+                app.set_status(crate::ai::part_on_cpu(route).into());
+            }
             WORKER.with(|w| {
                 if let Some(w) = &*w.borrow() {
                     w.send(Job::Mask {
@@ -493,16 +498,18 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // strokes and picks into the mask it was armed for
             // (`placing.index`), not whichever this switches to: put
             // it down first, as leaving the Masks tab already does.
-            if st.placing.take().is_some() {
+            if st.placing.take().is_some() || st.choosing.take().is_some() {
                 app.set_placing("".into());
                 app.set_status("".into());
             }
+            st.part_pending = None;
             let edit = read_edit(&app, &st.edit, st.target);
             st.edit = edit;
             let target = (i > 0).then(|| i as usize - 1);
             st.target = target.filter(|&t| t < st.edit.adjustments.len());
             app.set_component(0);
             show_edit(&st, &st.edit, &app, st.target);
+            crate::panel::parts::rearm(&mut st, &app);
             app.window().request_redraw();
         });
     }
@@ -522,10 +529,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.set_panel_tab(tab.clone());
             }
             if tab != "Masks" {
-                if st.placing.take().is_some() {
+                if st.placing.take().is_some() || st.choosing.is_some() {
                     app.set_placing("".into());
                     app.set_status("".into());
                 }
+                crate::panel::parts::stopped(&mut st);
                 if st.target.is_some() {
                     let edit = read_edit(&app, &st.edit, st.target);
                     st.edit = edit;
@@ -537,6 +545,16 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if tab != "Retouch" && st.retouching.take().is_some() {
                 app.set_retouch_mode("".into());
                 app.set_status("".into());
+            }
+            // Back on Masks with a Part on this picture asking which
+            // person: its mask chosen, and the picking armed.
+            let asking = (tab == "Masks")
+                .then(|| crate::panel::parts::asking_mask(&st))
+                .flatten();
+            drop(st);
+            if let Some(i) = asking {
+                app.set_panel_tab(tab.clone());
+                app.invoke_target_changed(i as i32 + 1);
             }
             app.window().request_redraw();
         });
@@ -697,10 +715,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            if st.placing.take().is_some() {
+            if st.placing.take().is_some() || st.choosing.is_some() {
                 app.set_placing("".into());
                 app.set_status("".into());
             }
+            crate::panel::parts::dismissed(&mut st);
+            crate::panel::parts::stopped(&mut st);
             if st.retouching.take().is_some() {
                 app.set_retouch_mode("".into());
                 app.set_status("".into());
@@ -833,6 +853,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if let Some(a) = st.target.and_then(|i| st.edit.adjustments.get(i)) {
                 show_component(&a.mask, &app);
             }
+            crate::panel::parts::rearm(&mut st, &app);
         });
     }
     {
@@ -866,10 +887,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // remove below — put it down first rather than let a
             // later stroke or pick land in whatever mask slid into
             // its place.
-            if st.placing.take().is_some() {
+            if st.placing.take().is_some() || st.choosing.is_some() {
                 app.set_placing("".into());
                 app.set_status("".into());
             }
+            crate::panel::parts::stopped(&mut st);
             let edit = read_edit(&app, &st.edit, st.target);
             st.edit = edit;
             if i < st.edit.adjustments.len() {
@@ -906,6 +928,14 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.set_patch(i as i32);
                 show_patches(&st.edit, &app);
                 app.window().request_redraw();
+                return;
+            }
+            // A person picked for a part.
+            if let Some(changed) = crate::panel::parts::pressed(&mut st, &app, x, y) {
+                drop(st);
+                if changed {
+                    app.invoke_view_changed();
+                }
                 return;
             }
             let Some(mut placing) = st.placing.take() else {
@@ -964,6 +994,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 s @ (Shape::Subject {}
                 | Shape::Background {}
                 | Shape::Sky { .. }
+                | Shape::Part { .. }
                 | Shape::Luminance { .. }
                 | Shape::Color { .. }
                 | Shape::Unknown) => s.clone(),
@@ -1061,6 +1092,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 Shape::Subject {}
                 | Shape::Background {}
                 | Shape::Sky { .. }
+                | Shape::Part { .. }
                 | Shape::Luminance { .. }
                 | Shape::Color { .. }
                 | Shape::Unknown => {}
@@ -1146,6 +1178,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     | Shape::Background {}
                     | Shape::Sky { .. }
                     | Shape::Object { .. }
+                    | Shape::Part { .. }
                     | Shape::Luminance { .. }
                     | Shape::Color { .. }
                     | Shape::Unknown => true,

@@ -68,6 +68,9 @@ pub struct Tally {
     pub canceled: usize,
     /// The frames that failed, by source name, and why.
     pub failed: Vec<(String, String)>,
+    /// The frames written with a People mask empty: asking which
+    /// person, and with their person not in the picture.
+    pub parts: (usize, usize),
 }
 
 /// A set on its way through the queue.
@@ -140,7 +143,12 @@ impl Set {
     pub fn record(&self, source: &Path, done: &Done) -> Tally {
         let mut t = self.tally.lock().expect("the set's tally");
         match done {
-            Done::Exported { .. } => t.exported += 1,
+            Done::Exported { left_out, .. } => {
+                t.exported += 1;
+                let (asks, nobody) = crate::ai::parts_left_out(left_out);
+                t.parts.0 += usize::from(asks > 0);
+                t.parts.1 += usize::from(nobody > 0);
+            }
             Done::Skipped { .. } => t.skipped += 1,
             Done::Canceled => t.canceled += 1,
             Done::Failed { message } => t.failed.push((file_name(source), message.clone())),
@@ -319,6 +327,7 @@ pub fn finished_line(tally: &Tally, total: usize, place: &str, seconds: f64) -> 
     if tally.skipped > 0 {
         s.push_str(&format!(", {} skipped (there already)", tally.skipped));
     }
+    s.push_str(&crate::ai::parts_words(true, tally.parts));
     if !tally.failed.is_empty() {
         s.push_str(&format!(", {} failed", tally.failed.len()));
         if let [(name, why)] = tally.failed.as_slice() {

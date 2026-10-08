@@ -164,6 +164,9 @@ pub enum Job {
         shape: Shape,
         model: Option<&'static greycard_ai::Model>,
     },
+    /// The people on the open picture, as the People model finds them,
+    /// for a Part chosen to be picked among: answered with `People`.
+    People,
     /// Fetch a model into the store; on its own thread.
     Fetch {
         model: &'static greycard_ai::Model,
@@ -400,21 +403,31 @@ pub enum Outcome {
         set: Arc<crate::queue::Set>,
         tally: crate::queue::Tally,
     },
-    /// A learned mask made (or found made) for `shape` at `key`.
+    /// A learned mask made (or found made) for `shape` at `key`, on
+    /// `file`, the picture open when it was made.
     Mask {
         key: Key,
         shape: Shape,
+        file: Option<PathBuf>,
         raster: Arc<Raster>,
         /// The provider that ran it; none when it was cached.
         provider: Option<&'static str>,
         seconds: f64,
         /// What the status line says instead: a Sky shape on a frame
-        /// with no sky.
+        /// with no sky; a Part whose person is not settled.
         note: Option<String>,
+        /// A Part made empty, its person not settled on this picture.
+        part: Option<crate::ai::Unresolved>,
     },
     MaskFailed {
         key: Key,
         message: String,
+    },
+    /// The people on the open picture, `file`, for a Part to be
+    /// picked among; or why they could not be found.
+    People {
+        file: Option<PathBuf>,
+        people: Result<(Vec<crate::ai::Candidate>, &'static str, f64), String>,
     },
     Fetching {
         name: &'static str,
@@ -457,6 +470,8 @@ struct Queue {
     /// picked (Subject; `None` for a shape whose model is not in
     /// question, Object among them, which always wants SAM).
     masks: std::collections::VecDeque<(Key, Shape, Option<&'static greycard_ai::Model>)>,
+    /// The people on the open picture are wanted (`Job::People`).
+    people: bool,
     exports: std::collections::VecDeque<Job>,
     /// A Subject model arrived since the one loaded, if any: drop it,
     /// so the next Subject mask picks up the new file rather than the
@@ -827,6 +842,7 @@ impl Worker {
                 q.masks.retain(|(k, _, _)| *k != key);
                 q.masks.push_back((key, shape, model));
             }
+            Job::People => q.people = true,
             job => q.develop = Some(job),
         }
         cv.notify_one();
@@ -1100,6 +1116,10 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
     // open file's own `ai` holds (its masks, its fills) is for it, and
     // a set run past it must not take that away.
     let mut set_ai: Option<Ai> = None;
+    // A part's people were found and the part is not made yet: a
+    // person is being picked, and the People model is wanted on the
+    // click, whatever the edit says meanwhile.
+    let mut picking = false;
     loop {
         let mut device = None;
         let job = {
@@ -1125,6 +1145,10 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                 }
                 if let Some(job) = q.develop.take() {
                     break job;
+                }
+                if q.people {
+                    q.people = false;
+                    break Job::People;
                 }
                 if let Some((key, shape, model)) = q.masks.pop_front() {
                     break Job::Mask { key, shape, model };
@@ -1229,16 +1253,21 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                             Ok(left_out)
                         })
                     } else {
-                        export_other(
+                        // The editor's People model, lent for the
+                        // frame rather than a second one loaded.
+                        let other = set_ai.get_or_insert_with(Ai::new);
+                        ai.lend_parts(other);
+                        let written = export_other(
                             &frame,
-                            set_ai.get_or_insert_with(Ai::new),
+                            other,
                             cache.as_ref(),
                             lenses.as_deref(),
                             &deliver,
                             &set.settings,
                             &path,
-                        )
-                        .map(|(edit, left_out)| {
+                        );
+                        other.lend_parts(&mut ai);
+                        written.map(|(edit, left_out)| {
                             rendered = edit;
                             left_out
                         })
@@ -1288,6 +1317,17 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
         // A develop has the machine: the thumbnails' threads are held
         // to what `during_develop` allows until it is done.
         let developing = matches!(job, Job::Open { .. } | Job::Develop { .. });
+        // A picture with no Part on it lets the People model go: it
+        // holds about a gigabyte, and two with a picture's crops.
+        if matches!(job, Job::Open { .. }) {
+            picking = false;
+        }
+        if let Job::Open { edit, .. } | Job::Develop { edit, .. } = &job
+            && !has_live_part(edit)
+            && !picking
+        {
+            ai.release_parts();
+        }
         if developing {
             pool.set_limit(during_develop(pool.threads()));
         }
@@ -1464,16 +1504,23 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                 });
             }
             Job::Mask { key, shape, model } => {
+                if matches!(shape, Shape::Part { .. }) {
+                    picking = false;
+                }
                 let outcome = match &base {
                     Some(b) => {
-                        match ai.raster(b.stamp, &b.image, &b.edit, b.source, key, &shape, model) {
+                        match ai.raster(
+                            b.stamp, &b.image, &b.edit, b.source, b.turn, key, &shape, model,
+                        ) {
                             Ok(made) => Outcome::Mask {
                                 key,
                                 shape,
+                                file: opened_path.clone(),
                                 raster: made.raster,
                                 provider: made.provider.map(|p| p.name()),
                                 seconds: made.seconds,
                                 note: made.note,
+                                part: made.part,
                             },
                             Err(message) => Outcome::MaskFailed { key, message },
                         }
@@ -1484,6 +1531,19 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                     },
                 };
                 deliver(outcome);
+            }
+            Job::People => {
+                picking = true;
+                let people = match &base {
+                    Some(b) => ai
+                        .people(b.stamp, &b.image, b.source, b.turn)
+                        .map(|(found, provider, seconds)| (found, provider.name(), seconds)),
+                    None => Err("nothing developed yet".into()),
+                };
+                deliver(Outcome::People {
+                    file: opened_path.clone(),
+                    people,
+                });
             }
             Job::Fetch { .. }
             | Job::FetchLenses
@@ -1723,11 +1783,22 @@ fn finish_export(
                     &b.image,
                     &b.edit,
                     b.source,
+                    b.turn,
                     (a.id, i),
                     &c.shape,
                     None,
                 ) {
                     Ok(made) => {
+                        // A Part whose person is not settled here goes
+                        // out empty, and the log says so.
+                        if let Some(part) = &made.part {
+                            let why = part.left_out();
+                            left_out.push(format!(
+                                "{}'s {} shape: {why}; its mask written empty",
+                                a.name,
+                                c.shape.name()
+                            ));
+                        }
                         rasters.insert((a.id, i), made.raster);
                     }
                     Err(why) => left_out.push(format!(
@@ -1838,6 +1909,7 @@ enum Blame {
     Develop(u64),
     Export,
     Mask(Key),
+    People,
     Nobody,
 }
 
@@ -1852,6 +1924,7 @@ impl Blame {
             // there as the set's failure.
             Job::ExportSet { .. } | Job::ExportFrame { .. } => Blame::Nobody,
             Job::Mask { key, .. } => Blame::Mask(*key),
+            Job::People => Blame::People,
             Job::Thumbnail { .. }
             | Job::CachedThumbnail { .. }
             | Job::Fetch { .. }
@@ -1869,6 +1942,10 @@ impl Blame {
             },
             Blame::Export => Outcome::ExportFailed { message },
             Blame::Mask(key) => Outcome::MaskFailed { key, message },
+            Blame::People => Outcome::People {
+                file: None,
+                people: Err(message),
+            },
             Blame::Nobody => return None,
         })
     }
@@ -1974,6 +2051,16 @@ fn discard_base(base: &mut Option<Base>, gpu: Option<&greycard_gpu::Context>) {
     {
         gpu.release();
     }
+}
+
+/// Whether a live Part is in `edit`'s masks.
+fn has_live_part(edit: &Edit) -> bool {
+    edit.adjustments.iter().any(|a| {
+        a.enabled
+            && a.mask
+                .live()
+                .any(|(_, c)| matches!(c.shape, Shape::Part { .. }))
+    })
 }
 
 /// A develop before its dehaze and sharpen, and what the sharpen
@@ -4870,7 +4957,16 @@ mod tests {
                 ai.forget(None);
                 let t = Instant::now();
                 let made = ai
-                    .raster(b.stamp, &b.image, &b.edit, b.source, (1, 0), &shape, None)
+                    .raster(
+                        b.stamp,
+                        &b.image,
+                        &b.edit,
+                        b.source,
+                        b.turn,
+                        (1, 0),
+                        &shape,
+                        None,
+                    )
                     .unwrap_or_else(|e| panic!("{stem}: {e}"));
                 let total = t.elapsed().as_secs_f64();
                 (made, total, ai.last_sky.clone().expect("a sky report"))
@@ -5180,5 +5276,550 @@ mod tests {
         let said = left_out_of(&second, base.as_ref());
         assert_eq!(said.len(), 1, "{said:?}");
         assert!(said[0].starts_with("the learned denoiser:"), "{}", said[0]);
+    }
+
+    /// The People mask on real frames, through the editor's own path:
+    /// each frame of `GREYCARD_PARTS_PICTURES` (the trial's JPEGs)
+    /// opened and developed, its people found, and the parts made on
+    /// it, with the models of `GREYCARD_MODELS`.
+    /// - On a portrait an Iris is two small pieces, and a part of the
+    ///   one woman on it, as the panel keeps her, finds her there.
+    /// - Hers pasted onto her other frame finds her; a group's woman
+    ///   pasted onto the portrait is never decided alone.
+    /// - On the group, each one's Top resolves alone on her own picture
+    ///   and is hers: centered under her face, and no two overlapping.
+    /// - A person picked there is still that person after the picture
+    ///   is turned or brightened, and her signature does not move.
+    /// - A person pasted to a picture of two or more people asks.
+    ///
+    /// Prints each part's seconds and provider; with
+    /// `GREYCARD_PARTS_OUT` set, writes each mask there as a PNG.
+    #[test]
+    #[ignore]
+    fn parts_on_real_frames() {
+        use crate::ai::Unresolved;
+        use greycard_ai::Provider;
+        use greycard_edit::mask::{PARTS, Person, Turned};
+        let Some(models) = std::env::var_os("GREYCARD_MODELS") else {
+            return;
+        };
+        let dir = std::env::var_os("GREYCARD_PARTS_PICTURES")
+            .map(PathBuf::from)
+            .expect("GREYCARD_PARTS_PICTURES: the trial's JPEGs, with GREYCARD_MODELS set");
+        let out = std::env::var_os("GREYCARD_PARTS_OUT").map(PathBuf::from);
+        if let Some(out) = &out {
+            std::fs::create_dir_all(out).unwrap();
+        }
+        let store = greycard_ai::Store::at(models);
+        let mut develop_ai = Ai::for_test(store.clone(), vec![Provider::Cpu]);
+        let mut ai = Ai::for_test(store, Provider::available());
+        let deliver: Deliver = Arc::new(|_| {});
+        // A frame developed under `edit` at `turn`, and the Parts side
+        // told it is that file, as opening it tells the editor's.
+        let mut develop = |stem: &str, edit: &Edit, turn: u8, ai: &mut Ai| {
+            let path = dir.join(format!("{stem}.jpg"));
+            let (input, _) = open(&path).unwrap_or_else(|e| panic!("{stem}: {e:#}"));
+            let mut base = None;
+            let _ = develop_job(
+                &input,
+                edit,
+                turn,
+                1,
+                &mut base,
+                &mut None,
+                &mut develop_ai,
+                None,
+                None,
+                &mut None,
+                &deliver,
+            );
+            ai.forget(Some(path));
+            base.unwrap_or_else(|| panic!("{stem} did not develop"))
+        };
+        let save = |name: &str, raster: &Raster| {
+            if let Some(out) = &out {
+                let height = raster.data().len() / greycard_edit::brush::RASTER_WIDTH;
+                image::save_buffer(
+                    out.join(format!("{name}.png")),
+                    raster.data(),
+                    greycard_edit::brush::RASTER_WIDTH as u32,
+                    height as u32,
+                    image::ExtendedColorType::L8,
+                )
+                .unwrap();
+            }
+        };
+        // Each frame's people as a shape stores them, for a sidecar
+        // written by hand to look at.
+        let dump = |stem: &str, people: &[crate::ai::Candidate]| {
+            if let Some(out) = &out {
+                let people: Vec<Person> = people.iter().map(|p| p.person()).collect();
+                std::fs::write(
+                    out.join(format!("people-{stem}.json")),
+                    serde_json::to_string(&people).unwrap(),
+                )
+                .unwrap();
+            }
+        };
+        let on = |r: &Raster| r.data().iter().filter(|&&v| v > 127).count();
+        let share = |r: &Raster| on(r) as f64 / r.data().len() as f64;
+        let part = |label: &str, person: Option<Person>| {
+            let p = PARTS.iter().find(|p| p.label == label).unwrap();
+            Shape::Part {
+                phrase: p.phrase.to_string(),
+                route: p.route.clone(),
+                person,
+            }
+        };
+        let plain = Edit::default();
+
+        // A portrait: every part of everyone, timed; the first run
+        // pays for the load and the encoding.
+        let b = develop("DSCF0835", &plain, 0, &mut ai);
+        let (people, provider, seconds) = ai.people(b.stamp, &b.image, b.source, b.turn).unwrap();
+        println!(
+            "DSCF0835: {} people on {} in {seconds:.2}s (load and encode)",
+            people.len(),
+            provider.name()
+        );
+        assert_eq!(people.len(), 1, "one woman");
+        dump("DSCF0835", &people);
+        for (i, p) in PARTS.iter().enumerate() {
+            let shape = part(p.label, None);
+            let made = ai
+                .raster(
+                    b.stamp,
+                    &b.image,
+                    &b.edit,
+                    b.source,
+                    b.turn,
+                    (1, i),
+                    &shape,
+                    None,
+                )
+                .unwrap_or_else(|e| panic!("{}: {e}", p.label));
+            assert!(made.part.is_none());
+            println!(
+                "  {:<12} {:>6.2}s on {:<6} {:>6.2}% of the frame",
+                p.label,
+                made.seconds,
+                made.provider.map_or("-", |p| p.name()),
+                100.0 * share(&made.raster)
+            );
+            save(&format!("DSCF0835-{}", p.label), &made.raster);
+            if p.label == "Iris" {
+                let s = share(&made.raster);
+                assert!(s > 0.0 && s < 0.002, "two irises, small: {s}");
+            }
+        }
+        // A part chosen on the portrait is hers, the one person on it
+        // kept as a pick is, and on her own picture it finds her.
+        let her = people[0].person();
+        assert!(her.picture.is_some());
+        let made = ai
+            .raster(
+                b.stamp,
+                &b.image,
+                &b.edit,
+                b.source,
+                b.turn,
+                (1, PARTS.len()),
+                &part("Lips", Some(her.clone())),
+                None,
+            )
+            .unwrap();
+        assert!(made.part.is_none(), "hers on her own picture");
+        assert!(share(&made.raster) > 0.0, "her lips");
+        println!(
+            "  Lips, hers: {:.2}s, {:.3}% of the frame",
+            made.seconds,
+            100.0 * share(&made.raster)
+        );
+        // Her whole, as the menu's first entry makes it on a portrait:
+        // hers, and on a picture of one, all but everyone's.
+        let everyone = ai
+            .raster(
+                b.stamp,
+                &b.image,
+                &b.edit,
+                b.source,
+                b.turn,
+                (1, 0),
+                &part("Whole person", None),
+                None,
+            )
+            .unwrap()
+            .raster;
+        let made = ai
+            .raster(
+                b.stamp,
+                &b.image,
+                &b.edit,
+                b.source,
+                b.turn,
+                (1, PARTS.len() + 1),
+                &part("Whole person", Some(her.clone())),
+                None,
+            )
+            .unwrap();
+        assert!(made.part.is_none(), "her whole on her own picture");
+        save("DSCF0835-person-hers", &made.raster);
+        let both = made
+            .raster
+            .data()
+            .iter()
+            .zip(everyone.data())
+            .filter(|&(&a, &b)| a > 127 && b > 127)
+            .count();
+        println!(
+            "  Whole person, hers: {:.2}s, {:.2}% of the frame, {both} of everyone's {}",
+            made.seconds,
+            100.0 * share(&made.raster),
+            on(&everyone)
+        );
+        assert!(share(&made.raster) > 0.05, "her, whole");
+        assert!(both * 10 > on(&everyone) * 9, "the one person is everyone");
+
+        // The group: each person's Top on her own picture is decided
+        // alone, and hers.
+        let g = develop("5M0A4169", &plain, 0, &mut ai);
+        let (group, _, seconds) = ai.people(g.stamp, &g.image, g.source, g.turn).unwrap();
+        println!("5M0A4169: {} people in {seconds:.2}s", group.len());
+        assert_eq!(group.len(), 5, "the group frame");
+        assert!(group.iter().all(|p| p.picture.is_some()));
+        dump("5M0A4169", &group);
+        let w = greycard_edit::brush::RASTER_WIDTH;
+        let aspect = g.image.height as f32 / g.image.width as f32;
+        let mut tops = Vec::new();
+        for (i, p) in group.iter().enumerate() {
+            let shape = part("Top", Some(p.person()));
+            let made = ai
+                .raster(
+                    g.stamp,
+                    &g.image,
+                    &g.edit,
+                    g.source,
+                    g.turn,
+                    (2, i),
+                    &shape,
+                    None,
+                )
+                .unwrap();
+            assert!(made.part.is_none(), "#{i} resolves on her own picture");
+            save(&format!("5M0A4169-top-{i}"), &made.raster);
+            // Her top's middle, across, is nearer her face than anyone
+            // else's.
+            let r = made.raster.data();
+            let (mut sx, mut n) = (0.0f64, 0usize);
+            for (k, &v) in r.iter().enumerate() {
+                if v > 127 {
+                    sx += (k % w) as f64;
+                    n += 1;
+                }
+            }
+            assert!(n > 0, "#{i} has a top");
+            let mid = (sx / n as f64 / w as f64) as f32;
+            let nearest = (0..group.len())
+                .min_by(|&a, &b| {
+                    (group[a].at[0] - mid)
+                        .abs()
+                        .total_cmp(&(group[b].at[0] - mid).abs())
+                })
+                .unwrap();
+            println!(
+                "  Top of #{i}: {:.2}s, {:.2}% of the frame, nearest face #{nearest}",
+                made.seconds,
+                100.0 * share(&made.raster)
+            );
+            assert_eq!(nearest, i, "#{i}'s top is hers");
+            tops.push(made.raster);
+        }
+        // No two the same, and none taking a piece of another's.
+        for i in 0..tops.len() {
+            for j in i + 1..tops.len() {
+                let both = tops[i]
+                    .data()
+                    .iter()
+                    .zip(tops[j].data())
+                    .filter(|&(&a, &b)| a > 127 && b > 127)
+                    .count();
+                let least = on(&tops[i]).min(on(&tops[j]));
+                println!("  #{i} and #{j} overlap {both} of {least}");
+                assert!(both * 50 < least, "#{i} and #{j} overlap {both} of {least}");
+            }
+        }
+
+        // Each one whole, on her own picture: decided alone, over her
+        // own face, and no two sharing much; All people holds them all.
+        let mut wholes = Vec::new();
+        for (i, p) in group.iter().enumerate() {
+            let made = ai
+                .raster(
+                    g.stamp,
+                    &g.image,
+                    &g.edit,
+                    g.source,
+                    g.turn,
+                    (9, i),
+                    &part("Whole person", Some(p.person())),
+                    None,
+                )
+                .unwrap();
+            assert!(
+                made.part.is_none(),
+                "#{i} whole resolves on her own picture"
+            );
+            save(&format!("5M0A4169-person-{i}"), &made.raster);
+            let r = made.raster.data();
+            let h = r.len() / w;
+            let [cx, cy] = [
+                (p.face[0] + p.face[2]) / 2.0,
+                (p.face[1] + p.face[3]) / 2.0 / aspect,
+            ];
+            let at = (cy * h as f32) as usize * w + (cx * w as f32) as usize;
+            println!(
+                "  Whole person #{i}: {:.2}s, {:.2}% of the frame, body {}, {} at her face",
+                made.seconds,
+                100.0 * share(&made.raster),
+                p.body.is_some(),
+                r[at]
+            );
+            assert!(r[at] > 127, "#{i} whole holds her face");
+            wholes.push(made.raster);
+        }
+        for i in 0..wholes.len() {
+            for j in i + 1..wholes.len() {
+                let both = wholes[i]
+                    .data()
+                    .iter()
+                    .zip(wholes[j].data())
+                    .filter(|&(&a, &b)| a > 127 && b > 127)
+                    .count();
+                let least = on(&wholes[i]).min(on(&wholes[j]));
+                println!("  whole #{i} and #{j} overlap {both} of {least}");
+                assert!(
+                    both * 20 < least,
+                    "whole #{i} and #{j} overlap {both} of {least}"
+                );
+            }
+        }
+        let made = ai
+            .raster(
+                g.stamp,
+                &g.image,
+                &g.edit,
+                g.source,
+                g.turn,
+                (9, group.len()),
+                &part("Whole person", None),
+                None,
+            )
+            .unwrap();
+        save("5M0A4169-person-all", &made.raster);
+        for (i, one) in wholes.iter().enumerate() {
+            let held = one
+                .data()
+                .iter()
+                .zip(made.raster.data())
+                .filter(|&(&a, &b)| a > 127 && b > 127)
+                .count();
+            println!("  All people holds {held} of #{i}'s {}", on(one));
+            assert!(held * 10 > on(one) * 9, "All people holds #{i}");
+        }
+
+        // One of them after a global edit and a turn: still her, decided
+        // on her own picture by where her face was, and her signature
+        // the same under the brighter edit.
+        let k = 2;
+        let first = group[k].person();
+        let mut bright = Edit::default();
+        bright.light.exposure = 0.7;
+        let e = develop("5M0A4169", &bright, 0, &mut ai);
+        let (again, _, _) = ai.people(e.stamp, &e.image, e.source, e.turn).unwrap();
+        for (a, b) in again.iter().zip(&group) {
+            let most = a
+                .signature
+                .values
+                .iter()
+                .zip(&b.signature.values)
+                .map(|(x, y)| (x - y).abs())
+                .fold(0.0f32, f32::max);
+            assert!(most <= 1e-3, "a signature moved by {most} under +0.7 EV");
+        }
+        let made = ai
+            .raster(
+                e.stamp,
+                &e.image,
+                &bright,
+                e.source,
+                e.turn,
+                (7, 0),
+                &part("Top", Some(first.clone())),
+                None,
+            )
+            .unwrap();
+        assert!(made.part.is_none(), "brighter: still decided");
+        let both = made
+            .raster
+            .data()
+            .iter()
+            .zip(tops[k].data())
+            .filter(|&(&a, &b)| a > 127 && b > 127)
+            .count();
+        assert!(both * 10 > on(&tops[k]) * 9, "brighter: the same top");
+        println!("+0.7 EV: #{k} decided alone, the same top");
+
+        let t = develop("5M0A4169", &plain, 1, &mut ai);
+        let mut turned = part("Top", Some(first));
+        turned.turn(Turned::new(1, 1.0 / aspect));
+        let made = ai
+            .raster(
+                t.stamp,
+                &t.image,
+                &t.edit,
+                t.source,
+                t.turn,
+                (8, 0),
+                &turned,
+                None,
+            )
+            .unwrap();
+        assert!(made.part.is_none(), "turned: still decided");
+        save("5M0A4169-top-turned", &made.raster);
+        // Her top, turned: the same cells, a quarter clockwise.
+        let tw = w;
+        let th = made.raster.data().len() / tw;
+        let (gw, gh) = (w, tops[k].data().len() / w);
+        let mut hit = 0usize;
+        for (idx, &v) in tops[k].data().iter().enumerate() {
+            if v > 127 {
+                let (x, y) = (idx % gw, idx / gw);
+                let (nx, ny) = (
+                    ((1.0 - (y as f32 + 0.5) / gh as f32) * tw as f32) as usize,
+                    (((x as f32 + 0.5) / gw as f32) * th as f32) as usize,
+                );
+                if made.raster.data()[ny.min(th - 1) * tw + nx.min(tw - 1)] > 127 {
+                    hit += 1;
+                }
+            }
+        }
+        println!(
+            "turned: #{k} decided alone, {hit} of {} cells",
+            on(&tops[k])
+        );
+        assert!(hit * 10 > on(&tops[k]) * 8, "turned: the same top");
+
+        // The woman of the portrait pasted onto the group: asked
+        // about, empty, the people offered to pick from.
+        let g = develop("5M0A4169", &plain, 0, &mut ai);
+        let made = ai
+            .raster(
+                g.stamp,
+                &g.image,
+                &g.edit,
+                g.source,
+                g.turn,
+                (3, 0),
+                &part("Lips", Some(her.clone())),
+                None,
+            )
+            .unwrap();
+        match &made.part {
+            Some(Unresolved::Ask(ask)) => {
+                println!("pasted onto the group: asked, guess {:?}", ask.guess);
+                assert_eq!(ask.people.len(), 5);
+                assert_eq!(ask.why, crate::ai::Asking::Unsure);
+            }
+            other => panic!("pasted onto the group: {other:?}"),
+        }
+        assert!(made.raster.data().iter().all(|&v| v == 0));
+        // And onto her other frame: found again, her lips.
+        let o = develop("DSCF0848", &plain, 0, &mut ai);
+        let made = ai
+            .raster(
+                o.stamp,
+                &o.image,
+                &o.edit,
+                o.source,
+                o.turn,
+                (4, 0),
+                &part("Lips", Some(her)),
+                None,
+            )
+            .unwrap();
+        println!(
+            "pasted onto DSCF0848: {}, {:.3}% of the frame in {:.2}s",
+            if made.part.is_none() {
+                "decided"
+            } else {
+                "not decided"
+            },
+            100.0 * share(&made.raster),
+            made.seconds
+        );
+        save("DSCF0848-lips-pasted", &made.raster);
+        assert!(made.part.is_none() && share(&made.raster) > 0.0);
+        // A group frame's person on the portrait: someone else, nobody.
+        let b = develop("DSCF0835", &plain, 0, &mut ai);
+        let made = ai
+            .raster(
+                b.stamp,
+                &b.image,
+                &b.edit,
+                b.source,
+                b.turn,
+                (5, 0),
+                &part("Hair", Some(group[0].person())),
+                None,
+            )
+            .unwrap();
+        println!(
+            "group #0 pasted onto DSCF0835: {}",
+            match &made.part {
+                None => "decided".to_string(),
+                Some(Unresolved::Nobody) => "nobody".to_string(),
+                Some(Unresolved::Ask(a)) => format!("asked ({:?}), guess {:?}", a.why, a.guess),
+            }
+        );
+        // Not her: asked as someone else's, the portrait's one face
+        // outlined and no guess, never the stranger decided alone.
+        match &made.part {
+            Some(Unresolved::Ask(ask)) => {
+                assert_eq!(ask.why, crate::ai::Asking::SomeoneElse);
+                assert_eq!((ask.people.len(), ask.guess), (1, None));
+            }
+            other => panic!("group #0 pasted onto DSCF0835: {other:?}"),
+        }
+        assert!(made.raster.data().iter().all(|&v| v == 0));
+
+        // A couple's person pasted onto the other couple: asked.
+        let mut couples = Vec::new();
+        for stem in ["4Z4A3846", "5M0A0504"] {
+            let c = develop(stem, &plain, 0, &mut ai);
+            let (people, _, _) = ai.people(c.stamp, &c.image, c.source, c.turn).unwrap();
+            println!("{stem}: {} people", people.len());
+            dump(stem, &people);
+            couples.push((c, people));
+        }
+        let (c, _) = &couples[1];
+        let made = ai
+            .raster(
+                c.stamp,
+                &c.image,
+                &c.edit,
+                c.source,
+                c.turn,
+                (6, 0),
+                &part("Lips", Some(couples[0].1[0].person())),
+                None,
+            )
+            .unwrap();
+        match &made.part {
+            Some(Unresolved::Ask(ask)) => {
+                println!("4Z4A3846 #0 onto 5M0A0504: asked, guess {:?}", ask.guess);
+                assert_eq!(ask.why, crate::ai::Asking::Unsure);
+            }
+            other => panic!("4Z4A3846 #0 onto 5M0A0504: {other:?}"),
+        }
     }
 }

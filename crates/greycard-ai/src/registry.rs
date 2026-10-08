@@ -209,7 +209,7 @@ const SAM_LICENSE: &str = concat!(
     include_str!("sam_license.txt"),
 );
 
-/// SAM 3 (Meta): segment by a phrase, for the Parts mask. Our export
+/// SAM 3 (Meta): segment by a phrase, for the People mask. Our export
 /// of Meta's `sam3.pt` (`tools/ai/sam3_trial/export.py` and
 /// `fp16.py`): the image encoder in fp16, once a picture or a crop;
 /// the decoder once a phrase; and the phrases' decoder inputs as a
@@ -217,7 +217,7 @@ const SAM_LICENSE: &str = concat!(
 pub const SAM3: Model = Model {
     id: "sam3-fp16-top16-1",
     name: "SAM 3 (Meta), fp16 image encoder, ONNX export by greycard",
-    purpose: "the Parts mask: a part of a person, asked for by name",
+    purpose: "the People mask: a person, or a part of one, asked for by name",
     source: "https://github.com/facebookresearch/sam3 and https://huggingface.co/facebook/sam3, exported by https://github.com/jessolmstead/greycard (tools/ai/sam3_trial/export.py, fp16.py, table.py)",
     license: License {
         name: "SAM License",

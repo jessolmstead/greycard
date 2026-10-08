@@ -45,6 +45,17 @@ export struct MaskBox {
     h: float,
 }
 
+/// A person a part may be of, outlined on the view while one is to
+/// be picked: their face's box, logical pixels, and whether it is the
+/// guess, drawn more strongly (a highlight, never a pick).
+export struct PersonBox {
+    x: float,
+    y: float,
+    w: float,
+    h: float,
+    guess: bool,
+}
+
 /// A pick for an object on the view: on it, or not on it.
 export struct MaskPick {
     x: float,
