@@ -4077,7 +4077,13 @@ mod tests {
         press(&app, "c");
         assert!(ends.borrow().is_empty(), "{:?}", ends.borrow());
         assert!(seen.borrow().iter().all(|r| r.0 == 0.0));
-        // Home put the cursor before the "a", End after it.
-        assert_eq!(app.get_filter_text(), "bac");
+        // Home put the cursor before the "a", End after it. Slint leaves
+        // the cursor where it is on Apple systems, as a Mac field does.
+        let typed = if cfg!(target_vendor = "apple") {
+            "abc"
+        } else {
+            "bac"
+        };
+        assert_eq!(app.get_filter_text(), typed);
     }
 }
