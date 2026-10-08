@@ -19,11 +19,6 @@ the reasoning lives in `docs/notes.md`.
       away loses its last edit at quit: its save goes out only as a
       job, which the closing window never sends. A bounded write to
       the copy at quit, or the reader closed after the last save (§261)
-- [ ] When exporting directly to a subfolder the blue button says
-      "Choose File" but it just exports directly with no file picker.
-      this should be clearer that in that mode it puts it in the
-      source parent directory under a subfolder.
-- [ ] Name increment should add a -1, not a space (2) etc
 
 ## Next: 0.5.0
 

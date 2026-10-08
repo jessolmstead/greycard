@@ -65,6 +65,21 @@ export component ExportSheet inherits Rectangle {
     in-out property <int> frame-width;
     in-out property <int> frame-height;
     pure callback custom-edge(string) -> int;
+    pure callback export-subfolder-name(string) -> string;
+    pure callback export-button-label(string, int, int) -> string;
+    pure callback export-subfolder-problem(string) -> string;
+    /// The folder an export goes into without a chooser, as the export
+    /// reads the Subfolder field; empty when it asks where.
+    property <string> sub-name: root.export-subfolder-name(root.export-subfolder);
+    property <string> sub-problem: root.export-subfolder-problem(root.export-subfolder);
+    /// The primary button: what it does, and no ellipsis when no
+    /// dialog follows.
+    property <string> export-label: root.export-button-label(root.export-subfolder, root.set-count, root.label-room);
+    /// How many characters of its label the primary button holds: the
+    /// sheet's full row less the icon and paddings, at a conservative
+    /// 7px a character (font-sm, medium weight; the system font sets
+    /// the real width, so the button also elides what still overflows).
+    property <int> label-room: max(12, floor((root.sheet-width - 2 * Theme.space-5 - Theme.icon - 3 * Theme.space-3) / 7px));
     /// The long edge the sheet asks for; 0 is the picture's own.
     pure function export-edge() -> int {
         if (root.export-size == "Full") { return 0; }
@@ -108,11 +123,12 @@ export component ExportSheet inherits Rectangle {
     pure callback export-preset-exists(string) -> bool;
     property <bool> naming: false;
     property <string> new-name;
+    property <length> sheet-width: 420px;
 
     background: #000000a0;
     TouchArea { clicked => { root.export-open = false; } }
     Rectangle {
-        width: 420px;
+        width: root.sheet-width;
         // The header and the buttons always show; the choices between
         // them scroll when the window is too short for all of them.
         height: min(header.preferred-height + body.preferred-height + footer.preferred-height + 2px,
@@ -287,6 +303,17 @@ export component ExportSheet inherits Rectangle {
                             placeholder-text: "None: ask where";
                         }
                     }
+                    // Always there, so the sheet does not move as the
+                    // field is typed in: blank when there is nothing to say.
+                    Text {
+                        text: root.sub-name != "" ? "Saved in " + root.sub-name + " beside each original."
+                            : root.sub-problem != "" ? root.sub-problem : " ";
+                        color: root.sub-problem != "" ? Theme.label-yellow : Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        // Any character may break, so a long run
+                        // without a space never widens the sheet.
+                        wrap: char-wrap;
+                    }
                     HorizontalLayout {
                         spacing: Theme.space-2;
                         Text { text: "If it exists"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
@@ -388,12 +415,17 @@ export component ExportSheet inherits Rectangle {
                         text: "Add to queue...";
                         clicked => { root.export-open = false; root.queue-add(); }
                     }
-                    PanelButton {
-                        text: root.set-count > 1 ? "Export " + root.set-count + " frames..." : "Choose file...";
-                        icon: @image-url("../icons/image-down.svg");
-                        primary: true;
-                        clicked => { root.export-open = false; root.export(); }
-                    }
+                }
+                // Its own row in every state, so the footer keeps its
+                // shape however long the label; a long subfolder is cut
+                // at the front to fit, and the end of anything that
+                // still does not is elided.
+                PanelButton {
+                    text: root.export-label;
+                    icon: @image-url("../icons/image-down.svg");
+                    primary: true;
+                    enabled: root.sub-problem == "";
+                    clicked => { root.export-open = false; root.export(); }
                 }
                 // The queue: its count, run it, or clear it after asking.
                 if root.queue-sets > 0 && !root.confirm-clear: HorizontalLayout {

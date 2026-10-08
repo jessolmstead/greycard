@@ -259,18 +259,21 @@ pub(crate) fn plan(
             turn: sidecar.turn,
             seed_blend: seed,
             out: PathBuf::new(),
+            moved_from: None,
         });
     }
 
     let (folder, settings, preset_name) = if into_folder {
         let sources: Vec<PathBuf> = frames.iter().map(|f| f.source.clone()).collect();
-        for (frame, out) in frames.iter_mut().zip(queue::names(
+        for (frame, (out, moved_from)) in frames.iter_mut().zip(queue::named(
             &sources,
             Some(target),
             None,
             sheet_settings.format,
+            sheet.on_exists(),
         )) {
             frame.out = out;
+            frame.moved_from = moved_from;
         }
         (Some(target.to_path_buf()), sheet_settings, preset_name)
     } else {

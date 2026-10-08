@@ -1171,7 +1171,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
             let (done, finished) = crate::queue::step(&set, index, &frame.source, || {
                 // The name the policy chose, which the status line says:
                 // the one written, not the one asked for.
-                let resolved = set.on_exists.resolve(&frame.out);
+                let resolved = crate::queue::resolve(&set, &frame);
                 deliver(Outcome::SetFrameStarted {
                     set: set.clone(),
                     index,
@@ -3427,6 +3427,7 @@ mod tests {
                     edit: Edit::default(),
                     turn: 0,
                     seed_blend: false,
+                    moved_from: None,
                     out: dir.join("out").join(format!("{n}.jpg")),
                 }
             })

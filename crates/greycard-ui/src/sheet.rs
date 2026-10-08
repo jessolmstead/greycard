@@ -99,6 +99,19 @@ impl Default for Sheet {
     }
 }
 
+/// A reason as a sentence: a capital first, a full stop last.
+fn sentence(reason: &str) -> String {
+    let mut chars = reason.chars();
+    let Some(first) = chars.next() else {
+        return String::new();
+    };
+    let mut out: String = first.to_uppercase().chain(chars).collect();
+    if !out.ends_with('.') {
+        out.push('.');
+    }
+    out
+}
+
 impl Sheet {
     /// The export these choices ask for. A name from another version
     /// is the default's. A text or image mark with nothing to draw is
@@ -151,6 +164,64 @@ impl Sheet {
             return Err(format!("the subfolder {typed} names no folder"));
         }
         Ok(Some(path))
+    }
+
+    /// The folder name the export will use for a typed `Subfolder`,
+    /// as the sheet shows it (`export/web`, always with `/`), and the
+    /// reason it is refused when it is. Both empty when none is typed.
+    /// It reads the field through [`Sheet::subfolder`], the one the
+    /// export itself goes by, so a label can never name a folder the
+    /// export would not write to.
+    pub fn subfolder_shown(typed: &str) -> (String, String) {
+        let sheet = Sheet {
+            subfolder: typed.into(),
+            ..Sheet::default()
+        };
+        match sheet.subfolder() {
+            Ok(None) => (String::new(), String::new()),
+            Ok(Some(path)) => {
+                let parts: Vec<_> = path.iter().map(|c| c.to_string_lossy()).collect();
+                (parts.join("/"), String::new())
+            }
+            Err(e) => (String::new(), sentence(&e)),
+        }
+    }
+
+    /// The export sheet's main button for a set of `count` frames:
+    /// with a subfolder it says where the files go and has no ellipsis
+    /// (no dialog follows); with none, the chooser's ellipsis; with
+    /// one the export would refuse, neither (the click only explains).
+    pub fn export_label(typed: &str, count: usize, room: usize) -> String {
+        let (name, problem) = Self::subfolder_shown(typed);
+        let frames = if count > 1 {
+            format!("Export {count} frames")
+        } else {
+            "Export".to_string()
+        };
+        if !name.is_empty() {
+            // `room` is the whole label's; the name gets what the rest
+            // leaves, never less than a few characters.
+            let head = format!("{frames} to ");
+            let left = room.saturating_sub(head.chars().count()).max(4);
+            format!("{head}{}", Self::elide_front(&name, left))
+        } else if !problem.is_empty() {
+            frames
+        } else if count > 1 {
+            format!("{frames}...")
+        } else {
+            "Choose file...".to_string()
+        }
+    }
+
+    /// `name` kept to `room` characters for a button, the front cut
+    /// off (the end of a path is the folder that matters) and marked.
+    pub fn elide_front(name: &str, room: usize) -> String {
+        let count = name.chars().count();
+        if count <= room {
+            return name.to_string();
+        }
+        let tail: String = name.chars().skip(count - (room - 1)).collect();
+        format!("\u{2026}{tail}")
     }
 
     fn watermark(&self) -> Option<Mark> {
@@ -471,6 +542,26 @@ mod tests {
         assert!(with("/tmp/export").is_err());
         assert!(with(".").is_err());
         assert_eq!(with("./export/."), Ok(Some(PathBuf::from("export"))));
+        // What the labels show is what the export goes by.
+        let shown = |typed: &str| Sheet::subfolder_shown(typed);
+        assert_eq!(shown(""), (String::new(), String::new()));
+        assert_eq!(shown("   "), (String::new(), String::new()));
+        assert_eq!(shown(" ./export//web/ ").0, "export/web");
+        assert!(shown("../out").0.is_empty() && !shown("../out").1.is_empty());
+        assert!(shown(".").0.is_empty() && !shown(".").1.is_empty());
+        assert_eq!(Sheet::elide_front("export", 10), "export");
+        // The button: the chooser, the folder, or neither.
+        let label = Sheet::export_label;
+        assert_eq!(label("", 1, 60), "Choose file...");
+        assert_eq!(label("  ", 3, 60), "Export 3 frames...");
+        assert_eq!(label(" ./export/web/ ", 1, 60), "Export to export/web");
+        assert_eq!(label("export", 4, 60), "Export 4 frames to export");
+        assert_eq!(label("../out", 1, 60), "Export");
+        assert_eq!(label("/tmp/x", 2, 60), "Export 2 frames");
+        assert_eq!(
+            Sheet::elide_front("exports/for-the-web", 10),
+            "\u{2026}r-the-web"
+        );
         // A settings file from before the field reads as asking.
         let old: Sheet = serde_json::from_str(r#"{"export_format":"PNG"}"#).unwrap();
         assert_eq!(old.subfolder(), Ok(None));

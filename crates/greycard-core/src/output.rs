@@ -5,13 +5,12 @@
 //! [`OnExists::resolve`], so nothing is ever replaced without either
 //! the user's word for it or a line saying so.
 
-use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 /// What to do when the file asked for is already there.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum OnExists {
-    /// Write beside it under the first free ` (2)`, ` (3)`... name.
+    /// Write beside it under the first free `-1`, `-2`... name.
     #[default]
     Increment,
     /// Write over it.
@@ -117,44 +116,44 @@ impl Resolved {
     }
 }
 
-/// The first free ` (2)`, ` (3)`... beside `path`. A name that ends in
-/// a number of its own counts from there, so a second export of
-/// `a (2).jpg` is `a (3).jpg` and not `a (2) (2).jpg`.
+/// The first free `-1`, `-2`... beside `path`, before its extension:
+/// `photo.jpg` is `photo-1.jpg`, then `photo-2.jpg`. The name is taken
+/// as it is: a stem that ends in a dash and a number (`DSC-0042`,
+/// `photo-1`) is never read as a counter, since the next number could
+/// be another frame's real name; `DSC-0042.jpg` is `DSC-0042-1.jpg`.
 pub fn free_name(path: &Path) -> Option<PathBuf> {
-    let stem = base_stem(path.file_stem()?);
-    let extension = path.extension();
-    let parent = path.parent();
-    for n in 2..=9999u32 {
-        let mut name = stem.clone();
-        name.push(format!(" ({n})"));
-        if let Some(e) = extension {
-            name.push(".");
-            name.push(e);
-        }
-        let candidate = match parent {
-            Some(dir) => dir.join(&name),
-            None => PathBuf::from(&name),
-        };
-        if !candidate.exists() {
-            return Some(candidate);
-        }
-    }
-    None
+    path.file_stem()?;
+    (1..=9999u32)
+        .map(|n| numbered(path, n))
+        .find(|candidate| !candidate.exists())
 }
 
-/// A stem without the ` (2)` an earlier increment gave it.
-fn base_stem(stem: &OsStr) -> OsString {
-    let Some(text) = stem.to_str() else {
-        return stem.to_os_string();
+/// The longest a file name goes on the file systems we write to, in
+/// bytes.
+pub const NAME_MAX: usize = 255;
+
+/// `path` with `-n` before its extension. A stem too long to take the
+/// suffix within [`NAME_MAX`] bytes loses the end of itself, on a
+/// character's edge, so the name still writes.
+pub fn numbered(path: &Path, n: u32) -> PathBuf {
+    let stem = path.file_stem().unwrap_or_default();
+    let suffix = format!("-{n}");
+    let tail = path.extension().map_or(0, |e| e.len() + 1);
+    let mut name = match stem.to_str() {
+        Some(text) => {
+            let room = NAME_MAX.saturating_sub(suffix.len() + tail).max(1);
+            let mut cut = room.min(text.len());
+            while !text.is_char_boundary(cut) {
+                cut -= 1;
+            }
+            std::ffi::OsString::from(&text[..cut])
+        }
+        None => stem.to_os_string(),
     };
-    OsString::from(trim_number(text).unwrap_or(text))
-}
-
-/// `name (2)` without its number; none when it has none.
-fn trim_number(text: &str) -> Option<&str> {
-    let (head, number) = text.strip_suffix(')')?.rsplit_once(" (")?;
-    if head.is_empty() || number.is_empty() || !number.bytes().all(|b| b.is_ascii_digit()) {
-        return None;
+    name.push(suffix);
+    if let Some(e) = path.extension() {
+        name.push(".");
+        name.push(e);
     }
-    Some(head)
+    path.with_file_name(name)
 }

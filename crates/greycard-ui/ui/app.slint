@@ -1278,6 +1278,13 @@ export component App inherits Window {
     in-out property <int> frame-height: 0;
     /// The typed text as a long edge, or 0 when it is not a size.
     pure callback custom-edge(string) -> int;
+    /// The typed Subfolder as the export reads it: its name, the
+    /// export button's label for it, a set of that size and room for so
+    /// many characters, and why it is refused (each empty when
+    /// there is nothing to say).
+    pure callback export-subfolder-name(string) -> string;
+    pure callback export-button-label(string, int, int) -> string;
+    pure callback export-subfolder-problem(string) -> string;
     in-out property <string> export-space: "sRGB";
     in-out property <bool> export-embed: true;
     in-out property <string> export-sharpen: "Standard";
@@ -3066,6 +3073,9 @@ export component App inherits Window {
         frame-width <=> root.frame-width;
         frame-height <=> root.frame-height;
         custom-edge(a) => { return root.custom-edge(a); }
+        export-subfolder-name(a) => { return root.export-subfolder-name(a); }
+        export-button-label(a, b, c) => { return root.export-button-label(a, b, c); }
+        export-subfolder-problem(a) => { return root.export-subfolder-problem(a); }
         export-space <=> root.export-space;
         export-embed <=> root.export-embed;
         export-sharpen <=> root.export-sharpen;

@@ -599,7 +599,7 @@ export component PanelButton inherits Rectangle {
     callback clicked();
     height: Theme.control-height;
     border-radius: Theme.radius-md;
-    border-width: root.primary ? 0 : 1px;
+    border-width: root.primary && root.enabled ? 0 : 1px;
     border-color: fs.has-focus ? Theme.focus-ring : Theme.border-strong;
     background: !root.enabled ? Theme.base
         : root.primary ? (ta.pressed ? Theme.accent-pressed : ta.has-hover ? Theme.accent-hover : Theme.accent)
@@ -612,17 +612,18 @@ export component PanelButton inherits Rectangle {
         padding-right: root.text == "" ? 0 : Theme.space-3;
         if root.icon.width > 0: Image {
             source: root.icon;
-            colorize: root.primary ? #101010 : (root.enabled ? Theme.text : Theme.text-muted);
+            colorize: !root.enabled ? Theme.text-muted : root.primary ? #101010 : Theme.text;
             width: Theme.icon;
             height: Theme.icon;
             y: (parent.height - self.height) / 2;
         }
         if root.text != "": Text {
             text: root.text;
-            color: root.primary ? #101010 : (root.enabled ? Theme.text : Theme.text-muted);
+            color: !root.enabled ? Theme.text-muted : root.primary ? #101010 : Theme.text;
             font-size: Theme.font-sm;
             font-weight: Theme.weight-medium;
             vertical-alignment: center;
+            overflow: elide;
         }
     }
     fs := FocusScope {

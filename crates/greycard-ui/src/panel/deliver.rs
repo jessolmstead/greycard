@@ -994,17 +994,26 @@ pub(crate) fn start_set(
         return None;
     }
     let sources: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
-    let outs = queue::names(&sources, folder.as_deref(), sub.as_deref(), settings.format);
+    let outs = queue::named(
+        &sources,
+        folder.as_deref(),
+        sub.as_deref(),
+        settings.format,
+        on_exists,
+    );
     let frames: Vec<queue::Frame> = frames
         .into_iter()
         .zip(outs)
-        .map(|((source, edit, turn, seed_blend), out)| queue::Frame {
-            source,
-            edit,
-            turn,
-            seed_blend,
-            out,
-        })
+        .map(
+            |((source, edit, turn, seed_blend), (out, moved_from))| queue::Frame {
+                source,
+                edit,
+                turn,
+                seed_blend,
+                out,
+                moved_from,
+            },
+        )
         .collect();
     let set = Arc::new(
         queue::Set::new(frames.len(), folder, settings, on_exists)
@@ -1061,11 +1070,16 @@ fn start_or_ask(
 ) {
     if on_exists == export::OnExists::Overwrite {
         let sources: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
-        let there: Vec<PathBuf> =
-            queue::names(&sources, folder.as_deref(), sub.as_deref(), settings.format)
-                .into_iter()
-                .filter(|p| p.exists())
-                .collect();
+        let there: Vec<PathBuf> = queue::names(
+            &sources,
+            folder.as_deref(),
+            sub.as_deref(),
+            settings.format,
+            on_exists,
+        )
+        .into_iter()
+        .filter(|p| p.exists())
+        .collect();
         if !there.is_empty() {
             let title = match there.as_slice() {
                 [one] => format!("{} is there already", file_name(one)),
@@ -1116,6 +1130,16 @@ fn overwrite_answered(st: &mut State, app: &App, answer: i32) {
     );
 }
 
+/// The Subfolder field as the export reads it: the button and the
+/// line under the field say where the files go, or why they won't.
+fn wire_subfolder(app: &App) {
+    app.on_export_subfolder_name(|typed| Sheet::subfolder_shown(&typed).0.into());
+    app.on_export_button_label(|typed, set, room| {
+        Sheet::export_label(&typed, set.max(1) as usize, room.max(0) as usize).into()
+    });
+    app.on_export_subfolder_problem(|typed| Sheet::subfolder_shown(&typed).1.into());
+}
+
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
@@ -1144,6 +1168,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
         });
     }
+    wire_subfolder(app);
     // The sheet's typed size, read the way the export reads it.
     app.on_custom_edge(|text| export::parse_edge(&text).map_or(0, |n| n as i32));
     // Any choice on the sheet: is it still the preset?
@@ -1745,6 +1770,42 @@ mod tests {
         assert_eq!(set.sub.as_deref(), Some(Path::new("export")));
         assert_eq!(set.on_exists, export::OnExists::Skip);
         assert!(set.place().starts_with("into export"), "{}", set.place());
+    }
+
+    /// The button the sheet shows says what a click does, by the same
+    /// reading of the Subfolder field the export goes by: the Rust
+    /// callback the sheet binds is the one asked here.
+    #[test]
+    fn the_export_button_names_the_subfolder_it_will_use() {
+        let app = crate::testing::window(2);
+        wire_subfolder(&app);
+        let label = |typed: &str, set: i32| app.invoke_export_button_label(typed.into(), set, 60);
+        for typed in ["", "   "] {
+            assert_eq!(label(typed, 1), "Choose file...");
+            assert_eq!(label(typed, 3), "Export 3 frames...");
+        }
+        assert_eq!(label("export", 1), "Export to export");
+        assert_eq!(label("export", 4), "Export 4 frames to export");
+        let long = "a-very-long-subfolder/for-the-web-gallery";
+        // Cut at the front to the room the button has.
+        let narrow = app.invoke_export_button_label(long.into(), 1, 20);
+        assert_eq!(narrow.chars().count(), 20, "{narrow}");
+        assert!(narrow.starts_with("Export to \u{2026}"), "{narrow}");
+        assert!(narrow.ends_with("gallery"), "{narrow}");
+        assert_eq!(label(long, 1), format!("Export to {long}"));
+        assert_eq!(app.invoke_export_subfolder_name(long.into()), long);
+        for typed in ["../out", "/tmp/x", "."] {
+            assert_eq!(label(typed, 1), "Export", "{typed}");
+            assert!(!app.invoke_export_subfolder_problem(typed.into()).is_empty());
+            // And a click on it is refused, as the label implies.
+            let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+            state.borrow_mut().current = Some(0);
+            app.set_export_subfolder(typed.into());
+            app.set_export_open(false);
+            app.invoke_export();
+            assert!(app.get_export_open(), "{typed}");
+            assert!(state.borrow().exporting.is_none(), "{typed}");
+        }
     }
 
     #[test]

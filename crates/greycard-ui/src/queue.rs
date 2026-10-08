@@ -10,6 +10,7 @@
 //! status line says, so it is tested without a raw or a window.
 
 use crate::export::{Format, OnExists, Settings};
+use greycard_core::output::Resolved;
 use greycard_edit::Edit;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -28,6 +29,11 @@ pub struct Frame {
     pub seed_blend: bool,
     /// The name asked for; the policy may write another beside it.
     pub out: PathBuf,
+    /// When naming the set moved `out` off a file already on disk
+    /// ([`named`]), the name it would have had: the export then says
+    /// so, as the policy does for a name taken at the moment of
+    /// writing.
+    pub moved_from: Option<PathBuf>,
 }
 
 /// What came of one frame.
@@ -167,6 +173,21 @@ pub fn step(set: &Set, index: usize, source: &Path, work: impl FnOnce() -> Done)
     (done, set.is_last(index))
 }
 
+/// What the set's policy makes of frame's name at the moment of
+/// writing, with a name [`named`] moved off a file on disk told as
+/// the policy tells a name taken then: the file was there already and
+/// this one is written beside it.
+pub fn resolve(set: &Set, frame: &Frame) -> Resolved {
+    let resolved = set.on_exists.resolve(&frame.out);
+    match (resolved, &frame.moved_from) {
+        (Resolved::Free(path), Some(asked)) => Resolved::Renamed {
+            path,
+            asked: asked.clone(),
+        },
+        (resolved, _) => resolved,
+    }
+}
+
 fn file_name(path: &Path) -> String {
     path.file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -178,8 +199,8 @@ fn file_name(path: &Path) -> String {
 /// own file's folder by that name, or with no `sub` either (no chooser
 /// to ask) beside its own file under the `.greycard` name the editor
 /// writes there, which no camera does. Two frames of one name (a raw and its camera
-/// JPEG) are told apart as the policy would tell them, ` (2)` on the
-/// second, so neither writes over the other whatever the policy says;
+/// JPEG) are told apart as the policy would tell them, `-1` on the
+/// second (`-2` on a third), so neither writes over the other whatever the policy says;
 /// the names are compared as a case-blind file system compares them.
 /// A name that would be the source itself (a JPEG exported as a JPEG
 /// into its own folder) takes the `.greycard` name the editor writes
@@ -189,15 +210,38 @@ pub fn names(
     folder: Option<&Path>,
     sub: Option<&Path>,
     format: Format,
+    on_exists: OnExists,
 ) -> Vec<PathBuf> {
+    named(sources, folder, sub, format, on_exists)
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect()
+}
+
+/// [`names`], and with each the name it was moved off when a file
+/// already on disk (under Increment) took it, so the export can say
+/// "was there already" for it as it does for a single file.
+pub fn named(
+    sources: &[PathBuf],
+    folder: Option<&Path>,
+    sub: Option<&Path>,
+    format: Format,
+    on_exists: OnExists,
+) -> Vec<(PathBuf, Option<PathBuf>)> {
     let key = |p: &Path| p.to_string_lossy().to_lowercase();
     // Every source of the set is taken before any name is given: a
     // frame's export must never land on another frame's file (a raw's
     // `X.jpg` on the camera's `X.JPG`, which a case-blind file system
     // holds as one), or that frame would be read back from the export.
     let mut taken: Vec<String> = sources.iter().map(|s| key(s)).collect();
+    // Under Increment a file already there is taken too, so a pair
+    // sharing a name goes to the next two free ones (`X-1`, `X-2`)
+    // rather than the second hunting past the first on its own.
+    // Overwrite and Skip leave the name to the policy.
     let clashes = |path: &Path, taken: &[String]| {
-        taken.contains(&key(path)) || sources.iter().any(|s| same_file(path, s))
+        taken.contains(&key(path))
+            || sources.iter().any(|s| same_file(path, s))
+            || (on_exists == OnExists::Increment && path.exists())
     };
     sources
         .iter()
@@ -218,17 +262,15 @@ pub fn names(
                 path = folder.join(format!("{stem}.greycard.{ext}"));
             }
             let base = path.clone();
-            let mut n = 2;
+            let mut n = 1;
+            let mut moved = false;
             while clashes(&path, &taken) {
-                let stem = base
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().into_owned())
-                    .unwrap_or_default();
-                path = folder.join(format!("{stem} ({n}).{ext}"));
+                moved |= on_exists == OnExists::Increment && path.exists();
+                path = greycard_core::output::numbered(&base, n);
                 n += 1;
             }
             taken.push(key(&path));
-            path
+            (path, moved.then_some(base))
         })
         .collect()
 }
@@ -411,21 +453,39 @@ mod tests {
             PathBuf::from("b/img_1.CR3"),
             PathBuf::from("a/IMG_2.CR3"),
         ];
-        let got = names(&files, Some(folder), None, Format::Jpeg);
+        let got = names(
+            &files,
+            Some(folder),
+            None,
+            Format::Jpeg,
+            OnExists::Increment,
+        );
         assert_eq!(
             got,
             vec![
                 folder.join("IMG_1.jpg"),
-                folder.join("IMG_1 (2).jpg"),
-                folder.join("img_1 (3).jpg"),
+                folder.join("IMG_1-1.jpg"),
+                folder.join("img_1-2.jpg"),
                 folder.join("IMG_2.jpg"),
             ]
         );
         // A JPEG into its own folder as a JPEG is not written over.
         let a = Path::new("a");
-        let own = names(&[a.join("IMG_3.JPG")], Some(a), None, Format::Jpeg);
+        let own = names(
+            &[a.join("IMG_3.JPG")],
+            Some(a),
+            None,
+            Format::Jpeg,
+            OnExists::Increment,
+        );
         assert_eq!(own, vec![a.join("IMG_3.greycard.jpg")]);
-        let tiff = names(&[a.join("IMG_3.JPG")], Some(a), None, Format::Tiff);
+        let tiff = names(
+            &[a.join("IMG_3.JPG")],
+            Some(a),
+            None,
+            Format::Tiff,
+            OnExists::Increment,
+        );
         assert_eq!(tiff, vec![a.join("IMG_3.tif")]);
         // A raw's export never lands on the camera's JPEG beside it,
         // which is a frame of the set too; that JPEG's own export
@@ -435,16 +495,18 @@ mod tests {
             Some(a),
             None,
             Format::Jpeg,
+            OnExists::Increment,
         );
-        assert_eq!(pair, vec![a.join("X (2).jpg"), a.join("X.greycard.jpg")]);
+        assert_eq!(pair, vec![a.join("X-1.jpg"), a.join("X.greycard.jpg")]);
         // The same in any case: one file on macOS and Windows.
         let upper = names(
             &[a.join("A.CR3"), a.join("A.JPG")],
             Some(a),
             None,
             Format::Jpeg,
+            OnExists::Increment,
         );
-        assert_eq!(upper, vec![a.join("A (2).jpg"), a.join("A.greycard.jpg")]);
+        assert_eq!(upper, vec![a.join("A-1.jpg"), a.join("A.greycard.jpg")]);
         // Beside the files, a source already named `.greycard` is not
         // written over by another frame's export.
         let beside = names(
@@ -452,11 +514,12 @@ mod tests {
             None,
             None,
             Format::Jpeg,
+            OnExists::Increment,
         );
         assert_eq!(
             beside,
             vec![
-                a.join("X.greycard (2).jpg"),
+                a.join("X.greycard-1.jpg"),
                 a.join("X.greycard.greycard.jpg")
             ]
         );
@@ -466,13 +529,11 @@ mod tests {
             None,
             None,
             Format::Jpeg,
+            OnExists::Increment,
         );
         assert_eq!(
             beside,
-            vec![
-                a.join("IMG_4.greycard.jpg"),
-                a.join("IMG_4.greycard (2).jpg")
-            ]
+            vec![a.join("IMG_4.greycard.jpg"), a.join("IMG_4.greycard-1.jpg")]
         );
     }
 
@@ -488,6 +549,7 @@ mod tests {
             None,
             Some(sub),
             Format::Jpeg,
+            OnExists::Increment,
         );
         // No `.greycard`: the subfolder is not where the camera writes.
         // Two of one name in one subfolder are still told apart.
@@ -496,13 +558,135 @@ mod tests {
             vec![
                 a.join("export/IMG_1.jpg"),
                 b.join("export/IMG_2.jpg"),
-                a.join("export/IMG_1 (2).jpg"),
+                a.join("export/IMG_1-1.jpg"),
+            ]
+        );
+        // A camera's own `-0042` is a name, not a counter: three
+        // frames of one such name become `-1` and `-2`, never `DSC-0043`.
+        let cam = names(
+            &[
+                a.join("DSC-0042.CR3"),
+                a.join("DSC-0042.JPG"),
+                a.join("DSC-0042.DNG"),
+            ],
+            None,
+            Some(sub),
+            Format::Jpeg,
+            OnExists::Increment,
+        );
+        assert_eq!(
+            cam,
+            vec![
+                a.join("export/DSC-0042.jpg"),
+                a.join("export/DSC-0042-1.jpg"),
+                a.join("export/DSC-0042-2.jpg"),
             ]
         );
         // A chosen folder wins over the subfolder.
-        let chosen = names(&[a.join("IMG_1.CR3")], Some(b), Some(sub), Format::Jpeg);
+        let chosen = names(
+            &[a.join("IMG_1.CR3")],
+            Some(b),
+            Some(sub),
+            Format::Jpeg,
+            OnExists::Increment,
+        );
         assert_eq!(chosen, vec![b.join("IMG_1.jpg")]);
         assert_eq!(place(None, Some(sub)), "into export beside their files");
         assert_eq!(place(Some(b), Some(sub)), "to b");
+    }
+
+    #[test]
+    fn a_pair_re_exported_goes_to_the_next_free_names_not_a_name_hunting_a_name() {
+        let dir = std::env::temp_dir().join(format!("greycard-names-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let pair = [dir.join("X.CR3"), dir.join("X.jpg")];
+        let touch = |p: PathBuf| std::fs::write(p, b"").unwrap();
+        // An earlier export left `X.jpg` there: the pair takes the
+        // next two free names.
+        touch(out.join("X.jpg"));
+        let first = names(&pair, Some(&out), None, Format::Jpeg, OnExists::Increment);
+        assert_eq!(first, vec![out.join("X-1.jpg"), out.join("X-2.jpg")]);
+        for p in first {
+            touch(p);
+        }
+        // Again, with those on disk: the next two, never `X-1-1`.
+        let again = names(&pair, Some(&out), None, Format::Jpeg, OnExists::Increment);
+        assert_eq!(again, vec![out.join("X-3.jpg"), out.join("X-4.jpg")]);
+        // Overwrite and Skip leave what is on disk to the policy.
+        for policy in [OnExists::Overwrite, OnExists::Skip] {
+            let got = names(&pair, Some(&out), None, Format::Jpeg, policy);
+            assert_eq!(got, vec![out.join("X.jpg"), out.join("X-1.jpg")]);
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_name_moved_off_a_file_on_disk_says_what_it_was_moved_from() {
+        let dir = std::env::temp_dir().join(format!("greycard-moved-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        std::fs::write(out.join("X.jpg"), b"").unwrap();
+        let sources = [dir.join("X.CR3"), dir.join("Y.CR3"), dir.join("X.jpg")];
+        let got = named(
+            &sources,
+            Some(&out),
+            None,
+            Format::Jpeg,
+            OnExists::Increment,
+        );
+        assert_eq!(
+            got,
+            vec![
+                (out.join("X-1.jpg"), Some(out.join("X.jpg"))),
+                (out.join("Y.jpg"), None),
+                // The camera's JPEG, a source: its name is X.jpg too.
+                (out.join("X-2.jpg"), Some(out.join("X.jpg"))),
+            ]
+        );
+        // With nothing on disk, nothing is said; the in-set `-1` is quiet.
+        let quiet = named(
+            &sources[..1],
+            Some(&dir.join("none")),
+            None,
+            Format::Jpeg,
+            OnExists::Increment,
+        );
+        assert_eq!(quiet[0].1, None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_moved_name_is_told_as_a_name_taken() {
+        let dir = std::env::temp_dir().join(format!("greycard-told-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let set = Set::new(
+            1,
+            Some(dir.clone()),
+            Settings::default(),
+            OnExists::Increment,
+        );
+        let frame = Frame {
+            source: dir.join("X.CR3"),
+            edit: Edit::default(),
+            turn: 0,
+            seed_blend: false,
+            out: dir.join("X-1.jpg"),
+            moved_from: Some(dir.join("X.jpg")),
+        };
+        let told = resolve(&set, &frame);
+        assert_eq!(
+            told.note().as_deref(),
+            Some("X.jpg was there already: wrote X-1.jpg")
+        );
+        let plain = Frame {
+            moved_from: None,
+            ..frame
+        };
+        assert_eq!(resolve(&set, &plain).note(), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

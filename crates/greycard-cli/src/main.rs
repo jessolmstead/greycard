@@ -199,7 +199,7 @@ enum Command {
         #[arg(long)]
         preview: Option<PathBuf>,
         /// What to do when an output file is there already: write
-        /// beside it under the first free " (2)" name, write over it,
+        /// beside it under the first free "-1" name, write over it,
         /// or leave it and write nothing
         #[arg(long, value_name = "WHAT", default_value = "increment",
               value_parser = on_exists_named)]

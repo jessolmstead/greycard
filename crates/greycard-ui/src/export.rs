@@ -1607,25 +1607,70 @@ mod tests {
         assert_eq!(
             OnExists::Increment.resolve(&asked),
             Resolved::Renamed {
-                path: dir.join("frame (2).jpg"),
+                path: dir.join("frame-1.jpg"),
                 asked: asked.clone(),
             }
         );
-        // With a (2) there already, the next free one.
-        touch(&dir.join("frame (2).jpg"));
-        touch(&dir.join("frame (3).jpg"));
+        // With a -1 there already, the next free one.
+        touch(&dir.join("frame-1.jpg"));
+        touch(&dir.join("frame-2.jpg"));
         assert_eq!(
             OnExists::Increment.resolve(&asked).path(),
-            Some(dir.join("frame (4).jpg").as_path())
+            Some(dir.join("frame-3.jpg").as_path())
         );
-        // Asked for the numbered name itself: counted from the stem it
-        // was made from, not numbered twice.
+        // A name that ends in a dash and a number is never a counter:
+        // a camera's `DSC-0042` clashes into `DSC-0042-1`, not the next
+        // frame's `DSC-0043`, and `frame-1` into `frame-1-1`.
+        let cam = dir.join("DSC-0042.jpg");
+        touch(&cam);
         assert_eq!(
-            OnExists::Increment
-                .resolve(&dir.join("frame (2).jpg"))
-                .path(),
-            Some(dir.join("frame (4).jpg").as_path())
+            OnExists::Increment.resolve(&cam).path(),
+            Some(dir.join("DSC-0042-1.jpg").as_path())
         );
+        assert_eq!(
+            OnExists::Increment.resolve(&dir.join("frame-1.jpg")).path(),
+            Some(dir.join("frame-1-1.jpg").as_path())
+        );
+        // An old ` (2)` is an ordinary name too.
+        touch(&dir.join("old (2).jpg"));
+        assert_eq!(
+            OnExists::Increment.resolve(&dir.join("old (2).jpg")).path(),
+            Some(dir.join("old (2)-1.jpg").as_path())
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    #[test]
+    fn a_numbered_name_still_fits_the_file_system() {
+        let dir = scratch("increment-long");
+        // A stem at the limit, with a multibyte character at the cut.
+        let stem = format!("{}\u{e9}", "a".repeat(250));
+        let asked = dir.join(format!("{stem}.jpg"));
+        let free = greycard_core::output::numbered(&asked, 1);
+        let name = free.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(name.len() <= 255, "{}", name.len());
+        assert!(name.ends_with("-1.jpg"), "{name}");
+        // It writes, and a second clash goes on to `-2` at the same length.
+        touch(&free);
+        assert!(free.exists());
+        let again = OnExists::Increment.resolve(&free);
+        assert!(again.path().is_some());
+        let long = dir.join(format!("{}.jpg", "b".repeat(251)));
+        touch(&long);
+        let first = OnExists::Increment
+            .resolve(&long)
+            .path()
+            .unwrap()
+            .to_path_buf();
+        assert!(first.file_name().unwrap().len() <= 255);
+        touch(&first);
+        let second = OnExists::Increment
+            .resolve(&long)
+            .path()
+            .unwrap()
+            .to_path_buf();
+        assert!(second.file_name().unwrap().len() <= 255);
+        assert_ne!(first, second);
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -1637,20 +1682,20 @@ mod tests {
         touch(&dotted);
         assert_eq!(
             OnExists::Increment.resolve(&dotted).path(),
-            Some(dir.join("IMG_1234.greycard (2).jpg").as_path())
+            Some(dir.join("IMG_1234.greycard-1.jpg").as_path())
         );
         let bare = dir.join("export");
         touch(&bare);
         assert_eq!(
             OnExists::Increment.resolve(&bare).path(),
-            Some(dir.join("export (2)").as_path())
+            Some(dir.join("export-1").as_path())
         );
         // A dotfile's name is its stem, not its extension.
         let dotfile = dir.join(".keep");
         touch(&dotfile);
         assert_eq!(
             OnExists::Increment.resolve(&dotfile).path(),
-            Some(dir.join(".keep (2)").as_path())
+            Some(dir.join(".keep-1").as_path())
         );
         crate::testing::remove_dir_retry(&dir);
     }

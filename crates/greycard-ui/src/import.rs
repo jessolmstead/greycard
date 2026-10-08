@@ -311,14 +311,14 @@ fn companion_reserve(item: &Item) -> usize {
         .saturating_sub(own)
 }
 
-/// `path` with ` (n)` before its extension, the name kept within
+/// `path` with `-n` before its extension, the name kept within
 /// [`naming::LONGEST`] less `reserve` however long it was.
 fn numbered(path: &Path, n: usize, reserve: usize) -> PathBuf {
     let tail = path
         .extension()
         .map(|e| format!(".{}", e.to_string_lossy()))
         .unwrap_or_default();
-    let suffix = format!(" ({n})");
+    let suffix = format!("-{n}");
     let room = naming::LONGEST.saturating_sub(tail.len() + suffix.len() + reserve);
     let stem = naming::with_tail(&stem_of(path), "");
     let mut cut = room.min(stem.len());
@@ -358,7 +358,7 @@ pub struct Report {
     /// Frames already imported: the same bytes under the destination,
     /// or a file the library holds with the same bytes.
     pub already: usize,
-    /// Frames whose name was another file's, given ` (2)` instead.
+    /// Frames whose name was another file's, given `-1` instead.
     pub renamed: usize,
     /// Companions not copied because their name was another file's.
     pub companions_left: usize,
@@ -435,7 +435,7 @@ impl Report {
         }
         if self.renamed > 0 {
             s.push_str(&format!(
-                ", {} renamed with (2) (the name was another file's)",
+                ", {} renamed with -1 (the name was another file's)",
                 self.renamed
             ));
         }
@@ -1350,12 +1350,12 @@ impl Run<'_> {
         land(from, to, want)
     }
 
-    /// `planned`, or ` (2)`, ` (3)` after it until the name is neither
+    /// `planned`, or `-1`, `-2` after it until the name is neither
     /// on disk nor given in this run; and whether a file that was on
     /// disk before this run moved it.
     fn free_name(&mut self, planned: &Path, reserve: usize) -> (PathBuf, bool) {
         let mut out = planned.to_path_buf();
-        let mut n = 2;
+        let mut n = 1;
         let mut moved = false;
         loop {
             let on_disk = std::fs::symlink_metadata(&out).is_ok();
@@ -1599,7 +1599,7 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
 /// the slow disk and may be the dying one. A name the backup already
 /// holds with these bytes (by size, head and tail, or every byte with
 /// Verify) is done; one holding other bytes moves the frame on to
-/// ` (2)`, ` (3)`, stopping at the first that is free or holds these
+/// `-1`, `-2`, stopping at the first that is free or holds these
 /// bytes, so a re-run never makes another copy. The companions follow
 /// the frame's backup name, as they follow its name in the destination.
 fn back_up(
@@ -1616,7 +1616,7 @@ fn back_up(
     let rel = frame.strip_prefix(&opts.destination).unwrap_or(frame);
     let planned = backup.join(rel);
     let mut b_frame = planned.clone();
-    let mut n = 2;
+    let mut n = 1;
     let held = loop {
         if std::fs::symlink_metadata(&b_frame).is_err() {
             break false;
@@ -1946,9 +1946,9 @@ mod tests {
     }
 
     /// A name that is there with other bytes is never
-    /// written over; the frame goes in as ` (2)` and the line says so.
+    /// written over; the frame goes in as `-1` and the line says so.
     #[test]
-    fn a_name_taken_by_another_file_goes_in_as_two() {
+    fn a_name_taken_by_another_file_goes_in_numbered() {
         let root = dir("taken");
         let card = root.join("card/DCIM");
         write(&card.join("IMG_0001.CR3"), b"from the card");
@@ -1963,16 +1963,16 @@ mod tests {
             b"last year's frame"
         );
         assert_eq!(
-            std::fs::read(dest.join("IMG_0001 (2).CR3")).unwrap(),
+            std::fs::read(dest.join("IMG_0001-1.CR3")).unwrap(),
             b"from the card"
         );
         // The JPEG follows its frame's new name.
         assert_eq!(
-            std::fs::read(dest.join("IMG_0001 (2).JPG")).unwrap(),
+            std::fs::read(dest.join("IMG_0001-1.JPG")).unwrap(),
             b"its jpeg"
         );
         assert!(
-            r.line(&dest).contains("1 renamed with (2)"),
+            r.line(&dest).contains("1 renamed with -1"),
             "{}",
             r.line(&dest)
         );
@@ -2009,7 +2009,7 @@ mod tests {
             b"first body"
         );
         assert_eq!(
-            std::fs::read(dest.join("IMG_0001 (2).CR3")).unwrap(),
+            std::fs::read(dest.join("IMG_0001-1.CR3")).unwrap(),
             b"second body"
         );
     }
@@ -2190,7 +2190,7 @@ mod tests {
         o.verify = true;
         let verified = go(&o);
         assert_eq!((verified.already, verified.frames), (0, 1), "{verified:?}");
-        assert_eq!(std::fs::read(dest.join("IMG_0001 (2).CR3")).unwrap(), body);
+        assert_eq!(std::fs::read(dest.join("IMG_0001-1.CR3")).unwrap(), body);
 
         let dest = root.join("tail");
         write(&dest.join("IMG_0001.CR3"), &tail);
@@ -2500,8 +2500,8 @@ mod tests {
     }
 
     /// A backup name holding other bytes moves the frame's backup on to
-    /// ` (2)`, and a re-run finds that copy rather than making ` (3)`;
-    /// the companion follows as `X (2).CR3.xmp`.
+    /// `-1`, and a re-run finds that copy rather than making `-2`;
+    /// the companion follows as `X-1.CR3.xmp`.
     #[test]
     fn a_backup_name_taken_is_numbered_once_and_found_again() {
         let root = dir("backup-names");
@@ -2516,11 +2516,11 @@ mod tests {
         let first = go(&o);
         assert_eq!(first.backed_up, 2, "{first:?}");
         assert_eq!(
-            std::fs::read(backup.join("IMG_0002 (2).CR3")).unwrap(),
+            std::fs::read(backup.join("IMG_0002-1.CR3")).unwrap(),
             b"the card's raw"
         );
         assert_eq!(
-            std::fs::read(backup.join("IMG_0002 (2).CR3.xmp")).unwrap(),
+            std::fs::read(backup.join("IMG_0002-1.CR3.xmp")).unwrap(),
             b"<x/>"
         );
         for _ in 0..2 {
@@ -2531,7 +2531,24 @@ mod tests {
         names.sort();
         assert_eq!(
             names,
-            vec!["IMG_0002 (2).CR3", "IMG_0002 (2).CR3.xmp", "IMG_0002.CR3"]
+            vec!["IMG_0002-1.CR3", "IMG_0002-1.CR3.xmp", "IMG_0002.CR3"]
+        );
+    }
+
+    /// The `-n` goes before the extension and the name is cut to make
+    /// room for it and the companion's tail, never the other way round.
+    #[test]
+    fn a_numbered_name_keeps_within_the_limit() {
+        let long = Path::new("d").join(format!("{}.CR3", "a".repeat(300)));
+        for (n, reserve) in [(1, 0), (2, 4), (10, 4)] {
+            let got = numbered(&long, n, reserve);
+            let name = name_of(&got);
+            assert!(name.len() + reserve <= naming::LONGEST, "{}", name.len());
+            assert!(name.ends_with(&format!("-{n}.CR3")), "{name}");
+        }
+        assert_eq!(
+            name_of(&numbered(Path::new("d/DSC-0042.CR3"), 1, 0)),
+            "DSC-0042-1.CR3"
         );
     }
 

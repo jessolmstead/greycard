@@ -98,7 +98,7 @@ With **Subfolder** empty, the button reads **Export 3 frames...** and
 asks for a folder. Each frame is written there under its own name with
 the format's extension: `IMG_0001.CR3` becomes `IMG_0001.jpg`. Two
 frames of one name, such as a raw and its camera JPEG, are told apart
-with ` (2)` on the second.
+with `-1` on the second (`IMG_0001-1.jpg`), `-2` on a third.
 
 ### Into a subfolder
 
@@ -107,14 +107,24 @@ to skip the dialog. Each frame then goes into that folder inside its
 own raw's folder, made when needed. Frames from three shoots land in
 three `export` folders, one beside each shoot.
 
+The button says so: with `edited` typed it reads **Export to edited**
+(**Export 3 frames to edited** for a set), without an ellipsis because
+no dialog follows, and a line under the field reads "Saved in edited
+beside each original." The label shows the name as it will be used, so
+`./export//web/` shows as `export/web`: spaces around the name, a
+leading `./` and doubled slashes are cleaned away. A long name is cut at
+the front on the button to fit it; the line under the field has it
+whole.
+
 The name must go down from the raw's folder. A full path, or one with
-`..`, is refused with the reason.
+`..`, is refused: the reason shows under the field in yellow, and the
+button is dimmed and reads plain **Export** until the name is fixed.
 
 ## When a file is already there
 
 **If it exists** decides:
 
-- **Increment** writes beside it as `IMG_0001 (2).jpg`.
+- **Increment** writes beside it as `IMG_0001-1.jpg`.
 - **Overwrite** replaces it.
 - **Skip** leaves it and writes nothing.
 

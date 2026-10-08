@@ -118,7 +118,7 @@ was damaged.
   any folder your library holds. Run an import again after it stops,
   and it picks up where it left off.
 - **A name another file already has** is never written over. The new
-  frame gets ` (2)` before its extension (` (3)` and so on if needed),
+  frame gets `-1` before its extension (`-2` and so on if needed),
   and the status line says how many.
 
 ## While it runs, and when it's done

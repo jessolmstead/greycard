@@ -32,6 +32,17 @@ note a first tester reads.
   group under it, and holds it while a group's look is fitted
   ([§258](https://github.com/jessolmstead/greycard/blob/master/docs/notes/258-a-bar-on-the-camera-match-run.md))
 
+### Export
+
+- With a subfolder typed, the export button says where the files go
+  ("Export to edited", "Export 3 frames to edited") instead of
+  "Choose file...", a line under the field confirms it, and a name
+  the export would refuse disables the button and says why ([§262](https://github.com/jessolmstead/greycard/blob/master/docs/notes/262-export-names-and-the-subfolder-button.md))
+- A name already taken gets -1, -2 before the extension, in exports
+  and imports, instead of " (2)"; a name that already ends in a
+  number, like DSC-0042, becomes DSC-0042-1 and is never counted on,
+  and a re-exported set takes the next free names ([§262](https://github.com/jessolmstead/greycard/blob/master/docs/notes/262-export-names-and-the-subfolder-button.md))
+
 ### Speed
 
 - Texture and Clarity run on the GPU, so a move of either costs about
