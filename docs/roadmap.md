@@ -240,8 +240,7 @@ ask for first.
       another folder replaces the table there, where today more frames
       wins; the per-lens radial report fed
       into the vignetting line below; `style:` in the filter text;
-      Nikon, Sony and Panasonic styles once files with the settings
-      varied make exiv2 a clean oracle for them (§180)
+      Sony's Picture Profiles and Panasonic's newer Photo Styles (§265)
 - [ ] Camera match Refine: the frame on screen, or the selection,
       pinned into a group's sample and the group fitted again, with the
       pinned frames' error and the rest's said before and after; a

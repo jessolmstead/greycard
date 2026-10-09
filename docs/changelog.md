@@ -45,6 +45,11 @@ note a first tester reads.
   of lightness, the "deep-fried" look on bark, fabric and skin; a look
   fitted before says so in the Look section, with a Refit button
   ([§260](https://github.com/jessolmstead/greycard/blob/master/docs/notes/260-the-camera-match-keeps-lightness-off-chroma.md))
+- **Fit this camera's look…** now reads Nikon, Sony and Panasonic
+  raws too, grouping them by Picture Control, Creative Style or Photo
+  Style; a frame shot in a scene, auto or effect mode, or with a
+  setting greycard can't read, is left out of every group
+  ([§265](https://github.com/jessolmstead/greycard/blob/master/docs/notes/265-nikon-sony-and-panasonic-styles-for-the-camera-match.md))
 
 ### Export
 

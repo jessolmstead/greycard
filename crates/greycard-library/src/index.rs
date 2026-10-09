@@ -4250,6 +4250,57 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A schema 6 library's rows with a maker's tags are marked to be
+    /// read again: the reader learned three makers and changed which
+    /// frames group. A row whose tags gave no maker is left as it was.
+    #[test]
+    fn a_schema_6_library_reads_the_makers_tags_again() {
+        let dir = scratch("schema6");
+        let (r5, r6, _) = shoot(&dir);
+        let db = dir.join("library.sqlite");
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&dir, &mut quiet()).unwrap();
+            lib.conn_mut()
+                .execute(
+                    "UPDATE files SET maker = 'Nikon' WHERE path = ?",
+                    params![path_bytes(&r5)],
+                )
+                .unwrap();
+            lib.conn_mut()
+                .execute(
+                    "UPDATE files SET maker = 'Canon' WHERE path = ?",
+                    params![path_bytes(&r6)],
+                )
+                .unwrap();
+            lib.conn_mut()
+                .execute_batch("PRAGMA user_version = 6;")
+                .unwrap();
+        }
+        let mut lib = Library::open(&db).unwrap();
+        let version: i32 = lib
+            .conn_mut()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, crate::SCHEMA_VERSION);
+        let unread: Vec<(String, i64)> = lib
+            .conn_mut()
+            .prepare("SELECT name, style_read FROM files ORDER BY name")
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<std::result::Result<_, _>>()
+            .unwrap();
+        let name = |p: &Path| p.file_name().unwrap().to_string_lossy().into_owned();
+        for (row, read) in &unread {
+            assert_eq!(*read == 0, *row == name(&r5) || *row == name(&r6), "{row}");
+        }
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.styled, 2, "{report:?}");
+        drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// What we last wrote to an archive copy, and the writes that
     /// wait: keyed by the frame's hash and the archive, a frame once
     /// each, the archive's path as the index keeps roots.

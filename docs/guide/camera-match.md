@@ -2,10 +2,11 @@
 
 Every raw file carries a JPEG the camera made from it, in the picture
 style you had set: Canon's Faithful or Standard, Fujifilm's Provia or
-Reala Ace. **Fit this camera's look…** learns that rendering from your
-own raws and keeps it as a look you can put on any frame. Use it when
-you like how your camera's JPEGs look and want that as a starting
-point for your raws.
+Reala Ace, Nikon's Neutral, Sony's Standard, Panasonic's Natural.
+**Fit this camera's look…** learns that rendering from your own raws
+and keeps it as a look you can put on any frame. Use it when you like
+how your camera's JPEGs look and want that as a starting point for
+your raws.
 
 Nothing is shipped: every fitted look is made on your machine, from
 your frames.
@@ -28,25 +29,51 @@ a slider, you get the camera's rendering of the changed picture.
 
 ## What frames it needs
 
-- **Canon `.CR3` or Fujifilm `.RAF` raws, for now.** greycard reads
-  the picture style from these so far; other makers' raws will follow.
+- **Canon `.CR3`, Fujifilm `.RAF`, Nikon `.NEF`, Sony `.ARW` or
+  Panasonic `.RW2` raws.** greycard reads the picture style from these;
+  other makers' raws, and Canon's older `.CR2`, are not fitted yet. A
+  library indexed before a maker was read reads that maker's frames
+  again on its next pass.
 - **About 20 frames or more** of one body and one style. A group is
   sampled down to about 40. A group under 20 can borrow a look (see
   below) or is skipped.
 - **The scene-adaptive settings off**, where you can. These change the
   camera's JPEG from scene to scene, so a frame shot with them on
-  teaches the look less. Once a group has 20 frames with them off, the
-  rest are left out.
-
-| Camera | Adaptive settings |
-|---|---|
-| Canon | Auto Lighting Optimizer, Highlight Tone Priority, the Auto picture style |
-| Fujifilm | Dynamic Range above 100% or on auto, D-Range Priority, Highlight Tone or Shadow Tone not at 0 |
-
+  teaches the look less. They come in two kinds, below.
 - **Variety.** Frames from many shoots, places and light make a better
   look than one session. The sample takes a few frames from every
   folder first for this reason, and the sheet warns when every frame is
   from one folder.
+
+### The adaptive settings
+
+Settings that bend the style's tone per scene leave the frame in its
+style's group. Once a group has 20 frames with them off, the rest are
+left out; a group with fewer uses frames with them on to make up its
+sample.
+
+| Camera | Tone settings |
+|---|---|
+| Canon | Auto Lighting Optimizer, Highlight Tone Priority |
+| Fujifilm | Dynamic Range above 100% or on auto, D-Range Priority, Highlight Tone or Shadow Tone not at 0 |
+| Nikon | Active D-Lighting, Contrast or Saturation set to A |
+| Sony | Dynamic Range Optimizer (any level or Auto) |
+| Panasonic | Intelligent D-Range (Intelligent Exposure on older bodies) |
+
+Settings that render in place of the style, or draw over it, take the
+frame out of every group: it was not rendered in that style, so it is
+never used, and the sheet counts it with the raws that have no fixed
+picture style. So does a style that adapts to the scene itself.
+
+| Camera | Settings that replace the style |
+|---|---|
+| Canon | the Auto picture style |
+| Nikon | the Auto Picture Control (and a custom one built on it), a scene mode, the Auto, scene and effects positions of the mode dial |
+| Sony | the scene modes, Intelligent Auto and Superior Auto, Auto HDR, a Picture Effect |
+| Panasonic | the scene modes and Intelligent Auto, the Auto photo style, HDR, a creative filter (Filter Settings) |
+
+A setting greycard cannot read or does not recognize takes the frame
+out of every group too, so a frame is never taken as fixed on a guess.
 
 ## Fitting a look
 
@@ -173,10 +200,21 @@ look to use it on another machine.
 
 ## Limits
 
-- Picture styles are read from Canon CR3 and Fujifilm RAF so far.
-- Canon's per-style contrast, saturation and color tone settings, and
-  Fujifilm's Color, Color Chrome and Clarity, are not read, so a group
-  may mix frames shot with different settings.
+- Picture styles are read from Canon CR3, Fujifilm RAF, Nikon NEF, Sony
+  ARW and Panasonic RW2.
+- Canon's per-style contrast, saturation and color tone settings,
+  Fujifilm's Color, Color Chrome and Clarity, a Nikon Picture Control's
+  sharpening, contrast, saturation and hue steps, Sony's contrast,
+  saturation and Creative Look settings, and a Panasonic Photo Style's
+  own adjustments are not read, so a group may mix frames shot with
+  different settings.
+- Panasonic writes the same code for Standard and for its custom
+  styles, so they share one group, "Standard or Custom", and a fit may
+  mix them; a high held-out error on that group is the sign. Photo
+  styles the camera writes that greycard has no name for (some newer
+  ones, such as the Leica looks and the cine styles) are not fitted.
+- Sony's Picture Profiles are not read, so a frame shot under one may
+  still group under its Creative Style.
 - A look fitted under **AgX** lands a little further from the camera
   than one fitted under per channel, since the camera's own tone is
   closer to per channel.

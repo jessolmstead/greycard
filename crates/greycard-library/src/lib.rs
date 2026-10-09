@@ -87,7 +87,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 6;
+pub const SCHEMA_VERSION: i32 = 7;
 
 /// The steps a library is brought up by in place rather than rebuilt:
 /// from the version on the left to the next, the statements on the
@@ -107,7 +107,12 @@ pub const SCHEMA_VERSION: i32 = 6;
 /// and `pending`, the writes that could not be made yet. Both are
 /// keyed by the frame's content hash and the archive root, not by a
 /// row, so a row forgotten or pruned does not take them with it; a
-/// schema 5 library gains them empty.
+/// schema 5 library gains them empty. Schema 7 adds nothing: the style
+/// reader learned Nikon's, Sony's and Panasonic's maker notes, and a
+/// frame with a setting on that replaces its style, or one not known,
+/// now has no group whatever its maker, so every schema 6 row with a
+/// maker is marked unread and the next pass over its folder reads its
+/// tags again and nothing else of the file.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -126,6 +131,10 @@ const MIGRATIONS: &[(i32, &str)] = &[
     ),
     (4, "ALTER TABLE files ADD COLUMN whole_hash TEXT;"),
     (5, SYNC_SCHEMA),
+    (
+        6,
+        "UPDATE files SET style_read = 0 WHERE maker IS NOT NULL;",
+    ),
 ];
 
 /// The tables for a frame's sidecar on its archive copy (§233), part
@@ -339,8 +348,9 @@ pub struct StyleTags {
     /// The maker as the reader names it: "Canon", "Fujifilm".
     pub maker: Option<String>,
     /// The group key, the maker and a fixed style: "Canon Faithful",
-    /// "Fujifilm Reala Ace". None with no style, or a style that
-    /// adapts to the scene itself.
+    /// "Fujifilm Reala Ace". None with no style, a style that adapts
+    /// to the scene itself, or a setting on that replaces the style or
+    /// one not known (`CameraStyle::group_key`).
     pub style: Option<String>,
     /// A fixed style with every adaptive setting off: a frame the
     /// camera match can fit on.

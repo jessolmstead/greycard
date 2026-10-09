@@ -7,12 +7,17 @@
 //! named and exiv2 is missing, or when there were files and none was
 //! compared. The expected values come from exiv2's own names for the
 //! settings (`-Pkt`), not from the reader's rules.
+//!
+//! Every field compared is tallied per body, and the table of files and
+//! agreements is printed before the test fails on the first
+//! disagreement, so one run says how far the reader and exiv2 agree.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
+use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use greycard_core::decode::{Adaptive, CameraStyle, Maker, is_raw_path};
+use greycard_core::decode::{CameraStyle, Maker, is_raw_path};
 
 fn samples() -> Vec<PathBuf> {
     let mut files = Vec::new();
@@ -69,24 +74,22 @@ fn exiv2(path: &Path, mode: &str) -> HashMap<String, String> {
     map
 }
 
-fn find(style: &CameraStyle, name: &str) -> Option<Adaptive> {
-    style.adaptive.iter().find(|a| a.name == name).copied()
+/// A setting as (on, known): what exiv2 can say of it. Its kind is the
+/// reader's, not exiv2's, and is tested beside the reader.
+fn find(style: &CameraStyle, name: &str) -> Option<(bool, bool)> {
+    style
+        .adaptive
+        .iter()
+        .find(|a| a.name == name)
+        .map(|a| (a.on, a.known))
 }
 
 /// The setting as expected: `Some(on)` a named value, `None` one exiv2
 /// does not name or the file does not carry.
-fn expect(name: &'static str, on: Option<bool>) -> Option<Adaptive> {
+fn expect(on: Option<bool>) -> Option<(bool, bool)> {
     Some(match on {
-        Some(on) => Adaptive {
-            name,
-            on,
-            known: true,
-        },
-        None => Adaptive {
-            name,
-            on: true,
-            known: false,
-        },
+        Some(on) => (on, true),
+        None => (true, false),
     })
 }
 
@@ -102,12 +105,47 @@ fn film(name: &str) -> String {
     name.to_lowercase()
 }
 
-fn check_canon(path: &Path, style: &CameraStyle, kt: &HashMap<String, String>) {
-    let what = path.display();
-    match kt.get("Exif.CanonPr.PictureStyle").map(String::as_str) {
-        Some("None") | None => assert_eq!(style.style, None, "{what}"),
-        Some(name) => assert_eq!(style.style.as_deref(), Some(name), "{what}: picture style"),
+/// Per body and field, the files compared and the ones that agreed,
+/// and every disagreement.
+#[derive(Default)]
+struct Tally {
+    rows: BTreeMap<(String, &'static str), (usize, usize)>,
+    wrong: Vec<String>,
+}
+
+/// One file's checks: the tally, the body and the file.
+struct Check<'a> {
+    tally: &'a mut Tally,
+    body: String,
+    path: &'a Path,
+}
+
+impl Check<'_> {
+    fn eq<T: PartialEq + Debug>(&mut self, field: &'static str, got: T, want: T) {
+        let row = self
+            .tally
+            .rows
+            .entry((self.body.clone(), field))
+            .or_default();
+        row.0 += 1;
+        if got == want {
+            row.1 += 1;
+        } else {
+            self.tally.wrong.push(format!(
+                "{} ({}): {field}: read {got:?}, exiv2 says {want:?}",
+                self.path.display(),
+                self.body
+            ));
+        }
     }
+}
+
+fn check_canon(c: &mut Check, style: &CameraStyle, kt: &HashMap<String, String>) {
+    let expected = match kt.get("Exif.CanonPr.PictureStyle").map(String::as_str) {
+        Some("None") | None => None,
+        Some(name) => Some(name.to_string()),
+    };
+    c.eq("style", style.style.clone(), expected);
     let alo = match kt
         .get("Exif.CanonLiOp.AutoLightingOptimizer")
         .map(String::as_str)
@@ -116,11 +154,7 @@ fn check_canon(path: &Path, style: &CameraStyle, kt: &HashMap<String, String>) {
         Some("Standard" | "Low" | "Strong") => Some(true),
         _ => None,
     };
-    assert_eq!(
-        find(style, "Auto Lighting Optimizer"),
-        expect("Auto Lighting Optimizer", alo),
-        "{what}: ALO"
-    );
+    c.eq("ALO", find(style, "Auto Lighting Optimizer"), expect(alo));
     let htp = match kt
         .get("Exif.CanonLiOp.HighlightTonePriority")
         .map(String::as_str)
@@ -129,11 +163,7 @@ fn check_canon(path: &Path, style: &CameraStyle, kt: &HashMap<String, String>) {
         Some("On") => Some(true),
         _ => None,
     };
-    assert_eq!(
-        find(style, "Highlight Tone Priority"),
-        expect("Highlight Tone Priority", htp),
-        "{what}: HTP"
-    );
+    c.eq("HTP", find(style, "Highlight Tone Priority"), expect(htp));
     let peripheral = kt
         .get("Exif.CanonVigCor2.PeripheralLightingSetting")
         .or_else(|| kt.get("Exif.CanonLiOp.PeripheralIlluminationCorr"));
@@ -142,26 +172,21 @@ fn check_canon(path: &Path, style: &CameraStyle, kt: &HashMap<String, String>) {
         Some("Off") => Some(false),
         _ => None,
     };
-    assert_eq!(style.peripheral_correction, expected, "{what}: peripheral");
+    c.eq("peripheral", style.peripheral_correction, expected);
 }
 
 fn check_fujifilm(
-    path: &Path,
+    c: &mut Check,
     style: &CameraStyle,
     kv: &HashMap<String, String>,
     kt: &HashMap<String, String>,
 ) {
-    let what = path.display();
     let mono = kt.get("Exif.Fujifilm.Color").filter(|c| {
         let c = c.to_lowercase();
         c.starts_with("monochrome") || c.starts_with("acros") || c.starts_with("sepia")
     });
     let expected = kt.get("Exif.Fujifilm.FilmMode").or(mono).map(|n| film(n));
-    assert_eq!(
-        style.style.as_deref().map(film),
-        expected,
-        "{what}: film mode"
-    );
+    c.eq("film mode", style.style.as_deref().map(film), expected);
 
     let dr = match (
         kt.get("Exif.Fujifilm.DynamicRangeSetting")
@@ -176,32 +201,238 @@ fn check_fujifilm(
         (Some(s), _) if s.starts_with("Wide mode") => Some(true),
         _ => None,
     };
-    assert_eq!(
-        find(style, "Dynamic Range"),
-        expect("Dynamic Range", dr),
-        "{what}: dynamic range"
-    );
+    c.eq("dynamic range", find(style, "Dynamic Range"), expect(dr));
     let drp = match kt.get("Exif.Fujifilm.DRangePriority").map(String::as_str) {
         None => Some(false),
         Some("Auto" | "Fixed") => Some(true),
         Some(_) => None,
     };
-    assert_eq!(
+    c.eq(
+        "D-Range Priority",
         find(style, "D-Range Priority"),
-        expect("D-Range Priority", drp),
-        "{what}: D-Range Priority"
+        expect(drp),
     );
     for (key, name) in [
         ("Exif.Fujifilm.HighlightTone", "Highlight Tone"),
         ("Exif.Fujifilm.ShadowTone", "Shadow Tone"),
     ] {
         let moved = kv.get(key).is_some_and(|v| v != "0");
-        assert_eq!(
+        c.eq(
+            name,
             find(style, name),
-            moved.then(|| expect(name, Some(true)).unwrap()),
-            "{what}: {name}"
+            moved.then(|| expect(Some(true)).unwrap()),
         );
     }
+}
+
+/// exiv2's name for a value it has no name for: the number in
+/// parentheses.
+fn unnamed(text: &str) -> bool {
+    text.starts_with('(') && text.ends_with(')')
+}
+
+fn check_nikon(c: &mut Check, style: &CameraStyle, kt: &HashMap<String, String>) {
+    // exiv2 reads every Picture Control record with the first
+    // version's offsets. The third version writes its version twice and
+    // the name four bytes on, so exiv2's name there starts with the
+    // second copy and its base is the empty bytes before the real one.
+    let version = kt.get("Exif.NikonPc.Version").cloned().unwrap_or_default();
+    let third = version.starts_with("3.");
+    let name = kt.get("Exif.NikonPc.Name").map(|n| match third {
+        true => n.get(4..).unwrap_or("").to_string(),
+        false => n.clone(),
+    });
+    let base = kt.get("Exif.NikonPc.Base").cloned();
+    c.eq(
+        "Picture Control",
+        style.style.as_ref().map(|s| s.to_uppercase()),
+        name.clone().filter(|n| !n.is_empty()),
+    );
+    if !third {
+        // A custom control's base; the style's own for a preset.
+        let expected = match (&name, &base) {
+            (Some(n), Some(b)) if n != b && !b.is_empty() => Some(b.clone()),
+            _ => None,
+        };
+        c.eq(
+            "Picture Control base",
+            style.base.as_ref().map(|s| s.to_uppercase()),
+            expected,
+        );
+        // A preset's base is its own name, so either way the control
+        // is as fixed as its base, and Auto is not.
+        let fixed = match (&name, &base) {
+            (Some(n), Some(b)) => !n.is_empty() && !b.is_empty() && b != "AUTO",
+            _ => false,
+        };
+        c.eq("style fixed", style.style_fixed, fixed);
+        // exiv2 reads contrast and saturation where the first version
+        // keeps them; the second keeps them elsewhere.
+        if version.starts_with("1.") {
+            let auto = ["Exif.NikonPc.Contrast", "Exif.NikonPc.Saturation"]
+                .iter()
+                .any(|k| kt.get(*k).is_some_and(|v| v == "Auto"));
+            c.eq(
+                "auto contrast or saturation",
+                find(style, "Auto Contrast or Saturation"),
+                expect(Some(auto)),
+            );
+        }
+    } else if style.base.is_none() {
+        // A preset: fixed unless it is Auto.
+        c.eq(
+            "style fixed",
+            style.style_fixed,
+            name.as_deref()
+                .is_some_and(|n| !n.is_empty() && n != "AUTO"),
+        );
+    }
+    let adl = match kt.get("Exif.Nikon3.ActiveDLighting").map(String::as_str) {
+        Some("Off") => Some(false),
+        Some("Low" | "Normal" | "High" | "Extra High" | "Auto") => Some(true),
+        _ => None,
+    };
+    c.eq(
+        "Active D-Lighting",
+        find(style, "Active D-Lighting"),
+        expect(adl),
+    );
+    for (key, name) in [
+        ("Exif.Nikon3.SceneMode", "Scene Mode"),
+        ("Exif.Nikon3.VariProgram", "Auto, Scene or Effects Program"),
+    ] {
+        let on = kt.get(key).is_some_and(|t| !t.trim().is_empty());
+        c.eq(name, find(style, name), expect(Some(on)));
+    }
+    let vignette = match kt.get("Exif.Nikon3.VignetteControl").map(String::as_str) {
+        Some("Off") => Some(false),
+        Some("Low" | "Normal" | "High") => Some(true),
+        _ => None,
+    };
+    c.eq("vignette control", style.peripheral_correction, vignette);
+}
+
+/// A Sony tag from whichever of exiv2's two groups the note is read
+/// into.
+fn sony<'a>(kt: &'a HashMap<String, String>, tag: &str) -> Option<&'a str> {
+    kt.get(&format!("Exif.Sony2.{tag}"))
+        .or_else(|| kt.get(&format!("Exif.Sony1.{tag}")))
+        .map(String::as_str)
+}
+
+fn check_sony(c: &mut Check, style: &CameraStyle, kt: &HashMap<String, String>) {
+    let (expected, fixed) = match sony(kt, "CreativeStyle") {
+        None | Some("None") => (None, false),
+        Some(t) if unnamed(t) => (Some(format!("Unknown ({})", &t[1..t.len() - 1])), false),
+        Some(t) => (Some(t.to_string()), true),
+    };
+    c.eq("Creative Style", style.style.clone(), expected);
+    c.eq("style fixed", style.style_fixed, fixed);
+    let dro = match sony(kt, "DynamicRangeOptimizer") {
+        Some("Off") => Some(false),
+        Some(t) if !unnamed(t) => Some(true),
+        _ => None,
+    };
+    c.eq("DRO", find(style, "Dynamic Range Optimizer"), expect(dro));
+    let hdr = match sony(kt, "AutoHDR") {
+        None => Some(false),
+        Some(t) if t.starts_with("Off,") => Some(false),
+        Some(t) if t.starts_with("Auto,") || t.contains(" EV,") => Some(true),
+        _ => None,
+    };
+    c.eq("Auto HDR", find(style, "Auto HDR"), expect(hdr));
+    let scene = match sony(kt, "SceneMode") {
+        None | Some("Standard" | "Cont. Priority AE") => Some(false),
+        Some(t) if t == "n/a" || unnamed(t) => None,
+        Some(_) => Some(true),
+    };
+    c.eq("scene mode", find(style, "Scene Mode"), expect(scene));
+    let ia = match sony(kt, "IntelligentAuto") {
+        None | Some("Off") => Some(false),
+        Some("On" | "Advanced") => Some(true),
+        _ => None,
+    };
+    c.eq(
+        "Intelligent Auto",
+        find(style, "Intelligent Auto"),
+        expect(ia),
+    );
+    let effect = match sony(kt, "PictureEffect") {
+        None | Some("Off") => Some(false),
+        Some(t) if unnamed(t) => None,
+        Some(_) => Some(true),
+    };
+    c.eq(
+        "Picture Effect",
+        find(style, "Picture Effect"),
+        expect(effect),
+    );
+    let vignetting = match sony(kt, "VignettingCorrection") {
+        Some("Off") => Some(false),
+        Some("Auto") => Some(true),
+        _ => None,
+    };
+    c.eq(
+        "vignetting correction",
+        style.peripheral_correction,
+        vignetting,
+    );
+}
+
+fn check_panasonic(c: &mut Check, style: &CameraStyle, kt: &HashMap<String, String>) {
+    let pana = |tag: &str| kt.get(&format!("Exif.Panasonic.{tag}")).map(String::as_str);
+    // exiv2 names style 0 "NoAuto"; the reader calls it Auto.
+    let (expected, fixed) = match pana("PhotoStyle") {
+        None => (None, false),
+        Some("NoAuto") => (Some("Auto".to_string()), false),
+        Some(t) if unnamed(t) => (Some(format!("Unknown ({})", &t[1..t.len() - 1])), false),
+        Some(t) => (Some(t.to_string()), true),
+    };
+    c.eq("Photo Style", style.style.clone(), expected);
+    c.eq("style fixed", style.style_fixed, fixed);
+    let level = |t: Option<&str>| match t {
+        Some("Off") => Some(false),
+        Some("Low" | "Standard" | "High") => Some(true),
+        _ => None,
+    };
+    let idr = pana("IntelligentDRange");
+    let iex = pana("IntelligentExposure");
+    if idr.is_some() || iex.is_none() {
+        c.eq(
+            "Intelligent D-Range",
+            find(style, "Intelligent D-Range"),
+            expect(level(idr)),
+        );
+    }
+    if iex.is_some() {
+        c.eq(
+            "Intelligent Exposure",
+            find(style, "Intelligent Exposure"),
+            expect(level(iex)),
+        );
+    }
+    let hdr = match pana("HDR") {
+        None | Some("Off") => Some(false),
+        Some(t) if unnamed(t) => None,
+        Some(_) => Some(true),
+    };
+    c.eq("HDR", find(style, "HDR"), expect(hdr));
+    let scene = match pana("ShootingMode") {
+        Some("Program" | "Aperture priority" | "Shutter-speed priority" | "Manual") => Some(false),
+        Some(t) if !unnamed(t) => Some(true),
+        _ => None,
+    };
+    c.eq(
+        "shooting mode",
+        find(style, "Scene or Intelligent Auto Mode"),
+        expect(scene),
+    );
+    let shading = match pana("ShadingCompensation") {
+        Some("Off") => Some(false),
+        Some("On") => Some(true),
+        _ => None,
+    };
+    c.eq("shading compensation", style.peripheral_correction, shading);
 }
 
 #[test]
@@ -220,29 +451,61 @@ fn camera_style_agrees_with_exiv2() {
         return;
     }
     let mut compared = 0;
+    let mut tally = Tally::default();
     let mut counts: HashMap<(Maker, Option<String>), usize> = HashMap::new();
     for path in &files {
         let kv = exiv2(path, "-Pkv");
         let kt = exiv2(path, "-Pkt");
         let make = kv.get("Exif.Image.Make").cloned().unwrap_or_default();
+        let body = kv
+            .get("Exif.Image.Model")
+            .cloned()
+            .unwrap_or_else(|| "?".into());
         let maker = Maker::from_make(&make);
-        let style = CameraStyle::read(path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+        let mut c = Check {
+            tally: &mut tally,
+            body,
+            path,
+        };
+        let style = match CameraStyle::read(path) {
+            Ok(style) => style,
+            Err(e) => {
+                c.eq("read", Err::<(), _>(e.to_string()), Ok(()));
+                continue;
+            }
+        };
         let Some(style) = style else {
-            assert_eq!(maker, Maker::Other, "{}", path.display());
+            c.eq("maker", Maker::Other, maker);
             *counts.entry((Maker::Other, None)).or_default() += 1;
             compared += 1;
             continue;
         };
-        assert_eq!(style.maker, maker, "{}", path.display());
+        c.eq("maker", style.maker, maker);
+        // Whether the maker note was found at all: the reader lists the
+        // adaptive settings whenever it reads one, and exiv2 shows the
+        // maker's group.
+        let group = match maker {
+            Maker::Nikon => Some(&["Exif.Nikon3."][..]),
+            Maker::Sony => Some(&["Exif.Sony1.", "Exif.Sony2."][..]),
+            Maker::Panasonic => Some(&["Exif.Panasonic."][..]),
+            _ => None,
+        };
+        if let Some(group) = group {
+            let shown = kt.keys().any(|k| group.iter().any(|g| k.starts_with(g)));
+            c.eq("maker note read", !style.adaptive.is_empty(), shown);
+        }
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("")
             .to_ascii_lowercase();
         match (maker, ext.as_str()) {
-            (Maker::Canon, "cr3") => check_canon(path, &style, &kt),
-            (Maker::Fujifilm, "raf") => check_fujifilm(path, &style, &kv, &kt),
-            _ => assert_eq!(style.style, None, "{}", path.display()),
+            (Maker::Canon, "cr3") => check_canon(&mut c, &style, &kt),
+            (Maker::Fujifilm, "raf") => check_fujifilm(&mut c, &style, &kv, &kt),
+            (Maker::Nikon, "nef" | "nrw") => check_nikon(&mut c, &style, &kt),
+            (Maker::Sony, "arw") => check_sony(&mut c, &style, &kt),
+            (Maker::Panasonic, "rw2") => check_panasonic(&mut c, &style, &kt),
+            _ => c.eq("style", style.style.clone(), None),
         }
         compared += 1;
         *counts.entry((maker, style.group_key())).or_default() += 1;
@@ -252,6 +515,19 @@ fn camera_style_agrees_with_exiv2() {
     for ((maker, group), n) in counts {
         println!("{} {group:?}: {n}", maker.name());
     }
+    println!("body\tfield\tfiles\tagreed");
+    for ((body, field), (files, agreed)) in &tally.rows {
+        println!("{body}\t{field}\t{files}\t{agreed}");
+    }
+    for wrong in &tally.wrong {
+        println!("DISAGREES {wrong}");
+    }
     println!("compared {compared} of {}", files.len());
     assert!(compared > 0, "there were files and none was compared");
+    assert!(
+        tally.wrong.is_empty(),
+        "{} disagreements with exiv2, the first: {}",
+        tally.wrong.len(),
+        tally.wrong[0]
+    );
 }

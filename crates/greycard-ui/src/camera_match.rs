@@ -141,7 +141,8 @@ pub(crate) struct Survey {
     /// yet, which the next pass over their folders reads.
     pub(crate) unread: usize,
     /// Raws in the scope, read directly, with no fixed style: an
-    /// adaptive style, or a maker whose styles are not read.
+    /// adaptive style, a setting on that replaces the style or one not
+    /// known, or a maker whose styles are not read.
     pub(crate) no_style: usize,
 }
 
@@ -2983,6 +2984,98 @@ mod tests {
                 }
                 Err(why) => eprintln!("{}: {why} on {}", g.name(), frame.path.display()),
             }
+        }
+    }
+
+    /// The sheet and the run on real raws: every raw in
+    /// `GREYCARD_SAMPLES` surveyed, each group's plan line as the sheet
+    /// would show it, the run into a scratch store and its result
+    /// lines; then every sampled frame of each group developed and
+    /// registered, and the group fitted and held out whatever its size,
+    /// which the run itself does only from twenty frames. Prints; asserts
+    /// only that the run wrote nothing it did not report. Ignored, since
+    /// it wants the samples and a release build.
+    #[test]
+    #[ignore]
+    fn the_samples_run() {
+        let Some(dir) = std::env::var_os("GREYCARD_SAMPLES").map(PathBuf::from) else {
+            eprintln!("set GREYCARD_SAMPLES to a folder of raws");
+            return;
+        };
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .collect();
+        files.sort();
+        let survey = survey_files(&files);
+        let curve = DisplayCurve::Channels;
+        let plans = plan(&survey.groups, &HashMap::new(), curve, false);
+        for (g, p) in survey.groups.iter().zip(&plans) {
+            eprintln!("plan: {}", crate::panel::camera_match::group_line(g, p));
+        }
+        eprintln!("summary: {}", crate::panel::camera_match::summary(&survey));
+        let lenses = greycard_lens::Store::user()
+            .ok()
+            .and_then(|s| s.load())
+            .map(|(db, _)| db);
+        eprintln!("lens database: {}", lenses.is_some());
+
+        let store = scratch_store("samples-run");
+        let results = run(
+            &survey.groups,
+            &store,
+            Choices {
+                curve,
+                replace: false,
+                chosen: &[],
+            },
+            lenses.as_ref(),
+            &AtomicBool::new(false),
+            &mut |_| {},
+        );
+        for r in &results {
+            eprintln!("result: {}", r.line());
+        }
+        let written = std::fs::read_dir(&store).map_or(0, |d| d.count());
+        let fitted = results
+            .iter()
+            .filter(|r| matches!(r.outcome, Outcome::Fitted { .. } | Outcome::Borrowed { .. }))
+            .count();
+        assert!(written <= fitted, "{written} tables for {fitted} fits");
+        crate::testing::remove_dir_retry(&store);
+
+        for g in &survey.groups {
+            let mut kept = Vec::new();
+            for frame in sample(&g.frames, SAMPLE) {
+                let name = frame.path.file_name().unwrap().to_string_lossy();
+                match measure(&frame, curve, lenses.as_ref()) {
+                    Ok(k) => {
+                        eprintln!(
+                            "  {}: {name} ({}): {} blocks of {}",
+                            g.name(),
+                            if frame.fixed { "fixed" } else { "adaptive" },
+                            k.pairs.pairs.len(),
+                            k.pairs.total
+                        );
+                        kept.push(k);
+                    }
+                    Err(why) => eprintln!("  {}: {name}: {why}", g.name()),
+                }
+            }
+            if kept.len() < 2 {
+                eprintln!("measured: {}: {} frames kept, no fit", g.name(), kept.len());
+                continue;
+            }
+            let (x, y, ids) = stacked(&kept);
+            let fit = fit_group(&x, &y, &ids);
+            eprintln!(
+                "measured: {}: {} frames kept of {}, ΔE {:.4} fitted, {} held out",
+                g.name(),
+                kept.len(),
+                g.frames.len(),
+                fit.fitted,
+                fit.held_out.map_or("none".into(), |h| format!("{h:.4}")),
+            );
         }
     }
 }
