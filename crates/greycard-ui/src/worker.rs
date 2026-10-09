@@ -9,8 +9,10 @@ use std::time::Instant;
 use greycard_core::CameraProfile;
 use greycard_core::color::{as_shot_temp_tint, profile_from_frame};
 use greycard_core::develop::ca::{CaOptions, CaStats, correct_ca};
-use greycard_core::develop::dehaze::{self, DehazeStats};
-use greycard_core::develop::local_contrast::{LocalContrastStats, local_contrast};
+use greycard_core::develop::dehaze::{self, DehazeStats, Reduced};
+use greycard_core::develop::local_contrast::{
+    LocalContrastOptions, LocalContrastStats, local_contrast,
+};
 use greycard_core::develop::sharpen::{SharpenStats, sharpen_with_mask};
 use greycard_core::develop::{
     CaCorrector, DemosaicMethod, DevelopSettings, demosaic_prepared, develop, develop_with, finish,
@@ -2090,12 +2092,17 @@ struct Base {
     /// The picture before its sharpen, on the GPU, for the sharpen's
     /// slider: made once, re-read on every move.
     pre: Option<PreSharpen>,
-    /// The patched picture on the GPU, for the local contrast there
+    /// The patched picture on the GPU, for the Detail section there
     /// on every Detail move, held with the `Arc` it was made from so
     /// its identity cannot be reused. Kept while the GPU path is the
-    /// one taken; let go when the dehaze, which has no GPU port,
-    /// takes the develop to the CPU, or when neither op is on.
+    /// one taken; let go when a picture the ops decline takes the
+    /// develop to the CPU, or when neither the Detail section nor the
+    /// sharpen is on.
     uploaded: Option<(Arc<WorkingImage>, Arc<greycard_gpu::Image>)>,
+    /// The dehaze's reduced copy of the picture it read on the GPU,
+    /// for a Dehaze move to fit again from without summing the blocks
+    /// and reading them back again.
+    haze: Option<KeptHaze>,
     /// Whether the CA correction in this base ran on the GPU. The
     /// export's picture is the reference's, and the CA is in the base
     /// (unlike the sharpen, which the export re-runs), so an export
@@ -2127,15 +2134,37 @@ impl Base {
 
 /// The picture the sharpen reads, on the GPU, with what it was made
 /// from and what the steps before the sharpen reported. The image is
-/// the local contrast's output on the device, the patched picture's
+/// the Detail section's output on the device (the dehaze's, or the
+/// local contrast's when the dehaze is off), the patched picture's
 /// own upload when nothing before the sharpen is set, or the CPU's
-/// picture uploaded when the dehaze is on.
+/// picture uploaded when the ops declined the picture.
 struct PreSharpen {
     patched: Arc<WorkingImage>,
     detail: greycard_edit::Detail,
     image: Arc<greycard_gpu::Image>,
     detail_stats: Option<LocalContrastStats>,
     dehaze_stats: Option<DehazeStats>,
+}
+
+/// The dehaze's reduced copy, with what it was made from: the patched
+/// picture and the local contrast the GPU ran on it. The GPU's local
+/// contrast gives the same picture from the same inputs, run to run,
+/// so a move of the Dehaze alone runs the local contrast again (a few
+/// ms, where keeping its output would hold another picture on the
+/// device, 716 MB at 45 MP) and fits from this copy.
+struct KeptHaze {
+    patched: Arc<WorkingImage>,
+    detail: Option<LocalContrastOptions>,
+    reduced: Arc<Reduced>,
+}
+
+/// Where a develop's dehaze ran, as [`DetailRan`] says it of the
+/// local contrast, for the log.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum DehazeRan {
+    Cpu,
+    Gpu,
+    Kept,
 }
 
 /// Where a develop's local contrast ran: on the CPU, in so many
@@ -2253,18 +2282,18 @@ fn correct_lens(
 /// picture that is not a raw is its own base: nothing before the lens
 /// applies to it.
 ///
-/// With `gpu`, the local contrast and the sharpen run there: the
-/// patched picture is uploaded once and kept with the base, the
-/// local contrast makes the picture before the sharpen from it on a
-/// Detail move and that is kept too, and the result is a texture the
-/// viewport draws as it is, so a Detail slider costs the local
-/// contrast and the sharpen alone, and a sharpen slider the sharpen
-/// alone. The dehaze has no GPU port, so with it on the two run on
-/// the CPU and the picture is uploaded. No CPU picture comes back
-/// then; the export, which passes no `gpu`, develops its own on the
-/// reference path. A GPU error (out of memory, a lost device) is
-/// warned once and the context is dropped: the session stays on the
-/// CPU from then on.
+/// With `gpu`, the Detail section and the sharpen run there: the
+/// patched picture is uploaded once and kept with the base, the local
+/// contrast and the dehaze make the picture before the sharpen from it
+/// on a Detail move and that is kept too, and the result is a texture
+/// the viewport draws as it is, so a Detail slider costs the Detail
+/// section and the sharpen alone, and a sharpen slider the sharpen
+/// alone. The dehaze's fit runs on the CPU between its two GPU halves,
+/// from a reduced copy the GPU makes, which is kept for the next
+/// Dehaze move. No CPU picture comes back then; the export, which
+/// passes no `gpu`, develops its own on the reference path. A GPU
+/// error (out of memory, a lost device) is warned once and the context
+/// is dropped: the session stays on the CPU from then on.
 #[allow(clippy::too_many_arguments)]
 fn develop_job(
     input: &Input,
@@ -2379,6 +2408,7 @@ fn develop_job(
                 patched: None,
                 pre: None,
                 uploaded: None,
+                haze: None,
                 ca_on_gpu: false,
                 stand_in: None,
                 profile: None,
@@ -2556,22 +2586,21 @@ fn develop_job(
     // The ops on the GPU, when there is one. With the sharpen on, the
     // picture before it is kept on the device from the last develop
     // when nothing before the sharpen changed, and is made there by
-    // the local contrast from the patched picture's upload when the
-    // Detail section moved (unless the dehaze is on, which has no GPU
-    // port: then the CPU's picture is uploaded). With the sharpen
-    // off, the local contrast alone writes the viewport's texture;
-    // with neither on, the ops' textures are let go.
+    // the Detail section from the patched picture's upload when the
+    // section moved. With the sharpen off, the Detail section writes
+    // the viewport's texture itself; with neither on, the ops'
+    // textures are let go.
     match (gpu.as_ref(), edit.sharpen.options()) {
         (Some(ctx), Some(options)) => {
             let kept = b
                 .pre
                 .as_ref()
                 .is_some_and(|p| Arc::ptr_eq(&p.patched, &patched) && p.detail == edit.detail);
-            let mut detail_ran = None;
+            let mut ran = Ran::default();
             let made = if kept {
                 Ok(())
             } else {
-                make_pre_sharpen(ctx, b, &patched, edit, &before_sharpen, &mut detail_ran)
+                make_pre_sharpen(ctx, b, &patched, edit, &before_sharpen, &mut ran)
             };
             let sharpened = made.and_then(|()| {
                 let pre = b.pre.as_ref().expect("made, or kept");
@@ -2590,8 +2619,9 @@ fn develop_job(
                         ca_note,
                         &report,
                         &fills,
-                        detail_ran,
-                        pre.dehaze_stats.is_some(),
+                        ran.detail,
+                        pre.dehaze_stats
+                            .map(|_| ran.dehaze.unwrap_or(DehazeRan::Kept)),
                         Some(Sharpened::Gpu),
                         seconds,
                     );
@@ -2605,7 +2635,7 @@ fn develop_job(
                             seconds,
                             detail: pre
                                 .detail_stats
-                                .map(|s| (s, detail_ran.unwrap_or(DetailRan::Kept))),
+                                .map(|s| (s, ran.detail.unwrap_or(DetailRan::Kept))),
                             sharpen: Some(stats),
                             dehaze: pre.dehaze_stats,
                             sources,
@@ -2615,6 +2645,15 @@ fn develop_job(
                         None,
                     );
                 }
+                Err(greycard_gpu::Error::Unsupported(why)) => {
+                    // This picture's, not the device's (one it cannot
+                    // hold): the CPU for this develop, the context kept.
+                    tracing::info!("the ops on the CPU: {why}");
+                    b.pre = None;
+                    b.uploaded = None;
+                    b.haze = None;
+                    ctx.release();
+                }
                 Err(e) => {
                     // Once is enough: the device is not trusted again
                     // this session, and every develop from here is the
@@ -2622,6 +2661,7 @@ fn develop_job(
                     tracing::warn!("the GPU ops: {e}; the CPU's from now on");
                     b.pre = None;
                     b.uploaded = None;
+                    b.haze = None;
                     if let Some(ctx) = gpu.take() {
                         ctx.release();
                     }
@@ -2633,71 +2673,63 @@ fn develop_job(
             // path the develop takes.
             b.pre = None;
             ctx.release_sharpen();
-            let on_gpu = edit
-                .detail
-                .options()
-                .filter(|_| edit.detail.dehaze_options().is_none());
-            match on_gpu {
-                Some(options) => {
-                    let result = uploaded_patched(ctx, b, &patched).and_then(|uploaded| {
-                        let texture = ctx.viewport_texture(uploaded.width(), uploaded.height());
-                        ctx.local_contrast_to_viewport(&uploaded, &options, b.clip_level, &texture)
-                            .map(|stats| (texture, stats))
-                    });
-                    match result {
-                        Ok((texture, stats)) => {
-                            let seconds = start.elapsed().as_secs_f64();
-                            note_developed(
-                                texture.width(),
-                                texture.height(),
-                                fresh_base,
-                                ca_note,
-                                &report,
-                                &fills,
-                                Some(DetailRan::Gpu),
-                                false,
-                                None,
+            if edit.detail.options().is_some() || edit.detail.dehaze_options().is_some() {
+                let mut ran = Ran::default();
+                match detail_on_gpu(ctx, b, &patched, edit, true, &mut ran) {
+                    Ok(Some(made)) => {
+                        let texture = made.texture.expect("a viewport texture was asked for");
+                        let seconds = start.elapsed().as_secs_f64();
+                        note_developed(
+                            texture.width(),
+                            texture.height(),
+                            fresh_base,
+                            ca_note,
+                            &report,
+                            &fills,
+                            ran.detail,
+                            ran.dehaze,
+                            None,
+                            seconds,
+                        );
+                        return (
+                            Outcome::Developed {
+                                generation,
+                                turn,
+                                image: Developed::Texture(texture),
+                                guide: b.guide.clone(),
+                                white: b.white,
                                 seconds,
-                            );
-                            return (
-                                Outcome::Developed {
-                                    generation,
-                                    turn,
-                                    image: Developed::Texture(texture),
-                                    guide: b.guide.clone(),
-                                    white: b.white,
-                                    seconds,
-                                    detail: Some((stats, DetailRan::Gpu)),
-                                    sharpen: None,
-                                    dehaze: None,
-                                    sources,
-                                    learned: report,
-                                    fills,
-                                },
-                                None,
-                            );
-                        }
-                        Err(greycard_gpu::Error::Unsupported(why)) => {
-                            // This picture's, not the device's: the
-                            // CPU for this develop, the context kept.
-                            tracing::info!("the local contrast on the CPU: {why}");
-                            b.uploaded = None;
+                                detail: made.detail.map(|s| (s, DetailRan::Gpu)),
+                                sharpen: None,
+                                dehaze: made.dehaze,
+                                sources,
+                                learned: report,
+                                fills,
+                            },
+                            None,
+                        );
+                    }
+                    Ok(None) => {
+                        // This picture's, not the device's: the CPU for
+                        // this develop, the context kept.
+                        b.uploaded = None;
+                        b.haze = None;
+                        ctx.release();
+                    }
+                    Err(e) => {
+                        tracing::warn!("the GPU Detail section: {e}; the CPU's from now on");
+                        b.uploaded = None;
+                        b.haze = None;
+                        if let Some(ctx) = gpu.take() {
                             ctx.release();
-                        }
-                        Err(e) => {
-                            tracing::warn!("the GPU local contrast: {e}; the CPU's from now on");
-                            b.uploaded = None;
-                            if let Some(ctx) = gpu.take() {
-                                ctx.release();
-                            }
                         }
                     }
                 }
-                None => {
-                    // The CPU's develop: nothing on the device is of use.
-                    b.uploaded = None;
-                    ctx.release();
-                }
+            } else {
+                // The CPU's develop: nothing on the device is of use.
+                b.uploaded = None;
+                b.haze = None;
+                ctx.release();
             }
         }
         (None, _) => {}
@@ -2726,7 +2758,7 @@ fn develop_job(
         &report,
         &fills,
         detail.as_ref().map(|(_, s)| DetailRan::Cpu(*s)),
-        dehaze_stats.is_some(),
+        dehaze_stats.map(|_| DehazeRan::Cpu),
         stats.map(|_| Sharpened::Cpu),
         seconds,
     );
@@ -2772,61 +2804,49 @@ fn uploaded_patched(
     Ok(image)
 }
 
+/// Where this develop's local contrast and dehaze ran, for the log;
+/// none for an op that did not run in it.
+#[derive(Default)]
+struct Ran {
+    detail: Option<DetailRan>,
+    dehaze: Option<DehazeRan>,
+}
+
 /// The picture before the sharpen, on the GPU, for `edit`'s Detail
-/// section on `patched`, into `b.pre`. With the dehaze off: the
-/// patched picture's own upload when no Detail slider is set, else
-/// the local contrast run on the device from that upload. With the
-/// dehaze on, which has no GPU port, or a picture the op declines
-/// (`Unsupported`): the CPU's local contrast and dehaze
-/// (`before_sharpen`), uploaded, and the patched picture's upload and
-/// the local contrast's planes let go, since that path has no use for
-/// them. The last picture before the sharpen goes first, so that two
-/// are never held at once (716 MB at 45 MP). Any other GPU error is
-/// the caller's to act on.
+/// section on `patched`, into `b.pre`: [`detail_on_gpu`]'s picture,
+/// or, for a picture the ops decline (`Unsupported`), the CPU's local
+/// contrast and dehaze (`before_sharpen`), uploaded, with the patched
+/// picture's upload, the dehaze's reduced copy and the local
+/// contrast's planes let go, since that path has no use for them. The
+/// last picture before the sharpen goes first, so that two are never
+/// held at once (716 MB at 45 MP). Any other GPU error is the
+/// caller's to act on.
 fn make_pre_sharpen(
     ctx: &greycard_gpu::Context,
     b: &mut Base,
     patched: &Arc<WorkingImage>,
     edit: &Edit,
     before_sharpen: &dyn Fn(&mut Option<WorkingImage>) -> BeforeSharpen,
-    detail_ran: &mut Option<DetailRan>,
+    ran: &mut Ran,
 ) -> greycard_gpu::Result<()> {
     b.pre = None;
-    if edit.detail.dehaze_options().is_none() {
-        let uploaded = uploaded_patched(ctx, b, patched)?;
-        let made = match edit.detail.options() {
-            None => {
-                ctx.release_local_contrast();
-                Some((uploaded, None))
-            }
-            Some(options) => match ctx.local_contrast(&uploaded, &options, b.clip_level) {
-                Ok((image, stats)) => {
-                    *detail_ran = Some(DetailRan::Gpu);
-                    Some((Arc::new(image), Some(stats)))
-                }
-                Err(greycard_gpu::Error::Unsupported(why)) => {
-                    tracing::info!("the local contrast on the CPU: {why}");
-                    None
-                }
-                Err(e) => return Err(e),
-            },
-        };
-        if let Some((image, detail_stats)) = made {
-            b.pre = Some(PreSharpen {
-                patched: patched.clone(),
-                detail: edit.detail,
-                image,
-                detail_stats,
-                dehaze_stats: None,
-            });
-            return Ok(());
-        }
+    if let Some(made) = detail_on_gpu(ctx, b, patched, edit, false, ran)? {
+        b.pre = Some(PreSharpen {
+            patched: patched.clone(),
+            detail: edit.detail,
+            image: made.image.expect("no viewport texture was given"),
+            detail_stats: made.detail,
+            dehaze_stats: made.dehaze,
+        });
+        return Ok(());
     }
     b.uploaded = None;
+    b.haze = None;
     ctx.release_local_contrast();
     let mut copy = None;
     let (detail, dehaze_stats) = before_sharpen(&mut copy);
-    *detail_ran = detail.map(|(_, s)| DetailRan::Cpu(s));
+    ran.detail = detail.map(|(_, s)| DetailRan::Cpu(s));
+    ran.dehaze = dehaze_stats.map(|_| DehazeRan::Cpu);
     let image: &WorkingImage = copy.as_ref().unwrap_or(patched);
     let image = Arc::new(ctx.upload(image)?);
     b.pre = Some(PreSharpen {
@@ -2837,6 +2857,135 @@ fn make_pre_sharpen(
         dehaze_stats,
     });
     Ok(())
+}
+
+/// What the Detail section made on the device: the picture after it,
+/// or the viewport's texture it went into, and its ops' stats.
+struct OnGpu {
+    image: Option<Arc<greycard_gpu::Image>>,
+    texture: Option<greycard_gpu::wgpu::Texture>,
+    detail: Option<LocalContrastStats>,
+    dehaze: Option<DehazeStats>,
+}
+
+/// `edit`'s Detail section on the device, from the patched picture's
+/// upload: the local contrast when a slider of it is set, then the
+/// dehaze when it is on, each reading the last one's output, as the
+/// reference runs them. The dehaze sums the blocks of its input there
+/// and reads them back, fits its model on the CPU from them (the
+/// reference's own fit), and applies the model there; the reduced
+/// copy is kept, so a move of the Dehaze alone fits again from it. With
+/// `viewport`, the last op writes a viewport texture, made once the
+/// upload has found the picture fits the device; else the result is a
+/// new picture for the sharpen, the upload itself when neither op is
+/// set. None for a picture the device or an op declines
+/// (`Unsupported`: one larger than the device's textures, or an amount
+/// so small its strength is zero, which the CPU's path leaves alone),
+/// to take the CPU for this develop.
+fn detail_on_gpu(
+    ctx: &greycard_gpu::Context,
+    b: &mut Base,
+    patched: &Arc<WorkingImage>,
+    edit: &Edit,
+    viewport: bool,
+    ran: &mut Ran,
+) -> greycard_gpu::Result<Option<OnGpu>> {
+    let declined = |op: &str, why: String| {
+        tracing::info!("the {op} on the CPU: {why}");
+        Ok(None)
+    };
+    let uploaded = match uploaded_patched(ctx, b, patched) {
+        Ok(uploaded) => uploaded,
+        Err(greycard_gpu::Error::Unsupported(why)) => return declined("Detail section", why),
+        Err(e) => return Err(e),
+    };
+    let texture = viewport.then(|| ctx.viewport_texture(uploaded.width(), uploaded.height()));
+    let viewport = texture.as_ref();
+    let local = edit.detail.options();
+    let dehaze = edit.detail.dehaze_options();
+    let (image, detail) = match (local, dehaze, viewport) {
+        (None, _, _) => {
+            ctx.release_local_contrast();
+            (uploaded, None)
+        }
+        // The local contrast last, into the viewport's texture.
+        (Some(options), None, Some(out)) => {
+            return match ctx.local_contrast_to_viewport(&uploaded, &options, b.clip_level, out) {
+                Ok(stats) => {
+                    ran.detail = Some(DetailRan::Gpu);
+                    b.haze = None;
+                    Ok(Some(OnGpu {
+                        image: None,
+                        texture,
+                        detail: Some(stats),
+                        dehaze: None,
+                    }))
+                }
+                Err(greycard_gpu::Error::Unsupported(why)) => declined("local contrast", why),
+                Err(e) => Err(e),
+            };
+        }
+        (Some(options), _, _) => match ctx.local_contrast(&uploaded, &options, b.clip_level) {
+            Ok((image, stats)) => {
+                ran.detail = Some(DetailRan::Gpu);
+                (Arc::new(image), Some(stats))
+            }
+            Err(greycard_gpu::Error::Unsupported(why)) => return declined("local contrast", why),
+            Err(e) => return Err(e),
+        },
+    };
+    let Some(options) = dehaze else {
+        b.haze = None;
+        return Ok(Some(OnGpu {
+            image: Some(image),
+            texture,
+            detail,
+            dehaze: None,
+        }));
+    };
+    // The reduced copy: kept from the last develop when it was made
+    // from this picture through the same local contrast, else summed
+    // here and read back.
+    let reduced = match b.haze.as_ref() {
+        Some(k) if Arc::ptr_eq(&k.patched, patched) && k.detail == local => k.reduced.clone(),
+        _ => {
+            b.haze = None;
+            let reduced = Arc::new(ctx.dehaze_reduced(&image)?);
+            b.haze = Some(KeptHaze {
+                patched: patched.clone(),
+                detail: local,
+                reduced: reduced.clone(),
+            });
+            reduced
+        }
+    };
+    let Some(model) = reduced.model(&options) else {
+        return declined(
+            "dehaze",
+            format!("a strength of zero at {}", options.amount),
+        );
+    };
+    let applied = match viewport {
+        Some(out) => ctx
+            .dehaze_to_viewport(&image, &model, out)
+            .map(|stats| (None, stats)),
+        None => ctx
+            .dehaze(&image, &model)
+            .map(|(image, stats)| (Some(Arc::new(image)), stats)),
+    };
+    match applied {
+        Ok((image, stats)) => {
+            ran.dehaze = Some(DehazeRan::Gpu);
+            Ok(Some(OnGpu {
+                image,
+                texture,
+                detail,
+                dehaze: Some(stats),
+            }))
+        }
+        Err(greycard_gpu::Error::Unsupported(why)) => declined("dehaze", why),
+        Err(e) => Err(e),
+    }
 }
 
 /// Where a develop's sharpen ran.
@@ -2867,7 +3016,7 @@ fn note_developed(
     learned: &LearnedReport,
     fills: &FillReport,
     detail: Option<DetailRan>,
-    dehazed: bool,
+    dehazed: Option<DehazeRan>,
     sharpened: Option<Sharpened>,
     total: f64,
 ) {
@@ -2912,8 +3061,10 @@ fn note_developed(
         Some(DetailRan::Cpu(s)) => parts.push(format!("local contrast {s:.2} s")),
         Some(DetailRan::Kept) | None => {}
     }
-    if dehazed {
-        parts.push("dehaze".into());
+    match dehazed {
+        Some(DehazeRan::Gpu) => parts.push("dehaze on the GPU".into()),
+        Some(DehazeRan::Cpu) => parts.push("dehaze".into()),
+        Some(DehazeRan::Kept) | None => {}
     }
     match sharpened {
         Some(Sharpened::Cpu) => parts.push("sharpen".into()),
@@ -2993,6 +3144,7 @@ fn turn_base(
     b.turn = turn;
     b.stamp = stamp;
     b.patched = None;
+    b.haze = None;
     let kept = b.pre.take().is_some() | b.uploaded.take().is_some();
     if kept && let Some(ctx) = gpu {
         ctx.release();
@@ -3023,6 +3175,7 @@ fn engine_base(
         patched: None,
         pre: None,
         uploaded: None,
+        haze: None,
         ca_on_gpu: false,
         stand_in: None,
         profile: None,
@@ -3084,6 +3237,7 @@ fn learned_base(
             patched: None,
             pre: None,
             uploaded: None,
+            haze: None,
             ca_on_gpu: l.ca_on_gpu,
             stand_in: None,
             profile: None,
@@ -3987,6 +4141,7 @@ mod tests {
                 patched: None,
                 pre: None,
                 uploaded: None,
+                haze: None,
                 ca_on_gpu: false,
                 stand_in: None,
                 profile: None,
@@ -4028,6 +4183,7 @@ mod tests {
             patched: None,
             pre: None,
             uploaded: None,
+            haze: None,
             ca_on_gpu: false,
             stand_in: None,
             profile: None,
@@ -4328,14 +4484,15 @@ mod tests {
 
     /// The Detail section on the GPU: a move runs the local contrast
     /// there from the patched picture's upload, which is kept for the
-    /// next; the dehaze takes the develop to the CPU and lets that
-    /// upload go; with the sharpen off the op writes the viewport's
-    /// texture itself; with neither op on, nothing is kept. And each
-    /// path keeps on the device only what it uses: the local
-    /// contrast's planes those its sliders need (none when they are
-    /// made for each run, as on an integrated GPU), none with the
-    /// dehaze or the Detail section off, and the sharpen's none with
-    /// the sharpen off.
+    /// next; the dehaze runs there after it, from the same upload, its
+    /// reduced copy kept for a move of the Dehaze alone and made again
+    /// when the local contrast moves; with the sharpen off the last op
+    /// writes the viewport's texture itself; with neither op on,
+    /// nothing is kept. And each path keeps on the device only what it
+    /// uses: the local contrast's planes those its sliders need (none
+    /// when they are made for each run, as on an integrated GPU), none
+    /// with the Detail section off, and the sharpen's none with the
+    /// sharpen off.
     #[test]
     fn the_detail_section_runs_on_the_gpu_from_the_kept_upload() {
         for keep in [true, false] {
@@ -4437,27 +4594,103 @@ mod tests {
         let b = base.as_ref().unwrap();
         assert!(Arc::ptr_eq(&b.pre.as_ref().unwrap().image, &uploaded));
         assert_eq!(kept(&gpu).local_contrast, 0, "no Detail, no planes");
-        // The dehaze has no GPU port: the CPU's picture, uploaded, and
-        // the patched upload and the op's planes let go.
+        // The dehaze after the local contrast, both on the GPU from the
+        // kept upload; its reduced copy kept with what it was made from.
         edit.detail.clarity = -0.5;
         develop(&edit, &mut base, &mut gpu);
         assert_eq!(kept(&gpu).local_contrast, planes(4));
+        assert!(base.as_ref().unwrap().haze.is_none());
         edit.detail.dehaze = 0.5;
+        let (outcome, _) = develop(&edit, &mut base, &mut gpu);
+        let Outcome::Developed {
+            image: Developed::Texture(_),
+            detail: Some((_, DetailRan::Gpu)),
+            dehaze: Some(first),
+            ..
+        } = outcome
+        else {
+            panic!("the local contrast and the dehaze on the GPU");
+        };
+        let b = base.as_ref().unwrap();
+        assert!(Arc::ptr_eq(&b.uploaded.as_ref().unwrap().1, &uploaded));
+        assert!(b.pre.as_ref().is_some_and(|p| p.dehaze_stats.is_some()));
+        let haze = b.haze.as_ref().expect("the reduced copy is kept");
+        assert_eq!(haze.detail, edit.detail.options());
+        let reduced = haze.reduced.clone();
+        assert_eq!(kept(&gpu).local_contrast, planes(4));
+        assert!(kept(&gpu).sharpen > 0);
+        // A move of the Dehaze alone fits again from the kept copy, so
+        // the airlight is the same.
+        edit.detail.dehaze = 0.8;
+        let (outcome, _) = develop(&edit, &mut base, &mut gpu);
+        let Outcome::Developed {
+            dehaze: Some(second),
+            ..
+        } = outcome
+        else {
+            panic!("a Dehaze move");
+        };
+        let b = base.as_ref().unwrap();
+        assert!(Arc::ptr_eq(&b.haze.as_ref().unwrap().reduced, &reduced));
+        assert_eq!(second.airlight, first.airlight);
+        assert!(second.strength > first.strength);
+        // A sharpen move keeps the picture before it, dehaze and all.
+        edit.sharpen.iterations += 1;
+        let (outcome, _) = develop(&edit, &mut base, &mut gpu);
+        assert!(matches!(
+            outcome,
+            Outcome::Developed {
+                detail: Some((_, DetailRan::Kept)),
+                dehaze: Some(_),
+                ..
+            }
+        ));
+        // A move of the local contrast makes the copy again.
+        edit.detail.clarity = -0.3;
+        develop(&edit, &mut base, &mut gpu);
+        let b = base.as_ref().unwrap();
+        assert!(!Arc::ptr_eq(&b.haze.as_ref().unwrap().reduced, &reduced));
+        // The dehaze alone: from the upload, the local contrast's planes
+        // let go.
+        edit.detail.clarity = 0.0;
         let (outcome, _) = develop(&edit, &mut base, &mut gpu);
         assert!(matches!(
             outcome,
             Outcome::Developed {
                 image: Developed::Texture(_),
-                detail: Some((_, DetailRan::Cpu(_))),
+                detail: None,
                 dehaze: Some(_),
                 ..
             }
         ));
         let b = base.as_ref().unwrap();
-        assert!(b.uploaded.is_none(), "the dehaze path has no use for it");
-        assert!(b.pre.as_ref().is_some_and(|p| p.dehaze_stats.is_some()));
-        assert_eq!(kept(&gpu).local_contrast, 0, "nor for the op's planes");
-        assert!(kept(&gpu).sharpen > 0);
+        assert_eq!(b.haze.as_ref().unwrap().detail, None);
+        assert_eq!(kept(&gpu).local_contrast, 0, "no local contrast, no planes");
+        // With the sharpen off, the dehaze writes the viewport's
+        // texture, after the local contrast or alone.
+        edit.sharpen.enabled = false;
+        for clarity in [0.4, 0.0] {
+            edit.detail.clarity = clarity;
+            let (outcome, image) = develop(&edit, &mut base, &mut gpu);
+            assert!(
+                matches!(
+                    outcome,
+                    Outcome::Developed {
+                        image: Developed::Texture(_),
+                        sharpen: None,
+                        dehaze: Some(_),
+                        ..
+                    }
+                ),
+                "the dehaze into the viewport's texture"
+            );
+            assert!(image.is_none());
+            let b = base.as_ref().unwrap();
+            assert!(b.pre.is_none() && b.haze.is_some());
+            assert_eq!(kept(&gpu).sharpen, 0);
+        }
+        edit.sharpen.enabled = true;
+        edit.detail.clarity = -0.5;
         // Sharpen off, dehaze off: the op writes the viewport's texture
         // itself, and nothing waits for a sharpen: its planes go.
         edit.detail.dehaze = 0.0;
@@ -4497,6 +4730,292 @@ mod tests {
         assert!(b.uploaded.is_none() && b.pre.is_none());
         assert_eq!(kept(&gpu), greycard_gpu::KeptBytes::default());
         assert!(gpu.is_some(), "the context is kept throughout");
+    }
+
+    /// The Detail section on the GPU gives the picture the CPU's does:
+    /// the local contrast, then the dehaze, in the reference's order,
+    /// with the sharpen off so that the viewport's texture is the
+    /// Detail section's output alone. From one base made on the CPU,
+    /// so that the CA correction is the same on both. The two differ by
+    /// the viewport's half floats, the local contrast's rounding and
+    /// the dehaze's gain on it; the dehaze run before the local
+    /// contrast would be percents off.
+    #[test]
+    fn the_detail_section_on_the_gpu_is_the_cpus() {
+        let Some(ctx) = greycard_gpu::Context::own().ok() else {
+            skipped("the Detail section's GPU picture");
+            return;
+        };
+        let frame = Arc::new(aberrated_frame(400, 320));
+        let deliver: Deliver = Arc::new(|_| {});
+        let mut gpu = Some(ctx);
+        let mut base = None;
+        let mut edit = Edit::default();
+        edit.sharpen.enabled = false;
+        for (texture, clarity, dehaze) in [(0.4, 0.6, 0.7), (0.0, 0.0, -0.8), (-0.5, 0.3, 1.0)] {
+            edit.detail.texture = texture;
+            edit.detail.clarity = clarity;
+            edit.detail.dehaze = dehaze;
+            let mut develop = |gpu: &mut Option<greycard_gpu::Context>| {
+                develop_job(
+                    &Input::Raw(frame.clone()),
+                    &edit,
+                    0,
+                    1,
+                    &mut base,
+                    &mut None,
+                    &mut Ai::new(),
+                    None,
+                    None,
+                    gpu,
+                    &deliver,
+                )
+            };
+            let (cpu_outcome, cpu) = develop(&mut None);
+            let (outcome, _) = develop(&mut gpu);
+            let (
+                Outcome::Developed {
+                    dehaze: Some(cpu_stats),
+                    ..
+                },
+                Outcome::Developed {
+                    image: Developed::Texture(out),
+                    dehaze: Some(gpu_stats),
+                    ..
+                },
+            ) = (cpu_outcome, outcome)
+            else {
+                panic!("both develops, the GPU's into a texture");
+            };
+            let cpu = cpu.unwrap();
+            let viewport = read_viewport(gpu.as_ref().unwrap(), &out);
+            let worst = cpu
+                .data
+                .iter()
+                .zip(&viewport.data)
+                .map(|(a, b)| (a - b).abs() / a.abs().max(0.05))
+                .fold(0.0, f32::max);
+            println!(
+                "texture {texture}, clarity {clarity}, dehaze {dehaze}: worst {worst:.2e}; airlight {:?} / {:?}",
+                cpu_stats.airlight, gpu_stats.airlight
+            );
+            // Two of a half float's ulps.
+            assert!(
+                worst < 2e-3,
+                "the viewport is {worst:.2e} off the CPU's picture"
+            );
+            for c in 0..3 {
+                assert!((cpu_stats.airlight[c] - gpu_stats.airlight[c]).abs() < 1e-4);
+            }
+            assert!((cpu_stats.transmission_mean - gpu_stats.transmission_mean).abs() < 1e-4);
+        }
+    }
+
+    /// A GPU error in the dehaze is warned once and takes the session
+    /// to the CPU, as the other ops' do: here a device whose storage
+    /// buffers are too small for the dehaze's block sums, which its
+    /// error scope catches. The develop that met it is the CPU's, to
+    /// the bit.
+    #[test]
+    fn a_gpu_error_in_the_dehaze_takes_the_session_to_the_cpu() {
+        let Some(ctx) = context_with(greycard_gpu::wgpu::Limits {
+            max_storage_buffer_binding_size: 256,
+            ..greycard_gpu::wgpu::Limits::default()
+        }) else {
+            skipped("the dehaze's device error");
+            return;
+        };
+        let frame = Arc::new(aberrated_frame(400, 320));
+        let deliver: Deliver = Arc::new(|_| {});
+        let mut edit = Edit::default();
+        edit.detail.dehaze = 0.6;
+        for sharpen in [true, false] {
+            edit.sharpen.enabled = sharpen;
+            let mut gpu = Some(
+                context_with(greycard_gpu::wgpu::Limits {
+                    max_storage_buffer_binding_size: 256,
+                    ..greycard_gpu::wgpu::Limits::default()
+                })
+                .unwrap(),
+            );
+            let mut base = None;
+            let mut develop = |gpu: &mut Option<greycard_gpu::Context>| {
+                develop_job(
+                    &Input::Raw(frame.clone()),
+                    &edit,
+                    0,
+                    1,
+                    &mut base,
+                    &mut None,
+                    &mut Ai::new(),
+                    None,
+                    None,
+                    gpu,
+                    &deliver,
+                )
+            };
+            let (_, cpu) = develop(&mut None);
+            let (outcome, image) = develop(&mut gpu);
+            assert!(gpu.is_none(), "the context is dropped after a device error");
+            assert!(matches!(
+                outcome,
+                Outcome::Developed {
+                    image: Developed::Halves(_),
+                    dehaze: Some(_),
+                    ..
+                }
+            ));
+            assert_eq!(image.unwrap().data, cpu.unwrap().data);
+        }
+        drop(ctx);
+    }
+
+    /// A picture larger than the device's textures, with a Detail
+    /// slider set, is the CPU's for that develop, with the sharpen off
+    /// and on, and the context is kept: the next picture that fits is
+    /// the GPU's again. No texture is made for it before the upload
+    /// has found it fits, so nothing reaches wgpu's uncaptured handler
+    /// (which panics the worker).
+    #[test]
+    fn a_picture_the_device_cannot_hold_is_the_cpus_for_that_develop() {
+        let Some(ctx) = context_with(greycard_gpu::wgpu::Limits {
+            max_texture_dimension_2d: 256,
+            ..greycard_gpu::wgpu::Limits::default()
+        }) else {
+            skipped("the oversized picture's develop");
+            return;
+        };
+        let deliver: Deliver = Arc::new(|_| {});
+        let mut gpu = Some(ctx);
+        let large = Arc::new(aberrated_frame(400, 320));
+        let small = Arc::new(aberrated_frame(200, 160));
+        for sharpen in [false, true] {
+            for dehaze in [0.0, 0.6] {
+                let mut edit = Edit::default();
+                edit.sharpen.enabled = sharpen;
+                edit.detail.clarity = 0.5;
+                edit.detail.dehaze = dehaze;
+                let develop =
+                    |frame: &Arc<RawFrame>,
+                     base: &mut Option<Base>,
+                     gpu: &mut Option<greycard_gpu::Context>| {
+                        develop_job(
+                            &Input::Raw(frame.clone()),
+                            &edit,
+                            0,
+                            1,
+                            base,
+                            &mut None,
+                            &mut Ai::new(),
+                            None,
+                            None,
+                            gpu,
+                            &deliver,
+                        )
+                    };
+                let what = format!("sharpen {sharpen}, dehaze {dehaze}");
+                let mut base = None;
+                let (outcome, image) = develop(&large, &mut base, &mut gpu);
+                assert!(
+                    matches!(
+                        outcome,
+                        Outcome::Developed {
+                            image: Developed::Halves(_),
+                            detail: Some((_, DetailRan::Cpu(_))),
+                            ..
+                        }
+                    ),
+                    "{what}: the CPU's develop"
+                );
+                assert!(gpu.is_some(), "{what}: the context is kept");
+                let (_, reference) = develop(&large, &mut None, &mut None);
+                assert_eq!(image.unwrap().data, reference.unwrap().data, "{what}");
+                let b = base.as_ref().unwrap();
+                assert!(b.uploaded.is_none() && b.pre.is_none() && b.haze.is_none());
+                let (outcome, _) = develop(&small, &mut None, &mut gpu);
+                assert!(
+                    matches!(
+                        outcome,
+                        Outcome::Developed {
+                            image: Developed::Texture(_),
+                            detail: Some((_, DetailRan::Gpu)),
+                            ..
+                        }
+                    ),
+                    "{what}: the next picture that fits is the GPU's"
+                );
+            }
+        }
+    }
+
+    /// A move of the Dehaze alone, which fits again from the kept
+    /// reduced copy, gives the picture a develop made afresh at that
+    /// amount gives, to the bit: with the sharpen off (the dehaze's own
+    /// output in the viewport's texture) and on.
+    #[test]
+    fn a_dehaze_move_from_the_kept_copy_is_a_fresh_develop() {
+        let Some(ctx) = greycard_gpu::Context::own().ok() else {
+            skipped("the Dehaze move's picture");
+            return;
+        };
+        let frame = Arc::new(aberrated_frame(400, 320));
+        let deliver: Deliver = Arc::new(|_| {});
+        let mut gpu = Some(ctx);
+        for sharpen in [false, true] {
+            let mut edit = Edit::default();
+            edit.sharpen.enabled = sharpen;
+            edit.detail.texture = 0.3;
+            edit.detail.clarity = 0.5;
+            let mut develop = |edit: &Edit, base: &mut Option<Base>| {
+                let (outcome, _) = develop_job(
+                    &Input::Raw(frame.clone()),
+                    edit,
+                    0,
+                    1,
+                    base,
+                    &mut None,
+                    &mut Ai::new(),
+                    None,
+                    None,
+                    &mut gpu,
+                    &deliver,
+                );
+                let Outcome::Developed {
+                    image: Developed::Texture(texture),
+                    dehaze: Some(_),
+                    ..
+                } = outcome
+                else {
+                    panic!("the dehaze on the GPU, into a texture");
+                };
+                texture
+            };
+            let mut base = None;
+            edit.detail.dehaze = 0.4;
+            develop(&edit, &mut base);
+            let reduced = base
+                .as_ref()
+                .unwrap()
+                .haze
+                .as_ref()
+                .unwrap()
+                .reduced
+                .clone();
+            edit.detail.dehaze = 0.9;
+            let moved = develop(&edit, &mut base);
+            let kept = &base.as_ref().unwrap().haze.as_ref().unwrap().reduced;
+            assert!(
+                Arc::ptr_eq(kept, &reduced),
+                "the move fitted from the kept copy"
+            );
+            let fresh = develop(&edit, &mut None);
+            let ctx = gpu.as_ref().unwrap();
+            let (moved, fresh) = (read_viewport(ctx, &moved), read_viewport(ctx, &fresh));
+            assert!(
+                moved.data == fresh.data,
+                "sharpen {sharpen}: the move's picture is not a fresh develop's"
+            );
+        }
     }
 
     #[test]
@@ -5821,5 +6340,279 @@ mod tests {
             }
             other => panic!("4Z4A3846 #0 onto 5M0A0504: {other:?}"),
         }
+    }
+
+    /// The viewport against the export with the Dehaze on, on real
+    /// frames (`GREYCARD_SAMPLES`, a folder of raws; `GREYCARD_DEHAZE_ONLY`,
+    /// stems to keep, comma-separated). For each frame and each Detail
+    /// setting, the export's picture is developed on the CPU and the
+    /// viewport's on the GPU from the same base, so the CA correction
+    /// is the CPU's on both and what differs is the Detail section and
+    /// the sharpen alone. Both are finished the export's way (the edit's
+    /// look, sRGB, eight bits) and compared level by level; the dehaze's
+    /// airlight and mean transmission from each path are printed beside
+    /// them. A measurement, not a pass: it prints and holds nothing.
+    #[test]
+    #[ignore]
+    fn the_dehaze_viewport_against_the_export_on_real_frames() {
+        let Some(samples) = std::env::var_os("GREYCARD_SAMPLES") else {
+            eprintln!("set GREYCARD_SAMPLES to a folder of raws");
+            return;
+        };
+        let only: Option<Vec<String>> = std::env::var("GREYCARD_DEHAZE_ONLY")
+            .ok()
+            .map(|s| s.split(',').map(str::to_string).collect());
+        let Some(ctx) = greycard_gpu::Context::own().ok() else {
+            skipped("the dehaze's viewport against its export");
+            return;
+        };
+        let mut gpu = Some(ctx);
+        let mut frames: Vec<PathBuf> = std::fs::read_dir(&samples)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| greycard_core::decode::is_raw_path(p))
+            .collect();
+        frames.sort();
+        let deliver: Deliver = Arc::new(|_| {});
+        let detail = |dehaze: f32, texture: f32, clarity: f32, sharpen: bool| {
+            let mut edit = Edit::default();
+            edit.detail.enabled = true;
+            edit.detail.dehaze = dehaze;
+            edit.detail.texture = texture;
+            edit.detail.clarity = clarity;
+            edit.sharpen.enabled = sharpen;
+            edit
+        };
+        let cases = [
+            ("dehaze +50", detail(0.5, 0.0, 0.0, true)),
+            ("dehaze +60", detail(0.6, 0.0, 0.0, true)),
+            (
+                "dehaze +50, texture and clarity +50",
+                detail(0.5, 0.5, 0.5, true),
+            ),
+            ("dehaze -50, clarity +30", detail(-0.5, 0.0, 0.3, true)),
+            ("dehaze +100, sharpen off", detail(1.0, 0.0, 0.0, false)),
+        ];
+        for path in frames {
+            let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+            if only.as_ref().is_some_and(|o| !o.contains(&stem)) {
+                continue;
+            }
+            let Ok((input, _)) = open(&path) else {
+                println!("{stem}: passed over, it will not open");
+                continue;
+            };
+            let mut base = None;
+            for (name, edit) in &cases {
+                let run = |base: &mut Option<Base>, gpu: &mut Option<greycard_gpu::Context>| {
+                    develop_job(
+                        &input,
+                        edit,
+                        0,
+                        1,
+                        base,
+                        &mut None,
+                        &mut Ai::new(),
+                        None,
+                        None,
+                        gpu,
+                        &deliver,
+                    )
+                };
+                let (cpu_outcome, cpu) = run(&mut base, &mut None);
+                let (gpu_outcome, _) = run(&mut base, &mut gpu);
+                assert!(gpu.is_some(), "{stem}: the GPU failed");
+                let cpu = cpu.expect("the CPU's develop gives its picture");
+                let Outcome::Developed {
+                    dehaze: cpu_dehaze, ..
+                } = cpu_outcome
+                else {
+                    panic!("{stem}: the CPU's develop failed");
+                };
+                let Outcome::Developed {
+                    image,
+                    dehaze: gpu_dehaze,
+                    ..
+                } = gpu_outcome
+                else {
+                    panic!("{stem}: the GPU's develop failed");
+                };
+                let viewport = match image {
+                    Developed::Texture(t) => read_viewport(gpu.as_ref().unwrap(), &t),
+                    Developed::Halves(h) => {
+                        let data: Vec<f32> = h
+                            .pixels
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .flat_map(|px| [px[0].to_f32(), px[1].to_f32(), px[2].to_f32()])
+                            .collect();
+                        WorkingImage::from_data(h.width as usize, h.height as usize, data).unwrap()
+                    }
+                };
+                let b = base.as_ref().unwrap();
+                let global = crate::finish::Baked::global(edit, b.source);
+                let to_out = crate::export::Space::Srgb.matrix();
+                let finish = |image: &WorkingImage| -> Vec<u8> {
+                    crate::finish::finish_with(
+                        image,
+                        None,
+                        &global,
+                        &[],
+                        |x, y| (x as f32, y as f32),
+                        |_, _| (0.0, None),
+                        None,
+                        None,
+                        &to_out,
+                        |v| (v.clamp(0.0, 1.0) * 255.0).round() as u8,
+                    )
+                };
+                let (a, v) = (finish(&cpu), finish(&viewport));
+                // The sharpen's dots in the blacks (§268): a pixel whose
+                // brightest channel is over 0.8 in a 16-bit finish while
+                // the 5x5 mean of its Rec.709 luma is under 0.08.
+                let dots = |image: &WorkingImage| -> usize {
+                    let out: Vec<u16> = crate::finish::finish_with(
+                        image,
+                        None,
+                        &global,
+                        &[],
+                        |x, y| (x as f32, y as f32),
+                        |_, _| (0.0, None),
+                        None,
+                        None,
+                        &to_out,
+                        |v| (v.clamp(0.0, 1.0) * 65535.0).round() as u16,
+                    );
+                    let (w, h) = (image.width, image.height);
+                    let at = |i: usize| f32::from(out[i]) / 65535.0;
+                    let luma: Vec<f32> = (0..w * h)
+                        .map(|i| {
+                            0.2126 * at(i * 3) + 0.7152 * at(i * 3 + 1) + 0.0722 * at(i * 3 + 2)
+                        })
+                        .collect();
+                    (0..w * h)
+                        .filter(|&i| {
+                            let (x, y) = (i % w, i / w);
+                            let brightest = at(i * 3).max(at(i * 3 + 1)).max(at(i * 3 + 2));
+                            if brightest <= 0.8 {
+                                return false;
+                            }
+                            let (mut sum, mut n) = (0f32, 0f32);
+                            for yy in y.saturating_sub(2)..(y + 3).min(h) {
+                                for xx in x.saturating_sub(2)..(x + 3).min(w) {
+                                    sum += luma[yy * w + xx];
+                                    n += 1.0;
+                                }
+                            }
+                            sum / n < 0.08
+                        })
+                        .count()
+                };
+                let mut counts = [0usize; 256];
+                let mut sq = 0f64;
+                for (x, y) in a.iter().zip(&v) {
+                    let d = x.abs_diff(*y);
+                    counts[d as usize] += 1;
+                    sq += f64::from(d) * f64::from(d);
+                }
+                let n = a.len();
+                let worst = counts.iter().rposition(|&c| c > 0).unwrap_or(0);
+                let off = n - counts[0];
+                let mut seen = 0;
+                let p999 = counts
+                    .iter()
+                    .position(|&c| {
+                        seen += c;
+                        seen as f64 >= 0.999 * n as f64
+                    })
+                    .unwrap_or(0);
+                let fit = |d: &Option<DehazeStats>| {
+                    d.map_or("none".into(), |d| {
+                        format!(
+                            "A ({:.5}, {:.5}, {:.5}) t {:.5}",
+                            d.airlight[0], d.airlight[1], d.airlight[2], d.transmission_mean
+                        )
+                    })
+                };
+                println!(
+                    "{stem} {}x{}, {name}: {:.4}% of samples off, {:.4}% by 2 or more, \
+                     99.9th percentile {p999}, worst {worst} levels, RMSE {:.4} levels; \
+                     export {} viewport {}; dots, export {} viewport {}",
+                    cpu.width,
+                    cpu.height,
+                    100.0 * off as f64 / n as f64,
+                    100.0 * (off - counts[1]) as f64 / n as f64,
+                    (sq / n as f64).sqrt(),
+                    fit(&cpu_dehaze),
+                    fit(&gpu_dehaze),
+                    dots(&cpu),
+                    dots(&viewport),
+                );
+            }
+        }
+    }
+
+    /// The viewport's half-float texture read back as a working image,
+    /// its alpha dropped.
+    fn read_viewport(
+        ctx: &greycard_gpu::Context,
+        texture: &greycard_gpu::wgpu::Texture,
+    ) -> WorkingImage {
+        use greycard_gpu::wgpu;
+        let (w, h) = (texture.width(), texture.height());
+        let row = (w * 8).div_ceil(256) * 256;
+        let band = ((64u32 << 20) / row).max(1);
+        let mut data = Vec::with_capacity((w * h * 3) as usize);
+        for y0 in (0..h).step_by(band as usize) {
+            let rows = band.min(h - y0);
+            let staging = ctx.device().create_buffer(&wgpu::BufferDescriptor {
+                label: Some("read back"),
+                size: u64::from(row * rows),
+                usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                mapped_at_creation: false,
+            });
+            let mut encoder = ctx.device().create_command_encoder(&Default::default());
+            encoder.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: 0, y: y0, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: &staging,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(row),
+                        rows_per_image: Some(rows),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: rows,
+                    depth_or_array_layers: 1,
+                },
+            );
+            ctx.queue().submit(Some(encoder.finish()));
+            let slice = staging.slice(..);
+            let (tx, rx) = std::sync::mpsc::channel();
+            slice.map_async(wgpu::MapMode::Read, move |r| {
+                let _ = tx.send(r);
+            });
+            ctx.device()
+                .poll(wgpu::PollType::wait_indefinitely())
+                .unwrap();
+            rx.recv().unwrap().unwrap();
+            let mapped = slice.get_mapped_range().unwrap();
+            for r in 0..rows as usize {
+                let line: &[half::f16] =
+                    bytemuck::cast_slice(&mapped[r * row as usize..][..(w * 8) as usize]);
+                for px in line.as_chunks::<4>().0 {
+                    data.extend([px[0].to_f32(), px[1].to_f32(), px[2].to_f32()]);
+                }
+            }
+        }
+        WorkingImage::from_data(w as usize, h as usize, data).unwrap()
     }
 }

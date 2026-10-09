@@ -12,8 +12,10 @@
 //! sees wgpu; that boundary is this crate's reason to exist.
 //!
 //! The ops so far: the capture sharpening ([`Context::sharpen`]), the
-//! lateral chromatic aberration correction ([`Context::correct_ca`])
-//! and the local contrast ([`Context::local_contrast`]).
+//! lateral chromatic aberration correction ([`Context::correct_ca`]),
+//! the local contrast ([`Context::local_contrast`]) and the dehaze's
+//! block sums and apply ([`Context::dehaze_reduced`],
+//! [`Context::dehaze`]), its fit staying the reference's on the CPU.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -22,6 +24,7 @@ use greycard_core::image::WorkingImage;
 pub use wgpu;
 
 mod ca;
+mod dehaze;
 mod local_contrast;
 mod plumbing;
 mod sharpen;
@@ -90,6 +93,7 @@ pub struct Context {
     sharpen: sharpen::Pipelines,
     ca: ca::Pipelines,
     local_contrast: local_contrast::Pipelines,
+    dehaze: dehaze::Pipelines,
 }
 
 impl Context {
@@ -141,6 +145,9 @@ impl Context {
         let local_contrast = scoped(&device, "building the local contrast's pipelines", || {
             Ok(local_contrast::Pipelines::new(&device, keep))
         })?;
+        let dehaze = scoped(&device, "building the dehaze's pipelines", || {
+            Ok(dehaze::Pipelines::new(&device))
+        })?;
         log::info!("greycard-gpu on {name}, textures up to {max_dimension}");
         Ok(Self {
             device,
@@ -150,6 +157,7 @@ impl Context {
             sharpen,
             ca,
             local_contrast,
+            dehaze,
         })
     }
 
@@ -158,8 +166,9 @@ impl Context {
     /// the local contrast's, up to five planes and its grid, about 950
     /// MB, kept on a discrete GPU only; the CA correction keeps
     /// nothing, its 812 MiB at 45 MP being made and dropped within a
-    /// run). For when the ops are switched off or the picture is
-    /// closed; the next run makes them again.
+    /// run, and neither does the dehaze). For when the ops are
+    /// switched off or the picture is closed; the next run makes them
+    /// again.
     pub fn release(&self) {
         self.release_sharpen();
         self.release_local_contrast();
@@ -306,6 +315,22 @@ impl Context {
         })
     }
 
+    /// A picture on the GPU read back as a working image, its alpha
+    /// dropped: for the CLI and the tests, not a slider.
+    pub fn download(&self, image: &Image) -> Result<WorkingImage> {
+        let (w, h) = (image.width, image.height);
+        let rgba = self.read_texture(&image.texture, 0, 0, w, h, 16)?;
+        let rgba: &[f32] = bytemuck::cast_slice(&rgba);
+        let data = rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|px| [px[0], px[1], px[2]])
+            .collect();
+        WorkingImage::from_data(w as usize, h as usize, data)
+            .map_err(|e| Error::ReadBack(e.to_string()))
+    }
+
     /// A texture for an op's result as the viewport draws it: RGBA
     /// half floats, the op's mask in the alpha.
     pub fn viewport_texture(&self, width: u32, height: u32) -> wgpu::Texture {
@@ -402,7 +427,7 @@ impl Context {
     ) -> Result<Vec<u8>> {
         let row = (width * bytes).div_ceil(256) * 256;
         let band = ((64u32 << 20) / row).max(1);
-        let mut out = Vec::with_capacity((width * bytes * height) as usize);
+        let mut out = Vec::with_capacity(width as usize * bytes as usize * height as usize);
         for y0 in (0..height).step_by(band as usize) {
             let rows = band.min(height - y0);
             let staging = self.device.create_buffer(&wgpu::BufferDescriptor {

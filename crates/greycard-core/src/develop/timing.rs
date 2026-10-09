@@ -115,6 +115,26 @@ fn ops_alone() {
             (t.elapsed(), im.data)
         });
     }
+    // The halves the GPU path runs on the CPU: the reduced copy with
+    // what it reads that the amount does not change (here from the
+    // picture; the GPU path divides the sums it read back), and the
+    // fit at an amount from a kept copy, which is a Dehaze move's.
+    if wants("dehaze_reduce") {
+        time("dehaze_reduce", runs, || {
+            let t = Instant::now();
+            let reduced = dehaze::Reduced::new(&image);
+            (t.elapsed(), reduced.means().to_vec())
+        });
+    }
+    if wants("dehaze_fit") {
+        let options = dehaze::DehazeOptions { amount: 0.5 };
+        let reduced = dehaze::Reduced::new(&image);
+        time("dehaze_fit", runs, || {
+            let t = Instant::now();
+            let model = reduced.model(&options).expect("a strength");
+            (t.elapsed(), model.slope().to_vec())
+        });
+    }
     if wants("dehaze_map") {
         let options = dehaze::DehazeOptions { amount: 0.5 };
         time("dehaze_map", runs, || {

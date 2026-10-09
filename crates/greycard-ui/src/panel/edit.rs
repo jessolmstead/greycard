@@ -114,18 +114,22 @@ pub(crate) fn current_turn(st: &State) -> u8 {
 pub(crate) const DEBOUNCE_MS: u64 = 300;
 
 /// The slider a timing run moves: `--time-sharpen` the sharpen's
-/// radius, `--time-clarity` the Detail section's Clarity.
+/// radius, `--time-clarity` the Detail section's Clarity,
+/// `--time-dehaze` its Dehaze, and `--time-texture` its Texture with
+/// the Dehaze held on, which is the move that pays for both.
 #[derive(Clone, Copy)]
 enum Timed {
     Sharpen,
     Clarity,
+    Dehaze,
+    Texture,
 }
 
 /// The moves left, when the last was sent, and the milliseconds each
 /// took to its frame.
 pub(crate) type Timing = (u32, Option<std::time::Instant>, Vec<f64>);
 
-/// `--time-sharpen` and `--time-clarity`, on each frame that brought
+/// `--time-sharpen` and the other timing runs, on each frame that brought
 /// a new picture: the time since the last move was sent, then the
 /// next move (the slider between two fixed values, its section on)
 /// sent straight to the worker, past the debounce; after the last,
@@ -133,12 +137,16 @@ pub(crate) type Timing = (u32, Option<std::time::Instant>, Vec<f64>);
 pub(crate) fn time_moves(st: &mut State, app: &App) {
     time_move(st, app, Timed::Sharpen);
     time_move(st, app, Timed::Clarity);
+    time_move(st, app, Timed::Dehaze);
+    time_move(st, app, Timed::Texture);
 }
 
 fn time_move(st: &mut State, app: &App, which: Timed) {
     let (name, timing) = match which {
         Timed::Sharpen => ("sharpen", &mut st.time_sharpen),
         Timed::Clarity => ("clarity", &mut st.time_clarity),
+        Timed::Dehaze => ("dehaze", &mut st.time_dehaze),
+        Timed::Texture => ("texture", &mut st.time_texture),
     };
     let Some((left, sent, samples)) = timing.as_mut() else {
         return;
@@ -175,6 +183,15 @@ fn time_move(st: &mut State, app: &App, which: Timed) {
         Timed::Clarity => {
             st.edit.detail.enabled = true;
             st.edit.detail.clarity = if low { 0.3 } else { 0.6 };
+        }
+        Timed::Dehaze => {
+            st.edit.detail.enabled = true;
+            st.edit.detail.dehaze = if low { 0.3 } else { 0.6 };
+        }
+        Timed::Texture => {
+            st.edit.detail.enabled = true;
+            st.edit.detail.dehaze = 0.5;
+            st.edit.detail.texture = if low { 0.3 } else { 0.6 };
         }
     }
     st.generation += 1;

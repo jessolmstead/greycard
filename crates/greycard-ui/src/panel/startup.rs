@@ -389,11 +389,15 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             && cli.screenshot.is_none()
             && cli.time_sharpen.is_none()
             && cli.time_clarity.is_none()
+            && cli.time_dehaze.is_none()
+            && cli.time_texture.is_none()
             && cli.time_cull.is_none()
             && cli.time_select.is_none()
             && cli.time_scroll.is_none(),
         time_sharpen: cli.time_sharpen.map(|n| (n, None, Vec::new())),
         time_clarity: cli.time_clarity.map(|n| (n, None, Vec::new())),
+        time_dehaze: cli.time_dehaze.map(|n| (n, None, Vec::new())),
+        time_texture: cli.time_texture.map(|n| (n, None, Vec::new())),
         time_cull: cli.time_cull.map(|n| (n, Vec::new())),
         time_select: cli.time_select.map(|n| (n, Vec::new(), Vec::new())),
         time_scroll: cli

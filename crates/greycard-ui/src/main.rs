@@ -351,6 +351,16 @@ struct Cli {
     /// with the mean
     #[arg(long, value_name = "N", hide = true)]
     time_clarity: Option<u32>,
+    /// Once the first develop is on screen, move Dehaze this many
+    /// times, logging the time from each move to its frame, then quit
+    /// with the mean
+    #[arg(long, value_name = "N", hide = true)]
+    time_dehaze: Option<u32>,
+    /// Once the first develop is on screen, move Texture this many
+    /// times with Dehaze held at +50, logging the time from each move
+    /// to its frame, then quit with the mean
+    #[arg(long, value_name = "N", hide = true)]
+    time_texture: Option<u32>,
     /// Once the first develop is on screen, step to the next frame
     /// this many times, a tenth of a second apart, logging the time
     /// from each step to the frame that develops it, then quit with
@@ -513,10 +523,13 @@ pub(crate) struct State {
     pub(crate) placement: greycard_edit::Placement,
     /// The developed image waiting to go to the GPU, if any.
     pub(crate) pending: Option<Landed>,
-    /// `--time-sharpen` and `--time-clarity`: the moves left, when the
-    /// last was sent, and the milliseconds each took to its frame.
+    /// `--time-sharpen`, `--time-clarity`, `--time-dehaze` and
+    /// `--time-texture`: the moves left, when the last was sent, and
+    /// the milliseconds each took to its frame.
     pub(crate) time_sharpen: Option<crate::panel::edit::Timing>,
     pub(crate) time_clarity: Option<crate::panel::edit::Timing>,
+    pub(crate) time_dehaze: Option<crate::panel::edit::Timing>,
+    pub(crate) time_texture: Option<crate::panel::edit::Timing>,
     /// `--time-cull`: the steps left and the milliseconds each took
     /// from the key to the frame that showed the next picture.
     pub(crate) time_cull: Option<(u32, Vec<f64>)>,
@@ -1050,6 +1063,8 @@ impl State {
             pending: None,
             time_sharpen: None,
             time_clarity: None,
+            time_dehaze: None,
+            time_texture: None,
             time_cull: None,
             time_select: None,
             time_scroll: None,

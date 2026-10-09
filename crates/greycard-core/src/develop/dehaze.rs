@@ -32,7 +32,7 @@ use crate::image::WorkingImage;
 use rayon::prelude::*;
 
 /// Luminance weights of the working space, Rec.2020.
-const LUMA: [f32; 3] = [0.2627, 0.6780, 0.0593];
+pub const LUMA: [f32; 3] = [0.2627, 0.6780, 0.0593];
 
 /// About the long edge the reduced copy is brought to; the windows
 /// below are in its pixels, so they cover the same share of the
@@ -119,14 +119,61 @@ pub struct DehazeStats {
 /// The transmission map's coefficients on the reduced grid: `t = a *
 /// luminance + b` at every full-size pixel, bilinearly between
 /// them, and no less than the pixel's own dark channel says.
-struct Model {
+///
+/// What the fit hands the apply. The CPU's dehaze makes one and
+/// applies it at once; the GPU's apply takes the same model, fitted
+/// here on the CPU from a reduced copy the GPU made, so the two paths
+/// differ only in the per-pixel arithmetic of the apply.
+pub struct Model {
     width: usize,
     height: usize,
     factor: usize,
     a: Vec<f32>,
     b: Vec<f32>,
     airlight: [f32; 3],
+    amount: f32,
     strength: f32,
+}
+
+impl Model {
+    /// The reduced grid's size, and the factor it was reduced by.
+    pub fn grid(&self) -> (usize, usize, usize) {
+        (self.width, self.height, self.factor)
+    }
+
+    /// The averaged slope of the line in the luminance, a value a
+    /// reduced pixel, rows packed.
+    pub fn slope(&self) -> &[f32] {
+        &self.a
+    }
+
+    /// The averaged intercept, laid out as [`Model::slope`].
+    pub fn intercept(&self) -> &[f32] {
+        &self.b
+    }
+
+    pub fn airlight(&self) -> [f32; 3] {
+        self.airlight
+    }
+
+    /// The amount's share of the dark channel, [`FULL_STRENGTH`] at
+    /// the amount's end; never zero, see [`Reduced::model`].
+    pub fn strength(&self) -> f32 {
+        self.strength
+    }
+
+    /// What the dehaze reports, given what its apply found the
+    /// transmission's mean and least to be.
+    pub fn stats(&self, transmission_mean: f32, transmission_min: f32) -> DehazeStats {
+        DehazeStats {
+            airlight: self.airlight,
+            amount: self.amount,
+            strength: self.strength,
+            factor: self.factor,
+            transmission_mean,
+            transmission_min,
+        }
+    }
 }
 
 /// Remove haze from the working image in place, by `options.amount`.
@@ -146,30 +193,57 @@ pub fn dehaze_with_map(
     (stats, map.expect("the map was asked for"))
 }
 
+/// What a dehaze that does nothing reports: an amount whose strength
+/// is zero, or an empty picture.
+pub fn identity_stats(options: &DehazeOptions) -> DehazeStats {
+    let amount = options.amount.clamp(-1.0, 1.0);
+    DehazeStats {
+        airlight: [0.0; 3],
+        amount,
+        strength: amount * FULL_STRENGTH,
+        factor: 1,
+        transmission_mean: 1.0,
+        transmission_min: 1.0,
+    }
+}
+
 fn run(
     image: &mut WorkingImage,
     options: &DehazeOptions,
     want_map: bool,
 ) -> (DehazeStats, Option<Vec<f32>>) {
-    let amount = options.amount.clamp(-1.0, 1.0);
-    let strength = amount * FULL_STRENGTH;
     let (w, h) = (image.width, image.height);
-    if strength == 0.0 || w == 0 || h == 0 {
-        return (
-            DehazeStats {
-                airlight: [0.0; 3],
-                amount,
-                strength,
-                factor: 1,
-                transmission_mean: 1.0,
-                transmission_min: 1.0,
-            },
-            want_map.then(|| vec![1.0; w * h]),
-        );
+    let identity = || (identity_stats(options), want_map.then(|| vec![1.0; w * h]));
+    // Nothing to reduce for: the amount's strength is zero.
+    if options.amount.clamp(-1.0, 1.0) * FULL_STRENGTH == 0.0 {
+        return identity();
     }
-    let model = fit(image, strength);
+    let Some(model) = Reduced::new(image).model(options) else {
+        return identity();
+    };
+    apply(image, &model, want_map)
+}
+
+/// The apply alone: `model`'s transmission put on `image` in place,
+/// the full-size half of the dehaze. For a model fitted elsewhere,
+/// the GPU's tests' way to hold its apply to this one on the same
+/// model.
+pub fn dehaze_with_model(image: &mut WorkingImage, model: &Model) -> DehazeStats {
+    apply(image, model, false).0
+}
+
+fn apply(
+    image: &mut WorkingImage,
+    model: &Model,
+    want_map: bool,
+) -> (DehazeStats, Option<Vec<f32>>) {
+    let (w, h) = (image.width, image.height);
+    assert_eq!(
+        (w.div_ceil(model.factor), h.div_ceil(model.factor)),
+        (model.width, model.height),
+        "a model fitted on a picture of another size"
+    );
     let columns = taps(w, model.width, model.factor);
-    let a = model.airlight;
     let mut map = want_map.then(|| vec![0f32; w * h]);
     // A row of the map to fill for each row of the picture, or none.
     let map_rows: Vec<Option<&mut [f32]>> = match map.as_mut() {
@@ -181,19 +255,9 @@ fn run(
         .par_chunks_mut(w * 3)
         .zip(map_rows.into_par_iter())
         .enumerate()
-        .map(|(y, (row, map_row))| clear_row(row, map_row, y, &model, &columns))
+        .map(|(y, (row, map_row))| clear_row(row, map_row, y, model, &columns))
         .reduce(|| (0.0, f32::INFINITY), |x, y| (x.0 + y.0, x.1.min(y.1)));
-    (
-        DehazeStats {
-            airlight: a,
-            amount,
-            strength,
-            factor: model.factor,
-            transmission_mean: (sum / (w * h) as f64) as f32,
-            transmission_min: min,
-        },
-        map,
-    )
+    (model.stats((sum / (w * h) as f64) as f32, min), map)
 }
 
 /// One row of the picture cleared of its haze, and its transmission
@@ -310,83 +374,185 @@ fn tap(i: usize, reduced: usize, factor: usize) -> (usize, usize, f32) {
     (i0, i1, u - i0 as f32)
 }
 
-fn taps(full: usize, reduced: usize, factor: usize) -> Vec<(usize, usize, f32)> {
+/// The bilinear taps of every full-size coordinate along an edge of
+/// `full` pixels on a reduced edge of `reduced`: what the apply reads
+/// the model at, and what the GPU's apply is given rather than working
+/// out itself, so that its taps are these to the bit.
+pub fn taps(full: usize, reduced: usize, factor: usize) -> Vec<(usize, usize, f32)> {
     (0..full).map(|i| tap(i, reduced, factor)).collect()
 }
 
-/// Fit the model: reduce, read the airlight, take the dark channel
-/// for a transmission, refine it by the guided filter and keep the
-/// filter's coefficients.
-fn fit(image: &WorkingImage, strength: f32) -> Model {
-    let (w, h) = (image.width, image.height);
-    let factor = reduce_factor(w, h);
-    let (rw, rh, rgb) = reduce(image, factor);
-    let n = rw * rh;
-    let luminance: Vec<f32> = rgb
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|px| LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2])
-        .collect();
+/// The reduced copy of a picture that the fit is made on, and what
+/// it reads off it that the amount does not change: the luminance,
+/// the airlight, and the guide's halves of the guided filter. A
+/// Dehaze move on a picture that has not changed fits again from
+/// this alone ([`Reduced::model`]); the full-size picture is read
+/// again only by the apply.
+///
+/// The CPU makes it from the picture ([`Reduced::new`]); the GPU path
+/// sums the blocks on the device, reads the sums back, and divides
+/// them here ([`Reduced::from_block_sums`]) as the CPU does, so that
+/// on the same pixels the two copies, and so the airlight and the
+/// model, are the same to the bit.
+pub struct Reduced {
+    width: usize,
+    height: usize,
+    factor: usize,
+    rgb: Vec<f32>,
+    luminance: Vec<f32>,
+    airlight: [f32; 3],
+    /// The box means of the guide and of its square.
+    mean_g: Vec<f32>,
+    corr_gg: Vec<f32>,
+}
 
-    let airlight = airlight(&rgb, &luminance, rw, rh);
-
-    // The transmission the prior reads: one minus the strength's
-    // share of the dark channel of the picture over its airlight,
-    // each reduced pixel's block its own window.
-    let t0: Vec<f32> = rgb
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|px| 1.0 - strength * dark_ratio(px, &airlight))
-        .collect();
-
-    // The guided filter (He, Sun and Tang): in each window the
-    // transmission is taken as a line in the guide, `a g + b`, with
-    // the slope regularized toward zero where the guide is flat, and
-    // each pixel gets the mean of the lines of the windows it is in.
-    let mean_g = box_mean(&luminance, rw, rh, GUIDE_WINDOW);
-    let mean_t = box_mean(&t0, rw, rh, GUIDE_WINDOW);
-    let gg: Vec<f32> = luminance.iter().map(|g| g * g).collect();
-    let gt: Vec<f32> = luminance.iter().zip(&t0).map(|(g, t)| g * t).collect();
-    let corr_gg = box_mean(&gg, rw, rh, GUIDE_WINDOW);
-    let corr_gt = box_mean(&gt, rw, rh, GUIDE_WINDOW);
-    let mut a = vec![0f32; n];
-    let mut b = vec![0f32; n];
-    for i in 0..n {
-        let var = (corr_gg[i] - mean_g[i] * mean_g[i]).max(0.0);
-        let cov = corr_gt[i] - mean_g[i] * mean_t[i];
-        a[i] = cov / (var + GUIDE_EPS);
-        b[i] = mean_t[i] - a[i] * mean_g[i];
+impl Reduced {
+    /// The picture reduced by [`reduce_factor`], each reduced pixel
+    /// the mean of its block.
+    pub fn new(image: &WorkingImage) -> Self {
+        let (w, h) = (image.width, image.height);
+        let factor = reduce_factor(w, h);
+        if factor == 1 {
+            return Self::from_means(w, h, 1, image.data.clone());
+        }
+        let mut sums = block_sums(image, factor);
+        divide(&mut sums, w, h, factor);
+        Self::from_means(w.div_ceil(factor), h.div_ceil(factor), factor, sums)
     }
-    let a = box_mean(&a, rw, rh, GUIDE_WINDOW);
-    let b = box_mean(&b, rw, rh, GUIDE_WINDOW);
-    Model {
-        width: rw,
-        height: rh,
-        factor,
-        a,
-        b,
-        airlight,
-        strength,
+
+    /// The reduced copy of a `width` by `height` picture from its
+    /// block sums, interleaved RGB on the grid of [`reduce_factor`]'s
+    /// blocks: each the f32 sum of its block's pixels from zero, along
+    /// each row of the block and the rows in order, as
+    /// [`Reduced::new`] adds them. At a factor of one a block is its
+    /// pixel and the sums are the picture.
+    pub fn from_block_sums(width: usize, height: usize, mut sums: Vec<f32>) -> Self {
+        let factor = reduce_factor(width, height);
+        let (rw, rh) = (width.div_ceil(factor), height.div_ceil(factor));
+        assert_eq!(sums.len(), rw * rh * 3, "block sums of another grid");
+        if factor > 1 {
+            divide(&mut sums, width, height, factor);
+        }
+        Self::from_means(rw, rh, factor, sums)
+    }
+
+    fn from_means(width: usize, height: usize, factor: usize, rgb: Vec<f32>) -> Self {
+        if width == 0 || height == 0 {
+            // An empty picture: nothing to read, and no model to fit.
+            return Self {
+                width,
+                height,
+                factor,
+                rgb,
+                luminance: Vec::new(),
+                airlight: [0.0; 3],
+                mean_g: Vec::new(),
+                corr_gg: Vec::new(),
+            };
+        }
+        let luminance: Vec<f32> = rgb
+            .as_chunks::<3>()
+            .0
+            .par_iter()
+            .map(|px| LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2])
+            .collect();
+        let airlight = airlight(&rgb, &luminance, width, height);
+        let mean_g = box_mean(&luminance, width, height, GUIDE_WINDOW);
+        let gg: Vec<f32> = luminance.par_iter().map(|g| g * g).collect();
+        let corr_gg = box_mean(&gg, width, height, GUIDE_WINDOW);
+        Self {
+            width,
+            height,
+            factor,
+            rgb,
+            luminance,
+            airlight,
+            mean_g,
+            corr_gg,
+        }
+    }
+
+    /// The reduced grid's size, and the factor it was reduced by.
+    pub fn grid(&self) -> (usize, usize, usize) {
+        (self.width, self.height, self.factor)
+    }
+
+    /// The block means, interleaved RGB.
+    pub fn means(&self) -> &[f32] {
+        &self.rgb
+    }
+
+    pub fn airlight(&self) -> [f32; 3] {
+        self.airlight
+    }
+
+    /// Fit the model at `options`' amount: take the dark channel for
+    /// a transmission, refine it by the guided filter and keep the
+    /// filter's coefficients. None where the amount's strength is
+    /// zero, or the picture is empty, and the dehaze does nothing.
+    pub fn model(&self, options: &DehazeOptions) -> Option<Model> {
+        let amount = options.amount.clamp(-1.0, 1.0);
+        let strength = amount * FULL_STRENGTH;
+        let (rw, rh) = (self.width, self.height);
+        if strength == 0.0 || rw == 0 || rh == 0 {
+            return None;
+        }
+        let n = rw * rh;
+        let airlight = self.airlight;
+        let (luminance, mean_g, corr_gg) = (&self.luminance, &self.mean_g, &self.corr_gg);
+
+        // The transmission the prior reads: one minus the strength's
+        // share of the dark channel of the picture over its airlight,
+        // each reduced pixel's block its own window.
+        let t0: Vec<f32> = self
+            .rgb
+            .as_chunks::<3>()
+            .0
+            .par_iter()
+            .map(|px| 1.0 - strength * dark_ratio(px, &airlight))
+            .collect();
+
+        // The guided filter (He, Sun and Tang): in each window the
+        // transmission is taken as a line in the guide, `a g + b`, with
+        // the slope regularized toward zero where the guide is flat, and
+        // each pixel gets the mean of the lines of the windows it is in.
+        let mean_t = box_mean(&t0, rw, rh, GUIDE_WINDOW);
+        let gt: Vec<f32> = luminance.par_iter().zip(&t0).map(|(g, t)| g * t).collect();
+        let corr_gt = box_mean(&gt, rw, rh, GUIDE_WINDOW);
+        let (a, b): (Vec<f32>, Vec<f32>) = (0..n)
+            .into_par_iter()
+            .map(|i| {
+                let var = (corr_gg[i] - mean_g[i] * mean_g[i]).max(0.0);
+                let cov = corr_gt[i] - mean_g[i] * mean_t[i];
+                let a = cov / (var + GUIDE_EPS);
+                (a, mean_t[i] - a * mean_g[i])
+            })
+            .unzip();
+        let a = box_mean(&a, rw, rh, GUIDE_WINDOW);
+        let b = box_mean(&b, rw, rh, GUIDE_WINDOW);
+        Some(Model {
+            width: rw,
+            height: rh,
+            factor: self.factor,
+            a,
+            b,
+            airlight,
+            amount,
+            strength,
+        })
     }
 }
 
-/// The picture reduced by `factor` on each edge, each reduced pixel
-/// the mean of its block; a block cut by the edge is the mean of what
-/// is there. Interleaved RGB, and the reduced size.
-fn reduce(image: &WorkingImage, factor: usize) -> (usize, usize, Vec<f32>) {
+/// The picture's block sums at `factor`, interleaved RGB on the
+/// reduced grid: a block cut by the edge sums what is there.
+fn block_sums(image: &WorkingImage, factor: usize) -> Vec<f32> {
     let (w, h) = (image.width, image.height);
-    if factor == 1 {
-        return (w, h, image.data.clone());
-    }
     let rw = w.div_ceil(factor);
     let rh = h.div_ceil(factor);
     let mut out = vec![0f32; rw * rh * 3];
     out.par_chunks_mut(rw * 3)
         .zip(image.data.par_chunks(w * 3 * factor))
         .for_each(|(out, rows)| {
-            let rows_here = rows.len() / (w * 3);
             for row in rows.chunks_exact(w * 3) {
                 for (i, px) in row.as_chunks::<3>().0.iter().enumerate() {
                     let o = &mut out[(i / factor) * 3..(i / factor) * 3 + 3];
@@ -395,6 +561,18 @@ fn reduce(image: &WorkingImage, factor: usize) -> (usize, usize, Vec<f32>) {
                     o[2] += px[2];
                 }
             }
+        });
+    out
+}
+
+/// Block sums to block means in place: each divided by the pixels its
+/// block holds inside the picture.
+fn divide(sums: &mut [f32], w: usize, h: usize, factor: usize) {
+    let rw = w.div_ceil(factor);
+    sums.par_chunks_mut(rw * 3)
+        .enumerate()
+        .for_each(|(y, out)| {
+            let rows_here = (h - y * factor).min(factor);
             for (i, o) in out.as_chunks_mut::<3>().0.iter_mut().enumerate() {
                 let cols_here = (w - i * factor).min(factor);
                 let count = (rows_here * cols_here) as f32;
@@ -403,7 +581,6 @@ fn reduce(image: &WorkingImage, factor: usize) -> (usize, usize, Vec<f32>) {
                 o[2] /= count;
             }
         });
-    (rw, rh, out)
 }
 
 /// The airlight: the mean color of the brightest of the haziest
@@ -508,22 +685,43 @@ fn box_mean(plane: &[f32], w: usize, h: usize, r: usize) -> Vec<f32> {
             }
         });
     // Columns: a running sum down the rows, then each output row a
-    // difference of two of them.
-    let mut prefix = vec![0f64; w * (h + 1)];
-    for y in 0..h {
-        let (above, here) = prefix.split_at_mut((y + 1) * w);
-        let above = &above[y * w..];
-        for x in 0..w {
-            here[x] = above[x] + rows[y * w + x] as f64;
-        }
-    }
+    // difference of two of them. A band of columns at a time, each with
+    // running sums of its own, so that the bands run in parallel; down
+    // each column the sums are added in the same order as one pass
+    // over the whole plane would add them.
+    const BAND: usize = 64;
+    let bands: Vec<Vec<f32>> = (0..w.div_ceil(BAND))
+        .into_par_iter()
+        .map(|band| {
+            let x0 = band * BAND;
+            let bw = BAND.min(w - x0);
+            let mut prefix = vec![0f64; bw * (h + 1)];
+            for y in 0..h {
+                let (above, here) = prefix.split_at_mut((y + 1) * bw);
+                let above = &above[y * bw..];
+                let row = &rows[y * w + x0..][..bw];
+                for x in 0..bw {
+                    here[x] = above[x] + row[x] as f64;
+                }
+            }
+            let mut out = vec![0f32; bw * h];
+            for (y, out) in out.chunks_exact_mut(bw).enumerate() {
+                let lo = y.saturating_sub(r);
+                let hi = (y + r + 1).min(h);
+                let count = (hi - lo) as f64;
+                for (x, o) in out.iter_mut().enumerate() {
+                    *o = ((prefix[hi * bw + x] - prefix[lo * bw + x]) / count) as f32;
+                }
+            }
+            out
+        })
+        .collect();
     let mut out = vec![0f32; w * h];
-    out.par_chunks_mut(w).enumerate().for_each(|(y, out)| {
-        let lo = y.saturating_sub(r);
-        let hi = (y + r + 1).min(h);
-        let count = (hi - lo) as f64;
-        for (x, o) in out.iter_mut().enumerate() {
-            *o = ((prefix[hi * w + x] - prefix[lo * w + x]) / count) as f32;
+    out.par_chunks_mut(w).enumerate().for_each(|(y, row)| {
+        for (band, values) in bands.iter().enumerate() {
+            let x0 = band * BAND;
+            let bw = BAND.min(w - x0);
+            row[x0..x0 + bw].copy_from_slice(&values[y * bw..][..bw]);
         }
     });
     out
@@ -957,6 +1155,146 @@ mod tests {
             / body(hazy.width, hazy.height).count() as f32;
         assert!(err < 0.06, "reduced transmission off by {err:.3}");
     }
+
+    /// FNV-1a over the bits of a picture's samples.
+    fn hash(data: &[f32]) -> u64 {
+        data.iter().fold(0xcbf2_9ce4_8422_2325, |h, v| {
+            (h ^ u64::from(v.to_bits())).wrapping_mul(0x0100_0000_01b3)
+        })
+    }
+
+    /// The pictures the bit-for-bit record is made on: each scene at
+    /// sizes that take the reduction at factors one to four, with
+    /// sides that are not a multiple of the factor, and black and
+    /// clipped frames.
+    fn recorded_cases() -> Vec<(&'static str, WorkingImage, f32)> {
+        let hazy = |w, h| hazed(&clear_scene(w, h), [0.95, 0.85, 0.70]).0;
+        let flat = |w, h, v: f32| {
+            let mut image = WorkingImage::new(w, h);
+            image.data.fill(v);
+            image
+        };
+        vec![
+            ("clear 192x128", clear_scene(192, 128), 0.5),
+            ("hazy 256x160", hazy(256, 160), 1.0),
+            ("hazy 256x160 in", hazy(256, 160), -0.5),
+            ("neutral 192x128", neutral_scene(192, 128), 0.5),
+            ("hazy 1601x401", hazy(1601, 401), 0.73),
+            ("neutral 401x1601", neutral_scene(401, 1601), -1.0),
+            ("hazy 3077x211", hazy(3077, 211), 0.31),
+            ("clear 37x4700", clear_scene(37, 4700), 1.0),
+            ("hazy 4610x97", hazy(4610, 97), -0.17),
+            ("black 1700x30", flat(1700, 30, 0.0), 1.0),
+            ("clipped 1700x30", flat(1700, 30, 8.0), 0.6),
+        ]
+    }
+
+    /// The CPU's output, held bit for bit to what it was before the
+    /// fit was split from the apply for the GPU: the pictures' sample
+    /// bits, the airlight's and the least transmission's, and the
+    /// factor. The mean transmission is a sum rayon combines in an
+    /// order of its own, so it is held to 1e-6.
+    #[test]
+    fn the_output_is_what_it_was_bit_for_bit() {
+        let mut lines = Vec::new();
+        for (name, image, amount) in recorded_cases() {
+            let mut image = image;
+            let stats = dehaze(&mut image, &DehazeOptions { amount });
+            lines.push(format!(
+                "{name}: {:016x} {:08x} {:08x} {:08x} {:08x} {} {:.6}",
+                hash(&image.data),
+                stats.airlight[0].to_bits(),
+                stats.airlight[1].to_bits(),
+                stats.airlight[2].to_bits(),
+                stats.transmission_min.to_bits(),
+                stats.factor,
+                stats.transmission_mean,
+            ));
+        }
+        let got = lines.join("\n");
+        println!("{got}");
+        assert_eq!(got, RECORDED.trim(), "the dehaze's output moved");
+    }
+
+    /// Block sums made the way [`Reduced::from_block_sums`] says, one
+    /// block at a time in the order the GPU's reduce adds them, give
+    /// the reduced copy [`Reduced::new`] makes to the bit, and so the
+    /// same model; and a model made again from a kept copy is the one
+    /// made fresh.
+    #[test]
+    fn the_block_sums_divide_as_the_reduction_does() {
+        for (name, image, amount) in recorded_cases() {
+            let (w, h) = (image.width, image.height);
+            let factor = reduce_factor(w, h);
+            let (rw, rh) = (w.div_ceil(factor), h.div_ceil(factor));
+            let mut sums = vec![0f32; rw * rh * 3];
+            for by in 0..rh {
+                for bx in 0..rw {
+                    let mut s = [0f32; 3];
+                    for y in by * factor..((by + 1) * factor).min(h) {
+                        for x in bx * factor..((bx + 1) * factor).min(w) {
+                            let px = &image.data[(y * w + x) * 3..][..3];
+                            for (s, v) in s.iter_mut().zip(px) {
+                                *s += v;
+                            }
+                        }
+                    }
+                    sums[(by * rw + bx) * 3..][..3].copy_from_slice(&s);
+                }
+            }
+            let from_sums = Reduced::from_block_sums(w, h, sums);
+            let made = Reduced::new(&image);
+            let bits = |v: &[f32]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+            assert_eq!(bits(from_sums.means()), bits(made.means()), "{name}");
+            assert_eq!(from_sums.grid(), made.grid(), "{name}");
+            let options = DehazeOptions { amount };
+            let (a, b) = (
+                from_sums.model(&options).unwrap(),
+                made.model(&options).unwrap(),
+            );
+            assert_eq!(bits(a.slope()), bits(b.slope()), "{name}");
+            assert_eq!(bits(a.intercept()), bits(b.intercept()), "{name}");
+            assert_eq!(a.airlight(), b.airlight(), "{name}");
+            let mut once = image.clone();
+            let mut kept = image.clone();
+            let stats = dehaze(&mut once, &options);
+            let kept_stats = dehaze_with_model(&mut kept, &a);
+            assert_eq!(bits(&once.data), bits(&kept.data), "{name}");
+            assert_eq!(stats.airlight, kept_stats.airlight, "{name}");
+            assert_eq!(stats.transmission_min, kept_stats.transmission_min);
+        }
+        assert!(
+            Reduced::new(&clear_scene(8, 8))
+                .model(&DehazeOptions { amount: 0.0 })
+                .is_none()
+        );
+        // An empty picture has nothing to fit and does nothing.
+        let options = DehazeOptions { amount: 0.5 };
+        for (w, h) in [(0, 0), (0, 5), (7, 0)] {
+            let mut empty = WorkingImage::new(w, h);
+            assert_eq!(dehaze(&mut empty, &options), identity_stats(&options));
+            assert!(Reduced::new(&empty).model(&options).is_none());
+            assert!(
+                Reduced::from_block_sums(w, h, Vec::new())
+                    .model(&options)
+                    .is_none()
+            );
+        }
+    }
+
+    const RECORDED: &str = "
+clear 192x128: 9cdd28592fda787b 3ef65bb4 3f394d52 3e394d52 3f75d705 1 0.992128
+hazy 256x160: f62b6b1bc0e95397 3f733333 3f59999a 3f333333 3e4ccccd 1 0.512326
+hazy 256x160 in: bc2f26d432d1be80 3f733333 3f59999a 3f333333 3f8cca5d 1 1.244359
+neutral 192x128: 995db5ac332f28d3 3f5995ae 3f5cbde6 3f42af88 3f19999a 1 0.801992
+hazy 1601x401: 9c4f72ecdd8feaa6 3f733333 3f59999a 3f333333 3ed4fdf2 2 0.644646
+neutral 401x1601: 35964929103ad437 3f472a77 3f4c2453 3f3e615b 3f9616cc 2 1.430974
+hazy 3077x211: 2365fe6922bb716c 3f733332 3f599999 3f333332 3f408cf7 3 0.849333
+clear 37x4700: fec7d70691a193f7 3f1cc62e 3f4a0889 3e4a0889 3f714a57 4 0.988538
+hazy 4610x97: 30b68017e3540007 3f733331 3f59999c 3f333331 3f8256f3 4 1.082619
+black 1700x30: fbf76ffb08900a45 38d1b717 38d1b717 38d1b717 3f800000 2 1.000000
+clipped 1700x30: ede667fe46900a45 41000000 41000000 41000000 3f051eb8 2 0.520000
+";
 
     #[test]
     fn the_box_mean_and_min_filter_handle_their_edges() {
