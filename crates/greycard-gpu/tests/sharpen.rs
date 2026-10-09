@@ -424,6 +424,127 @@ fn the_automatic_threshold_is_the_references() {
     );
 }
 
+/// A high-ISO black beside an edge: every channel noise about zero,
+/// the luminance under black at a quarter of the pixels, sharpened
+/// everywhere. The pedestal the deconvolution runs on, the floor its
+/// early stop reads and the scaling about the pedestal's negative are
+/// the reference's, and no pixel in the black comes out a dot.
+#[test]
+fn a_noisy_black_matches_the_reference() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let (w, h) = (300, 200);
+    let mut image = textured(w, h, 1.0);
+    let mut seed = 0x2545_F491_u32;
+    let mut rand = || {
+        seed ^= seed << 13;
+        seed ^= seed >> 17;
+        seed ^= seed << 5;
+        (seed as f32 / u32::MAX as f32) - 0.5
+    };
+    for (i, px) in image.data.chunks_mut(3).enumerate() {
+        // The left two thirds taken down to black, the rest left lit.
+        let dim = if i % w < 2 * w / 3 { 0.001 } else { 1.0 };
+        for c in px.iter_mut() {
+            *c = *c * dim + 0.006 * rand();
+        }
+    }
+    let under = image
+        .data
+        .chunks(3)
+        .filter(|px| {
+            reference::LUMA[0] * px[0] + reference::LUMA[1] * px[1] + reference::LUMA[2] * px[2]
+                < 0.0
+        })
+        .count();
+    assert!(under > w * h / 6, "{under} pixels under black");
+    for (what, options) in [
+        (
+            "noisy black, no threshold",
+            SharpenOptions {
+                contrast: Threshold::Fixed(0.0),
+                ..Default::default()
+            },
+        ),
+        (
+            "noisy black, no early stop",
+            SharpenOptions {
+                contrast: Threshold::Fixed(0.0),
+                radius: Radius::Fixed(1.2),
+                iterations: 40,
+                stop_early: false,
+            },
+        ),
+        (
+            "noisy black, a threshold",
+            SharpenOptions {
+                contrast: Threshold::Fixed(0.05),
+                ..Default::default()
+            },
+        ),
+    ] {
+        check(&ctx, what, &image, &options, Some(0.7), 2.0, TOLERANCE);
+        let mut gpu = image.clone();
+        ctx.sharpen_image(&mut gpu, &options, Some(0.7), 2.0)
+            .expect("the GPU sharpen runs");
+        let brightest = gpu
+            .data
+            .chunks(3)
+            .enumerate()
+            .filter(|(i, _)| i % w < 100)
+            .map(|(_, px)| px[0].max(px[1]).max(px[2]))
+            .fold(f32::MIN, f32::max);
+        assert!(
+            brightest < 0.05,
+            "{what}: a dot of {brightest} in the black"
+        );
+    }
+}
+
+/// Blocks of exact black beside bright primaries, sharpened everywhere:
+/// a black pixel's estimate rests on the pedestal, to within its
+/// rounding, and the early stop's floor must sit clear of it, or the
+/// two paths stop its block on different iterations by the rounding.
+#[test]
+fn a_black_at_rest_stops_where_the_reference_does() {
+    let Some(ctx) = context() else {
+        return;
+    };
+    let (w, h) = (260, 200);
+    let mut image = WorkingImage::new(w, h);
+    for (i, px) in image.data.chunks_mut(3).enumerate() {
+        let (x, y) = (i % w, i / w);
+        let color = match ((x / 9) % 4, (y / 13) % 3) {
+            _ if x < 100 => [0.0, 0.0, 0.0],
+            (0, _) | (_, 0) => [0.0, 0.0, 0.0],
+            (1, 1) => [2.5, 0.0, 0.0],
+            (2, _) => [0.0, 0.8, 0.8],
+            _ => [0.0, 0.0, 1.7],
+        };
+        px.copy_from_slice(&color);
+    }
+    for (iterations, radius) in [(5, 0.59), (30, 0.4), (50, 1.0)] {
+        let options = SharpenOptions {
+            radius: Radius::Fixed(radius),
+            iterations,
+            contrast: Threshold::Fixed(0.0),
+            stop_early: true,
+        };
+        for clip in [0.98, 8.0] {
+            check(
+                &ctx,
+                &format!("black at rest, {iterations} iterations at {radius}, clip {clip}"),
+                &image,
+                &options,
+                None,
+                clip,
+                TOLERANCE,
+            );
+        }
+    }
+}
+
 /// What the device rejects comes back as an error, not a panic: an
 /// output texture the op cannot write to (no storage usage) fails the
 /// bind group's validation, which the op's error scope catches. The
@@ -557,6 +678,11 @@ enum Scene {
     /// Blocks of pure primaries, black and bright: a channel at zero,
     /// a luminance at zero.
     Saturated,
+    /// A high-ISO black after the camera matrix: textured, from black
+    /// to somewhere in the shadows or the midtones, with noise about
+    /// zero in every channel on its own, so the luminance and the
+    /// channels go under black, against the pedestal.
+    Black,
 }
 
 /// A picture of `scene`'s kind, its numbers from `seed`.
@@ -566,7 +692,7 @@ fn drawn_picture(scene: Scene, seed: u64, w: usize, h: usize) -> WorkingImage {
     let mut rand = move || noise.unit() - 0.5;
     let mut image = WorkingImage::new(w, h);
     match scene {
-        Scene::Textured | Scene::Busy | Scene::Dark => {
+        Scene::Textured | Scene::Busy | Scene::Dark | Scene::Black => {
             let (across, down) = (r.between(2, 12), r.between(2, 10));
             let (dark, light) = (r.range(0.0, 0.3), r.range(0.2, 0.9));
             let modulus = r.between(17, 151);
@@ -620,10 +746,17 @@ fn drawn_picture(scene: Scene, seed: u64, w: usize, h: usize) -> WorkingImage {
                     }
                 }
             }
-            let scale = if let Scene::Dark = scene {
-                r.range(1e-4, 0.01)
+            let scale = match scene {
+                Scene::Dark => r.range(1e-4, 0.01),
+                Scene::Black => r.pick(&[0.0, 0.002, 0.02, 0.3]) * r.unit(),
+                _ => 1.0,
+            };
+            // The black's noise, each channel's own: from a tenth of the
+            // pedestal to ten times it, each way about zero.
+            let speckle = if let Scene::Black = scene {
+                reference::BLACK_PEDESTAL * r.pick(&[0.1f32, 1.0, 3.0, 10.0]) * r.range(0.5, 1.0)
             } else {
-                1.0
+                0.0
             };
             let (pixels, _) = image.data.as_chunks_mut::<3>();
             for (i, px) in pixels.iter_mut().enumerate() {
@@ -633,6 +766,11 @@ fn drawn_picture(scene: Scene, seed: u64, w: usize, h: usize) -> WorkingImage {
                 px[0] = v * tint;
                 px[1] = v;
                 px[2] = v * (2.0 - tint) * (0.5 + 0.5 * (y as f32 / h as f32));
+                if speckle > 0.0 {
+                    for c in px.iter_mut() {
+                        *c += 2.0 * speckle * rand();
+                    }
+                }
             }
         }
         Scene::Noise => {
@@ -736,6 +874,8 @@ fn draw(r: &mut Rng) -> Drawn {
         Scene::Busy,
         Scene::Dark,
         Scene::Saturated,
+        Scene::Black,
+        Scene::Black,
     ]);
     let scene_seed = r.next();
     // The panel's ranges: radius 0.4 to 2, iterations 5 to 50, a

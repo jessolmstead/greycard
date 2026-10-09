@@ -65,13 +65,13 @@ struct Params {
     taps: u32,
     threshold: f32,
     clip_level: f32,
-    _align: u32,
+    pedestal: f32,
     origin: [u32; 2],
     skip: u32,
     tsize: u32,
     count: [u32; 2],
     offset: u32,
-    _pad: u32,
+    floor_pedestal: f32,
     kernel: [[f32; 4]; 4],
 }
 
@@ -521,6 +521,8 @@ impl Context {
             half,
             taps: kernel.len() as u32,
             clip_level,
+            pedestal: reference::BLACK_PEDESTAL,
+            floor_pedestal: reference::BLACK_PEDESTAL * reference::FLOOR_PEDESTAL,
             kernel: deconv,
             ..Default::default()
         };
@@ -983,11 +985,13 @@ mod tests {
         assert_eq!(offset_of!(Params, taps), 48);
         assert_eq!(offset_of!(Params, threshold), 52);
         assert_eq!(offset_of!(Params, clip_level), 56);
+        assert_eq!(offset_of!(Params, pedestal), 60);
         assert_eq!(offset_of!(Params, origin), 64);
         assert_eq!(offset_of!(Params, skip), 72);
         assert_eq!(offset_of!(Params, tsize), 76);
         assert_eq!(offset_of!(Params, count), 80);
         assert_eq!(offset_of!(Params, offset), 88);
+        assert_eq!(offset_of!(Params, floor_pedestal), 92);
         assert_eq!(offset_of!(Params, kernel), 96);
         assert_eq!(std::mem::size_of::<Params>(), 160);
     }

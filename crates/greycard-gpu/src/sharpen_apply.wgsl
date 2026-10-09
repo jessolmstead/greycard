@@ -1,7 +1,7 @@
-// The capture sharpening's last step: every channel scaled by the
-// sharpened luminance over the old, the blend mask in the alpha, into
-// the viewport's half-float texture or into full floats for a read
-// back.
+// The capture sharpening's last step: every channel scaled about the
+// pedestal's negative by the sharpened luminance over the old, both on
+// the pedestal, the blend mask in the alpha, into the viewport's
+// half-float texture or into full floats for a read back.
 
 struct Params {
     size: vec2<u32>,
@@ -18,12 +18,13 @@ struct Params {
     taps: u32,
     threshold: f32,
     clip_level: f32,
+    pedestal: f32,
     origin: vec2<u32>,
     skip: u32,
     tsize: u32,
     count: vec2<u32>,
     offset: u32,
-    pad1: u32,
+    floor_pedestal: f32,
     kernel: array<vec4<f32>, 4>,
 }
 
@@ -40,9 +41,9 @@ fn sharpened_pixel(at: vec2<i32>) -> vec4<f32> {
     let px = textureLoad(rgb, at, 0).rgb;
     let old = textureLoad(lum, at, 0).r;
     let now = textureLoad(sharpened, at, 0).r;
-    let factor = now / max(old, 1.0e-5);
+    let factor = now / old;
     let mask = textureLoad(blend, at, 0).r;
-    return vec4<f32>(px * factor, mask);
+    return vec4<f32>((px + p.pedestal) * factor - p.pedestal, mask);
 }
 
 @compute @workgroup_size(16, 16, 1)

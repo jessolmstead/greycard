@@ -89,6 +89,10 @@ note a first tester reads.
   the chromatic aberration correction could differ between the GPU
   and the CPU by up to 37 levels on a few pixels; an export moves
   from 0.4.0's on single pixels only ([§264](https://github.com/jessolmstead/greycard/blob/master/docs/notes/264-the-gpu-ops-checked-at-random-settings.md))
+- At high ISO the capture sharpen turned single pixels in the blacks
+  into full-brightness magenta, blue and white dots, hundreds to
+  thousands a frame at ISO 4000 and up; they are gone, and the
+  sharpening elsewhere is as it was ([§268](https://github.com/jessolmstead/greycard/blob/master/docs/notes/268-the-capture-sharpen-on-a-pedestal.md))
 - After a camera match run, **Fit** no longer stays on and
   highlighted over the groups it just fitted, where pressing it fitted
   the same frames again; it comes back when a group, the scope or

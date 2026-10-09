@@ -12,9 +12,18 @@
 //! edge clamp their reads so every pixel is sharpened; the clip mask is
 //! taken on the working image; and units are the working space's
 //! (luminance relative to one, L* out of a hundred) rather than
-//! RawTherapee's scaled integers, with the thresholds converted.
+//! RawTherapee's scaled integers, with the thresholds converted. And
+//! the deconvolution runs on the luminance clipped at zero and raised
+//! by [`BLACK_PEDESTAL`], the channels scaled about the pedestal's
+//! negative and the early stop's floor read under the pedestal
+//! ([`stop_floor`]): RawTherapee divides camera values that are never
+//! negative, but the working image is after the camera matrix, where
+//! the noise at black goes below zero, and there Richardson–Lucy and
+//! the division by the old luminance both blew single pixels up into
+//! full-brightness colored dots.
 //!
-//! The pieces marked as shared (`LUMA`, `l_star`, `contrast`,
+//! The pieces marked as shared (`LUMA`, `BLACK_PEDESTAL`,
+//! `FLOOR_PEDESTAL`, `stop_floor`, `l_star`, `contrast`,
 //! `blend_factor`, `kernel`, `tile_for`, `border_for`, `tile_index`,
 //! `contrast_threshold` and the tile constants) are public so that a
 //! GPU implementation reads the same numbers this reference does; a
@@ -26,6 +35,35 @@ use rayon::prelude::*;
 
 /// Luminance weights of the working space, Rec.2020. Shared.
 pub const LUMA: [f32; 3] = [0.2627, 0.6780, 0.0593];
+
+/// What the deconvolution adds to the luminance, clipped at zero,
+/// before it starts, relative to white at one. Shared.
+///
+/// The working image is after the camera matrix, so the noise at
+/// black goes below zero. Richardson–Lucy divides by its blurred
+/// estimate and multiplies by the ratio: on a luminance that is noise
+/// about zero the divisor crosses zero, the ratio runs to hundreds and
+/// changes sign, and the estimate with it; and the channels were then
+/// scaled by the sharpened luminance over an old one of a ten
+/// thousandth or less. At ISO 10000 the two together made hundreds of
+/// isolated magenta, blue and white dots in the blacks, one pixel at a
+/// time. On a luminance that is never under the pedestal the ratios
+/// stay near one, and the channels are scaled about the pedestal's
+/// negative, `(c + k) · new / old − k`, so a factor never meets a
+/// luminance smaller than the pedestal.
+///
+/// Small, because under it the sharpen changes character: the
+/// deconvolution there is nearer linear than Richardson–Lucy's
+/// multiplicative steps, which go slowly in the dark, and a channel's
+/// change there is nearer an equal step in every channel than a gain.
+/// At a thousandth of white the frame that showed the dots shows none,
+/// and no pixel in its blacks rises by a hundredth of white, at the
+/// editor's settings and at the panel's strongest; it stays so with
+/// the pedestal at a thirtieth of that frame's noise at black, so a
+/// frame many times noisier is covered too, and the pedestal need not
+/// follow the noise. A base-ISO frame's pixels well above the pedestal
+/// move by under a level of 255 at the 99.9th percentile.
+pub const BLACK_PEDESTAL: f32 = 0.001;
 
 /// A sample this many times brighter than every same-color neighbor
 /// two away is a spike, not an edge, and says nothing about the lens.
@@ -64,8 +102,8 @@ pub struct SharpenOptions {
     /// haloed.
     pub iterations: usize,
     pub contrast: Threshold,
-    /// Stop a patch's iterations when any pixel in it drops under half
-    /// its blended start, before a halo goes dark.
+    /// Stop a patch's iterations when any pixel's luminance in it drops
+    /// under half its blended start, before a halo goes dark.
     pub stop_early: bool,
 }
 
@@ -219,7 +257,10 @@ pub fn sharpen_with_mask(
     let (w, h) = (image.width, image.height);
     let n = w * h;
 
-    // Luminance, its L*, and the clip mask.
+    // Luminance on its pedestal, which is what the deconvolution works
+    // on; the L* of the luminance itself, which is what the blend
+    // reads; and the clip mask.
+    let k = BLACK_PEDESTAL;
     let mut luminance = vec![0f32; n];
     let mut lstar = vec![0f32; n];
     let mut clip = vec![1f32; n];
@@ -229,8 +270,9 @@ pub fn sharpen_with_mask(
         .zip(clip.par_iter_mut())
         .zip(image.data.par_chunks(3))
         .for_each(|(((y, l), c), px)| {
-            *y = LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2];
-            *l = l_star(*y);
+            let raw = LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2];
+            *y = raw.max(0.0) + k;
+            *l = l_star(raw);
             if px[0] >= clip_level || px[1] >= clip_level || px[2] >= clip_level {
                 *c = 0.0;
             }
@@ -247,16 +289,21 @@ pub fn sharpen_with_mask(
 
     let sharpened = deconvolve(&luminance, &blend, w, h, radius, options);
 
+    // Every channel scaled about the pedestal's negative: a gain, so
+    // a color keeps its ratios, wherever the pedestal is small beside
+    // the channel, and an equal step in each channel where it is not.
+    // A channel under the pedestal's negative stays there, scaled
+    // away from it by a factor that the pedestal keeps near one.
     image
         .data
         .par_chunks_mut(3)
         .zip(luminance.par_iter())
         .zip(sharpened.par_iter())
         .for_each(|((px, &old), &new)| {
-            let factor = new / old.max(1e-5);
-            px[0] *= factor;
-            px[1] *= factor;
-            px[2] *= factor;
+            let factor = new / old;
+            px[0] = (px[0] + k) * factor - k;
+            px[1] = (px[1] + k) * factor - k;
+            px[2] = (px[2] + k) * factor - k;
         });
     (
         SharpenStats {
@@ -535,6 +582,34 @@ pub fn tile_for(h: usize) -> usize {
     tile
 }
 
+/// How much of the pedestal the early stop's floor keeps under a
+/// pixel; see [`stop_floor`]. Shared.
+pub const FLOOR_PEDESTAL: f32 = 0.9;
+
+/// The estimate under which a pixel stops its block's iterations, for
+/// a start of `luminance` on the pedestal and a blend of `blend`.
+///
+/// RawTherapee's rule is half the blended start. Here it is read
+/// nearly on the luminance rather than on the pedestal under it: where
+/// the blend is full, a pixel stops its block when its estimate's
+/// luminance falls under half its start less a tenth of the pedestal;
+/// where the blend is nothing it stops nothing, as before. Taken on
+/// the pedestal whole, half of it would come off the floor too, and a
+/// pixel at black would have to fall half the pedestal under black:
+/// the deconvolution on a pedestal, nearer linear in the dark than it
+/// was, then left two thirds more dark halos on a base-ISO frame than
+/// before, and moved the frame's export twice as much. Held to the
+/// luminance exactly, a pixel resting at black (a flat patch whose
+/// luminance is under zero, its estimate the pedestal to the last few
+/// bits) would sit on its floor, and which side of it is the rounding:
+/// the viewport and the export could stop a block an iteration apart.
+/// A tenth of the pedestal is far past any rounding and leaves a
+/// quarter more halos than before. Shared.
+#[inline]
+pub fn stop_floor(luminance: f32, blend: f32, pedestal: f32) -> f32 {
+    ((luminance - pedestal) * 0.5 + pedestal * FLOOR_PEDESTAL) * blend
+}
+
 /// Richardson–Lucy on the luminance, in tiles with a border, each
 /// blended into the old luminance by the mask.
 fn deconvolve(
@@ -563,6 +638,7 @@ fn deconvolve_in_tiles(
     let half = k.len() / 2;
     let border = border_for(half, options.iterations);
     let full = tile + 2 * border;
+    let pedestal = BLACK_PEDESTAL;
     let mut out = luminance.to_vec();
     out.par_chunks_mut(w * tile)
         .enumerate()
@@ -595,7 +671,7 @@ fn deconvolve_in_tiles(
                                 let b = blend[(y0 + ty) * w + x0 + tx];
                                 max_blend = max_blend.max(b);
                                 floor[ty * tile + tx] =
-                                    luminance[(y0 + ty) * w + x0 + tx] * b * 0.5;
+                                    stop_floor(luminance[(y0 + ty) * w + x0 + tx], b, pedestal);
                             }
                         }
                         if max_blend < SETTLED_BLEND {
@@ -839,15 +915,110 @@ mod tests {
             "{stats:?}"
         );
         assert_eq!(stats.clipped, 0.0);
-        // Channel ratios hold: the sharpen is a gain.
+        // Channel ratios hold about the pedestal's negative: the sharpen
+        // is a gain there, and so, to within the pedestal over the
+        // level, a gain on the channels themselves.
         let mut color = blurred_edge(w, h, 1.0);
         for px in color.data.chunks_mut(3) {
             px[0] *= 1.5;
             px[2] *= 0.5;
         }
+        let before = color.data.clone();
         sharpen(&mut color, &options, None, 10.0);
-        for px in color.data.chunks(3) {
-            assert!((px[0] / px[1] - 1.5).abs() < 1e-3 && (px[2] / px[1] - 0.5).abs() < 1e-3);
+        let k = BLACK_PEDESTAL;
+        for (px, was) in color.data.chunks(3).zip(before.chunks(3)) {
+            for c in [0, 2] {
+                let now = (px[c] + k) / (px[1] + k);
+                let then = (was[c] + k) / (was[1] + k);
+                assert!((now - then).abs() < 1e-4, "{now} against {then}");
+            }
+            assert!((px[0] / px[1] - 1.5).abs() < 0.02 && (px[2] / px[1] - 0.5).abs() < 0.02);
+        }
+    }
+
+    #[test]
+    fn noise_about_black_is_not_blown_up_into_dots() {
+        // A high-ISO black after the camera matrix: every channel noise
+        // about zero, the luminance negative at about half the pixels,
+        // beside a blurred edge up to a mid grey. Sharpened everywhere
+        // (a threshold of zero, which is where the automatic one lands
+        // on a frame with no flat patch to read), with the editor's
+        // other settings. Richardson–Lucy on that luminance, and the
+        // division by it, made single pixels hundreds of times their
+        // noise; the noise at black must stay noise.
+        let (w, h) = (128, 96);
+        let mut image = WorkingImage::new(w, h);
+        let mut seed = 0x2545_F491_u32;
+        let mut rand = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            (seed as f32 / u32::MAX as f32) - 0.5
+        };
+        for y in 0..h {
+            for x in 0..w {
+                let d = (x as f32 - 80.5) / (0.8 * std::f32::consts::SQRT_2);
+                let level = 0.3 * (1.0 + erf(d)) / 2.0;
+                let i = (y * w + x) * 3;
+                for c in 0..3 {
+                    image.data[i + c] = level + 0.006 * rand();
+                }
+            }
+        }
+        let before = image;
+        let negative = before
+            .data
+            .chunks(3)
+            .filter(|px| LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2] < 0.0)
+            .count();
+        assert!(negative > w * h / 4, "{negative} pixels under black");
+        // The edge's steepest step, summed down the rows: sharper is
+        // steeper.
+        let slope = |im: &WorkingImage| -> f32 {
+            (0..h)
+                .map(|y| {
+                    (70..90)
+                        .map(|x| {
+                            let i = (y * w + x) * 3;
+                            let sum = |j: usize| im.data[j..j + 3].iter().sum::<f32>();
+                            sum(i + 3) - sum(i)
+                        })
+                        .fold(0.0, f32::max)
+                })
+                .sum()
+        };
+        // With the early stop, the black's own noise sharpened under the
+        // floor ends the iterations of the blocks it is in, the edge's
+        // among them; without it the edge is sharpened in full.
+        for (stop_early, sharper) in [(true, 1.05), (false, 1.3)] {
+            let mut image = before.clone();
+            let options = SharpenOptions {
+                contrast: Threshold::Fixed(0.0),
+                radius: Radius::Fixed(0.6),
+                stop_early,
+                ..Default::default()
+            };
+            sharpen(&mut image, &options, None, 10.0);
+            // In the black, well clear of the edge, no channel moves by
+            // more than the noise's own spread.
+            let mut worst = 0f32;
+            for y in 0..h {
+                for x in 0..64 {
+                    let i = (y * w + x) * 3;
+                    for c in 0..3 {
+                        worst = worst.max((image.data[i + c] - before.data[i + c]).abs());
+                    }
+                }
+            }
+            assert!(
+                worst < 0.006,
+                "stopping early {stop_early}: a channel in the black moved by {worst}"
+            );
+            let (was, is) = (slope(&before), slope(&image));
+            assert!(
+                is > was * sharper,
+                "stopping early {stop_early}: the edge's slope {was} -> {is}"
+            );
         }
     }
 

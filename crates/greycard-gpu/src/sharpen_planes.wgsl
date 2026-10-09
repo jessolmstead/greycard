@@ -29,6 +29,8 @@ struct Params {
     taps: u32,
     threshold: f32,
     clip_level: f32,
+    // What the luminance is raised by, `BLACK_PEDESTAL`.
+    pedestal: f32,
     // A grid of tiles for the threshold search: where it starts, its
     // step, its tile's side, and how many along each axis.
     origin: vec2<u32>,
@@ -36,7 +38,7 @@ struct Params {
     tsize: u32,
     count: vec2<u32>,
     offset: u32,
-    pad1: u32,
+    floor_pedestal: f32,
     // The kernel's taps, up to sixteen: a deconvolution kernel whole,
     // or the blend blur's one side, the center first.
     kernel: array<vec4<f32>, 4>,
@@ -100,7 +102,9 @@ fn blend_factor(c: f32, threshold: f32) -> f32 {
     return 0.5 * (1.0 + x / sqrt(1.0 + x * x));
 }
 
-// Luminance and L* of every pixel, and the clip mask into `blend`.
+// Luminance of every pixel, clipped at zero and on the pedestal, for
+// the deconvolution; L* of the luminance itself, for the blend; and the
+// clip mask into `blend`.
 @compute @workgroup_size(16, 16, 1)
 fn prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= p.size.x || gid.y >= p.size.y {
@@ -109,7 +113,7 @@ fn prepare(@builtin(global_invocation_id) gid: vec3<u32>) {
     let at = vec2<i32>(gid.xy);
     let px = textureLoad(rgb, at, 0).rgb;
     let y = LUMA.x * px.x + LUMA.y * px.y + LUMA.z * px.z;
-    textureStore(lum, at, vec4<f32>(y, 0.0, 0.0, 0.0));
+    textureStore(lum, at, vec4<f32>(max(y, 0.0) + p.pedestal, 0.0, 0.0, 0.0));
     textureStore(lstar, at, vec4<f32>(l_star(y), 0.0, 0.0, 0.0));
     var clip = 1.0;
     if px.x >= p.clip_level || px.y >= p.clip_level || px.z >= p.clip_level {
@@ -267,8 +271,8 @@ fn blur_cols(@builtin(global_invocation_id) gid: vec3<u32>) {
     textureStore(blend, at, vec4<f32>(acc, 0.0, 0.0, 0.0));
 }
 
-// `tmp` becomes the sharpened luminance, starting as the luminance:
-// what a block the sharpen never commits keeps.
+// `tmp` becomes the sharpened luminance, starting as the luminance on
+// its pedestal: what a block the sharpen never commits keeps.
 @compute @workgroup_size(16, 16, 1)
 fn init_sharpened(@builtin(global_invocation_id) gid: vec3<u32>) {
     if gid.x >= p.size.x || gid.y >= p.size.y {

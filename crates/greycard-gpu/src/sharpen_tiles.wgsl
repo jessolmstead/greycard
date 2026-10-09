@@ -20,12 +20,14 @@ struct Params {
     taps: u32,
     threshold: f32,
     clip_level: f32,
+    pedestal: f32,
     origin: vec2<u32>,
     skip: u32,
     tsize: u32,
     count: vec2<u32>,
     offset: u32,
-    pad1: u32,
+    // The pedestal times `FLOOR_PEDESTAL`, for the early stop's floor.
+    floor_pedestal: f32,
     kernel: array<vec4<f32>, 4>,
 }
 
@@ -245,9 +247,15 @@ fn commit(tile: Tile, tx: u32, ty: u32) {
     textureStore(sharpened, at, vec4<f32>(l + b * (e - l), 0.0, 0.0, 0.0));
 }
 
-// After an iteration: a block whose estimate has dropped under half its
-// blended start anywhere stops here, its estimate committed as it is;
-// a workgroup a block.
+// The reference's `stop_floor`: half the blended luminance and most of
+// the blended pedestal.
+fn stop_floor(l: f32, b: f32) -> f32 {
+    return ((l - p.pedestal) * 0.5 + p.floor_pedestal) * b;
+}
+
+// After an iteration: a block whose estimate has dropped under its
+// floor anywhere stops here, its estimate committed as it is; a
+// workgroup a block.
 @compute @workgroup_size(32, 8, 1)
 fn check(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) lid: vec3<u32>) {
     let t = wid.z;
@@ -268,7 +276,7 @@ fn check(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_id) li
         if tx < tile.cols_here && ty < tile.rows_here {
             let at = vec2<i32>(i32(tile.x0 + tx), i32(tile.y0 + ty));
             let e = textureLoad(estimate, vec2<i32>(i32(tile.ax + tx + p.border), i32(tile.ay + ty + p.border))).r;
-            let f = textureLoad(lum, at, 0).r * textureLoad(blend, at, 0).r * 0.5;
+            let f = stop_floor(textureLoad(lum, at, 0).r, textureLoad(blend, at, 0).r);
             worst = min(worst, e - f);
         }
     }
