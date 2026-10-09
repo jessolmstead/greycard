@@ -28,6 +28,9 @@ use crate::raw::{
 /// Say what happened instead, and name the camera only when there is
 /// one to name.
 fn decoder_error(e: ::rawler::RawlerError) -> Error {
+    if is_nikon_high_efficiency(&e) {
+        return Error::Unsupported(NIKON_HE.into());
+    }
     let ::rawler::RawlerError::Unsupported {
         what,
         model,
@@ -50,6 +53,20 @@ fn decoder_error(e: ::rawler::RawlerError) -> Error {
         format!(" in {mode} mode")
     };
     Error::Unsupported(format!("{camera}{mode}: {what}"))
+}
+
+/// What a Nikon High Efficiency raw says in a build without the
+/// decoder for it.
+const NIKON_HE: &str = "Nikon High Efficiency raw (HE or HE*), not supported in this build";
+
+/// rawler refuses HE and HE* with `NEF compression
+/// Some(HighEfficency) is not supported`, or `HighEfficencyStar`, when
+/// it has no JPEG XS decoder built in. The text is the only thing that
+/// tells this refusal from any other decode failure. The match stops
+/// at `HighEffic` so that rawler correcting its spelling keeps it.
+fn is_nikon_high_efficiency(e: &::rawler::RawlerError) -> bool {
+    matches!(e, ::rawler::RawlerError::DecoderFailed(msg)
+        if msg.starts_with("NEF compression") && msg.contains("HighEffic"))
 }
 
 /// Every call into rawler goes through here. rawler panics on some
@@ -664,6 +681,31 @@ mod tests {
         // Anything else is passed through as rawler wrote it.
         let other = decoder_error(::rawler::RawlerError::DecoderFailed("truncated".into()));
         assert!(other.to_string().contains("truncated"));
+    }
+
+    #[test]
+    fn a_nikon_high_efficiency_raw_says_this_build_does_not_read_it() {
+        // rawler's words for HE and HE* without its JPEG XS decoder,
+        // spelled as rawler spells them and as it might one day.
+        for mode in [
+            "HighEfficency",
+            "HighEfficencyStar",
+            "HighEfficiency",
+            "HighEfficiencyStar",
+        ] {
+            let e = decoder_error(::rawler::RawlerError::DecoderFailed(format!(
+                "NEF compression Some({mode}) is not supported"
+            )));
+            assert!(matches!(e, Error::Unsupported(_)), "{e}");
+            let text = e.to_string();
+            assert!(text.contains("Nikon High Efficiency"), "{text}");
+            assert!(text.contains("not supported in this build"), "{text}");
+        }
+        // Any other NEF failure is passed through.
+        let other = decoder_error(::rawler::RawlerError::DecoderFailed(
+            "NEF: JPEG XS decoded a 2x2 mosaic but the IFD says 4x4".into(),
+        ));
+        assert!(matches!(other, Error::Decode(_)), "{other}");
     }
 
     #[test]

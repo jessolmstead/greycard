@@ -32,9 +32,16 @@ tracing-log = "0.2"
 # rawler 0.8.0 reads the wrong ColorData word for the EOS R6 Mark II, R7,
 # R8, R10 and R50 and declares a white level 10-17% too low (notes §13j).
 # Fixed upstream in dnglab/dnglab#840; this pins a fork carrying the same
-# fix until a release has it, and comes out then.
+# fix until a release has it. The pinned branch, nikon-he-jpegxs, carries
+# three things: that fix; dnglab/dnglab#835, Nikon High Efficiency
+# decoding, behind a `jpegxs` feature that is off unless greycard's
+# `nikon-he` turns it on; and our refit of #835's curve, which continues
+# it below black instead of flooring it at 1050 and lowers its offset to
+# 1018. The offset was measured against the camera's own JPEG between about
+# 45 and 1000 DN above black, and it moves every value above the toe down
+# 32 DN. The patch comes out when a release has all three.
 [patch.crates-io]
-rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "4b6164122c78f989c676cbcd517bd3897e6046fb" }
+rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "ec749df15c87f770ebdd29b0d3896bb354816f8c" }
 # femtovg 0.27.0 plus one change: a render pipeline is kept through
 # flushes that do not bind it, where 0.27.0 drops it at every flush and
 # compiles it again next frame (§208; femtovg/femtovg#371).

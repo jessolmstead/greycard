@@ -89,6 +89,9 @@ note a first tester reads.
   the chromatic aberration correction could differ between the GPU
   and the CPU by up to 37 levels on a few pixels; an export moves
   from 0.4.0's on single pixels only ([§264](https://github.com/jessolmstead/greycard/blob/master/docs/notes/264-the-gpu-ops-checked-at-random-settings.md))
+- A Nikon High Efficiency raw (HE or HE*) says so when it can't be
+  opened, instead of calling the file possibly corrupt
+  ([§266](https://github.com/jessolmstead/greycard/blob/master/docs/notes/266-nikon-high-efficiency-raws-behind-a-build-feature.md))
 
 ### For developers
 
@@ -97,6 +100,11 @@ note a first tester reads.
   shader is, with `GREYCARD_OP_PARITY_SEED`, `_CASES` and `_ONLY` to
   replay a case, and an ignored test checks the correction on real
   frames ([§264](https://github.com/jessolmstead/greycard/blob/master/docs/notes/264-the-gpu-ops-checked-at-random-settings.md))
+- A build from source with `--features nikon-he` opens Nikon's High
+  Efficiency raws, through dnglab/dnglab#835's decoder with its curve
+  refitted below 1000 DN; the published builds leave it out, since
+  JPEG XS is licensed per copy of a decoder, and the release workflow
+  checks that they do ([§266](https://github.com/jessolmstead/greycard/blob/master/docs/notes/266-nikon-high-efficiency-raws-behind-a-build-feature.md))
 
 ## 0.4.0, 2026-10-05
 

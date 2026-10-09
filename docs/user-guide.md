@@ -15,7 +15,8 @@ expect, please [report it](#reporting-a-problem).
   for Intel Macs or Windows on ARM.
 - **Raw files.** Tested with Canon, Fujifilm GFX, Sony, Panasonic and
   Nikon raws. Two kinds don't open yet: Fujifilm's X-Trans raws, and
-  Nikon's High Efficiency raws (TicoRAW).
+  Nikon's High Efficiency raws (TicoRAW), which only a build from
+  source with the `nikon-he` feature reads ([building.md](building.md)).
 - **Copies or a backup.** greycard never changes a raw file, but it is
   a test build.
 

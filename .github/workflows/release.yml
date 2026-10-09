@@ -139,6 +139,19 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
 
+      # Nikon High Efficiency decoding (the nikon-he feature) stays out
+      # of every published build: JPEG XS is licensed per copy of a
+      # decoder. This fails the release if anything turns rawler's
+      # decoder on. The tree is taken first so that a cargo tree that
+      # fails fails the step, rather than giving grep nothing to find.
+      - name: No JPEG XS decoder in the dependency tree
+        run: |
+          tree=$(cargo tree --locked -p greycard-ui -p greycard-cli -e features -i rawler)
+          if grep -q jpegxs <<<"$tree"; then
+            echo "rawler's jpegxs feature is on in the release build"
+            exit 1
+          fi
+
       # No build cache here, on purpose. target/release/libwebgpu_dawn.so
       # is a symlink into the ort download cache, which is not part of
       # any cache action; restoring a target directory without it would
@@ -148,6 +161,20 @@ jobs:
       # pinned to a git revision. A release builds what it says it does.
       - name: Build
         run: cargo build --locked --release -p greycard-ui -p greycard-cli
+
+      # The same, checked on what was built: every error rawler's JPEG
+      # XS decoder can return names the format, so a binary with the
+      # decoder in it carries the text and one without it does not.
+      - name: No JPEG XS decoder in the binaries
+        run: |
+          for bin in target/release/greycard target/release/greycard-ui; do
+            if [ -f "$bin.exe" ]; then bin="$bin.exe"; fi
+            test -f "$bin"
+            if grep -qa 'JPEG XS' "$bin"; then
+              echo "$bin carries the JPEG XS decoder"
+              exit 1
+            fi
+          done
 
       - name: Package
         env:

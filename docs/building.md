@@ -124,8 +124,11 @@ git clone https://github.com/jessolmstead/greycard.git
 cd greycard
 ```
 
-Git is needed for the build too, not just the clone: one dependency
-is pinned to a git revision until the fix it carries is released.
+Git is needed for the build too, not just the clone: two
+dependencies are pinned to git revisions until releases carry what
+they add. rawler's carries a white-level fix, the Nikon High
+Efficiency decoder below, and a fix of ours to that decoder's black
+level; femtovg's carries a rendering fix.
 
 ## 4. Build
 
@@ -135,6 +138,13 @@ cargo build --release
 
 The first one takes ten to twenty minutes and is mostly quiet.
 Afterwards a rebuild of your own change is seconds.
+
+Nikon's High Efficiency raws (HE and HE*, written by newer Z bodies
+such as the Z9, Z8, Z6 III, Zf and Z50 II) are JPEG XS inside, and
+their decoder is a build feature:
+`cargo build --release -p greycard-ui -p greycard-cli --features
+nikon-he`. It is off in the published builds because JPEG XS is
+licensed by its patent holders per copy of a decoder.
 
 Build the debug profile instead if you are going to attach a
 debugger, but do not develop photographs with it: the pipeline is

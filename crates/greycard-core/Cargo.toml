@@ -15,3 +15,10 @@ image.workspace = true
 rawcolor.workspace = true
 rayon.workspace = true
 thiserror.workspace = true
+
+[features]
+# Nikon High Efficiency (HE and HE*) raws, through rawler's JPEG XS
+# decoder. Off by default and in every published build: JPEG XS is
+# licensed by a patent pool per copy of a decoder, with no exemption
+# for free software. Someone building for themselves can turn it on.
+nikon-he = ["rawler/jpegxs"]

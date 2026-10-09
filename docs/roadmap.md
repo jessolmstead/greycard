@@ -23,7 +23,7 @@ the reasoning lives in `docs/notes.md`.
 ## Next: 0.5.0
 
 More sophisticated masking (people parts!); Texture and Clarity as
-quick as the sharpen; a look can be renamed, the film strip gets a
+quick as sharpen; a look can be renamed, the filmstrip gets a
 scroll bar, and the camera match gets a progress bar.
 
 ## Tracks
@@ -475,15 +475,15 @@ clears or a tester asks for it.
 - [ ] A tool for a broad out-of-focus color cast: §61's lavender bokeh
       discs, which the defringe cannot reach because the cast is wider
       than any local mean it takes (§74)
-- [ ] Nikon High Efficiency raws (the Z9, Z8 and Z6 III's default
-      setting; 64 of the 87 Z6 III frames on hand): the codec is JPEG
-      XS and a Rust decoder for rawler sits in dnglab/dnglab#835,
-      tested on a Z6 III only. Run it on our Z6 III set against the
-      lossless frames and report on the PR; review it against the
-      standard; the shipping call is separate, since the JPEG XS
-      patent pool charges per copy and exempts nothing (§176). A build
-      feature off by default, or the macOS system decoder, are the
-      ways to carry it without that
+- [ ] Nikon High Efficiency, after the build feature (§266): Adobe
+      DNG Converter's decode of the eleven frames against ours, which
+      settles the curve above 1000 DN and the 3% magenta midtones;
+      the report on dnglab/dnglab#835; the decoder read against the
+      standard (§176); HE* from a Z8 or Z9. Waits on a Windows or Mac
+      machine for the converter
+- [ ] Nikon High Efficiency in the published builds: the JPEG XS
+      patent pool charges per copy and exempts nothing (§176); the
+      macOS system decoder is the one way around it
 
 #### Immich
 

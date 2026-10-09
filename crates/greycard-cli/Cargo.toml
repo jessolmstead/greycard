@@ -26,6 +26,10 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-log.workspace = true
 
+[features]
+# Nikon High Efficiency raws; off by default, see greycard-core.
+nikon-he = ["greycard-core/nikon-he"]
+
 # The icon and the version fields Explorer and the file properties
 # sheet read out of the executable itself. Windows only: every other
 # desktop takes its icon from the .desktop entry or the bundle beside
