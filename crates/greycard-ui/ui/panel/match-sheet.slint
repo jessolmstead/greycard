@@ -37,6 +37,9 @@ export component MatchSheet inherits Rectangle {
     in-out property <bool> match-replace;
     callback match-replace-toggled();
     in property <bool> match-running;
+    /// A run went to its end and nothing has changed since: Fit is
+    /// off, and Close is the sheet's button.
+    in property <bool> match-done;
     in property <string> match-progress;
     /// How much of the run is done, 0 to 1; below 0 while there is
     /// nothing to count (starting, done), and the words stand alone.
@@ -225,6 +228,7 @@ export component MatchSheet inherits Rectangle {
                 spacing: Theme.space-2;
                 PanelButton {
                     text: root.match-running ? "Stop" : "Close";
+                    primary: root.match-done && !root.match-running;
                     clicked => {
                         if (root.match-running) { root.match-cancel(); } else { root.match-close(); }
                     }
@@ -232,7 +236,7 @@ export component MatchSheet inherits Rectangle {
                 PanelButton {
                     text: root.match-fit-label;
                     icon: @image-url("../icons/film.svg");
-                    primary: true;
+                    primary: !root.match-done;
                     enabled: root.match-can-fit && !root.match-running;
                     clicked => { root.match-fit(); }
                 }

@@ -89,6 +89,9 @@ fn stopping_words(fitting: bool) -> &'static str {
     }
 }
 
+/// The line under Fit once a run has gone to its end.
+const DONE_NOTE: &str = "Done. Change a group, the scope or Replace existing looks to fit again.";
+
 /// The scopes, as the sheet names them.
 pub(crate) const LIBRARY: &str = "Library";
 pub(crate) const FOLDER: &str = "This folder";
@@ -105,6 +108,10 @@ pub(crate) struct Sheet {
     results: Vec<String>,
     /// The run is in a group's fit, which Stop does not cut short.
     fitting: bool,
+    /// A run over the sheet's choices went to its end. Fit stays off
+    /// until a choice changes: the tables it wrote are a fit from as
+    /// many frames, which the plan would let the same run write again.
+    done: bool,
     /// The display curve the run develops under: the open picture's
     /// when the sheet was opened.
     curve: greycard_edit::DisplayCurve,
@@ -160,6 +167,7 @@ impl Sheet {
         if !self.unchecked.remove(&name) {
             self.unchecked.insert(name);
         }
+        self.done = false;
         Some(self.unchecked.iter().cloned().collect())
     }
 
@@ -403,6 +411,7 @@ fn show(st: &State, app: &App) {
     let sheet = &st.camera_match;
     let running = sheet.cancel.is_some();
     app.set_match_running(running);
+    app.set_match_done(sheet.done);
     app.set_match_results(strings(&sheet.results));
     app.set_match_curve_note(sheet.curve_note().into());
     match (&sheet.survey, sheet.groups()) {
@@ -437,8 +446,12 @@ fn show(st: &State, app: &App) {
             let donors = plans.iter().filter(|p| matches!(p, Plan::Donor)).count();
             let (label, note) = fit_label(n, !groups.is_empty(), donors);
             app.set_match_fit_label(label.into());
-            app.set_match_fit_note(note.into());
-            app.set_match_can_fit(n > 0);
+            app.set_match_fit_note(if sheet.done {
+                DONE_NOTE.into()
+            } else {
+                note.into()
+            });
+            app.set_match_can_fit(n > 0 && !sheet.done);
         }
         _ => {
             app.set_match_groups(ModelRc::new(VecModel::from(Vec::<MatchGroup>::new())));
@@ -452,6 +465,7 @@ fn show(st: &State, app: &App) {
 /// Survey the sheet's scope on a thread and show the answer.
 fn start_survey(st: &mut State, app: &App) {
     st.camera_match.generation += 1;
+    st.camera_match.done = false;
     st.camera_match.survey = None;
     let generation = st.camera_match.generation;
     let at = Where {
@@ -562,6 +576,7 @@ fn start_run(st: &mut State, app: &App) {
     st.camera_match.cancel = Some(cancel.clone());
     st.camera_match.results.clear();
     st.camera_match.fitting = false;
+    st.camera_match.done = false;
     st.camera_match.generation += 1;
     let generation = st.camera_match.generation;
     show(st, app);
@@ -608,7 +623,8 @@ fn start_run(st: &mut State, app: &App) {
                 },
             )
         }));
-        let end = match ran {
+        let stopped = cancel.load(Ordering::Relaxed);
+        let (end, complete) = match ran {
             Ok(results) => {
                 let written = results
                     .iter()
@@ -624,27 +640,33 @@ fn start_run(st: &mut State, app: &App) {
                     results.len(),
                     started.elapsed().as_secs_f64()
                 );
-                match (cancel.load(Ordering::Relaxed), written) {
+                let words = match (stopped, written) {
                     (true, _) => format!("Stopped. {written} written."),
                     (false, 0) => "Done: no look written.".to_string(),
                     (false, 1) => format!("Done: 1 look written to {}.", store.display()),
                     (false, n) => format!("Done: {n} looks written to {}.", store.display()),
-                }
+                };
+                (words, !stopped)
             }
             Err(panic) => {
                 let why = crate::worker::panic_message(&*panic);
                 tracing::error!("camera match: {why}");
-                format!("The fit stopped: {why}")
+                (format!("The fit stopped: {why}"), false)
             }
         };
-        post(Message::Finished(end));
+        post(Message::Finished { end, complete });
     });
 }
 
 /// What the run says to the window.
 enum Message {
     Progress(Progress),
-    Finished(String),
+    /// The run is over: the words to leave on the sheet, and whether
+    /// it went to its end, neither stopped nor failed.
+    Finished {
+        end: String,
+        complete: bool,
+    },
 }
 
 fn heard(st: &mut State, app: &App, generation: u64, message: Message) {
@@ -676,10 +698,11 @@ fn heard(st: &mut State, app: &App, generation: u64, message: Message) {
                 }
             }
         }
-        Message::Finished(end) => {
+        Message::Finished { end, complete } => {
             // Whatever is still on its way is of a run that is over.
             st.camera_match.generation += 1;
             st.camera_match.cancel = None;
+            st.camera_match.done = complete;
             app.set_match_fraction(-1.0);
             app.set_match_progress(end.into());
             show(st, app);
@@ -737,7 +760,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>) {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            show(&state.borrow(), &app);
+            let mut st = state.borrow_mut();
+            st.camera_match.done = false;
+            show(&st, &app);
         });
     }
     {
@@ -917,13 +942,55 @@ mod tests {
             &mut st,
             &app,
             7,
-            Message::Finished("Stopped. 1 written.".into()),
+            Message::Finished {
+                end: "Stopped. 1 written.".into(),
+                complete: false,
+            },
         );
         assert_eq!(app.get_match_progress(), "Stopped. 1 written.");
         // A message of the run that is over changes nothing.
         heard(&mut st, &app, 7, fit(7));
         assert_eq!(app.get_match_progress(), "Stopped. 1 written.");
         assert!(st.camera_match.cancel.is_none());
+    }
+
+    /// A run that goes to its end leaves Fit off, Close the sheet's
+    /// button, until a choice changes; a stopped one leaves Fit on.
+    #[test]
+    fn fit_is_off_after_a_run_to_its_end_until_a_choice_changes() {
+        let app = crate::testing::window(0);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        let mut st = state.borrow_mut();
+        let finish = |st: &mut State, complete: bool| {
+            st.camera_match.cancel = Some(Arc::new(AtomicBool::new(false)));
+            st.camera_match.generation = 7;
+            heard(
+                st,
+                &app,
+                7,
+                Message::Finished {
+                    end: "Done: 1 look written.".into(),
+                    complete,
+                },
+            );
+        };
+        st.camera_match = two_bodies_two_styles();
+        show(&st, &app);
+        assert!(app.get_match_can_fit());
+        finish(&mut st, true);
+        assert!(!app.get_match_can_fit());
+        assert!(app.get_match_done());
+        assert_eq!(app.get_match_fit_note(), DONE_NOTE);
+        // A box pressed is a new choice: Fit again.
+        st.camera_match.toggle(1).unwrap();
+        show(&st, &app);
+        assert!(app.get_match_can_fit());
+        assert!(!app.get_match_done());
+        assert_ne!(app.get_match_fit_note(), DONE_NOTE);
+        // Stopped, or failed, the run is not over its choices: Fit stays.
+        finish(&mut st, false);
+        assert!(app.get_match_can_fit());
+        assert!(!app.get_match_done());
     }
 
     #[test]

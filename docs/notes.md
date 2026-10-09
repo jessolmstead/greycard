@@ -276,3 +276,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§264. The GPU ops checked at random settings](notes/264-the-gpu-ops-checked-at-random-settings.md) (2026-10-08)
 - [§265. Nikon, Sony and Panasonic styles for the camera match](notes/265-nikon-sony-and-panasonic-styles-for-the-camera-match.md) (2026-10-08)
 - [§266. Nikon High Efficiency raws behind a build feature](notes/266-nikon-high-efficiency-raws-behind-a-build-feature.md) (2026-10-08)
+- [§267. Fit off after a run to its end](notes/267-fit-off-after-a-run-to-its-end.md) (2026-10-08)

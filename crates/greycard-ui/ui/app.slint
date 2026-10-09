@@ -1120,6 +1120,7 @@ export component App inherits Window {
     in-out property <bool> match-replace: false;
     callback match-replace-toggled();
     in property <bool> match-running;
+    in property <bool> match-done;
     in property <string> match-progress;
     in property <float> match-fraction: -1;
     in property <[string]> match-results;
@@ -3023,6 +3024,7 @@ export component App inherits Window {
         match-replace <=> root.match-replace;
         match-replace-toggled => { root.match-replace-toggled(); }
         match-running: root.match-running;
+        match-done: root.match-done;
         match-progress: root.match-progress;
         match-fraction: root.match-fraction;
         match-results: root.match-results;
