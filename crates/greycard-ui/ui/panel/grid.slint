@@ -4,7 +4,7 @@
 
 import { Theme } from "../theme.slint";
 import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile } from "../structs.slint";
-import { PanelButton, ScrollBand, ThumbBadges } from "../controls.slint";
+import { PanelButton, ScrollBand, ThumbBadges, ThumbMarks } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 import { LoadingCard } from "loading.slint";
 
@@ -573,6 +573,23 @@ export component GridSheet inherits Rectangle {
                         // uses, and the largest does not turn a
                         // quiet mark into a label across the
                         // picture.
+                        glyph: clamp(root.grid-cell / 16, 9px, 18px);
+                    }
+                    ThumbMarks {
+                        // On the picture's top right corner, held
+                        // inside the cell as the badges are; the
+                        // badges are at the bottom left.
+                        x: clamp(
+                            Theme.space-1 + (parent.box + parent.shown-w) / 2
+                                - self.width - Theme.space-1,
+                            Theme.space-1,
+                            max(Theme.space-1, Theme.space-1 + parent.box - self.width));
+                        y: clamp(
+                            Theme.space-1 + (parent.box - parent.shown-h) / 2 + Theme.space-1,
+                            Theme.space-1,
+                            max(Theme.space-1, Theme.space-1 + parent.box - self.height));
+                        edited: t.edited;
+                        exported: t.exported;
                         glyph: clamp(root.grid-cell / 16, 9px, 18px);
                     }
                     // `clicked` carries no modifiers, so the press

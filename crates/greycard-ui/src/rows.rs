@@ -80,6 +80,13 @@ pub(crate) struct FromRow {
     /// The row says the sidecar holds a develop: a read that finds no
     /// sidecar then is not believed over it.
     pub(crate) edited: bool,
+    /// The row says the sidecar records an export, for the mark on the
+    /// frame's cell while the sidecar stands in.
+    pub(crate) exported: bool,
+    /// The frame's ISO as the row had it (`Some(None)`: the camera
+    /// gave none), kept past the read; `None` for a frame never
+    /// stood in for. What a learned blend is judged against.
+    pub(crate) iso: Option<Option<u32>>,
     /// The last read of the sidecar did not take, and why: it could not
     /// be read, or it was not there though the row says it holds a
     /// develop. The frame stands in still, and nothing is written over
@@ -95,6 +102,8 @@ impl FromRow {
             turns: (0, false),
             key: None,
             edited: false,
+            exported: false,
+            iso: None,
             unread: None,
         }
     }
@@ -106,6 +115,8 @@ impl FromRow {
             turns: row.shown_turns(),
             key: Some((row.hash.clone(), row.mtime.max(0) as u64)),
             edited: row.edited,
+            exported: row.exported,
+            iso: Some(row.iso),
             unread: None,
         }
     }
@@ -132,8 +143,12 @@ impl Default for FromRow {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Held {
     pub(crate) sidecar: Sidecar,
-    /// The frame is a raw whose edit is still the default, so its
-    /// learned-denoiser blend is seeded from the ISO on its first open.
+    /// The frame is a raw to seed the learned-denoiser blend of from
+    /// its ISO on its first open. A disk read decides it by the
+    /// sidecar itself (`files::never_developed`: the default edit, no
+    /// history, no snapshot); from a row it is only a first guess
+    /// (`!row.edited`, which leaves a seeded blend and a history out of
+    /// it), and the read that lands replaces it.
     pub(crate) seed: bool,
     pub(crate) from_row: FromRow,
     /// The frame's row in the index, when the read that brought this
@@ -1040,11 +1055,15 @@ fn take(st: &mut State, app: &App, i: usize, held: Held) -> bool {
             "{}'s sidecar could not be read ({e}); nothing is written over it",
             file_name(&st.files[i])
         )),
-        Some(Trouble::Missing) if standing_in && st.from_row[i].edited => Some(format!(
-            "{}'s sidecar was not found, though the library has an edit for it; \
-             nothing is written over it",
-            file_name(&st.files[i])
-        )),
+        Some(Trouble::Missing)
+            if standing_in && (st.from_row[i].edited || st.from_row[i].exported) =>
+        {
+            Some(format!(
+                "{}'s sidecar was not found, though the library has an edit or an \
+                 export of it on record; nothing is written over it",
+                file_name(&st.files[i])
+            ))
+        }
         _ => None,
     };
     if let Some(why) = why {
@@ -1053,7 +1072,6 @@ fn take(st: &mut State, app: &App, i: usize, held: Held) -> bool {
         st.from_row[i].unread = Some(why);
         return false;
     }
-    let moved = st.sidecars[i].meta != sidecar.meta;
     st.sidecars[i] = sidecar;
     // A read that was out when a look it names was renamed: it takes the
     // new name, the open frame's too, before the panel is opened on it.
@@ -1061,10 +1079,11 @@ fn take(st: &mut State, app: &App, i: usize, held: Held) -> bool {
     if let Some(s) = st.seed_blend.get_mut(i) {
         *s = seed;
     }
-    st.from_row[i] = from_row;
-    if moved {
-        crate::panel::browser::show_badges(st, app, i);
-    }
+    let iso = st.from_row[i].iso;
+    st.from_row[i] = FromRow { iso, ..from_row };
+    // The cell follows what the read found: the meta, and the marks
+    // for an edit and an export, which the row only stood in for.
+    crate::panel::browser::show_badges(st, app, i);
     // The frame on screen, its panel the stand-in's: opened on its own
     // sidecar now, whatever brought it in (a stalled read after the
     // give-up, a key's read, a preset's load), so the next slider
@@ -1096,8 +1115,10 @@ pub(crate) fn apply_row(st: &mut State, i: usize, row: &RowMeta) -> bool {
     }
     let raw = !greycard_core::picture::is_picture_path(&st.files[i]);
     let next = FromRow::of(row);
-    let turned = from.turns != next.turns;
+    let turned =
+        from.turns != next.turns || from.edited != next.edited || from.exported != next.exported;
     *from = next;
+    // A first guess from the row; the read that lands decides the seed.
     if let Some(s) = st.seed_blend.get_mut(i) {
         *s = raw && !row.edited;
     }

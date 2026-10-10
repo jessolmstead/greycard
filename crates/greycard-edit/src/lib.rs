@@ -1210,6 +1210,20 @@ pub struct Sidecar {
         deserialize_with = "loose_exports"
     )]
     pub current_exports: Vec<Exported>,
+    /// The last export made of the frame, whatever state it was made
+    /// from: a fact about the file, not the state, so it outlives an
+    /// undo past that state, a history that replaces it and the
+    /// history's cap, none of which a record on a state does. Written
+    /// as `last_export` after `exported`, left out when the frame has
+    /// never been exported (or its sidecar is from before the field,
+    /// which gets it on its next export) and read loosely.
+    #[serde(
+        rename = "last_export",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "meta::loose"
+    )]
+    pub last_export: Option<Exported>,
     /// The id of the current state: see [`Step::id`]. Written as `id`
     /// after `exported`, left out when the state has none yet, and
     /// read loosely.
@@ -1358,6 +1372,7 @@ impl PartialEq for Sidecar {
             current,
             current_label,
             current_exports,
+            last_export,
             current_id,
             meta,
             meta_at,
@@ -1375,6 +1390,7 @@ impl PartialEq for Sidecar {
         *current == other.current
             && *current_label == other.current_label
             && *current_exports == other.current_exports
+            && *last_export == other.last_export
             && *current_id == other.current_id
             && *meta == other.meta
             && *meta_at == other.meta_at
@@ -1958,9 +1974,15 @@ impl Sidecar {
     /// while the file was written (undone and then replaced), and a
     /// record with no state to go back to would not do what its row
     /// promises.
+    ///
+    /// A record a state took is also kept as [`Self::last_export`]. One
+    /// no state took (the command line's overrides, which are never the
+    /// frame's) leaves the sidecar as it was.
     pub fn record_export(&mut self, edit: &Edit, exported: Exported) -> bool {
+        let last = exported.clone();
         if self.current == *edit {
             self.current_exports.push(exported);
+            self.keep_last_export(last);
             return true;
         }
         // The redo stack is newest first: its nearest is its last.
@@ -1973,9 +1995,20 @@ impl Sidecar {
         match found {
             Some(step) => {
                 step.exports.push(exported);
+                self.keep_last_export(last);
                 true
             }
             None => false,
+        }
+    }
+
+    fn keep_last_export(&mut self, exported: Exported) {
+        if self
+            .last_export
+            .as_ref()
+            .is_none_or(|l| l.at <= exported.at)
+        {
+            self.last_export = Some(exported);
         }
     }
 

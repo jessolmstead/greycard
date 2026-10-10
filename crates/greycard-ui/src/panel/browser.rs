@@ -370,7 +370,7 @@ pub(crate) fn screen_filled(st: &State, app: &App) -> bool {
 
 /// A browser row for a file: its name, the badges its meta asks for,
 /// and no picture until the worker has made one.
-pub(crate) fn thumb_for(path: &Path, meta: &Meta) -> Thumb {
+pub(crate) fn thumb_for(path: &Path, meta: &Meta, marks: (bool, bool)) -> Thumb {
     Thumb {
         name: file_name(path).into(),
         image: slint::Image::default(),
@@ -380,6 +380,20 @@ pub(crate) fn thumb_for(path: &Path, meta: &Meta) -> Thumb {
         chosen: false,
         failed: false,
         offline: false,
+        edited: marks.0,
+        exported: marks.1,
+    }
+}
+
+/// Whether frame `i` shows as edited and as exported: what its
+/// sidecar says once the window holds it, and what its row said while
+/// the row stands in for it (`greycard_library::develop_marks`, the
+/// rule the index applies to the file).
+pub(crate) fn frame_marks(st: &State, i: usize) -> (bool, bool) {
+    match (st.from_row.get(i), st.sidecars.get(i), st.files.get(i)) {
+        (Some(r), _, _) if !r.read => (r.edited, r.exported),
+        (r, Some(s), Some(f)) => greycard_library::develop_marks(s, f, r.and_then(|r| r.iso)),
+        _ => (false, false),
     }
 }
 
@@ -428,12 +442,20 @@ pub(crate) fn show_badges(st: &State, app: &App, i: usize) {
     let Some(row) = row_of(st, i) else {
         return;
     };
+    let marks = frame_marks(st, i);
     let model = app.get_thumbs();
     if let Some(mut t) = model.row_data(row) {
+        let was = (t.rating, t.flag, t.label, t.edited, t.exported);
         t.rating = meta.rating.min(meta::STARS) as i32;
         t.flag = meta.flag.code();
         t.label = meta.label.code();
-        model.set_row_data(row, t);
+        t.edited = marks.0;
+        t.exported = marks.1;
+        // Only a row that changed is written, so a cell not touched
+        // is not drawn again.
+        if was != (t.rating, t.flag, t.label, t.edited, t.exported) {
+            model.set_row_data(row, t);
+        }
     }
     if Some(i) == st.current {
         show_frame_tags(st, app);
@@ -973,7 +995,7 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
             Thumb {
                 offline,
                 failed: st.thumb_failed[f] && st.thumb_base[f].is_none() && !offline,
-                ..thumb_for(&st.files[f], &st.sidecars[f].meta)
+                ..thumb_for(&st.files[f], &st.sidecars[f].meta, frame_marks(st, f))
             }
         })
         .collect();
@@ -2504,13 +2526,15 @@ mod tests {
             ..Meta::default()
         };
         // A rating past the range does not draw two hundred stars.
-        let thumb = thumb_for(Path::new("/tmp/IMG_0001.CR3"), &meta);
+        let thumb = thumb_for(Path::new("/tmp/IMG_0001.CR3"), &meta, (true, false));
         assert_eq!(thumb.name, "IMG_0001.CR3");
         assert_eq!(thumb.rating, 5);
         assert_eq!(thumb.flag, 2);
         assert_eq!(thumb.label, 5);
-        let bare = thumb_for(Path::new("/tmp/a.CR3"), &Meta::default());
+        assert_eq!((thumb.edited, thumb.exported), (true, false));
+        let bare = thumb_for(Path::new("/tmp/a.CR3"), &Meta::default(), (false, false));
         assert_eq!((bare.rating, bare.flag, bare.label), (0, 0, 0));
+        assert_eq!((bare.edited, bare.exported), (false, false));
         assert_eq!(Flag::Pick.code(), 1);
         assert_eq!(Label::Red.code(), 1);
         assert_eq!(Label::Blue.code(), 4);

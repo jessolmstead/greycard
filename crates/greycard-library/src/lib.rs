@@ -87,7 +87,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 7;
+pub const SCHEMA_VERSION: i32 = 8;
 
 /// The steps a library is brought up by in place rather than rebuilt:
 /// from the version on the left to the next, the statements on the
@@ -112,7 +112,11 @@ pub const SCHEMA_VERSION: i32 = 7;
 /// frame with a setting on that replaces its style, or one not known,
 /// now has no group whatever its maker, so every schema 6 row with a
 /// maker is marked unread and the next pass over its folder reads its
-/// tags again and nothing else of the file.
+/// tags again and nothing else of the file. Schema 8 adds whether the
+/// sidecar records an export (`exported`), read from the sidecar as
+/// `edited` is, so a schema 7 row's sidecar hash is cleared and the
+/// next pass over its folder fills it; the same pass counts a frame as
+/// `edited` by the edit applied, not by a history left behind a reset.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -134,6 +138,11 @@ const MIGRATIONS: &[(i32, &str)] = &[
     (
         6,
         "UPDATE files SET style_read = 0 WHERE maker IS NOT NULL;",
+    ),
+    (
+        7,
+        "ALTER TABLE files ADD COLUMN exported INTEGER NOT NULL DEFAULT 0;
+         UPDATE files SET sidecar_hash = NULL WHERE sidecar IS NOT NULL;",
     ),
 ];
 
@@ -219,7 +228,8 @@ CREATE TABLE IF NOT EXISTS files (
     style_read    INTEGER NOT NULL DEFAULT 0,
     edited        INTEGER NOT NULL DEFAULT 0,
     turns         INTEGER NOT NULL DEFAULT 0,
-    whole_hash    TEXT
+    whole_hash    TEXT,
+    exported      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS files_folder ON files(folder);
 CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
@@ -299,12 +309,60 @@ const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash
     files.aperture, files.shutter, files.taken, files.sidecar, files.sidecar_mtime, \
     files.rating, files.flag, files.label, files.keywords, files.missing_since, \
     files.maker, files.style, files.style_fixed, files.peripheral, files.edited, \
-    files.turns";
+    files.turns, files.exported";
 
 /// The columns [`RowMeta`] is read from, in the order `row_meta`
 /// reads them, after the path.
 const META_COLUMNS: &str = "files.id, files.hash, files.mtime, files.rating, files.flag, files.label, \
-    files.keywords, files.edited, files.turns";
+    files.keywords, files.edited, files.turns, files.exported, files.iso";
+
+/// Whether the learned denoiser's `blend` is what nobody has touched:
+/// the default, or what the first open or export of a raw seeds from
+/// its ISO (`Noise::blend_for_iso`). Any other value was set on
+/// purpose and is an edit.
+pub fn blend_is_default(blend: f32, iso: Option<u32>) -> bool {
+    let close = |a: f32, b: f32| (a - b).abs() < 1e-3;
+    close(blend, greycard_edit::Noise::default().learned_strength)
+        || close(blend, greycard_edit::Noise::blend_for_iso(iso))
+}
+
+/// Whether `edit` is the default of the frame at `raw` (a raw's
+/// `Edit::default()`, a picture's `Edit::for_picture()`). The learned
+/// blend is judged by [`blend_is_default`] against the frame's `iso`
+/// (`Some(None)` for a frame whose camera gave none); with the ISO not
+/// known (`None`) the blend is left out of it, as a seeded one is the
+/// likelier.
+pub fn is_default_edit(edit: &greycard_edit::Edit, raw: &Path, iso: Option<Option<u32>>) -> bool {
+    let default = if greycard_core::picture::is_picture_path(raw) {
+        greycard_edit::Edit::for_picture()
+    } else {
+        greycard_edit::Edit::default()
+    };
+    if let Some(iso) = iso
+        && !blend_is_default(edit.noise.learned_strength, iso)
+    {
+        return false;
+    }
+    let mut seen = edit.clone();
+    seen.noise.learned_strength = default.noise.learned_strength;
+    seen == default
+}
+
+/// Whether `sidecar` holds a develop of the frame at `raw` and whether
+/// it records an export, as a row's `edited` and `exported` columns
+/// say it from the file: the same rule for the sidecar in memory, so a
+/// cell can follow a save without waiting for the index.
+pub fn develop_marks(
+    sidecar: &greycard_edit::Sidecar,
+    raw: &Path,
+    iso: Option<Option<u32>>,
+) -> (bool, bool) {
+    let edited = !is_default_edit(&sidecar.current, raw, iso) || !sidecar.snapshots.is_empty();
+    let exported = sidecar.last_export.is_some()
+        || !sidecar.current_exports.is_empty()
+        || sidecar.history.iter().any(|s| !s.exports.is_empty());
+    (edited, exported)
+}
 
 /// The index, open.
 pub struct Library {
@@ -463,6 +521,9 @@ pub struct Entry {
     /// The quarter turns the picture is shown at, packed: see
     /// [`RowMeta::turns`].
     pub turns: u8,
+    /// Whether the sidecar records an export of the frame: see
+    /// [`RowMeta::exported`].
+    pub exported: bool,
 }
 
 impl Entry {
@@ -487,10 +548,11 @@ pub struct RowMeta {
     /// The file's mtime, nanoseconds since the epoch.
     pub mtime: i64,
     pub meta: Meta,
-    /// The sidecar holds a develop: a step in its history, a snapshot,
-    /// or a current edit that is not the frame's default (a raw's
-    /// `Edit::default()`, a picture's `Edit::for_picture()`). A frame
-    /// only rated, or never opened, has none. A sidecar whose edit
+    /// The sidecar holds a develop: a snapshot, or a current edit that
+    /// is not the frame's default (a raw's `Edit::default()`, a
+    /// picture's `Edit::for_picture()`). A frame only rated, or never
+    /// opened, has none, and neither has one whose edit was reset,
+    /// whatever history that left behind. A sidecar whose edit
     /// this build cannot read counts as edited: there is something in
     /// it, whatever it is.
     pub edited: bool,
@@ -499,6 +561,15 @@ pub struct RowMeta {
     /// packed as the turns plus four when mirrored: see
     /// [`RowMeta::shown_turns`].
     pub turns: u8,
+    /// The sidecar records an export of the frame, on its current
+    /// state or a step of its history. The editor
+    /// writes the record when an export lands, so the fact needs no
+    /// state of its own and travels with the sidecar through a move or
+    /// a rename.
+    pub exported: bool,
+    /// The frame's ISO as the index holds it, `None` for a camera that
+    /// gave none: what the learned blend's seed is judged against.
+    pub iso: Option<u32>,
 }
 
 impl RowMeta {
@@ -2097,6 +2168,7 @@ fn entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
         missing: row.get::<_, Option<i64>>(20)?.is_some(),
         edited: row.get::<_, i64>(25)? != 0,
         turns: (row.get::<_, i64>(26)?.clamp(0, 7)) as u8,
+        exported: row.get::<_, i64>(27)? != 0,
     })
 }
 
@@ -2117,6 +2189,8 @@ fn row_meta(row: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<RowMeta> {
         meta,
         edited: row.get::<_, i64>(from + 7)? != 0,
         turns: (row.get::<_, i64>(from + 8)?.clamp(0, 7)) as u8,
+        exported: row.get::<_, i64>(from + 9)? != 0,
+        iso: row.get::<_, Option<i64>>(from + 10)?.map(|v| v as u32),
     })
 }
 

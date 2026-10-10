@@ -1426,6 +1426,12 @@ pub(crate) struct Summary {
     pub(crate) edited: bool,
     /// Packed as [`crate::pack_turns`] packs them.
     pub(crate) turns: u8,
+    /// The sidecar records an export.
+    pub(crate) exported: bool,
+    /// The edit's learned blend when the sidecar has an edit to read it
+    /// from, judged against the frame's ISO when the row is written
+    /// (`edited` leaves it out).
+    pub(crate) blend: Option<f32>,
 }
 
 /// The `.gcd`'s JSON read for what the row mirrors of it, before the
@@ -1440,8 +1446,12 @@ struct Parsed {
     /// The edit, brought up to this build's shape; none when there is
     /// no `current` in the file.
     current: Option<greycard_edit::Edit>,
-    /// A step in the history, or a snapshot.
+    /// A snapshot is kept. History alone is not a develop: a reset
+    /// leaves its steps behind.
     stepped: bool,
+    /// An export is recorded on the current state or on a step of the
+    /// history.
+    exported: bool,
     /// The file, or its edit, could not be read: there is something
     /// in it, whatever it is.
     unreadable: bool,
@@ -1501,9 +1511,25 @@ fn parsed(json: Option<&[u8]>, sidecar: &Path) -> Parsed {
             .map_or(0, |t| (t % 4) as u8),
         mark,
         current,
-        stepped: count("history") > 0 || count("snapshots") > 0,
+        stepped: count("snapshots") > 0,
+        exported: records_export(&value),
         unreadable,
     }
+}
+
+/// Whether a sidecar's JSON records an export: the frame's
+/// `last_export`, or, for a sidecar from before it, `exported` on the
+/// current state or on a step of `history` (the redo stack is not
+/// written).
+fn records_export(value: &serde_json::Value) -> bool {
+    let some =
+        |v: Option<&serde_json::Value>| v.and_then(|v| v.as_array()).is_some_and(|a| !a.is_empty());
+    value.get("last_export").is_some_and(|v| v.is_object())
+        || some(value.get("exported"))
+        || value
+            .get("history")
+            .and_then(|v| v.as_array())
+            .is_some_and(|steps| steps.iter().any(|s| some(s.get("exported"))))
 }
 
 /// What the row mirrors of what `raw` has beside it: the `.gcd`'s
@@ -1553,10 +1579,13 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
                 .ok()
         });
     }
-    let edited = p.stepped || p.unreadable || sidecar.current != default;
+    // The blend is judged at the write, where the row's ISO is.
+    let edited = p.stepped || p.unreadable || !crate::is_default_edit(&sidecar.current, raw, None);
     Summary {
         meta: sidecar.meta,
         edited,
+        exported: p.exported,
+        blend: p.current.as_ref().map(|c| c.noise.learned_strength),
         turns: crate::pack_turns(sidecar.current.geometry.shown_turns(sidecar.turn)),
     }
 }
@@ -1582,9 +1611,18 @@ pub(crate) fn summary_from_json(json: &[u8], sidecar: &Path, raw: Option<&Path>)
 fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
     let (sidecar, summary) = (seen.sidecar, seen.summary);
     let meta = &summary.meta;
+    let iso: Option<u32> = tx
+        .query_row("SELECT iso FROM files WHERE id = ?", params![id], |r| {
+            r.get::<_, Option<i64>>(0)
+        })?
+        .map(|v| v as u32);
+    let edited = summary.edited
+        || summary
+            .blend
+            .is_some_and(|b| !crate::blend_is_default(b, iso));
     tx.prepare_cached(
         "UPDATE files SET sidecar = ?, sidecar_hash = ?, sidecar_mtime = ?, rating = ?, \
-         flag = ?, label = ?, keywords = ?, edited = ?, turns = ? WHERE id = ?",
+         flag = ?, label = ?, keywords = ?, edited = ?, turns = ?, exported = ? WHERE id = ?",
     )?
     .execute(params![
         sidecar.and_then(|s| s.path.as_deref().map(path_bytes)),
@@ -1594,8 +1632,9 @@ fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
         filter::flag_name(meta.flag),
         filter::label_name(meta.label),
         serde_json::to_string(&meta.keywords).unwrap_or_else(|_| "[]".into()),
-        i64::from(summary.edited),
+        i64::from(edited),
         i64::from(summary.turns),
+        i64::from(summary.exported),
         id
     ])?;
     tx.prepare_cached("DELETE FROM keywords WHERE file = ?")?
@@ -3823,6 +3862,7 @@ pub(crate) mod tests {
                      ALTER TABLE files DROP COLUMN edited;
                      ALTER TABLE files DROP COLUMN turns;
                      ALTER TABLE files DROP COLUMN whole_hash;
+                     ALTER TABLE files DROP COLUMN exported;
                      PRAGMA user_version = 2;",
                 )
                 .unwrap();
@@ -3968,6 +4008,176 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A reset leaves its history behind and is no develop; the blend
+    /// the ISO seeds is none either, one set on purpose is. An export
+    /// is a fact about the frame: it stays through an undo past the
+    /// exported state and past the history's cap, and a sidecar from
+    /// before the fact is read from its history.
+    #[test]
+    fn a_row_mirrors_an_export_and_a_reset_is_not_a_develop() {
+        use greycard_edit::{Edit, Exported};
+        let dir = scratch("exported");
+        let names = [
+            "plain", "reset", "now", "behind", "undone", "capped", "seeded", "blended", "legacy",
+        ];
+        let path = |n: &str| dir.join(format!("{n}.tif"));
+        for (i, n) in names.iter().enumerate() {
+            write_frame(&path(n), &R5, i as u16 + 1);
+        }
+        let fresh = || Sidecar {
+            current: Edit::for_picture(),
+            ..Sidecar::default()
+        };
+        let moved = |x: f32| {
+            let mut e = Edit::for_picture();
+            e.light.exposure = x;
+            e
+        };
+        let sent = || Exported {
+            file: "out.jpg".into(),
+            at: 5,
+            ..Exported::default()
+        };
+        let mut s = fresh();
+        s.record(moved(0.5));
+        s.record(Edit::for_picture());
+        s.save(&path("reset")).unwrap();
+        let mut s = fresh();
+        s.record(moved(0.5));
+        assert!(s.record_export(&moved(0.5), sent()));
+        s.save(&path("now")).unwrap();
+        let mut s = fresh();
+        s.record(moved(0.5));
+        assert!(s.record_export(&moved(0.5), sent()));
+        s.record(moved(0.9));
+        s.save(&path("behind")).unwrap();
+        // Exported, then undone past the exported state: its record
+        // goes with the redo stack, which is not written.
+        let mut s = fresh();
+        s.record(moved(0.5));
+        s.record(moved(0.9));
+        assert!(s.record_export(&moved(0.9), sent()));
+        assert!(s.undo());
+        s.save(&path("undone")).unwrap();
+        // Exported, then more steps than the history keeps.
+        let mut s = fresh();
+        s.record(moved(0.5));
+        assert!(s.record_export(&moved(0.5), sent()));
+        for k in 0..51 {
+            s.record(moved(1.0 + k as f32 / 100.0));
+        }
+        assert!(
+            s.history.iter().all(|h| h.exports.is_empty()),
+            "the record fell off the history"
+        );
+        s.save(&path("capped")).unwrap();
+        fresh().save(&path("plain")).unwrap();
+        // The blend the ISO seeds, as an open or an export leaves it,
+        // and the same frame with the blend moved.
+        let mut s = fresh();
+        s.current.noise.learned_strength = greycard_edit::Noise::blend_for_iso(Some(R5.iso.into()));
+        s.save(&path("seeded")).unwrap();
+        let mut s = fresh();
+        s.current.noise.learned_strength = 0.8;
+        s.save(&path("blended")).unwrap();
+        // A sidecar from before `last_export`: its history says.
+        let mut s = fresh();
+        s.record(moved(0.5));
+        assert!(s.record_export(&moved(0.5), sent()));
+        s.record(moved(0.9));
+        s.save(&path("legacy")).unwrap();
+        let gcd = dir.join("legacy.tif.gcd");
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&gcd).unwrap()).unwrap();
+        assert!(
+            json.as_object_mut()
+                .unwrap()
+                .remove("last_export")
+                .is_some()
+        );
+        std::fs::write(&gcd, serde_json::to_vec(&json).unwrap()).unwrap();
+
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let said = |n: &str| {
+            let e = lib.by_path(&path(n)).unwrap().unwrap();
+            (e.edited, e.exported)
+        };
+        assert_eq!(said("plain"), (false, false));
+        assert_eq!(said("reset"), (false, false));
+        assert_eq!(said("seeded"), (false, false), "the seed is no edit");
+        assert_eq!(said("blended"), (true, false), "a blend set is");
+        assert_eq!(said("now"), (true, true));
+        assert_eq!(said("behind"), (true, true));
+        assert_eq!(said("undone"), (true, true), "an undo does not unexport");
+        assert_eq!(said("capped"), (true, true), "nor does the cap");
+        assert_eq!(said("legacy"), (true, true));
+        // The same rule on the sidecar in memory.
+        let iso = Some(Some(u32::from(R5.iso)));
+        for n in names {
+            let s = Sidecar::load(&path(n)).unwrap().unwrap();
+            assert_eq!(crate::develop_marks(&s, &path(n), iso), said(n), "{n}");
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A schema 7 library comes up with the exports its sidecars
+    /// record and without the develop a history-only reset made.
+    #[test]
+    fn a_schema_7_library_reads_its_sidecars_for_exports_and_resets() {
+        use greycard_edit::{Edit, Exported};
+        let dir = scratch("schema7");
+        let (exported, reset, _) = shoot(&dir);
+        let base = |p: &Path| {
+            if greycard_core::picture::is_picture_path(p) {
+                Edit::for_picture()
+            } else {
+                Edit::default()
+            }
+        };
+        let mut moved = base(&exported);
+        moved.light.exposure = 0.5;
+        let mut s = Sidecar {
+            current: base(&exported),
+            ..Sidecar::default()
+        };
+        s.record(moved.clone());
+        assert!(s.record_export(&moved, Exported::default()));
+        s.save(&exported).unwrap();
+        let mut s = Sidecar {
+            current: base(&reset),
+            ..Sidecar::default()
+        };
+        s.record(moved);
+        s.record(base(&reset));
+        s.save(&reset).unwrap();
+        let db = dir.join("library.sqlite");
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&dir, &mut quiet()).unwrap();
+            // As schema 7 left them: the reset's history made it edited,
+            // and there was no column for the export.
+            lib.conn_mut()
+                .execute(
+                    "UPDATE files SET edited = 1 WHERE path = ?",
+                    params![path_bytes(&reset)],
+                )
+                .unwrap();
+            lib.conn_mut()
+                .execute_batch("ALTER TABLE files DROP COLUMN exported; PRAGMA user_version = 7;")
+                .unwrap();
+        }
+        let mut lib = Library::open(&db).unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.meta_refreshed, 2, "{report:?}");
+        let a = lib.by_path(&exported).unwrap().unwrap();
+        assert_eq!((a.edited, a.exported), (true, true));
+        let b = lib.by_path(&reset).unwrap().unwrap();
+        assert_eq!((b.edited, b.exported), (false, false));
+        drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A sidecar whose edit this build cannot read still gives up its
     /// stars, counts as edited, and shows its picture by the frame's
     /// own turn alone.
@@ -4013,6 +4223,7 @@ pub(crate) mod tests {
                     "ALTER TABLE files DROP COLUMN edited;
                      ALTER TABLE files DROP COLUMN turns;
                      ALTER TABLE files DROP COLUMN whole_hash;
+                     ALTER TABLE files DROP COLUMN exported;
                      PRAGMA user_version = 3;",
                 )
                 .unwrap();
@@ -4231,6 +4442,7 @@ pub(crate) mod tests {
             lib.conn_mut()
                 .execute_batch(
                     "DROP TABLE pending; DROP TABLE archive_writes;
+                     ALTER TABLE files DROP COLUMN exported;
                      PRAGMA user_version = 5;",
                 )
                 .unwrap();
@@ -4244,7 +4456,13 @@ pub(crate) mod tests {
         assert!(lib.pending_all().unwrap().is_empty());
         assert_eq!(lib.archive_write("abc", &dir, &dir).unwrap(), None);
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
-        assert_eq!(report.unchanged, 3, "{report:?}");
+        // Schema 8 asks the two sidecars again for the exports in them;
+        // the file with none is not read.
+        assert_eq!(
+            (report.meta_refreshed, report.unchanged),
+            (2, 1),
+            "{report:?}"
+        );
         // Windows holds the file while the library is open.
         drop(lib);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -4274,7 +4492,7 @@ pub(crate) mod tests {
                 )
                 .unwrap();
             lib.conn_mut()
-                .execute_batch("PRAGMA user_version = 6;")
+                .execute_batch("ALTER TABLE files DROP COLUMN exported; PRAGMA user_version = 6;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -4516,6 +4734,8 @@ pub(crate) mod tests {
         {
             let conn = rusqlite::Connection::open(&db).unwrap();
             conn.execute_batch(crate::SCHEMA).unwrap();
+            conn.execute_batch("ALTER TABLE files DROP COLUMN exported;")
+                .unwrap();
             conn.pragma_update(None, "application_id", crate::APPLICATION_ID)
                 .unwrap();
             conn.pragma_update(None, "user_version", 5).unwrap();
@@ -4568,6 +4788,7 @@ pub(crate) mod tests {
             lib.conn_mut()
                 .execute_batch(
                     "ALTER TABLE files DROP COLUMN whole_hash;
+                     ALTER TABLE files DROP COLUMN exported;
                      PRAGMA user_version = 4;",
                 )
                 .unwrap();
@@ -4581,7 +4802,12 @@ pub(crate) mod tests {
         assert_eq!(lib.len().unwrap(), 3);
         assert_eq!(lib.whole_hash(&r5).unwrap(), None);
         let report = lib.index_folder(&shoot_dir, &mut quiet()).unwrap();
-        assert_eq!(report.unchanged, 3, "nothing read again: {report:?}");
+        // Only the sidecars are asked again, for schema 8's exports.
+        assert_eq!(
+            (report.meta_refreshed, report.unchanged),
+            (2, 1),
+            "{report:?}"
+        );
         drop(lib);
         std::fs::remove_dir_all(&dir).unwrap();
     }

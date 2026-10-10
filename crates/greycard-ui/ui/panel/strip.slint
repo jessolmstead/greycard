@@ -4,7 +4,7 @@
 
 import { Theme } from "../theme.slint";
 import { Thumb, ThumbCell } from "../structs.slint";
-import { ScrollBand, ThumbBadges } from "../controls.slint";
+import { ScrollBand, ThumbBadges, ThumbMarks } from "../controls.slint";
 
 export component Filmstrip inherits Rectangle {
     /// Every row, for the strip's length; the cells are drawn from
@@ -172,6 +172,14 @@ export component Filmstrip inherits Rectangle {
                     flag: t.flag;
                     label: t.label;
                     stars: root.meta-stars;
+                }
+                // The picture's top right corner: the badges are at
+                // the bottom left, so the two never meet.
+                ThumbMarks {
+                    x: parent.width - Theme.space-2 - Theme.space-1 - self.width;
+                    y: Theme.space-2 + Theme.space-1;
+                    edited: t.edited;
+                    exported: t.exported;
                 }
                 // The strip sits beside the developed picture, where a
                 // tinted plate would pull the eye's color judgment, so

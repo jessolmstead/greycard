@@ -43,8 +43,6 @@ and smart collections that survive a move.
       changes the hash, a hand order of their own; a sidebar list, add
       and remove from the grid and the strip, a smart one saved from
       the filter bar (§273)
-- [ ] Icons on the grid and the filmstrip showing edited and exported
-      frames
 
 ## Tracks
 

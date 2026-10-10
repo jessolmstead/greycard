@@ -28,6 +28,10 @@ pub(crate) fn show_history(st: &State, app: &App) {
     let sidecar = &st.sidecars[c];
     app.set_can_undo(!sidecar.history.is_empty());
     app.set_can_redo(!sidecar.redo.is_empty());
+    // Whatever moved the history (a save, a reset, an undo, an export
+    // landing) moved what the frame's cell says of its edit and its
+    // exports; the cell is written only if it differs.
+    crate::panel::browser::show_badges(st, app, c);
     let now = now();
     let position = sidecar.position();
     let rows: Vec<HistoryRow> = sidecar
@@ -137,6 +141,7 @@ pub(crate) fn record_export(
         if st.current == Some(i) {
             show_history(st, app);
         }
+        crate::panel::browser::show_badges(st, app, i);
         return;
     }
     if st.write_sidecars
@@ -147,6 +152,15 @@ pub(crate) fn record_export(
         }
         // The archive's copy, from the file (§233).
         crate::sync::after_disk_save(st, source);
+        // The frame's cell while its sidecar stands in from the row:
+        // the export is on the file now, and the row says so after the
+        // indexer's next look, which the cell need not wait for.
+        if let Some(i) = st.files.iter().position(|f| f == source)
+            && let Some(from) = st.from_row.get_mut(i)
+        {
+            from.exported = true;
+            crate::panel::browser::show_badges(st, app, i);
+        }
     }
 }
 
@@ -728,6 +742,135 @@ mod tests {
         (0..rows.row_count())
             .map(|r| rows.row_data(r).unwrap().undone)
             .collect()
+    }
+
+    /// The two marks a frame's cell wears, as the strip and the grid
+    /// are given them.
+    fn marks(app: &App, row: usize) -> (bool, bool) {
+        let t = app.get_thumbs().row_data(row).unwrap();
+        (t.edited, t.exported)
+    }
+
+    /// A saved edit puts the pencil on the frame's cell, a reset takes
+    /// it off again whatever history it leaves, and a frame never
+    /// touched wears nothing.
+    #[test]
+    fn a_saved_edit_shows_its_mark_and_a_reset_hides_it() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.invoke_select(0);
+        assert_eq!(marks(&app, 0), (false, false));
+        assert_eq!(crate::testing::count_labeled(&app, "Edited"), 0);
+
+        app.set_exposure(0.5);
+        save(&app, &state);
+        assert_eq!(marks(&app, 0), (true, false));
+        assert_eq!(marks(&app, 1), (false, false), "the other frame is bare");
+        assert_eq!(
+            crate::testing::count_labeled(&app, "Edited"),
+            1,
+            "drawn once, on the one cell"
+        );
+        assert_eq!(crate::testing::count_labeled(&app, "Exported"), 0);
+
+        // Reset: the panel back to the default is a state of its own,
+        // and the frame is no longer edited.
+        app.set_exposure(0.0);
+        save(&app, &state);
+        assert!(!state.borrow().sidecars[0].history.is_empty());
+        assert_eq!(marks(&app, 0), (false, false));
+        assert_eq!(crate::testing::count_labeled(&app, "Edited"), 0);
+    }
+
+    /// An export landing puts its mark on the cell, beside the pencil
+    /// when the frame is edited as well, and one that failed puts
+    /// none.
+    #[test]
+    fn an_export_landing_shows_its_mark() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.invoke_select(0);
+        let source = state.borrow().files[0].clone();
+        let landed = |edit: Edit| Outcome::Exported {
+            path: PathBuf::from("/out/IMG_0000.jpg"),
+            seconds: 1.0,
+            note: None,
+            source: source.clone(),
+            edit,
+            preset: None,
+            left_out: Vec::new(),
+        };
+        crate::panel::deliver::deliver(
+            &app,
+            Outcome::ExportFailed {
+                message: "disk full".into(),
+            },
+        );
+        assert_eq!(marks(&app, 0), (false, false));
+
+        // An unedited frame exported: the export mark alone.
+        let plain = state.borrow().sidecars[0].current.clone();
+        crate::panel::deliver::deliver(&app, landed(plain));
+        assert_eq!(marks(&app, 0), (false, true));
+        assert_eq!(marks(&app, 1), (false, false));
+        assert_eq!(crate::testing::count_labeled(&app, "Exported"), 1);
+        assert_eq!(crate::testing::count_labeled(&app, "Edited"), 0);
+
+        // Edited as well: both, together.
+        app.set_exposure(0.5);
+        save(&app, &state);
+        assert_eq!(marks(&app, 0), (true, true));
+        assert_eq!(crate::testing::count_labeled(&app, "Exported"), 1);
+        assert_eq!(crate::testing::count_labeled(&app, "Edited"), 1);
+    }
+
+    /// The export mark is a fact about the frame: an undo back past the
+    /// exported state leaves it, and so do more steps than the history
+    /// keeps.
+    #[test]
+    fn the_export_mark_outlives_the_state_it_was_made_from() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        let source = state.borrow().files[0].clone();
+        app.set_exposure(0.5);
+        save(&app, &state);
+        let sent = state.borrow().sidecars[0].current.clone();
+        crate::panel::deliver::deliver(
+            &app,
+            Outcome::Exported {
+                path: PathBuf::from("/out/IMG_0000.jpg"),
+                seconds: 1.0,
+                note: None,
+                source,
+                edit: sent,
+                preset: None,
+                left_out: Vec::new(),
+            },
+        );
+        assert_eq!(marks(&app, 0), (true, true));
+
+        // Back past the exported state: the pencil goes, the export stays.
+        {
+            let st = &mut *state.borrow_mut();
+            assert!(st.sidecars[0].undo());
+            show_history(st, &app);
+        }
+        assert_eq!(marks(&app, 0), (false, true));
+
+        // More steps than the history keeps: the record is off it, the
+        // mark is not.
+        for k in 0..51 {
+            app.set_exposure(1.0 + k as f32 / 100.0);
+            save(&app, &state);
+        }
+        assert!(
+            state.borrow().sidecars[0]
+                .history
+                .iter()
+                .all(|s| s.exports.is_empty())
+        );
+        assert_eq!(marks(&app, 0), (true, true));
     }
 
     /// An export that finishes after the panel moved on is recorded on

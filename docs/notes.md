@@ -285,3 +285,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§273. Collections and smart collections](notes/273-collections-and-smart-collections.md) (2026-10-10)
 - [§274. The shot lines in cull mode, and the export chooser's memory](notes/274-the-shot-lines-in-cull-mode-and-the-export-choosers-memory.md) (2026-10-10)
 - [§275. A followed frame's save at the quit](notes/275-a-followed-frames-save-at-the-quit.md) (2026-10-10)
+- [§276. Marks for edited and exported frames](notes/276-marks-for-edited-and-exported-frames.md) (2026-10-10)

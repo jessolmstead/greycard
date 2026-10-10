@@ -14,6 +14,11 @@ note a first tester reads.
 
 ### Culling and the grid
 
+- A pencil on a grid tile or strip cell marks a frame whose edit is
+  not the default, and a second mark one that has been exported; the
+  export mark stays through an undo, and a frame reset to the default
+  shows neither
+  ([§276](https://github.com/jessolmstead/greycard/blob/master/docs/notes/276-marks-for-edited-and-exported-frames.md))
 - Cull mode shows the body and lens and the exposure under the file's
   name, as edit mode does, read from the library index so stepping
   through a shoot stays fast

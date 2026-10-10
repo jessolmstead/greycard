@@ -1671,6 +1671,8 @@ fn settle_held(
                 }
             }
             st.sidecars[c] = theirs;
+            // A frame off screen has its marks from what it holds now.
+            crate::panel::browser::show_badges(&st, app, c);
             if let Some(indexer) = &st.index {
                 indexer.file(st.files[c].clone());
             }
@@ -1688,6 +1690,7 @@ fn settle_held(
         Compared::SameEdit | Compared::Diverged => {
             let joined = join(&st.sidecars[c], &theirs);
             st.sidecars[c] = joined;
+            crate::panel::browser::show_badges(&st, app, c);
             if st.current == Some(c) {
                 drop(st);
                 crate::panel::history::take_current_settled(&mut state.borrow_mut(), app, worker);

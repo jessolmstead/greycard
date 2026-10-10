@@ -27,6 +27,11 @@ export struct Thumb {
     /// drive unplugged): listed from the index, drawn dimmed, its
     /// picture from the cache if one is there.
     offline: bool,
+    /// The frame's edit is not the default, and an export of it is
+    /// on record: the two marks in the corner of its picture. Rust
+    /// owns what they mean; see `greycard_library::develop_marks`.
+    edited: bool,
+    exported: bool,
 }
 
 /// One of the strip's or the grid's cells: the browser's row it

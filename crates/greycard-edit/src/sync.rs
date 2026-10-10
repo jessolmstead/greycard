@@ -880,6 +880,12 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
     let mut joined = Sidecar {
         xmp: newer.xmp.clone().or(older.xmp.clone()),
         saved: newer.saved.max(older.saved),
+        // The later of the two exports: the frame was exported on
+        // either side, whichever state it was.
+        last_export: match (&newer.last_export, &older.last_export) {
+            (Some(a), Some(b)) => Some(if a.at >= b.at { a } else { b }.clone()),
+            (a, b) => a.clone().or_else(|| b.clone()),
+        },
         ..Sidecar::default()
     };
     // The first state of the list is the current; the rest follow it

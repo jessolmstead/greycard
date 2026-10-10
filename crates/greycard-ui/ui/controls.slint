@@ -873,6 +873,44 @@ export component ThumbBadges inherits Rectangle {
     }
 }
 
+// What a frame has been through, in the corner of its picture opposite
+// the badges' (rating, flag, color): a pencil for a frame whose edit
+// is not the default, a picture going down for a frame exported. Both
+// when both are so, nothing when neither. Quieter than the badges, in
+// the secondary text color on a lighter scrim.
+export component ThumbMarks inherits Rectangle {
+    in property <bool> edited;
+    in property <bool> exported;
+    in property <length> glyph: 9px;
+    visible: root.edited || root.exported;
+    width: marks.preferred-width;
+    height: root.glyph + 6px;
+    border-radius: Theme.radius-sm;
+    background: #00000080;
+    marks := HorizontalLayout {
+        padding-left: root.glyph / 3;
+        padding-right: root.glyph / 3;
+        spacing: root.glyph / 4.5;
+        alignment: center;
+        if root.edited: Image {
+            source: @image-url("icons/pencil.svg");
+            colorize: Theme.text-secondary;
+            width: root.glyph;
+            height: root.glyph;
+            accessible-role: image;
+            accessible-label: "Edited";
+        }
+        if root.exported: Image {
+            source: @image-url("icons/image-down.svg");
+            colorize: Theme.text-secondary;
+            width: root.glyph;
+            height: root.glyph;
+            accessible-role: image;
+            accessible-label: "Exported";
+        }
+    }
+}
+
 // The arrow on a panel's edge that puts the panel away and brings it
 // back: a small plate over the viewport's edge, its chevron pointing
 // the way the edge will move. Quiet, it shows only under the pointer,
