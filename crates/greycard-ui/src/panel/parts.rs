@@ -218,6 +218,9 @@ fn add(st: &mut State, app: &App, pending: &Pending, person: Option<Person>) -> 
     });
     name_first_shape(a, pending.part.label);
     let which = a.mask.components.len() - 1;
+    // Asked for from the menu: the Subject model its edge runs may be
+    // offered beside it (`mask::ask_for`).
+    st.edge_offer_due = crate::ai::takes_subject_edge(&a.mask.components[which].shape);
     st.fresh_mask = None;
     st.target = Some(index);
     app.set_component(which as i32);
@@ -955,6 +958,12 @@ mod tests {
         assert!(all_people(&mut st, &app));
         assert_eq!(shapes(&st)[2], person(None));
         assert_eq!(app.get_placing(), "");
+        // Asked for from the menu, so the Subject model its edge runs
+        // may be offered beside it; another part makes no such offer.
+        assert!(st.edge_offer_due);
+        pending(&mut st, "Lips");
+        people_found(&mut st, &app, None, Ok((vec![her.clone()], "CPU", 0.1)));
+        assert!(!st.edge_offer_due);
     }
 
     #[test]

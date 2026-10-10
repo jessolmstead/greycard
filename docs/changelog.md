@@ -31,6 +31,12 @@ note a first tester reads.
 
 ### Masks
 
+- A Whole person mask takes its edge from the Subject model's matte
+  inside the person, so loose hair against the sky is kept and the edge
+  is as fine as a part's; where two people touch the split stays; a
+  machine without the Subject model is offered it once and keeps the
+  coarser edge meanwhile
+  ([§279](https://github.com/jessolmstead/greycard/blob/master/docs/notes/279-whole-persons-edge-from-subjects-matte.md))
 - A mask's overlay turns off by itself when a slider in the mask's look
   moves, so the edit is seen; feather, range, invert and the brush keep
   it showing

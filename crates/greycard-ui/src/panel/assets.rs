@@ -143,6 +143,27 @@ Kept in {}.",
     app.set_fetch_open(true);
 }
 
+/// The status line once the Subject model is declined for a Whole
+/// person's edge.
+pub(crate) const EDGE_DECLINED: &str =
+    "Whole person keeps its coarser edge without the Subject model";
+
+/// Open the model sheet for the Subject file `model`, for a Whole
+/// person's finer edge: the mask is made meanwhile with the coarser
+/// one, and the sheet says so.
+pub(crate) fn offer_edge(st: &mut State, app: &App, model: &'static greycard_ai::Model) {
+    offer_model(st, app, model, false);
+    st.fetch = Some(Fetch::Edge(model));
+    app.set_fetch_note(
+        format!(
+            "For a Whole person's finer edge, hair against the sky; the mask is made \
+             meanwhile with a coarser one. {}",
+            model_note(model)
+        )
+        .into(),
+    );
+}
+
 /// The presets' names on the panel. A removal waiting on its Remove
 /// is dropped: the row it named may be another preset's now.
 pub(crate) fn show_presets(st: &State, app: &App) {
@@ -464,9 +485,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             match (fetch, yes) {
-                (Fetch::Model(model), true) => {
+                (Fetch::Model(model) | Fetch::Edge(model), true) => {
                     st.fetching = true;
                     worker.send(Job::Fetch { model });
+                }
+                (Fetch::Edge(_), false) => {
+                    st.edge_declined = true;
+                    app.set_status(EDGE_DECLINED.into());
                 }
                 (Fetch::Model(model), false) if model.id == greycard_ai::SAM3.id => {
                     st.declined.push(model.id);
@@ -884,6 +909,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// The Subject model offered for a Whole person's edge, declined:
+    /// the edge is not offered again this session, a Subject shape
+    /// would still be offered its own, and the status line speaks of
+    /// the Whole person, not of a shape that masks nothing.
+    #[test]
+    fn a_declined_edge_offer_is_not_made_again_and_says_so() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        offer_edge(&mut state.borrow_mut(), &app, &greycard_ai::SUBJECT_WEBGPU);
+        assert!(app.get_fetch_open());
+        assert_eq!(
+            state.borrow().fetch,
+            Some(Fetch::Edge(&greycard_ai::SUBJECT_WEBGPU))
+        );
+        assert!(app.get_fetch_note().contains("Whole person"));
+        app.invoke_fetch_answered(false);
+        let st = state.borrow();
+        assert!(st.edge_declined);
+        assert!(st.declined.is_empty(), "a Subject shape is still offered");
+        assert_eq!(app.get_status(), EDGE_DECLINED);
     }
 
     #[test]

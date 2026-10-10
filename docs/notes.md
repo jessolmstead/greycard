@@ -288,3 +288,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§276. Marks for edited and exported frames](notes/276-marks-for-edited-and-exported-frames.md) (2026-10-10)
 - [§277. The overlay steps aside for a look edit](notes/277-the-overlay-steps-aside-for-a-look-edit.md) (2026-10-10)
 - [§278. Thumbnails from the edit, part one: the key, the entries, the open frame](notes/278-thumbnails-from-the-edit-part-one.md) (2026-10-10)
+- [§279. Whole person's edge from Subject's matte, as built](notes/279-whole-persons-edge-from-subjects-matte.md) (2026-10-10)

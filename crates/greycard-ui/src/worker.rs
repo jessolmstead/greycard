@@ -6350,6 +6350,9 @@ mod tests {
     /// - A person picked there is still that person after the picture
     ///   is turned or brightened, and her signature does not move.
     /// - A person pasted to a picture of two or more people asks.
+    /// - With a Subject model in the store, a Whole person's edge is
+    ///   as fine as Subject's, and on the group no two share more
+    ///   than with SAM's edge alone.
     ///
     /// Prints each part's seconds and provider; with
     /// `GREYCARD_PARTS_OUT` set, writes each mask there as a PNG.
@@ -6370,6 +6373,8 @@ mod tests {
             std::fs::create_dir_all(out).unwrap();
         }
         let store = greycard_ai::Store::at(models);
+        // Whole person's edge is Subject's where the store has it.
+        let edge = store.have(&greycard_ai::SUBJECT_WEBGPU) || store.have(&greycard_ai::SUBJECT);
         let mut develop_ai = Ai::for_test(store.clone(), vec![Provider::Cpu]);
         let mut ai = Ai::for_test(store, Provider::available());
         let deliver: Deliver = Arc::new(|_| {});
@@ -6422,6 +6427,30 @@ mod tests {
         };
         let on = |r: &Raster| r.data().iter().filter(|&&v| v > 127).count();
         let share = |r: &Raster| on(r) as f64 / r.data().len() as f64;
+        // A mask's soft band: its pixels between a tenth and nine
+        // tenths for each pixel of its edge (over a half, a neighbor
+        // under it).
+        let band = |r: &Raster| {
+            let (d, w) = (r.data(), greycard_edit::brush::RASTER_WIDTH);
+            let h = d.len() / w;
+            let soft = d.iter().filter(|&&v| v > 25 && v < 230).count();
+            let mut edge = 0usize;
+            for y in 0..h {
+                for x in 0..w {
+                    let i = y * w + x;
+                    let under = |j: usize| d[j] <= 127;
+                    if d[i] > 127
+                        && ((x > 0 && under(i - 1))
+                            || (x + 1 < w && under(i + 1))
+                            || (y > 0 && under(i - w))
+                            || (y + 1 < h && under(i + w)))
+                    {
+                        edge += 1;
+                    }
+                }
+            }
+            soft as f64 / edge.max(1) as f64
+        };
         let part = |label: &str, person: Option<Person>| {
             let p = PARTS.iter().find(|p| p.label == label).unwrap();
             Shape::Part {
@@ -6538,6 +6567,38 @@ mod tests {
         );
         assert!(share(&made.raster) > 0.05, "her, whole");
         assert!(both * 10 > on(&everyone) * 9, "the one person is everyone");
+        // Her edge is Subject's: its soft band per edge pixel as
+        // narrow as Subject's own, within a sixth (SAM's alone ran 1.3
+        // times as wide), and Subject's raster the same run's. Without
+        // Subject in the store, SAM's edge, and the status line says so.
+        if edge {
+            let subject = ai
+                .raster(
+                    b.stamp,
+                    &b.image,
+                    &b.edit,
+                    b.source,
+                    b.turn,
+                    (1, PARTS.len() + 2),
+                    &Shape::Subject {},
+                    None,
+                )
+                .unwrap();
+            assert_eq!(subject.seconds, 0.0, "Subject's matte, kept from her edge");
+            let (hers, theirs) = (band(&made.raster), band(&subject.raster));
+            println!("  Whole person's band {hers:.1}, Subject's {theirs:.1}");
+            assert!(
+                hers < 1.15 * theirs,
+                "her band {hers:.1} against {theirs:.1}"
+            );
+        } else {
+            println!(
+                "  Whole person's band {:.1}, no Subject",
+                band(&made.raster)
+            );
+            let note = made.note.as_deref().unwrap_or_default();
+            assert!(note.contains("Subject model is not downloaded"), "{note}");
+        }
 
         // The group: each person's Top on her own picture is decided
         // alone, and hers.
@@ -6646,19 +6707,73 @@ mod tests {
             assert!(r[at] > 127, "#{i} whole holds her face");
             wholes.push(made.raster);
         }
+        // Each one's edge as fine as Subject's, within a sixth: SAM's
+        // alone ran to 1.26 times as wide on these five.
+        if edge {
+            let subject = ai
+                .raster(
+                    g.stamp,
+                    &g.image,
+                    &g.edit,
+                    g.source,
+                    g.turn,
+                    (9, group.len() + 1),
+                    &Shape::Subject {},
+                    None,
+                )
+                .unwrap();
+            let theirs = band(&subject.raster);
+            for (i, one) in wholes.iter().enumerate() {
+                let hers = band(one);
+                println!("  whole #{i}'s band {hers:.1}, Subject's {theirs:.1}");
+                assert!(
+                    hers < 1.15 * theirs,
+                    "#{i}'s band {hers:.1} against {theirs:.1}"
+                );
+            }
+        } else {
+            for (i, one) in wholes.iter().enumerate() {
+                println!("  whole #{i}'s band {:.1}, no Subject", band(one));
+            }
+        }
+        // The same five with SAM's edge alone, under other keys.
+        ai.sams_edge_only = true;
+        let sams: Vec<Arc<Raster>> = group
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                ai.raster(
+                    g.stamp,
+                    &g.image,
+                    &g.edit,
+                    g.source,
+                    g.turn,
+                    (10, i),
+                    &part("Whole person", Some(p.person())),
+                    None,
+                )
+                .unwrap()
+                .raster
+            })
+            .collect();
+        ai.sams_edge_only = false;
+        let overlap = |a: &Raster, b: &Raster| {
+            a.data()
+                .iter()
+                .zip(b.data())
+                .filter(|&(&a, &b)| a > 127 && b > 127)
+                .count()
+        };
+        // No two share more than SAM's edges alone did, and not much.
         for i in 0..wholes.len() {
             for j in i + 1..wholes.len() {
-                let both = wholes[i]
-                    .data()
-                    .iter()
-                    .zip(wholes[j].data())
-                    .filter(|&(&a, &b)| a > 127 && b > 127)
-                    .count();
+                let both = overlap(&wholes[i], &wholes[j]);
+                let before = overlap(&sams[i], &sams[j]);
                 let least = on(&wholes[i]).min(on(&wholes[j]));
-                println!("  whole #{i} and #{j} overlap {both} of {least}");
+                println!("  whole #{i} and #{j} overlap {both} of {least}, SAM's {before}");
                 assert!(
-                    both * 20 < least,
-                    "whole #{i} and #{j} overlap {both} of {least}"
+                    both <= before && both * 20 < least,
+                    "whole #{i} and #{j} overlap {both} of {least}, SAM's {before}"
                 );
             }
         }

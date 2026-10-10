@@ -49,10 +49,6 @@ and smart collections that survive a move.
       branch and the sync's take and join, with its ΔE check against
       the export at 360 and 2048; a develop key column in the index so
       an offline frame shows its own edit; part one landed (§270, §278)
-- [ ] Whole person's edge from Subject's matte inside the picked
-      person, so the hair Subject keeps is kept and the edge is as
-      fine as a part's; the People masks read fuzzy at the edge
-      beside the parts (§263)
 - [ ] Lightbox over a collection, or the picks until collections
       exist: the grid with everything that gets in the way of judging
       consistency taken out. Tiles at a chosen size up to a handful
@@ -218,6 +214,10 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       fp16 untried), the phrase and its vector kept in the sidecar,
       and "not found" under the cut (§252: phrases for things absent
       topped out at 0.31). After the parts
+- [ ] People: Hair and the other whole-route parts with an edge as fine
+      as Whole person's (§279): Subject's matte cut by the part's
+      neighbors (face, skin, top) as the kept cells, or a matte of the
+      hair alone
 - [ ] People: the solid fill Whole person has, for Top, Hair and the
       other whole-picture parts (§263)
 - [ ] People: "use this person on all N pictures" after a paste or

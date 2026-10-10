@@ -201,6 +201,10 @@ pub struct Ai {
     /// is carried along so a hit here still says where its run
     /// happened and still turns Show mask on, as an actual run does.
     subject_matte: Option<(u64, Vec<u8>, Provider)>,
+    /// A Whole person keeps SAM's edge whatever the store has: for a
+    /// test to set the two edges side by side.
+    #[cfg(test)]
+    pub(crate) sams_edge_only: bool,
 }
 
 /// Why the learned denoiser is not to be had.
@@ -590,6 +594,8 @@ impl Ai {
             cache: HashMap::new(),
             disk: true,
             subject_matte: None,
+            #[cfg(test)]
+            sams_edge_only: false,
         }
     }
 
@@ -670,6 +676,10 @@ impl Ai {
             other.sam3 = self.sam3.take();
             other.presets = self.presets.take();
         }
+        // And the Subject model a Whole person's edge runs.
+        if self.subject.is_some() {
+            other.subject = self.subject.take();
+        }
     }
 
     /// The open file's content hash, read once.
@@ -691,6 +701,8 @@ impl Ai {
     pub fn forget_subject(&mut self) {
         self.subject = None;
         self.subject_matte = None;
+        // A Whole person made without Subject's edge is made again.
+        self.cache.retain(|_, (s, _)| !takes_subject_edge(s));
     }
 
     /// Whether the fill model is in the store, so a fill not kept
@@ -896,6 +908,11 @@ impl Ai {
         if matches!(shape, Shape::Part { .. }) {
             PART_PIPELINE.hash(&mut h);
         }
+        // Made again with Subject's edge once a Subject model is in.
+        if takes_subject_edge(shape) {
+            PERSON_EDGE.hash(&mut h);
+            self.subject_in_store().is_some().hash(&mut h);
+        }
         // A turned base is another picture to a raster: a half turn
         // keeps the height a cached one is checked by. Only hashed when
         // turned, so every raster made unturned keeps its slot.
@@ -995,7 +1012,12 @@ impl Ai {
         } = shape
         {
             let start = Instant::now();
-            let (data, provider, part) = self.part(
+            let PartMade {
+                data,
+                provider,
+                part,
+                edgeless,
+            } = self.part(
                 (stamp, turn),
                 image,
                 kind,
@@ -1004,20 +1026,36 @@ impl Ai {
                 &store,
             )?;
             let raster = Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data));
+            let seconds = start.elapsed().as_secs_f64();
             // Only a settled person's part is kept: an ask is asked
             // again, so the panel can show it and an export can say it.
+            // A Whole person whose Subject failed to run is kept only
+            // here, its disk key being the one with Subject's edge.
             if part.is_none() {
-                if let Some(path) = &cached {
+                if let Some(path) = &cached
+                    && !edgeless.as_ref().is_some_and(|e| e.failed)
+                {
                     write_raster(path, height, raster.data());
                 }
                 self.cache
                     .insert((key, turn), (shape.clone(), raster.clone()));
             }
-            let note = part.as_ref().map(|p| part_note(p, self.file.as_deref()));
+            let note = match (&part, &edgeless) {
+                (Some(p), _) => Some(part_note(p, self.file.as_deref())),
+                (None, Some(e)) => {
+                    tracing::info!("Whole person keeps SAM's edge: {}", e.why);
+                    Some(format!(
+                        "whole person found on {} in {seconds:.2} s, with a coarser edge: {}",
+                        provider.name(),
+                        e.why
+                    ))
+                }
+                (None, None) => None,
+            };
             return Ok(Made {
                 raster,
                 provider: Some(provider),
-                seconds: start.elapsed().as_secs_f64(),
+                seconds,
                 note,
                 part,
             });
@@ -1048,28 +1086,13 @@ impl Ai {
                 part: None,
             });
         }
-        let (_, rgb, luma) = self.preview.as_ref().expect("a preview was just made");
         let start = Instant::now();
         if matches!(shape, Shape::Subject {} | Shape::Background {}) {
-            let subject = match &mut self.subject {
-                Some(s) => s,
-                None => {
-                    let chosen = self
-                        .subject_model(model)
-                        .ok_or("no Subject model to load")?;
-                    self.subject.insert(
-                        Subject::load_model(&store, chosen, &self.providers)
-                            .map_err(|e| e.to_string())?,
-                    )
-                }
-            };
-            let mask = subject.mask(rgb).map_err(|e| e.to_string())?;
-            let provider = subject.provider();
-            let radius = (rgb.width / 256).max(2);
-            let refined = refine(&mask, luma, rgb.width, rgb.height, radius, 1e-3);
-            dump(rgb, &mask, &refined);
-            let base = refined.resampled(RASTER_WIDTH, height).to_u8();
-            self.subject_matte = Some((stamp, base.clone(), provider));
+            let chosen = self
+                .subject_model(model)
+                .ok_or("no Subject model to load")?;
+            let (base, provider) =
+                self.subject_base(stamp, (RASTER_WIDTH, height), chosen, &store)?;
             let data = background_or_not(shape, &base);
             if let Some(path) = &cached {
                 write_raster(path, height, &data);
@@ -1085,6 +1108,7 @@ impl Ai {
                 note: None,
             });
         }
+        let (_, rgb, luma) = self.preview.as_ref().expect("a preview was just made");
         let (mask, provider) = match shape {
             Shape::Object { picks, boxes } => {
                 let sam = match &mut self.sam {
@@ -1211,6 +1235,7 @@ impl Ai {
             key: stamp,
             region: &mut region,
             encodings,
+            matte: None,
         };
         let found = people_of(sam, presets, &mut picture, people)?;
         let aspect = image.height as f32 / image.width as f32;
@@ -1254,6 +1279,8 @@ impl Ai {
     /// base develop `stamp`, and the provider: of the person the
     /// shape names, found again on this picture (`sam3::choose`), or
     /// of everyone. Empty, and why, where the person is not settled.
+    /// A Whole person takes Subject's edge (`person_edge`), run only
+    /// once the person is settled; where it cannot, why.
     fn part(
         &mut self,
         (stamp, turn): (u64, u8),
@@ -1262,26 +1289,39 @@ impl Ai {
         (phrase, route, person): PartAsked,
         raster: (usize, usize),
         store: &Store,
-    ) -> Result<(Vec<u8>, Provider, Option<Unresolved>), String> {
+    ) -> Result<PartMade, String> {
         let route = route_of(route)?;
         self.parts_model(store)?;
         self.parts_view_of(stamp, turn, image, kind);
         let hash = self.picture_hash();
+        let who = match self.settled((stamp, turn), image, kind, phrase, person, &hash)? {
+            Ok(who) => who,
+            Err(why) => {
+                return Ok(PartMade {
+                    data: vec![0u8; raster.0 * raster.1],
+                    provider: self.sam3.as_ref().expect("loaded").providers().0,
+                    part: Some(why),
+                    edgeless: None,
+                });
+            }
+        };
+        let (matte, edgeless) = if route == sam3::Route::Whole && phrase == sam3::PERSON {
+            match self.person_edge(stamp, turn, raster, store) {
+                Ok(m) => (Some(m), None),
+                Err(e) => (None, Some(e)),
+            }
+        } else {
+            (None, None)
+        };
         let Ai {
             sam3,
             presets,
             encodings,
             parts_view,
-            people,
             ..
         } = self;
         let sam = sam3.as_mut().expect("the People model was just loaded");
         let presets = presets.as_ref().expect("the table was just read");
-        // Said before any model runs: a phrase not in the table is
-        // never asked of a text encoder.
-        if presets.phrase(phrase).is_none() {
-            return Err(format!("\"{phrase}\" is not in the People model's table"));
-        }
         let provider = sam.providers().0;
         let view = parts_view.as_ref().expect("the view was just made");
         let size = unturned_size(image, turn);
@@ -1293,27 +1333,7 @@ impl Ai {
             key: stamp,
             region: &mut region,
             encodings,
-        };
-        let empty = || vec![0u8; raster.0 * raster.1];
-        // The picture as it stands: its height over its width, the
-        // masks' units' aspect.
-        let aspect = image.height as f32 / image.width as f32;
-        let who = match person {
-            None => None,
-            Some(p) => {
-                let found = people_of(sam, presets, &mut picture, people)?;
-                let candidates: Vec<Candidate> = found
-                    .iter()
-                    .map(|q| Candidate::of(q, turn, aspect, &hash))
-                    .collect();
-                let own = hash.is_some() && p.picture == hash;
-                let vaspect = view.preview.height as f32 / view.preview.width as f32;
-                let choice = settle(p, found, &candidates, own, turn, (aspect, vaspect));
-                match decided(choice, candidates) {
-                    Ok(i) => Some(found[i].clone()),
-                    Err(why) => return Ok((empty(), provider, Some(why))),
-                }
-            }
+            matte: matte.as_ref(),
         };
         let pieces = sam3::find(sam, presets, &mut picture, route, phrase, who.as_ref())
             .map_err(|e| e.to_string())?;
@@ -1329,7 +1349,183 @@ impl Ai {
             .map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8)
             .collect();
         let (data, _, _) = rotate(&data, unturned.0, unturned.1, 1, turn);
-        Ok((data, provider, None))
+        Ok(PartMade {
+            data,
+            provider,
+            part: None,
+            edgeless,
+        })
+    }
+
+    /// Which person on the People view of base develop `stamp` a
+    /// part asked of `person` is of: `None` for everyone, or why it is
+    /// not settled here.
+    fn settled(
+        &mut self,
+        (stamp, turn): (u64, u8),
+        image: &WorkingImage,
+        kind: crate::finish::Source,
+        phrase: &str,
+        person: Option<&greycard_edit::mask::Person>,
+        hash: &Option<String>,
+    ) -> Result<Result<Option<sam3::Person>, Unresolved>, String> {
+        let Ai {
+            sam3,
+            presets,
+            encodings,
+            parts_view,
+            people,
+            ..
+        } = self;
+        let sam = sam3.as_mut().expect("the People model was just loaded");
+        let presets = presets.as_ref().expect("the table was just read");
+        // Said before any model runs: a phrase not in the table is
+        // never asked of a text encoder.
+        if presets.phrase(phrase).is_none() {
+            return Err(format!("\"{phrase}\" is not in the People model's table"));
+        }
+        let Some(p) = person else {
+            return Ok(Ok(None));
+        };
+        let view = parts_view.as_ref().expect("the view was just made");
+        let size = unturned_size(image, turn);
+        let mut region = |r: sam3::Rect| parts_region(image, kind, turn, size, r);
+        let mut picture = Picture {
+            preview: &view.preview,
+            luma: &view.luma,
+            size,
+            key: stamp,
+            region: &mut region,
+            encodings,
+            matte: None,
+        };
+        // The picture as it stands: its height over its width, the
+        // masks' units' aspect.
+        let aspect = image.height as f32 / image.width as f32;
+        let found = people_of(sam, presets, &mut picture, people)?;
+        let candidates: Vec<Candidate> = found
+            .iter()
+            .map(|q| Candidate::of(q, turn, aspect, hash))
+            .collect();
+        let own = hash.is_some() && p.picture == *hash;
+        let vaspect = view.preview.height as f32 / view.preview.width as f32;
+        let choice = settle(p, found, &candidates, own, turn, (aspect, vaspect));
+        Ok(decided(choice, candidates).map(|i| Some(found[i].clone())))
+    }
+
+    /// The Subject model a Whole person's edge would run: the one
+    /// loaded, else the file the store and the providers pick, else
+    /// whichever of the two the store has; none with neither.
+    fn subject_in_store(&self) -> Option<&'static Model> {
+        if let Some(s) = &self.subject {
+            return Some(s.model());
+        }
+        let store = self.store.as_ref()?;
+        model_for(&Shape::Subject {}, Some(store), &[])
+            .filter(|m| store.have(m))
+            .or_else(|| {
+                [&greycard_ai::SUBJECT, &greycard_ai::SUBJECT_WEBGPU]
+                    .into_iter()
+                    .find(|m| store.have(m))
+            })
+    }
+
+    /// The Subject matte of base develop `stamp` at the raster's size
+    /// (`raster`, as turned), as a Subject shape makes it, and the
+    /// provider it ran on: the one kept in `subject_matte` when it is
+    /// this develop's, else a run of `model`, kept there after. A
+    /// Subject, a Background and a Whole person on one picture cost
+    /// the model one run.
+    fn subject_base(
+        &mut self,
+        stamp: u64,
+        raster: (usize, usize),
+        model: &'static Model,
+        store: &Store,
+    ) -> Result<(Vec<u8>, Provider), String> {
+        if let Some((s, base, provider)) = &self.subject_matte
+            && *s == stamp
+        {
+            return Ok((base.clone(), *provider));
+        }
+        let Ai {
+            subject,
+            preview,
+            providers,
+            ..
+        } = self;
+        let (_, rgb, luma) = preview.as_ref().expect("a preview is made before a mask");
+        let subject = match subject {
+            Some(s) => s,
+            None => subject
+                .insert(Subject::load_model(store, model, providers).map_err(|e| e.to_string())?),
+        };
+        let mask = subject.mask(rgb).map_err(|e| e.to_string())?;
+        let provider = subject.provider();
+        let radius = (rgb.width / 256).max(2);
+        let refined = refine(&mask, luma, rgb.width, rgb.height, radius, 1e-3);
+        dump(rgb, &mask, &refined);
+        let base = refined.resampled(raster.0, raster.1).to_u8();
+        self.subject_matte = Some((stamp, base.clone(), provider));
+        Ok((base, provider))
+    }
+
+    /// Subject's matte for a Whole person on base develop `stamp` made
+    /// at `turn`, unturned as the People view is: the one a Subject or
+    /// Background made on it, in memory or on disk, else a run of the
+    /// Subject model, kept for them as theirs. Without the model in
+    /// the store, or with a run that fails, why: the person then keeps
+    /// SAM's edge, and the People run never waits on a download.
+    fn person_edge(
+        &mut self,
+        stamp: u64,
+        turn: u8,
+        raster: (usize, usize),
+        store: &Store,
+    ) -> Result<greycard_ai::Mask, Edgeless> {
+        #[cfg(test)]
+        if self.sams_edge_only {
+            return Err(Edgeless {
+                why: "SAM's edge asked for by a test".into(),
+                failed: false,
+            });
+        }
+        let Some(model) = self.subject_in_store() else {
+            return Err(Edgeless {
+                why: "the Subject model is not downloaded".into(),
+                failed: false,
+            });
+        };
+        let kept = self
+            .subject_matte
+            .as_ref()
+            .filter(|(s, _, _)| *s == stamp)
+            .map(|(_, base, _)| base.clone());
+        let on_disk = || {
+            let path = self.cached_path(&Shape::Subject {}, Some(model), turn)?;
+            read_raster(&path, raster.1)
+        };
+        let base = match kept.or_else(on_disk) {
+            Some(base) => base,
+            None => {
+                let (base, _) = self
+                    .subject_base(stamp, raster, model, store)
+                    .map_err(|e| Edgeless {
+                        why: format!("Subject did not run ({e})"),
+                        failed: true,
+                    })?;
+                if let Some(path) = self.cached_path(&Shape::Subject {}, Some(model), turn) {
+                    write_raster(&path, raster.1, &base);
+                }
+                base
+            }
+        };
+        let (data, w, h) = rotate(&base, raster.0, raster.1, 1, (4 - turn % 4) % 4);
+        Ok(greycard_ai::Mask::new(
+            w,
+            h,
+            data.into_iter().map(|v| v as f32 / 255.0).collect(),
+        ))
     }
 
     /// What the status line says of a Sky raster that comes back from
@@ -1485,6 +1681,40 @@ impl Ai {
         Ok((matte, provider, note))
     }
 }
+
+/// A Part's raster as `Ai::part` made it.
+struct PartMade {
+    data: Vec<u8>,
+    provider: Provider,
+    /// Why it is empty: its person is not settled here.
+    part: Option<Unresolved>,
+    /// Why a Whole person kept SAM's edge.
+    edgeless: Option<Edgeless>,
+}
+
+/// Why a Whole person kept SAM's edge rather than taking Subject's.
+#[derive(Debug)]
+struct Edgeless {
+    why: String,
+    /// The Subject model was in the store and did not run: the raster
+    /// is not kept on disk, whose key says Subject was there.
+    failed: bool,
+}
+
+/// Whether `shape` is a Whole person, whose edge is Subject's matte
+/// inside the person's region (`sam3::find`), so whose raster changes
+/// when a Subject model arrives.
+pub fn takes_subject_edge(shape: &Shape) -> bool {
+    matches!(
+        shape,
+        Shape::Part { phrase, route: greycard_edit::mask::Route::Whole, .. }
+            if phrase == sam3::PERSON
+    )
+}
+
+/// What a Whole person's raster was made with beside the shape, in its
+/// disk cache's key: Subject's edge, once a Subject model is in.
+const PERSON_EDGE: &str = "person-edge-1";
 
 /// A Part as `Ai::part` takes it: the phrase, its route and the person.
 type PartAsked<'a> = (

@@ -480,6 +480,10 @@ struct Cli {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Fetch {
     Model(&'static greycard_ai::Model),
+    /// A Subject model, offered for a Whole person's finer edge rather
+    /// than for a Subject shape: declined, the edge offer is not made
+    /// again this session, and a Subject shape is still offered its own.
+    Edge(&'static greycard_ai::Model),
     /// The lens database.
     Lenses,
 }
@@ -883,6 +887,17 @@ pub(crate) struct State {
     pub(crate) fetching: bool,
     /// Models declined this session, not to be asked for again.
     pub(crate) declined: Vec<&'static str>,
+    /// The Subject model declined this session as a Whole person's
+    /// edge: not offered for it again.
+    pub(crate) edge_declined: bool,
+    /// A Whole person was just asked for from the People menu: the
+    /// Subject model its edge runs may be offered once, beside it.
+    /// Never for one loaded from a sidecar or pasted.
+    pub(crate) edge_offer_due: bool,
+    /// A Whole person has been made with Subject's edge this session,
+    /// so the worker has the Subject model loaded: the first such run
+    /// says on the status line that it loads it.
+    pub(crate) edge_loaded: bool,
     /// Models whose fetch failed this session: a Subject turns from
     /// its WebGPU file to the original when that one fails.
     pub(crate) fetch_failed: Vec<&'static str>,
@@ -1209,6 +1224,9 @@ impl State {
             fetch: None,
             fetching: false,
             declined: Vec::new(),
+            edge_declined: false,
+            edge_offer_due: false,
+            edge_loaded: false,
             fetch_failed: Vec::new(),
             lenses_declined: false,
             lenses_asked: false,

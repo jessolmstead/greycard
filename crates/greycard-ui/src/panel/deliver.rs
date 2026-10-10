@@ -713,6 +713,14 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // with the people outlined; settled, it asks no more. An
             // ask made on a picture no longer open is that picture's.
             let open = st.current.and_then(|c| st.files.get(c)).cloned();
+            // A part made, though with a word on the status line (a
+            // Whole person that kept SAM's edge): shown as any other.
+            let settled = matches!(shape, Shape::Part { .. }) && part.is_none();
+            // A Whole person run with Subject's edge: the worker has
+            // Subject loaded.
+            if crate::ai::takes_subject_edge(&shape) && provider.is_some() && note.is_none() {
+                st.edge_loaded = true;
+            }
             match part {
                 Some(crate::ai::Unresolved::Ask(ask)) if file.is_none() || file == open => {
                     crate::panel::parts::asked(&mut st, app, key, ask)
@@ -743,7 +751,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                         | Shape::Part { .. }
                 )
                 && provider.is_some()
-                && note.is_none()
+                && (note.is_none() || settled)
             {
                 app.set_show_mask(true);
             }
@@ -797,6 +805,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // so the next Subject mask picks up the new choice rather
             // than running on the session's first one until restart.
             if model.id == greycard_ai::SUBJECT.id || model.id == greycard_ai::SUBJECT_WEBGPU.id {
+                // A Whole person made meanwhile with SAM's edge is
+                // asked for again, for Subject's.
+                st.learned
+                    .retain(|_, (s, _)| !crate::ai::takes_subject_edge(s));
+                st.edge_loaded = false;
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {
                         w.forget_subject();

@@ -349,6 +349,50 @@ pub(crate) fn step(
     })
 }
 
+/// The status line while the first Whole person of a session loads the
+/// Subject model for its edge.
+pub(crate) const EDGE_LOADING: &str =
+    "finding the whole person; loading Subject for its edge takes a few seconds the first time";
+
+/// The Subject model to offer beside a Whole person being asked for:
+/// its edge is Subject's matte (`sam3::find`), but the People run never
+/// waits on it. `may_offer`: the sheet is free, the Whole person was
+/// just asked for from the People menu (not loaded or pasted), and the
+/// edge offer was not declined this session. None for any other shape,
+/// without `may_offer`, with either Subject file in the store, or with
+/// the file `step` would pick for a Subject declined or failed to fetch
+/// this session.
+pub(crate) fn edge_offer(
+    shape: &Shape,
+    have: impl Fn(&greycard_ai::Model) -> bool + Copy,
+    providers: &[greycard_ai::Provider],
+    declined: &[&'static str],
+    failed: &[&'static str],
+    may_offer: bool,
+    original_failed_on_webgpu: impl Fn(&greycard_ai::Model) -> bool,
+) -> Option<&'static greycard_ai::Model> {
+    let sheet_free = may_offer;
+    if !crate::ai::takes_subject_edge(shape)
+        || !may_offer
+        || have(&greycard_ai::SUBJECT)
+        || have(&greycard_ai::SUBJECT_WEBGPU)
+    {
+        return None;
+    }
+    match step(
+        &Shape::Subject {},
+        have,
+        providers,
+        declined,
+        failed,
+        sheet_free,
+        original_failed_on_webgpu,
+    )? {
+        Step::Offer(model, _) => Some(model),
+        _ => None,
+    }
+}
+
 /// Ask the worker for the learned masks wanted and not yet asked for;
 /// where the model is not in the store, offer to fetch it.
 pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
@@ -394,6 +438,29 @@ pub(crate) fn ask_for(st: &mut State, app: &App, wants: Vec<(Key, Shape)>) {
                     });
                 }
             });
+            // A Whole person goes ahead with SAM's edge; asked for from
+            // the menu just now, the Subject model its finer edge runs
+            // is offered beside it, once. The first with Subject in the
+            // store loads it, some seconds: said.
+            if crate::ai::takes_subject_edge(&shape) {
+                if !st.edge_loaded
+                    && (have(&greycard_ai::SUBJECT) || have(&greycard_ai::SUBJECT_WEBGPU))
+                {
+                    app.set_status(EDGE_LOADING.into());
+                }
+                let due = std::mem::take(&mut st.edge_offer_due);
+                if let Some(subject) = edge_offer(
+                    &shape,
+                    have,
+                    providers,
+                    &st.declined,
+                    &st.fetch_failed,
+                    due && !st.edge_declined && sheet_free,
+                    original_failed_on_webgpu,
+                ) {
+                    crate::panel::assets::offer_edge(st, app, subject);
+                }
+            }
             st.asked.insert(key, shape);
         } else if let Step::Offer(model, falls_back) = next {
             offer_model(st, app, model, falls_back);
@@ -1669,6 +1736,52 @@ mod tests {
             step(&shape, subject_too, &gpu, &[], &[], false, no_record),
             Some(Step::Wait)
         );
+    }
+
+    /// A Whole person with the People model in the store is asked for
+    /// at once, and the Subject model its edge runs is offered beside
+    /// it, as a Subject would be offered; not with either Subject file
+    /// in, the sheet busy, or that file declined; never for another
+    /// part.
+    #[test]
+    fn a_whole_person_runs_at_once_and_offers_subject_beside_it() {
+        use greycard_ai::{Provider, SAM3, SUBJECT, SUBJECT_WEBGPU};
+        use greycard_edit::mask::Route;
+        let gpu = [Provider::WebGpu, Provider::Cpu];
+        let no_record = |_: &greycard_ai::Model| false;
+        let whole = Shape::Part {
+            phrase: "person".into(),
+            route: Route::Whole,
+            person: None,
+        };
+        let hair = Shape::Part {
+            phrase: "hair".into(),
+            route: Route::Whole,
+            person: None,
+        };
+        let people: fn(&greycard_ai::Model) -> bool = |m| m.id == SAM3.id;
+        assert_eq!(
+            step(&whole, people, &gpu, &[], &[], true, no_record),
+            Some(Step::Ask(&SAM3))
+        );
+        let offer = |shape, have, declined: &[&'static str], free| {
+            edge_offer(shape, have, &gpu, declined, &[], free, no_record).map(|m| m.id)
+        };
+        assert_eq!(offer(&whole, people, &[], true), Some(SUBJECT_WEBGPU.id));
+        assert_eq!(offer(&hair, people, &[], true), None);
+        assert_eq!(offer(&whole, people, &[], false), None);
+        // The GPU file declined: the original, as for a Subject.
+        assert_eq!(
+            offer(&whole, people, &[SUBJECT_WEBGPU.id], true),
+            Some(SUBJECT.id)
+        );
+        assert_eq!(
+            offer(&whole, people, &[SUBJECT_WEBGPU.id, SUBJECT.id], true),
+            None
+        );
+        let with_subject: fn(&greycard_ai::Model) -> bool =
+            |m| m.id == SAM3.id || m.id == SUBJECT.id;
+        assert_eq!(offer(&whole, with_subject, &[], true), None);
     }
 
     /// An Object waiting on SAM with the sheet busy waits: the Subject

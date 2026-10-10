@@ -157,6 +157,7 @@ fn the_decoder_answers_as_the_python_reference() {
             key: 1,
             region: &mut region,
             encodings: &mut encodings,
+            matte: None,
         };
         let people = sam3::people(&mut sam, &presets, &mut pic).expect("people");
         assert!(!people.is_empty(), "nobody on the reference picture");
@@ -204,6 +205,7 @@ fn the_eye_route_finds_two_irises() {
             key: 1,
             region: &mut region,
             encodings: &mut encodings,
+            matte: None,
         };
         let t = Instant::now();
         let irises = sam3::find(
@@ -291,6 +293,7 @@ fn people_are_told_apart_on_the_frames() {
             key: key as u64,
             region: &mut region,
             encodings: &mut encodings,
+            matte: None,
         };
         let people = sam3::people(&mut sam, &presets, &mut pic).expect("people");
         for (i, p) in people.iter().enumerate() {
@@ -449,4 +452,246 @@ fn people_are_told_apart_on_the_frames() {
         let c = sam3::choose(&p.0, p.1, &group);
         assert!(matches!(c, Choice::Person(j, _) if j == i), "#{i}: {c:?}");
     }
+}
+
+/// The soft band of a mask `w` wide: its pixels between 0.1 and 0.9 for
+/// each pixel of its edge (over a half with a neighbor under it). The
+/// wider, the fuzzier the edge reads.
+fn band(m: &[f32], w: usize) -> f64 {
+    let h = m.len() / w;
+    let soft = m.iter().filter(|&&v| v > 0.1 && v < 0.9).count();
+    let mut edge = 0usize;
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            if m[i] < 0.5 {
+                continue;
+            }
+            let under = (x > 0 && m[i - 1] < 0.5)
+                || (x + 1 < w && m[i + 1] < 0.5)
+                || (y > 0 && m[i - w] < 0.5)
+                || (y + 1 < h && m[i + w] < 0.5);
+            edge += under as usize;
+        }
+    }
+    soft as f64 / edge.max(1) as f64
+}
+
+/// Two masks' pixels over a half: their intersection over their union.
+fn iou(a: &[f32], b: &[f32]) -> f64 {
+    let both = a
+        .iter()
+        .zip(b)
+        .filter(|&(&x, &y)| x > 0.5 && y > 0.5)
+        .count();
+    let either = a
+        .iter()
+        .zip(b)
+        .filter(|&(&x, &y)| x > 0.5 || y > 0.5)
+        .count();
+    both as f64 / either.max(1) as f64
+}
+
+/// Pixels both masks are over `at` in.
+fn shared(a: &[f32], b: &[f32], at: f32) -> usize {
+    a.iter().zip(b).filter(|&(&x, &y)| x > at && y > at).count()
+}
+
+/// Crops of a frame at 1:1 and twice that: SAM's edge, Subject's edge
+/// and Subject's matte side by side, each over the picture in red and
+/// alone below it. `spec` is `x,y,w,h` in the preview's pixels.
+fn save_crops(out: &Path, stem: &str, spec: &str, preview: &Rgb8, panels: &[greycard_ai::Mask]) {
+    let r: Vec<usize> = spec.split(',').map(|v| v.trim().parse().unwrap()).collect();
+    let [x0, y0, cw, ch] = [r[0], r[1], r[2], r[3]];
+    let pw = preview.width;
+    for scale in [1usize, 2] {
+        let gap = 4;
+        let (ow, oh) = (
+            panels.len() * (cw * scale + gap) - gap,
+            2 * ch * scale + gap,
+        );
+        let mut img = vec![255u8; ow * oh * 3];
+        for (k, m) in panels.iter().enumerate() {
+            for y in 0..ch * scale {
+                for x in 0..cw * scale {
+                    let (sx, sy) = (x0 + x / scale, y0 + y / scale);
+                    let p = &preview.data[(sy * pw + sx) * 3..(sy * pw + sx) * 3 + 3];
+                    let v = m.at(sx, sy).clamp(0.0, 1.0);
+                    let ox = k * (cw * scale + gap) + x;
+                    let top = (y * ow + ox) * 3;
+                    let keep = 1.0 - 0.6 * v;
+                    img[top] = (p[0] as f32 * keep + 255.0 * 0.6 * v) as u8;
+                    img[top + 1] = (p[1] as f32 * keep) as u8;
+                    img[top + 2] = (p[2] as f32 * keep) as u8;
+                    let low = ((y + ch * scale + gap) * ow + ox) * 3;
+                    let g = (v * 255.0).round() as u8;
+                    img[low..low + 3].copy_from_slice(&[g, g, g]);
+                }
+            }
+        }
+        image::save_buffer(
+            out.join(format!("{stem}-crop-{x0}-{y0}-x{scale}.png")),
+            &img,
+            ow as u32,
+            oh as u32,
+            image::ExtendedColorType::Rgb8,
+        )
+        .unwrap();
+    }
+}
+
+/// Whole person with Subject's edge against SAM's alone, on the frames
+/// of `GREYCARD_SAM3_FRAMES`, everyone and each person on a picture of
+/// several, drawn into the editor's raster (2048 wide): the soft band
+/// per edge pixel ([`band`]) before and after, and Subject's own; All
+/// people's IoU with Subject; on a picture of several, the pixels two
+/// people share, which Subject's edge must not add to; the seconds
+/// Subject and the composing add. With `GREYCARD_EDGE_OUT` set, writes
+/// each raster there, and with `GREYCARD_EDGE_CROPS`
+/// (`stem:x,y,w,h;...`, the preview's pixels) each crop ([`save_crops`]).
+#[test]
+#[ignore]
+fn whole_person_takes_subjects_edge_on_the_frames() {
+    let Some(store) = store() else { return };
+    let dir = std::env::var_os("GREYCARD_SAM3_FRAMES")
+        .map(PathBuf::from)
+        .expect("GREYCARD_SAM3_FRAMES: the directory of the thirteen 2048 previews");
+    let out = std::env::var_os("GREYCARD_EDGE_OUT").map(PathBuf::from);
+    if let Some(out) = &out {
+        std::fs::create_dir_all(out).unwrap();
+    }
+    let crops = std::env::var("GREYCARD_EDGE_CROPS").unwrap_or_default();
+    let presets = Presets::of(&store).expect("the phrase table");
+    let providers = Provider::available();
+    let mut sam = Sam3::load(&store, &providers).expect("load");
+    let t = Instant::now();
+    let mut subject = greycard_ai::Subject::load(&store, &providers).expect("Subject");
+    println!(
+        "Subject ({}) loaded on {} in {:.2}s",
+        subject.model().id,
+        subject.provider().name(),
+        t.elapsed().as_secs_f64()
+    );
+    let (mut widest_before, mut widest_after) = (0f64, 0f64);
+    for (key, stem) in FRAMES.iter().enumerate() {
+        let preview = open(&dir.join(format!("{stem}.jpg")));
+        let luma = preview.luma();
+        let (pw, ph) = (preview.width, preview.height);
+        let raster = (2048usize, (2048.0 * ph as f32 / pw as f32).round() as usize);
+        let t = Instant::now();
+        let matte = subject.mask(&preview).expect("Subject's matte");
+        let matte = greycard_ai::refine(&matte, &luma, pw, ph, (pw / 256).max(2), 1e-3);
+        let subject_s = t.elapsed().as_secs_f64();
+        let whole = Rect {
+            x0: 0,
+            y0: 0,
+            x1: pw,
+            y1: ph,
+        };
+        let drawn = |m: &greycard_ai::Mask| {
+            sam3::draw(
+                &[sam3::Piece {
+                    rect: whole,
+                    mask: m.clone(),
+                }],
+                (pw, ph),
+                raster,
+            )
+        };
+        let subj = drawn(&matte);
+        let mut region = |r: Rect| crop(&preview, r);
+        let mut encodings = Encodings::new(0);
+        let mut pic = Picture {
+            preview: &preview,
+            luma: &luma,
+            size: (pw, ph),
+            key: key as u64,
+            region: &mut region,
+            encodings: &mut encodings,
+            matte: None,
+        };
+        let people = sam3::people(&mut sam, &presets, &mut pic).expect("people");
+        let mut whos: Vec<Option<usize>> = vec![None];
+        if people.len() > 1 {
+            whos.extend((0..people.len()).map(Some));
+        }
+        let mut each = Vec::new();
+        for who in whos {
+            let person = who.map(|i| &people[i]);
+            let mut ask = |pic: &mut Picture<_>| {
+                let t = Instant::now();
+                let piece = sam3::find(&mut sam, &presets, pic, Route::Whole, sam3::PERSON, person)
+                    .expect("Whole person")
+                    .remove(0);
+                (drawn(&piece.mask), t.elapsed().as_secs_f64())
+            };
+            pic.matte = None;
+            let (before, tb) = ask(&mut pic);
+            pic.matte = Some(&matte);
+            let (after, ta) = ask(&mut pic);
+            let name = who.map_or("all".to_string(), |i| format!("#{i}"));
+            let (bb, ba) = (band(&before, raster.0), band(&after, raster.0));
+            let share =
+                |m: &[f32]| 100.0 * m.iter().filter(|&&v| v > 0.5).count() as f64 / m.len() as f64;
+            println!(
+                "{stem} {name:>3}: band {bb:5.1} -> {ba:5.1} (Subject {:5.1}); IoU with Subject \
+                 {:.3} -> {:.3}; {:.2}% -> {:.2}% of the frame; find {tb:.2}s -> {ta:.2}s, \
+                 Subject {subject_s:.2}s",
+                band(&subj, raster.0),
+                iou(&before, &subj),
+                iou(&after, &subj),
+                share(&before),
+                share(&after),
+            );
+            widest_before = widest_before.max(bb);
+            widest_after = widest_after.max(ba);
+            if let Some(out) = &out {
+                for (what, m) in [("sam", &before), ("subject-edge", &after)] {
+                    let bytes: Vec<u8> = m.iter().map(|v| (v * 255.0).round() as u8).collect();
+                    image::save_buffer(
+                        out.join(format!("{stem}-{name}-{what}.png")),
+                        &bytes,
+                        raster.0 as u32,
+                        raster.1 as u32,
+                        image::ExtendedColorType::L8,
+                    )
+                    .unwrap();
+                }
+                if who.is_none() {
+                    let at_preview = |m: &[f32]| {
+                        greycard_ai::Mask::new(raster.0, raster.1, m.to_vec()).resampled(pw, ph)
+                    };
+                    let panels = [at_preview(&before), at_preview(&after), matte.clone()];
+                    let prefix = format!("{stem}:");
+                    for spec in crops.split(';').filter(|s| s.starts_with(&prefix)) {
+                        save_crops(out, stem, &spec[prefix.len()..], &preview, &panels);
+                    }
+                }
+            }
+            if who.is_some() {
+                each.push((name, before, after));
+            }
+        }
+        for i in 0..each.len() {
+            for j in i + 1..each.len() {
+                let (a, b) = (&each[i], &each[j]);
+                println!(
+                    "{stem} {} and {}: share {} -> {} pixels over a half, {} -> {} over 0.1",
+                    a.0,
+                    b.0,
+                    shared(&a.1, &b.1, 0.5),
+                    shared(&a.2, &b.2, 0.5),
+                    shared(&a.1, &b.1, 0.1),
+                    shared(&a.2, &b.2, 0.1),
+                );
+                assert!(
+                    shared(&a.2, &b.2, 0.5) <= shared(&a.1, &b.1, 0.5),
+                    "{stem}: Subject's edge gave {} and {} pixels in common",
+                    a.0,
+                    b.0
+                );
+            }
+        }
+    }
+    println!("widest band: {widest_before:.1} -> {widest_after:.1}");
 }

@@ -916,6 +916,11 @@ pub struct Picture<'a, E = Encoding> {
     /// full-resolution pixels, at those pixels.
     pub region: &'a mut dyn FnMut(Rect) -> Rgb8,
     pub encodings: &'a mut Encodings<E>,
+    /// Subject's matte of the same picture, over the whole of it at
+    /// any size (the preview's, as a rule): the edge a Whole person
+    /// takes inside their region grown a little ([`subject_edge`]).
+    /// `None` keeps SAM's own edge.
+    pub matte: Option<&'a Mask>,
 }
 
 impl<E> Picture<'_, E> {
@@ -1108,19 +1113,41 @@ fn whole<S: Segment>(
 ) -> Result<Piece> {
     let found = preview_found(sam, picture, phrase)?;
     if phrase.text == PERSON {
-        let mask = match who {
-            Some(person) => {
-                let faces = faces(sam, presets, picture)?;
-                person_mask(&found, &faces, person)
-            }
-            None => union(&found.instances, CUT),
+        let faces = match who {
+            Some(_) => faces(sam, presets, picture)?,
+            None => Vec::new(),
         };
-        let mask = harden(&fill_unsure(&mask));
+        // A head with no body keeps SAM's edge: Subject's matte about
+        // it would take a collar of neck and shoulders the person is
+        // not, cut off three cells under the chin.
+        let (mask, bodied) = match who {
+            Some(person) => person_mask(&found, &faces, person),
+            None => (union(&found.instances, CUT), true),
+        };
+        let matte = picture.matte.filter(|_| bodied);
+        let (filled, open) = fill_unsure_open(&mask.resampled(MASK, MASK));
+        let solid = harden(&filled);
         let p = picture.preview;
         let radius = (p.width / 256).max(2);
+        let sams = refine(&solid, picture.luma, p.width, p.height, radius, 1e-3);
+        let mask = match matte {
+            Some(matte) => {
+                // Kept to SAM's edge: where someone else is, and the
+                // gaps the fill left open.
+                let mut keep = match who {
+                    Some(person) => others(&found, &faces, person, &solid),
+                    None => vec![false; MASK * MASK],
+                };
+                for (k, o) in keep.iter_mut().zip(open) {
+                    *k |= o;
+                }
+                subject_edge(&solid, &keep, &sams, matte)
+            }
+            None => sams,
+        };
         return Ok(Piece {
             rect: picture.whole(),
-            mask: refine(&mask, picture.luma, p.width, p.height, radius, 1e-3),
+            mask,
         });
     }
     // A body over more than one face is a merged one: kept to it, one
@@ -1197,14 +1224,14 @@ fn whole<S: Segment>(
 /// over the cut that holds their face and no other; else, where SAM
 /// merged them with someone into one instance, their share of it
 /// ([`split`]); and for a face no instance holds, their face.
-fn person_mask(found: &Found, faces: &[Instance], who: &Person) -> Mask {
+fn person_mask(found: &Found, faces: &[Instance], who: &Person) -> (Mask, bool) {
     let boxes = || faces.iter().map(|f| f.bbox);
     let [fx, fy] = center(who.face);
     let at = |m: &Mask| sample(m, fx * m.width as f32 - 0.5, fy * m.height as f32 - 0.5);
     if let Some(body) = &who.body
         && holds(body, boxes()) <= 1
     {
-        return body.clone();
+        return (body.clone(), true);
     }
     let holding: Vec<&Instance> = found.over(CUT).filter(|i| at(&i.mask) > CUT).collect();
     let alone = holding
@@ -1212,7 +1239,7 @@ fn person_mask(found: &Found, faces: &[Instance], who: &Person) -> Mask {
         .filter(|i| holds(&i.mask, boxes()) <= 1)
         .max_by(|a, b| at(&a.mask).total_cmp(&at(&b.mask)));
     if let Some(alone) = alone {
-        return alone.mask.clone();
+        return (alone.mask.clone(), true);
     }
     let merged = who.body.as_ref().or_else(|| {
         holding
@@ -1225,14 +1252,15 @@ fn person_mask(found: &Found, faces: &[Instance], who: &Person) -> Mask {
         let held: Vec<[f32; 4]> = boxes()
             .filter(|&f| holds(&merged, [f].into_iter()) > 0)
             .collect();
-        return split(&merged, &held, who.face);
+        return (split(&merged, &held, who.face), true);
     }
     // No instance holds the face: the face as the model found it.
-    faces
+    let face = faces
         .iter()
         .max_by(|a, b| iou(a.bbox, who.face).total_cmp(&iou(b.bbox, who.face)))
         .filter(|f| iou(f.bbox, who.face) > SAME_FACE)
-        .map_or_else(|| box_mask(who.face), |f| f.mask.clone())
+        .map_or_else(|| box_mask(who.face), |f| f.mask.clone());
+    (face, false)
 }
 
 /// A person's mask made solid: SAM 3's sigmoid over a body runs from
@@ -1256,10 +1284,19 @@ fn harden(mask: &Mask) -> Mask {
 const UNSURE: f32 = 0.1;
 
 /// `mask` (`MASK` square) with each unsure hole and its rim filled.
+#[cfg(test)]
 fn fill_unsure(mask: &Mask) -> Mask {
+    fill_unsure_open(mask).0
+}
+
+/// [`fill_unsure`], and the cells of the holes it left open: the
+/// enclosed gaps that reach background, which Subject's edge must not
+/// close ([`subject_edge`]).
+fn fill_unsure_open(mask: &Mask) -> (Mask, Vec<bool>) {
     let (w, h) = (mask.width, mask.height);
     let mut seen = vec![false; w * h];
     let mut out = mask.clone();
+    let mut open = vec![false; w * h];
     for start in 0..w * h {
         if seen[start] || mask.data[start] > CUT {
             continue;
@@ -1299,9 +1336,302 @@ fn fill_unsure(mask: &Mask) -> Mask {
                     }
                 }
             }
+        } else if !edge {
+            for &c in &region {
+                open[c] = true;
+            }
         }
     }
+    (out, open)
+}
+
+/// How far, in `MASK` cells, a Whole person's region is grown for
+/// Subject's edge: Subject's matte is taken out to `GROW` cells past
+/// SAM's outline and nothing beyond. SAM's cut runs within a cell or two
+/// of the true edge at 288 cells (7 pixels a cell at 2048), and loose
+/// hair against the sky that Subject keeps reaches a cell or two past
+/// it; three takes that and stops before a neighbor's shoulder or a
+/// held thing Subject also finds salient becomes this person's.
+const GROW: f32 = 3.0;
+
+/// How deep into the person's region, in cells, SAM's solid inside
+/// comes up under Subject's matte as a floor, ramping from nothing at
+/// SAM's outline: so a blotch Subject leaves in a body is filled, as
+/// the fill fills SAM's, while at the edge Subject's matte alone says
+/// where the person ends.
+const FLOOR: f32 = 2.0;
+
+/// The least share of a part of the person's inside Subject's matte
+/// must hold (over the cut) for its edge to be taken there: a person
+/// Subject does not see as salient, someone in the background, keeps
+/// SAM's edge rather than losing theirs.
+const COVER: f32 = 0.8;
+
+/// The cells of `MASK` square instances that are someone else's, for a
+/// whole person `who` whose region is `own`: every `person` instance
+/// over the cut that does not hold `who`'s face, and the rest of one
+/// that holds theirs and another's (a body SAM merged), and every
+/// other face; less `own` itself. An instance that holds only their
+/// face, or lies mostly inside `own`, is their own found again.
+fn others(found: &Found, faces: &[Instance], who: &Person, own: &Mask) -> Vec<bool> {
+    let mine: Vec<bool> = own.data.iter().map(|&v| v > CUT).collect();
+    let boxes = || faces.iter().map(|f| f.bbox);
+    let [fx, fy] = center(who.face);
+    let mut out = vec![false; MASK * MASK];
+    let mut add = |m: &Mask| {
+        for (o, v) in out.iter_mut().zip(&m.data) {
+            *o |= *v > CUT;
+        }
+    };
+    for i in found.over(CUT) {
+        let m = i.mask.resampled(MASK, MASK);
+        let holds_theirs = sample(&m, fx * MASK as f32 - 0.5, fy * MASK as f32 - 0.5) > CUT;
+        if holds_theirs && holds(&m, boxes()) <= 1 {
+            continue;
+        }
+        let on = m.data.iter().filter(|&&v| v > CUT).count();
+        let inside = m
+            .data
+            .iter()
+            .zip(&mine)
+            .filter(|&(&v, &o)| v > CUT && o)
+            .count();
+        if !holds_theirs && 2 * inside > on {
+            continue;
+        }
+        // Filled as their own Whole person would be: glasses are theirs.
+        add(&fill_unsure_open(&m).0);
+    }
+    for f in faces.iter().filter(|f| iou(f.bbox, who.face) <= SAME_FACE) {
+        add(&f.mask.resampled(MASK, MASK));
+    }
+    for (o, m) in out.iter_mut().zip(&mine) {
+        *o &= !m;
+    }
     out
+}
+
+/// Each cell's distance, in cells, to the nearest cell `on` (nought on
+/// one): a two-pass chamfer over the eight neighbors, steps of one and
+/// √2. With no cell on, every distance is infinite.
+fn cells_to(on: &[bool], w: usize, h: usize) -> Vec<f32> {
+    const D: f32 = std::f32::consts::SQRT_2;
+    let mut d: Vec<f32> = on
+        .iter()
+        .map(|&o| if o { 0.0 } else { f32::INFINITY })
+        .collect();
+    for y in 0..h {
+        for x in 0..w {
+            let i = y * w + x;
+            let mut v = d[i];
+            if x > 0 {
+                v = v.min(d[i - 1] + 1.0);
+            }
+            if y > 0 {
+                v = v.min(d[i - w] + 1.0);
+                if x > 0 {
+                    v = v.min(d[i - w - 1] + D);
+                }
+                if x + 1 < w {
+                    v = v.min(d[i - w + 1] + D);
+                }
+            }
+            d[i] = v;
+        }
+    }
+    for y in (0..h).rev() {
+        for x in (0..w).rev() {
+            let i = y * w + x;
+            let mut v = d[i];
+            if x + 1 < w {
+                v = v.min(d[i + 1] + 1.0);
+            }
+            if y + 1 < h {
+                v = v.min(d[i + w] + 1.0);
+                if x + 1 < w {
+                    v = v.min(d[i + w + 1] + D);
+                }
+                if x > 0 {
+                    v = v.min(d[i + w - 1] + D);
+                }
+            }
+            d[i] = v;
+        }
+    }
+    d
+}
+
+/// The four-connected parts of `on`, `w` wide: each cell's part, or
+/// `None` off them, and how many there are.
+fn label(on: &[bool], w: usize) -> (Vec<Option<usize>>, usize) {
+    let h = on.len() / w;
+    let mut out = vec![None; on.len()];
+    let mut n = 0;
+    let mut stack = Vec::new();
+    for start in 0..on.len() {
+        if !on[start] || out[start].is_some() {
+            continue;
+        }
+        out[start] = Some(n);
+        stack.push(start);
+        while let Some(c) = stack.pop() {
+            let (x, y) = (c % w, c / w);
+            let near = [
+                (x > 0).then(|| c - 1),
+                (x + 1 < w).then(|| c + 1),
+                (y > 0).then(|| c - w),
+                (y + 1 < h).then(|| c + w),
+            ];
+            for j in near.into_iter().flatten() {
+                if on[j] && out[j].is_none() {
+                    out[j] = Some(n);
+                    stack.push(j);
+                }
+            }
+        }
+        n += 1;
+    }
+    (out, n)
+}
+
+/// A whole person's mask with Subject's edge: `solid` is their region
+/// as SAM made it and the fill and the ramp left it (`MASK` square),
+/// `sams` that region refined at the preview's size (the edge SAM
+/// alone gives), `matte` Subject's matte of the picture, and `keep`
+/// the cells (`MASK` square) where SAM's edge stands whatever Subject
+/// says: someone else's region ([`others`]) and the gaps the fill left
+/// open. At the preview's size:
+///
+/// - out to `GROW` cells past SAM's outline, Subject's matte, fading
+///   to nothing over the last cell; nothing beyond;
+/// - inside, SAM's solid region under it as a floor, from nothing at
+///   the outline to all of it `FLOOR` cells in;
+/// - within a cell of `keep`, or as near it as to the person, SAM's
+///   edge alone, blending into the above over the next `GROW - 1`
+///   cells: where two people touch the line between them is the
+///   person split's, a gap between them that Subject fills goes to
+///   neither by its matte, and the fill's open gaps stay open.
+///
+/// A part of the region (four-connected) keeps SAM's edge, as if it
+/// were `keep`, where Subject's matte holds less than `COVER` of its
+/// inside, where it has no inside (no cell two in: a speck, a
+/// sliver), or where most of the cells about it are kept (a speck SAM
+/// gave this person inside someone else).
+fn subject_edge(solid: &Mask, keep: &[bool], sams: &Mask, matte: &Mask) -> Mask {
+    let (w, h) = (sams.width, sams.height);
+    let n = MASK * MASK;
+    let mut own: Vec<bool> = solid.data.iter().map(|&v| v > CUT).collect();
+    let mut keep = keep.to_vec();
+    // Subject's view of each cell, for the cover.
+    let cells = matte.resampled(MASK, MASK);
+    let inside = cells_to(&own.iter().map(|&o| !o).collect::<Vec<_>>(), MASK, MASK);
+    let (parts, count) = label(&own, MASK);
+    // Counted away from the outline, where SAM and Subject should both
+    // be sure. A part with no cell two in, a speck or a sliver, has
+    // too little inside to trust a matte grown three cells about it.
+    let (mut held, mut deep) = (vec![0usize; count], vec![0usize; count]);
+    for c in 0..n {
+        if let Some(p) = parts[c]
+            && inside[c] >= 2.0
+        {
+            deep[p] += 1;
+            held[p] += (cells.data[c] > CUT) as usize;
+        }
+    }
+    // The cells about each part, and how many of them are kept: a
+    // speck SAM gave this person inside someone else is ringed by
+    // them, and Subject, which holds them both, would make it solid.
+    let (mut ring, mut ringed) = (vec![0usize; count], vec![0usize; count]);
+    let mut stamp = vec![usize::MAX; n];
+    for (c, part) in parts.iter().enumerate() {
+        let Some(p) = *part else { continue };
+        let (x, y) = ((c % MASK) as isize, (c / MASK) as isize);
+        for (dx, dy) in [
+            (-1, 0),
+            (1, 0),
+            (0, -1),
+            (0, 1),
+            (-1, -1),
+            (1, -1),
+            (-1, 1),
+            (1, 1),
+        ] {
+            let (nx, ny) = (x + dx, y + dy);
+            if nx < 0 || ny < 0 || nx >= MASK as isize || ny >= MASK as isize {
+                continue;
+            }
+            let j = ny as usize * MASK + nx as usize;
+            if !own[j] && stamp[j] != p {
+                stamp[j] = p;
+                ring[p] += 1;
+                ringed[p] += keep[j] as usize;
+            }
+        }
+    }
+    let trusted: Vec<bool> = (0..count)
+        .map(|p| {
+            deep[p] > 0 && held[p] as f32 >= COVER * deep[p] as f32 && 2 * ringed[p] <= ring[p]
+        })
+        .collect();
+    for c in 0..n {
+        if let Some(p) = parts[c]
+            && !trusted[p]
+        {
+            own[c] = false;
+            keep[c] = true;
+        }
+    }
+    if !own.iter().any(|&o| o) {
+        return sams.clone();
+    }
+    // The signed distance to SAM's outline, in cells: positive out,
+    // negative in, nought half way between a cell in and one out.
+    let out_d = cells_to(&own, MASK, MASK);
+    let in_d = cells_to(&own.iter().map(|&o| !o).collect::<Vec<_>>(), MASK, MASK);
+    let signed: Vec<f32> = (0..n)
+        .map(|c| {
+            if own[c] {
+                0.5 - in_d[c]
+            } else {
+                out_d[c] - 0.5
+            }
+        })
+        .collect();
+    // Far from anything kept, as far as matters.
+    let kept: Vec<f32> = cells_to(&keep, MASK, MASK)
+        .into_iter()
+        .map(|d| d.min(2.0 * GROW))
+        .collect();
+    let reach = 2.0 * GROW;
+    let signed = Mask::new(
+        MASK,
+        MASK,
+        signed.into_iter().map(|d| d.clamp(-reach, reach)).collect(),
+    )
+    .resampled(w, h);
+    let kept = Mask::new(MASK, MASK, kept).resampled(w, h);
+    let matte = if matte.width == w && matte.height == h {
+        std::borrow::Cow::Borrowed(matte)
+    } else {
+        std::borrow::Cow::Owned(matte.resampled(w, h))
+    };
+    let data = (0..w * h)
+        .map(|i| {
+            let (d, r, s) = (signed.data[i], sams.data[i], matte.data[i]);
+            let allow = (GROW + 0.5 - d).clamp(0.0, 1.0);
+            let floor = (-d / FLOOR).clamp(0.0, 1.0);
+            let theirs = s.min(allow).max(floor * r);
+            // Away from what is kept, and nearer this person than it:
+            // a gap between two people that Subject fills goes to
+            // neither by Subject's matte, so they never share it.
+            let k = kept.data[i];
+            let away = ((k - 1.0) / (GROW - 1.0)).clamp(0.0, 1.0);
+            let nearer = (k - 0.5 - d.max(0.0)).clamp(0.0, 1.0);
+            let t = away.min(nearer);
+            (t * theirs + (1.0 - t) * r).clamp(0.0, 1.0)
+        })
+        .collect();
+    Mask::new(w, h, data)
 }
 
 /// `face`'s share of a `MASK` square instance SAM merged over the
@@ -2832,6 +3162,7 @@ mod tests {
             key: 1,
             region: &mut region,
             encodings: &mut encodings,
+            matte: None,
         };
         let mut sam = Colors {
             encoded: Vec::new(),
@@ -2898,6 +3229,7 @@ mod tests {
             key: 1,
             region: &mut region,
             encodings: &mut encodings,
+            matte: None,
         };
         let mut sam = Colors {
             encoded: Vec::new(),
@@ -3013,6 +3345,7 @@ mod tests {
             key: 1,
             region: &mut region,
             encodings: &mut encodings,
+            matte: None,
         };
         let mut sam = Fixed(vec![
             ("face", vec![face(faces[0], 0.9), face(faces[1], 0.85)]),
@@ -3074,6 +3407,7 @@ mod tests {
             key: 1,
             region: &mut region,
             encodings: &mut encodings,
+            matte: None,
         };
         run(sam, &mut picture)
     }
@@ -3519,6 +3853,58 @@ mod tests {
         assert!(at(&each[1], 0.75, 0.5) < 0.1 && at(&each[1], 0.25, 0.5) < 0.1);
     }
 
+    /// With Subject's matte over both people, the one with a body takes
+    /// its edge, and the head SAM saw alone keeps SAM's edge to the
+    /// pixel: no collar of Subject's neck and shoulders under the chin.
+    #[test]
+    fn a_head_alone_keeps_sams_edge_beside_subjects_matte() {
+        let (img, faces) = two_people();
+        let a = body([0.15, 0.05, 0.35, 0.95], [0.15, 0.05, 0.35, 0.95], 0.95);
+        let mut sam = Fixed(vec![
+            ("face", vec![face(faces[0], 0.9), face(faces[1], 0.85)]),
+            ("person", vec![a]),
+        ]);
+        let matte = mask_of(400, 400, |x, y| {
+            (40..380).contains(&y) && ((60..140).contains(&x) || (260..340).contains(&x))
+        });
+        let luma = img.luma();
+        let mut region = |r: Rect| crop(&img, r);
+        let mut encodings = Encodings::new(2);
+        let mut picture = Picture {
+            preview: &img,
+            luma: &luma,
+            size: (400, 400),
+            key: 1,
+            region: &mut region,
+            encodings: &mut encodings,
+            matte: None,
+        };
+        let people = people(&mut sam, &table(), &mut picture).unwrap();
+        assert!(people[0].body.is_some() && people[1].body.is_none());
+        let mut each = |pic: &mut Picture<()>| -> Vec<Mask> {
+            people
+                .iter()
+                .map(|p| {
+                    find(&mut sam, &table(), pic, Route::Whole, PERSON, Some(p))
+                        .unwrap()
+                        .remove(0)
+                        .mask
+                })
+                .collect()
+        };
+        let sams = each(&mut picture);
+        picture.matte = Some(&matte);
+        let subjects = each(&mut picture);
+        assert_eq!(subjects[1], sams[1], "the head alone, SAM's edge");
+        assert_ne!(subjects[0], sams[0], "the body, Subject's edge");
+        let below = |m: &Mask| (105..125).map(|y| m.at(300, y)).fold(0f32, f32::max);
+        assert!(
+            below(&subjects[1]) < 0.1,
+            "no collar: {}",
+            below(&subjects[1])
+        );
+    }
+
     #[test]
     fn a_persons_mask_is_solid_with_its_gaps_kept() {
         // A body at 0.8, its glasses an unsure hole at 0.3 and a gap
@@ -3549,6 +3935,114 @@ mod tests {
         assert!(at(114, 185) < 1e-6, "the gap kept");
         assert!(at(114, 160) < 1e-6, "all of it");
         assert_eq!(at(50, 50), 0.0, "the background");
+    }
+
+    /// Subject's edge on a whole person, on masks made by hand: a
+    /// person at cells 100 to 190 across with an open gap by her arm,
+    /// a second person touching her right side, and a matte that keeps
+    /// her hair two cells past SAM's outline, finds a held thing six
+    /// out, leaves a blotch in her body, closes her gap and runs on
+    /// into her neighbor. At two pixels a cell.
+    #[test]
+    fn subject_gives_a_whole_person_its_edge_within_their_region() {
+        const S: usize = 2;
+        let (w, h) = (MASK * S, MASK * S);
+        let cells = |f: &dyn Fn(usize, usize) -> f32| {
+            Mask::new(
+                MASK,
+                MASK,
+                (0..MASK * MASK).map(|i| f(i % MASK, i / MASK)).collect(),
+            )
+        };
+        let her = |x: usize, y: usize| (100..190).contains(&x) && (40..280).contains(&y);
+        let gap = |x: usize, y: usize| (110..118).contains(&x) && (150..220).contains(&y);
+        let him = |x: usize, y: usize| (190..250).contains(&x) && (60..280).contains(&y);
+        // An arm of hers off on its own, which Subject does not see.
+        let stray = |x: usize, y: usize| (20..40).contains(&x) && (200..240).contains(&y);
+        let sam = |mine: &dyn Fn(usize, usize) -> bool| {
+            let m = cells(&|x, y| {
+                if mine(x, y) && !gap(x, y) {
+                    0.9
+                } else if gap(x, y) && y != 185 {
+                    0.3
+                } else {
+                    0.02
+                }
+            });
+            let (filled, open) = fill_unsure_open(&m);
+            (harden(&filled), open)
+        };
+        let (solid, open) = sam(&|x, y| her(x, y) || stray(x, y));
+        assert!(open[185 * MASK + 114], "her gap is left open");
+        let matte = cells(&|x, y| {
+            if (98..100).contains(&x) && (40..60).contains(&y) {
+                0.6 // hair
+            } else if (90..94).contains(&x) && (100..120).contains(&y) {
+                1.0 // a held thing
+            } else if (140..150).contains(&x) && (200..210).contains(&y) {
+                0.2 // a blotch
+            } else if her(x, y) || him(x, y) {
+                1.0
+            } else {
+                0.0
+            }
+        })
+        .resampled(w, h);
+        let edge = |solid: &Mask, keep: &[bool]| {
+            let sams = solid.resampled(w, h);
+            (subject_edge(solid, keep, &sams, &matte), sams)
+        };
+        let theirs: Vec<bool> = (0..MASK * MASK).map(|i| him(i % MASK, i / MASK)).collect();
+        let keep: Vec<bool> = theirs.iter().zip(&open).map(|(&a, &b)| a || b).collect();
+        let (out, sams) = edge(&solid, &keep);
+        let at = |m: &Mask, x: usize, y: usize| m.at(x * S + 1, y * S + 1);
+        assert!(at(&out, 98, 50) > 0.5, "her hair: {}", at(&out, 98, 50));
+        assert!(at(&sams, 98, 50) < 0.1, "which SAM's edge loses");
+        assert!(at(&out, 92, 110) < 1e-6, "the held thing, six out");
+        assert!(at(&out, 145, 205) > 0.99, "the blotch filled");
+        assert!(at(&out, 150, 150) > 0.99, "her body");
+        assert!(at(&out, 114, 185) < 0.1, "the gap kept open");
+        assert!(at(&out, 50, 50) < 1e-6, "the background");
+        // Her stray arm, which Subject does not hold, keeps SAM's edge.
+        for (x, y) in [(30, 220), (19, 220), (20, 220), (41, 230)] {
+            let (a, b) = (at(&out, x, y), at(&sams, x, y));
+            assert!((a - b).abs() < 1e-6, "({x}, {y}): {a} against {b}");
+        }
+        // Into him: SAM's split, to the pixel.
+        for x in 189..200 {
+            for y in [100, 200] {
+                let (a, b) = (at(&out, x, y), at(&sams, x, y));
+                assert!((a - b).abs() < 1e-6, "({x}, {y}): {a} against {b}");
+            }
+        }
+        // And he, given her as someone else's, shares no pixel with her
+        // that SAM's edges did not already share.
+        let (his, _) = sam(&him);
+        let mine: Vec<bool> = solid.data.iter().map(|&v| v > CUT).collect();
+        let (out_him, sams_him) = edge(&his, &mine);
+        let shared = |a: &Mask, b: &Mask| {
+            a.data
+                .iter()
+                .zip(&b.data)
+                .filter(|&(&p, &q)| p > 0.5 && q > 0.5)
+                .count()
+        };
+        assert_eq!(shared(&out, &out_him), shared(&sams, &sams_him));
+        // No matte held anywhere: SAM's edge, unchanged.
+        let none = Mask::new(w, h, vec![0.0; w * h]);
+        let sams = solid.resampled(w, h);
+        assert_eq!(subject_edge(&solid, &keep, &sams, &none), sams);
+    }
+
+    #[test]
+    fn cells_to_counts_cells_to_the_nearest_on() {
+        let mut on = vec![false; 7 * 5];
+        on[2 * 7 + 3] = true;
+        let d = cells_to(&on, 7, 5);
+        assert_eq!(d[2 * 7 + 3], 0.0);
+        assert_eq!(d[2 * 7 + 5], 2.0);
+        assert!((d[0] - (1.0 + 2.0 * std::f32::consts::SQRT_2)).abs() < 1e-6);
+        assert!(cells_to(&[false; 4], 2, 2).iter().all(|d| d.is_infinite()));
     }
 
     #[test]
