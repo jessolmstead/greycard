@@ -15,9 +15,11 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] Quitting a `--cull` or `--cull-compare` launch over an edited frame
-      writes the default edit over it as a new history state (exposure
-      0, learned blend 1.0); seen on master 0a271a9 with a scripted run
+- [ ] Quitting while culling writes the panel's edit onto the wrong
+      frame: a `--cull` launch over an edited frame gets the default
+      edit as a new history state, and a develop on edited frame A, `c`,
+      right to unedited B, quit, writes A's edit into B's new sidecar.
+      The quit's save reads the panel without checking `st.cull`
 
 ## Open Questions
 
