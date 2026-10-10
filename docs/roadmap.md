@@ -25,7 +25,37 @@ the reasoning lives in `docs/notes.md`.
 
 ## Next: 0.6.0
 
-TBD
+The grid and the strip show each edited frame as edited, a set opens
+in a lightbox for judging it whole, and frames gather into collections
+and smart collections that survive a move.
+
+- [ ] Thumbnails from the edit: an edited frame shows its edit in the
+      strip, the grid, the cull loupe and compare, from the open
+      frame's develop or a reduced develop in the pool; first the key
+      and the open frame, then the measurement and the reduced develop
+      with its check against the export (§270)
+- [ ] Lightbox over a collection, or the picks until collections
+      exist: the grid with everything that gets in the way of judging
+      consistency taken out. Tiles at a chosen size up to a handful
+      across, the developed picture in each rather than the camera's
+      JPEG so what is compared is what will export, no badges, names
+      or chips, a dark surround, Tab hiding the rest; the sync sheet
+      reachable from it so a frame that stands out is matched to its
+      neighbors; one key into the loupe on a tile and one back. Reads
+      the 2048 picture of §270
+- [ ] Collections and smart collections in one file under
+      `~/.local/share/greycard/`, referencing files by hash with the
+      path as a hint. To settle first: two identical files sharing a
+      hash, a file whose hash changes when another tool rewrites it,
+      and whether a collection keeps an order of its own
+- [ ] Icons on the grid and the filmstrip showing edited and exported
+      frames
+- [ ] Camera metadata shown in cull mode too
+- [ ] Remember the last chosen export location when exporting again
+- [ ] Security chores: `cargo audit` in CI, the import's rename
+      refusing a `/` or `..` from a file's own data as the export's
+      does (§262), and the release workflow's third-party Actions
+      pinned by commit hash
 
 ## Tracks
 
@@ -122,8 +152,9 @@ seconds.
       the full develop is pending and replaced by it when it lands, so
       the fit view at rest is still the export (§90, §115). The
       camera's JPEG now stands in for the switch (§134), so this is
-      only worth building if the Mac timing says the first develop
-      itself is the wait; waits on that timing
+      only worth showing if the Mac timing says the first develop
+      itself is the wait; waits on that timing. §270 builds the
+      reduced develop itself, for the edited thumbnails
 - [ ] The CoreML provider, so the learned denoiser runs on the Neural
       Engine and the M5's GPU neural accelerators: ort's `coreml`
       feature, a `Provider::CoreMl` with the ML Program format and a
@@ -281,54 +312,37 @@ A moved shoot is found, not flagged missing, and a Lightroom catalog
 comes across with its ratings and collections.
 
 - [ ] The filter bar's last two chips: a "none" chip for frames with
-  no value for a facet (decide it with a library of phone JPEGs in
-  hand), and an error row in the index for a file whose hash fails so
-  it stops showing under every chip (§168). The all-roots view and
-  the filter remembered between sessions are there since §174
+      no value for a facet (decide it with a library of phone JPEGs in
+      hand), and an error row in the index for a file whose hash fails
+      so it stops showing under every chip (§168). The all-roots view
+      and the filter remembered between sessions are there since §174
 - [ ] The network assumed slow and sometimes hung: a timeout on every
-  read of a root over a network mount so a sleeping NAS does not hold
-  the pool; the indexer's reads several at once on such a root,
-  latency being the limit; check what the content hash reads of a
-  file, since a whole-file hash over 200 GB is a first pass measured
-  in hours. The polling fallback for the watcher landed in §188
-- [ ] Thumbnails from the edit: the strip's and the grid's picture of a
-  frame with an edit is the developed frame, not the camera's JPEG,
-  made by the pool from the edit at the thumbnail's size and remade
-  when the edit is saved, with the camera's JPEG standing in until it
-  lands; what the lightbox needs too
-- [ ] Lightbox over a collection, or the picks until collections
-  exist: the grid with everything that gets in the way of judging
-  consistency taken out. Tiles at a chosen size up to a handful
-  across, the developed picture in each rather than the camera's JPEG
-  so what is compared is what will export, no badges, names or chips,
-  a dark surround, Tab hiding the rest; the sync sheet reachable from
-  it so a frame that stands out is matched to its neighbors; one key
-  into the loupe on a tile and one back. Needs thumbnails rendered
-  from the edit at a larger size
-- [ ] Collections and smart collections in one file under
-  `~/.local/share/greycard/`, referencing files by hash with the
-  path as a hint. To settle first: two identical files sharing a
-  hash, a file whose hash changes when another tool rewrites it, and
-  whether a collection keeps an order of its own
+      read of a root over a network mount so a sleeping NAS does not
+      hold the pool; the indexer's reads several at once on such a
+      root, latency being the limit; check what the content hash reads
+      of a file, since a whole-file hash over 200 GB is a first pass
+      measured in hours. The polling fallback for the watcher landed
+      in §188
 - [ ] Virtual copies: named versions in the same sidecar, each with
-  its own edit and history; a collection references hash plus
-  version. Waits on collections
+      its own edit and history; a collection references hash plus
+      version. Waits on collections
 - [ ] Stacks, in the collections file. Waits on collections
 - [ ] Faces in the library: detection and grouping by a clean-license
-  model, names as keywords in the meta section, a facet in the filter
-  bar. The index is there since §160
+      model, names as keywords in the meta section, a facet in the
+      filter bar. The index is there since §160
 - [ ] Lightroom catalog import: the `.lrcat` read as SQLite, ratings,
-  flags, labels, keywords and captions to the meta section exactly,
-  collections and translatable smart collections to the collections
-  file, develop settings through the XMP mapper as a named first
-  history state, roots remapped by asking; the older process
-  versions (PV2003, PV2010), whose keys and slider meanings differ
-  from the 2012 ones the mapper reads, mapped or reported as
-  approximate, their keys checked against a real old catalog; a
-  command with a dry-run report first, then a sheet (§79). Waits on
-  collections; the capstone, its own release if it grows
+      flags, labels, keywords and captions to the meta section
+      exactly, collections and translatable smart collections to the
+      collections file, develop settings through the XMP mapper as a
+      named first history state, roots remapped by asking; the older
+      process versions (PV2003, PV2010), whose keys and slider
+      meanings differ from the 2012 ones the mapper reads, mapped or
+      reported as approximate, their keys checked against a real old
+      catalog; a command with a dry-run report first, then a sheet
+      (§79). Waits on collections; the capstone, its own release if it
+      grows
 - [ ] A map: the frames' EXIF GPS on tiles, a click to select them, a
-  position given to a frame by hand. Low priority
+      position given to a frame by hand. Low priority
 
 ### Merge
 
@@ -370,7 +384,6 @@ clears or a tester asks for it.
 
 #### Editor
 
-- [ ] Camera metadata should be shown in cull mode too
 - [ ] The learned mask and fill caches keyed by the develop they were
       made from: the window's Export reuses the mask its viewport made
       from a base whose CA ran on the GPU, where `--export` makes it
@@ -427,7 +440,6 @@ clears or a tester asks for it.
 - [ ] The vibrance protection's skin window (§60, 55 degrees plus or
       minus 15) against the 10 to 59 degrees a pale face measured
       (§158): widen it or not; a change to existing edits
-- [ ] Remember the last chosen export location when exporting again
 - [ ] A proper export queue (§213): a Destination row on the export
       sheet (the folder, Change..., the last one remembered) that Export
       and Add to queue both take, so queuing opens no chooser; and the
@@ -504,7 +516,6 @@ clears or a tester asks for it.
 
 #### Nice-to-have
 
-- [ ] Maybe: Icons on grid/filmstrip showing edited and/or exported photos
 - [ ] Flexible dual monitor support
 - [ ] Reference view
 - [ ] Different frameline options when cropping
@@ -514,6 +525,7 @@ clears or a tester asks for it.
 - [ ] Idea: AI sharpening
 - [ ] Idea: AI color grade matching to a reference
 - [ ] Idea: AI highlight recovery
+- [ ] Maybe: MCP
 
 ## Blocked
 
