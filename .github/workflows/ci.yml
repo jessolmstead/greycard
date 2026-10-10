@@ -20,6 +20,10 @@ name: CI
 on:
   push:
   pull_request:
+  # Weekly, so an advisory filed against a lock file that has not
+  # changed is still seen; only the audit job runs then.
+  schedule:
+    - cron: '17 5 * * 1'
 
 env:
   CARGO_TERM_COLOR: always
@@ -31,6 +35,7 @@ env:
 
 jobs:
   check:
+    if: github.event_name != 'schedule'
     name: fmt, clippy, test (${{ matrix.os }})
     strategy:
       fail-fast: false
@@ -45,7 +50,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Room to build
         # The hosted image ships .NET, Android and Haskell toolchains
@@ -82,11 +87,12 @@ jobs:
           ls -d "/c/Program Files"*"/Microsoft Visual Studio"/*/*/VC/Tools/MSVC/*/ \
             2>/dev/null || echo "no VC/Tools/MSVC directory found"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
         with:
+          toolchain: stable
           components: rustfmt, clippy
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
 
       - name: cargo fmt
         run: cargo fmt --check
@@ -107,3 +113,23 @@ jobs:
           GREYCARD_REQUIRE_GPU: ${{ runner.os == 'Linux' && '1' || '' }}
           WGPU_BACKEND: ${{ runner.os == 'Linux' && 'vulkan' || '' }}
         run: cargo test
+
+  # Known advisories against Cargo.lock, from the RustSec database. It
+  # runs once, on Linux, since the lock file is the same everywhere. A
+  # vulnerability fails it; an "unmaintained" notice prints in the log
+  # and passes. (bincode 2.0.1 shows as one: it is in Cargo.lock only
+  # through typed-index-collections' weak bincode? features, by way of
+  # Slint's compiler, and is never compiled.)
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version 0.22.2
+
+      - name: cargo audit
+        run: cargo audit

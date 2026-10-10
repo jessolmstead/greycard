@@ -12,6 +12,13 @@ note a first tester reads.
 
 ## 0.6.0, unreleased
 
+### Under the hood
+
+- `cargo audit` runs in CI and weekly, every third-party Action is
+  pinned by commit hash, and a test pins the import's names from a
+  file's own data inside the destination
+  ([§272](https://github.com/jessolmstead/greycard/blob/master/docs/notes/272-security-chores-the-audit-the-imports-names-and-the-pins.md))
+
 ### Fixes
 
 - Picking the person for a People part while zoomed in no longer sends

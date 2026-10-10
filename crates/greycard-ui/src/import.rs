@@ -2572,4 +2572,37 @@ mod tests {
         assert_eq!(format!("{raw}.xmp"), *xmp);
         assert!(xmp.len() <= naming::LONGEST, "{}", xmp.len());
     }
+
+    /// A camera string or a stem from a file's own data never adds a
+    /// level or climbs out of the destination (§262's rule).
+    #[test]
+    fn a_name_from_file_data_stays_inside_the_destination() {
+        let dest = Path::new("/dest");
+        let mut o = options(Path::new("/card"), dest);
+        o.subfolder = "{camera}/{date} {camera}".into();
+        o.name = "{camera}-{name}".into();
+        for camera in ["../x", "a/b", "..", "..\\..\\x", "/etc/passwd", "a/../../b"] {
+            let mut f = sample();
+            f.camera = camera.into();
+            f.name = format!("{camera}stem");
+            let rel = relative(&o, Path::new("/card/IMG_0001.CR3"), &f).unwrap();
+            for c in rel.components() {
+                assert!(
+                    matches!(c, std::path::Component::Normal(_)),
+                    "{camera:?} gave {rel:?}"
+                );
+            }
+            let name = rel.file_name().unwrap().to_string_lossy().into_owned();
+            assert!(
+                !name.contains(['/', '\\']) && name.ends_with(".CR3"),
+                "{name}"
+            );
+            assert!(rel.components().count() <= 3, "{camera:?} gave {rel:?}");
+            assert!(dest.join(&rel).starts_with(dest));
+        }
+        let mut f = sample();
+        f.camera = "../x".into();
+        let rel = relative(&o, Path::new("/card/IMG_0001.CR3"), &f).unwrap();
+        assert_eq!(rel, Path::new("_._x/2026-01-01 .._x/_._x-IMG_0001.CR3"));
+    }
 }

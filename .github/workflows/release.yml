@@ -42,7 +42,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       prerelease: ${{ steps.version.outputs.prerelease }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - id: version
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -99,7 +99,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: Native libraries
         # The same set CI installs: lcms2 for the profiles, fontconfig
@@ -137,7 +137,9 @@ jobs:
           ls -d "/c/Program Files"*"/Microsoft Visual Studio"/*/*/VC/Redist/MSVC/*/x64/Microsoft.VC*.CRT \
             2>/dev/null || echo "no VC redistributable directory found"
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: stable
 
       # Nikon High Efficiency decoding (the nikon-he feature) stays out
       # of every published build: JPEG XS is licensed per copy of a
@@ -194,7 +196,7 @@ jobs:
           *) tar tzf "$ARCHIVE" ;;
           esac
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: package-${{ matrix.package }}
           path: target/dist/greycard-${{ needs.version.outputs.version }}-${{ matrix.package }}.${{ matrix.ext }}
@@ -208,9 +210,9 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: package-*
           path: target/dist
@@ -248,7 +250,7 @@ jobs:
           ls -l target/dist/greycard-*
 
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
             target/dist/greycard-${{ needs.version.outputs.version }}-*.tar.gz

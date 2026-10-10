@@ -193,7 +193,7 @@ pub fn folders(pattern: &str, f: &Fields) -> Result<Vec<String>, PatternError> {
 const REFUSED: [char; 9] = ['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
 
 /// Names Windows keeps for devices, whatever follows the first dot.
-const RESERVED: [&str; 4] = ["CON", "PRN", "AUX", "NUL"];
+const RESERVED: [&str; 6] = ["CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"];
 
 /// The longest a name is let be, in bytes: under every file system's
 /// 255, with room for the import's temporary prefix and suffix.
@@ -236,8 +236,14 @@ fn safe_within(name: &str, limit: usize) -> String {
     }
     let device = s.split('.').next().unwrap_or_default().trim_end();
     let upper = device.to_ascii_uppercase();
+    // COM and LPT with a digit, the superscript digits Windows counts
+    // as one too (two bytes each, so matched by characters).
     let numbered = |prefix: &str| {
-        upper.len() == 4 && upper.starts_with(prefix) && upper.as_bytes()[3].is_ascii_digit()
+        let mut chars = upper.chars();
+        upper.starts_with(prefix)
+            && chars.by_ref().take(3).count() == 3
+            && matches!(chars.next(), Some(c) if c.is_ascii_digit() || "¹²³".contains(c))
+            && chars.next().is_none()
     };
     if RESERVED.contains(&upper.as_str()) || numbered("COM") || numbered("LPT") {
         s.insert(0, '_');
@@ -362,7 +368,24 @@ mod tests {
             "Maker_Model_II.jpg"
         );
         // Windows' devices, in any case and before any dot.
-        for device in ["CON", "prn", "Aux", "nul", "COM1", "lpt9", "con.txt"] {
+        for device in [
+            "CON",
+            "prn",
+            "Aux",
+            "nul",
+            "COM1",
+            "lpt9",
+            "con.txt",
+            "COM¹",
+            "com²",
+            "COM³",
+            "LPT¹",
+            "lpt²",
+            "LPT³.txt",
+            "CONIN$",
+            "conout$",
+            "CONOUT$.log",
+        ] {
             let named = Fields {
                 name: device.into(),
                 ..fields()
@@ -373,6 +396,8 @@ mod tests {
         // Not a device: a longer word, a COM with no digit.
         assert_eq!(safe("CONSOLE"), "CONSOLE");
         assert_eq!(safe("COMX"), "COMX");
+        assert_eq!(safe("COM¹²"), "COM¹²");
+        assert_eq!(safe("CONIN"), "CONIN");
         // Trailing dots and spaces go, a leading dot is not a hidden
         // file, and dots alone are not `.` or `..`.
         assert_eq!(safe("  shoot. . "), "shoot");

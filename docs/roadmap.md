@@ -50,10 +50,6 @@ and smart collections that survive a move.
       frames
 - [ ] Camera metadata shown in cull mode too
 - [ ] Remember the last chosen export location when exporting again
-- [ ] Security chores: `cargo audit` in CI, the import's rename
-      refusing a `/` or `..` from a file's own data as the export's
-      does (§262), and the release workflow's third-party Actions
-      pinned by commit hash
 
 ## Tracks
 
