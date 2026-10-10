@@ -90,7 +90,11 @@ out of every group too, so a frame is never taken as fixed on a guess.
 6. Press **Fit**.
 
 Each group's result appears as a line when it is done. When the run
-ends, the new looks are in the LOOK section's list.
+ends, the new looks are in the LOOK section's list. **Fit** then
+stays off and **Close** is highlighted, since fitting the same groups
+again would give the same looks. Tick or untick a group, change where
+to look, or turn **Replace existing looks** on or off, and **Fit**
+comes back.
 
 ### What the lines say
 

@@ -23,7 +23,8 @@ section, develops about forty of your frames per body and picture
 style, lays the camera's JPEG over each, and fits the maker's
 rendering as a look you can pick: Canon Standard or Fujifilm's Provia
 learned from your own files, with no license and no reverse
-engineering. [docs/camera-match.md](docs/camera-match.md) has how
+engineering. It reads the picture styles of Canon, Fujifilm, Nikon,
+Sony and Panasonic raws. [docs/camera-match.md](docs/camera-match.md) has how
 well it fits.
 
 **Accurate.** White balance is applied as gains in camera space, and
@@ -72,12 +73,14 @@ shader on the picture already on the GPU. The full develop runs on a
 worker thread once the sliders rest, and the window never waits for
 it. Switching frames puts the camera's picture up in about a tenth
 of a second on a 45 MP raw, and the develop replaces it when it
-lands. Sharpening, chromatic aberration correction and the display
-path all run on the GPU.
+lands. Sharpening, Texture, Clarity, Dehaze, chromatic aberration
+correction and the display path all run on the GPU.
 
 **What is in it.** Gradient, radial, brush, subject, object and sky
 masks, and masks by lightness and by color, each with its own light,
-color and tint. Heal, clone and a learned fill. A learned denoiser
+color and tint. A People mask of a whole person or one part of them,
+such as the eyes, the lips, the hair or a top, picked out of a group
+and found again when it is pasted onto the next frame. Heal, clone and a learned fill. A learned denoiser
 trained on a measured noise model, mosaic in and color out, running on
 your machine with published weights, and a profiled denoiser beside
 it. Lens corrections from lensfun. Parametric and point curves, 3D LUT
@@ -217,8 +220,8 @@ sets; fetch them once with `scripts/fetch-bench-data.sh`.
 **What it needs.** A GPU with Vulkan on Linux and Windows, or Metal
 on a Mac:
 the viewport is wgpu through Slint, and there is no software renderer
-for it. The learned models (the denoiser, the subject and object
-masks, the fill) run on the same GPU through ONNX Runtime and Dawn,
+for it. The learned models (the denoiser, the subject, object, sky
+and People masks, the fill) run on the same GPU through ONNX Runtime and Dawn,
 and fall back to the CPU, slower, if it is not there. Wayland or X11
 on Linux.
 
@@ -226,11 +229,12 @@ Lens corrections want the lensfun database; if your distribution
 already has it installed, that copy is used. Otherwise the LENS panel
 offers to fetch it (under half a megabyte, under its own license) into
 `~/.cache/greycard/lensfun`, and `greycard lenses --fetch` does the
-same from a terminal. First use of a model, Subject or Objects for
-masking, the fill, or the learned denoiser, downloads it after showing
-its license, into `~/.cache/greycard/models`: the denoiser is 5 to
-20 MB depending on its tier, the subject mask about 115 MB, the
-object mask about 184 MB, and the fill about 208 MB. `greycard models`
+same from a terminal. First use of a model, a Subject, Object, Sky or
+People mask, the fill, or the learned denoiser, downloads it after
+showing its license, into `~/.cache/greycard/models`: the denoiser is
+5 to 20 MB depending on its tier, the subject mask about 115 MB, the
+object mask about 184 MB, the sky mask about 96 MB, the People mask
+about 1 GB, and the fill about 208 MB. `greycard models`
 lists them and `greycard models --fetch <tier|id|all>` gets them
 without the window, for a headless machine. The browser's thumbnails
 are kept in `~/.cache/greycard/thumbs`, by what is in each file rather

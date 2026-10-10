@@ -249,7 +249,8 @@ acts on a fringe's hue; camera profiles from DCP files; a profiled
 denoiser and a learned one with published weights; deconvolution
 sharpening, on the GPU in the editor; lens corrections from lensfun;
 exposure, tone, a parametric and a point curve, a color mixer,
-grading, black and white, texture, clarity, dehaze, grain, vignette;
+grading, black and white, texture, clarity and dehaze, on the GPU
+in the editor, grain, vignette;
 gradient, radial, brush, subject and object masks; heal, clone and a
 learned fill, each outlined where it was drawn; crop, rotation and a
 guided perspective tool; scopes; presets, including Lightroom's, and

@@ -20,11 +20,9 @@ the reasoning lives in `docs/notes.md`.
       job, which the closing window never sends. A bounded write to
       the copy at quit, or the reader closed after the last save (§261)
 
-## Next: 0.5.0
+## Next: 0.6.0
 
-More sophisticated masking (people parts!); Texture and Clarity as
-quick as sharpen; a look can be renamed, the filmstrip gets a
-scroll bar, and the camera match gets a progress bar.
+TBD
 
 ## Tracks
 

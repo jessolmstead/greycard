@@ -10,11 +10,15 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
-## 0.5.0, unreleased
+## 0.5.0, 2026-10-09
+
+Improvements for portrait editing: People masks are introduced, including parts.
+Texture, Clarity, and Dehaze run fast on the GPU. Camera match is extended
+to Nikon, Sony, and Panasonic.
 
 ### Culling and the grid
 
-- A scroll bar under the filmstrip, as the grid has, showing where you
+- A scroll bar under the filmstrip showing where you
   are in the folder and dragging there; Home and End go to the first
   and last frame in the filmstrip and the grid, and Shift+Home and
   Shift+End select the run to that end ([§255](https://github.com/jessolmstead/greycard/blob/master/docs/notes/255-the-strips-scroll-bar-and-home-and-end.md))
@@ -22,15 +26,14 @@ note a first tester reads.
 ### Color and editing
 
 - **Rename…** in the Look section renames a look's files and the name
-  in every edit, preset and snapshot that uses it, so nothing shows
-  "(missing)"; edits it can't reach keep the old files until they are
+  in every edit, preset and snapshot that uses it
   ([§257](https://github.com/jessolmstead/greycard/blob/master/docs/notes/257-renaming-a-look.md))
 
 ### Masks
 
 - **People**: a mask of a whole person or a part of one, picked from a
   menu: face, facial skin, eyebrows, eyes, iris, lips, teeth, skin,
-  hair, hands, and clothing by where it is worn. On a picture of
+  hair, hands, and clothing. On a picture of
   several people you click the one you mean, or All people; pasted
   onto another picture, the mask finds the same person by their
   clothes, hair and skin, and asks when it isn't sure or they aren't
@@ -38,12 +41,11 @@ note a first tester reads.
 
 ### Camera match
 
-- The run fills a bar across all its groups, with the count and the
-  group under it, and holds it while a group's look is fitted
+- Adds a progress bar when running camera match
   ([§258](https://github.com/jessolmstead/greycard/blob/master/docs/notes/258-a-bar-on-the-camera-match-run.md))
 - A fitted look no longer turns a picture's color noise into blotches
   of lightness, the "deep-fried" look on bark, fabric and skin; a look
-  fitted before says so in the Look section, with a Refit button
+  fitted before gives a warning in the Look section, with a Refit button
   ([§260](https://github.com/jessolmstead/greycard/blob/master/docs/notes/260-the-camera-match-keeps-lightness-off-chroma.md))
 - **Fit this camera's look…** now reads Nikon, Sony and Panasonic
   raws too, grouping them by Picture Control, Creative Style or Photo
@@ -64,15 +66,9 @@ note a first tester reads.
 
 ### Speed
 
-- With Dehaze on, the Dehaze runs on the GPU too and Texture, Clarity
-  and the sharpen stay there: a Dehaze move takes about 70 ms at
-  24 MP, from 170, and a Texture or Clarity move with Dehaze on about
-  100, from 260; the export is unchanged
+- Texture, Clarity, and Dehaze all now run on the GPU, making them much
+  more responsive; the export is unchanged.
   ([§269](https://github.com/jessolmstead/greycard/blob/master/docs/notes/269-the-dehaze-on-the-gpu.md))
-- Texture and Clarity run on the GPU, so a move of either costs about
-  what a sharpen move does: about 60 ms at 24 MP, from about 330 on
-  the CPU
-  ([§259](https://github.com/jessolmstead/greycard/blob/master/docs/notes/259-local-contrast-on-the-gpu-as-built.md))
 - Clarity takes half the time it did on a picture with a long edge of
   2540 pixels or more, in the editor and the export alike, its filter
   found on a grid of four-pixel blocks; below that it is unchanged
@@ -83,14 +79,14 @@ note a first tester reads.
 - Quitting while a picture was still developing on the GPU could crash
   the editor on the way out; so could the desktop session ending
   mid-develop, which also skipped saving settings and the open
-  frame's edit. Both now save everything and leave cleanly, and the
+  frame's edit. Both now save everything and exit cleanly, and the
   last edit before quitting reaches the frame's archive copy at the
   next start ([§261](https://github.com/jessolmstead/greycard/blob/master/docs/notes/261-leaving-while-the-worker-is-in-a-job.md))
-- A raw whose width fell 105 to 111 pixels past a multiple of 112
-  crashed its export, and the command line and the camera match, in
-  the chromatic aberration correction; such a width now develops
+- Fixed a bug in the chromatic aberration correction where a raw
+  whose width fell 105 to 111 pixels past a multiple of 112
+  crashed its export
   ([§264](https://github.com/jessolmstead/greycard/blob/master/docs/notes/264-the-gpu-ops-checked-at-random-settings.md))
-- The viewport and the export agree beside blown highlights, where
+- The viewport and the export agree next to blown highlights, where
   the chromatic aberration correction could differ between the GPU
   and the CPU by up to 37 levels on a few pixels; an export moves
   from 0.4.0's on single pixels only ([§264](https://github.com/jessolmstead/greycard/blob/master/docs/notes/264-the-gpu-ops-checked-at-random-settings.md))
@@ -115,9 +111,10 @@ note a first tester reads.
   frames ([§264](https://github.com/jessolmstead/greycard/blob/master/docs/notes/264-the-gpu-ops-checked-at-random-settings.md))
 - A build from source with `--features nikon-he` opens Nikon's High
   Efficiency raws, through dnglab/dnglab#835's decoder with its curve
-  refitted below 1000 DN; the published builds leave it out, since
+  refitted below 1000 DN; the release workflow ensures that the
+  published builds leave it out, since
   JPEG XS is licensed per copy of a decoder, and the release workflow
-  checks that they do ([§266](https://github.com/jessolmstead/greycard/blob/master/docs/notes/266-nikon-high-efficiency-raws-behind-a-build-feature.md))
+  ([§266](https://github.com/jessolmstead/greycard/blob/master/docs/notes/266-nikon-high-efficiency-raws-behind-a-build-feature.md))
 
 ## 0.4.0, 2026-10-05
 
