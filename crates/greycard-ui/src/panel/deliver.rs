@@ -998,8 +998,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
 
 /// The frames an export takes as a set, in file order: each file with
 /// its own edit, its turn and whether its blend is still to be seeded;
-/// the frame on screen under the panel's edit. One frame when the
-/// selection is one frame.
+/// the frame on screen under the panel's edit, outside culling. One
+/// frame when the selection is one frame.
 #[cfg(test)]
 pub(crate) fn set_frames(st: &mut State, app: &App) -> SetFrames {
     let chosen = chosen_frames(st);
@@ -1017,7 +1017,9 @@ pub(crate) fn set_frames_of(st: &mut State, app: &App, frames: &[usize]) -> SetF
     frames
         .into_iter()
         .map(|f| {
-            let edit = if Some(f) == st.current {
+            // The panel is the current frame's outside culling only:
+            // in it, the panel is no frame's (`save_edit`).
+            let edit = if Some(f) == st.current && st.cull.is_none() {
                 read_edit(app, &st.edit, st.target)
             } else {
                 st.sidecars[f].current.clone()
@@ -1429,14 +1431,15 @@ pub(crate) fn pressed_frames(
         let mut st = state.borrow_mut();
         // Gone from the list: the request says so.
         let p = st.files.iter().position(|f| f == pressed)?;
-        let on_screen = st.current == Some(p);
+        // On screen is the panel's frame: never in culling, where an
+        // export asked for before the mode can land (its request
+        // queued behind a read) with the panel no frame's, and the
+        // frame takes its sidecar's edit as any other does.
+        let on_screen = st.current == Some(p) && st.cull.is_none();
         // The frame on screen with a panel that is not its own (its
         // root offline, its sidecar not read): nothing to export, and
         // the worker's open picture is another frame's.
-        if on_screen
-            && st.cull.is_none()
-            && let Some(why) = crate::rows::refused(&st, p, "nothing is exported")
-        {
+        if on_screen && let Some(why) = crate::rows::refused(&st, p, "nothing is exported") {
             app.set_status(why.into());
             return None;
         }
@@ -1447,10 +1450,8 @@ pub(crate) fn pressed_frames(
             // state it was written from once it is done, and a
             // panel that moved on meanwhile would otherwise have
             // saved over it before it ever was one.
-            if st.cull.is_none() {
-                crate::panel::edit::save_edit(&mut st, edit.clone());
-                show_history(&st, app);
-            }
+            crate::panel::edit::save_edit(&mut st, edit.clone());
+            show_history(&st, app);
             edit
         } else {
             if !crate::rows::load_frame(&mut st, app, p) {

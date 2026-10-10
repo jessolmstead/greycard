@@ -3279,6 +3279,142 @@ pub(crate) mod tests {
         crate::testing::remove_scratch(state, &dir);
     }
 
+    /// Frame `c`'s edit on the panel, as an open shows it, and into
+    /// culling from there, staying on a key rather than moving on.
+    fn cull_from(state: &Rc<RefCell<State>>, app: &App, c: usize) {
+        let mut st = state.borrow_mut();
+        st.current = Some(c);
+        let edit = st.sidecars[c].current.clone();
+        crate::panel::edit::show_edit(&st, &edit, app, None);
+        st.edit = edit;
+        st.cull_move_on = false;
+        crate::panel::cull::enter_cull(&mut st, app, 1);
+        assert!(st.cull.is_some());
+    }
+
+    /// A quit from culling records nothing from the panel, which is
+    /// no frame's there, and still makes the rest of its saves: a
+    /// followed frame's last save, a culling key's whose job is still
+    /// out, waits for that job, is noted waiting when it has not ended
+    /// in the wait, and reaches the copy after it; the panel's edit
+    /// (another frame's, here made plain by a value no frame has) is
+    /// nowhere in it.
+    #[test]
+    fn a_quit_from_culling_still_writes_a_followed_frames_copy() {
+        use crate::panel::startup::save_at_quit;
+        let dir = scratch("cull-quit-followed");
+        let (local, nas, files, db) = two_places(&dir);
+        let app = window(2);
+        let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
+        save(&state, 0.5);
+        land_sent(&state, &app, &worker);
+        let copy = nas.join("shoot").join("a.tif");
+        let away = dir.join("local-away");
+        std::fs::rename(&local, &away).unwrap();
+        {
+            let mut st = state.borrow_mut();
+            st.library.offline.insert(local.clone());
+            follow_offline(&mut st, &app);
+        }
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().files[0], copy, "followed");
+        cull_from(&state, &app, 0);
+        assert!(
+            SENT.with(|s| s.borrow().is_empty()),
+            "nothing new on the panel on the way in"
+        );
+        // A rating, its write sent and not landed.
+        assert!(app.invoke_meta_key("3".into()));
+        assert_eq!(state.borrow().sidecars[0].meta.rating, 3);
+        assert!(state.borrow().sync.in_flight.contains(&copy));
+        let on_copy = || Sidecar::load(&copy).unwrap().unwrap();
+        assert_eq!(on_copy().meta.rating, 0);
+        state.borrow_mut().index_reader = None;
+        assert_eq!(
+            save_at_quit(
+                &mut state.borrow_mut(),
+                exposed(2.0),
+                Duration::from_millis(200)
+            ),
+            QuitWrites { ended: 0, noted: 1 },
+            "the followed frame's write made, and noted"
+        );
+        assert_eq!(
+            pending_for(&db, &nas)
+                .iter()
+                .map(|r| (r.frame.as_path(), r.reason.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(copy.as_path(), "saved as the window closed")]
+        );
+        assert!(!exposures_of(&state.borrow().sidecars[0]).contains(&2.0));
+        // The key's job lands; the quit's write goes after it.
+        land_sent(&state, &app, &worker);
+        let latest = state.borrow().sidecars[0]
+            .revisions
+            .last()
+            .map(|r| r.hash.clone());
+        let recorded = || {
+            let lib = Library::open_read_only(&db).unwrap();
+            let hash = lib.by_path(&copy).unwrap().unwrap().hash;
+            lib.archive_write(&hash, &nas, &copy)
+                .unwrap()
+                .map(|w| w.revision)
+        };
+        let start = std::time::Instant::now();
+        while recorded() != latest {
+            assert!(start.elapsed() < Duration::from_secs(20), "never written");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(on_copy().meta.rating, 3);
+        assert_eq!(on_copy().current.light.exposure, 0.5);
+        assert!(!exposures_of(&on_copy()).contains(&2.0), "not the panel's");
+        std::fs::rename(&away, &local).unwrap();
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A quit from culling still notes the archive writes that never
+    /// went out (§261): a culling key's write queued behind one still
+    /// out is noted waiting for the next window. The panel's edit is
+    /// recorded nowhere.
+    #[test]
+    fn a_quit_from_culling_still_notes_the_writes_not_sent() {
+        use crate::panel::startup::save_at_quit;
+        let dir = scratch("cull-quit-noted");
+        let (local, nas, files, db) = two_places(&dir);
+        let app = window(2);
+        let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
+        cull_from(&state, &app, 1);
+        assert!(SENT.with(|s| s.borrow().is_empty()));
+        // Two keys on b: one write out, the next queued behind it.
+        assert!(app.invoke_meta_key("2".into()));
+        assert!(app.invoke_meta_key("3".into()));
+        assert_eq!(state.borrow().sidecars[1].meta.rating, 3);
+        assert_eq!(state.borrow().sync.queued.len(), 1);
+        let on_disk = std::fs::read(Sidecar::path_for(&files[1])).unwrap();
+        state.borrow_mut().index_reader = None;
+        save_at_quit(
+            &mut state.borrow_mut(),
+            exposed(2.0),
+            crate::sync::QUIT_WRITE_WAIT,
+        );
+        assert!(state.borrow().sync.queued.is_empty());
+        let p = pending_for(&db, &nas);
+        assert_eq!(
+            p.iter()
+                .map(|r| (r.frame.as_path(), r.reason.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(files[1].as_path(), "saved as the window closed")]
+        );
+        assert_eq!(
+            std::fs::read(Sidecar::path_for(&files[1])).unwrap(),
+            on_disk,
+            "the panel's edit not written onto b"
+        );
+        assert!(!exposures_of(&state.borrow().sidecars[1]).contains(&2.0));
+        drop(worker);
+        crate::testing::remove_scratch(state, &dir);
+    }
+
     /// An export recorded on a frame the window has let go of, and a
     /// stand-in un-rejected, reach the archive from the file.
     #[test]

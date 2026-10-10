@@ -277,8 +277,12 @@ pub(crate) fn panel_state(st: &mut State, edit: Edit) -> Option<Edit> {
 /// action that goes on from it (an undo, a history click, a snapshot,
 /// a preset or a paste over it), without writing the sidecar; true
 /// when that was news to the history. Nothing while the panel is the
-/// command line's overrides unmoved ([`panel_state`]).
+/// command line's overrides unmoved ([`panel_state`]), or in culling.
 pub(crate) fn record_panel(st: &mut State, app: &App) -> bool {
+    // Never in culling, for the reason `save_edit` gives.
+    if st.cull.is_some() {
+        return false;
+    }
     let Some(c) = st.current else {
         return false;
     };
@@ -291,7 +295,8 @@ pub(crate) fn record_panel(st: &mut State, app: &App) -> bool {
 
 /// Record `edit` as the current file's, and write its sidecar if that
 /// changed anything; nothing while it is the command line's overrides
-/// unmoved ([`panel_state`]). True when the change was refused because
+/// unmoved ([`panel_state`]), and nothing in culling, where the panel
+/// is not the frame's. True when the change was refused because
 /// the panel is not the frame's own (its sidecar stands in: its root
 /// offline, its read still out or given up on; or the panel still
 /// shows the stand-in it had then) and the panel differs from the
@@ -300,6 +305,15 @@ pub(crate) fn record_panel(st: &mut State, app: &App) -> bool {
 /// replace it whole, and the caller with a status line says why
 /// ([`crate::rows::not_kept`]).
 pub(crate) fn save_edit(st: &mut State, edit: Edit) -> bool {
+    // In culling the panel is no frame's: it holds the last-developed
+    // frame's edit, or the default for a run begun in culling, and the
+    // selection moves on without loading it (`cull_select`). The panel
+    // was saved on the way in (`enter_cull`, before the mode is set);
+    // recorded now, by the quit or a timer still running, it would be
+    // written onto whichever frame is current, so nothing is.
+    if st.cull.is_some() {
+        return false;
+    }
     let Some(c) = st.current else {
         return false;
     };

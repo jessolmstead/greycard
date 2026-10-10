@@ -4344,4 +4344,112 @@ mod tests {
             );
         }
     }
+
+    /// Two frames on disk, a edited (+1.5 EV, its sidecar written) and
+    /// b never touched (no sidecar), in a folder of `what`'s own.
+    fn an_edited_frame_and_one_untouched(what: &str) -> (PathBuf, Vec<PathBuf>) {
+        use greycard_library::fixture::{A7, R5, write_frame};
+        let dir = crate::testing::scratch_dir(&format!("ui-cull-quit-{what}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dunce::canonicalize(&dir).unwrap();
+        let files = vec![dir.join("a.tif"), dir.join("b.tif")];
+        write_frame(&files[0], &R5, 1);
+        write_frame(&files[1], &A7, 2);
+        let mut edited = Edit::default();
+        edited.light.exposure = 1.5;
+        let mut s = Sidecar::default();
+        s.record(edited);
+        s.save(&files[0]).unwrap();
+        (dir, files)
+    }
+
+    /// The quit's saves, as `startup::main` makes them once the window
+    /// has closed: the panel read, then `save_at_quit`.
+    fn quit(state: &Rc<RefCell<State>>, app: &App) -> crate::sync::QuitWrites {
+        let edit = {
+            let st = state.borrow();
+            read_edit(app, &st.edit, st.target)
+        };
+        crate::panel::startup::save_at_quit(
+            &mut state.borrow_mut(),
+            edit,
+            crate::sync::QUIT_WRITE_WAIT,
+        )
+    }
+
+    /// `--cull` over an edited frame, and quit: the run developed
+    /// nothing, so the panel never held the frame's edit, only the
+    /// default; the quit records none of it on the frame, whose
+    /// sidecar on disk is as it was.
+    #[test]
+    fn a_quit_from_culling_at_launch_leaves_the_edited_frame_alone() {
+        let (dir, files) = an_edited_frame_and_one_untouched("launch");
+        let app = window(files.len());
+        let (state, _worker) = opened_with_sidecars(&app, &files);
+        {
+            let mut st = state.borrow_mut();
+            // As the window starts: nothing open yet, the mode asked for.
+            st.current = None;
+            st.cull_at_start = Some(1);
+        }
+        let on_disk = std::fs::read(Sidecar::path_for(&files[0])).unwrap();
+        app.invoke_select(0);
+        {
+            let st = state.borrow();
+            assert!(st.cull.is_some());
+            assert_eq!(st.current, Some(0));
+            assert_ne!(
+                read_edit(&app, &st.edit, st.target),
+                st.sidecars[0].current,
+                "the panel is not the frame's"
+            );
+        }
+        quit(&state, &app);
+        assert_eq!(
+            std::fs::read(Sidecar::path_for(&files[0])).unwrap(),
+            on_disk,
+            "nothing written over it"
+        );
+        assert_eq!(state.borrow().sidecars[0].current.light.exposure, 1.5);
+        assert_eq!(state.borrow().sidecars[0].history.len(), 1);
+        assert!(Sidecar::load(&files[1]).unwrap().is_none());
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// Developed on an edited frame, culled on to an untouched one,
+    /// and quit: the panel still holds the first frame's edit, and
+    /// none of it reaches the second, which still has no sidecar; the
+    /// first frame's is as it was, the way in having found nothing new
+    /// on the panel to record.
+    #[test]
+    fn a_quit_from_culling_writes_no_frames_edit_onto_another() {
+        let (dir, files) = an_edited_frame_and_one_untouched("moved-on");
+        let app = window(files.len());
+        let (state, _worker) = opened_with_sidecars(&app, &files);
+        state.borrow_mut().current = None;
+        let on_disk = std::fs::read(Sidecar::path_for(&files[0])).unwrap();
+        // a opens in the develop view: its edit on the panel.
+        app.invoke_select(0);
+        assert!(state.borrow().cull.is_none());
+        assert_eq!(app.get_exposure(), 1.5);
+        // C, then the arrow on to b.
+        press(&app, "c");
+        assert!(state.borrow().cull.is_some(), "culling");
+        press(&app, Key::RightArrow);
+        assert_eq!(state.borrow().current, Some(1));
+        assert_eq!(app.get_exposure(), 1.5, "the panel is still a's");
+        quit(&state, &app);
+        assert!(
+            Sidecar::load(&files[1]).unwrap().is_none(),
+            "b has no sidecar"
+        );
+        assert!(state.borrow().sidecars[1].history.is_empty());
+        assert_eq!(state.borrow().sidecars[1].current, Edit::default());
+        assert_eq!(
+            std::fs::read(Sidecar::path_for(&files[0])).unwrap(),
+            on_disk,
+            "a's is as it was"
+        );
+        crate::testing::remove_scratch(state, &dir);
+    }
 }

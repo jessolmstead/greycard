@@ -5793,6 +5793,70 @@ pub(crate) mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
+    /// An export asked for before culling, its request waiting on a
+    /// frame of the set that stands in, and landing in culling on that
+    /// frame: the panel is no frame's there, so each frame of the set
+    /// takes its own sidecar's edit, and the one now current is not
+    /// given the panel's (the frame the mode was entered from).
+    /// Through Add to queue, whose entry says what each frame took.
+    #[test]
+    fn an_export_landing_in_culling_takes_each_frames_own_edit() {
+        let (dir, files, writer, app, state, worker) = rated_under_a_root("rows-export-cull");
+        open_view(&state, &app, &worker, View::Roots(None));
+        land_all(&state, &app, &worker);
+        // z open, its panel at 2.0.
+        crate::panel::browser::open_row(&mut state.borrow_mut(), &app, &worker, 2, false);
+        crate::rows::land_pending(&state, &app, &worker);
+        assert_eq!(state.borrow().current, Some(2));
+        app.set_exposure(2.0);
+        // y and z chosen, y standing in still: the queue's request
+        // waits on its read.
+        {
+            let mut st = state.borrow_mut();
+            st.picked = vec![1, 2];
+            assert!(!st.from_row[1].read);
+        }
+        crate::panel::export_queue::CHOSEN.with(|c| *c.borrow_mut() = Some(Some(dir.join("out"))));
+        app.invoke_export_queue_add();
+        assert!(state.borrow().export_queue.is_empty(), "waiting");
+        // Into culling, on to y; then the read lands.
+        {
+            let mut st = state.borrow_mut();
+            crate::panel::cull::enter_cull(&mut st, &app, 1);
+            crate::panel::cull::cull_select(&mut st, &app, 1);
+            assert_eq!(st.current, Some(1));
+        }
+        crate::rows::land_pending(&state, &app, &worker);
+        let st = state.borrow();
+        assert_eq!(st.export_queue.len(), 1);
+        let got: Vec<(PathBuf, f32, u8)> = st.export_queue[0]
+            .frames
+            .iter()
+            .map(|f| {
+                (
+                    f.source.clone(),
+                    f.edit.light.exposure,
+                    f.edit.geometry.turns,
+                )
+            })
+            .collect();
+        let y = &st.sidecars[1].current;
+        assert_eq!(
+            got,
+            vec![
+                (files[1].clone(), y.light.exposure, 1),
+                (files[2].clone(), 2.0, 0),
+            ],
+            "y under its own edit, z under the one saved on the way in"
+        );
+        assert_ne!(y.light.exposure, 2.0);
+        drop(st);
+        state.borrow_mut().index_reader = None;
+        drop(state);
+        drop(writer);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// A sidecar the index says holds a develop, and that cannot be
     /// read when its frame is opened, or is not there, is not replaced
     /// by the default: the frame stands in still, the status line says

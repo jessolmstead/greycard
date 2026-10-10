@@ -58,6 +58,12 @@ note a first tester reads.
 
 ### Fixes
 
+- Quitting while culling no longer writes the panel's edit onto the
+  frame under the loupe (a frame culled from launch got the default
+  edit as a new state; a frame culled to after developing another got
+  that frame's edit), and an export asked for just before culling
+  starts takes each frame's own edit
+  ([§280](https://github.com/jessolmstead/greycard/blob/master/docs/notes/280-a-quit-from-culling-records-nothing-from-the-panel.md))
 - A frame followed onto its archive copy while its own disk is away
   keeps its last edit at quit: the copy is written before the editor
   ends, waiting at most five seconds, and a write that cannot finish
