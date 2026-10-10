@@ -26,11 +26,6 @@ the reasoning lives in `docs/notes.md`.
   midtones like Lightroom or stay more surgical as it is? Decides the
   feel track's highlights-and-whites item; §250's trial is built on the
   highlights branch
-- Is the default 40 frames developed for camera match the right number?
-  Accurate enough without taking too long? Never swept: the trial sets
-  were 22 to 32 frames (§180). To measure: held-out error at 10, 20, 40
-  and 80 frames, picked at random and picked for coverage of the color
-  lattice, on the four archive sets
 
 ## Next: 0.6.0
 

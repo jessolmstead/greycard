@@ -290,3 +290,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§278. Thumbnails from the edit, part one: the key, the entries, the open frame](notes/278-thumbnails-from-the-edit-part-one.md) (2026-10-10)
 - [§279. Whole person's edge from Subject's matte, as built](notes/279-whole-persons-edge-from-subjects-matte.md) (2026-10-10)
 - [§280. A quit from culling records nothing from the panel](notes/280-a-quit-from-culling-records-nothing-from-the-panel.md) (2026-10-10)
+- [§281. How many frames the camera match develops](notes/281-how-many-frames-the-camera-match-develops.md) (2026-10-10)

@@ -36,6 +36,11 @@ use greycard_match::fit::{LutParams, leave_one_out};
 use greycard_match::register::{NCC_MIN, register};
 use greycard_match::{FIT_VERSION, Model, Pairs, Picture};
 
+#[cfg(test)]
+mod cover;
+#[cfg(test)]
+mod sweep;
+
 /// Frames a group is sampled down to.
 pub(crate) const SAMPLE: usize = 40;
 /// Usable frames a group needs for a table of its own; also the
