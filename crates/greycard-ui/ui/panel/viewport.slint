@@ -125,6 +125,11 @@ export component Viewport inherits Rectangle {
         // `picking` inside its own press handler still keeps the
         // release from reading as a plain click and zooming.
         property <bool> picked-down;
+        // Whether the press went to a tool placing on the picture,
+        // latched for the same reason: the person a part is of is
+        // picked on the press, which puts the picking down, and the
+        // release must not then read as a click and zoom.
+        property <bool> placed-down;
         // Whether the press opened the frame menu: its release is
         // then no click, and a Mac's Control+click no pan.
         property <bool> menu-down;
@@ -172,6 +177,7 @@ export component Viewport inherits Rectangle {
                 // stop a click here from zooming, since nothing
                 // was picked to keep it from a plain click.
                 self.picked-down = false;
+                self.placed-down = false;
                 if (root.placeholder) {
                 } else if (root.picking != "") {
                     self.picked-down = true;
@@ -179,6 +185,7 @@ export component Viewport inherits Rectangle {
                         root.pick-pressed(self.mouse-x, self.mouse-y);
                     }
                 } else if (root.placing != "" || root.retouch-mode != "") {
+                    self.placed-down = true;
                     root.place-pressed(self.mouse-x, self.mouse-y, e.button == PointerEventButton.right);
                 }
                 self.last-x = self.mouse-x;
@@ -192,7 +199,7 @@ export component Viewport inherits Rectangle {
                     self.menu-down = false;
                 } else if (self.picked-down) {
                     root.pick-released();
-                } else if (root.placing != "" || root.retouch-mode != "") {
+                } else if (self.placed-down || root.placing != "" || root.retouch-mode != "") {
                     root.place-released();
                 } else if (self.crop-drawing) {
                     root.crop-draw-released();
@@ -214,6 +221,7 @@ export component Viewport inherits Rectangle {
                 }
                 self.menu-down = false;
                 self.picked-down = false;
+                self.placed-down = false;
                 self.dragged = false;
                 self.crop-drawing = false;
             }
@@ -227,7 +235,7 @@ export component Viewport inherits Rectangle {
                     root.pick-dragged(self.mouse-x, self.mouse-y);
                 } else if (root.placing != "" || root.retouch-mode != "") {
                     root.place-dragged(self.mouse-x, self.mouse-y);
-                } else if (self.dragged && !self.picked-down && root.crop-mode && !root.placeholder) {
+                } else if (self.dragged && !self.picked-down && !self.placed-down && root.crop-mode && !root.placeholder) {
                     // Crop mode is a mode: a drag out here draws,
                     // whether or not the picture is zoomed in enough
                     // that a drag would otherwise have panned it. Not
@@ -239,7 +247,7 @@ export component Viewport inherits Rectangle {
                         root.crop-draw-pressed(self.down-x, self.down-y);
                     }
                     root.crop-draw-dragged(self.mouse-x, self.mouse-y);
-                } else if (self.dragged && !self.picked-down) {
+                } else if (self.dragged && !self.picked-down && !self.placed-down) {
                     root.pan(self.mouse-x - self.last-x, self.mouse-y - self.last-y);
                 }
                 self.last-x = self.mouse-x;

@@ -280,3 +280,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§268. The capture sharpen on a pedestal](notes/268-the-capture-sharpen-on-a-pedestal.md) (2026-10-08)
 - [§269. The dehaze on the GPU](notes/269-the-dehaze-on-the-gpu.md) (2026-10-08)
 - [§270. Thumbnails from the edit](notes/270-thumbnails-from-the-edit.md) (2026-10-09)
+- [§271. A person picked on a zoomed view keeps the view](notes/271-a-person-picked-on-a-zoomed-view-keeps-the-view.md) (2026-10-10)

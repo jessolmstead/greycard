@@ -10,6 +10,14 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
+## 0.6.0, unreleased
+
+### Fixes
+
+- Picking the person for a People part while zoomed in no longer sends
+  the view back to Fit; it read as the mask resetting the view when it
+  landed ([§271](https://github.com/jessolmstead/greycard/blob/master/docs/notes/271-a-person-picked-on-a-zoomed-view-keeps-the-view.md))
+
 ## 0.5.0, 2026-10-09
 
 Improvements for portrait editing: People masks are introduced, including parts.

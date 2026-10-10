@@ -997,6 +997,134 @@ mod tests {
         assert!(group.contains("title: \"Face\"; enabled: false"), "{group}");
     }
 
+    /// The view as it stands: the zoom asked for, the center and the
+    /// frame's size.
+    fn view(state: &Rc<RefCell<State>>) -> (f32, (f32, f32), (u32, u32)) {
+        let st = state.borrow();
+        (st.zoom, st.center, st.image_size)
+    }
+
+    /// The part's raster and the develop after it, as the worker
+    /// delivers them.
+    fn land(app: &App, state: &Rc<RefCell<State>>) {
+        let (shape, generation) = {
+            let st = state.borrow();
+            (shapes(&st)[0].clone(), st.generation)
+        };
+        crate::panel::deliver::deliver(
+            app,
+            Outcome::Mask {
+                key: (1, 0),
+                shape,
+                file: None,
+                raster: Arc::new(Raster::from_data(1.0, 4, vec![255; 16])),
+                provider: Some("CPU"),
+                seconds: 0.1,
+                note: None,
+                part: None,
+            },
+        );
+        crate::panel::deliver::deliver(
+            app,
+            Outcome::Developed {
+                generation,
+                turn: 0,
+                image: crate::worker::Developed::Halves(Arc::new(crate::worker::Halves {
+                    width: 1200,
+                    height: 800,
+                    pixels: Vec::new(),
+                })),
+                guide: Arc::new(crate::finish::Guide::NONE),
+                white: crate::worker::WhiteBase::IDENTITY,
+                seconds: 0.1,
+                detail: None,
+                sharpen: None,
+                dehaze: None,
+                sources: Vec::new(),
+                learned: crate::worker::LearnedReport::Off,
+                fills: crate::worker::FillReport::default(),
+            },
+        );
+    }
+
+    /// Zoomed in on a group, a person picked with a click on her face
+    /// is the pick's click and not the zoom's: the press takes the
+    /// picking out of hand, and its release used to read as a plain
+    /// click on the picture and go back to Fit. The view stays where
+    /// it was through the pick, the part's raster landing and the
+    /// develop after it; and on a picture of one, where the part is
+    /// made with no click, the same.
+    #[test]
+    fn a_person_picked_on_a_zoomed_view_keeps_the_view() {
+        use i_slint_backend_testing::ElementHandle;
+        let (app, state, _worker) = masks();
+        {
+            let mut st = state.borrow_mut();
+            st.image_size = (1200, 800);
+            st.zoom = 2.0;
+            st.center = (330.0, 230.0);
+            pending(&mut st, "Lips");
+        }
+        let before = view(&state);
+        crate::panel::deliver::deliver(
+            &app,
+            Outcome::People {
+                file: None,
+                people: Ok((two(), "CPU", 0.1)),
+            },
+        );
+        assert_eq!(app.get_placing(), PICKING);
+        assert_eq!(view(&state), before, "the people found move nothing");
+
+        // The click, inside the first face's own outline on the
+        // viewport.
+        let viewport = ElementHandle::find_by_element_type_name(&app, "Viewport")
+            .next()
+            .expect("the viewport is on screen");
+        let (base, size) = (viewport.absolute_position(), viewport.size());
+        let people = two();
+        let (x, y) = over(&state.borrow(), &app, &people[0]);
+        assert!(
+            x > 20.0 && y > 60.0 && x < size.width - 20.0 && y < size.height - 20.0,
+            "the face is on the view, clear of All people: {x}, {y} in {size:?}"
+        );
+        crate::testing::click(&app, base.x + x, base.y + y);
+        assert_eq!(
+            shapes(&state.borrow()),
+            [Shape::Part {
+                phrase: "lips".into(),
+                route: Route::Mouth,
+                person: Some(people[0].person()),
+            }],
+            "the click picked her"
+        );
+        assert_eq!(view(&state), before, "the pick's release is not a zoom");
+        land(&app, &state);
+        assert_eq!(view(&state), before, "nor is the mask landing");
+
+        // A picture of one: made at once, landed, the view where it was.
+        {
+            let mut st = state.borrow_mut();
+            st.edit.adjustments[0].mask.components.clear();
+            pending(&mut st, "Lips");
+        }
+        crate::panel::deliver::deliver(
+            &app,
+            Outcome::People {
+                file: None,
+                people: Ok((vec![people[1].clone()], "CPU", 0.1)),
+            },
+        );
+        assert_eq!(shapes(&state.borrow()).len(), 1);
+        land(&app, &state);
+        assert_eq!(view(&state), before);
+
+        // A plain click on the picture still goes back to Fit: what
+        // is latched is the press's, not a rule against zooming.
+        crate::testing::click(&app, base.x + x, base.y + y);
+        assert_eq!(state.borrow().zoom, 0.0, "a plain click goes back to Fit");
+    }
+
     /// Every phrase the menu asks for is in the table the model ships
     /// (`prompts.py`'s SHIPPED, which `table.py` writes), and so are
     /// the ones the routes and the people ask on their own.
