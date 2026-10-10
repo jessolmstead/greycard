@@ -1,8 +1,13 @@
 version: 2
 updates:
   # The Actions are pinned by commit hash with their tag in a comment;
-  # this opens the pull request that bumps both together.
+  # this opens the pull request that bumps both together. Within the
+  # major we chose only: a major is a step taken on purpose, with the
+  # artifact pair moved together.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
