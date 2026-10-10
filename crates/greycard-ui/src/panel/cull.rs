@@ -3478,6 +3478,9 @@ mod tests {
         crate::library::refresh_ids(&mut state.borrow_mut());
         show_shot(&state.borrow(), &app);
         assert!(app.get_shot_exposure().contains("ISO 6400"));
+        // The window's callbacks hold the state, so the reader must
+        // be closed here or Windows keeps the folder locked.
+        state.borrow_mut().index_reader = None;
         drop(state);
         crate::testing::remove_dir_retry(&dir);
     }
