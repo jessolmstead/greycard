@@ -282,3 +282,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§270. Thumbnails from the edit](notes/270-thumbnails-from-the-edit.md) (2026-10-09)
 - [§271. A person picked on a zoomed view keeps the view](notes/271-a-person-picked-on-a-zoomed-view-keeps-the-view.md) (2026-10-10)
 - [§272. Security chores: the audit, the import's names and the pins](notes/272-security-chores-the-audit-the-imports-names-and-the-pins.md) (2026-10-10)
+- [§273. Collections and smart collections](notes/273-collections-and-smart-collections.md) (2026-10-10)

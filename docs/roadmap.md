@@ -41,11 +41,12 @@ and smart collections that survive a move.
       reachable from it so a frame that stands out is matched to its
       neighbors; one key into the loupe on a tile and one back. Reads
       the 2048 picture of §270
-- [ ] Collections and smart collections in one file under
-      `~/.local/share/greycard/`, referencing files by hash with the
-      path as a hint. To settle first: two identical files sharing a
-      hash, a file whose hash changes when another tool rewrites it,
-      and whether a collection keeps an order of its own
+- [ ] Collections and smart collections, one file a collection under
+      `~/.local/share/greycard/collections/`, referencing frames by
+      hash with the path as a hint, healed by the hint when a rewrite
+      changes the hash, a hand order of their own; a sidebar list, add
+      and remove from the grid and the strip, a smart one saved from
+      the filter bar (§273)
 - [ ] Icons on the grid and the filmstrip showing edited and exported
       frames
 - [ ] Camera metadata shown in cull mode too
