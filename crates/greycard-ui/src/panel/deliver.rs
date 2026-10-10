@@ -442,6 +442,8 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if generation != st.generation || st.cull.is_some() {
                 return;
             }
+            // The saved edit's pictures, from this develop.
+            crate::edited::landed(&st, turn);
             let detailed = match detail {
                 Some((s, ran)) => {
                     let how = match ran {
@@ -854,6 +856,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 )
                 .into(),
             );
+        }
+        Outcome::EditedKept { path } => {
+            let mut st = state.borrow_mut();
+            if let Some(worker) = WORKER.with(|w| w.borrow().clone()) {
+                crate::edited::kept(&mut st, &worker, &path);
+            }
         }
         Outcome::LensesFetched => {
             let mut st = state.borrow_mut();

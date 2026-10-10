@@ -26,6 +26,7 @@ pub mod geometry;
 pub mod grading;
 pub mod grain;
 pub mod history;
+pub mod key;
 pub mod lens;
 pub mod lightroom;
 pub mod look;

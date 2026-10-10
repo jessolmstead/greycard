@@ -98,6 +98,12 @@ pub struct Preview {
     /// camera's JPEG read from the file: the file is out of reach, or
     /// still on its way over the network.
     pub local: bool,
+    /// This is the picture made from the frame's edit, kept in the
+    /// cache (`edited`): what a frame with an edit is culled on. It
+    /// stands where the camera's JPEG would at the view's size, and is
+    /// never taken for the JPEG's every pixel, so 1:1 still opens the
+    /// camera's full JPEG for focus.
+    pub edited: bool,
     /// How long the decode took, for the log.
     pub seconds: f64,
 }
@@ -114,7 +120,27 @@ impl Preview {
             source,
             full,
             local: false,
+            edited: false,
             seconds: 0.0,
+        }
+    }
+
+    /// The picture made from a frame's edit, as the cache keeps it.
+    pub fn edited(thumb: greycard_library::thumbs::Thumb) -> Self {
+        let mut preview = Self::local(thumb, false);
+        preview.local = false;
+        preview.edited = true;
+        preview
+    }
+
+    /// Where this picture came from, for the words that name it.
+    pub fn origin(&self) -> Origin {
+        if self.edited {
+            Origin::Edit
+        } else if self.local {
+            Origin::Local
+        } else {
+            Origin::Camera
         }
     }
 
@@ -143,13 +169,24 @@ impl Preview {
     /// The preview is smaller than a camera's full frame would be. A
     /// local preview is small by design and says so in its own words.
     pub fn small(&self) -> bool {
-        !self.local && self.source.0.max(self.source.1) < SMALL_LONG_EDGE
+        !self.local && !self.edited && self.source.0.max(self.source.1) < SMALL_LONG_EDGE
     }
 
     /// This copy is the JPEG's every pixel: 1:1 needs no other.
     pub fn own_size(&self) -> bool {
         (self.width, self.height) == self.source
     }
+}
+
+/// Where a picture the loupe shows came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// The camera's JPEG, or the picture itself, from the file.
+    Camera,
+    /// The frame's local preview, from the cache.
+    Local,
+    /// The picture made from the frame's edit, from the cache.
+    Edit,
 }
 
 /// How many screen-size previews of `size` on the long edge a budget
@@ -200,7 +237,8 @@ impl Cache {
     /// JPEG's, so it is not: at 1:1 the file's is still asked for
     /// where the file can be read.
     pub fn has_own_size(&self, file: usize) -> bool {
-        self.best(file).is_some_and(|p| p.own_size() && !p.local)
+        self.best(file)
+            .is_some_and(|p| p.own_size() && !p.local && !p.edited)
     }
 
     pub fn insert(&mut self, file: usize, preview: Arc<Preview>) {
@@ -236,6 +274,12 @@ impl Cache {
     pub fn clear(&mut self) {
         self.previews.clear();
         self.full = None;
+    }
+
+    /// Drop `file`'s view-size copy: its picture changed (its edit's
+    /// was kept), and the next refresh asks for it again.
+    pub fn forget(&mut self, file: usize) {
+        self.previews.remove(&file);
     }
 
     /// What is held, in bytes.
@@ -577,7 +621,22 @@ pub(crate) fn fetch(
     previews: Option<&Arc<crate::previews::Previews>>,
     deliver: &dyn Fn(Loaded),
 ) {
+    let edited = previews.and_then(|p| p.edited());
     if let Source::Preview { hash, stamp } = &want.from {
+        // An edited frame out of reach shows the last picture of its
+        // edit kept for its content, ahead of the camera's.
+        let from_edit = edited
+            .filter(|_| want.size > 0)
+            .and_then(|e| e.lookup(hash, crate::edited::BIG, e.shows_offline(&want.path)));
+        if let Some(thumb) = from_edit {
+            deliver(Loaded::Ok {
+                file: want.file,
+                path: want.path.clone(),
+                size: want.size,
+                preview: Arc::new(Preview::edited(thumb)),
+            });
+            return;
+        }
         deliver(match previews.and_then(|p| p.get(hash, *stamp)) {
             Some(thumb) => Loaded::Ok {
                 file: want.file,
@@ -589,6 +648,22 @@ pub(crate) fn fetch(
                 file: want.file,
                 path: want.path.clone(),
             },
+        });
+        return;
+    }
+    // A frame with an edit is culled on the picture of its edit at the
+    // view's size; 1:1 is the camera's JPEG all the same, for focus.
+    if want.size > 0
+        && let Some(edited) = edited
+        && let shows @ crate::edited::Shows::Edit(_) = edited.shows(&want.path)
+        && let Ok(hash) = greycard_library::hash_file(&want.path)
+        && let Some(thumb) = edited.lookup(&hash, crate::edited::BIG, shows)
+    {
+        deliver(Loaded::Ok {
+            file: want.file,
+            path: want.path.clone(),
+            size: want.size,
+            preview: Arc::new(Preview::edited(thumb)),
         });
         return;
     }

@@ -87,6 +87,10 @@ pub(crate) struct FromRow {
     /// gave none), kept past the read; `None` for a frame never
     /// stood in for. What a learned blend is judged against.
     pub(crate) iso: Option<Option<u32>>,
+    /// The hash of the sidecar the row was read from, `None` for none:
+    /// a row that comes in with another says the sidecar changed under
+    /// the frame (`edited::changed`).
+    pub(crate) sidecar: Option<String>,
     /// The last read of the sidecar did not take, and why: it could not
     /// be read, or it was not there though the row says it holds a
     /// develop. The frame stands in still, and nothing is written over
@@ -104,6 +108,7 @@ impl FromRow {
             edited: false,
             exported: false,
             iso: None,
+            sidecar: None,
             unread: None,
         }
     }
@@ -117,6 +122,7 @@ impl FromRow {
             edited: row.edited,
             exported: row.exported,
             iso: Some(row.iso),
+            sidecar: row.sidecar_hash.clone(),
             unread: None,
         }
     }
@@ -1084,6 +1090,8 @@ fn take(st: &mut State, app: &App, i: usize, held: Held) -> bool {
     // The cell follows what the read found: the meta, and the marks
     // for an edit and an export, which the row only stood in for.
     crate::panel::browser::show_badges(st, app, i);
+    // Its edit is known now: shown in its cells, or the camera's.
+    crate::edited::refresh(st, i);
     // The frame on screen, its panel the stand-in's: opened on its own
     // sidecar now, whatever brought it in (a stalled read after the
     // give-up, a key's read, a preset's load), so the next slider
@@ -1115,9 +1123,16 @@ pub(crate) fn apply_row(st: &mut State, i: usize, row: &RowMeta) -> bool {
     }
     let raw = !greycard_core::picture::is_picture_path(&st.files[i]);
     let next = FromRow::of(row);
-    let turned =
-        from.turns != next.turns || from.edited != next.edited || from.exported != next.exported;
+    let edited = from.edited != next.edited;
+    let rewritten = from.sidecar != next.sidecar;
+    let turned = from.turns != next.turns || edited || from.exported != next.exported;
     *from = next;
+    // Whether it shows an edit, and under what key, as the row now says.
+    if rewritten {
+        crate::edited::changed(st, i);
+    } else if edited {
+        crate::edited::refresh(st, i);
+    }
     // A first guess from the row; the read that lands decides the seed.
     if let Some(s) = st.seed_blend.get_mut(i) {
         *s = raw && !row.edited;

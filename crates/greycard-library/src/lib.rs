@@ -314,7 +314,7 @@ const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash
 /// The columns [`RowMeta`] is read from, in the order `row_meta`
 /// reads them, after the path.
 const META_COLUMNS: &str = "files.id, files.hash, files.mtime, files.rating, files.flag, files.label, \
-    files.keywords, files.edited, files.turns, files.exported, files.iso";
+    files.keywords, files.edited, files.turns, files.exported, files.iso, files.sidecar_hash";
 
 /// Whether the learned denoiser's `blend` is what nobody has touched:
 /// the default, or what the first open or export of a raw seeds from
@@ -570,6 +570,11 @@ pub struct RowMeta {
     /// The frame's ISO as the index holds it, `None` for a camera that
     /// gave none: what the learned blend's seed is judged against.
     pub iso: Option<u32>,
+    /// The hash of the sidecar the row was last read from (with the XMP
+    /// beside it), `None` for a frame with none: what tells a browser the
+    /// sidecar changed under a frame it holds, when nothing else the row
+    /// mirrors moved (another edit of the same kind).
+    pub sidecar_hash: Option<String>,
 }
 
 impl RowMeta {
@@ -2191,6 +2196,7 @@ fn row_meta(row: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<RowMeta> {
         turns: (row.get::<_, i64>(from + 8)?.clamp(0, 7)) as u8,
         exported: row.get::<_, i64>(from + 9)? != 0,
         iso: row.get::<_, Option<i64>>(from + 10)?.map(|v| v as u32),
+        sidecar_hash: row.get(from + 11)?,
     })
 }
 

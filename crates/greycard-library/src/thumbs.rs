@@ -60,6 +60,16 @@
 //! apart from the thumbnails, which keep theirs. They stay one store:
 //! one directory, one key, one lock, one count, and a removal or a
 //! clear takes both.
+//!
+//! A caller may keep other pictures of a file under the same hash with
+//! a recipe of its own and a stamp that is not a time: the editor keeps
+//! the pictures made from a frame's edit beside the camera's, the edit's
+//! develop key in the stamp's place. They are entries like any other,
+//! named, counted, capped and evicted by the same rules, so a cache
+//! written before them reads as it did and a build that does not know
+//! them never asks for them. [`Thumbs::remove_tag`] takes one tag's
+//! entries out when a frame's key moves on, and [`Thumbs::newest`]
+//! finds the last one kept when the stamp wanted cannot be said.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -514,6 +524,65 @@ impl Thumbs {
         removed
     }
 
+    /// Remove the entries kept for `hash` under `tag`, every size: what a
+    /// caller that keys a picture by something other than the file's
+    /// time (the editor's pictures made from an edit, keyed by the edit)
+    /// takes out when one frame's key moves on, so its old pictures go
+    /// now rather than by the eviction. Only that tag's: another copy of
+    /// the same content may be showing pictures under another, and those
+    /// are left to the eviction. Answers how many went.
+    pub fn remove_tag(&mut self, hash: &str, tag: Tag) -> usize {
+        let fan = self.root.join(hash.get(..2).unwrap_or("__"));
+        let Ok(entries) = std::fs::read_dir(&fan) else {
+            return 0;
+        };
+        let mut removed = 0;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some((size, found)) = name.to_str().and_then(|n| parse_name(n, hash)) else {
+                continue;
+            };
+            if found != tag {
+                continue;
+            }
+            let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            if std::fs::remove_file(entry.path()).is_ok() {
+                self.forget(len, self.class_of(size));
+                removed += 1;
+            }
+        }
+        // Fails, as it is meant to, while anything is left in it.
+        let _ = std::fs::remove_dir(&fan);
+        removed
+    }
+
+    /// The tag under `recipe` whose entries for `hash` were written last,
+    /// whatever its stamp: for a caller that cannot say which stamp it
+    /// wants (the editor's frame whose edit cannot be read, its root
+    /// offline) and takes the last one kept. One tag for the hash, the
+    /// same at every size, so a frame's sizes never mix two pictures. An
+    /// entry's birth time says when it was written, since a hit moves
+    /// only its modification time; on a filesystem that keeps no birth
+    /// time the modification time stands in, which is the last used, and
+    /// a tie goes to the larger stamp. One listing of the hash's fan-out
+    /// folder; nothing is read or decoded.
+    pub fn newest(&self, hash: &str, recipe: u16) -> Option<Tag> {
+        let fan = self.root.join(hash.get(..2).unwrap_or("__"));
+        std::fs::read_dir(&fan)
+            .ok()?
+            .flatten()
+            .filter_map(|entry| {
+                let name = entry.file_name();
+                let (_, tag) = parse_name(name.to_str()?, hash)?;
+                (tag.recipe == recipe).then_some(())?;
+                let meta = entry.metadata().ok()?;
+                let when = meta.created().or_else(|_| meta.modified()).ok()?;
+                Some(((when, tag.stamp), tag))
+            })
+            .max_by_key(|(when, _)| *when)
+            .map(|(_, tag)| tag)
+    }
+
     /// One entry of `len` bytes, of `class`, gone from the count.
     fn forget(&mut self, len: u64, class: Class) {
         if let Some(u) = self.used.as_mut() {
@@ -602,6 +671,22 @@ fn size_in_name(name: &str) -> Option<u32> {
     let (_, after) = rest.split_once('-')?;
     let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
     digits.parse().ok()
+}
+
+/// The size and tag an entry's file name says, when it is an entry of
+/// `hash`: `<hash>-<size>-r<recipe>-<stamp>.thumb`.
+fn parse_name(name: &str, hash: &str) -> Option<(u32, Tag)> {
+    let rest = name.strip_prefix(hash)?.strip_prefix('-')?;
+    let rest = rest.strip_suffix(".thumb")?;
+    let (size, rest) = rest.split_once("-r")?;
+    let (recipe, stamp) = rest.split_once('-')?;
+    Some((
+        size.parse().ok()?,
+        Tag {
+            recipe: recipe.parse().ok()?,
+            stamp: stamp.parse().ok()?,
+        },
+    ))
 }
 
 /// Every entry under `root`, and every temporary file: its path, its
@@ -889,6 +974,56 @@ mod tests {
         assert!(cache.get(&other, 96, at(1, 7)).is_some());
         assert_eq!(cache.remove(&key, 7), 0);
         assert_eq!(cache.remove(&"ff".repeat(32), 7), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Pictures kept under a recipe of their own and a stamp that is a
+    /// key of the caller's (the editor's made from an edit) sit beside
+    /// the camera's under one hash; one key's are taken out, every size,
+    /// and another key's of the same content, the camera's and another
+    /// hash's stay, the count following; and the key written last is
+    /// found without its stamp, one key for every size, a hit on an
+    /// older one not moving it.
+    #[test]
+    fn one_key_s_pictures_go_and_no_others() {
+        let dir = scratch("stale");
+        let mut cache =
+            Thumbs::at(dir.join("thumbs"), DEFAULT_CAP).with_previews(2048, DEFAULT_PREVIEW_CAP);
+        cache.seed_split(Split::default());
+        let (key, other) = ("ab".repeat(32), "ac".repeat(32));
+        let at = |recipe, stamp| Tag { recipe, stamp };
+        let (camera, edited) = (2, 0x8001);
+        let thumb = picture(96, 64, 5);
+        let big = picture(300, 200, 6);
+        cache.put(&key, 128, at(camera, 7), &thumb).unwrap();
+        cache.put(&key, 2048, at(camera, 7), &big).unwrap();
+        cache.put(&key, 128, at(edited, 41), &thumb).unwrap();
+        cache.put(&key, 256, at(edited, 41), &thumb).unwrap();
+        cache.put(&key, 2048, at(edited, 41), &big).unwrap();
+        cache.put(&other, 128, at(edited, 41), &thumb).unwrap();
+        assert_eq!(cache.newest(&key, edited), Some(at(edited, 41)));
+        // Another copy's key beside it, written later.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        cache.put(&key, 128, at(edited, 42), &thumb).unwrap();
+        cache.put(&key, 2048, at(edited, 42), &big).unwrap();
+        assert_eq!(cache.newest(&key, edited), Some(at(edited, 42)));
+        assert_eq!(cache.newest(&key, camera), Some(at(camera, 7)));
+        // A hit on the older key moves its recency, not which was made last.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        assert!(cache.get(&key, 256, at(edited, 41)).is_some());
+        assert_eq!(cache.newest(&key, edited), Some(at(edited, 42)));
+        // One frame's key moved on: its pictures go, the other copy's stay.
+        assert_eq!(cache.remove_tag(&key, at(edited, 41)), 3);
+        assert!(cache.has(&key, 128, at(edited, 42)) && cache.has(&key, 2048, at(edited, 42)));
+        assert!(!cache.has(&key, 256, at(edited, 41)));
+        assert!(cache.has(&key, 128, at(camera, 7)) && cache.has(&key, 2048, at(camera, 7)));
+        assert!(cache.has(&other, 128, at(edited, 41)));
+        assert_eq!(cache.known_split(), Some(cache.split()));
+        assert_eq!(cache.remove_tag(&key, at(edited, 42)), 2);
+        assert_eq!(cache.newest(&key, edited), None);
+        assert!(cache.get(&key, 128, at(camera, 7)).is_some());
+        assert_eq!(cache.known_split(), Some(cache.split()));
+        assert_eq!(cache.remove_tag(&"ff".repeat(32), at(edited, 1)), 0);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

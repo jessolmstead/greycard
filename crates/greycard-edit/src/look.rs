@@ -537,6 +537,17 @@ fn is_format(c: char) -> bool {
     )
 }
 
+/// Every table of the look `name` in `dir` that a picture under
+/// `curve` may be finished through: the look's own file, whichever
+/// extension is there, and its variant for that curve. For the develop
+/// key, which takes their contents.
+pub(crate) fn tables_in(dir: &Path, name: &str, curve: DisplayCurve) -> Vec<PathBuf> {
+    if !is_a_name(name) {
+        return Vec::new();
+    }
+    vec![path_in(dir, name), variant_in(dir, name, curve)]
+}
+
 /// [`path_for`] in the directory `dir`, the name already checked.
 fn path_in(dir: &Path, name: &str) -> PathBuf {
     let mut first = None;

@@ -331,6 +331,20 @@ impl Context {
             .map_err(|e| Error::ReadBack(e.to_string()))
     }
 
+    /// Rows `y..y + rows` of a texture made by
+    /// [`viewport_texture`](Self::viewport_texture), read back as they
+    /// are: RGBA half floats, eight bytes a texel, row after row, the
+    /// mask in the alpha. For a caller that keeps a smaller copy of the
+    /// developed picture and reads it a band at a time rather than whole.
+    pub fn read_viewport_rows(
+        &self,
+        texture: &wgpu::Texture,
+        y: u32,
+        rows: u32,
+    ) -> Result<Vec<u8>> {
+        self.read_texture(texture, 0, y, texture.width(), rows, 8)
+    }
+
     /// A texture for an op's result as the viewport draws it: RGBA
     /// half floats, the op's mask in the alpha.
     pub fn viewport_texture(&self, width: u32, height: u32) -> wgpu::Texture {

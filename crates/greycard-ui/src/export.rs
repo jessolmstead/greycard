@@ -359,7 +359,38 @@ pub fn render(
     kind: finish::Source,
     white: Option<&greycard_edit::WhiteShift>,
 ) -> Rendered {
-    let framed = image.width as f32;
+    render_framed(
+        image,
+        image.width as f32,
+        edit,
+        source,
+        settings,
+        learned,
+        clip_level,
+        guide,
+        kind,
+        white,
+    )
+}
+
+/// [`render`] of an image that stands for a framed picture `framed`
+/// pixels wide, which it may be smaller than: the frame's own picture
+/// already reduced, as the pictures kept of an edit are made, so the
+/// masks, the guide plane and the vignette are placed by the frame and
+/// not by the reduced copy's pixels.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_framed(
+    image: &WorkingImage,
+    framed: f32,
+    edit: &greycard_edit::Edit,
+    source: (u32, u32),
+    settings: &Settings,
+    learned: &std::collections::HashMap<(u64, usize), std::sync::Arc<Raster>>,
+    clip_level: f32,
+    guide: Option<&finish::Guide>,
+    kind: finish::Source,
+    white: Option<&greycard_edit::WhiteShift>,
+) -> Rendered {
     let fitted;
     // The range masks read the picture from before the output
     // sharpen, so an export at any size samples the stage the
@@ -513,7 +544,7 @@ pub(crate) fn reads_guide(edit: &greycard_edit::Edit) -> bool {
 
 /// The image no larger than `long_edge` on its long side, in linear
 /// light, Lanczos; none when it already fits.
-fn fit(image: &WorkingImage, long_edge: Option<u32>) -> Option<WorkingImage> {
+pub(crate) fn fit(image: &WorkingImage, long_edge: Option<u32>) -> Option<WorkingImage> {
     let long = image.width.max(image.height) as u32;
     let edge = long_edge?;
     if edge >= long {

@@ -43,11 +43,12 @@ The grid and the strip show each edited frame as edited, a set opens
 in a lightbox for judging it whole, and frames gather into collections
 and smart collections that survive a move.
 
-- [ ] Thumbnails from the edit: an edited frame shows its edit in the
-      strip, the grid, the cull loupe and compare, from the open
-      frame's develop or a reduced develop in the pool; first the key
-      and the open frame, then the measurement and the reduced develop
-      with its check against the export (§270)
+- [ ] Thumbnails from the edit, part two: the reduced develop in the
+      pool for frames edited without being opened (a sync, a preset
+      over the selection, a paste, a join), fed from the save's non-open
+      branch and the sync's take and join, with its ΔE check against
+      the export at 360 and 2048; a develop key column in the index so
+      an offline frame shows its own edit; part one landed (§270, §278)
 - [ ] Whole person's edge from Subject's matte inside the picked
       person, so the hair Subject keeps is kept and the edge is as
       fine as a part's; the People masks read fuzzy at the edge

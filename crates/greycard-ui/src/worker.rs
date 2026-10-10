@@ -169,6 +169,20 @@ pub enum Job {
     /// The people on the open picture, as the People model finds them,
     /// for a Part chosen to be picked among: answered with `People`.
     People,
+    /// The frame at `path` was saved under `edit` at `turn`: when it is
+    /// the open frame and its develop is in hand, the edit's pictures
+    /// are made from it and kept (`edited`); when the develop is still
+    /// to land, they are made when it does, or when the frame is left
+    /// with it in hand. Answered with `EditedKept` once the frame's
+    /// pictures may have changed.
+    Keep {
+        path: PathBuf,
+        edit: Edit,
+        turn: u8,
+        /// The frame's ISO from its row, which the learned blend is
+        /// judged against in saying whether this is an edit at all.
+        iso: crate::edited::Iso,
+    },
     /// Fetch a model into the store; on its own thread.
     Fetch {
         model: &'static greycard_ai::Model,
@@ -454,6 +468,12 @@ pub enum Outcome {
     LensesFetchFailed {
         message: String,
     },
+    /// The pictures `path` shows in the strip, the grid and the loupe
+    /// may have changed: its edit's were kept, or its edit was reset or
+    /// left without them. Its cells ask for their pictures again.
+    EditedKept {
+        path: PathBuf,
+    },
 }
 
 #[derive(Default)]
@@ -474,6 +494,10 @@ struct Queue {
     masks: std::collections::VecDeque<(Key, Shape, Option<&'static greycard_ai::Model>)>,
     /// The people on the open picture are wanted (`Job::People`).
     people: bool,
+    /// The saves of the open frame (`Job::Keep`), the newest a frame,
+    /// taken ahead of a develop or an open queued after them, so a frame
+    /// left at once still has its picture in hand when its save is seen.
+    keeps: std::collections::VecDeque<Job>,
     exports: std::collections::VecDeque<Job>,
     /// A Subject model arrived since the one loaded, if any: drop it,
     /// so the next Subject mask picks up the new file rather than the
@@ -519,6 +543,9 @@ pub struct Worker {
     /// The local previews the pool makes behind the thumbnails, in
     /// the same cache.
     previews: Arc<crate::previews::Previews>,
+    /// Which frames show their edit, and the pictures made from it, in
+    /// the same cache (`edited`).
+    edited: Arc<crate::edited::Edited>,
 }
 
 impl Worker {
@@ -540,16 +567,27 @@ impl Worker {
     fn build(deliver: Deliver, batched: bool) -> Self {
         let queue = Arc::new((Mutex::new(Queue::default()), Condvar::new()));
         let thumbs: ThumbCache = Arc::new(Mutex::new(None));
-        let previews = Arc::new(crate::previews::Previews::new(thumbs.clone()));
+        let edited = Arc::new(crate::edited::Edited::new(thumbs.clone()));
+        let previews =
+            Arc::new(crate::previews::Previews::new(thumbs.clone()).with_edited(edited.clone()));
         let make: crate::thumbpool::Make = {
-            let (thumbs, previews) = (thumbs.clone(), previews.clone());
+            let (thumbs, previews, edited) = (thumbs.clone(), previews.clone(), edited.clone());
             Arc::new(move |path, size| {
-                cached_thumbnail_noting(&thumbs, Some(&previews), path, size, thumbnail)
+                cached_thumbnail_noting(
+                    &thumbs,
+                    Some(&previews),
+                    Some(&edited),
+                    path,
+                    size,
+                    thumbnail,
+                )
             })
         };
         let lookup: crate::thumbpool::Lookup = {
-            let (thumbs, previews) = (thumbs.clone(), previews.clone());
-            Arc::new(move |path, size| thumb_lookup(&thumbs, path, size, Some(&previews)).2)
+            let (thumbs, previews, edited) = (thumbs.clone(), previews.clone(), edited.clone());
+            Arc::new(move |path, size| {
+                thumb_lookup(&thumbs, path, size, Some(&previews), Some(&edited)).2
+            })
         };
         let hooks = crate::thumbpool::PreviewHooks {
             owes: {
@@ -569,10 +607,10 @@ impl Worker {
         )
         .with_previews(hooks);
         let pool = Arc::new(if batched { pool.batched() } else { pool });
-        let (q, d, p) = (queue.clone(), deliver.clone(), pool.clone());
+        let (q, d, p, e) = (queue.clone(), deliver.clone(), pool.clone(), edited.clone());
         let thread = std::thread::Builder::new()
             .name("greycard worker".into())
-            .spawn(move || run(q, d, p))
+            .spawn(move || run(q, d, p, e))
             .expect("spawning the worker");
         Self {
             queue,
@@ -582,7 +620,14 @@ impl Worker {
             caps: Arc::new(Mutex::new(None)),
             pool,
             previews,
+            edited,
         }
+    }
+
+    /// Which frames show their edit: the window says which it holds as
+    /// edited, and the culling loupe looks their pictures up.
+    pub(crate) fn edited(&self) -> Arc<crate::edited::Edited> {
+        self.edited.clone()
     }
 
     /// The local previews, for the culling loupe's decode threads,
@@ -775,29 +820,36 @@ impl Worker {
             // start from the file, which this frame's cannot be. At
             // the size the pool makes and keeps pictures at, or the
             // entry it kept is never found.
-            let (thumbs, deliver, size) = (
+            let (thumbs, deliver, size, edited) = (
                 self.thumbs.clone(),
                 self.deliver.clone(),
                 crate::grid::made_size(self.pool.size()),
+                self.edited.clone(),
             );
             rayon::spawn(move || {
                 let started = Instant::now();
                 // Caught here: a panic on rayon's pool with no handler
-                // takes the editor down with it.
+                // takes the editor down with it. A frame held as edited
+                // shows the last picture of its edit kept, its sidecar
+                // being out of reach with its file.
                 let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    thumbs
-                        .lock()
-                        .expect("thumbnail cache")
-                        .as_mut()
-                        .and_then(|c| {
-                            c.get(
-                                &hash,
-                                size,
-                                Tag {
-                                    recipe: THUMB_RECIPE,
-                                    stamp,
-                                },
-                            )
+                    edited
+                        .lookup(&hash, size, edited.shows_offline(&path))
+                        .or_else(|| {
+                            thumbs
+                                .lock()
+                                .expect("thumbnail cache")
+                                .as_mut()
+                                .and_then(|c| {
+                                    c.get(
+                                        &hash,
+                                        size,
+                                        Tag {
+                                            recipe: THUMB_RECIPE,
+                                            stamp,
+                                        },
+                                    )
+                                })
                         })
                 }))
                 .unwrap_or_else(|payload| {
@@ -845,6 +897,21 @@ impl Worker {
                 q.masks.push_back((key, shape, model));
             }
             Job::People => q.people = true,
+            Job::Keep {
+                path,
+                edit,
+                turn,
+                iso,
+            } => {
+                q.keeps
+                    .retain(|k| !matches!(k, Job::Keep { path: p, .. } if *p == path));
+                q.keeps.push_back(Job::Keep {
+                    path,
+                    edit,
+                    turn,
+                    iso,
+                });
+            }
             job => q.develop = Some(job),
         }
         cv.notify_one();
@@ -1080,7 +1147,12 @@ fn left_out_of(outcome: &Outcome, base: Option<&Base>) -> Vec<String> {
     out
 }
 
-fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::thumbpool::Pool>) {
+fn run(
+    queue: Arc<(Mutex<Queue>, Condvar)>,
+    deliver: Deliver,
+    pool: Arc<crate::thumbpool::Pool>,
+    edited: Arc<crate::edited::Edited>,
+) {
     let (lock, cv) = &*queue;
     let mut ai = Ai::new();
     match greycard_ai::Store::user() {
@@ -1122,6 +1194,11 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
     // person is being picked, and the People model is wanted on the
     // click, whatever the edit says meanwhile.
     let mut picking = false;
+    // The viewport's develop as a texture on the device, for the edit's
+    // pictures to be read back from; none while a develop runs.
+    let mut shown: Option<ShownTexture> = None;
+    // A save of the open frame whose develop is still to land.
+    let mut pending: Option<Keep> = None;
     loop {
         let mut device = None;
         let job = {
@@ -1135,6 +1212,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                 }
                 if let Some(db) = q.lenses.take() {
                     lenses = Some(db);
+                    edited.set_lenses(crate::edited::lens_database());
                     discard_base(&mut base, gpu.as_ref());
                     learned = None;
                 }
@@ -1144,6 +1222,9 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                 if q.forget_subject {
                     q.forget_subject = false;
                     ai.forget_subject();
+                }
+                if let Some(job) = q.keeps.pop_front() {
+                    break job;
                 }
                 if let Some(job) = q.develop.take() {
                     break job;
@@ -1185,6 +1266,69 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
         }
         if matches!(job, Job::Gpu) {
             continue;
+        }
+        // A save of the open frame: its edit's pictures from the develop
+        // in hand, or held for the develop still to land.
+        if let Job::Keep {
+            path,
+            edit,
+            turn,
+            iso,
+        } = job
+        {
+            let hand = InHand {
+                opened: opened_path.as_deref(),
+                last: last.as_ref(),
+                shown: shown.as_ref(),
+                base: base.as_ref(),
+                gpu: gpu.as_ref(),
+            };
+            let keep = Keep {
+                path,
+                edit,
+                turn,
+                iso,
+            };
+            let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                keep_open(keep, false, hand, &mut ai, &edited, &deliver)
+            }));
+            pending = held.unwrap_or_else(|payload| {
+                tracing::warn!(
+                    "the edit's pictures: the worker panicked: {}",
+                    panic_message(payload.as_ref())
+                );
+                None
+            });
+            continue;
+        }
+        // The frame is about to be left, or its picture replaced: a save
+        // still waiting on it is made from what is in hand now, or let go.
+        if let Some(keep) = pending.take()
+            && matches!(job, Job::Open { .. } | Job::Develop { .. })
+        {
+            let leaving = match &job {
+                Job::Open { .. } => true,
+                Job::Develop { edit, turn, .. } => {
+                    !(edit.same_develop(&keep.edit) && *turn % 4 == keep.turn)
+                }
+                _ => false,
+            };
+            let hand = InHand {
+                opened: opened_path.as_deref(),
+                last: last.as_ref(),
+                shown: shown.as_ref(),
+                base: base.as_ref(),
+                gpu: gpu.as_ref(),
+            };
+            pending = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                keep_open(keep, leaving, hand, &mut ai, &edited, &deliver)
+            }))
+            .unwrap_or(None);
+        }
+        // The texture goes before a develop makes the next, so the two are
+        // never held at once.
+        if matches!(job, Job::Open { .. } | Job::Develop { .. }) {
+            shown = None;
         }
         // A frame of a set: written, counted, and the set said to be
         // done after its last; a panic in it is that frame's failure.
@@ -1414,6 +1558,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                         &mut gpu,
                         &deliver,
                     );
+                    shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
                     last =
                         image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
                     deliver(outcome);
@@ -1443,6 +1588,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
                         &mut gpu,
                         &deliver,
                     );
+                    shown = ShownTexture::of(&edit, turn, &outcome, base.as_ref());
                     last =
                         image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
                     deliver(outcome);
@@ -1553,9 +1699,10 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
             | Job::Thumbnail { .. }
             | Job::CachedThumbnail { .. }
             | Job::ExportSet { .. }
-            | Job::ExportFrame { .. } => {
+            | Job::ExportFrame { .. }
+            | Job::Keep { .. } => {
                 unreachable!(
-                    "fetches and thumbnails run on threads of their own; the device and a set's frames are taken above"
+                    "fetches and thumbnails run on threads of their own; the device, a set's frames and a save are taken above"
                 )
             }
         }));
@@ -1563,6 +1710,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
             discard_base(&mut base, gpu.as_ref());
             learned = None;
             last = None;
+            shown = None;
             // The next stamp restarts with the base; what was cached
             // under the old ones goes with them.
             ai.forget(opened_path.clone());
@@ -1573,6 +1721,20 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, pool: Arc<crate::t
         }
         if developing {
             pool.set_limit(pool.threads());
+            // A save that was waiting for this develop: its pictures now.
+            if let Some(keep) = pending.take() {
+                let hand = InHand {
+                    opened: opened_path.as_deref(),
+                    last: last.as_ref(),
+                    shown: shown.as_ref(),
+                    base: base.as_ref(),
+                    gpu: gpu.as_ref(),
+                };
+                pending = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    keep_open(keep, false, hand, &mut ai, &edited, &deliver)
+                }))
+                .unwrap_or(None);
+            }
         }
     }
 }
@@ -1744,7 +1906,37 @@ fn finish_export(
     settings: &crate::export::Settings,
 ) -> (crate::export::Rendered, Vec<String>) {
     let source = (image.width as u32, image.height as u32);
-    // The learned masks, made now if they are not yet.
+    let (rasters, left_out) = learned_masks(edit, base, ai);
+    let framed;
+    let image: &WorkingImage = if edit.geometry.is_identity() {
+        &image
+    } else {
+        framed = crate::geometry::apply(&image, &edit.geometry);
+        &framed
+    };
+    let clip_level = base.map(|b| b.clip_level).unwrap_or(f32::INFINITY);
+    let rendered = crate::export::render(
+        image,
+        edit,
+        source,
+        settings,
+        &rasters,
+        clip_level,
+        base.map(|b| &*b.guide),
+        base.map(|b| b.source).unwrap_or_default(),
+        base.and_then(Base::white_shift).as_ref(),
+    );
+    (rendered, left_out)
+}
+
+/// Learned masks' rasters by adjustment id and component.
+type Rasters = std::collections::HashMap<(u64, usize), Arc<Raster>>;
+
+/// The learned masks `edit` draws, made now if they are not yet, for
+/// the picture `base` was made for; and what the edit names that could
+/// not be had: a look not in the look directory, and each learned mask
+/// whose model is not downloaded or failed.
+fn learned_masks(edit: &Edit, base: Option<&Base>, ai: &mut Ai) -> (Rasters, Vec<String>) {
     let mut rasters = std::collections::HashMap::new();
     let mut left_out = Vec::new();
     // A look the edit names that the export cannot have, not in the
@@ -1812,26 +2004,206 @@ fn finish_export(
             }
         }
     }
-    let framed;
-    let image: &WorkingImage = if edit.geometry.is_identity() {
-        &image
-    } else {
-        framed = crate::geometry::apply(&image, &edit.geometry);
-        &framed
+    (rasters, left_out)
+}
+
+/// A save of the open frame's edit, waiting on the worker for the
+/// develop it is the picture of (`Job::Keep`).
+struct Keep {
+    path: PathBuf,
+    edit: Edit,
+    turn: u8,
+    iso: crate::edited::Iso,
+}
+
+/// The develop the viewport shows, as a texture the engine's GPU ops
+/// left on the device, with the edit and the turn it was made under:
+/// held until the next develop begins, so a save of the open frame can
+/// read a reduced copy of it back for the pictures kept of its edit.
+struct ShownTexture {
+    edit: Edit,
+    turn: u8,
+    texture: greycard_gpu::wgpu::Texture,
+    /// What the develop left out of what the edit asked for
+    /// ([`left_out_of`]): a picture without it is not kept.
+    left_out: Vec<String>,
+}
+
+impl ShownTexture {
+    /// The texture a develop's outcome carries, for `edit` at `turn`,
+    /// from `base`.
+    fn of(edit: &Edit, turn: u8, outcome: &Outcome, base: Option<&Base>) -> Option<Self> {
+        match outcome {
+            Outcome::Developed {
+                image: Developed::Texture(texture),
+                ..
+            } => Some(Self {
+                edit: edit.clone(),
+                turn,
+                texture: texture.clone(),
+                left_out: left_out_of(outcome, base),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// What the worker holds of the open frame that the edit's pictures
+/// can be made from.
+struct InHand<'a> {
+    opened: Option<&'a std::path::Path>,
+    last: Option<&'a Last>,
+    shown: Option<&'a ShownTexture>,
+    base: Option<&'a Base>,
+    gpu: Option<&'a greycard_gpu::Context>,
+}
+
+/// A save of the open frame (`Job::Keep`): its edit's pictures made
+/// from the develop the worker holds when that is of this edit, on the
+/// keeping thread; a reset edit's taken out of the cache; a frame not
+/// open, or `leaving` with no develop of its edit in hand, held as
+/// edited and its key read again, so it shows the camera's until a
+/// picture of its edit is kept. Answers the save back when its develop
+/// is still to land.
+fn keep_open(
+    keep: Keep,
+    leaving: bool,
+    hand: InHand<'_>,
+    ai: &mut Ai,
+    edited: &Arc<crate::edited::Edited>,
+    deliver: &Deliver,
+) -> Option<Keep> {
+    let path = keep.path.clone();
+    let name = crate::panel::browser::file_name(&path);
+    let said = |path: PathBuf| deliver(Outcome::EditedKept { path });
+    let is_edited = crate::edited::is_edited(&path, &keep.edit, keep.iso);
+    if !is_edited {
+        let hash = greycard_library::hash_file(&path).ok();
+        if edited.reset(&path, hash.as_deref()) {
+            said(path);
+        }
+        return None;
+    }
+    let left = |edited: &crate::edited::Edited| {
+        edited.note(&path, true, keep.iso);
+        said(path.clone());
     };
-    let clip_level = base.map(|b| b.clip_level).unwrap_or(f32::INFINITY);
-    let rendered = crate::export::render(
-        image,
-        edit,
-        source,
-        settings,
-        &rasters,
-        clip_level,
-        base.map(|b| &*b.guide),
-        base.map(|b| b.source).unwrap_or_default(),
-        base.and_then(Base::white_shift).as_ref(),
+    if hand.opened != Some(path.as_path()) || !edited.cache_on() {
+        left(edited);
+        return None;
+    }
+    let Ok(hash) = greycard_library::hash_file(&path) else {
+        left(edited);
+        return None;
+    };
+    let key = edited.key_of(&keep.edit);
+    // Kept already (a save that changed nothing of the picture, or a
+    // develop of an edit kept before): the cells are asked again only
+    // when they were showing something else.
+    if edited.all_kept(&hash, key) {
+        if edited.settle_key(&path, &hash, key, keep.iso) {
+            said(path);
+        }
+        return None;
+    }
+    // Being made already, from a save or a develop just before: that
+    // making says when it is kept, and nothing waits here.
+    let marked = edited.mark(&hash, key)?;
+    // The develop in hand of this edit at this turn: the frame's turn is
+    // not in the key, but the picture in hand is turned by it, and the
+    // making takes it back out.
+    let cpu = hand
+        .last
+        .filter(|l| l.turn == keep.turn && l.edit.same_develop(&keep.edit));
+    let gpu = hand
+        .shown
+        .filter(|s| s.turn == keep.turn && s.edit.same_develop(&keep.edit));
+    let (cpu, gpu, base) = match (cpu, gpu, hand.gpu, hand.base) {
+        (Some(l), _, _, Some(b)) => (Some(l), None, b),
+        (None, Some(s), Some(ctx), Some(b)) => (None, Some((s, ctx)), b),
+        _ => {
+            if leaving {
+                left(edited);
+                return None;
+            }
+            return Some(keep);
+        }
+    };
+    // A picture without something its edit asks for (a learned model
+    // not downloaded or failed, a look not in the directory) is not the
+    // edit's, and would be kept under the edit's key for good: none is
+    // kept, and the frame shows the camera's until one can be.
+    let (rasters, mut left_out) = learned_masks(&keep.edit, Some(base), ai);
+    left_out.extend(
+        cpu.map(|l| &l.left_out)
+            .or(gpu.map(|(s, _)| &s.left_out))
+            .into_iter()
+            .flatten()
+            .cloned(),
     );
-    (rendered, left_out)
+    if !left_out.is_empty() {
+        for why in &left_out {
+            tracing::info!("the edit's pictures of {name}: not kept, {why}");
+        }
+        left(edited);
+        return None;
+    }
+    let factor = |source: (u32, u32)| crate::edited::factor_for(source, &keep.edit.geometry);
+    let (developed, source, factor, read_back) = match (cpu, gpu) {
+        (Some(l), _) => {
+            let source = (l.image.width as u32, l.image.height as u32);
+            (
+                crate::edited::Developed::Full(l.image.clone()),
+                source,
+                factor(source),
+                None,
+            )
+        }
+        (None, Some((s, ctx))) => {
+            let source = (s.texture.width(), s.texture.height());
+            let k = factor(source);
+            let started = Instant::now();
+            match crate::edited::read_back_reduced(ctx, &s.texture, k) {
+                Ok(reduced) => (
+                    crate::edited::Developed::Reduced(reduced),
+                    source,
+                    k,
+                    Some(started.elapsed().as_secs_f64()),
+                ),
+                Err(e) => {
+                    tracing::warn!("the edit's pictures of {name}: the read back failed: {e}");
+                    left(edited);
+                    return None;
+                }
+            }
+        }
+        (None, None) => unreachable!("one picture or the other, matched above"),
+    };
+    let job = crate::edited::Keeping {
+        path,
+        hash,
+        key,
+        developed,
+        factor,
+        read_back,
+        iso: keep.iso,
+        marked,
+        finish: crate::edited::Finish {
+            turn: keep.turn,
+            source,
+            rasters,
+            clip_level: base.clip_level,
+            guide: Some(base.guide.clone()),
+            kind: base.source,
+            white: base.white_shift(),
+            edit: keep.edit,
+        },
+    };
+    let (on, deliver) = (edited.clone(), deliver.clone());
+    edited.keep_later(Box::new(move || {
+        crate::edited::keep(&on, job, |path| deliver(Outcome::EditedKept { path }))
+    }));
+    None
 }
 
 /// A frame developed once on the CPU, as an export of a frame that is
@@ -1931,7 +2303,8 @@ impl Blame {
             | Job::CachedThumbnail { .. }
             | Job::Fetch { .. }
             | Job::FetchLenses
-            | Job::Gpu => Blame::Nobody,
+            | Job::Gpu
+            | Job::Keep { .. } => Blame::Nobody,
         }
     }
 
@@ -3433,12 +3806,18 @@ pub(crate) fn thumb_key(path: &std::path::Path) -> Option<(String, u64)> {
 /// preview reads no second head. A lookup alone, with no making after
 /// it, is what the thumbnails' threads do while a develop holds them,
 /// since a hit costs a tenth of a millisecond.
+///
+/// A frame `edited` says shows its edit is looked up first under its
+/// develop key, and the camera's entry stands in on a miss: the
+/// picture made from the edit, when one is kept, is the frame's
+/// thumbnail at every size.
 #[allow(clippy::type_complexity)]
 fn thumb_lookup(
     cache: &ThumbCache,
     path: &std::path::Path,
     size: u32,
     previews: Option<&crate::previews::Previews>,
+    edited: Option<&crate::edited::Edited>,
 ) -> (Option<(u64, u64)>, Option<(String, Tag)>, Option<Thumb>) {
     let on = cache
         .lock()
@@ -3453,12 +3832,18 @@ fn thumb_lookup(
             None
         }
     });
-    let hit = key.as_ref().and_then(|(hash, tag)| {
-        cache
-            .lock()
-            .expect("thumbnail cache")
-            .as_mut()
-            .and_then(|c| c.get(hash, size, *tag))
+    let from_edit = key.as_ref().and_then(|(hash, _)| {
+        let edited = edited?;
+        edited.lookup(hash, size, edited.shows(path))
+    });
+    let hit = from_edit.or_else(|| {
+        key.as_ref().and_then(|(hash, tag)| {
+            cache
+                .lock()
+                .expect("thumbnail cache")
+                .as_mut()
+                .and_then(|c| c.get(hash, size, *tag))
+        })
     });
     if let (Some(previews), Some(stat), Some((hash, _))) = (previews, before, key.as_ref()) {
         previews.note(path, stat, hash);
@@ -3480,11 +3865,12 @@ fn thumb_lookup(
 fn cached_thumbnail_noting(
     cache: &ThumbCache,
     previews: Option<&crate::previews::Previews>,
+    edited: Option<&crate::edited::Edited>,
     path: &std::path::Path,
     size: u32,
     make: impl FnOnce(&std::path::Path, u32) -> anyhow::Result<(u32, u32, Vec<u8>)>,
 ) -> anyhow::Result<(Thumb, bool)> {
-    let (before, key, hit) = thumb_lookup(cache, path, size, previews);
+    let (before, key, hit) = thumb_lookup(cache, path, size, previews, edited);
     if let Some(thumb) = hit {
         return Ok((thumb, true));
     }
@@ -5058,7 +5444,7 @@ mod tests {
         std::fs::write(&raw, vec![0x17u8; 90_000]).unwrap();
         let cache = cache_at(&dir);
         assert!(
-            cached_thumbnail_noting(&cache, None, &raw, THUMB_WIDTH, thumbnail).is_err(),
+            cached_thumbnail_noting(&cache, None, None, &raw, THUMB_WIDTH, thumbnail).is_err(),
             "not a raw, and nothing cached"
         );
         let kept = Thumb {
@@ -5085,12 +5471,159 @@ mod tests {
         let moved = moved_dir.join("wedding-0001.CR3");
         std::fs::rename(&raw, &moved).unwrap();
         let (thumb, cached) =
-            cached_thumbnail_noting(&cache, None, &moved, THUMB_WIDTH, thumbnail).unwrap();
+            cached_thumbnail_noting(&cache, None, None, &moved, THUMB_WIDTH, thumbnail).unwrap();
         assert!(cached);
         assert_eq!((thumb.width, thumb.height), (3, 2));
         // Another size is not the same entry.
-        assert!(cached_thumbnail_noting(&cache, None, &moved, 256, thumbnail).is_err());
+        assert!(cached_thumbnail_noting(&cache, None, None, &moved, 256, thumbnail).is_err());
         crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// What keeping the open frame's edit costs, on the raws of the
+    /// folder `GREYCARD_SAMPLES` names (ignored; run it in release with
+    /// `--ignored --nocapture`): each raw developed once on the CPU under
+    /// a brightening, then its pictures made as a save makes them, from
+    /// the CPU's picture (reduced, straightened, fitted, finished,
+    /// shrunk, encoded and kept) and, when there is a GPU, the same
+    /// picture read back from a viewport texture a whole factor smaller.
+    #[test]
+    #[ignore]
+    fn the_edit_s_pictures_of_the_samples() {
+        let Some(dir) = std::env::var_os("GREYCARD_SAMPLES") else {
+            eprintln!("GREYCARD_SAMPLES names no folder; nothing measured");
+            return;
+        };
+        let mut raws: Vec<PathBuf> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.path())
+            .filter(|p| greycard_core::decode::is_raw_path(p))
+            .collect();
+        raws.sort();
+        let gpu = greycard_gpu::Context::own()
+            .inspect_err(|e| eprintln!("no GPU for the read back: {e}"))
+            .ok();
+        let scratch = thumb_scratch("edit-samples");
+        for path in raws {
+            let (input, _) = timed_open(&path).unwrap();
+            let mut edit = Edit::default();
+            edit.light.exposure = 1.0;
+            let mut base = None;
+            let deliver: Deliver = Arc::new(|_| {});
+            let (_, image) = develop_job(
+                &input,
+                &edit,
+                0,
+                1,
+                &mut base,
+                &mut None,
+                &mut Ai::new(),
+                None,
+                None,
+                &mut None,
+                &deliver,
+            );
+            let image = image.expect("a picture on the CPU");
+            let b = base.as_ref().unwrap();
+            let source = (image.width as u32, image.height as u32);
+            let factor = crate::edited::factor_for(source, &edit.geometry);
+            let finish = || crate::edited::Finish {
+                edit: edit.clone(),
+                turn: 0,
+                source,
+                rasters: Default::default(),
+                clip_level: b.clip_level,
+                guide: Some(b.guide.clone()),
+                kind: b.source,
+                white: b.white_shift(),
+            };
+            let cache: ThumbCache = Arc::new(Mutex::new(Some(
+                Thumbs::at(
+                    scratch.join("thumbs"),
+                    greycard_library::thumbs::DEFAULT_CAP,
+                )
+                .with_previews(2048, greycard_library::thumbs::DEFAULT_PREVIEW_CAP),
+            )));
+            let edited = crate::edited::Edited::new(cache);
+            let hash = greycard_library::hash_file(&path).unwrap();
+            let cpu = Instant::now();
+            crate::edited::keep(
+                &edited,
+                crate::edited::Keeping {
+                    path: path.clone(),
+                    hash: hash.clone(),
+                    key: 1,
+                    developed: crate::edited::Developed::Full(image.clone()),
+                    factor,
+                    read_back: None,
+                    marked: edited.mark(&hash, 1).unwrap(),
+                    iso: None,
+                    finish: finish(),
+                },
+                |_| {},
+            );
+            let cpu = cpu.elapsed().as_secs_f64();
+            let read_back = gpu.as_ref().map(|ctx| {
+                let halves = Halves::from_image(&image, None);
+                let texture = ctx.viewport_texture(source.0, source.1);
+                ctx.queue().write_texture(
+                    greycard_gpu::wgpu::TexelCopyTextureInfo {
+                        texture: &texture,
+                        mip_level: 0,
+                        origin: greycard_gpu::wgpu::Origin3d::ZERO,
+                        aspect: greycard_gpu::wgpu::TextureAspect::All,
+                    },
+                    bytemuck::cast_slice(&halves.pixels),
+                    greycard_gpu::wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(source.0 * 8),
+                        rows_per_image: Some(source.1),
+                    },
+                    greycard_gpu::wgpu::Extent3d {
+                        width: source.0,
+                        height: source.1,
+                        depth_or_array_layers: 1,
+                    },
+                );
+                ctx.queue().submit([]);
+                let started = Instant::now();
+                let reduced = crate::edited::read_back_reduced(ctx, &texture, factor).unwrap();
+                let read = started.elapsed().as_secs_f64();
+                let started = Instant::now();
+                crate::edited::keep(
+                    &edited,
+                    crate::edited::Keeping {
+                        path: path.clone(),
+                        hash: hash.clone(),
+                        key: 2,
+                        developed: crate::edited::Developed::Reduced(reduced),
+                        factor,
+                        read_back: Some(read),
+                        marked: edited.mark(&hash, 2).unwrap(),
+                        iso: None,
+                        finish: finish(),
+                    },
+                    |_| {},
+                );
+                (read, started.elapsed().as_secs_f64())
+            });
+            println!(
+                "{}: {}x{} ({:.1} MP), factor {factor}: from the CPU's picture {:.0} ms{}",
+                path.file_name().unwrap().to_string_lossy(),
+                source.0,
+                source.1,
+                source.0 as f64 * source.1 as f64 / 1e6,
+                cpu * 1e3,
+                read_back
+                    .map(|(r, k)| format!(
+                        "; from the GPU's, read back {:.0} ms and made {:.0} ms",
+                        r * 1e3,
+                        k * 1e3
+                    ))
+                    .unwrap_or_default(),
+            );
+        }
+        crate::testing::remove_dir_retry(&scratch);
     }
 
     /// An offline frame's picture: looked up by the row's hash and
@@ -5167,9 +5700,11 @@ mod tests {
         };
         write(200);
         let cache = cache_at(&dir);
-        let (first, cached) = cached_thumbnail_noting(&cache, None, &png, 16, thumbnail).unwrap();
+        let (first, cached) =
+            cached_thumbnail_noting(&cache, None, None, &png, 16, thumbnail).unwrap();
         assert!(!cached);
-        let (again, cached) = cached_thumbnail_noting(&cache, None, &png, 16, thumbnail).unwrap();
+        let (again, cached) =
+            cached_thumbnail_noting(&cache, None, None, &png, 16, thumbnail).unwrap();
         assert!(cached);
         assert_eq!((again.width, again.height), (first.width, first.height));
         // Written again with another mtime.
@@ -5181,7 +5716,8 @@ mod tests {
             .unwrap()
             .set_modified(later)
             .unwrap();
-        let (fresh, cached) = cached_thumbnail_noting(&cache, None, &png, 16, thumbnail).unwrap();
+        let (fresh, cached) =
+            cached_thumbnail_noting(&cache, None, None, &png, 16, thumbnail).unwrap();
         assert!(!cached);
         assert!(
             fresh.rgb.iter().all(|v| *v < 60),
@@ -5225,7 +5761,7 @@ mod tests {
         std::fs::write(&raw, &half).unwrap();
         let cache = cache_at(&dir);
         let (grey, cached) =
-            cached_thumbnail_noting(&cache, None, &raw, 176, tail_picture).unwrap();
+            cached_thumbnail_noting(&cache, None, None, &raw, 176, tail_picture).unwrap();
         assert!(!cached);
         assert!(grey.rgb.iter().all(|v| *v == 0));
         // The same head and the same length: the same hash.
@@ -5234,7 +5770,7 @@ mod tests {
         set_time(&raw, 7);
         assert_eq!(greycard_library::hash_file(&raw).unwrap(), before);
         let (done, cached) =
-            cached_thumbnail_noting(&cache, None, &raw, 176, tail_picture).unwrap();
+            cached_thumbnail_noting(&cache, None, None, &raw, 176, tail_picture).unwrap();
         assert!(
             !cached,
             "the half-copied picture is not the finished file's"
@@ -5245,7 +5781,7 @@ mod tests {
         let renamed = dir.join("wedding-1981.NEF");
         std::fs::rename(&raw, &renamed).unwrap();
         let (again, cached) =
-            cached_thumbnail_noting(&cache, None, &renamed, 176, tail_picture).unwrap();
+            cached_thumbnail_noting(&cache, None, None, &renamed, 176, tail_picture).unwrap();
         assert!(cached);
         assert_eq!(again.rgb, done.rgb);
         crate::testing::remove_dir_retry(&dir);
@@ -5274,7 +5810,7 @@ mod tests {
             .enumerate()
         {
             let (_, cached) =
-                cached_thumbnail_noting(&cache, None, path, 176, tail_picture).unwrap();
+                cached_thumbnail_noting(&cache, None, None, path, 176, tail_picture).unwrap();
             assert_eq!(cached, round >= 2, "round {round}");
         }
         crate::testing::remove_dir_retry(&dir);
@@ -5294,14 +5830,14 @@ mod tests {
             std::io::Write::write_all(&mut f, &[9u8; 1000]).unwrap();
             made
         };
-        let (_, cached) = cached_thumbnail_noting(&cache, None, &raw, 176, grows).unwrap();
+        let (_, cached) = cached_thumbnail_noting(&cache, None, None, &raw, 176, grows).unwrap();
         assert!(!cached);
         let touched = |path: &std::path::Path, size: u32| {
             let made = tail_picture(path, size);
             set_time(path, 30);
             made
         };
-        let (_, cached) = cached_thumbnail_noting(&cache, None, &raw, 176, touched).unwrap();
+        let (_, cached) = cached_thumbnail_noting(&cache, None, None, &raw, 176, touched).unwrap();
         assert!(!cached);
         assert_eq!(
             cache.lock().unwrap().as_ref().unwrap().usage().entries,
@@ -5309,9 +5845,11 @@ mod tests {
             "neither was kept"
         );
         // Left alone, it is made once and kept.
-        let (_, cached) = cached_thumbnail_noting(&cache, None, &raw, 176, tail_picture).unwrap();
+        let (_, cached) =
+            cached_thumbnail_noting(&cache, None, None, &raw, 176, tail_picture).unwrap();
         assert!(!cached);
-        let (_, cached) = cached_thumbnail_noting(&cache, None, &raw, 176, tail_picture).unwrap();
+        let (_, cached) =
+            cached_thumbnail_noting(&cache, None, None, &raw, 176, tail_picture).unwrap();
         assert!(cached);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -5327,7 +5865,8 @@ mod tests {
             .unwrap();
         let cache: ThumbCache = Arc::new(Mutex::new(Some(Thumbs::at(dir.join("thumbs"), 0))));
         for _ in 0..2 {
-            let (_, cached) = cached_thumbnail_noting(&cache, None, &png, 8, thumbnail).unwrap();
+            let (_, cached) =
+                cached_thumbnail_noting(&cache, None, None, &png, 8, thumbnail).unwrap();
             assert!(!cached);
         }
         assert!(!dir.join("thumbs").exists());
@@ -5375,7 +5914,8 @@ mod tests {
             .unwrap();
         let off: ThumbCache = Arc::new(Mutex::new(None));
         for _ in 0..2 {
-            let (_, cached) = cached_thumbnail_noting(&off, None, &png, 8, thumbnail).unwrap();
+            let (_, cached) =
+                cached_thumbnail_noting(&off, None, None, &png, 8, thumbnail).unwrap();
             assert!(!cached);
         }
         assert!(!dir.join("thumbs").exists());

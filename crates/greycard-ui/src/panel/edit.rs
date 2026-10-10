@@ -76,6 +76,7 @@ pub(crate) fn save_sidecar(st: &mut State, c: usize) -> bool {
     if crate::sync::followed(st, c) {
         st.sidecars[c].advance(&greycard_edit::sync::Stamp::now());
         crate::sync::after_save(st, c);
+        crate::edited::saved(st, c);
         return true;
     }
     let (path, placement) = (st.files[c].clone(), st.placement);

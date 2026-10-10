@@ -155,7 +155,12 @@ pub fn overlays(placeholder_up: bool) -> Overlays {
 /// follows the frame's turn; `small` is a preview smaller than the
 /// camera's full frame; `at` is the view's zoom, 0 for fitted, and
 /// whether the copy is the full one (`cull::zoom_words`).
-pub fn status(size: (u32, u32), small: bool, local: bool, at: (f32, bool)) -> String {
+pub fn status(
+    size: (u32, u32),
+    small: bool,
+    local: crate::cull::Origin,
+    at: (f32, bool),
+) -> String {
     let what = crate::panel::cull::picture_words(size, small, local);
     let at = crate::panel::cull::zoom_words(at.0, at.1);
     format!("{WORD}: {what}, {at}; developing...")
@@ -238,6 +243,7 @@ pub fn worth_it(path: &std::path::Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cull::Origin;
 
     #[test]
     fn a_select_waits_and_its_own_preview_puts_it_up() {
@@ -307,22 +313,29 @@ mod tests {
 
     #[test]
     fn the_status_names_the_camera_jpeg_its_size_and_the_develop_coming() {
-        let line = status((8192, 5464), false, false, (0.0, false));
+        let line = status((8192, 5464), false, Origin::Camera, (0.0, false));
         assert!(line.starts_with("camera preview: the camera JPEG, 8192 \u{d7} 5464"));
         assert!(line.ends_with("fitted; developing..."));
         assert!(
-            status((1616, 1080), true, false, (0.0, false))
+            status((1616, 1080), true, Origin::Camera, (0.0, false))
                 .contains("a small camera preview, 1616 \u{d7} 1080")
         );
         assert!(
-            status((2048, 1365), false, true, (0.0, false))
+            status((2048, 1365), false, Origin::Local, (0.0, false))
                 .contains("the local preview, 2048 \u{d7} 1365")
+        );
+        assert!(
+            status((1365, 2048), false, Origin::Edit, (0.0, false))
+                .contains("the edit, 1365 \u{d7} 2048")
         );
         // At the command line's zoom it says the zoom, not fitted, and
         // what the loupe says of a view-size copy.
-        assert!(status((8192, 5464), false, false, (1.0, true)).ends_with(", 100%; developing..."));
         assert!(
-            status((8192, 5464), false, false, (1.0, false))
+            status((8192, 5464), false, Origin::Camera, (1.0, true))
+                .ends_with(", 100%; developing...")
+        );
+        assert!(
+            status((8192, 5464), false, Origin::Camera, (1.0, false))
                 .ends_with(", 100%, screen-size copy until the full one decodes; developing...")
         );
     }

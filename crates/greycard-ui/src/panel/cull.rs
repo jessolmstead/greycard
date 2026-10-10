@@ -242,7 +242,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
         }
         .plane_size(preview.source.0 as f32, preview.source.1 as f32);
         let shown = (plane.0.round() as u32, plane.1.round() as u32);
-        let (small, local, own) = (preview.small(), preview.local, preview.own_size());
+        let (small, local, own) = (preview.small(), preview.origin(), preview.own_size());
         st.placeholder = Some(placeholder::Wait::held(c, st.generation));
         show_overlays(st, app, true);
         say_placeholder(app, shown, small, local, (st.zoom, own));
@@ -592,7 +592,7 @@ fn placeholder_arrived(st: &mut State, app: &App, file: usize) {
     }
     .plane_size(preview.source.0 as f32, preview.source.1 as f32);
     let shown = (plane.0.round() as u32, plane.1.round() as u32);
-    let (small, local, own) = (preview.small(), preview.local, preview.own_size());
+    let (small, local, own) = (preview.small(), preview.origin(), preview.own_size());
     if !st.zoom_stands {
         st.zoom = 0.0;
     }
@@ -616,7 +616,7 @@ pub(crate) fn say_placeholder(
     app: &App,
     shown: (u32, u32),
     small: bool,
-    local: bool,
+    local: cull::Origin,
     at: (f32, bool),
 ) {
     let line = placeholder::status(shown, small, local, at);
@@ -978,7 +978,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
             size: (full.0.round() as u32, full.1.round() as u32),
             small: preview.small(),
             own: preview.own_size(),
-            local: preview.local,
+            local: preview.origin(),
         });
     }
     let drawn: Vec<render::Tile> = tiles
@@ -1187,13 +1187,15 @@ pub(crate) struct Named {
     pub(crate) size: (u32, u32),
     pub(crate) small: bool,
     pub(crate) own: bool,
-    pub(crate) local: bool,
+    pub(crate) local: cull::Origin,
 }
 
 /// The picture shown, in the status line's words: the camera's JPEG,
 /// a small camera preview, or the local preview kept in the cache.
-pub(crate) fn picture_words((w, h): (u32, u32), small: bool, local: bool) -> String {
-    if local {
+pub(crate) fn picture_words((w, h): (u32, u32), small: bool, from: cull::Origin) -> String {
+    if from == cull::Origin::Edit {
+        format!("the edit, {w} \u{d7} {h}")
+    } else if from == cull::Origin::Local {
         format!("the local preview, {w} \u{d7} {h}")
     } else if small {
         format!("a small camera preview, {w} \u{d7} {h}")

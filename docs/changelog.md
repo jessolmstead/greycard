@@ -14,6 +14,11 @@ note a first tester reads.
 
 ### Culling and the grid
 
+- An edited frame shows its edit in the strip, the grid, the cull loupe
+  and compare, kept from the open frame's own develop when its edit is
+  saved or the frame is left; a frame reset to the default shows the
+  camera's picture again
+  ([§278](https://github.com/jessolmstead/greycard/blob/master/docs/notes/278-thumbnails-from-the-edit-part-one.md))
 - A pencil on a grid tile or strip cell marks a frame whose edit is
   not the default, and a second mark one that has been exported; the
   export mark stays through an undo, and a frame reset to the default

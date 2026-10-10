@@ -1470,6 +1470,9 @@ pub(crate) fn sidecar_written(st: &mut State, file: usize) {
     if let (Some(indexer), Some(path)) = (&st.index, st.files.get(file)) {
         indexer.file(path.clone());
     }
+    // The pictures made from the edit: the open frame's kept from its
+    // develop, another frame's shown as it now is.
+    crate::edited::saved(st, file);
     crate::sync::after_save(st, file);
 }
 

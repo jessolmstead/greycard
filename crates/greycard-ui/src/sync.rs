@@ -1671,8 +1671,10 @@ fn settle_held(
                 }
             }
             st.sidecars[c] = theirs;
-            // A frame off screen has its marks from what it holds now.
+            // A frame off screen has its marks from what it holds now,
+            // and its pictures from its edit as it is now.
             crate::panel::browser::show_badges(&st, app, c);
+            crate::edited::saved(&st, c);
             if let Some(indexer) = &st.index {
                 indexer.file(st.files[c].clone());
             }

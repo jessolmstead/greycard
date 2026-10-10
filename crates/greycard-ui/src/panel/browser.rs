@@ -1324,6 +1324,8 @@ pub(crate) fn open_loaded(
             .collect(),
     );
     st.files = files.clone();
+    // Which frames show their edit, before any picture is asked for.
+    crate::edited::note_list(&st, worker);
     // The new folder's rows as the index has them now, and a pass
     // over it on the indexer's thread to bring them up to date.
     st.index_passed = vec![true; files.len()];

@@ -2945,6 +2945,8 @@ pub(crate) fn merge(
     if rows.is_none() {
         crate::library::refresh_ids(st);
     }
+    // Which frames show their edit, before any picture is asked for.
+    crate::edited::note_list(st, worker);
     let hidden = rebuild_browser(st, app);
     if renumbered {
         ask_owed(st, worker);
@@ -4595,7 +4597,7 @@ pub(crate) mod tests {
             size: (300, 200),
             small: false,
             own: true,
-            local: true,
+            local: crate::cull::Origin::Local,
         }];
         let line = crate::panel::cull::cull_status(
             state.borrow().cull.as_ref().unwrap(),

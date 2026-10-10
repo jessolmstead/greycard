@@ -21,6 +21,7 @@ mod clipboard;
 mod cull;
 mod delete;
 mod display;
+mod edited;
 mod entry;
 mod export;
 mod export_queue;
