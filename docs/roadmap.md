@@ -325,6 +325,10 @@ comes across with its ratings and collections.
       its own edit and history; a collection references hash plus
       version. Waits on collections
 - [ ] Stacks, in the collections file. Waits on collections
+- [ ] Collections carried across machines: the collections file is per
+      machine, so a set gathered on the laptop is not on the desktop;
+      carry it through the archive as the sidecars are (§243). Waits on
+      collections
 - [ ] Faces in the library: detection and grouping by a clean-license
       model, names as keywords in the meta section, a facet in the
       filter bar. The index is there since §160
