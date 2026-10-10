@@ -64,14 +64,22 @@ fn files_read(edit: &Edit, looks: Option<&Path>, profiles: Option<&Path>) -> Vec
 
 /// A file's contents as the key takes them: BLAKE3 of the whole file,
 /// kept by its path, length and modification time so a table read
-/// once is not hashed again for every frame that names it. `None` for
-/// a file that is not there or will not read.
+/// once is not hashed again for every frame that names it. A file
+/// written in the last two seconds is read again whatever the cache
+/// holds: a refit of the same length landing within one tick of the
+/// filesystem's time (coarse on Windows) would otherwise keep the old
+/// hash. `None` for a file that is not there or will not read.
 fn contents(path: &Path) -> Option<[u8; 32]> {
     type Seen = HashMap<PathBuf, (u64, Option<SystemTime>, [u8; 32])>;
     static SEEN: LazyLock<Mutex<Seen>> = LazyLock::new(|| Mutex::new(HashMap::new()));
     let meta = std::fs::metadata(path).ok().filter(|m| m.is_file())?;
     let stat = (meta.len(), meta.modified().ok());
-    if let Some(&(len, time, hash)) = SEEN.lock().ok()?.get(path)
+    let settled = stat
+        .1
+        .and_then(|t| SystemTime::now().duration_since(t).ok())
+        .is_some_and(|age| age >= std::time::Duration::from_secs(2));
+    if settled
+        && let Some(&(len, time, hash)) = SEEN.lock().ok()?.get(path)
         && (len, time) == stat
     {
         return Some(hash);

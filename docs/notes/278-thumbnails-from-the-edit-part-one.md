@@ -22,7 +22,10 @@ extension is there (`.cube` or a HaldCLUT; the camera match's fitted
 tables are looks like any other) and its variant for the edit's display
 curve, and a DCP from the profile directory. A file's hash is kept in
 memory by its path, length and mtime, so a 65-point table is read once
-a session and not once a frame. `Sidecar::develop_key` is the same for
+a session and not once a frame; a file written in the last two seconds
+is read again whatever is kept, since a refit of the same length can
+land within one tick of a filesystem's time (Windows CI caught that
+on the key's own test). `Sidecar::develop_key` is the same for
 the sidecar's current edit.
 
 The lens database's name is the editor's to give, since greycard-edit
