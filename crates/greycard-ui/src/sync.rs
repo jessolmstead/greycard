@@ -61,6 +61,9 @@ pub(crate) struct Sync {
     /// the first save of a window whose index is still opening): paired
     /// and queued when it is (`reader_opened`), never dropped.
     deferred: Vec<(PathBuf, Source)>,
+    /// The frames whose write job is running on its thread, which the
+    /// quit's write waits for ([`write_followed_at_quit`]).
+    running: Arc<Running>,
 }
 
 /// A frame followed to its archive copy: where it was, and where.
@@ -336,7 +339,9 @@ pub(crate) fn after_save(st: &mut State, c: usize) {
     };
     if let Some(followed) = st.sync.followed.get(&frame).cloned() {
         // The frame is the archive's copy: its own write, checked
-        // against the copy as any is.
+        // against the copy as any is. With the reader closed (the
+        // quit's own save), the quit writes it
+        // (`write_followed_at_quit`).
         let Some(lib) = st.index_reader.as_ref() else {
             return;
         };
@@ -408,8 +413,9 @@ pub(crate) fn note_disk_save(index: &Path, roots: &greycard_library::Roots, fram
 /// still out for its frame. Each was saved to the frame's own sidecar
 /// first, which is what the catch-up reads. A bring-home or a settle
 /// is not a write of the file to the archive and is left; a frame on
-/// the archive (one followed there) is not noted (`note_disk_save`).
-/// How many rows were noted.
+/// the archive (one followed there) is not noted (`note_disk_save`):
+/// it has no file here to write from, and its write went just before
+/// ([`write_followed_at_quit`]). How many rows were noted.
 pub(crate) fn note_unsent_at_quit(st: &mut State) -> usize {
     let deferred = std::mem::take(&mut st.sync.deferred);
     let queued = std::mem::take(&mut st.sync.queued);
@@ -433,6 +439,344 @@ pub(crate) fn note_unsent_at_quit(st: &mut State) -> usize {
             )
         })
         .sum()
+}
+
+/// How long the quit waits for the writes of the frames it follows on
+/// an archive's copy, a write of the frame's still out before them
+/// included: the roots' look (three seconds) and a write, as long as
+/// it waits for the worker (`worker::LEAVING`).
+pub(crate) const QUIT_WRITE_WAIT: Duration = Duration::from_secs(5);
+
+/// The frames whose write job is running on its thread, counted from
+/// its sending to its end there, not to its landing, which a closing
+/// window never hears: the quit's write of a frame waits for the
+/// frame's job still out, so the two never write the copy at once.
+#[derive(Default)]
+pub(crate) struct Running {
+    frames: std::sync::Mutex<HashMap<PathBuf, usize>>,
+    ended: std::sync::Condvar,
+}
+
+impl Running {
+    fn frames(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, usize>> {
+        self.frames
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn start(&self, frame: &Path) {
+        *self.frames().entry(frame.to_path_buf()).or_default() += 1;
+    }
+
+    fn end(&self, frame: &Path) {
+        let mut frames = self.frames();
+        if let Some(n) = frames.get_mut(frame) {
+            *n = n.saturating_sub(1);
+            if *n == 0 {
+                frames.remove(frame);
+            }
+        }
+        drop(frames);
+        self.ended.notify_all();
+    }
+
+    fn running(&self, frame: &Path) -> bool {
+        self.frames().contains_key(frame)
+    }
+
+    /// Until no job of `frame`'s is running, however long that is.
+    fn wait_for(&self, frame: &Path) {
+        let mut frames = self.frames();
+        while frames.contains_key(frame) {
+            frames = self
+                .ended
+                .wait(frames)
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+        }
+    }
+}
+
+/// A job's end on its thread, said however it ends, and when it never
+/// runs: a job not sent is dropped unrun.
+struct Ends(Arc<Running>, PathBuf);
+
+impl Drop for Ends {
+    fn drop(&mut self) {
+        self.0.end(&self.1);
+    }
+}
+
+/// What the quit's writes of followed frames came to.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct QuitWrites {
+    /// Frames whose write ended within the wait, whatever it came to.
+    pub(crate) ended: usize,
+    /// Rows noted waiting for the writes that had not.
+    pub(crate) noted: usize,
+}
+
+/// The window is closing, its index reader gone: a frame it follows on
+/// an archive's copy (§233) has no sidecar here, its root being away,
+/// so a save whose write never went out (the quit's own, made after
+/// the reader closed; one queued behind a write still out) is held in
+/// memory alone, and no job sent now would land. Its write goes now,
+/// off the window's thread, as a job's would: checked against what we
+/// last wrote there, and a copy saved elsewhere since joined, not
+/// written over. A job of the frame's still out goes first: the quit's
+/// write waits for it to end, never runs beside it, and then finds its
+/// save recorded or writes over it. The window waits for all of it at
+/// most `limit`. A frame whose latest revision the index records on
+/// its copy already is not written again. A write that has not ended
+/// within the limit is noted waiting in the index, "saved as the
+/// window closed", and goes on until the process ends: the save is on
+/// the copy only if it lands by then, and the next window's catch-up
+/// records what stands on the copy.
+pub(crate) fn write_followed_at_quit(st: &mut State, limit: Duration) -> QuitWrites {
+    write_followed_with(st, limit, write_at_quit)
+}
+
+/// [`write_followed_at_quit`], each frame's write made by `run`.
+fn write_followed_with(
+    st: &mut State,
+    limit: Duration,
+    run: fn(&Write, &Path) -> Vec<Outcome>,
+) -> QuitWrites {
+    let mut out = QuitWrites::default();
+    let Some(index) = st.index_path.clone().filter(|_| st.write_sidecars) else {
+        return out;
+    };
+    let held: Vec<(usize, PathBuf, PathBuf)> = st
+        .files
+        .iter()
+        .enumerate()
+        .filter_map(|(c, f)| {
+            let followed = st.sync.followed.get(f)?;
+            Some((c, f.clone(), followed.archive.clone()))
+        })
+        .filter(|(c, ..)| {
+            crate::panel::edit::writable(st, *c) && !st.sidecars[*c].revisions.is_empty()
+        })
+        .collect();
+    if held.is_empty() {
+        return out;
+    }
+    // Opened as a save with no window open opens it: only as it is,
+    // its lock waited on a quarter second.
+    let lib = match Library::open_current(&index, Duration::from_millis(250)) {
+        Ok(lib) => lib,
+        Err(e) => {
+            tracing::warn!(
+                "sync: the index not read at the quit: {e}; a followed frame's last save is \
+                 not written to its copy"
+            );
+            return out;
+        }
+    };
+    let mut writes = Vec::new();
+    for (c, copy, archive) in held {
+        let Some(row) = lib.by_path(&copy).ok().flatten() else {
+            continue;
+        };
+        let latest = st.sidecars[c].revisions.last().map(|r| r.hash.clone());
+        let recorded = lib
+            .archive_write(&row.hash, &archive, &copy)
+            .ok()
+            .flatten()
+            .map(|w| w.revision);
+        if recorded == latest {
+            continue;
+        }
+        // The window's sidecar is the latest: a write queued behind
+        // one still out carries no more than it.
+        st.sync.queued.remove(&copy);
+        writes.push(Write {
+            frame: copy.clone(),
+            hash: row.hash,
+            source: Source::Memory(Box::new(st.sidecars[c].clone())),
+            placement: st.placement,
+            xmp: st.xmp_sidecars,
+            copies: vec![Copy { archive, copy }],
+        });
+    }
+    drop(lib);
+    if writes.is_empty() {
+        return out;
+    }
+    let keys: Vec<(String, PathBuf, PathBuf)> = writes
+        .iter()
+        .map(|w| (w.hash.clone(), w.copies[0].archive.clone(), w.frame.clone()))
+        .collect();
+    let running = Arc::clone(&st.sync.running);
+    let job_running = Arc::clone(&running);
+    let (tx, rx) = std::sync::mpsc::channel::<(PathBuf, Vec<Outcome>)>();
+    let job_index = index.clone();
+    let spawned = std::thread::Builder::new()
+        .name("greycard quit write".into())
+        .spawn(move || {
+            for write in writes {
+                // After the frame's job still out, never beside it: an
+                // older save renamed over this one would stand on the
+                // copy, and its record would clear this one's row.
+                job_running.wait_for(&write.frame);
+                let outcomes = run(&write, &job_index);
+                if tx.send((write.frame, outcomes)).is_err() {
+                    return;
+                }
+            }
+        });
+    let mut ended = HashSet::new();
+    match spawned {
+        Ok(_) => {
+            let deadline = std::time::Instant::now() + limit;
+            while ended.len() < keys.len() {
+                let left = deadline.saturating_duration_since(std::time::Instant::now());
+                let Ok((frame, outcomes)) = rx.recv_timeout(left) else {
+                    break;
+                };
+                for outcome in outcomes {
+                    said_at_quit(&frame, outcome);
+                }
+                ended.insert(frame);
+            }
+        }
+        Err(e) => tracing::warn!("sync: the quit's write not started: {e}"),
+    }
+    out.ended = ended.len();
+    let late: Vec<&(String, PathBuf, PathBuf)> =
+        keys.iter().filter(|(_, _, f)| !ended.contains(f)).collect();
+    if late.is_empty() {
+        return out;
+    }
+    let mut lib = match Library::open_current(&index, Duration::from_millis(250)) {
+        Ok(lib) => lib,
+        Err(e) => {
+            tracing::warn!("sync: the index not written at the quit: {e}");
+            return out;
+        }
+    };
+    for (hash, archive, frame) in late {
+        if running.running(frame) {
+            tracing::warn!(
+                "sync: {}: a write of an older save to {} was still out as the window closed; \
+                 this save waits behind it, and is lost unless both land before the editor ends",
+                file_name(frame),
+                archive.display()
+            );
+        } else {
+            tracing::warn!(
+                "sync: {}: its write to {} had not ended as the window closed; this save is \
+                 lost unless it lands before the editor ends",
+                file_name(frame),
+                archive.display()
+            );
+        }
+        match lib.add_pending(hash, archive, frame, frame, "saved as the window closed") {
+            Ok(()) => out.noted += 1,
+            Err(e) => tracing::warn!("sync: {}: pending not noted: {e}", file_name(frame)),
+        }
+    }
+    out
+}
+
+/// A followed frame's write at the quit, off the window's thread:
+/// nothing when a job of the frame's that was still out has recorded
+/// this save on the copy already; else [`write_one`], and a copy that
+/// came back not behind (saved elsewhere since) joined with this save
+/// here and written, as the window's settle would at a landing that
+/// will not come, the archive's answer of a moment ago standing. A
+/// copy that holds all of this save already is left, its row for the
+/// next catch-up.
+fn write_at_quit(write: &Write, index: &Path) -> Vec<Outcome> {
+    // Nobody listens: the quit's wait is a deadline, not a silence.
+    let beat: Beat = Arc::new(|| {});
+    let Source::Memory(ours) = &write.source else {
+        return write_through(write, index, &beat);
+    };
+    let latest = ours.revisions.last().map(|r| r.hash.as_str());
+    let recorded = |target: &Copy| {
+        archive::open_index(index, false, &beat)
+            .and_then(|lib| {
+                lib.archive_write(&write.hash, &target.archive, &target.copy)
+                    .ok()
+                    .flatten()
+            })
+            .map(|w| w.revision)
+    };
+    write
+        .copies
+        .iter()
+        .map(|target| {
+            if recorded(target).as_deref() == latest {
+                return Outcome::Same {
+                    archive: target.archive.clone(),
+                    copy: target.copy.clone(),
+                };
+            }
+            match write_one(write, target, index, &beat) {
+                Outcome::Take {
+                    archive,
+                    copy,
+                    frame,
+                    theirs,
+                } => match compare(ours, &theirs) {
+                    Compared::SameEdit | Compared::Diverged => {
+                        let mut joined = join(ours, &theirs);
+                        joined.advance(&greycard_edit::sync::Stamp::now());
+                        let again = Write {
+                            source: Source::Memory(Box::new(joined)),
+                            ..write.clone()
+                        };
+                        let outcome = write_copy(&again, target, index, &beat, true);
+                        if let Outcome::Take { archive, .. } = &outcome {
+                            tracing::warn!(
+                                "sync: {}: the copy on {} changed again while the quit joined \
+                                 this save with it; this save is not on it",
+                                file_name(&write.frame),
+                                archive.display()
+                            );
+                        }
+                        outcome
+                    }
+                    _ => {
+                        tracing::info!(
+                            "sync: {}: the copy on {} holds this save already",
+                            file_name(&frame),
+                            archive.display()
+                        );
+                        Outcome::Take {
+                            archive,
+                            copy,
+                            frame,
+                            theirs,
+                        }
+                    }
+                },
+                other => other,
+            }
+        })
+        .collect()
+}
+
+/// The log's line for what a quit's write of `frame` came to.
+fn said_at_quit(frame: &Path, outcome: Outcome) {
+    match outcome {
+        Outcome::Written { archive, .. } | Outcome::Same { archive, .. } => tracing::info!(
+            "sync: {}: its last save is on {} as the window closed",
+            file_name(frame),
+            archive.display()
+        ),
+        Outcome::Waiting { archive, reason } => tracing::warn!(
+            "sync: {}: its last save not written to {} as the window closed: {reason}",
+            file_name(frame),
+            archive.display()
+        ),
+        Outcome::Take { archive, .. } => tracing::info!(
+            "sync: {}: the copy on {} was not behind this save; its row waits for the next window",
+            file_name(frame),
+            archive.display()
+        ),
+        Outcome::Gone { .. } | Outcome::Homed { .. } => {}
+    }
 }
 
 /// [`note_disk_save`], the rows given `reason`.
@@ -557,11 +901,17 @@ fn send_next(st: &mut State, frame: &Path) {
     st.sync.in_flight.insert(frame.to_path_buf());
     let frame = frame.to_path_buf();
     let landing_frame = frame.clone();
+    st.sync.running.start(&frame);
+    let ends = Ends(Arc::clone(&st.sync.running), frame.clone());
     let sent = send(
         &app,
         "archive write",
         WRITE_WAIT,
-        move |beat| write_through(&write, &index, beat),
+        move |beat| {
+            let outcomes = write_through(&write, &index, beat);
+            drop(ends);
+            outcomes
+        },
         move |state, app, worker, heard| {
             landed(state, app, worker, &landing_frame, heard);
         },
@@ -648,6 +998,14 @@ fn bring_home(write: &Write, local: &Path, ours: &Sidecar) -> Outcome {
 
 /// One copy: see [`write_through`].
 fn write_one(write: &Write, target: &Copy, index: &Path, beat: &Beat) -> Outcome {
+    write_copy(write, target, index, beat, false)
+}
+
+/// [`write_one`]; `again` when the same job wrote this copy a moment
+/// ago (the quit's join, [`write_at_quit`]): the archive answered then
+/// and the row was made, so it is neither looked at nor counted a try
+/// again.
+fn write_copy(write: &Write, target: &Copy, index: &Path, beat: &Beat, again: bool) -> Outcome {
     let (archive, copy) = (&target.archive, &target.copy);
     let mut lib = archive::open_index(index, true, beat);
     let note = |lib: Option<&mut Library>, reason: &str| {
@@ -662,7 +1020,8 @@ fn write_one(write: &Write, target: &Copy, index: &Path, beat: &Beat) -> Outcome
         }
     };
     // Pending before the attempt.
-    if let Some(lib) = lib.as_mut()
+    if !again
+        && let Some(lib) = lib.as_mut()
         && let Err(e) = lib.add_pending(&write.hash, archive, copy, &write.frame, "writing")
     {
         tracing::warn!("sync: {}: pending not noted: {e}", file_name(&write.frame));
@@ -673,7 +1032,7 @@ fn write_one(write: &Write, target: &Copy, index: &Path, beat: &Beat) -> Outcome
             "more than one copy of this frame on the archive: which is its own is not known",
         );
     }
-    if crate::roots::answer_of(archive, ROOT_WAIT) != Some(true) {
+    if !again && crate::roots::answer_of(archive, ROOT_WAIT) != Some(true) {
         return note(lib.as_mut(), "offline");
     }
     beat();
@@ -2752,6 +3111,166 @@ pub(crate) mod tests {
         };
         assert_eq!((exposure("a.tif"), exposure("b.tif")), (0.7, 0.3));
         assert!(pending_for(&db, &nas).is_empty());
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A frame followed onto its archive copy while its own root is
+    /// away has no file here: the quit's save of it, made after the
+    /// reader closed, sent no job and was lost. Through the quit's own
+    /// saves (`startup::save_at_quit`): the save reaches the copy within
+    /// the wait; a copy saved elsewhere since is joined, not written
+    /// over; a job of the frame's still out goes first and the quit's
+    /// write after it, never beside it; and a write that has not ended
+    /// in the wait is noted waiting, which the next window settles.
+    #[test]
+    fn a_followed_frames_save_at_the_quit_reaches_its_copy() {
+        use crate::panel::startup::save_at_quit;
+        let dir = scratch("followed-quit");
+        let (local, nas, files, db) = two_places(&dir);
+        let app = window(2);
+        let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
+        save(&state, 0.5);
+        land_sent(&state, &app, &worker);
+        // The local disk is unplugged, and the frame on screen follows
+        // its copy.
+        let copy = nas.join("shoot").join("a.tif");
+        let away = dir.join("local-away");
+        std::fs::rename(&local, &away).unwrap();
+        {
+            let mut st = state.borrow_mut();
+            st.library.offline.insert(local.clone());
+            follow_offline(&mut st, &app);
+        }
+        land_sent(&state, &app, &worker);
+        assert_eq!(state.borrow().files[0], copy, "followed");
+        save(&state, 0.7);
+        land_sent(&state, &app, &worker);
+        let on_copy = || Sidecar::load(&copy).unwrap().unwrap();
+        assert_eq!(on_copy().current.light.exposure, 0.7);
+        let recorded = || {
+            let lib = Library::open_read_only(&db).unwrap();
+            let hash = lib.by_path(&copy).unwrap().unwrap().hash;
+            lib.archive_write(&hash, &nas, &copy)
+                .unwrap()
+                .map(|w| w.revision)
+        };
+        let latest = |state: &Rc<RefCell<State>>| {
+            state.borrow().sidecars[0]
+                .revisions
+                .last()
+                .map(|r| r.hash.clone())
+        };
+        // The quit: the reader closed, as `startup::main` closes it,
+        // then its saves.
+        state.borrow_mut().index_reader = None;
+        assert_eq!(
+            save_at_quit(&mut state.borrow_mut(), exposed(0.9), QUIT_WRITE_WAIT),
+            QuitWrites { ended: 1, noted: 0 }
+        );
+        assert!(SENT.with(|s| s.borrow().is_empty()), "no job: written");
+        assert_eq!(on_copy().current.light.exposure, 0.9);
+        assert_eq!(
+            compare(&state.borrow().sidecars[0], &on_copy()),
+            Compared::Same
+        );
+        assert!(pending_for(&db, &nas).is_empty());
+        assert_eq!(recorded(), latest(&state), "recorded, as a job's write is");
+        // Recorded, it is not written again.
+        assert_eq!(
+            save_at_quit(&mut state.borrow_mut(), exposed(0.9), QUIT_WRITE_WAIT),
+            QuitWrites::default()
+        );
+        // A save's job still out at the quit: the quit's write waits
+        // for it and does not go beside it. Here the job cannot run
+        // until the test lands it, so the wait runs out first: the row
+        // is noted and the copy is untouched.
+        crate::library::open_reader(&mut state.borrow_mut(), &app);
+        save(&state, 1.2);
+        assert!(state.borrow().sync.in_flight.contains(&copy));
+        state.borrow_mut().index_reader = None;
+        let before = std::fs::read(copy_sidecar(&copy, Placement::Beside)).unwrap();
+        assert_eq!(
+            save_at_quit(
+                &mut state.borrow_mut(),
+                exposed(1.4),
+                Duration::from_millis(200)
+            ),
+            QuitWrites { ended: 0, noted: 1 }
+        );
+        assert_eq!(
+            std::fs::read(copy_sidecar(&copy, Placement::Beside)).unwrap(),
+            before,
+            "nothing written beside the job"
+        );
+        let p = pending_for(&db, &nas);
+        assert_eq!(
+            p.iter()
+                .map(|r| (r.frame.as_path(), r.reason.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(copy.as_path(), "saved as the window closed")]
+        );
+        // The older save's job ends; the quit's write goes after it, so
+        // the copy ends on the newer save and it is recorded.
+        land_sent(&state, &app, &worker);
+        let start = std::time::Instant::now();
+        while recorded() != latest(&state) {
+            assert!(start.elapsed() < Duration::from_secs(20), "never written");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(on_copy().current.light.exposure, 1.4);
+        assert!(exposures_of(&on_copy()).contains(&1.2));
+        assert!(pending_for(&db, &nas).is_empty());
+        // Another machine saved the copy meanwhile: the quit's save is
+        // joined with it, and neither edit is lost.
+        laptop_saves(&copy, -2.0);
+        assert_eq!(
+            save_at_quit(&mut state.borrow_mut(), exposed(1.6), QUIT_WRITE_WAIT),
+            QuitWrites { ended: 1, noted: 0 }
+        );
+        let joined = exposures_of(&on_copy());
+        assert!(
+            joined.contains(&1.6) && joined.contains(&-2.0),
+            "{joined:?}"
+        );
+        assert!(pending_for(&db, &nas).is_empty());
+        assert_eq!(
+            recorded(),
+            on_copy().revisions.last().map(|r| r.hash.clone()),
+            "the join recorded"
+        );
+        // A write that has not ended in the wait, the process ending
+        // under it: noted waiting.
+        fn never_lands(_: &Write, _: &Path) -> Vec<Outcome> {
+            std::thread::sleep(Duration::from_secs(2));
+            Vec::new()
+        }
+        let before = std::fs::read(copy_sidecar(&copy, Placement::Beside)).unwrap();
+        save(&state, 1.3);
+        assert_eq!(
+            write_followed_with(&mut state.borrow_mut(), Duration::ZERO, never_lands),
+            QuitWrites { ended: 0, noted: 1 }
+        );
+        let p = pending_for(&db, &nas);
+        assert_eq!(
+            p.iter()
+                .map(|r| (r.frame.as_path(), r.reason.as_str()))
+                .collect::<Vec<_>>(),
+            vec![(copy.as_path(), "saved as the window closed")]
+        );
+        close(state, worker);
+        // The next window says it waits, and its catch-up settles the
+        // row against what stands on the copy, which is whole.
+        std::fs::rename(&away, &local).unwrap();
+        let app = window(2);
+        let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
+        assert_eq!(app.get_sync_note(), "1 edit waiting for Archive");
+        heard_from(&mut state.borrow_mut(), &app, &nas, true);
+        land_sent(&state, &app, &worker);
+        assert!(pending_for(&db, &nas).is_empty());
+        assert_eq!(
+            std::fs::read(copy_sidecar(&copy, Placement::Beside)).unwrap(),
+            before
+        );
         crate::testing::remove_scratch(state, &dir);
     }
 

@@ -35,6 +35,11 @@ note a first tester reads.
 
 ### Fixes
 
+- A frame followed onto its archive copy while its own disk is away
+  keeps its last edit at quit: the copy is written before the editor
+  ends, waiting at most five seconds, and a write that cannot finish
+  is noted for the next window
+  ([§275](https://github.com/jessolmstead/greycard/blob/master/docs/notes/275-a-followed-frames-save-at-the-quit.md))
 - Picking the person for a People part while zoomed in no longer sends
   the view back to Fit; it read as the mask resetting the view when it
   landed ([§271](https://github.com/jessolmstead/greycard/blob/master/docs/notes/271-a-person-picked-on-a-zoomed-view-keeps-the-view.md))

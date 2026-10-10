@@ -15,10 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] A frame followed onto its archive copy while its own root is
-      away loses its last edit at quit: its save goes out only as a
-      job, which the closing window never sends. A bounded write to
-      the copy at quit, or the reader closed after the last save (§261)
 - [ ] People mask results are too fuzzy around the edges, not precise enough
 
 ## Next: 0.6.0

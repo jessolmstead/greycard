@@ -1471,11 +1471,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         let st = state.borrow();
         read_edit(&app, &st.edit, st.target)
     };
-    save_edit(&mut state.borrow_mut(), edit);
-    // That save's archive write, and any other that never went out,
-    // waits in the index for the next window: the reader is closed,
-    // and no job sent now would land.
-    crate::sync::note_unsent_at_quit(&mut state.borrow_mut());
+    save_at_quit(&mut state.borrow_mut(), edit, crate::sync::QUIT_WRITE_WAIT);
     // A batch run whose picture never developed is a failure a script
     // can see, as is a window lost under the run.
     let failed = state.borrow().failed || ran.is_err();
@@ -1486,12 +1482,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // tear NVIDIA's driver down under it, and the process dies with
     // SIGSEGV on the worker's thread. So it ends by `_exit` instead,
     // which runs none of them: the kernel ends every thread where it
-    // is. Everything this quit saves is written above (the import's
-    // file in hand, the index closed, the settings, the open frame's
-    // sidecar and its archive write noted), each by a write that has
-    // returned; what is lost is the job in hand, which leaving lost
-    // before too. A worker that has ended by now, the usual case,
-    // leaves the process to end as it always has.
+    // is. What this quit saves is written above (the import's file
+    // in hand, the index closed, the settings, the open frame's
+    // sidecar), each by a write that has returned. The archive writes
+    // are made or noted: a followed frame's write to its copy that
+    // outlasted its wait (`save_at_quit`), and an archive job still
+    // out, go on on threads of their own, each holding a connection to
+    // the index, and end where they are with the process, their rows
+    // noted waiting; each writes its file through a temporary and a
+    // rename, so the copy is the old save or the new, whole. What is
+    // lost is the job in hand, which leaving lost before too. A worker
+    // that has ended by now, the usual case, leaves the process to end
+    // as it always has.
     if !worker.finished() {
         return crate::headless::leave(u8::from(failed));
     }
@@ -1501,6 +1503,25 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     } else {
         std::process::ExitCode::SUCCESS
     })
+}
+
+/// The quit's saves, the window's index reader closed: the open
+/// frame's edit as left; a frame followed onto its archive copy, its
+/// own root away, has no file here for that save, so its write goes
+/// now, waited for at most `wait` and noted waiting in the index if it
+/// has not ended; and every other frame's archive write that never
+/// went out, this save's among them, is noted waiting for the next
+/// window, since no job sent now would land.
+/// What the followed frames' writes came to, for a test.
+pub(crate) fn save_at_quit(
+    st: &mut State,
+    edit: greycard_edit::Edit,
+    wait: std::time::Duration,
+) -> crate::sync::QuitWrites {
+    save_edit(st, edit);
+    let followed = crate::sync::write_followed_at_quit(st, wait);
+    crate::sync::note_unsent_at_quit(st);
+    followed
 }
 
 /// The monitor's profile as the panel has it, and where it is from,
