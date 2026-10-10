@@ -15,6 +15,9 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] Quitting a `--cull` or `--cull-compare` launch over an edited frame
+      writes the default edit over it as a new history state (exposure
+      0, learned blend 1.0); seen on master 0a271a9 with a scripted run
 
 ## Next: 0.6.0
 

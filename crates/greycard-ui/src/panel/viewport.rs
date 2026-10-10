@@ -1125,6 +1125,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 leave_cull(&mut st, &app, &worker, with);
                 return;
             }
+            crate::panel::mask::look_edited(&mut st, &app);
             app.window().request_redraw();
             schedule_save(&mut st, app.as_weak());
         });

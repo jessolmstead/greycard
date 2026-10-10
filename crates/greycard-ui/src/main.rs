@@ -1018,6 +1018,11 @@ pub(crate) struct State {
     /// shows while a shape is placed, and the toggle comes back after,
     /// unless it was thrown meanwhile.
     pub(crate) show_mask_kept: Option<bool>,
+    /// The look as the panel last showed it, read back from the panel
+    /// where it is written (`show_edit`) and where it is changed
+    /// (`mask::look_edited`), so the next change can tell a look slider
+    /// from a shape control.
+    pub(crate) look_seen: RefCell<Option<greycard_edit::Look>>,
     pub(crate) generation: u64,
     /// Whether the command line asked for a snapshot, a screenshot or
     /// an export. All three wait for a picture, and nobody is reading
@@ -1250,6 +1255,7 @@ impl State {
             status_kept: None,
             view_kept: None,
             show_mask_kept: None,
+            look_seen: RefCell::new(None),
             generation: 0,
             batch: false,
             failed: false,

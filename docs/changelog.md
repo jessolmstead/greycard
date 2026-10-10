@@ -24,6 +24,13 @@ note a first tester reads.
   through a shoot stays fast
   ([§274](https://github.com/jessolmstead/greycard/blob/master/docs/notes/274-the-shot-lines-in-cull-mode-and-the-export-choosers-memory.md))
 
+### Masks
+
+- A mask's overlay turns off by itself when a slider in the mask's look
+  moves, so the edit is seen; feather, range, invert and the brush keep
+  it showing
+  ([§277](https://github.com/jessolmstead/greycard/blob/master/docs/notes/277-the-overlay-steps-aside-for-a-look-edit.md))
+
 ### Export
 
 - The export chooser opens where the last export went, in the same

@@ -432,6 +432,24 @@ pub(crate) fn tool_in_hand(st: &mut State, app: &App) {
     app.set_show_mask(true);
 }
 
+/// A panel control has changed with a mask chosen: if it was one of the
+/// mask's look sliders and the overlay is showing, the overlay goes off
+/// so the edit is seen. Shape and range controls leave the look as it
+/// was and so leave the overlay alone.
+///
+/// Every look change hides it, not only the first: the toggle turned on
+/// by hand is for a look, and the next drag hides it again. A tool in
+/// hand has its kept toggle dropped, so the tool going down does not
+/// bring the overlay back over the edit.
+pub(crate) fn look_edited(st: &mut State, app: &App) {
+    let now = crate::panel::edit::read_look(app);
+    let before = st.look_seen.borrow_mut().replace(now.clone());
+    if st.target.is_some() && before.is_some_and(|b| b != now) && app.get_show_mask() {
+        app.set_show_mask(false);
+        st.show_mask_kept = None;
+    }
+}
+
 /// How far the pointer moves, in the masks' units, before a stroke
 /// takes another point: a texel of the raster.
 pub(crate) const MIN_STEP: f32 = 1.0 / greycard_edit::brush::RASTER_WIDTH as f32;
@@ -1314,6 +1332,132 @@ mod tests {
 
     use crate::testing::{click, count_labeled, window};
     use std::cell::Cell;
+
+    /// A look slider moved with the overlay showing turns it off, every
+    /// time; a shape control (feather, invert, the toggle itself) leaves
+    /// it as it is.
+    #[test]
+    fn a_look_change_hides_the_overlay_and_a_shape_change_does_not() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        app.set_show_mask(true);
+        app.set_mask_feather(0.3);
+        app.invoke_view_changed();
+        app.set_mask_invert(true);
+        app.invoke_view_changed();
+        assert!(app.get_show_mask(), "a shape control leaves the overlay");
+        app.set_exposure(0.5);
+        app.invoke_view_changed();
+        assert!(!app.get_show_mask(), "a look slider hides it");
+        // Turned on by hand, the next look change hides it again.
+        app.set_show_mask(true);
+        app.invoke_view_changed();
+        assert!(app.get_show_mask(), "turning it on is not a look change");
+        app.set_exposure(0.8);
+        app.invoke_view_changed();
+        assert!(!app.get_show_mask(), "every look change hides it");
+        assert!(state.borrow().show_mask_kept.is_none());
+    }
+
+    /// A look change while a tool is in hand hides the overlay and
+    /// drops the toggle kept for the tool going down, so it does not
+    /// come back over the edit.
+    #[test]
+    fn a_look_change_with_a_tool_in_hand_leaves_nothing_to_bring_it_back() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        app.set_show_mask(true);
+        app.invoke_add_shape("Brush".into(), "Add".into());
+        assert!(state.borrow().placing.is_some());
+        assert_eq!(state.borrow().show_mask_kept, Some(true));
+        app.set_shadows(0.4);
+        app.invoke_view_changed();
+        assert!(!app.get_show_mask());
+        assert_eq!(state.borrow().show_mask_kept, None);
+    }
+
+    /// Picking another mask keeps today's rule: the look on show is
+    /// that mask's own, and nothing hides the overlay.
+    #[test]
+    fn choosing_another_mask_leaves_the_overlay_as_it_was() {
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        app.set_exposure(0.5);
+        app.invoke_view_changed();
+        app.set_show_mask(true);
+        app.invoke_target_changed(2);
+        app.invoke_view_changed();
+        assert!(app.get_show_mask());
+    }
+
+    /// A mask picked with the panel's read-back unlike the stored look
+    /// (a local white in f64 and an empty curve from a foreign sidecar)
+    /// does not hide at the first toggle.
+    #[test]
+    fn a_stored_look_the_panel_reads_back_differently_does_not_hide() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        state.borrow_mut().edit.adjustments[0].look.white_balance =
+            greycard_edit::white::LocalWhite::Absolute {
+                temperature: 5123.4567,
+                tint: 0.0031,
+            };
+        state.borrow_mut().edit.adjustments[0].look.curves.red = Vec::new();
+        app.invoke_target_changed(1);
+        app.set_show_mask(true);
+        app.invoke_view_changed();
+        assert!(app.get_show_mask());
+    }
+
+    /// An undo or a history click that changes only the look rewrites
+    /// the panel; showing the overlay after it is not a look edit.
+    #[test]
+    fn a_restored_look_is_not_taken_for_an_edit() {
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ));
+            slint::platform::update_timers_and_animations();
+        };
+        for by_history in [false, true] {
+            let app = window(1);
+            let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+            app.invoke_select(0);
+            app.set_panel_tab("Masks".into());
+            app.invoke_new_mask();
+            app.invoke_target_changed(1);
+            settle();
+            app.set_show_mask(true);
+            app.set_exposure(0.5);
+            app.invoke_view_changed();
+            settle();
+            assert!(!app.get_show_mask(), "the look slider hides it");
+            if by_history {
+                app.invoke_history_clicked(1);
+            } else {
+                app.invoke_undo();
+            }
+            assert_eq!(app.get_exposure(), 0.0, "the look was restored");
+            app.set_show_mask(true);
+            app.invoke_view_changed();
+            assert!(app.get_show_mask(), "showing it after a restore stays");
+            app.set_mask_feather(0.2);
+            app.invoke_view_changed();
+            assert!(app.get_show_mask());
+        }
+    }
 
     /// The left bar: the navigator, the snapshots and the history,
     /// and the width the viewport begins at.

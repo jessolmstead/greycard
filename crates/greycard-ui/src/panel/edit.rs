@@ -684,6 +684,9 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     // undo or a preset that brings a look says so at once.
     show_looks(st, &edit.look_lut, app);
     app.set_retouch_enabled(edit.retouch.enabled);
+    // The look as the panel now holds it, the baseline for the next
+    // change (see `mask::look_edited`).
+    *st.look_seen.borrow_mut() = Some(read_look(app));
 }
 
 /// The panel's sections that fold, by the names the settings keep
