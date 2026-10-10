@@ -15,7 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] People mask results are too fuzzy around the edges, not precise enough
 
 ## Next: 0.6.0
 
@@ -28,6 +27,10 @@ and smart collections that survive a move.
       frame's develop or a reduced develop in the pool; first the key
       and the open frame, then the measurement and the reduced develop
       with its check against the export (§270)
+- [ ] Whole person's edge from Subject's matte inside the picked
+      person, so the hair Subject keeps is kept and the edge is as
+      fine as a part's; the People masks read fuzzy at the edge
+      beside the parts (§263)
 - [ ] Lightbox over a collection, or the picks until collections
       exist: the grid with everything that gets in the way of judging
       consistency taken out. Tiles at a chosen size up to a handful
@@ -193,8 +196,6 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       fp16 untried), the phrase and its vector kept in the sidecar,
       and "not found" under the cut (§252: phrases for things absent
       topped out at 0.31). After the parts
-- [ ] People: Whole person's edge from Subject's matte inside the
-      picked person, for the hair Subject keeps (§263)
 - [ ] People: the solid fill Whole person has, for Top, Hair and the
       other whole-picture parts (§263)
 - [ ] People: "use this person on all N pictures" after a paste or
