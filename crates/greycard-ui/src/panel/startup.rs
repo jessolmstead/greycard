@@ -374,6 +374,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             .or(cli.menu.map(crate::panel::viewport::Shown::Menu))
             .or(cli.press.map(crate::panel::viewport::Shown::Key)),
         export_presets: remembered.export_presets.clone(),
+        export_last_folder: remembered_folder(&remembered),
         settings_file: if cli.snapshot.is_some() || cli.screenshot.is_some() {
             None
         } else {
@@ -1439,7 +1440,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // develops, not gathered from the panel here.
     if cli.screenshot.is_none() && cli.snapshot.is_none() {
         let mut settings = remember(&app);
-        settings.export_presets = state.borrow().export_presets.clone();
+        take_state_choices(&mut settings, &state.borrow());
         settings.filter = filter::Saved::of(&state.borrow().filter);
         let kept = settings::Settings::load();
         settings.last_file = kept.last_file;
@@ -1780,6 +1781,22 @@ pub(crate) fn restores_filter(cli: &Cli) -> bool {
     !batch && !names_a_file
 }
 
+/// Where the export chooser opens at the start, from the file.
+pub(crate) fn remembered_folder(settings: &settings::Settings) -> Option<PathBuf> {
+    (!settings.export_last_folder.is_empty()).then(|| PathBuf::from(&settings.export_last_folder))
+}
+
+/// What the state owns of the settings, not the panel: put on the
+/// settings the panel's choices made, for the file at close.
+pub(crate) fn take_state_choices(settings: &mut settings::Settings, st: &State) {
+    settings.export_presets = st.export_presets.clone();
+    settings.export_last_folder = st
+        .export_last_folder
+        .as_ref()
+        .map(|f| f.to_string_lossy().into_owned())
+        .unwrap_or_default();
+}
+
 /// The panel's choices, to keep for the next run. What the panel
 /// does not own — the last file, the Settings sheet's two and the
 /// lens offer's answer, each written to the file when it changes —
@@ -1790,6 +1807,8 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         // Kept by the caller: the list is the state's, not the panel's.
         export_presets: Vec::new(),
         export_preset: chosen_preset(app).unwrap_or_default(),
+        // Kept by the caller: written when a chooser answers.
+        export_last_folder: String::new(),
         scope: app.get_scope().into(),
         curve_mode: app.get_curve_mode().into(),
         warn_shadows: app.get_warn_shadows(),

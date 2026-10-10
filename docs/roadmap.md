@@ -49,8 +49,6 @@ and smart collections that survive a move.
       the filter bar (§273)
 - [ ] Icons on the grid and the filmstrip showing edited and exported
       frames
-- [ ] Camera metadata shown in cull mode too
-- [ ] Remember the last chosen export location when exporting again
 
 ## Tracks
 

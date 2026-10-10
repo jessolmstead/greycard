@@ -285,6 +285,48 @@ pub(crate) fn control_over_frame(st: &mut State, app: &App) -> Option<Edit> {
     }
 }
 
+/// What the library index knows of how `file` was shot, in the words
+/// the edit panel uses. Culling develops nothing, so the file is not
+/// opened for it; the row is read by the id the window already holds,
+/// so the disk is not asked either. A frame the index has not reached,
+/// or one under a root that is offline, reads empty. None when the
+/// index could not be asked just now (busy, or no reader yet), which
+/// is not an answer.
+pub(crate) fn shot_text(st: &State, file: usize) -> Option<greycard_core::raw::ShotSummary> {
+    let path = st.files.get(file)?;
+    if st.library.offline.iter().any(|r| path.starts_with(r)) {
+        return Some(Default::default());
+    }
+    let reader = st.index_reader.as_ref()?;
+    let Some(id) = st.index_ids.get(file).copied().flatten() else {
+        return Some(Default::default());
+    };
+    match reader.by_id(id) {
+        Ok(Some(entry)) => Some(
+            entry
+                .exif
+                .shot()
+                .summary(&entry.exif.make, &entry.exif.model),
+        ),
+        Ok(None) => Some(Default::default()),
+        Err(_) => None,
+    }
+}
+
+/// The shot lines for the frame under the loupe, asked of the index
+/// again: it may have reached the frame since the focus came to it.
+/// Nothing outside culling, where the develop writes them; and the
+/// lines already up stay when the index could not be asked.
+pub(crate) fn show_shot(st: &State, app: &App) {
+    let (Some(_), Some(file)) = (&st.cull, st.current) else {
+        return;
+    };
+    if let Some(shot) = shot_text(st, file) {
+        app.set_shot_camera(shot.camera.as_str().into());
+        app.set_shot_exposure(shot.exposure.as_str().into());
+    }
+}
+
 /// The selection moves to `file` in culling mode: no develop, the
 /// panel left as it is, the frame's JPEG shown from the cache or
 /// asked for, and the window of decodes about it renewed.
@@ -306,8 +348,9 @@ pub(crate) fn cull_select(st: &mut State, app: &App, file: usize) {
     crate::panel::viewport::settle_source_size(st);
     app.set_selected(row as i32);
     app.set_file_name(file_name(&st.files[file]).into());
-    app.set_shot_camera("".into());
-    app.set_shot_exposure("".into());
+    let shot = shot_text(st, file).unwrap_or_default();
+    app.set_shot_camera(shot.camera.as_str().into());
+    app.set_shot_exposure(shot.exposure.as_str().into());
     app.set_shot_size("".into());
     show_history(st, app);
     show_frame_tags(st, app);
@@ -3376,6 +3419,65 @@ mod tests {
         app.invoke_meta_key("6".into());
         assert_eq!(tags(&state.borrow(), 2), (4, Flag::None, Label::None));
         assert_eq!(app.get_notice(), "No label");
+    }
+
+    /// The camera and the exposure under the file's name follow the
+    /// focus in culling, one compared frame to the next, from the
+    /// index; a frame the index lacks reads empty.
+    #[test]
+    fn the_shot_lines_follow_the_focus_in_culling() {
+        use greycard_library::fixture::{A7, R5, R6, write_frame};
+        let dir = crate::testing::scratch_dir("cull-shot");
+        std::fs::create_dir_all(&dir).unwrap();
+        let dir = dunce::canonicalize(&dir).unwrap();
+        let files: Vec<PathBuf> = ["a.tif", "b.tif", "c.tif", "d.tif"]
+            .iter()
+            .map(|n| dir.join(n))
+            .collect();
+        write_frame(&files[0], &R5, 1);
+        write_frame(&files[1], &A7, 2);
+        write_frame(&files[2], &R6, 3);
+        let db = dir.join("index").join("library.sqlite");
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_folder(&dir, &mut |_| {}).unwrap();
+        drop(writer);
+        // Written after the pass: no row for it yet.
+        write_frame(&files[3], &R6, 4);
+        let app = window(files.len());
+        let (state, _worker) = state_for(&app, files);
+        state.borrow_mut().index_reader =
+            Some(greycard_library::Library::open_read_only(&db).unwrap());
+        app.invoke_select(0);
+        crate::library::refresh_ids(&mut state.borrow_mut());
+        enter_cull(&mut state.borrow_mut(), &app, 2);
+        assert_eq!(
+            app.get_shot_camera(),
+            "Canon EOS R5 \u{b7} RF35mm F1.4 L VCM"
+        );
+        assert_eq!(
+            app.get_shot_exposure(),
+            "35 mm \u{b7} f/2 \u{b7} 1/2500 s \u{b7} ISO 100"
+        );
+        let (a, b) = (app.get_shot_camera(), app.get_shot_exposure());
+        cull_select(&mut state.borrow_mut(), &app, 1);
+        assert_ne!(app.get_shot_camera(), a, "the camera followed the focus");
+        assert_ne!(app.get_shot_exposure(), b, "and the exposure");
+        assert!(app.get_shot_camera().contains("ILCE-7M4"));
+        assert!(app.get_shot_exposure().contains("ISO 3200"));
+        cull_select(&mut state.borrow_mut(), &app, 2);
+        assert!(app.get_shot_exposure().contains("ISO 6400"));
+        cull_select(&mut state.borrow_mut(), &app, 3);
+        assert_eq!(app.get_shot_camera(), "", "not indexed yet");
+        assert_eq!(app.get_shot_exposure(), "");
+        // The pass reaches it while the loupe is on it: the lines fill.
+        let mut writer = greycard_library::Library::open(&db).unwrap();
+        writer.index_folder(&dir, &mut |_| {}).unwrap();
+        drop(writer);
+        crate::library::refresh_ids(&mut state.borrow_mut());
+        show_shot(&state.borrow(), &app);
+        assert!(app.get_shot_exposure().contains("ISO 6400"));
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
     }
 
     /// A culling key held down is one press. The window's repeats of

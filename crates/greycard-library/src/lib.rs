@@ -1434,6 +1434,18 @@ impl Library {
             .optional()?)
     }
 
+    /// The file with this id, if the index holds it. Nothing is asked
+    /// of the disk, which is what a caller on the window's thread
+    /// wants when it has the id already.
+    pub fn by_id(&self, id: i64) -> Result<Option<Entry>> {
+        let sql = format!("SELECT {COLUMNS} FROM files WHERE id = ?");
+        Ok(self
+            .conn
+            .prepare_cached(&sql)?
+            .query_row(params![id], entry)
+            .optional()?)
+    }
+
     /// The folders the index holds files in, sorted.
     pub fn folders(&self) -> Result<Vec<PathBuf>> {
         let mut stmt = self

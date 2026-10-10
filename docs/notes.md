@@ -283,3 +283,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§271. A person picked on a zoomed view keeps the view](notes/271-a-person-picked-on-a-zoomed-view-keeps-the-view.md) (2026-10-10)
 - [§272. Security chores: the audit, the import's names and the pins](notes/272-security-chores-the-audit-the-imports-names-and-the-pins.md) (2026-10-10)
 - [§273. Collections and smart collections](notes/273-collections-and-smart-collections.md) (2026-10-10)
+- [§274. The shot lines in cull mode, and the export chooser's memory](notes/274-the-shot-lines-in-cull-mode-and-the-export-choosers-memory.md) (2026-10-10)

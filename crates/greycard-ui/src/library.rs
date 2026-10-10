@@ -2155,7 +2155,10 @@ fn reread(state: &Rc<RefCell<State>>, app: &App, changed: bool) {
         crate::panel::cull::refilter(state, app, changed);
     } else {
         crate::panel::cull::show_filter(&st, app);
+        drop(st);
     }
+    // The frame under the loupe may be one this answer reached.
+    crate::panel::cull::show_shot(&state.borrow(), app);
 }
 
 #[cfg(test)]

@@ -743,7 +743,26 @@ fn ask(request: Ask, done: impl FnOnce(Result<Option<PathBuf>>) + Send + 'static
     if cfg!(test) {
         return done(Ok(None));
     }
-    std::thread::spawn(move || done(portal(request)));
+    // The folder it opens on is looked at here, on the thread that
+    // may wait on a mount, not on the window's.
+    std::thread::spawn(move || {
+        let mut request = request;
+        request.folder = nearest_folder(&request.folder);
+        done(portal(request))
+    });
+}
+
+/// `start` if it is a folder, else the nearest of its parents that
+/// is: a chooser opened on a folder since removed would otherwise
+/// open nowhere in particular. A mount point left behind with nothing
+/// mounted on it is still a folder, and passes.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+fn nearest_folder(start: &Path) -> PathBuf {
+    start
+        .ancestors()
+        .find(|p| p.is_dir())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| start.to_path_buf())
 }
 
 /// Everywhere else it is the platform's own dialog, through `rfd`.
@@ -973,6 +992,15 @@ fn percent_decode(s: &str) -> std::ffi::OsString {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_chooser_opens_on_the_nearest_folder_that_is_there() {
+        let dir = crate::testing::scratch_dir("nearest-folder");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(nearest_folder(&dir), dir);
+        assert_eq!(nearest_folder(&dir.join("gone").join("deeper")), dir);
+        crate::testing::remove_dir_retry(&dir);
+    }
 
     #[test]
     fn the_sheets_size_names_a_long_edge() {

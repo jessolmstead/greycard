@@ -967,6 +967,9 @@ pub(crate) struct State {
     pub(crate) queue_probes: u64,
     /// The export presets, as the settings file keeps them.
     pub(crate) export_presets: Vec<sheet::ExportPreset>,
+    /// The folder an export's chooser last answered with, where the
+    /// next one opens; the settings file keeps it across runs.
+    pub(crate) export_last_folder: Option<PathBuf>,
     /// Where a preset saved, chosen or deleted is written at once;
     /// none for a snapshot or a batch run, which leave the user's
     /// settings alone.
@@ -1230,6 +1233,7 @@ impl State {
             queue_run: None,
             queue_probes: 0,
             export_presets: Vec::new(),
+            export_last_folder: None,
             settings_file: None,
             presets: Vec::new(),
             preset_store: None,

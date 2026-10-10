@@ -28,6 +28,11 @@ pub struct Settings {
     /// The preset last chosen or saved, empty for none; the sheet
     /// above may have been edited since.
     pub export_preset: String,
+    /// The folder last chosen in an export's chooser, where the next
+    /// chooser opens. Not part of the sheet or a preset: a
+    /// preset that names a subfolder never asks, and one that asks
+    /// opens where the last export went. Empty for none.
+    pub export_last_folder: String,
     pub scope: String,
     /// Which curve the CURVES section shows: "Parametric" or "Point".
     pub curve_mode: String,
@@ -204,6 +209,7 @@ impl Default for Settings {
             export: Sheet::default(),
             export_presets: Vec::new(),
             export_preset: String::new(),
+            export_last_folder: String::new(),
             scope: crate::scope::Scope::default().name().into(),
             curve_mode: "Point".into(),
             warn_shadows: false,
@@ -393,6 +399,7 @@ mod tests {
             sidecars_in_folder: true,
             cull_move_on: true,
             lenses_declined: true,
+            export_last_folder: "/home/x/Pictures/out".into(),
             last_file: "/home/x/Pictures/IMG_0001.CR3".into(),
             recent_folders: vec!["/home/x/Pictures/b".into(), "/mnt/gone/a".into()],
             folder_tree_subfolders: true,

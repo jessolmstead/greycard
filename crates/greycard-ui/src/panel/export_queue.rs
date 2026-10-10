@@ -186,7 +186,7 @@ fn queue_pressed(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: 
         add(&mut state.borrow_mut(), app, Entry { folder, ..entry });
         return;
     }
-    let start = raw.parent().map(Path::to_path_buf).unwrap_or_default();
+    let start = crate::panel::deliver::export_start(&state.borrow(), &raw);
     state.borrow_mut().export_choosing = true;
     app.set_status(
         format!(
@@ -202,23 +202,35 @@ fn queue_pressed(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: 
                 return;
             };
             let mut st = state.borrow_mut();
-            let folder = match chosen {
-                Ok(Some(folder)) => Some(folder),
-                Ok(None) => {
-                    st.export_choosing = false;
-                    app.set_status("nothing queued".into());
-                    return;
-                }
-                // No chooser to ask: each beside its own file when the
-                // queue runs, as a set with no chooser goes.
-                Err(e) => {
-                    tracing::warn!("folder chooser: {e:#}; queued to go beside each file");
-                    None
-                }
+            let Some(folder) = answered(&mut st, chosen) else {
+                st.export_choosing = false;
+                app.set_status("nothing queued".into());
+                return;
             };
             add(&mut st, &app, Entry { folder, ..entry });
         });
     });
+}
+
+/// What the folder chooser answered, for the entry's folder: none when
+/// it was canceled; some none when there was no chooser to ask, so each
+/// frame goes beside its own file when the queue runs, as a set with no
+/// chooser goes; and a folder chosen, which the next chooser opens on.
+pub(crate) fn answered(
+    st: &mut State,
+    chosen: anyhow::Result<Option<PathBuf>>,
+) -> Option<Option<PathBuf>> {
+    match chosen {
+        Ok(Some(folder)) => {
+            crate::panel::deliver::remember_export_last_folder(st, &folder);
+            Some(Some(folder))
+        }
+        Ok(None) => None,
+        Err(e) => {
+            tracing::warn!("folder chooser: {e:#}; queued to go beside each file");
+            Some(None)
+        }
+    }
 }
 
 /// An entry of `frames` under `sheet`, its folder still to be named.

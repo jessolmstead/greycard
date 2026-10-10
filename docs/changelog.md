@@ -12,6 +12,20 @@ note a first tester reads.
 
 ## 0.6.0, unreleased
 
+### Culling and the grid
+
+- Cull mode shows the body and lens and the exposure under the file's
+  name, as edit mode does, read from the library index so stepping
+  through a shoot stays fast
+  ([§274](https://github.com/jessolmstead/greycard/blob/master/docs/notes/274-the-shot-lines-in-cull-mode-and-the-export-choosers-memory.md))
+
+### Export
+
+- The export chooser opens where the last export went, in the same
+  session and after a restart; a preset with its own subfolder still
+  wins
+  ([§274](https://github.com/jessolmstead/greycard/blob/master/docs/notes/274-the-shot-lines-in-cull-mode-and-the-export-choosers-memory.md))
+
 ### Under the hood
 
 - `cargo audit` runs in CI and weekly, every third-party Action is

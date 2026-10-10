@@ -167,6 +167,30 @@ fn keep_presets(st: &State, app: &App) {
     settings.save_to(path);
 }
 
+/// Where an export's chooser opens: the folder the last one answered
+/// with, else the folder of `raw`. The disk is not asked here, on the
+/// window's thread: a folder gone since is dealt with where the
+/// chooser is asked (`export::ask`).
+pub(crate) fn export_start(st: &State, raw: &Path) -> PathBuf {
+    st.export_last_folder
+        .clone()
+        .or_else(|| raw.parent().map(Path::to_path_buf))
+        .unwrap_or_default()
+}
+
+/// A chooser answered with `folder`: the next one opens there, in
+/// this run and, written at once as a preset is, in the next. Not
+/// from a snapshot or a batch run (`State::settings_file`).
+pub(crate) fn remember_export_last_folder(st: &mut State, folder: &Path) {
+    st.export_last_folder = Some(folder.to_path_buf());
+    let Some(path) = &st.settings_file else {
+        return;
+    };
+    let mut settings = settings::Settings::load_from(path);
+    settings.export_last_folder = folder.to_string_lossy().into_owned();
+    settings.save_to(path);
+}
+
 /// One picture from the thumbnails' pool, or word that none could be
 /// made, put on its file's row.
 pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
@@ -1477,7 +1501,7 @@ fn export_gathered(
     // Two frames or more, or a frame no longer on screen: the set,
     // into a folder.
     if frames.len() > 1 || !on_screen {
-        let start = raw.parent().map(Path::to_path_buf).unwrap_or_default();
+        let start = export_start(&state.borrow(), &raw);
         let weak = app.as_weak();
         state.borrow_mut().export_choosing = true;
         app.set_status(
@@ -1510,6 +1534,9 @@ fn export_gathered(
                     return;
                 };
                 let mut st = state.borrow_mut();
+                if let Some(folder) = &folder {
+                    remember_export_last_folder(&mut st, folder);
+                }
                 start_or_ask(
                     &mut st, &app, frames, folder, None, settings, on_exists, preset,
                 );
@@ -1518,6 +1545,12 @@ fn export_gathered(
         return;
     }
     let suggested = raw.with_extension(settings.format.extension());
+    // In the folder the last chooser answered with, under the
+    // frame's own name.
+    let suggested = match (suggested.file_name(), export_start(&state.borrow(), &raw)) {
+        (Some(name), start) if raw.parent() != Some(start.as_path()) => start.join(name),
+        _ => suggested,
+    };
     let weak = app.as_weak();
     app.set_status("choosing where to export...".into());
     export::choose_path(suggested, settings.format, move |chosen| {
@@ -1527,7 +1560,14 @@ fn export_gathered(
             // sheet's policy is for the paths the editor
             // decides by itself.
             let (path, on_exists) = match chosen {
-                Ok(Some(path)) => (path, export::OnExists::Overwrite),
+                Ok(Some(path)) => {
+                    if let (Some(dir), Some(state)) =
+                        (path.parent(), STATE.with(|s| s.borrow().clone()))
+                    {
+                        remember_export_last_folder(&mut state.borrow_mut(), dir);
+                    }
+                    (path, export::OnExists::Overwrite)
+                }
                 Ok(None) => {
                     app.set_status("export canceled".into());
                     return;
@@ -1674,6 +1714,70 @@ mod tests {
         assert_eq!(on_disk.export_presets.len(), 1);
         assert_eq!(on_disk.export_presets[0].name, "Web");
         assert_eq!(on_disk.export_preset, "");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The folder an export's chooser last answered with is where the
+    /// next one opens: in this run, after a restart (the settings
+    /// file), and while it is still there. A preset that names a
+    /// subfolder asks nothing, so it keeps its own place.
+    #[test]
+    fn the_chooser_opens_where_the_last_export_went() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let dir = crate::testing::scratch_dir("export-folder");
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let file = dir.join("greycard").join("settings.json");
+        settings::Settings::default().save_to(&file);
+        state.borrow_mut().settings_file = Some(file.clone());
+        let raw = dir.join("shoot").join("a.cr3");
+
+        // Nothing chosen yet: the frame's own folder.
+        assert_eq!(export_start(&state.borrow(), &raw), dir.join("shoot"));
+
+        // Chosen: the same sheet, closed and reopened, starts there.
+        remember_export_last_folder(&mut state.borrow_mut(), &out);
+        app.set_export_open(false);
+        app.set_export_open(true);
+        assert_eq!(export_start(&state.borrow(), &raw), out);
+
+        // And after a restart: the file has it, and the state is
+        // built from the file.
+        // The close writes the file from the panel and the state, as
+        // `run` does; the next start reads it back.
+        let mut closing = crate::panel::startup::remember(&app);
+        crate::panel::startup::take_state_choices(&mut closing, &state.borrow());
+        closing.save_to(&file);
+        let kept = settings::Settings::load_from(&file);
+        assert_eq!(kept.export_last_folder, out.to_string_lossy());
+        let app2 = crate::testing::window(1);
+        let (second, _worker) = crate::testing::retouch_state(&app2);
+        second.borrow_mut().export_last_folder = crate::panel::startup::remembered_folder(&kept);
+        assert_eq!(export_start(&second.borrow(), &raw), out);
+
+        // A preset with a subfolder fills the sheet with its own
+        // location and leaves the remembered chooser folder alone.
+        state.borrow_mut().export_presets = vec![ExportPreset {
+            name: "Beside".into(),
+            sheet: Sheet {
+                subfolder: "web".into(),
+                ..Sheet::default()
+            },
+        }];
+        app.invoke_export_preset_chosen("Beside".into());
+        assert_eq!(
+            read_sheet(&app).subfolder().unwrap().unwrap(),
+            PathBuf::from("web")
+        );
+        assert_eq!(export_start(&state.borrow(), &raw), out);
+
+        // The queue's chooser answering remembers it the same way.
+        let queued = dir.join("queued");
+        let told =
+            crate::panel::export_queue::answered(&mut state.borrow_mut(), Ok(Some(queued.clone())));
+        assert_eq!(told, Some(Some(queued.clone())));
+        assert_eq!(export_start(&state.borrow(), &raw), queued);
         crate::testing::remove_dir_retry(&dir);
     }
 
