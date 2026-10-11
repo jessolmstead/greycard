@@ -28,9 +28,17 @@ the reasoning lives in `docs/notes.md`.
 
 ## Next: 0.6.0
 
-The grid and the strip show each edited frame as edited, a set opens
-in a lightbox for judging it whole, and frames gather into collections
-and smart collections that survive a move.
+The grid and the strip show each edited frame as edited, the copy
+settings sheet copies one slider or one mask, a tint cools without
+turning hues, and the mask, history, snapshot and crop bugs of 0.5.0
+are gone. Everything for it is on master; what is left is the cut:
+the changelog's opening paragraph, the version bump and the tag.
+
+## Then: 0.7.0
+
+A set opens in a lightbox for judging it whole, frames gather into
+collections and smart collections that survive a move, and a mask has
+its own Detail.
 
 - [ ] Detail in a mask: Texture, Clarity and Dehaze in a mask's look,
       beside its Light and Color, so a face is smoothed or a distant
@@ -39,11 +47,6 @@ and smart collections that survive a move.
       a gain under its weight, on the CPU and the GPU alike, in the
       export, the viewport and the reduced develop; a Detail section
       on the Masks tab and a history row (§287)
-- [ ] A snapshot's row says what a click does: restore and rename
-      icons beside the bin, since the row is the only way back, nothing
-      but the hover names it, and the double-click that renames also
-      restores on its first click; and a rating or flag key pressed
-      while the filter would hide the frame tells the user where it went
 - [ ] Lightbox over a collection, or the picks until collections
       exist: the grid with everything that gets in the way of judging
       consistency taken out. Tiles at a chosen size up to a handful
@@ -59,6 +62,11 @@ and smart collections that survive a move.
       changes the hash, a hand order of their own; a sidebar list, add
       and remove from the grid and the strip, a smart one saved from
       the filter bar (§273)
+- [ ] A snapshot's row says what a click does: restore and rename
+      icons beside the bin, since the row is the only way back, nothing
+      but the hover names it, and the double-click that renames also
+      restores on its first click; and a rating or flag key pressed
+      while the filter would hide the frame tells the user where it went
 
 ## Tracks
 
