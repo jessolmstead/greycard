@@ -15,6 +15,11 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] A tint turns hues the short way round the circle (§83), so a blue
+      tint at 13% on a warm portrait sends a beige coat through green
+      and skin through magenta; the global tint the same. To become a
+      blend in Oklab's a and b toward the tint's vector, never through
+      the hues between
 - [ ] The histogram in a mask's curve editor is empty until a slider or
       a point is touched, then it appears
 
