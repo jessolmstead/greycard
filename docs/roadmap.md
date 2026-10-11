@@ -38,8 +38,15 @@ the reasoning lives in `docs/notes.md`.
 The grid and the strip show each edited frame as edited, the copy
 settings sheet copies one slider or one mask, a tint cools without
 turning hues, and the mask, history, snapshot and crop bugs of 0.5.0
-are gone. Everything for it is on master; what is left is the cut:
-the changelog's opening paragraph, the version bump and the tag.
+are gone. What is left before the cut: the Tint switch and the
+Portrait reading under Bugs, the Draw button below, then the version
+bump and the tag.
+
+- [ ] A Draw button in the Crop section, one shot: the next drag
+      anywhere on the picture draws a fresh crop held to the aspect,
+      since a drag inside the crop moves it and a crop at the full
+      frame leaves nowhere outside to start; Alt and a drag inside the
+      crop as the same thing without the button
 
 ## Then: 0.7.0
 
@@ -47,11 +54,6 @@ A set opens in a lightbox for judging it whole, frames gather into
 collections and smart collections that survive a move, and a mask has
 its own Detail.
 
-- [ ] A Draw button in the Crop section, one shot: the next drag
-      anywhere on the picture draws a fresh crop held to the aspect,
-      since a drag inside the crop moves it and a crop at the full
-      frame leaves nowhere outside to start; Alt and a drag inside the
-      crop as the same thing without the button
 - [ ] Detail in a mask: Texture, Clarity and Dehaze in a mask's look,
       beside its Light and Color, so a face is smoothed or a distant
       ridge dehazed without touching the rest; the bands and the
