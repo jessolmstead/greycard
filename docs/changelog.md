@@ -96,6 +96,11 @@ note a first tester reads.
 
 ### Fixes
 
+- Color grading: clicking a wheel or its name makes it the chosen one,
+  marked by a ring and its name in the accent color, and the Hue and
+  Strength sliders follow it; they used to stay on the last wheel
+  dragged. History rows name the wheel that moved
+  ([§293](https://github.com/jessolmstead/greycard/blob/master/docs/notes/293-the-gradings-sliders-follow-the-chosen-wheel.md))
 - A learned mask (Subject, Sky, People, a part) copied onto another
   frame is made for that frame; the editor used to draw the other
   frame's raster on it, and the first frame's with the second's, until

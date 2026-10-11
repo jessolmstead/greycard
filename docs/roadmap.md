@@ -15,11 +15,6 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] Color grading: the hue, saturation and luminance sliders follow
-      the wheel last dragged, not the wheel chosen or expanded, so a
-      wheel other than the last one touched cannot be fine-tuned with
-      the sliders; the chosen wheel should be marked plainly and
-      choosing or expanding one should hand it the sliders
 ## Open Questions
 
 - Default exposure is 0.8 stops up across the board. Is that too much?

@@ -292,14 +292,7 @@ fn look(b: &Look, a: &Look, prefix: &str) -> Vec<String> {
         out.push(format!("{prefix}{}", color(b, a)));
     }
     if b.grading != a.grading {
-        out.push(format!(
-            "{prefix}{}",
-            if b.grading.enabled != a.grading.enabled {
-                switched("Color grading", a.grading.enabled)
-            } else {
-                "Color grading".to_string()
-            }
-        ));
+        out.push(format!("{prefix}{}", grading(&b.grading, &a.grading)));
     }
     if b.tint != a.tint {
         out.push(format!("{prefix}{}", tint(&b.tint, &a.tint)));
@@ -332,6 +325,34 @@ fn local_white(b: &crate::LocalWhite, a: &crate::LocalWhite) -> String {
             },
         ) if t0 == t1 && d0 != d1 => format!("Tint {d1:+.3}"),
         (_, Absolute { temperature, .. }) => format!("White balance {temperature:.0} K"),
+    }
+}
+
+/// Color grading: its switch, the balance, or the one wheel that
+/// moved, by name, with its hue or its strength when only that did.
+fn grading(b: &crate::Grading, a: &crate::Grading) -> String {
+    use crate::grading::Range;
+    if b.enabled != a.enabled {
+        return switched("Color grading", a.enabled);
+    }
+    let moved: Vec<Range> = Range::ALL
+        .into_iter()
+        .filter(|&r| b.wheel(r) != a.wheel(r))
+        .collect();
+    match (moved.as_slice(), b.balance != a.balance) {
+        ([], true) => format!("Color grading balance {:+.0}", a.balance * 100.0),
+        ([r], false) => {
+            let (x, y) = (b.wheel(*r), a.wheel(*r));
+            let name = r.name().to_lowercase();
+            if x.saturation == y.saturation {
+                format!("Color grading {name} {:.0}°", y.hue)
+            } else if x.hue == y.hue {
+                format!("Color grading {name} {:.0}%", y.saturation * 100.0)
+            } else {
+                format!("Color grading {name}")
+            }
+        }
+        _ => "Color grading".to_string(),
     }
 }
 
@@ -704,17 +725,39 @@ mod tests {
         };
         let mut back = e.clone();
         back.tint.hue = 40.0;
-        assert_eq!(describe(&e, &back, &[]), "Color tint 40\u{b0}");
+        assert_eq!(describe(&e, &back, &[]), "Color tint 40°");
         back.tint.amount = 0.0;
         assert_eq!(describe(&e, &back, &[]), "Color tint off");
         // A hue picked before the amount is moved turns nothing off:
         // the amount was at nothing already.
         let mut picked = base.clone();
         picked.tint.hue = 130.0;
-        assert_eq!(describe(&base, &picked, &[]), "Color tint 130\u{b0}");
+        assert_eq!(describe(&base, &picked, &[]), "Color tint 130°");
         let mut undone = picked.clone();
         undone.tint.hue = 0.0;
-        assert_eq!(describe(&picked, &undone, &[]), "Color tint 0\u{b0}");
+        assert_eq!(describe(&picked, &undone, &[]), "Color tint 0°");
+        // A grading wheel is named, with what moved on it.
+        let mut e = base.clone();
+        e.grading.midtones.saturation = 0.25;
+        assert_eq!(describe(&base, &e, &[]), "Color grading mid-tones 25%");
+        let mut turned = e.clone();
+        turned.grading.midtones.hue = 40.0;
+        assert_eq!(describe(&e, &turned, &[]), "Color grading mid-tones 40°");
+        let mut both = base.clone();
+        both.grading.shadows = crate::grading::Wheel {
+            hue: 200.0,
+            saturation: 0.3,
+        };
+        assert_eq!(describe(&base, &both, &[]), "Color grading shadows");
+        let mut balanced = base.clone();
+        balanced.grading.balance = -0.2;
+        assert_eq!(describe(&base, &balanced, &[]), "Color grading balance -20");
+        let mut two = both.clone();
+        two.grading.highlights.saturation = 0.1;
+        assert_eq!(describe(&base, &two, &[]), "Color grading");
+        let mut off = base.clone();
+        off.grading.enabled = false;
+        assert_eq!(describe(&base, &off, &[]), "Color grading off");
         // And a mask's own tint is named after the mask.
         let mut e = base.clone();
         e.adjustments.push(Adjustment {

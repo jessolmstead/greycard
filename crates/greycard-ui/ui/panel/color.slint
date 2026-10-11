@@ -354,6 +354,41 @@ export component BlackWhiteSection inherits Section {
     }
 }
 
+// A grading wheel, ringed in the accent while it is the one the
+// sliders act on.
+component GradeWheel inherits Rectangle {
+    in property <image> picture;
+    in property <bool> enabled: true;
+    in property <bool> chosen;
+    callback pressed(float, float);
+    callback moved(float, float);
+    callback released();
+    callback double-clicked(float, float);
+    height: self.width;
+    accessible-role: image;
+    // The ring sits just outside the wheel's rim, a gap
+    // between, so it reads as a mark and not as the wheel's
+    // own edge.
+    Rectangle {
+        border-radius: self.width / 2;
+        border-width: 2px;
+        border-color: root.chosen ? Theme.accent : transparent;
+        animate border-color { duration: Theme.quick; }
+    }
+    CurveEditor {
+        x: 4px;
+        y: 4px;
+        width: parent.width - 8px;
+        picture: root.picture;
+        enabled: root.enabled;
+        background: transparent;
+        pressed(x, y) => { root.pressed(x, y); }
+        moved(x, y) => { root.moved(x, y); }
+        released => { root.released(); }
+        double-clicked(x, y) => { root.double-clicked(x, y); }
+    }
+}
+
 export component GradingSection inherits Section {
     in-out property <bool> collapsed-grading;
     in-out property <string> target-name;
@@ -368,7 +403,7 @@ export component GradingSection inherits Section {
     callback grade-move(int, float, float);
     callback grade-release();
     callback grade-double(int);
-    callback grade-resized();
+    callback grade-chose(int);
     callback grade-changed();
     callback grade-reset();
     callback view-changed();
@@ -382,11 +417,16 @@ export component GradingSection inherits Section {
     switched => { root.view-changed(); }
     // One wheel enlarged, for a finer hand, above the row;
     // a wheel's name toggles it. A double click puts a
-    // wheel back to nothing.
-    if root.grade-big >= 0 && root.grade-big < root.grade-images.length: CurveEditor {
+    // wheel back to nothing. The sliders act on one wheel,
+    // the chosen one, ringed and its name in the accent: a
+    // press in a wheel chooses it and puts its point at the
+    // pointer; a click on its name chooses it and moves
+    // nothing.
+    if root.grade-big >= 0 && root.grade-big < root.grade-images.length: GradeWheel {
         picture: root.grade-images[root.grade-big];
         enabled: root.grading-enabled;
-        background: transparent;
+        chosen: root.grade-range == root.grade-big;
+        accessible-label: "Enlarged wheel";
         pressed(x, y) => { root.grade-press(root.grade-big, x, y); }
         moved(x, y) => { root.grade-move(root.grade-big, x, y); }
         released => { root.grade-release(); }
@@ -397,10 +437,11 @@ export component GradingSection inherits Section {
         for name[i] in ["Shadows", "Mid-tones", "Highlights"]: VerticalLayout {
             spacing: Theme.space-1;
             alignment: end;
-            if root.grade-big != i && i < root.grade-images.length: CurveEditor {
+            if root.grade-big != i && i < root.grade-images.length: GradeWheel {
                 picture: root.grade-images[i];
                 enabled: root.grading-enabled;
-                background: transparent;
+                chosen: root.grade-range == i;
+                accessible-label: name + " wheel";
                 pressed(x, y) => { root.grade-press(i, x, y); }
                 moved(x, y) => { root.grade-move(i, x, y); }
                 released => { root.grade-release(); }
@@ -410,20 +451,25 @@ export component GradingSection inherits Section {
                 height: Theme.control-height - 6px;
                 border-radius: Theme.radius-sm;
                 background: name-area.has-hover ? Theme.hover : transparent;
+                accessible-role: button;
+                accessible-label: (root.grade-big == i ? "Shrink " : "Enlarge ") + name;
+                accessible-action-default => { name-area.choose(); }
                 name-area := TouchArea {
                     mouse-cursor: MouseCursor.pointer;
-                    clicked => {
+                    function choose() {
                         root.grade-big = root.grade-big == i ? -1 : i;
-                        root.grade-resized();
+                        root.grade-chose(i);
                     }
+                    clicked => { self.choose(); }
                 }
                 HorizontalLayout {
                     alignment: center;
                     spacing: Theme.space-1;
                     Text {
                         text: name;
-                        color: root.grade-range == i ? Theme.text : Theme.text-secondary;
+                        color: root.grade-range == i ? Theme.accent : Theme.text-secondary;
                         font-size: Theme.font-xs;
+                        font-weight: root.grade-range == i ? Theme.weight-medium : Theme.weight-regular;
                         vertical-alignment: center;
                     }
                     Image {

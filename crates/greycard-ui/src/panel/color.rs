@@ -81,6 +81,16 @@ pub(crate) fn show_grade_range(app: &App) {
     app.set_grade_saturation(grade_values(app.get_grade_saturations())[i]);
 }
 
+/// Make wheel `i` the sliders' wheel: its values onto them, and the
+/// wheels redrawn, which is also what puts an enlarged one at its
+/// size.
+pub(crate) fn choose_grade_range(app: &App, i: usize) {
+    app.set_grade_range(i.min(2) as i32);
+    show_grade_range(app);
+    draw_wheels(app);
+    app.window().request_redraw();
+}
+
 /// The tint as the panel shows it: the hue round the circle and the
 /// amount held to its ends, which is what everything downstream of
 /// the two sliders wants.
@@ -498,9 +508,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             app.invoke_view_changed();
         });
     }
-    // Color grading: a press or drag on a wheel sets its hue and
-    // strength from the pointer and makes it the sliders' wheel;
-    // release records the edit; the sliders act on that wheel.
+    // Color grading: the sliders act on the chosen wheel. A press or
+    // a drag in a wheel chooses it and sets its hue and strength from
+    // the pointer; release records the edit.
     {
         let app_weak = app.as_weak();
         let point = move |i: i32, x: f32, y: f32| {
@@ -517,13 +527,20 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             sats[i] = strength;
             app.set_grade_hues(grade_model(&hues));
             app.set_grade_saturations(grade_model(&sats));
-            app.set_grade_range(i as i32);
-            show_grade_range(&app);
-            draw_wheels(&app);
-            app.window().request_redraw();
+            choose_grade_range(&app, i);
         };
         app.on_grade_press(point.clone());
         app.on_grade_move(point);
+    }
+    // A wheel's name: enlarging or shrinking it chooses it too, and
+    // moves nothing in it, since nothing in it was touched.
+    {
+        let app_weak = app.as_weak();
+        app.on_grade_chose(move |i| {
+            if let Some(app) = app_weak.upgrade() {
+                choose_grade_range(&app, (i.max(0) as usize).min(2));
+            }
+        });
     }
     {
         let app_weak = app.as_weak();
@@ -563,18 +580,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             sats[i] = 0.0;
             app.set_grade_hues(grade_model(&hues));
             app.set_grade_saturations(grade_model(&sats));
-            app.set_grade_range(i as i32);
-            show_grade_range(&app);
-            draw_wheels(&app);
+            choose_grade_range(&app, i);
             app.invoke_view_changed();
-        });
-    }
-    {
-        let app_weak = app.as_weak();
-        app.on_grade_resized(move || {
-            if let Some(app) = app_weak.upgrade() {
-                draw_wheels(&app);
-            }
         });
     }
     {
@@ -684,5 +691,163 @@ mod tests {
                 assert!((v - want).abs() < 1e-5, "{p:?}");
             }
         }
+    }
+
+    /// The center of whatever is labeled `label`, scrolled into view.
+    fn center(app: &App, label: &str) -> (f32, f32) {
+        let (at, size) = crate::testing::labeled(app, label);
+        (at.x + size.width / 2.0, at.y + size.height / 2.0)
+    }
+
+    /// The grading the panel holds, wheel by wheel.
+    fn wheels(app: &App) -> [Wheel; 3] {
+        let g = read_grading(app);
+        Range::ALL.map(|r| *g.wheel(r))
+    }
+
+    /// The sliders' two numbers.
+    fn sliders(app: &App) -> Wheel {
+        Wheel {
+            hue: app.get_grade_hue(),
+            saturation: app.get_grade_saturation(),
+        }
+    }
+
+    /// A drag across the wheel labeled `label`, from its center out to
+    /// the right and up: a hue a little over 0 and some strength.
+    fn drag_wheel(app: &App, label: &str, up: f32) {
+        let (x, y) = center(app, label);
+        crate::testing::drag(app, &[(x, y), (x + 10.0, y), (x + 25.0, y - up)]);
+    }
+
+    /// The sliders follow the wheel chosen, not the wheel last
+    /// dragged: a click in a wheel chooses it and puts its point at
+    /// the click, a click on its name chooses it and moves nothing,
+    /// and either way its values go on the sliders; a
+    /// slider then moves that wheel and no other; the ring and the
+    /// name's accent follow `grade-range`. Global and a mask's alike.
+    fn the_sliders_follow_the_chosen_wheel(app: &App, state: &Rc<RefCell<State>>, prefix: &str) {
+        use crate::testing::click;
+        // The edit as a save reads it off the panel, and the grading
+        // the panel is on in it.
+        let edit = || {
+            let st = state.borrow();
+            crate::panel::edit::read_edit(app, &st.edit, st.target)
+        };
+        let grading = || edit().target_look(state.borrow().target).grading;
+
+        // Three wheels with three different points, each dragged, the
+        // highlights last.
+        drag_wheel(app, "Shadows wheel", 5.0);
+        drag_wheel(app, "Mid-tones wheel", 15.0);
+        drag_wheel(app, "Highlights wheel", 25.0);
+        let before = wheels(app);
+        assert_eq!(app.get_grade_range(), 2);
+        assert!(
+            before[0] != before[1] && before[1] != before[2],
+            "{before:?}"
+        );
+        assert_eq!(sliders(app), before[2]);
+
+        // A click in the shadows wheel, up and to the right of its
+        // center: chosen, its point at the click (a hue of 45 degrees),
+        // the sliders on its new values, the others unmoved.
+        let (x, y) = center(app, "Shadows wheel");
+        click(app, x + 20.0, y - 20.0);
+        assert_eq!(app.get_grade_range(), 0, "the marker follows the click");
+        let clicked = wheels(app);
+        assert!((clicked[0].hue - 45.0).abs() < 2.0, "{clicked:?}");
+        assert!(clicked[0].saturation > 0.0, "{clicked:?}");
+        assert_ne!(clicked[0], before[0], "the click moved its point");
+        assert_eq!((clicked[1], clicked[2]), (before[1], before[2]));
+        assert_eq!(sliders(app), clicked[0]);
+
+        // A slider moves the shadows, not the highlights last dragged,
+        // and the history row says so.
+        let was = edit();
+        app.set_grade_hue(123.0);
+        app.invoke_grade_changed();
+        let after = wheels(app);
+        assert_eq!(after[0].hue, 123.0);
+        assert_eq!(after[0].saturation, clicked[0].saturation);
+        assert_eq!((after[1], after[2]), (before[1], before[2]));
+        assert_eq!(grading().shadows.hue, 123.0, "the edit has it");
+        assert_eq!(
+            greycard_edit::history::describe(&was, &edit(), &[]),
+            format!("{prefix}Color grading shadows 123\u{b0}")
+        );
+
+        // Enlarging the mid-tones chooses them too.
+        let (x, y) = center(app, "Enlarge Mid-tones");
+        click(app, x, y);
+        // The section grows to the enlarged wheel over its 120ms
+        // animation, which the mock clock only runs when told.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(150));
+        assert_eq!(app.get_grade_big(), 1);
+        assert_eq!(app.get_grade_range(), 1, "the marker follows the enlarging");
+        assert_eq!(sliders(app), before[1]);
+        assert_eq!(crate::testing::count_labeled(app, "Enlarged wheel"), 1);
+        app.set_grade_saturation(0.9);
+        app.invoke_grade_changed();
+        let enlarged = wheels(app);
+        assert_eq!(enlarged[1].saturation, 0.9);
+        assert_eq!(enlarged[1].hue, before[1].hue);
+        assert_eq!((enlarged[0], enlarged[2]), (after[0], after[2]));
+        assert_eq!(grading().midtones.saturation, 0.9);
+
+        // A click in another wheel, the mid-tones still enlarged,
+        // left of its center: chosen, its point at the click (a hue of
+        // 180 degrees); the enlarged one keeps its size and its point
+        // and loses the mark.
+        let (x, y) = center(app, "Highlights wheel");
+        click(app, x - 20.0, y);
+        assert_eq!(app.get_grade_range(), 2);
+        assert_eq!(app.get_grade_big(), 1);
+        let pressed = wheels(app);
+        assert!((pressed[2].hue - 180.0).abs() < 2.0, "{pressed:?}");
+        assert_ne!(pressed[2], enlarged[2]);
+        assert_eq!((pressed[0], pressed[1]), (enlarged[0], enlarged[1]));
+        assert_eq!(sliders(app), pressed[2]);
+
+        // Shrinking it chooses it again.
+        let (x, y) = center(app, "Shrink Mid-tones");
+        click(app, x, y);
+        assert_eq!(app.get_grade_big(), -1);
+        assert_eq!(app.get_grade_range(), 1);
+        assert_eq!(sliders(app), enlarged[1]);
+    }
+
+    #[test]
+    fn the_global_gradings_sliders_follow_the_chosen_wheel() {
+        use crate::testing;
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        the_sliders_follow_the_chosen_wheel(&app, &state, "");
+    }
+
+    #[test]
+    fn a_masks_gradings_sliders_follow_the_chosen_wheel() {
+        use crate::testing;
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        assert_eq!(app.get_target(), 1);
+        let name = app.get_adjustment_name().to_string();
+        the_sliders_follow_the_chosen_wheel(&app, &state, &format!("{name}: "));
+        let st = state.borrow();
+        let edit = crate::panel::edit::read_edit(&app, &st.edit, st.target);
+        assert_eq!(
+            edit.grading,
+            Grading::default(),
+            "the global's wheels untouched"
+        );
     }
 }

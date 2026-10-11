@@ -942,7 +942,7 @@ export component App inherits Window {
     callback grade-move(int, float, float);
     callback grade-release();
     callback grade-double(int);
-    callback grade-resized();
+    callback grade-chose(int);
     callback grade-changed();
     callback grade-reset();
     // A tint toward one hue: the hue in Oklab degrees, how far 0 to
@@ -2298,7 +2298,7 @@ export component App inherits Window {
                             grade-move(a, b, c) => { root.grade-move(a, b, c); }
                             grade-release => { root.grade-release(); }
                             grade-double(a) => { root.grade-double(a); }
-                            grade-resized => { root.grade-resized(); }
+                            grade-chose(a) => { root.grade-chose(a); }
                             grade-changed => { root.grade-changed(); }
                             grade-reset => { root.grade-reset(); }
                             view-changed => { root.view-changed(); }
