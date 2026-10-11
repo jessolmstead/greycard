@@ -247,9 +247,10 @@ export component App inherits Window {
     /// test can lay the grid out on a backend that never does.
     in-out property <length> grid-w;
     in-out property <length> grid-h;
-    /// How far down the sheet is scrolled, logical pixels.
-    property <length> grid-scroll: 0px;
-    property <length> grid-row: root.grid-cell + root.grid-label + root.grid-gap;
+    /// How far down the sheet is scrolled, logical pixels. Out for
+    /// the tests.
+    out property <length> grid-scroll: 0px;
+    property <length> grid-row: root.tile-cell + root.grid-label + root.grid-gap;
     pure callback grid-columns(length, length) -> int;
     /// What is left over beside a full row, halved: the cells sit in
     /// the middle of the window rather than against its left edge.
@@ -259,13 +260,14 @@ export component App inherits Window {
     /// Rust side tests, rather than written out again here.
     pure callback grid-max-scroll(length, length, int, int, length) -> length;
     pure callback grid-reveal-to(length, length, length, int, int, int, length) -> length;
-    property <int> grid-cols: root.grid-columns(root.grid-w, root.grid-cell);
+    property <int> grid-cols: root.grid-columns(root.grid-w, root.tile-cell);
     /// How far the folder tiles push the cells down: none without
     /// tiles.
     pure callback grid-tiles-top(int, length, int) -> length;
-    property <length> grid-top: root.grid-tiles-top(root.grid-tiles.length, root.grid-cell, root.grid-cols);
+    property <length> grid-top: root.lightbox ? 0px
+        : root.grid-tiles-top(root.grid-tiles.length, root.tile-cell, root.grid-cols);
     property <length> grid-max:
-        root.grid-max-scroll(root.grid-h, root.grid-cell, root.grid-cols, root.thumbs.length,
+        root.grid-max-scroll(root.grid-h, root.tile-cell, root.grid-cols, root.thumbs.length,
             root.grid-top);
     /// The scroll bars' thumbs, the grid's and the strip's, their
     /// length and their place along the bar, and the scroll a drag of
@@ -292,6 +294,10 @@ export component App inherits Window {
         // here instead of staying over the window for good.
         root.tip-text = "";
         if (root.grid-open) {
+            // The sheet is back, by whatever way (a folder picked from
+            // the pane in the lightbox's loupe, the window's own): the
+            // loupe is over, and its keys are the lightbox's again.
+            root.lightbox-loupe = false;
             // Nothing can be placed on a picture that is not on
             // screen: whatever was in hand is put down on the way in,
             // so Escape in the grid is never spent on a stale mode.
@@ -301,10 +307,87 @@ export component App inherits Window {
             root.crop-draw-armed = false;
             // The sheet's own `init` lays it out and reports.
         } else {
+            // The lightbox's sheet closed by anything but its own keys
+            // (a double-click on a tile, the menu): that is its loupe,
+            // and Return or Escape comes back to it.
+            if (root.lightbox && !root.lightbox-loupe) {
+                root.lightbox-loupe = true;
+                root.lightbox-scroll = root.grid-scroll;
+            }
             root.strip-relay();
         }
     }
-    changed grid-cell => { root.grid-relay(); }
+
+    // The lightbox (L): the grid with everything that gets in the way
+    // of judging a set whole taken out, over the view the grid shows
+    // (a collection in its own order, the filtered folder). Tiles a
+    // few across to a handful, the picture an export of each will be,
+    // no names, badges or marks, on the canvas's dark; the left pane,
+    // the develop panel and the strip put away on the way in and put
+    // back as they were on the way out. Return is the loupe on the
+    // frame chosen, and Return or Escape comes back to the same scroll;
+    // Escape leaves to the grid.
+    in-out property <bool> lightbox: false;
+    /// In the loupe from the lightbox: the grid closed under it, to
+    /// come back to.
+    in-out property <bool> lightbox-loupe: false;
+    /// How many tiles across. Rust owns the steps.
+    in-out property <int> lightbox-across: 4;
+    /// The panes as they were before the lightbox put them away.
+    in-out property <bool> lightbox-left-was;
+    in-out property <bool> lightbox-right-was;
+    in-out property <bool> lightbox-strip-was;
+    /// The sheet's scroll when the loupe was taken, -1px for none.
+    property <length> lightbox-scroll: -1px;
+    /// A tile's side for `lightbox-across` tiles across a sheet this
+    /// wide.
+    pure callback lightbox-cell(length, int) -> length;
+    /// A step toward fewer, larger tiles (1) or more, smaller ones.
+    callback lightbox-zoom(int);
+    /// The lightbox came or went.
+    callback lightbox-changed();
+    /// The cell the grid's sheet is laid out at: the lightbox's tiles
+    /// while it is on, else the grid's own size, which the lightbox
+    /// leaves alone.
+    out property <length> tile-cell: root.lightbox
+        ? root.lightbox-cell(root.grid-w, root.lightbox-across) : root.grid-cell;
+    public function lightbox-enter() {
+        if (root.lightbox) { return; }
+        root.lightbox-left-was = root.left-hidden;
+        root.lightbox-right-was = root.right-hidden;
+        root.lightbox-strip-was = root.strip-hidden;
+        root.left-hidden = true;
+        root.right-hidden = true;
+        root.strip-hidden = true;
+        root.lightbox-scroll = -1px;
+        root.lightbox-loupe = false;
+        root.lightbox = true;
+        root.grid-open = true;
+        root.lightbox-changed();
+    }
+    /// Out of the lightbox to the grid, the panes as they were.
+    public function lightbox-leave() {
+        if (!root.lightbox) { return; }
+        root.lightbox = false;
+        root.lightbox-loupe = false;
+        root.lightbox-scroll = -1px;
+        root.left-hidden = root.lightbox-left-was;
+        root.right-hidden = root.lightbox-right-was;
+        root.strip-hidden = root.lightbox-strip-was;
+        root.grid-open = true;
+        root.lightbox-changed();
+    }
+    /// The loupe on the frame chosen, and back.
+    function lightbox-to-loupe() {
+        root.lightbox-scroll = root.grid-scroll;
+        root.lightbox-loupe = true;
+        root.grid-open = false;
+    }
+    function lightbox-from-loupe() {
+        root.lightbox-loupe = false;
+        root.grid-open = true;
+    }
+    changed tile-cell => { root.grid-relay(); }
     // Another folder's frames: the sheet re-flows and reports afresh,
     // as the strip does from its content width.
     changed thumbs => { root.grid-relay(); }
@@ -316,9 +399,14 @@ export component App inherits Window {
     /// crawl.
     function grid-wheel(by: length, ctrl: bool) {
         if (ctrl) {
-            root.grid-zoom(by > 0px ? 1 : -1);
+            if (root.lightbox) {
+                root.lightbox-zoom(by > 0px ? 1 : -1);
+            } else {
+                root.grid-zoom(by > 0px ? 1 : -1);
+            }
             return;
         }
+        root.lightbox-scroll = -1px;
         root.grid-scroll = clamp(
             root.grid-scroll - by * (root.grid-row / 3 / 60px), 0px, root.grid-max);
         root.grid-report();
@@ -327,6 +415,7 @@ export component App inherits Window {
     /// bar's drag and its track do: the wheel's path, so the report
     /// follows.
     function grid-scroll-to(to: length) {
+        root.lightbox-scroll = -1px;
         root.grid-scroll = clamp(to, 0px, root.grid-max);
         root.grid-report();
     }
@@ -336,7 +425,10 @@ export component App inherits Window {
     /// §89's lesson is that a least-scroll from an intermediate
     /// layout leaves the frame at an arbitrary place.
     function grid-relay() {
-        root.grid-scroll = 0px;
+        // Back from the lightbox's loupe: where the sheet was, and the
+        // least move from there that shows the frame the loupe left on.
+        root.grid-scroll = root.lightbox && root.lightbox-scroll >= 0px
+            ? clamp(root.lightbox-scroll, 0px, root.grid-max) : 0px;
         root.grid-reveal();
     }
     /// Scroll the least that brings the selected cell into view, the
@@ -347,7 +439,7 @@ export component App inherits Window {
         // what it shows, or its pictures wait behind the rest.
         if (root.selected >= 0) {
             root.grid-scroll = root.grid-reveal-to(
-                root.grid-scroll, root.grid-h, root.grid-cell,
+                root.grid-scroll, root.grid-h, root.tile-cell,
                 root.grid-cols, root.thumbs.length, root.selected, root.grid-top);
         }
         root.grid-report();
@@ -1742,10 +1834,46 @@ export component App inherits Window {
                 root.set-collapsed();
                 return accept;
             }
+            // The lightbox: L in and out, Return to the loupe on the
+            // frame chosen and Return, Escape or L back from there,
+            // Escape out to the grid, G to the grid, plus and minus
+            // the tiles' size. The rest is the grid's, below.
+            if (!root.sheet-open() && !e.modifiers.control && !e.modifiers.alt && !e.modifiers.meta) {
+                let l = e.text == "l" || e.text == "L";
+                // A held key is one press: held, it would flip in and out
+                // at the repeat's rate. Its repeats are eaten here, not
+                // left to the grid's keys below, which would take the
+                // next step out. Plus and minus may repeat.
+                let ours = l || e.text == "g" || e.text == "G" || e.text == Key.Return
+                    || e.text == Key.Escape;
+                if (root.lightbox && e.repeat && ours) { return accept; }
+                if (root.lightbox && root.lightbox-loupe) {
+                    if (!e.repeat && (l || e.text == Key.Return || e.text == Key.Escape)) {
+                        root.lightbox-from-loupe();
+                        return accept;
+                    }
+                    if (!e.repeat && (e.text == "g" || e.text == "G")) { root.lightbox-leave(); return accept; }
+                } else if (root.lightbox) {
+                    if (!e.repeat && (l || e.text == Key.Escape || e.text == "g" || e.text == "G")) {
+                        root.lightbox-leave();
+                        return accept;
+                    }
+                    if (!e.repeat && e.text == Key.Return) { root.lightbox-to-loupe(); return accept; }
+                    if (e.text == "+" || e.text == "=") { root.lightbox-zoom(1); return accept; }
+                    if (e.text == "-" || e.text == "_") { root.lightbox-zoom(-1); return accept; }
+                } else if (l && !e.repeat) {
+                    root.lightbox-enter();
+                    return accept;
+                }
+            }
             // The grid takes the window: its own arrows, its own
             // zoom, and three ways back to the loupe.
             if (root.grid-open && !root.sheet-open()) {
-                if (e.text == Key.Escape || e.text == Key.Return) { root.grid-open = false; return accept; }
+                // Held, one step out and no further.
+                if (e.text == Key.Escape || e.text == Key.Return) {
+                    if (!e.repeat) { root.grid-open = false; }
+                    return accept;
+                }
                 if (e.text == Key.LeftArrow) { root.grid-step(-1, 0, root.grid-cols, e.modifiers.shift); return accept; }
                 if (e.text == Key.RightArrow) { root.grid-step(1, 0, root.grid-cols, e.modifiers.shift); return accept; }
                 if (e.text == Key.UpArrow) { root.grid-step(0, -1, root.grid-cols, e.modifiers.shift); return accept; }
@@ -2764,7 +2892,9 @@ export component App inherits Window {
         set-count: root.set-count;
         meta-stars: root.meta-stars;
         grid-open <=> root.grid-open;
-        grid-cell <=> root.grid-cell;
+        grid-cell: root.tile-cell;
+        lightbox: root.lightbox;
+        lightbox-asked => { root.lightbox-enter(); }
         grid-pad: root.grid-pad;
         grid-label: root.grid-label;
         grid-w <=> root.grid-w;
@@ -2776,7 +2906,8 @@ export component App inherits Window {
         grid-cols: root.grid-cols;
         grid-max: root.grid-max;
         grid-top: root.grid-top;
-        tiles: root.grid-tiles;
+        // No folder tiles in the lightbox: frames alone.
+        tiles: root.lightbox ? [] : root.grid-tiles;
         tile-picked(i) => { root.grid-tile-picked(i); }
         tile-reveal(i) => { root.grid-tile-reveal(i); }
         menu-done => { root.menu-done(); }
@@ -3417,6 +3548,22 @@ export component App inherits Window {
         meta(k, v) => { root.menu-meta(k, v); root.menu-done(); }
         reveal => { root.menu-reveal(); root.menu-done(); }
         export => { root.menu-export(); root.menu-done(); }
+        // The sheet takes the focus itself: no `menu-done`, whose
+        // timer would take it back.
+        current: root.selected >= 0 && root.selected < root.thumbs.length
+            ? root.thumbs[root.selected].name : "";
+        sync => {
+            if (root.set-count > 1 && !root.sheet-open() && !root.tool-in-hand()) {
+                root.sync-open-asked();
+            } else {
+                root.menu-done();
+            }
+        }
+        lightbox: root.lightbox;
+        lightbox-toggled => {
+            if (root.lightbox) { root.lightbox-leave(); } else { root.lightbox-enter(); }
+            root.menu-done();
+        }
     }
 
     // Recently opened: one list for the window, opened below the

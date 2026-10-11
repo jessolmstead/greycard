@@ -1847,9 +1847,23 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         canvas_color: render::canvas_name(app.get_canvas_choice()).to_string(),
         collapsed: read_folds(app),
         grid_cell: app.get_grid_cell(),
-        hide_left: app.get_left_hidden(),
-        hide_right: app.get_right_hidden(),
-        hide_strip: app.get_strip_hidden(),
+        // The lightbox puts the panes away for as long as it is on:
+        // what is kept is how they were before it.
+        hide_left: if app.get_lightbox() {
+            app.get_lightbox_left_was()
+        } else {
+            app.get_left_hidden()
+        },
+        hide_right: if app.get_lightbox() {
+            app.get_lightbox_right_was()
+        } else {
+            app.get_right_hidden()
+        },
+        hide_strip: if app.get_lightbox() {
+            app.get_lightbox_strip_was()
+        } else {
+            app.get_strip_hidden()
+        },
         // Kept apart, all of them: the last file is written as soon
         // as a file develops, the sidecars' two as the Settings sheet
         // changes them, culling's switch as it is flipped, and the

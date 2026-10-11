@@ -31,6 +31,14 @@ export struct Pt {
 export struct Thumb {
     name: string,
     image: image,
+    /// The lightbox's picture of the frame, the size of its tile: the
+    /// picture of its edit, or the camera's for a frame with none.
+    /// Empty but for the rows the lightbox has a tile for.
+    big: image,
+    /// The lightbox waits for the picture of the frame's edit: what
+    /// `big` holds (an edit since replaced) is drawn dimmed, and a tile
+    /// with nothing says Developing.
+    pending: bool,
     /// The frame's meta, as the badges want it: stars, the flag (1 a
     /// pick, 2 a reject) and the color label (1 to 5). Rust owns what
     /// the numbers mean; see `greycard_edit::meta`.

@@ -37,6 +37,7 @@ mod grid;
 mod headless;
 mod import;
 mod library;
+mod lightbox;
 mod log;
 mod match_compare;
 mod mounts;
@@ -626,6 +627,10 @@ pub(crate) struct State {
     pub(crate) placeholder: Option<placeholder::Wait>,
     /// The previews decoded ahead of the arrow, on their own threads.
     pub(crate) prefetch: cull::Prefetcher,
+    /// The lightbox, while it is on: its tiles' pictures.
+    pub(crate) lightbox: Option<lightbox::Lightbox>,
+    /// The lightbox's decode threads, made the first time it opens.
+    pub(crate) lightbox_fetch: Option<cull::Prefetcher>,
     /// Open in culling mode, with the compare view at this many
     /// frames, once the first file is chosen (`--cull`).
     pub(crate) cull_at_start: Option<usize>,
@@ -1165,6 +1170,8 @@ impl State {
                     });
                 })
             },
+            lightbox: None,
+            lightbox_fetch: None,
             cull_at_start: None,
             shown: (0..count).collect(),
             pictured: [(0, 0); 2],
@@ -1364,6 +1371,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::camera_match::install(app, &state);
     roots::install(app, &state, &worker);
     panel::collections::install(app, &state, &worker);
+    lightbox::install(app, &state, &worker);
     tree::install(app, &state, &worker);
     report::install(app, &state);
     update::install(app, &state);

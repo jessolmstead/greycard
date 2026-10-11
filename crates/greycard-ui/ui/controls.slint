@@ -860,6 +860,16 @@ export component ThumbBadges inherits Rectangle {
     in property <length> glyph: 9px;
     property <bool> said: root.rating > 0 || root.flag > 0 || root.label > 0;
     visible: root.said;
+    // What it shows, in words: "3 stars, pick, red".
+    accessible-role: image;
+    accessible-label: (root.rating > 0
+            ? min(root.rating, root.stars) + (root.rating == 1 ? " star" : " stars") : "")
+        + (root.flag > 0 ? (root.rating > 0 ? ", " : "") + (root.flag == 2 ? "reject" : "pick") : "")
+        + (root.label > 0
+            ? (root.rating > 0 || root.flag > 0 ? ", " : "")
+                + (root.label == 1 ? "red" : root.label == 2 ? "yellow" : root.label == 3 ? "green"
+                    : root.label == 4 ? "blue" : "purple")
+            : "");
     width: badges.preferred-width;
     height: root.glyph + 6px;
     border-radius: Theme.radius-sm;

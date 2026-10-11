@@ -317,3 +317,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§304. Collections and smart collections, built](notes/304-collections-and-smart-collections-built.md) (2026-10-11)
 - [§305. A snapshot's row says what a click does; a key that hides a frame says where it went](notes/305-a-snapshots-row-says-what-a-click-does.md) (2026-10-11)
 - [§306. The window opens no taller than its screen](notes/306-the-window-opens-no-taller-than-its-screen.md) (2026-10-11)
+- [§307. The lightbox](notes/307-the-lightbox.md) (2026-10-11)

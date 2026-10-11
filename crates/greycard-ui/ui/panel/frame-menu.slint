@@ -53,6 +53,14 @@ export component FrameMenu inherits Rectangle {
     callback meta(string, int);
     callback reveal();
     callback export();
+    /// The sync sheet over the selection, from the frame on screen:
+    /// offered with more than one frame chosen, as Ctrl+Shift+S is.
+    callback sync();
+    /// The frame on screen, which a sync takes its settings from.
+    in property <string> current;
+    /// Whether the lightbox is on, for its item's words, and the item.
+    in property <bool> lightbox;
+    callback lightbox-toggled();
 
     // Nothing of its own to draw or to take a click: the menu is a
     // popup, placed from this corner, and a zero-sized area at the
@@ -78,6 +86,17 @@ export component FrameMenu inherits Rectangle {
                 title: root.paste-from == "" ? "Paste settings" : "Paste settings from " + root.paste-from;
                 enabled: root.paste-from != "";
                 activated => { root.paste(); }
+            }
+            if root.count > 1: MenuItem {
+                title: "Sync settings " + (root.current == "" ? "" : "of " + root.current + " ")
+                    + "onto " + (root.count - 1)
+                    + (root.count == 2 ? " other frame..." : " other frames...");
+                activated => { root.sync(); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: root.lightbox ? "Leave lightbox" : "Lightbox";
+                activated => { root.lightbox-toggled(); }
             }
             MenuSeparator { }
             Menu {

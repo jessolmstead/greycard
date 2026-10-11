@@ -403,6 +403,9 @@ pub struct Want {
     /// preview from the picture in hand when it is owed one. The
     /// develop view's is not: its cores are the develop's.
     pub make_preview: bool,
+    /// A tile of the lightbox: the picture of the frame's edit when it
+    /// has one, and never the camera's then (`lightbox::fetch`).
+    pub lightbox: bool,
 }
 
 impl Want {
@@ -414,6 +417,7 @@ impl Want {
             size,
             from: Source::File,
             make_preview: false,
+            lightbox: false,
         }
     }
 
@@ -440,6 +444,7 @@ impl Want {
             && self.size == other.size
             && self.path == other.path
             && self.from == other.from
+            && self.lightbox == other.lightbox
     }
 }
 
@@ -621,6 +626,9 @@ pub(crate) fn fetch(
     previews: Option<&Arc<crate::previews::Previews>>,
     deliver: &dyn Fn(Loaded),
 ) {
+    if want.lightbox {
+        return crate::lightbox::fetch(want, previews, deliver);
+    }
     let edited = previews.and_then(|p| p.edited());
     if let Source::Preview { hash, stamp } = &want.from {
         // An edited frame out of reach shows the last picture of its

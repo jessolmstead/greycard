@@ -374,6 +374,8 @@ pub(crate) fn thumb_for(path: &Path, meta: &Meta, marks: (bool, bool)) -> Thumb 
     Thumb {
         name: file_name(path).into(),
         image: slint::Image::default(),
+        big: slint::Image::default(),
+        pending: false,
         rating: meta.rating.min(meta::STARS) as i32,
         flag: meta.flag.code(),
         label: meta.label.code(),
@@ -664,6 +666,7 @@ pub(crate) fn turn_frames(
         write_sidecar(st, f);
         let (turns, flip) = thumb_turns(st, app, f);
         show_thumb(st, app, f, turns, flip);
+        crate::lightbox::show(st, app, f);
     }
     // The rasters are keyed by adjustment and component and know
     // nothing of a turn: a brush's is only brought up to its strokes
@@ -2356,7 +2359,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             // The grid is open: its pictures are what is on screen.
             worker.hold_thumbnails(false);
-            let cell = app.get_grid_cell();
+            // The lightbox's tiles when it is on, else the grid's cells.
+            let cell = app.get_tile_cell();
             let mut st = state.borrow_mut();
             let count = st.shown.len() as i32;
             // The grid's cells follow, and the pictures with them.
@@ -2400,6 +2404,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             worker.want_thumbnails(st.shown[first], st.shown[last]);
             // In the grid, no frame is being edited.
             crate::edited::note_editing(&st, &worker, true);
+            // The lightbox's tiles follow the cells.
+            if st.lightbox.is_some() {
+                crate::lightbox::refresh(&mut st, &app);
+            }
         });
     }
     // The desktop's folder chooser, for the Open folder button and

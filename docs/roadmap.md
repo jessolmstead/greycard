@@ -36,15 +36,6 @@ collections and smart collections that survive a move, a mask has its
 own Detail, and the first tester's rough edges on masks, the touchpad
 and export are smoothed.
 
-- [ ] Lightbox over a collection, or the picks until collections
-      exist: the grid with everything that gets in the way of judging
-      consistency taken out. Tiles at a chosen size up to a handful
-      across, the developed picture in each rather than the camera's
-      JPEG so what is compared is what will export, no badges, names
-      or chips, a dark surround, Tab hiding the rest; the sync sheet
-      reachable from it so a frame that stands out is matched to its
-      neighbors; one key into the loupe on a tile and one back. Reads
-      the 2048 picture of §270
 
 ## Tracks
 

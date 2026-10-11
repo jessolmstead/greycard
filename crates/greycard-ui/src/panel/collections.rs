@@ -1083,6 +1083,54 @@ mod tests {
         teardown(s);
     }
 
+    /// The lightbox over a collection lays its tiles out in the
+    /// collection's own order, not the frames' time or name.
+    #[test]
+    fn the_lightbox_over_a_collection_is_in_its_hand_order() {
+        use i_slint_backend_testing::{AccessibleRole, ElementHandle};
+        let s = setup("lightbox");
+        let (app, state, worker) = (&s.app, &s.state, &s.worker);
+        let id = {
+            let mut st = state.borrow_mut();
+            // z, x, y: neither the names' order nor the time's.
+            let order: Vec<usize> = [2, 0, 1]
+                .iter()
+                .map(|&i| st.files.iter().position(|p| *p == s.files[i]).unwrap())
+                .collect();
+            let frames = frames_of(&st, &order);
+            let mut c = Collection::new("Sequence");
+            c.add(&frames);
+            let id = c.id.clone();
+            st.collections.list.push(c);
+            st.collections.save(&id);
+            id
+        };
+        app.invoke_collection_picked(id.as_str().into());
+        land_sent(state, app, worker);
+        app.invoke_select(0);
+        crate::testing::press(app, "l");
+        assert!(app.get_lightbox());
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+        let mut tiles: Vec<(f32, f32, &str)> = ["x.tif", "y.tif", "z.tif"]
+            .into_iter()
+            .map(|name| {
+                let e = ElementHandle::find_by_accessible_label(app, name)
+                    .find(|e| e.accessible_role() == Some(AccessibleRole::Image))
+                    .unwrap_or_else(|| panic!("no tile {name}"));
+                let p = e.absolute_position();
+                (p.y, p.x, name)
+            })
+            .collect();
+        tiles.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        let order: Vec<&str> = tiles.iter().map(|t| t.2).collect();
+        assert_eq!(order, ["z.tif", "x.tif", "y.tif"]);
+        drop(s.writer);
+        crate::testing::remove_dir_retry(&s.dir);
+    }
+
     /// A reference to a picture nothing has is kept and said; a file
     /// another tool rewrote in place heals the reference by its hint in
     /// the pass that found it, and the collection still shows it.

@@ -1367,6 +1367,7 @@ pub(crate) fn kept(st: &mut crate::State, worker: &crate::worker::Worker, path: 
 /// its copy; the loupe's refresh is the caller's.
 fn ask_again(st: &mut crate::State, worker: &crate::worker::Worker, i: usize) {
     worker.send(crate::rows::thumb_job(st, i));
+    crate::lightbox::forget(st, i);
     for cull in [st.cull.as_mut(), st.hold.as_mut()].into_iter().flatten() {
         cull.cache.forget(i);
     }
