@@ -10,7 +10,7 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
-## 0.6.0, unreleased
+## 0.6.0, 2026-10-10
 
 The strip and the grid show each frame as edited, made in the background
 for frames edited without being opened. The copy settings and preset
