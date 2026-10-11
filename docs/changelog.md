@@ -42,6 +42,10 @@ note a first tester reads.
 
 ### Fixes
 
+- The brush and the retouch patch size by the wheel's accumulated
+  delta, one step of 1.1x per wheel click's worth, so a touchpad
+  scroll no longer resizes them a dozen times a gesture
+  ([§303](https://github.com/jessolmstead/greycard/blob/master/docs/notes/303-the-brush-and-the-patch-size-by-the-wheels-accumulated-delta.md))
 - A two-finger touchpad scroll over the picture pans it; a mouse
   wheel's click still zooms a step, Ctrl with any scroll zooms
   smoothly, and a Mac trackpad's pinch zooms about its center (the

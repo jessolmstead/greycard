@@ -15,10 +15,7 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] With the brush or the retouch patch in hand, every wheel event
-      resizes it by 1.1x, so a touchpad scroll resizes it many times a
-      gesture; size by the accumulated delta as the slider's notch does
-      (§284), found reviewing #17
+None at present.
 
 ## Open Questions
 

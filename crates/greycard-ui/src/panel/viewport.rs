@@ -2338,6 +2338,51 @@ mod tests {
         assert!((state.borrow().zoom - fit * 1.25).abs() < 1e-6);
     }
 
+    /// With the brush or the retouch patch in hand the wheel sizes it
+    /// by 1.1x for each 60 px of delta, however it arrives: a click is
+    /// one step, a touchpad's small deltas add up to one, and a turn of
+    /// direction starts the count over.
+    #[test]
+    fn the_wheel_sizes_the_brush_and_the_patch_by_the_accumulated_delta() {
+        type Get = fn(&App) -> f32;
+        type Put = fn(&App);
+        let brush: (Get, Put) = (App::get_brush_size, |a| a.set_placing("Brush".into()));
+        let patch: (Get, Put) = (App::get_patch_size, |a| a.set_retouch_mode("Heal".into()));
+        for (size, hold) in [brush, patch] {
+            let (app, _state, _worker) = scrolled_view(1.0);
+            app.set_brush_size(0.05);
+            app.set_patch_size(0.05);
+            hold(&app);
+            let base = size(&app);
+            let near = |a: f32, b: f32| (a - b).abs() < 1e-6;
+
+            scroll(&app, 0.0, 60.0);
+            assert!(near(size(&app), base * 1.1), "a click is a step");
+            scroll(&app, 0.0, -60.0);
+            assert!(near(size(&app), base), "and back");
+
+            for _ in 0..6 {
+                scroll(&app, 0.0, 10.0);
+            }
+            assert!(
+                near(size(&app), base * 1.1),
+                "six small deltas are one step"
+            );
+            for _ in 0..6 {
+                scroll(&app, 0.0, -10.0);
+            }
+            assert!(near(size(&app), base), "and six back");
+
+            for _ in 0..3 {
+                scroll(&app, 0.0, 10.0);
+            }
+            for _ in 0..3 {
+                scroll(&app, 0.0, -10.0);
+            }
+            assert!(near(size(&app), base), "a reversal does not step");
+        }
+    }
+
     /// A touchpad's small deltas pan the picture with the fingers and
     /// leave the zoom alone, adding up as they come; deltas on both
     /// axes, or a tilted wheel's sideways click, pan too.

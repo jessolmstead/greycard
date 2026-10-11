@@ -146,12 +146,24 @@ export component Viewport inherits Rectangle {
         height: 100%;
         image-fit: fill;
     }
+    // Putting the tool down, or picking another, drops a part of a
+    // step the wheel had added up.
+    changed placing => {
+        ta.size-acc = 0;
+    }
+    changed retouch-mode => {
+        ta.size-acc = 0;
+    }
+
     ta := TouchArea {
         property <length> last-x;
         property <length> last-y;
         // When the wheel last panned: a whole click's delta soon
         // after is a touchpad's flick, not a wheel's click.
         property <duration> pan-at: -1s;
+        // The wheel's delta toward the next step of the brush's or
+        // the patch's size, in px.
+        property <float> size-acc: 0;
         // Where the press was, and whether it has become a drag.
         property <length> down-x;
         property <length> down-y;
@@ -333,14 +345,25 @@ export component Viewport inherits Rectangle {
             }
         }
         scroll-event(e) => {
-            // With the brush in hand the wheel sizes it.
-            if (root.placing == "Brush") {
-                root.brush-size = clamp(root.brush-size * (e.delta-y > 0 ? 1.1 : 1 / 1.1), 0.002, 0.5);
-                return accept;
-            }
-            if (root.retouch-mode != "") {
-                root.patch-size = clamp(root.patch-size * (e.delta-y > 0 ? 1.1 : 1 / 1.1), 0.002, 0.3);
-                root.patch-edited();
+            // With the brush or the retouch patch in hand the wheel
+            // sizes it: a step of 1.1x for each 60 px of delta, a
+            // wheel click's size, added up as a touchpad's small
+            // deltas come, and started over when the direction turns.
+            if (root.placing == "Brush" || root.retouch-mode != "") {
+                if (self.size-acc * e.delta-y < 0) {
+                    self.size-acc = 0;
+                }
+                self.size-acc += e.delta-y / 1px;
+                if (abs(self.size-acc) >= 60) {
+                    let steps = (self.size-acc > 0 ? 1 : -1) * floor(abs(self.size-acc) / 60);
+                    self.size-acc -= steps * 60;
+                    if (root.placing == "Brush") {
+                        root.brush-size = clamp(root.brush-size * pow(1.1, steps), 0.002, 0.5);
+                    } else {
+                        root.patch-size = clamp(root.patch-size * pow(1.1, steps), 0.002, 0.3);
+                        root.patch-edited();
+                    }
+                }
                 return accept;
             }
             // Ctrl zooms whatever the delta, by as much of a step as
