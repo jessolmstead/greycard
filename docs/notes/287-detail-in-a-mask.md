@@ -58,16 +58,19 @@ and before the exposure, as the develop applies the global's before
 the sharpen:
 
     k_t = Σ_i w_i · texture_i · TEXTURE_GAIN
+    px *= exp2(clip(px) · k_t · texture)
     k_c = Σ_i w_i · clarity_i · CLARITY_GAIN
-    gain = exp2(clip · (k_t · texture + k_c · clarity))
-    px *= gain
+    px *= exp2(clip(px) · k_c · clarity)
     a = Σ_i w_i · dehaze_i, clamped to [-1, 1]
     t = bounded(1 - a · S · haze)
     px = (px - A) / t + A
 
 `w_i` is the mask's weight at the pixel, read as it is for the rest of
-the look. `clip` is the same fade toward the develop's clip level the
-global uses, from the pixel's brightest channel. `bounded` is the
+the look. `clip(px)` is the same fade toward the develop's clip level the
+global uses, from the pixel's brightest channel, read again before
+Clarity as the global op reads it, since the global applies the two
+bands one after the other and the finish must land on the same
+pixel. `bounded` is the
 apply's floor and the consistency bound (`t ≥ 1 - px_c / A_c` on each
 channel), computed from the pixel the finish holds. Texture and
 Clarity are in stops, so a mask at half weight gives half the stops,
