@@ -12,6 +12,9 @@ export component Viewport inherits Rectangle {
     in property <bool> typing: false;
     callback zoom(float, length, length);
     callback pan(length, length);
+    /// A touchpad's scroll: the picture follows the fingers, held
+    /// at its edges, and still where it fits the view.
+    callback wheel-pan(length, length);
     callback toggle-zoom(length, length);
     /// The dropper drawn at the pointer while picking. Empty if the
     /// icon is missing, and then the cursor stays a crosshair.
@@ -146,6 +149,9 @@ export component Viewport inherits Rectangle {
     ta := TouchArea {
         property <length> last-x;
         property <length> last-y;
+        // When the wheel last panned: a whole click's delta soon
+        // after is a touchpad's flick, not a wheel's click.
+        property <duration> pan-at: -1s;
         // Where the press was, and whether it has become a drag.
         property <length> down-x;
         property <length> down-y;
@@ -337,8 +343,53 @@ export component Viewport inherits Rectangle {
                 root.patch-edited();
                 return accept;
             }
-            root.zoom(e.delta-y > 0 ? 1.25 : 0.8, self.mouse-x, self.mouse-y);
+            // Ctrl zooms whatever the delta, by as much of a step as
+            // the delta is of a click: a pinch arrives as Ctrl and a
+            // stream of small deltas on Windows, and a browser zooms
+            // on Ctrl and the wheel too.
+            if (e.modifiers.control) {
+                root.zoom(pow(1.25, e.delta-y / 60px), self.mouse-x, self.mouse-y);
+                return accept;
+            }
+            // A mouse wheel's click is a single vertical delta of whole
+            // clicks (Slint makes a line 60 px) and zooms a step.
+            // Anything else, or with a sideways part, is a touchpad's,
+            // or a tilted wheel's, and pans. Slint drops the gesture's
+            // phase, so a fast flick that happens to land on a whole
+            // click is told by its company: within a quarter second
+            // of a pan it is part of the pan.
+            if (e.delta-x == 0 && e.delta-y != 0
+                    && mod(abs(e.delta-y) / 1px, 60) == 0
+                    && animation-tick() - self.pan-at > 250ms) {
+                root.zoom(e.delta-y > 0 ? 1.25 : 0.8, self.mouse-x, self.mouse-y);
+                return accept;
+            }
+            // Only a sizable pan counts: a flick ramps through deltas
+            // of 20 px and more on its way to a click's size, while a
+            // high-resolution wheel's fragments are a few pixels, and
+            // its whole detent must still zoom.
+            if (abs(e.delta-x) + abs(e.delta-y) >= 20px) {
+                self.pan-at = animation-tick();
+            }
+            root.wheel-pan(e.delta-x, e.delta-y);
             return accept;
+        }
+    }
+    // A pinch on a Mac's trackpad zooms about the pointer. A pinch
+    // never reaches the scroll handler above; this takes a pinch or a
+    // rotation, holds the pointer while one is active, and lets every
+    // other event through to the TouchArea under it. Two fingers on a
+    // touchscreen reach it too, but Slint first hands the TouchArea a
+    // release for the first finger, so such a pinch starts with a
+    // click's zoom; untried on hardware.
+    ScaleRotateGestureHandler {
+        property <float> last-scale: 1;
+        started => { self.last-scale = 1; }
+        updated => {
+            if (self.scale > 0 && self.last-scale > 0) {
+                root.zoom(self.scale / self.last-scale, self.center.x, self.center.y);
+            }
+            self.last-scale = self.scale;
         }
     }
     // The brush under the pointer: its radius, and where

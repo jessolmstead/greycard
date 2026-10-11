@@ -309,3 +309,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§296. The mixer's dropper is one pick](notes/296-the-mixers-dropper-is-one-pick.md) (2026-10-11)
 - [§297. A drag on a mask's body moves the mask](notes/297-a-drag-on-a-masks-body-moves-the-mask.md) (2026-10-11)
 - [§298. A sheet keeps the wheel, and the export sheet's fit](notes/298-a-sheet-keeps-the-wheel.md) (2026-10-11)
+- [§299. A two-finger scroll over the picture pans](notes/299-a-two-finger-scroll-over-the-picture-pans.md) (2026-10-11)

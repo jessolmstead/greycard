@@ -37,9 +37,42 @@ pub fn effective(asked: f32, cell: (u32, u32), image: (u32, u32)) -> f32 {
     (cw / iw).min(ch / ih).min(1.0)
 }
 
+/// One axis of a touchpad's pan: the view's center along a `frame`
+/// of image pixels, `shown` of them in view, moved `by` image pixels
+/// the way the content goes (so the center goes the other).
+///
+/// The pan stops at the frame's edge rather than run the picture off
+/// the view, and where the whole frame is in view it has nowhere to
+/// go and the center stays. A center already past the edge, as a
+/// drag can leave it, is never pulled back in a jump: the wheel only
+/// stops it going further out.
+pub fn wheel_pan(center: f32, by: f32, shown: f32, frame: f32) -> f32 {
+    if shown >= frame {
+        return center;
+    }
+    let (low, high) = (shown / 2.0, frame - shown / 2.0);
+    (center - by).clamp(center.min(low), center.max(high))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wheel_pan_stops_at_the_edge_and_is_still_when_the_frame_fits() {
+        // 6000 wide, 1000 in view: the center lives in 500..5500.
+        assert_eq!(wheel_pan(3000.0, 100.0, 1000.0, 6000.0), 2900.0);
+        assert_eq!(wheel_pan(3000.0, -100.0, 1000.0, 6000.0), 3100.0);
+        assert_eq!(wheel_pan(600.0, 400.0, 1000.0, 6000.0), 500.0);
+        assert_eq!(wheel_pan(5400.0, -400.0, 1000.0, 6000.0), 5500.0);
+        // The whole frame in view: nowhere to go.
+        assert_eq!(wheel_pan(3000.0, 100.0, 6000.0, 6000.0), 3000.0);
+        assert_eq!(wheel_pan(3000.0, 100.0, 9000.0, 6000.0), 3000.0);
+        // Dragged out past the edge: back in is free, further out is
+        // held where it is, and nothing jumps.
+        assert_eq!(wheel_pan(200.0, 100.0, 1000.0, 6000.0), 200.0);
+        assert_eq!(wheel_pan(200.0, -100.0, 1000.0, 6000.0), 300.0);
+    }
 
     #[test]
     fn a_fit_brings_the_whole_picture_in_and_never_enlarges() {

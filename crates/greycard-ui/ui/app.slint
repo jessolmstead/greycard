@@ -64,6 +64,7 @@ export component App inherits Window {
     out property <int> view-height: view.height / 1phx;
     callback zoom(float, length, length);
     callback pan(length, length);
+    callback wheel-pan(length, length);
     callback reset-view();
     /// Zoom to a level (0 fits) with the image pixel at the point held.
     callback zoom-to(float, length, length);
@@ -1918,6 +1919,7 @@ export component App inherits Window {
                 typing: root.snapshot-editing >= 0;
                 zoom(a, b, c) => { root.zoom(a, b, c); }
                 pan(a, b) => { root.pan(a, b); }
+                wheel-pan(a, b) => { root.wheel-pan(a, b); }
                 toggle-zoom(a, b) => { root.toggle-zoom(a, b); }
                 placeholder: root.placeholder;
                 compare-tiles: root.compare-tiles;

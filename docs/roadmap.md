@@ -39,9 +39,6 @@ collections and smart collections that survive a move, a mask has its
 own Detail, and the first tester's rough edges on masks, the touchpad
 and export are smoothed.
 
-- [ ] A two-finger touchpad scroll over the picture pans, and only a
-      wheel's click or a pinch zooms, telling them apart as §284 tells
-      a click from a touchpad (#17)
 - [ ] The Adjustments list (Global, each mask, New mask) stays pinned
       above the Masks tab's scrolling sections, at most six rows tall
       with its own scroll, so Global or another mask is one click from

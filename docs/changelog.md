@@ -14,6 +14,12 @@ note a first tester reads.
 
 ### Fixes
 
+- A two-finger touchpad scroll over the picture pans it; a mouse
+  wheel's click still zooms a step, Ctrl with any scroll zooms
+  smoothly, and a Mac trackpad's pinch zooms about its center (the
+  pinch is untried on hardware). A tilted wheel's sideways click pans
+  instead of zooming out
+  ([§299](https://github.com/jessolmstead/greycard/blob/master/docs/notes/299-a-two-finger-scroll-over-the-picture-pans.md))
 - A wheel or touchpad scroll over an open sheet, its dimmed surround,
   its buttons or a list at its end no longer zooms the picture behind
   it

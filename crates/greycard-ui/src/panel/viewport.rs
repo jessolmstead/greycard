@@ -1525,6 +1525,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_zoom(move |factor, x, y| {
+            // No change at all (Ctrl and a sideways scroll, a gesture
+            // that only rotates) keeps a fit a fit rather than pinning
+            // it to the zoom the fit happens to be.
+            if factor == 1.0 {
+                return;
+            }
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -1679,6 +1685,34 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             st.center.0 -= dx * scale / zoom;
             st.center.1 -= dy * scale / zoom;
             app.window().request_redraw();
+        });
+    }
+    // A touchpad's scroll pans as a drag does, but held to the frame:
+    // a stream of small deltas would otherwise carry the picture off
+    // the view, and where it fits there is nothing to move.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_wheel_pan(move |dx, dy| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            let scale = app.window().scale_factor();
+            let (vw, vh) = (
+                app.get_view_width().max(1) as u32,
+                app.get_view_height().max(1) as u32,
+            );
+            let at = effective_zoom(&st, vw, vh);
+            let (cw, ch) = view_cell(&st, vw, vh);
+            let (fw, fh) = (st.image_size.0 as f32, st.image_size.1 as f32);
+            let center = (
+                zoom::wheel_pan(st.center.0, dx * scale / at, cw as f32 / at, fw),
+                zoom::wheel_pan(st.center.1, dy * scale / at, ch as f32 / at, fh),
+            );
+            if center != st.center {
+                st.center = center;
+                app.window().request_redraw();
+            }
         });
     }
     {
@@ -2248,5 +2282,188 @@ mod tests {
         app.invoke_local_wb_toggled();
         assert_eq!(app.get_local_temperature(), 6100.0);
         assert_eq!(app.get_local_tint(), 0.001);
+    }
+
+    /// A window with a 6000 by 4000 picture on the viewport, centered,
+    /// at `zoom` (0 fits).
+    fn scrolled_view(zoom: f32) -> (App, Rc<RefCell<State>>, Rc<crate::worker::Worker>) {
+        let app = window(1);
+        let (state, worker) = crate::testing::retouch_state(&app);
+        {
+            let mut st = state.borrow_mut();
+            st.image_size = (6000, 4000);
+            st.center = (3000.0, 2000.0);
+            st.zoom = zoom;
+        }
+        (app, state, worker)
+    }
+
+    /// A wheel event at the middle of the view.
+    fn scroll(app: &App, delta_x: f32, delta_y: f32) {
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(600.0, 400.0),
+                delta_x,
+                delta_y,
+            });
+    }
+
+    /// A mouse wheel's click, a single vertical delta of 60 px, zooms a
+    /// step about the pointer, from the fit as from a zoom.
+    #[test]
+    fn a_wheel_click_over_the_picture_zooms() {
+        let (app, state, _worker) = scrolled_view(1.0);
+        scroll(&app, 0.0, 60.0);
+        assert_eq!(state.borrow().zoom, 1.25);
+        scroll(&app, 0.0, -60.0);
+        assert_eq!(state.borrow().zoom, 1.0);
+
+        let (app, state, _worker) = scrolled_view(0.0);
+        let (vw, vh) = (app.get_view_width() as u32, app.get_view_height() as u32);
+        let fit = effective_zoom(&state.borrow(), vw, vh);
+        scroll(&app, 0.0, 60.0);
+        assert!((state.borrow().zoom - fit * 1.25).abs() < 1e-6);
+    }
+
+    /// A touchpad's small deltas pan the picture with the fingers and
+    /// leave the zoom alone, adding up as they come; deltas on both
+    /// axes, or a tilted wheel's sideways click, pan too.
+    #[test]
+    fn a_touchpad_scroll_over_the_picture_pans() {
+        let (app, state, _worker) = scrolled_view(1.0);
+        let scale = app.window().scale_factor();
+        scroll(&app, 0.0, 10.0);
+        {
+            let st = state.borrow();
+            assert_eq!(st.zoom, 1.0, "a small delta does not zoom");
+            assert_eq!(st.center, (3000.0, 2000.0 - 10.0 * scale));
+        }
+        for _ in 0..5 {
+            scroll(&app, 3.0, -4.0);
+        }
+        {
+            let st = state.borrow();
+            assert_eq!(st.zoom, 1.0);
+            assert_eq!(st.center, (3000.0 - 15.0 * scale, 2000.0 + 10.0 * scale));
+        }
+        scroll(&app, 60.0, 60.0);
+        assert_eq!(state.borrow().zoom, 1.0);
+        scroll(&app, 60.0, 0.0);
+        assert_eq!(state.borrow().zoom, 1.0);
+        assert_eq!(state.borrow().center.0, 3000.0 - 135.0 * scale);
+    }
+
+    /// A touchpad's fast flick carries deltas of a click's size and
+    /// more: one that is no whole number of clicks pans, and a whole
+    /// click within a quarter second of a pan is part of the pan. The
+    /// same click after a quiet spell is a wheel's, and zooms.
+    #[test]
+    fn a_flick_that_reaches_a_clicks_size_still_pans() {
+        let (app, state, _worker) = scrolled_view(1.0);
+        let scale = app.window().scale_factor();
+        scroll(&app, 0.0, 72.0);
+        {
+            let st = state.borrow();
+            assert_eq!(st.zoom, 1.0, "72 px is no whole click");
+            assert_eq!(st.center.1, 2000.0 - 72.0 * scale);
+        }
+        // Well after that: a flick's ramp, which lands on a whole click
+        // on its way up.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(1000));
+        for dy in [8.0, 24.0, 48.0, 60.0] {
+            scroll(&app, 0.0, dy);
+        }
+        {
+            let st = state.borrow();
+            assert_eq!(st.zoom, 1.0, "a click's size mid-pan pans");
+            assert_eq!(st.center.1, 2000.0 - 212.0 * scale);
+        }
+        // Still within the quarter second of the last pan.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(200));
+        scroll(&app, 0.0, -120.0);
+        assert_eq!(state.borrow().zoom, 1.0);
+        // A quiet spell, and the same click zooms.
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(300));
+        scroll(&app, 0.0, 60.0);
+        assert_eq!(state.borrow().zoom, 1.25);
+    }
+
+    /// A high-resolution wheel's fragments pan a little, and its whole
+    /// detent, close behind them, still zooms: fragments that small
+    /// are no flick.
+    #[test]
+    fn a_high_resolution_wheels_detent_still_zooms() {
+        let (app, state, _worker) = scrolled_view(1.0);
+        let scale = app.window().scale_factor();
+        for _ in 0..3 {
+            scroll(&app, 0.0, 15.0);
+        }
+        assert_eq!(state.borrow().zoom, 1.0);
+        assert_eq!(state.borrow().center.1, 2000.0 - 45.0 * scale);
+        scroll(&app, 0.0, 60.0);
+        assert_eq!(state.borrow().zoom, 1.25);
+    }
+
+    /// A zoom by nothing (Ctrl and a purely sideways scroll; a gesture
+    /// that only rotates) leaves a fitted picture fitted.
+    #[test]
+    fn a_zoom_by_nothing_keeps_the_fit() {
+        use slint::platform::{Key, WindowEvent};
+        let (app, state, _worker) = scrolled_view(0.0);
+        app.invoke_zoom(1.0, 600.0, 400.0);
+        assert_eq!(state.borrow().zoom, 0.0);
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Control.into(),
+        });
+        scroll(&app, 60.0, 0.0);
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Control.into(),
+        });
+        let st = state.borrow();
+        assert_eq!(st.zoom, 0.0, "still the fit");
+        assert_eq!(st.center, (3000.0, 2000.0));
+    }
+
+    /// Where the whole picture is in view a pan has nowhere to go: the
+    /// picture stays put, and nothing zooms instead.
+    #[test]
+    fn a_touchpad_scroll_on_a_fitted_picture_does_nothing() {
+        let (app, state, _worker) = scrolled_view(0.0);
+        for _ in 0..10 {
+            scroll(&app, 7.0, -12.0);
+        }
+        let st = state.borrow();
+        assert_eq!(st.zoom, 0.0);
+        assert_eq!(st.center, (3000.0, 2000.0));
+    }
+
+    /// With Ctrl held a touchpad's delta zooms, by as much of a step as
+    /// the delta is of a click, and does not pan.
+    #[test]
+    fn ctrl_and_a_touchpad_scroll_zooms() {
+        use slint::platform::{Key, WindowEvent};
+        let (app, state, _worker) = scrolled_view(1.0);
+        app.window().dispatch_event(WindowEvent::KeyPressed {
+            text: Key::Control.into(),
+        });
+        scroll(&app, 0.0, 10.0);
+        let zoomed = state.borrow().zoom;
+        assert!(
+            (zoomed - 1.25f32.powf(10.0 / 60.0)).abs() < 1e-5,
+            "zoomed to {zoomed}"
+        );
+        // Six of them make a click's step.
+        for _ in 0..5 {
+            scroll(&app, 0.0, 10.0);
+        }
+        assert!((state.borrow().zoom - 1.25).abs() < 1e-4);
+        app.window().dispatch_event(WindowEvent::KeyReleased {
+            text: Key::Control.into(),
+        });
+        // Let go of Ctrl and the same delta pans again.
+        let before = state.borrow().center;
+        scroll(&app, 0.0, 10.0);
+        assert!((state.borrow().zoom - 1.25).abs() < 1e-4);
+        assert_ne!(state.borrow().center, before);
     }
 }
