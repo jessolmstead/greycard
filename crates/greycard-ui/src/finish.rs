@@ -740,8 +740,8 @@ pub fn mix(c: [f32; 3], mixer: &Mixer, color: &Color) -> [f32; 3] {
 /// the grading wheels are: a mono picture takes a local tint and is
 /// hand-colored there, which is what a Color mask is for, and no
 /// slider that scales chroma can undo the conversion. On a color
-/// picture it turns the hue toward the tint's and lifts the chroma to
-/// a floor that follows the lightness (`tint.rs`).
+/// picture it blends the pixel's a and b toward the tint's hue, at its
+/// own chroma or a floor that follows the lightness (`tint.rs`).
 #[inline]
 pub fn mix_with(
     c: [f32; 3],
@@ -3180,19 +3180,23 @@ mod tests {
         assert!(chroma(out) > 0.09, "clearly colored: {}", chroma(out));
         // The lightness is left where it was.
         assert!((oklab(out)[0] - oklab(grey)[0]).abs() < 1e-3);
-        // A saturated red keeps its chroma and turns halfway toward
-        // the hue at half the amount.
+        // A saturated red at half the amount lands halfway, in a and
+        // b, between itself and its own chroma on the tint's hue: a
+        // blend toward the hue, not a turn round to it.
         let red = [0.5, 0.05, 0.05];
         let half = Tint {
             hue: 210.0,
             amount: 0.5,
         };
-        let turned = tinted(red, &half);
-        assert!((chroma(turned) - chroma(red)).abs() < 2e-3);
-        let (was, now) = (hue(red), hue(turned));
-        let step = (now - was + 180.0).rem_euclid(360.0) - 180.0;
-        let whole = (210.0 - was + 180.0f32).rem_euclid(360.0) - 180.0;
-        assert!((step - whole / 2.0).abs() < 0.5, "{was} {now}");
+        let blended = oklab(tinted(red, &half));
+        let was = oklab(red);
+        let (s, c) = 210f32.to_radians().sin_cos();
+        let target = [chroma(red) * c, chroma(red) * s];
+        for k in 0..2 {
+            let want = (was[k + 1] + target[k]) / 2.0;
+            assert!((blended[k + 1] - want).abs() < 2e-3, "{blended:?} {want}");
+        }
+        assert!(chroma(tinted(red, &half)) < chroma(red) / 2.0);
     }
 
     #[test]

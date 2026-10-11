@@ -41,7 +41,7 @@ use crate::{Edit, Sidecar};
 /// change to an op, a default the edit does not store, the shrink that
 /// makes the kept pictures), and every picture kept under the old
 /// number is never asked for again.
-pub const DEVELOP_RECIPE: u32 = 1;
+pub const DEVELOP_RECIPE: u32 = 2;
 
 /// What the develop of `edit` reads outside the sidecar, with the
 /// directories it reads them from: the look directory and the profile

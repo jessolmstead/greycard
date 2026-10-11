@@ -4395,10 +4395,6 @@ mod tests {
     ///   is steepest, makes that whole levels.
     /// - A contrast under one, a power with no bound on its slope at
     ///   zero, on a channel the Oklab pass leaves near zero.
-    /// - A tint whose hue is opposite a pixel's own. `Tint::applied`
-    ///   turns the short way round, and at 180 degrees both ways are as
-    ///   short, so rounding picks the side and the two hues land
-    ///   `(1 - share) * 360` degrees apart.
     ///
     /// The brush rasters and the guide plane are read by texel and
     /// interpolated in f32 on both sides (`raster_at`, `guide_at` in

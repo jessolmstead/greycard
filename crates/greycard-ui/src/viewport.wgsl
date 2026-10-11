@@ -981,26 +981,18 @@ const TINT_MID: f32 = 0.5646;
 
 // A tint on Oklab's a and b at a lightness, as `Tint::applied` in
 // `tint.rs`: the vector's length is the amount and its direction the
-// hue. The chroma rises toward a floor that peaks at TINT_MID and is
-// nothing at black or at twice it; the hue turns toward the tint's by
-// the share of the chroma the tint answers for, so a neutral takes
-// the tint's hue outright rather than one read off its own noise.
+// hue. The pixel's a and b blend toward a target on the tint's hue
+// whose chroma is the pixel's own or a floor that peaks at TINT_MID
+// and is nothing at black or at twice it, whichever is more: a
+// straight line in a and b, so an opposite color passes through grey
+// and never through the hues between.
 fn tint_ab(tint: vec2<f32>, lightness: f32, ab: vec2<f32>) -> vec2<f32> {
     let amount = clamp(length(tint), 0.0, 1.0);
     if (amount <= 0.0) { return ab; }
-    let want_h = degrees(atan2(tint.y, tint.x));
     let d = (lightness - TINT_MID) / TINT_MID;
     let floor_c = TINT_CHROMA * max(1.0 - d * d, 0.0);
-    let chroma = length(ab);
-    let want_c = max(chroma, floor_c);
-    let sum = (1.0 - amount) * chroma + amount * want_c;
-    if (sum <= 0.0) { return ab; }
-    let share = amount * want_c / sum;
-    let chroma2 = chroma + amount * (want_c - chroma);
-    let hue = degrees(atan2(ab.y, ab.x));
-    let delta = wrap360(want_h - hue + 180.0) - 180.0;
-    let h = radians(hue + share * delta);
-    return vec2<f32>(chroma2 * cos(h), chroma2 * sin(h));
+    let want = max(length(ab), floor_c) * (tint / length(tint));
+    return ab + amount * (want - ab);
 }
 
 // The color mixer, as `mix_with` in `finish.rs`: to Oklab; the hue

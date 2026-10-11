@@ -40,6 +40,12 @@ note a first tester reads.
 
 - The Look section sits at the top of the Develop tab, above White
   balance, since the look is set first
+- A tint blends a color toward the tint's hue in Oklab instead of
+  turning its hue the short way round, so a blue tint on a warm
+  portrait cools the coat and the skin instead of sending them through
+  green and magenta; the same for a mask's tint. Thumbnails made from
+  edits are remade once
+  ([§286](https://github.com/jessolmstead/greycard/blob/master/docs/notes/286-a-tint-is-a-blend-not-a-turn.md))
 
 ### Masks
 

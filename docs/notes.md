@@ -295,3 +295,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§283. A mask's white balance keeps its light while off](notes/283-a-masks-white-balance-keeps-its-light-while-off.md) (2026-10-10)
 - [§284. A wheel click on a slider is one step](notes/284-a-wheel-click-on-a-slider-is-one-step.md) (2026-10-10)
 - [§285. Thumbnails from the edit, part two: the reduced develop, its queue, its check, the key in the index](notes/285-thumbnails-from-the-edit-part-two.md) (2026-10-10)
+- [§286. A tint is a blend, not a turn](notes/286-a-tint-is-a-blend-not-a-turn.md) (2026-10-10)

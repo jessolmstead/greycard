@@ -3,19 +3,28 @@
 //! Lightroom's local Color, and what a mask most often wants that no
 //! band-by-band control gives: warm this patch, cool that one. A hue
 //! in Oklab degrees and an amount, 0 to 1, off at nothing. The amount
-//! moves the pixel's hue toward the tint's and lifts its chroma to a
-//! floor that follows the lightness.
+//! blends the pixel's a and b toward a target on the tint's hue: as
+//! much chroma as the pixel has, or a floor that follows the
+//! lightness, whichever is more.
 //!
-//! The bell in the lightness gates the *lift* and not the turn, which
+//! A blend and not a turn. A pixel is moved in a straight line in a
+//! and b toward the target, so a color opposite the tint passes
+//! through grey on its way and never through the hues between the two:
+//! a blue tint on an orange coat cools it toward beige and then toward
+//! blue, never toward green. Turning the hue the short way round, as
+//! this once did, sent every color of a warm scene under a cool tint
+//! through yellow, green or magenta.
+//!
+//! The bell in the lightness gates the *lift* and not the pull, which
 //! is the whole of what "a black stays black and a white stays white"
-//! means: a neutral outside the bell is given no chroma, so it comes
-//! out the neutral it went in, while a pixel that already has color
-//! keeps every bit of that chroma and still has its hue turned, at
-//! the top of the scale as anywhere else. That is deliberate. It is
-//! how a bright sky is hand-colored: the pixels worth coloring up
-//! there have color in them already, and a tint that gave up above
-//! scene white would leave a rebuilt or pushed highlight behind while
-//! the rest of the mask moved.
+//! means: a neutral outside the bell has nothing to be pulled toward,
+//! so it comes out the neutral it went in, while a pixel that already
+//! has color is pulled toward the tint's hue at its own chroma, at the
+//! top of the scale as anywhere else. That is deliberate. It is how a
+//! bright sky is hand-colored: the pixels worth coloring up there have
+//! color in them already, and a tint that gave up above scene white
+//! would leave a rebuilt or pushed highlight behind while the rest of
+//! the mask moved.
 //!
 //! It lives on a [`crate::Look`], so a mask carries one and it blends
 //! with the mask's weight like everything else in a look; the blend
@@ -88,8 +97,8 @@ impl Tint {
     /// a bell peaking at [`MID_LIGHTNESS`] and nothing at black or at
     /// twice it, so neither end of the scale is given color it did
     /// not have. It is a floor and not a ceiling: a pixel already
-    /// above it keeps its own chroma, here as anywhere, and still has
-    /// its hue turned. The lightness is the scene's, as the whole
+    /// above it is pulled toward the tint's hue at its own chroma,
+    /// here as anywhere. The lightness is the scene's, as the whole
     /// Oklab pass is.
     pub fn floor(lightness: f32) -> f32 {
         let t = (lightness - MID_LIGHTNESS) / MID_LIGHTNESS;
@@ -119,18 +128,16 @@ impl Tint {
 
     /// Oklab's a and b at a lightness, tinted.
     ///
-    /// The chroma rises toward `max(chroma, floor(lightness))`, never
-    /// falls: the tint colors, it does not wash out. Where the floor
-    /// is nothing — black, white, and past the bell either way — a
-    /// neutral stays neutral, and a color keeps every bit of the
-    /// chroma it had and is turned like any other.
-    ///
-    /// The hue turns toward the tint's by the share of that chroma
-    /// the tint is answerable for, `amount * target` against
-    /// `(1 - amount) * chroma`, so a neutral takes the tint's hue
-    /// exactly rather than a hue read off its own noise, a color as
-    /// saturated as the floor meets it halfway at half the amount,
-    /// and a full amount replaces the hue outright.
+    /// A blend of the pixel's a and b toward a target on the tint's
+    /// hue, `ab + amount * (target - ab)`, the target's chroma
+    /// `max(chroma, floor(lightness))`. So a neutral lands on the
+    /// tint's hue exactly, at the floor's chroma at a full amount,
+    /// rather than at a hue read off its own noise; a neutral where
+    /// the floor is nothing (black, white, past the bell either way)
+    /// has a target of nothing and stays neutral; a color of the
+    /// tint's own hue keeps its hue and rises to the floor; and a
+    /// color opposite the tint passes through grey, never through the
+    /// hues between. A full amount is the target outright.
     pub fn applied(&self, lightness: f32, a: f32, b: f32) -> [f32; 2] {
         let amount = self.amount.clamp(0.0, 1.0);
         if amount <= 0.0 {
@@ -138,22 +145,8 @@ impl Tint {
         }
         let chroma = (a * a + b * b).sqrt();
         let target = chroma.max(Self::floor(lightness));
-        // What is left of the pixel's own color against what the
-        // tint puts there.
-        let own = (1.0 - amount) * chroma;
-        let theirs = amount * target;
-        let sum = own + theirs;
-        if sum <= 0.0 {
-            // Black, white, or beyond the bell: no chroma either way.
-            return [a, b];
-        }
-        let share = theirs / sum;
-        let chroma = chroma + amount * (target - chroma);
-        let hue = b.atan2(a).to_degrees();
-        // The short way round, so a tint never turns the long way.
-        let delta = (self.hue - hue + 180.0).rem_euclid(360.0) - 180.0;
-        let (s, c) = (hue + share * delta).to_radians().sin_cos();
-        [chroma * c, chroma * s]
+        let (s, c) = self.hue.to_radians().sin_cos();
+        [a + amount * (target * c - a), b + amount * (target * s - b)]
     }
 }
 
@@ -214,7 +207,7 @@ mod tests {
         // Black stays black and white stays white: what the bell
         // holds back is the chroma a *neutral* is given. A pixel with
         // color in it up there is another matter
-        // (`past_the_bell_a_color_still_turns_and_keeps_its_chroma`).
+        // (`past_the_bell_a_color_is_still_pulled_at_its_own_chroma`).
         let tint = Tint {
             hue: 210.0,
             amount: 1.0,
@@ -229,64 +222,119 @@ mod tests {
         assert!((Tint::floor(0.3) - Tint::floor(2.0 * MID_LIGHTNESS - 0.3)).abs() < 1e-6);
     }
 
+    /// How far a hue is from another, either way round, in degrees.
+    fn apart(h: f32, from: f32) -> f32 {
+        ((h - from + 180.0).rem_euclid(360.0) - 180.0).abs()
+    }
+
+    fn polar(chroma: f32, hue: f32) -> [f32; 2] {
+        let (s, c) = hue.to_radians().sin_cos();
+        [chroma * c, chroma * s]
+    }
+
     #[test]
-    fn a_saturated_color_turns_halfway_at_half_and_keeps_its_chroma() {
-        // A saturated red, well above the floor: at half the amount
-        // the hue is halfway to the tint's, the short way round (210
-        // is 150 degrees back from 0, not 210 on), and the chroma is
-        // its own.
+    fn a_color_is_blended_toward_the_target_in_a_straight_line() {
+        // A saturated red, well above the floor, under a tint at 210:
+        // the target is the red's own chroma on the tint's hue, and
+        // each amount is that share of the way from one to the other
+        // in a and b, not round the circle.
         let red = [0.2, 0.0];
-        let tint = Tint {
-            hue: 210.0,
-            amount: 0.5,
-        };
-        let out = tint.applied(MID_LIGHTNESS, red[0], red[1]);
-        assert!((chroma(out) - 0.2).abs() < 1e-6, "{out:?}");
-        assert!((hue(out) - 285.0).abs() < 1e-3, "{out:?}");
-        // At a full amount the hue is replaced outright, not added to.
+        let target = polar(0.2, 210.0);
+        for amount in [0.25, 0.5, 0.75, 1.0] {
+            let tint = Tint { hue: 210.0, amount };
+            let out = tint.applied(MID_LIGHTNESS, red[0], red[1]);
+            for k in 0..2 {
+                let want = red[k] + amount * (target[k] - red[k]);
+                assert!((out[k] - want).abs() < 1e-6, "{amount} {out:?}");
+            }
+        }
+        // At a full amount it is the target outright: the tint's hue
+        // at the red's chroma.
         let full = Tint {
             hue: 210.0,
             amount: 1.0,
         };
         let out = full.applied(MID_LIGHTNESS, red[0], red[1]);
-        assert!((hue(out) - 210.0).abs() < 1e-3, "{out:?}");
+        assert!(apart(hue(out), 210.0) < 1e-3, "{out:?}");
         assert!((chroma(out) - 0.2).abs() < 1e-6, "{out:?}");
-        // The short way round: a hue 20 degrees below wraps through
-        // zero rather than crossing the wheel.
-        let back = Tint {
-            hue: 340.0,
-            amount: 0.5,
-        };
-        let out = back.applied(MID_LIGHTNESS, red[0], red[1]);
-        assert!((hue(out) - 350.0).abs() < 1e-3, "{out:?}");
-    }
-
-    #[test]
-    fn a_pale_color_gives_way_sooner_than_a_saturated_one() {
-        let tint = Tint {
+        // On the way the chord passes nearer grey than either end:
+        // the chroma dips, which is what cooling a warm color is.
+        let half = Tint {
             hue: 210.0,
             amount: 0.5,
         };
-        // A chroma a tenth of the floor at half the amount is all but
-        // the tint's hue; the same hue at twice the floor is a long
-        // way short of it.
-        let from = |ab| ((hue(ab) - 210.0 + 180.0).rem_euclid(360.0) - 180.0).abs();
-        let pale = tint.applied(MID_LIGHTNESS, 0.01, 0.0);
-        let strong = tint.applied(MID_LIGHTNESS, 0.2, 0.0);
-        assert!(from(pale) < 20.0, "{pale:?}");
-        assert!(from(strong) > 60.0, "{strong:?}");
-        // And a pale color is lifted to the floor, never cut back.
-        assert!(chroma(pale) > 0.01 && chroma(pale) <= CHROMA);
-        assert!((chroma(strong) - 0.2).abs() < 1e-6);
+        let mid = half.applied(MID_LIGHTNESS, red[0], red[1]);
+        assert!(chroma(mid) < 0.2 * 0.5, "{mid:?}");
     }
 
     #[test]
-    fn past_the_bell_a_color_still_turns_and_keeps_its_chroma() {
-        // Above scene white the floor is nothing, so a neutral is
-        // left alone (`a_neutral_at_either_end_is_left_alone`) — but a pixel
-        // that has color keeps all of it and lands on the tint's hue
-        // at a full amount, which is what hand-coloring a bright sky
-        // asks for.
+    fn a_color_of_the_tint_s_own_hue_keeps_its_hue_and_rises_to_the_floor() {
+        let tint = Tint {
+            hue: 50.0,
+            amount: 0.5,
+        };
+        // A pale color of the tint's hue is lifted halfway to the
+        // floor at half the amount, and its hue does not move.
+        let pale = polar(0.02, 50.0);
+        let out = tint.applied(MID_LIGHTNESS, pale[0], pale[1]);
+        assert!(apart(hue(out), 50.0) < 1e-3, "{out:?}");
+        assert!((chroma(out) - (0.02 + 0.5 * (CHROMA - 0.02))).abs() < 1e-6);
+        // One already above the floor is its own target: nothing pulls
+        // it anywhere, and it is never cut back.
+        let strong = polar(0.2, 50.0);
+        let out = tint.applied(MID_LIGHTNESS, strong[0], strong[1]);
+        assert!((out[0] - strong[0]).abs() < 1e-6 && (out[1] - strong[1]).abs() < 1e-6);
+    }
+
+    #[test]
+    fn an_opposite_color_passes_through_grey_and_never_the_hues_between() {
+        // A warm scene under a cool tint: an orange at 60 degrees, a
+        // blue tint at 236, 176 degrees apart. Turned the short way
+        // round, as the tint once was, the orange went through yellow
+        // and green. Blended, it stays orange while its chroma falls,
+        // passes close by grey, and comes out blue: wherever the hue is
+        // more than ten degrees from both ends, the color has a quarter
+        // of the orange's chroma or less, and it reads green (100 to
+        // 200) only with less than a tenth of it.
+        for start in [0.05f32, 0.12, 0.2] {
+            let orange = polar(start, 60.0);
+            for step in 0..=1000 {
+                let amount = step as f32 / 1000.0;
+                let tint = Tint { hue: 236.0, amount };
+                let out = tint.applied(MID_LIGHTNESS, orange[0], orange[1]);
+                let (c, h) = (chroma(out), hue(out));
+                let near = apart(h, 60.0).min(apart(h, 236.0));
+                assert!(near <= 10.0 || c < start / 4.0, "{start} {amount} {c} {h}");
+                assert!(
+                    !(100.0..200.0).contains(&h) || c < start / 10.0,
+                    "{start} {amount} {c} {h}"
+                );
+            }
+        }
+        // And the colors of a warm portrait under the same tint at a
+        // small amount: a near-neutral beige, an orange, a red and a
+        // skin tone each lose chroma and stay near their own hue. The
+        // short-way turn took the beige to 125 (green) and the red to
+        // 10 (magenta).
+        let tint = Tint {
+            hue: 236.0,
+            amount: 0.13,
+        };
+        for (c, h) in [(0.03f32, 70.0f32), (0.12, 60.0), (0.1, 30.0), (0.06, 45.0)] {
+            let ab = polar(c, h);
+            let out = tint.applied(MID_LIGHTNESS, ab[0], ab[1]);
+            assert!(chroma(out) < c, "{c} {h} {out:?}");
+            assert!(apart(hue(out), h) < 15.0, "{c} {h} {}", hue(out));
+        }
+    }
+
+    #[test]
+    fn past_the_bell_a_color_is_still_pulled_at_its_own_chroma() {
+        // Above scene white the floor is nothing, so a neutral is left
+        // alone (`a_neutral_at_either_end_is_left_alone`), but a pixel
+        // that has color is pulled toward the tint's hue at its own
+        // chroma and lands on it at a full amount, which is what
+        // hand-coloring a bright sky asks for.
         assert_eq!(Tint::floor(1.5), 0.0);
         let tint = Tint {
             hue: 210.0,
@@ -295,18 +343,24 @@ mod tests {
         let out = tint.applied(1.5, 0.18, -0.06);
         let was = (0.18f32 * 0.18 + 0.06 * 0.06).sqrt();
         assert!((chroma(out) - was).abs() < 1e-6, "{out:?} {was}");
-        assert!((hue(out) - 210.0).abs() < 1e-3, "{out:?}");
-        // And at half the amount it is halfway there, chroma kept.
+        assert!(apart(hue(out), 210.0) < 1e-3, "{out:?}");
+        // And at half the amount it is the midpoint of the two, which
+        // lies on the hue between them.
         let half = Tint {
             hue: 210.0,
             amount: 0.5,
         };
         let mid = half.applied(1.5, 0.18, -0.06);
-        assert!((chroma(mid) - was).abs() < 1e-6, "{mid:?}");
+        let target = polar(was, 210.0);
+        assert!((mid[0] - (0.18 + target[0]) / 2.0).abs() < 1e-6, "{mid:?}");
+        assert!((mid[1] - (-0.06 + target[1]) / 2.0).abs() < 1e-6, "{mid:?}");
         let start = hue([0.18, -0.06]);
-        let step = (hue(mid) - start + 180.0).rem_euclid(360.0) - 180.0;
         let whole = (210.0 - start + 180.0f32).rem_euclid(360.0) - 180.0;
-        assert!((step - whole / 2.0).abs() < 1e-3, "{start} {}", hue(mid));
+        assert!(
+            apart(hue(mid), start + whole / 2.0) < 1e-3,
+            "{start} {}",
+            hue(mid)
+        );
     }
 
     #[test]
