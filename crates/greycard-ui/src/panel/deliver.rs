@@ -711,6 +711,22 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             part,
         } => {
             let mut st = state.borrow_mut();
+            // A Whole person run with Subject's edge: the worker has
+            // Subject loaded.
+            if crate::ai::takes_subject_edge(&shape) && provider.is_some() && note.is_none() {
+                st.edge_loaded = true;
+            }
+            // Made on a frame opened before this one: that frame's. The
+            // key and the shape may well be this frame's too (a mask
+            // pasted across), and its own is asked for already.
+            if file.is_some() && st.learned_of.is_some() && file != st.learned_of {
+                tracing::debug!(
+                    "mask: a {} raster of {} is not the open frame's",
+                    shape.name(),
+                    file.as_deref().map(file_name).unwrap_or_default()
+                );
+                return;
+            }
             st.asked.remove(&key);
             // A Part asking which person it is of here: the picking,
             // with the people outlined; settled, it asks no more. An
@@ -719,11 +735,6 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // A part made, though with a word on the status line (a
             // Whole person that kept SAM's edge): shown as any other.
             let settled = matches!(shape, Shape::Part { .. }) && part.is_none();
-            // A Whole person run with Subject's edge: the worker has
-            // Subject loaded.
-            if crate::ai::takes_subject_edge(&shape) && provider.is_some() && note.is_none() {
-                st.edge_loaded = true;
-            }
             match part {
                 Some(crate::ai::Unresolved::Ask(ask)) if file.is_none() || file == open => {
                     crate::panel::parts::asked(&mut st, app, key, ask)
@@ -894,19 +905,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if let Some(i) = st.current.filter(|_| st.cull.is_none()) {
                 st.generation += 1;
                 app.set_busy(true);
-                let (path, edit, generation) =
-                    (st.files[i].clone(), st.edit.clone(), st.generation);
-                let seed_blend = st.seed_blend.get(i).copied().unwrap_or(false);
-                let turn = st.sidecars[i].turn;
+                let edit = st.edit.clone();
+                let job = crate::panel::browser::open_job(&mut st, i, edit);
                 WORKER.with(|w| {
                     if let Some(w) = &*w.borrow() {
-                        w.send(Job::Open {
-                            path,
-                            edit,
-                            generation,
-                            seed_blend,
-                            turn,
-                        });
+                        w.send(job);
                     }
                 });
             }

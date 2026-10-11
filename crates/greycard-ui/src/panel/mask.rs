@@ -285,6 +285,20 @@ pub(crate) fn bake_locals(
     (locals, wants)
 }
 
+/// Frame `file` is sent to the worker to open: the learned rasters held
+/// and the asks still out are another picture's, unless it is the same
+/// file again. A raster is keyed by adjustment and component, and a
+/// Subject's or a Background's shape is the same on every frame that
+/// has one, so a mask copied from one frame to the next (same key, same
+/// shape) would otherwise be drawn there with the first frame's raster.
+pub(crate) fn learned_for(st: &mut State, file: &Path) {
+    if st.learned_of.as_deref() != Some(file) {
+        st.learned.clear();
+        st.asked.clear();
+        st.learned_of = Some(file.to_path_buf());
+    }
+}
+
 /// What to do for a learned shape wanted: ask the worker for it, offer
 /// its model, or wait (the sheet is busy, or every model it could use
 /// was declined).

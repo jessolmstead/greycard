@@ -882,6 +882,9 @@ pub(crate) struct State {
     pub(crate) learned: HashMap<Key, (Shape, Arc<Raster>)>,
     /// The shapes asked of the worker and not yet answered.
     pub(crate) asked: HashMap<Key, Shape>,
+    /// The file `learned` and `asked` are of: the one last sent to the
+    /// worker to open (`panel::mask::learned_for`).
+    pub(crate) learned_of: Option<PathBuf>,
     /// The model store, to know what is there.
     pub(crate) store: Option<greycard_ai::Store>,
     /// What the sheet offers to fetch, and whether something is coming.
@@ -1225,6 +1228,7 @@ impl State {
             stances: HashMap::new(),
             learned: HashMap::new(),
             asked: HashMap::new(),
+            learned_of: None,
             store: None,
             fetch: None,
             fetching: false,

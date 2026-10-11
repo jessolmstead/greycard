@@ -301,3 +301,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§289. A history click keeps the rows above it](notes/289-a-history-click-keeps-the-rows-above-it.md) (2026-10-10)
 - [§290. A new snapshot's name ends with a click away](notes/290-a-new-snapshots-name-ends-with-a-click-away.md) (2026-10-10)
 - [§291. The Portrait switch follows the frame, and a toggle keeps the crop](notes/291-the-portrait-switch-follows-the-frame-and-a-toggle-keeps-the-crop.md) (2026-10-10)
+- [§292. A learned mask's raster belongs to the frame it was made on](notes/292-a-learned-masks-raster-belongs-to-the-frame-it-was-made-on.md) (2026-10-10)

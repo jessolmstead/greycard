@@ -2327,6 +2327,83 @@ mod tests {
         assert!(state.borrow().sidecars[0].current_label.is_none());
     }
 
+    /// A Subject mask pasted onto another frame has the same key there,
+    /// adjustment and component, and the same shape: the panel's raster
+    /// of one frame is never the other's. Going back to the frame it
+    /// came from asks the worker for that frame's own, and a raster the
+    /// worker made for a frame no longer open is not taken for the one
+    /// open now.
+    #[test]
+    fn a_pasted_subject_mask_is_made_for_each_frame_and_never_shared() {
+        use crate::panel::mask::bake_locals;
+        use greycard_edit::brush::Raster;
+        let app = window(3);
+        let (state, _worker) = state_for(&app, folder(3));
+        let files = state.borrow().files.clone();
+        let raster = |fill: u8| Arc::new(Raster::from_data(1.5, 4, vec![fill; 24]));
+        let made = |file: &PathBuf, fill: u8| crate::worker::Outcome::Mask {
+            key: (1, 0),
+            shape: Shape::Subject {},
+            file: Some(file.clone()),
+            raster: raster(fill),
+            provider: None,
+            seconds: 0.0,
+            note: None,
+            part: None,
+        };
+        // What the viewport would draw for (1, 0) now, and what it
+        // would ask the worker for.
+        let baked = |state: &Rc<RefCell<State>>| {
+            let st = &mut *state.borrow_mut();
+            let edit = read_edit(&app, &st.edit, st.target);
+            let (_, wants) = bake_locals(&edit, &mut st.rasters, &mut st.learned, 1.5, None);
+            let held = st.learned.get(&(1, 0)).map(|(_, r)| r.data()[0]);
+            (held, wants.iter().any(|(k, _)| *k == (1, 0)))
+        };
+        app.invoke_select(0);
+        state
+            .borrow_mut()
+            .edit
+            .adjustments
+            .push(greycard_edit::Adjustment {
+                id: 1,
+                name: "Subject 1".into(),
+                enabled: true,
+                mask: Mask {
+                    components: vec![Component {
+                        shape: Shape::Subject {},
+                        ..Default::default()
+                    }],
+                    invert: false,
+                },
+                look: Default::default(),
+            });
+        crate::panel::deliver::deliver(&app, made(&files[0], 10));
+        assert_eq!(baked(&state), (Some(10), false), "the source's own");
+        app.invoke_copy_asked();
+        // Pasted onto the frame opened next, before any frame is drawn.
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        choose(&app, |s| s == Section::Adjustments);
+        app.invoke_sync_applied();
+        assert_eq!(
+            state.borrow().sidecars[2].current.adjustments[0].id,
+            1,
+            "the same key"
+        );
+        assert_eq!(baked(&state), (None, true), "asked for, not the source's");
+        crate::panel::deliver::deliver(&app, made(&files[2], 20));
+        assert_eq!(baked(&state), (Some(20), false), "the target's own");
+        // Back to the source: its own raster is asked for, and the
+        // target's, arriving late, is not taken for it.
+        app.invoke_select(0);
+        assert_eq!(baked(&state), (None, true), "asked for, not the target's");
+        crate::panel::deliver::deliver(&app, made(&files[2], 20));
+        assert_eq!(baked(&state), (None, true), "a late one of the target's");
+        crate::panel::deliver::deliver(&app, made(&files[0], 10));
+        assert_eq!(baked(&state), (Some(10), false), "the source's own again");
+    }
+
     /// A Part carries its person: pasted onto another frame it is the
     /// same person, signature and place, for that frame's raster to
     /// look for, and nothing here resolves it.

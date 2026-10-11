@@ -1734,6 +1734,9 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // The panel is the frame's own from here, or the stand-in's again
     // below.
     st.panel_stand_in = None;
+    // Its masks' rasters are its own, not the last frame's.
+    let file = st.files[i].clone();
+    crate::panel::mask::learned_for(st, &file);
     if offline {
         // The panel shows the frame's default edit, the one standing
         // in, and not the last frame's: a sync, a copy or a preset
@@ -1792,9 +1795,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     st.placing = None;
     app.set_placing("".into());
     // Its people are not the last picture's.
-    crate::panel::parts::stopped(st);
-    st.part_asks.clear();
-    st.part_dismissed.clear();
+    crate::panel::parts::another_picture(st);
     // Another picture: a guide stroke drawn on the last one
     // means nothing here, and the source's size is not known
     // again until this frame's develop lands — a turn before
@@ -1821,13 +1822,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     app.set_status("decoding...".into());
     app.set_busy(true);
     show_history(st, app);
-    worker.send(Job::Open {
-        path: st.files[i].clone(),
-        edit,
-        generation: st.generation,
-        seed_blend: st.seed_blend.get(i).copied().unwrap_or(false),
-        turn: st.sidecars[i].turn,
-    });
+    worker.send(open_job(st, i, edit));
     // The frame's own camera JPEG, to stand in for that
     // develop: after the job, so the decode that matters
     // most is under way first.
@@ -1835,6 +1830,24 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // Its neighbors' pictures come as the strip or the grid follows it
     // there and says what it shows.
     show_set(st, app);
+}
+
+/// The job that has the worker open frame `i` under `edit`, at the
+/// current generation. Every open the panel sends is made here, so
+/// the masks' rasters the panel holds always name the file the worker
+/// has open (`panel::mask::learned_for`): a raster made on another
+/// file is never drawn on this one, and none made on this one is
+/// dropped as another's.
+pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
+    let path = st.files[i].clone();
+    crate::panel::mask::learned_for(st, &path);
+    Job::Open {
+        path,
+        edit,
+        generation: st.generation,
+        seed_blend: st.seed_blend.get(i).copied().unwrap_or(false),
+        turn: st.sidecars[i].turn,
+    }
 }
 
 /// An arrow's landing on browser row `row`, which `moves` when it is

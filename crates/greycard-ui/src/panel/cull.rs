@@ -218,6 +218,15 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     }
     let edit = with.unwrap_or_else(|| st.sidecars[c].current.clone());
     st.target = None;
+    // The tool is put down. Left onto another frame than the one open
+    // before the mode, its people are not that frame's either; left on
+    // the same one, a part's question who it is of still stands, as
+    // its raster does.
+    if st.learned_of.as_deref() == Some(st.files[c].as_path()) {
+        crate::panel::parts::stopped(st);
+    } else {
+        crate::panel::parts::another_picture(st);
+    }
     show_edit(st, &edit, app, None);
     // A control's change is a step of the frame's history, as it
     // would be out of the mode: written once the panel rests.
@@ -253,13 +262,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     }
     app.set_status("developing...".into());
     app.set_busy(true);
-    worker.send(Job::Open {
-        path: st.files[c].clone(),
-        edit,
-        generation: st.generation,
-        seed_blend: st.seed_blend.get(c).copied().unwrap_or(false),
-        turn: st.sidecars[c].turn,
-    });
+    worker.send(crate::panel::browser::open_job(st, c, edit));
 }
 
 /// A control reached in culling, as the edit to leave with: the
@@ -2261,6 +2264,45 @@ mod tests {
         }
         cull_refresh(&mut st);
         assert!(!st.prefetch.asked().iter().any(|w| w.file == 2));
+    }
+
+    /// Culling left on another frame than the one opened before it: the
+    /// part asks and the dismissals of the frame opened before go, as
+    /// on any open (a part pasted across is the same key and shape on
+    /// both), and the masks' rasters are this frame's from here. Left
+    /// on that same frame, its asks stand, since its raster does and
+    /// nothing would ask again; only a pick under way is put down.
+    #[test]
+    fn leaving_culling_on_another_frame_drops_the_last_ones_asks() {
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        app.invoke_select(0);
+        let mut st = state.borrow_mut();
+        assert_eq!(st.learned_of.as_ref(), Some(&st.files[0]));
+        st.part_asks.insert((1, 0), crate::ai::Ask::default());
+        st.part_dismissed.insert((1, 1));
+        let pending = || crate::panel::parts::Pending {
+            id: 1,
+            part: crate::panel::parts::by_label("Lips").unwrap(),
+            mode: greycard_edit::mask::Mode::Add,
+        };
+        st.part_pending = Some(pending());
+        // In and out on the same frame.
+        enter_cull(&mut st, &app, 1);
+        leave_cull(&mut st, &app, &worker, None);
+        assert_eq!(st.part_asks.len(), 1);
+        assert_eq!(st.part_dismissed.len(), 1);
+        assert!(st.part_pending.is_none());
+        assert_eq!(st.learned_of.as_ref(), Some(&st.files[0]));
+        // In, and out on another.
+        st.part_pending = Some(pending());
+        enter_cull(&mut st, &app, 1);
+        st.current = Some(2);
+        leave_cull(&mut st, &app, &worker, None);
+        assert!(st.part_pending.is_none());
+        assert!(st.part_asks.is_empty());
+        assert!(st.part_dismissed.is_empty());
+        assert_eq!(st.learned_of.as_ref(), Some(&st.files[2]));
     }
 
     /// The frame's full-size copy held from 1:1 and no view-size one

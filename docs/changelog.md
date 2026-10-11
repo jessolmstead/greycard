@@ -96,6 +96,12 @@ note a first tester reads.
 
 ### Fixes
 
+- A learned mask (Subject, Sky, People, a part) copied onto another
+  frame is made for that frame; the editor used to draw the other
+  frame's raster on it, and the first frame's with the second's, until
+  a frame without such a mask came between. A paste of masks alone onto
+  the open frame is drawn at once
+  ([§292](https://github.com/jessolmstead/greycard/blob/master/docs/notes/292-a-learned-masks-raster-belongs-to-the-frame-it-was-made-on.md))
 - The Crop tab's Portrait switch means one thing, the crop is tall, on
   every photo and under Original too; a ratio picked on a photo shot on
   end starts tall, and toggling the switch keeps the crop's area, so

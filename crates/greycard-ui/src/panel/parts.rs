@@ -325,6 +325,16 @@ pub(crate) fn stopped(st: &mut State) {
     st.part_pending = None;
 }
 
+/// Another frame's edit on the panel: its people are not the last
+/// picture's. The asks are keyed by adjustment and component, and a
+/// part pasted across is the same shape on both frames, so the last
+/// frame's ask would otherwise stand for this one's.
+pub(crate) fn another_picture(st: &mut State) {
+    stopped(st);
+    st.part_asks.clear();
+    st.part_dismissed.clear();
+}
+
 /// A placed part asked which person it is of on this picture: kept,
 /// and the picking armed when it is the chosen mask's on the Masks tab.
 pub(crate) fn asked(st: &mut State, app: &App, key: Key, ask: Ask) {
