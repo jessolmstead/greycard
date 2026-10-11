@@ -260,6 +260,7 @@ in its section; the roadmap and the changelog only point at it.
 - [§247. The command line's zoom and mask on the first file](notes/247-the-command-lines-zoom-and-mask-on-the-first-file.md) (2026-10-04)
 - [§248. The GPU tests' stray SIGSEGV: NVIDIA's driver and instances made at once](notes/248-the-gpu-tests-stray-sigsegv.md) (2026-10-04)
 - [§249. The mouse's side buttons in the grid, and a deleted rejects folder in the tree](notes/249-the-mouse-side-buttons-and-a-deleted-rejects-folder.md) (2026-10-04)
+- [§250. Highlights by the frame's own range](notes/250-highlights-by-the-frames-own-range.md) (2026-10-05)
 - [§251. Local contrast faster: a quarter grid, then the GPU](notes/251-local-contrast-faster-a-quarter-grid-and-the-gpu.md) (2026-10-05)
 - [§252. SAM 3 for the body's parts: a trial on portraits](notes/252-sam-3-for-the-bodys-parts-a-trial-on-portraits.md) (2026-10-05)
 - [§253. The Parts mask on SAM 3: the build](notes/253-the-parts-mask-on-sam-3-the-build.md) (2026-10-06)
