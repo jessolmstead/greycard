@@ -2309,14 +2309,17 @@ mod tests {
         let (cancel, bytes) = (AtomicBool::new(false), AtomicU64::new(0));
         let report = run(&plan, &quiet_hooks(&cancel, &bytes));
         assert_eq!(report.copied.len(), 3);
-        // Another writer holds the lock for well past the wait.
+        // Another writer holds the lock for well past the wait. The
+        // wait is half a second: the lock's beats come every 10 ms, so
+        // a tighter window only measures how long a loaded runner can
+        // starve the thread (a 150 ms one failed once on Windows CI).
         let holder = rusqlite::Connection::open(&db).unwrap();
         holder.execute_batch("BEGIN IMMEDIATE;").unwrap();
         let (tx, rx) = mpsc::channel();
         let job_db = db.clone();
         supervise(
             "test locked",
-            Duration::from_millis(150),
+            Duration::from_millis(500),
             move |beat| record(&job_db, &report, beat),
             move |h| {
                 let _ = tx.send(match h {
@@ -2327,7 +2330,7 @@ mod tests {
             },
         )
         .unwrap();
-        std::thread::sleep(Duration::from_millis(800));
+        std::thread::sleep(Duration::from_millis(1500));
         holder.execute_batch("COMMIT;").unwrap();
         assert_eq!(rx.recv_timeout(Duration::from_secs(10)).unwrap(), "done");
         drop(holder);
