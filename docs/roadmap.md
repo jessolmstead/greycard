@@ -41,8 +41,10 @@ and export are smoothed.
 - [ ] A two-finger touchpad scroll over the picture pans, and only a
       wheel's click or a pinch zooms, telling them apart as §284 tells
       a click from a touchpad (#17)
-- [ ] A Done on the Masks tab that leaves the active mask without
-      changing tabs (#18)
+- [ ] The Adjustments list (Global, each mask, New mask) stays pinned
+      above the Masks tab's scrolling sections, at most six rows tall
+      with its own scroll, so Global or another mask is one click from
+      any slider (#18)
 - [ ] The mixer's dropper puts itself down after one pick (#20)
 - [ ] The export sheet scrolls on a short screen, and a scroll under
       any sheet never reaches the picture (#21)
