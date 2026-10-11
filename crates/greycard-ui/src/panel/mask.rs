@@ -2,7 +2,7 @@ use crate::panel::assets::offer_model;
 use crate::panel::cull::leave_cull;
 use crate::panel::edit::{develop_soon, read_edit, show_edit, show_names};
 use crate::panel::retouch::show_patches;
-use crate::panel::viewport::{source_to_view, view_to_source};
+use crate::panel::viewport::{source_to_view, view_on_picture, view_to_source};
 use crate::*;
 
 /// Zoom to use for a view of `vw` by `vh`: the state's, or fit.
@@ -1394,6 +1394,34 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             app.window().request_redraw();
         });
     }
+    // A shape's body: a press there takes hold of the whole, as its
+    // center handle does. Read in the masks' units, so the zoom, the
+    // pan and the crop are all in `view_to_source`, and the body is
+    // the painted shape's own, not the outline's drawing of it. Only on
+    // the picture: the grey around it pans, as the mask paints nothing
+    // there. Asked by the cursor on every move, so a borrow held
+    // elsewhere reads as off the body rather than panicking. The third
+    // argument is only the viewport's dependency on the drawn handles.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_mask_body_at(move |x, y, _| {
+            let Some(app) = app_weak.upgrade() else {
+                return false;
+            };
+            let Ok(st) = state.try_borrow() else {
+                return false;
+            };
+            let Some(shape) = st
+                .target
+                .and_then(|i| st.edit.adjustments.get(i))
+                .and_then(|a| a.mask.components.get(app.get_component().max(0) as usize))
+                .map(|c| &c.shape)
+            else {
+                return false;
+            };
+            view_on_picture(&st, &app, x, y) && shape.on_body(view_to_source(&st, &app, x, y))
+        });
+    }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_mask_dropped(move || {
@@ -2581,5 +2609,285 @@ mod tests {
         with_shape.invoke_new_mask();
         with_shape.invoke_add_shape("Subject".into(), "Add".into());
         assert_eq!(count_labeled(&with_shape, "Next shape mode"), 1);
+    }
+
+    /// A window with one adjustment whose only shape is `shape`, chosen
+    /// as the render step would leave it, over a 400 by 300 source at
+    /// zoom one; and the viewport's top left in the window, so a test
+    /// can press where `source_to_view` puts a point of the shape.
+    fn body_setup(
+        shape: Shape,
+    ) -> (
+        App,
+        Rc<RefCell<State>>,
+        Rc<crate::worker::Worker>,
+        slint::LogicalPosition,
+    ) {
+        let app = window(1);
+        let (state, worker) = crate::testing::state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            st.source_size = (400, 300);
+            st.zoom = 1.0;
+            st.edit.adjustments.push(Adjustment {
+                id: 1,
+                mask: Mask {
+                    components: vec![Component {
+                        shape: shape.clone(),
+                        ..Default::default()
+                    }],
+                    invert: false,
+                },
+                ..Default::default()
+            });
+            st.target = Some(0);
+        }
+        app.set_panel_tab("Masks".into());
+        app.set_component(0);
+        app.set_mask_kind(shape.name().into());
+        let base =
+            i_slint_backend_testing::ElementHandle::find_by_element_type_name(&app, "Viewport")
+                .next()
+                .expect("the viewport is on screen")
+                .absolute_position();
+        (app, state, worker, base)
+    }
+
+    /// Where in the window a point of the masks' units is shown.
+    fn shown_at(
+        app: &App,
+        state: &Rc<RefCell<State>>,
+        base: slint::LogicalPosition,
+        u: f32,
+        v: f32,
+    ) -> (f32, f32) {
+        let (x, y) = source_to_view(&state.borrow(), app, u, v);
+        (base.x + x, base.y + y)
+    }
+
+    fn the_shape(state: &Rc<RefCell<State>>) -> Shape {
+        state.borrow().edit.adjustments[0].mask.components[0]
+            .shape
+            .clone()
+    }
+
+    fn a_radial(rx: f32, ry: f32) -> Shape {
+        Shape::Radial {
+            center: [0.5, 0.375],
+            radius: [rx, ry],
+            angle: 0.0,
+            feather: 0.5,
+        }
+    }
+
+    /// The tester's report: a drag anywhere inside a radial's ellipse,
+    /// not only on its center handle, moves the radial; the picture
+    /// stays where it was.
+    #[test]
+    fn a_drag_inside_a_radial_moves_it_rather_than_the_picture() {
+        let (app, state, _worker, base) = body_setup(a_radial(0.2, 0.1));
+        // Halfway out along the long axis, well clear of every handle.
+        let press = shown_at(&app, &state, base, 0.6, 0.375);
+        let was_center = state.borrow().center;
+        let (center_x, center_y) = shown_at(&app, &state, base, 0.5, 0.375);
+        crate::testing::drag(
+            &app,
+            &[
+                press,
+                (press.0 + 10.0, press.1),
+                (press.0 + 40.0, press.1 + 20.0),
+            ],
+        );
+        let want = view_to_source(
+            &state.borrow(),
+            &app,
+            center_x - base.x + 40.0,
+            center_y - base.y + 20.0,
+        );
+        let Shape::Radial { center, radius, .. } = the_shape(&state) else {
+            panic!("still a radial");
+        };
+        assert!(
+            (center[0] - want.0).abs() < 1e-4 && (center[1] - want.1).abs() < 1e-4,
+            "{center:?} vs {want:?}"
+        );
+        assert!(center[0] > 0.55, "{center:?} did not move");
+        assert_eq!(radius, [0.2, 0.1], "a move is not a resize");
+        assert!(
+            !app.get_mask_body_moving(),
+            "the move cursor outlived the release"
+        );
+        assert_eq!(state.borrow().center, was_center, "the picture panned");
+        assert!(state.borrow().mask_drag.is_none(), "the drag was let go");
+    }
+
+    /// A linear's body is the band between its lines, the whole width
+    /// of the picture: a drag there far from its handles moves both.
+    #[test]
+    fn a_drag_on_a_linears_band_moves_the_gradient() {
+        let linear = Shape::Linear {
+            from: [0.5, 0.3],
+            to: [0.5, 0.45],
+        };
+        let (app, state, _worker, base) = body_setup(linear);
+        let press = shown_at(&app, &state, base, 0.15, 0.375);
+        let was_center = state.borrow().center;
+        crate::testing::drag(
+            &app,
+            &[press, (press.0, press.1 + 10.0), (press.0, press.1 + 40.0)],
+        );
+        let Shape::Linear { from, to } = the_shape(&state) else {
+            panic!("still a linear");
+        };
+        // Forty view pixels at zoom one on a 400 wide source.
+        let dv = 40.0 * app.window().scale_factor() / 400.0;
+        assert!((from[0] - 0.5).abs() < 1e-4 && (to[0] - 0.5).abs() < 1e-4);
+        assert!((from[1] - (0.3 + dv)).abs() < 1e-4, "{from:?}");
+        assert!((to[1] - (0.45 + dv)).abs() < 1e-4, "{to:?}");
+        assert!(!app.get_mask_body_moving(), "the move outlived the release");
+        assert_eq!(state.borrow().center, was_center, "the picture panned");
+    }
+
+    /// Off the body a drag still pans, and the shape stays put.
+    #[test]
+    fn a_drag_off_the_body_still_pans() {
+        let radial = a_radial(0.1, 0.05);
+        let (app, state, _worker, base) = body_setup(radial.clone());
+        let press = shown_at(&app, &state, base, 0.1, 0.1);
+        let was_center = state.borrow().center;
+        crate::testing::drag(
+            &app,
+            &[press, (press.0 + 10.0, press.1), (press.0 + 40.0, press.1)],
+        );
+        assert_eq!(the_shape(&state), radial);
+        assert_ne!(state.borrow().center, was_center, "the picture did not pan");
+        // Nor beyond a linear's lines.
+        let linear = Shape::Linear {
+            from: [0.5, 0.3],
+            to: [0.5, 0.45],
+        };
+        let (app, state, _worker, base) = body_setup(linear.clone());
+        let press = shown_at(&app, &state, base, 0.15, 0.6);
+        let was_center = state.borrow().center;
+        crate::testing::drag(
+            &app,
+            &[press, (press.0, press.1 + 10.0), (press.0, press.1 + 40.0)],
+        );
+        assert_eq!(the_shape(&state), linear);
+        assert_ne!(state.borrow().center, was_center, "the picture did not pan");
+    }
+
+    /// A press on the body that never clears the drag threshold is a
+    /// click, which zooms there as anywhere else on the picture, so a
+    /// shape over the whole frame does not take the click-to-zoom.
+    #[test]
+    fn a_click_on_the_body_still_zooms_and_leaves_the_shape() {
+        let radial = a_radial(0.2, 0.1);
+        let (app, state, _worker, base) = body_setup(radial.clone());
+        let zoomed = Rc::new(Cell::new(false));
+        {
+            let zoomed = zoomed.clone();
+            app.on_toggle_zoom(move |_, _| zoomed.set(true));
+        }
+        let press = shown_at(&app, &state, base, 0.6, 0.375);
+        click(&app, press.0, press.1);
+        assert!(zoomed.get(), "the click did not zoom");
+        assert_eq!(the_shape(&state), radial);
+        assert!(state.borrow().mask_drag.is_none());
+    }
+
+    /// With a dropper in hand the picture's presses are the dropper's:
+    /// a drag on the body does not move the shape under it.
+    #[test]
+    fn a_drag_on_the_body_with_a_dropper_in_hand_is_the_droppers() {
+        let radial = a_radial(0.2, 0.1);
+        let (app, state, _worker, base) = body_setup(radial.clone());
+        let grabbed = Rc::new(Cell::new(false));
+        {
+            let grabbed = grabbed.clone();
+            app.on_mask_grabbed(move |_| grabbed.set(true));
+        }
+        app.set_picking("White".into());
+        let press = shown_at(&app, &state, base, 0.6, 0.375);
+        crate::testing::drag(
+            &app,
+            &[press, (press.0 + 10.0, press.1), (press.0 + 40.0, press.1)],
+        );
+        assert!(!grabbed.get(), "the body took a dropper's drag");
+        assert_eq!(the_shape(&state), radial);
+    }
+
+    /// The body is read where the picture is shown, the crop and the
+    /// zoom applied: zoomed in on a cropped corner, a drag on the
+    /// radial there moves it, and a press where the radial would sit
+    /// on the whole frame at zoom one is off its body and pans.
+    #[test]
+    fn the_body_is_hit_through_the_crop_and_the_zoom() {
+        let radial = Shape::Radial {
+            center: [0.7, 0.55],
+            radius: [0.05, 0.05],
+            angle: 0.0,
+            feather: 0.5,
+        };
+        let (app, state, _worker, base) = body_setup(radial.clone());
+        app.set_geo_has_crop(true);
+        app.set_geo_crop_x(0.5);
+        app.set_geo_crop_y(0.5);
+        app.set_geo_crop_w(0.5);
+        app.set_geo_crop_h(0.5);
+        {
+            let mut st = state.borrow_mut();
+            st.zoom = 2.0;
+            st.center = (100.0, 75.0);
+        }
+        // Off the radial on the cropped, zoomed view: it pans.
+        let off = shown_at(&app, &state, base, 0.7, 0.45);
+        assert!(!app.invoke_mask_body_at(off.0 - base.x, off.1 - base.y, 0.0));
+        let was_center = state.borrow().center;
+        crate::testing::drag(&app, &[off, (off.0 + 10.0, off.1), (off.0 + 40.0, off.1)]);
+        assert_eq!(the_shape(&state), radial);
+        assert_ne!(state.borrow().center, was_center, "the picture did not pan");
+        // On it: the radial moves and the picture stays.
+        let press = shown_at(&app, &state, base, 0.72, 0.55);
+        assert!(app.invoke_mask_body_at(press.0 - base.x, press.1 - base.y, 0.0));
+        let was_center = state.borrow().center;
+        crate::testing::drag(
+            &app,
+            &[press, (press.0 + 10.0, press.1), (press.0 + 30.0, press.1)],
+        );
+        let Shape::Radial { center, .. } = the_shape(&state) else {
+            panic!("still a radial");
+        };
+        // Thirty view pixels at zoom two on a 400 wide source.
+        let du = 30.0 * app.window().scale_factor() / 2.0 / 400.0;
+        assert!(
+            (center[0] - (0.7 + du)).abs() < 1e-3 && (center[1] - 0.55).abs() < 1e-3,
+            "{center:?}"
+        );
+        assert_eq!(state.borrow().center, was_center, "the picture panned");
+    }
+
+    /// The body stops at the picture's edge: a linear's band runs on
+    /// into the grey around the picture as drawn, but a press there is
+    /// off the picture, so it pans rather than taking hold.
+    #[test]
+    fn the_grey_around_the_picture_is_not_the_body() {
+        let linear = Shape::Linear {
+            from: [0.5, 0.3],
+            to: [0.5, 0.45],
+        };
+        let (app, state, _worker, base) = body_setup(linear.clone());
+        state.borrow_mut().zoom = 0.25;
+        let on = shown_at(&app, &state, base, 0.1, 0.375);
+        assert!(app.invoke_mask_body_at(on.0 - base.x, on.1 - base.y, 0.0));
+        let grey = shown_at(&app, &state, base, -0.2, 0.375);
+        assert!(grey.0 > base.x, "the grey is in the viewport");
+        assert!(!app.invoke_mask_body_at(grey.0 - base.x, grey.1 - base.y, 0.0));
+        crate::testing::drag(
+            &app,
+            &[grey, (grey.0, grey.1 + 10.0), (grey.0, grey.1 + 40.0)],
+        );
+        assert_eq!(the_shape(&state), linear);
+        assert!(state.borrow().mask_drag.is_none());
     }
 }

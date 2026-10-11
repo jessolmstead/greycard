@@ -60,6 +60,28 @@ export component Viewport inherits Rectangle {
     // (plain) or free-end (Alt) rotation.
     callback mask-dragged(int, length, length, bool);
     callback mask-dropped();
+    /// Whether a point of the view lies on the chosen shape's body,
+    /// where a drag moves the whole shape as its center handle does.
+    /// The third argument is `mask-shape-key`, passed only so the
+    /// cursor's binding follows a change to the shape.
+    pure callback mask-body-at(length, length, float) -> bool;
+    // The drawn handles summed: read by the cursor's binding only so
+    // the binding depends on the handle rows, and an undo or a panel
+    // edit that moves the shape under a still pointer asks again. The
+    // value itself proves nothing; a changed row re-runs the binding.
+    property <float> mask-shape-key: root.mask-handles.length
+        + root.mask-handles[0].x + root.mask-handles[0].y
+        + root.mask-handles[1].x + root.mask-handles[1].y
+        + root.mask-handles[2].x + root.mask-handles[2].y
+        + root.mask-handles[3].x + root.mask-handles[3].y;
+    // Whether a drag on a shape's body is moving it, for the window.
+    out property <bool> mask-body-moving: ta.body-moving;
+    // A linear or radial shape chosen with no tool in hand: the only
+    // time a press on the picture can take hold of a shape's body.
+    property <bool> mask-body-live: (root.mask-kind == "Linear" || root.mask-kind == "Radial")
+        && !root.placeholder && root.picking == "" && root.placing == ""
+        && root.retouch-mode == "" && !root.crop-mode && !root.level-mode
+        && root.guide-mode == "";
     in property <length> crop-left;
     in property <length> crop-top;
     in property <length> crop-width;
@@ -147,9 +169,18 @@ export component Viewport inherits Rectangle {
         // drag threshold, so the release knows to end the gesture
         // there rather than reading as a click.
         property <bool> crop-drawing;
+        // Whether a left press landed on the chosen shape's body, and
+        // whether its drag has since cleared the threshold and is
+        // moving the shape. A press there that never drags is still a
+        // click, so it zooms as anywhere else.
+        property <bool> body-down;
+        property <bool> body-moving;
         mouse-cursor: root.picking != "" ? (root.dropper.width > 0 ? MouseCursor.none : MouseCursor.crosshair)
             : root.placing != "" || root.retouch-mode != "" ? MouseCursor.crosshair
             : root.crop-mode ? MouseCursor.crosshair
+            : self.body-moving ? MouseCursor.move
+            : !self.pressed && root.mask-body-live && self.has-hover
+                && root.mask-body-at(self.mouse-x, self.mouse-y, root.mask-shape-key) ? MouseCursor.move
             : self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
         // The keys belong to the picture whenever the pointer is
         // on it, or the last press was: a clicked slider keeps
@@ -205,9 +236,15 @@ export component Viewport inherits Rectangle {
                 self.down-y = self.mouse-y;
                 self.dragged = false;
                 self.crop-drawing = false;
+                self.body-moving = false;
+                self.body-down = e.button == PointerEventButton.left && !self.picked-down
+                    && !self.placed-down && root.mask-body-live
+                    && root.mask-body-at(self.mouse-x, self.mouse-y, root.mask-shape-key);
             } else if (e.kind == PointerEventKind.up) {
                 if (self.menu-down) {
                     self.menu-down = false;
+                } else if (self.body-moving) {
+                    root.mask-dropped();
                 } else if (self.picked-down) {
                     root.pick-released();
                 } else if (self.placed-down || root.placing != "" || root.retouch-mode != "") {
@@ -226,6 +263,10 @@ export component Viewport inherits Rectangle {
                     // A click that did not drag: zoom in here, or back out.
                     root.toggle-zoom(self.mouse-x, self.mouse-y);
                 }
+                // The gesture is over: the cursor goes back to what
+                // is under it.
+                self.body-down = false;
+                self.body-moving = false;
             } else if (e.kind == PointerEventKind.cancel) {
                 // The window let go of the gesture rather than this
                 // press ending it (focus lost, the platform taking
@@ -236,6 +277,11 @@ export component Viewport inherits Rectangle {
                     root.crop-draw-released();
                     root.crop-draw-armed = false;
                 }
+                if (self.body-moving) {
+                    root.mask-dropped();
+                }
+                self.body-down = false;
+                self.body-moving = false;
                 self.menu-down = false;
                 self.picked-down = false;
                 self.placed-down = false;
@@ -252,6 +298,15 @@ export component Viewport inherits Rectangle {
                     root.pick-dragged(self.mouse-x, self.mouse-y);
                 } else if (root.placing != "" || root.retouch-mode != "") {
                     root.place-dragged(self.mouse-x, self.mouse-y);
+                } else if (self.dragged && self.body-down) {
+                    // On the shape's body: the whole shape moves, by
+                    // the same path its center handle takes, from
+                    // where the press was.
+                    if (!self.body-moving) {
+                        self.body-moving = true;
+                        root.mask-grabbed(0);
+                    }
+                    root.mask-dragged(0, self.mouse-x - self.down-x, self.mouse-y - self.down-y, false);
                 } else if (self.dragged && !self.picked-down && !self.placed-down && root.crop-mode && !root.placeholder) {
                     // Crop mode is a mode: a drag out here draws,
                     // whether or not the picture is zoomed in enough

@@ -307,3 +307,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§294. The tint has a switch](notes/294-the-tint-has-a-switch.md) (2026-10-10)
 - [§295. A Draw button for the crop, and Alt to draw inside it](notes/295-a-draw-button-for-the-crop-and-alt-to-draw-inside-it.md) (2026-10-10)
 - [§296. The mixer's dropper is one pick](notes/296-the-mixers-dropper-is-one-pick.md) (2026-10-11)
+- [§297. A drag on a mask's body moves the mask](notes/297-a-drag-on-a-masks-body-moves-the-mask.md) (2026-10-11)

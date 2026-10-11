@@ -835,6 +835,11 @@ export component App inherits Window {
     // (Alt) rotation.
     callback mask-dragged(int, length, length, bool);
     callback mask-dropped();
+    /// Whether a point of the view (logical pixels) lies on the chosen
+    /// shape's body, where a drag moves the whole shape.
+    pure callback mask-body-at(length, length, float) -> bool;
+    // Whether a drag on the chosen shape's body is moving it.
+    out property <bool> mask-body-moving: view.mask-body-moving;
     in-out property <float> grain-amount: 0;
     in-out property <float> grain-size: 0.5;
     in-out property <string> grain-kind: "Cubic";
@@ -1952,6 +1957,7 @@ export component App inherits Window {
                 mask-grabbed(a) => { root.mask-grabbed(a); }
                 mask-dragged(a, b, c, d) => { root.mask-dragged(a, b, c, d); }
                 mask-dropped => { root.mask-dropped(); }
+                mask-body-at(a, b, c) => { return root.mask-body-at(a, b, c); }
                 crop-left: root.crop-left;
                 crop-top: root.crop-top;
                 crop-width: root.crop-width;

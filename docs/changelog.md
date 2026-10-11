@@ -14,6 +14,11 @@ note a first tester reads.
 
 ### Fixes
 
+- A drag anywhere on a radial or linear mask's body moves the mask;
+  before, only the center handle did and a drag elsewhere panned the
+  picture. The handles keep their meanings, a click on the body still
+  zooms, and the body stops at the picture's edge
+  ([§297](https://github.com/jessolmstead/greycard/blob/master/docs/notes/297-a-drag-on-a-masks-body-moves-the-mask.md))
 - The color mixer's dropper puts itself down after one pick, as the
   white balance and range droppers do; its button or Esc still puts
   it down without a pick

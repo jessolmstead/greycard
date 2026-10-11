@@ -36,8 +36,6 @@ collections and smart collections that survive a move, a mask has its
 own Detail, and the first tester's rough edges on masks, the touchpad
 and export are smoothed.
 
-- [ ] A drag anywhere on a radial or linear mask's body moves the
-      mask, not the picture; today only the center handle does (#16)
 - [ ] A two-finger touchpad scroll over the picture pans, and only a
       wheel's click or a pinch zooms, telling them apart as §284 tells
       a click from a touchpad (#17)

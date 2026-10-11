@@ -382,6 +382,30 @@ pub(crate) fn view_to_source(st: &State, app: &App, x: f32, y: f32) -> (f32, f32
     (at.0 / sw, at.1 / sw)
 }
 
+/// Whether a point of the view (logical pixels) lies on the picture
+/// as shown, the crop's frame (or the whole plane in crop mode), not
+/// on the grey around it.
+pub(crate) fn view_on_picture(st: &State, app: &App, x: f32, y: f32) -> bool {
+    let scale = app.window().scale_factor();
+    let (vw, vh) = (
+        app.get_view_width().max(1) as u32,
+        app.get_view_height().max(1) as u32,
+    );
+    let zoom = effective_zoom(st, vw, vh);
+    let (sw, sh) = (st.source_size.0 as f32, st.source_size.1 as f32);
+    let geometry = read_geometry(app);
+    let frame = if app.get_crop_mode() {
+        geometry.bounds(sw, sh)
+    } else {
+        geometry.frame(sw, sh)
+    };
+    let (fx, fy) = (
+        (x * scale - vw as f32 / 2.0) / zoom + st.center.0,
+        (y * scale - vh as f32 / 2.0) / zoom + st.center.1,
+    );
+    (0.0..=frame.size.0).contains(&fx) && (0.0..=frame.size.1).contains(&fy)
+}
+
 /// A point of the view (logical pixels) in the crop's own units:
 /// fractions of the leveled plane, the same a handle's drag reads and
 /// writes. Where `view_to_source` goes on to the source through the

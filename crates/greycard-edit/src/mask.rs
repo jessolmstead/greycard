@@ -722,6 +722,49 @@ impl Shape {
         }
     }
 
+    /// Whether `p`, in the masks' units, lies on the shape's body: the
+    /// part a press can take hold of to move the whole. For a radial
+    /// gradient the ellipse at its radii, the feather's outer edge; for
+    /// a linear one the band between its two lines, where it fades. A
+    /// shape with no handles has no body to hold.
+    pub fn on_body(&self, p: (f32, f32)) -> bool {
+        match *self {
+            Shape::Linear { from, to } => {
+                let (ax, ay) = (to[0] - from[0], to[1] - from[1]);
+                let length = ax * ax + ay * ay;
+                if length <= f32::EPSILON {
+                    return false;
+                }
+                let t = ((p.0 - from[0]) * ax + (p.1 - from[1]) * ay) / length;
+                (0.0..=1.0).contains(&t)
+            }
+            Shape::Radial {
+                center,
+                radius,
+                angle,
+                ..
+            } => {
+                let (rx, ry) = (radius[0].abs(), radius[1].abs());
+                if rx <= f32::EPSILON || ry <= f32::EPSILON {
+                    return false;
+                }
+                let (s, c) = angle.to_radians().sin_cos();
+                let (dx, dy) = (p.0 - center[0], p.1 - center[1]);
+                let (x, y) = ((dx * c + dy * s) / rx, (dy * c - dx * s) / ry);
+                x * x + y * y <= 1.0
+            }
+            Shape::Brush { .. }
+            | Shape::Subject {}
+            | Shape::Background {}
+            | Shape::Sky { .. }
+            | Shape::Object { .. }
+            | Shape::Part { .. }
+            | Shape::Luminance { .. }
+            | Shape::Color { .. }
+            | Shape::Unknown => false,
+        }
+    }
+
     /// The shape with handle `handle` moved to `p`, in the masks' units.
     pub fn dragged(&self, handle: usize, p: (f32, f32)) -> Self {
         match *self {
@@ -1035,6 +1078,58 @@ pub fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_radial_body_is_its_turned_ellipse() {
+        let radial = Shape::Radial {
+            center: [0.5, 0.4],
+            radius: [0.2, 0.1],
+            angle: 90.0,
+            feather: 0.5,
+        };
+        // Turned a quarter, its long axis runs down the picture.
+        assert!(radial.on_body((0.5, 0.4)));
+        assert!(radial.on_body((0.5, 0.59)));
+        assert!(radial.on_body((0.59, 0.4)));
+        assert!(!radial.on_body((0.5, 0.61)));
+        assert!(!radial.on_body((0.65, 0.4)), "the long axis is not across");
+        // Just inside every axis end, and just beyond each.
+        for (u, v) in radial.handles() {
+            let toward = |k: f32| (0.5 + (u - 0.5) * k, 0.4 + (v - 0.4) * k);
+            assert!(radial.on_body(toward(0.99)));
+            assert!(u == 0.5 && v == 0.4 || !radial.on_body(toward(1.01)));
+        }
+    }
+
+    #[test]
+    fn a_linear_body_is_the_band_between_its_lines() {
+        let linear = Shape::Linear {
+            from: [0.5, 0.2],
+            to: [0.5, 0.4],
+        };
+        assert!(linear.on_body((0.5, 0.3)));
+        // The band runs the whole width, however far from the handles.
+        assert!(linear.on_body((0.0, 0.25)));
+        assert!(linear.on_body((3.0, 0.39)));
+        assert!(!linear.on_body((0.5, 0.19)));
+        assert!(!linear.on_body((0.5, 0.41)));
+        let flat = Shape::Linear {
+            from: [0.5, 0.5],
+            to: [0.5, 0.5],
+        };
+        assert!(!flat.on_body((0.5, 0.5)));
+    }
+
+    #[test]
+    fn a_shape_without_handles_has_no_body() {
+        assert!(!Shape::Subject {}.on_body((0.5, 0.5)));
+        assert!(
+            !Shape::Brush {
+                strokes: Vec::new()
+            }
+            .on_body((0.5, 0.5))
+        );
+    }
 
     #[test]
     fn a_brush_has_no_handles_and_a_drag_leaves_it() {
