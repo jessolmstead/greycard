@@ -194,8 +194,13 @@ licenses, never bundled; a `greycard-ai` crate that core never sees.
       frame's twigs are not averaged fourfold; more hard negatives
       for the gate (sky-blue walls, a lake reflecting sky with none
       above it, a snowfield filling the frame); the bimodal WebGPU
-      prior. Then Water, Mountain, Vegetation, Ground and Building
-      shapes from the same label map
+      prior
+- [ ] Landscape masks: Water, Mountain, Foliage, Ground and Building
+      as shapes beside Sky in the Masks tab, each a matte from the Sky
+      prior's scene labels (§175) refined at the edge as Sky is, with
+      its own gate and hard negatives (a lake reflecting sky, a
+      rockface against cloud, a hedge against a lawn); SAM 3 by phrase
+      (§252) as the fallback for a thing the labels do not name
 - [ ] MediaPipe's iris landmarks as the CPU fallback for the Iris
       part, where the crop cascade takes about 15 s (§252)
 - [ ] Describe your own mask: a free-text field beside the presets,
