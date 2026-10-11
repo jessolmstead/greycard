@@ -126,7 +126,11 @@ frame.
   the copy on" and the other computer's name. Ratings, flags and
   labels each keep their most recent change.
 - If a frame's drive goes offline while it is open, greycard can carry
-  on from the archive's copy, and the status line says so.
+  on from the archive's copy, and the status line says so. When you
+  quit, the last edit you made there is written to the archive's copy
+  before greycard closes, waiting a few seconds at most for the
+  archive to answer. If the archive is away too, that edit has nowhere
+  to go and is lost.
 
 If a frame has two copies on the archive and greycard can't tell which
 is its own, the note adds "can't tell which copy is its own". Back up

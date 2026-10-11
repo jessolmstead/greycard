@@ -40,24 +40,36 @@ everything they set.
 1. Edit a frame until you like it.
 2. Press **Save...** under the list.
 3. Give the preset a name.
-4. Tick what it should carry. Each section is a heading with its
-   sliders under it (Detail: Texture, Clarity, Dehaze), each with its
-   own tick; the heading's tick takes or leaves the whole section, and
-   shows a dash when only some of it is ticked. They start ticked
-   where your edit differs from the defaults, so the preset holds what
-   you did and nothing else. **Check all** and **Uncheck all** set
-   every tick at once.
+4. Check what it should carry. The sections are listed in the
+   Develop tab's order, each a heading with its parts under it
+   (Detail: Texture, Clarity, Dehaze), each part with its own check.
+   The heading's check takes or leaves the whole section, and shows a
+   dash when only some of it is checked. They start checked where
+   your edit differs from the defaults, so the preset holds what you
+   did and nothing else. **Check all** and **Uncheck all** set every
+   check at once.
 5. Press **Save**.
 
 Saving under a name that is already in the list replaces that preset.
 
-Some sections are never ticked for you, because they belong to one
+The sheet works from the keyboard too: **Tab** moves from check to
+check, **Space** or **Return** turns the one with the focus ring, and
+**Esc** closes the sheet without saving.
+
+The parts are each section's sliders, or the few settings that make
+one control: a curve's channel, one band of the color mixer, one
+grading wheel. **White balance**, **Tint**, **Look**, **Noise**,
+**Sharpen**, **Demosaic** and **Camera profile** have no parts; each
+goes whole.
+
+Some sections are never checked for you, because they belong to one
 picture more than to a look: **White balance**, **Lens**,
-**Demosaic**, **Camera profile** and **Masks**. Tick them yourself if
+**Demosaic**, **Camera profile** and **Masks**. Check them yourself if
 you want them. Under **Masks** each of the frame's masks is listed by
 name, so a preset can carry one mask alone, and **Replace masks** or
 **Add to masks** says whether the preset's masks take the place of a
-frame's own or join them.
+frame's own or join them. A mask a frame already has is not added
+twice.
 
 A slider carried alone leaves the rest of its section, and the
 section's switch, as the frame has them. A preset never carries the
@@ -113,13 +125,21 @@ your configuration folder (`~/.config` on Linux, `~/Library/Application
 Support` on a Mac, `%APPDATA%` on Windows). Copy that folder to take
 them to another machine.
 
+A preset that carries single sliders, or whose masks are added to a
+frame's, needs greycard 0.6 or later. An older version reads it as its
+whole sections only: it leaves out the single sliders, and its masks
+replace a frame's own instead of joining them.
+
 ## Snapshots
 
 A snapshot keeps the whole edit of a frame under a name, so you can try
 something else and come back.
 
 - **Take** keeps the current edit as "Snapshot 1", "Snapshot 2" and so
-  on, and opens the name for typing. Type a name and press Enter.
+  on, and opens the name for typing. Type a name and press Enter, or
+  click anywhere else to keep what you typed. Esc keeps the old name.
+  While you type, moving the pointer over the picture doesn't take the
+  keys away from the name.
 - **Click** a snapshot to go back to it. This is a new step in the
   history, named "Snapshot: " and the name, so Ctrl+Z undoes it.
 - **Hover** over a snapshot to see it in the picture without changing
@@ -139,6 +159,9 @@ Each step is named for what it did:
 | A step from | Reads like |
 |---|---|
 | One slider | "Exposure +0.50" |
+| A section's switch | "Color tint off" |
+| A section's Reset | "Color tint reset" |
+| One grading wheel | "Color grading shadows 40°" |
 | Several sections | "Light, Curves off, Grain" |
 | A preset | "Preset: Warm Negative" |
 | A preset on a selection | "Preset ×3: Warm Negative" |
@@ -146,8 +169,12 @@ Each step is named for what it did:
 | A paste | "Paste from IMG_0001.CR3" |
 | A snapshot | "Snapshot: Evening" |
 
+A step in a mask starts with the mask's name, such as "Lamp: White
+balance on".
+
 - **Click** a row to go back to that state. The steps after it stay,
-  muted, until you change something, as with undo.
+  muted, until you change something, as with undo. Click a muted row
+  to go forward to it again.
 - **Hover** over a row to see that state in the picture without
   changing anything.
 - **Ctrl+Z** undoes a step, **Ctrl+Shift+Z** or **Ctrl+Y** redoes it.
@@ -162,6 +189,8 @@ an export mark: the file name, the export preset if you used one, and
 the time ("IMG_0001.jpg · Web 14:32"). Hover over it for the full path
 and date. Click it to go back to the edit that was sent out. An
 export row goes away with its state if that state leaves the history.
+The exported mark on the frame's thumbnail stays (see
+[the library](library.md#edited-and-exported-marks)).
 
 ## Several frames at once
 
@@ -195,17 +224,18 @@ Sync copies the open frame's edit onto the other selected frames.
 1. Edit one frame.
 2. Ctrl+click or Shift+click the others.
 3. Press **Sync...** under PRESETS, or **Ctrl+Shift+S**.
-4. Tick the sections to copy, and press **Apply**.
+4. Check the sections to copy, and press **Apply**.
 
-Every section starts ticked except **Masks**, because masks are drawn
+Every section starts checked except **Masks**, because masks are drawn
 around one picture's subject. The sheet lists what a preset's does: a
-heading a section, its sliders under it, the open frame's masks by
-name, **Check all** and **Uncheck all**. Untick a slider and only the
-rest of its section goes; tick a single mask and only that mask goes.
-**Replace masks** (the default) takes each frame's own masks away;
-**Add to masks** keeps them and puts the copied ones after. A Sky,
-Subject or People mask carries what it asks for and is found again on
-each frame.
+heading a section, its parts under it, the open frame's masks by
+name, **Check all** and **Uncheck all**, and the same keys. Uncheck a
+slider and only the rest of its section goes; check a single mask and
+only that mask goes. **Replace masks** (the default) takes each
+frame's own masks away; **Add to masks** keeps them and puts the
+copied ones after. A Subject, Background, Sky or People mask carries
+what it asks for and is made again for each frame, from that frame's
+own picture.
 
 - The crop, the straighten and the retouch are never copied.
 - A camera profile goes only to frames from the same camera. The status
@@ -222,10 +252,12 @@ frames it names are the frames it syncs.
 
 - **Ctrl+C** copies the open frame's whole edit.
 - **Ctrl+V** opens the same sheet, titled **Paste settings from** the
-  copied frame, over the selected frames. Tick what to paste and press
-  **Paste**.
+  copied frame, over the selected frames. Check what to paste and
+  press **Paste**.
 
-The ticks start as your last sync or paste left them. A paste
+The checks start as your last sync or paste left them, and masks
+checked by name check the copied frame's masks of the same name. A
+paste
 follows the sync's rules: crop, straighten and retouch stay each
 frame's own, and each frame gets one step, "Paste from" the frame you
 copied. The frame you copied from is left as it is.

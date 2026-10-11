@@ -21,12 +21,12 @@ The tab has three sections: **CROP**, **ROTATE** and **PERSPECTIVE**.
    - Drag anywhere outside the rectangle to draw a new crop from that
      point.
    - Click **Draw**, then drag anywhere on the picture, inside the
-     crop too, to draw a new one from where you press; this is the way
-     to start over when the crop already fills the frame, and Draw
-     lets go after the one drag, or when you press Esc.
-   - Holding Alt as you drag inside the rectangle draws a new crop
-     the same way, though some desktops keep Alt and a drag for moving
-     windows.
+     crop too, to draw a new one from where you press. This is the way
+     to start over when the crop already fills the frame. Draw lets go
+     after the one drag, or when you press Esc.
+   - Hold **Alt** as you drag inside the rectangle to draw a new crop
+     the same way. Some desktops keep Alt and a drag for moving
+     windows; use **Draw** there.
 3. Click **Done**, or switch to another tab. The picture shows
    cropped.
 
@@ -39,11 +39,20 @@ The tab has three sections: **CROP**, **ROTATE** and **PERSPECTIVE**.
 | **1:1**, **3:2**, **4:3**, **5:4**, **16:9**, **65:24** | That ratio. 65:24 is the XPan panorama. |
 | **Custom** | Type your own ratio as width:height, such as `7:5`. |
 
-**Portrait** turns the ratio on end, so 3:2 becomes 2:3.
+**Portrait** means the crop is tall: on, 3:2 becomes 2:3. It reads
+the same way under **Original**, a ratio and **Custom**, so on a photo
+shot on end it is on for the frame's own shape. Under **Free** the
+crop can be any shape, so the switch is greyed and does nothing.
 
-When you change the angle or the aspect, the crop stays where it is if
-it still fits. If not, it becomes the largest crop of the new shape
-around the same center.
+A ratio picked when the aspect was **Free** or **Original** starts the
+way the photo is: tall on a photo shot on end, wide otherwise. A ratio
+picked over another keeps the switch as you left it.
+
+When you pick another ratio or turn **Portrait**, the crop takes the
+new shape around the same center and keeps about the same area, so
+turning **Portrait** twice gives back the crop you had. When you change
+the angle, the crop stays where it is if it still fits; if not, it
+shrinks to fit around the same center.
 
 ### Straightening
 

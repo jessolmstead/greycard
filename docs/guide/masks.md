@@ -35,6 +35,12 @@ type is kept.
 acts more. It turns on by itself while you are drawing a shape, and
 goes back to how you had it when you finish.
 
+When you move a slider in the mask's own sections, **Show mask** turns
+off by itself, so you see the edit rather than the red. A shape's
+settings, such as **Feather** or a range, **Invert** and the brush
+leave it showing, since those are about the shape. Turn it on again
+whenever you want to check the shape.
+
 **Invert** flips the whole mask: the adjustment then acts everywhere
 the shapes are not.
 
@@ -131,9 +137,12 @@ stands out, people and things alike, Whole person takes the one person
 you pick, so on a group you can brighten one person and leave the rest.
 Where two people stand so close that the model sees them as one, each
 takes their own side of the pair. Someone of whom only a head shows
-gets their face. Its edge is a little softer than Subject's, and loses
-the finest strands of hair against the sky; on a picture of one
-person, Subject gives the finer edge.
+gets their face. Its edge comes from the Subject model, so loose hair
+against the sky is kept as Subject keeps it; where the person touches
+someone else, the line between them is the People model's. Without the
+Subject model on the machine, Whole person still works with a coarser
+edge, and the status line says so. The first Whole person you ask for
+offers the Subject model's download.
 
 Clothing goes by where it is worn: **Top** takes a coat and the shirt
 under it as one, **Bottoms** whatever is worn below the waist.
@@ -217,7 +226,12 @@ Under the mask, **LIGHT**, **COLOR**, **CURVES**, **COLOR MIXER**,
 **COLOR GRADING** and **TINT** work as they do on the Develop tab, but
 only where the mask reaches. **BLACK & WHITE** and the **Display
 curve** switch are global only. A mask's tone sliders act even when the
-global **LIGHT** section is switched off.
+global **LIGHT** section is switched off. Each of the mask's sections
+has its own switch, **TINT** included, so you can compare the mask
+with and without it.
+
+A mask's curve editor shows the picture's histogram behind the curve,
+as the global one does.
 
 ### White balance in a mask
 
@@ -226,12 +240,20 @@ under two colors of light. Set the global white balance for one light,
 then give a mask the other.
 
 The mask's **WHITE BALANCE** section is off until you switch it on at
-its title. It starts at the global white, so nothing jumps.
+its title. The first time, it starts at the global white, so nothing
+jumps.
 
 - **Temperature** (2000 to 12000 K) and **Tint** name the light under
   the mask.
 - **Neutral** gives you a dropper: click something under the mask that
   should be grey. It switches the section on for you.
+- The switch keeps the mask's light while it is off: off, the area
+  under the mask takes the global white; on again, the mask's own
+  light comes back. Use it to compare the two.
+- **Double-click** **Temperature** or **Tint** while the section is on
+  to forget the mask's light. The section switches off and follows
+  the global white again, and the next time you switch it on it
+  starts there.
 
 There is no **As shot** or **Auto** here. The values are absolute: a
 mask set to 3200 K stays a 3200 K lamp when you move the global white
@@ -252,7 +274,7 @@ choose **Download** or **Not now**.
 | Subject, Background | about 114 MB |
 | Sky | about 96 MB, plus the Object model for a finer edge |
 | Object | about 184 MB |
-| People | about 1.04 GB |
+| People | about 1.04 GB, plus the Subject model for Whole person's edge |
 
 Each is downloaded once. The first Subject or Background mask of a
 session takes a few seconds while the model loads; after that, masks
@@ -262,7 +284,11 @@ coarser edge, and clicks can only remove sky.
 ## Masks and other frames
 
 Masks are drawn around one picture, so syncing settings onto other
-frames leaves them out unless you tick **Masks**, or one mask under
+frames leaves them out unless you check **Masks**, or one mask under
 it by name. **Replace masks** takes each frame's own away; **Add to
 masks** keeps them and puts the copied ones after. See
 [Presets and history](presets-and-history.md).
+
+A Subject, Background, Sky or People mask copied onto another frame is
+made again for that frame, from that frame's own picture. A paste of
+masks onto the frame on screen shows at once.

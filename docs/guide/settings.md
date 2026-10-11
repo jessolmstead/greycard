@@ -48,7 +48,7 @@ kept, 2.5 MB of 300 MB."
 
 | Item | Default | What it does |
 |---|---|---|
-| **Clear** | | Empties the cache. Each folder's thumbnails are made again when it next opens. |
+| **Clear** | | Empties the cache, the pictures of edited frames included. Each folder's thumbnails are made again when it next opens, and an edited frame's in the background. |
 | **Keep up to** | 300 MB | Room for the grid's and filmstrip's thumbnails, about thirty thousand frames at one size. When full, the ones used longest ago go. 0 turns the cache off. |
 | **Previews up to** | 8192 MB | Room for local previews of the frames in your library, about 0.5 MB a frame. They let you cull a shoot on a drive that is unplugged or on a slow network. 0 keeps none. |
 
@@ -90,8 +90,8 @@ session to the next:
   tab ([Scopes and color](scopes-and-color.md))
 - **With subfolders**, in the left pane's folder tree
   ([Library](library.md))
-- the Export sheet's choices and export presets
-  ([Exporting](export.md))
+- the Export sheet's choices and export presets, and the folder the
+  export dialog opens in ([Exporting](export.md))
 
 ## Where greycard keeps its files
 

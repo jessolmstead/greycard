@@ -46,12 +46,37 @@ In the grid:
 - **Ctrl+wheel**, or **+** and **−**, change the cell size. There are
   six sizes, from 96 to 512 px; the header shows the current one, and
   greycard remembers it.
-- A color label tints the whole cell, in the grid and the filmstrip.
+- A color label tints the whole cell in the grid. In the filmstrip it
+  shows as a thin colored line under the thumbnail.
 - A frame greycard can't read says **Unreadable**.
 
 **F7** puts the left pane away, **F6** the filmstrip and **F8** the
 right panel. **Tab** hides all of them, or over the grid, the left
 pane alone.
+
+### Thumbnails show the edit
+
+An edited frame shows its edit in the filmstrip, the grid, the cull
+view and compare, not the camera's JPEG. Reset a frame's edit and the
+camera's picture comes back.
+
+Some frames are edited without being opened: a sync, a preset or a
+paste over a selection, an edit joined from another machine through an
+archive, or a folder opened with its edits already on disk. Their
+pictures are made in the background, and until then they show the
+camera's. greycard holds this work back while you edit the frame on
+screen, so your own develop comes first.
+
+### Edited and exported marks
+
+Two small marks sit in the top right corner of a thumbnail, in the
+grid and the filmstrip:
+
+- a **pencil** on a frame whose edit is not the default;
+- a **picture with a down arrow** on a frame that has been exported.
+
+A frame with both shows both. The exported mark stays after you undo
+past the export, or the export's row leaves the history.
 
 ## Roots: your library
 
@@ -136,7 +161,8 @@ working while it reads.
 When a root's drive is unplugged or its share is away, its row is
 dimmed and says "offline" in place of the count. You can still:
 
-- open it and browse its folder tree, its grid and its thumbnails
+- open it and browse its folder tree, its grid and its thumbnails,
+  an edited frame showing the last picture of its edit greycard made
 - filter it and read the ratings, flags and labels it had
 - cull it in the loupe and the compare view, from the local previews
   made while it was there (below)
@@ -249,7 +275,8 @@ again, move or rename fills in at once. Frames under a root also get
 a **local preview**, a picture 2048 px on its long side, made in the
 background while the drive is there. It lets you cull
 an offline drive, and a shoot on a NAS without reading each raw over
-the network.
+the network. An edited frame's pictures of its edit are kept in the
+same cache, beside the camera's.
 
 Both have a size limit under **THUMBNAILS** in Settings:
 

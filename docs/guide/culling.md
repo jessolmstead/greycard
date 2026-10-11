@@ -55,11 +55,18 @@ XMP too, for Lightroom or darktable; picks and rejects stay in the
 
 Press **C**, or click **Cull** in the grid's header, to cull. Culling
 shows each frame's own embedded camera JPEG instead of developing the
-raw, so moving from frame to frame is instant. The right panel shows
-the **CULLING** section in place of the develop tools.
+raw, so moving from frame to frame is instant. A frame you have
+edited shows its edit instead, as it does in the grid. The right
+panel shows the **CULLING** section in place of the develop tools.
+
+Under the file name at the top of the panel, culling shows the body
+and lens, then the focal length, aperture, shutter and ISO, as
+editing does. In compare, they are the chosen frame's.
+They fill in once greycard has indexed the folder.
 
 - **← →** move between frames.
-- **Space** zooms to 1:1 to check focus, and back.
+- **Space** zooms to 1:1 to check focus, and back. At 1:1 you always
+  see the camera's full JPEG, even on an edited frame.
 - **V** cycles through comparing 1, 2 or 4 frames side by side. The
   **Compare** buttons (**1**, **2**, **4**) do the same. Click a frame
   in the compare view to choose it.
@@ -70,8 +77,9 @@ the **CULLING** section in place of the develop tools.
 
 A word over the picture confirms each key, such as the new rating.
 
-The status line says what you are looking at: "the camera JPEG", or
-"a small camera preview" when the camera stored only a small one.
+The status line says what you are looking at: "the camera JPEG",
+"a small camera preview" when the camera stored only a small one, or
+"the edit" for an edited frame.
 For a frame on a drive that is offline or on the network, culling
 shows "the local preview" greycard keeps of it, so you can cull frames
 that aren't reachable right now, or are slow to read.

@@ -256,12 +256,15 @@ learned fill, each outlined where it was drawn; crop, rotation and a
 guided perspective tool; scopes; presets, including Lightroom's, and
 three film looks among them; 3D LUT looks from `.cube` and HaldCLUT
 files; export with embedded profiles and EXIF; a filmstrip and a
-zoomable grid from the camera's previews, with ratings, flags and
+zoomable grid that show each frame as edited, a frame edited without
+being opened made in the background, with marks for edited and
+exported frames, and with ratings, flags and
 color labels kept in the sidecar and set from the keyboard, and a
 folder filter on all of them with a count on every chip, and read from
 and written to XMP sidecars so stars, labels and keywords travel to
 Lightroom and darktable (picks and rejects do not, since XMP has no
-field for them); culling from the camera's JPEG, or from a local preview of it
+field for them); culling from the camera's JPEG or the edit's picture,
+or from a local preview of it
 when the frame's root is offline or on a network share, with compare,
 a rejects folder and a Move back out of it, a delete to the system trash behind a confirmation,
 and a quarter turn for a frame the camera got the wrong way up, in
@@ -274,7 +277,8 @@ expects, with the file types registered; and a Report a problem button
 that opens the bug form with the version, the OS and the GPU filled in
 and the log beside it; several frames at once, with the settings of
 one synced across them, a preset laid over all of them and an export
-of all of them; export presets, a watermark, a subfolder beside each raw and an
+of all of them, and a copy sheet and presets that carry a single
+slider or a single mask; export presets, a watermark, a subfolder beside each raw and an
 export queue that runs when you choose and keeps a set across a
 restart, each export a line in History, and a headless `--export`
 for the command line; masks by lightness and

@@ -88,9 +88,9 @@ file.
 ### One frame
 
 With **Subfolder** empty, the sheet's button reads **Choose file...**.
-It opens your system's save dialog, with the raw's name and folder
-filled in. The dialog asks before it replaces a file, so the sheet's
-**If it exists** does not apply here.
+It opens your system's save dialog, with the raw's name filled in. The
+dialog asks before it replaces a file, so the sheet's **If it exists**
+does not apply here.
 
 ### Several frames
 
@@ -99,6 +99,15 @@ asks for a folder. Each frame is written there under its own name with
 the format's extension: `IMG_0001.CR3` becomes `IMG_0001.jpg`. Two
 frames of one name, such as a raw and its camera JPEG, are told apart
 with `-1` on the second (`IMG_0001-1.jpg`), `-2` on a third.
+
+### Where the dialog opens
+
+The save dialog and the folder dialog open where your last export
+went, after a restart too, so a day's exports land in one place
+without hunting for it. The first time, they open in the raw's own
+folder. If that folder is gone, as on an unplugged drive, the dialog
+opens on the nearest folder above it that is still there. A preset
+with its own **Subfolder** never asks, so its folder always wins.
 
 ### Into a subfolder
 
@@ -192,7 +201,10 @@ the file was made from. Hover over it for the full path; click it to
 go back to the look you sent out.
 
 The line goes when its state leaves the history (undone and replaced,
-or pushed past the history's limit). To keep a look for good, add it
+or pushed past the history's limit). The frame's thumbnail keeps its
+exported mark either way (see
+[the library](library.md#edited-and-exported-marks)). To keep a look
+for good, add it
 under **SNAPSHOTS**.
 
 ## From the command line

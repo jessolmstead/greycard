@@ -21,8 +21,8 @@ pan and zoom straight away.
 - **Type a value:** click the number at the right, type it in the unit
   shown and press Enter. Escape leaves it as it was.
 - **Fine steps:** click a slider, then use the left and right arrow
-  keys or the mouse wheel. Shift with the wheel moves any slider
-  without clicking it first.
+  keys or the mouse wheel. Each click of the wheel is one step. Shift
+  with the wheel moves any slider without clicking it first.
 
 ### Sections
 
@@ -33,6 +33,37 @@ pan and zoom straight away.
 - Some sections have a **Reset** button that puts the whole section
   back to its defaults.
 - A section marked "raw only" does nothing on a JPEG, PNG or TIFF.
+
+## Look
+
+**LOOK** is the first section, since a look is usually the first
+thing you choose. A look is a color table laid over the finished
+picture. It can be a film preset, a LUT you bought or made, or a look
+fitted to your camera's JPEGs.
+
+- Click a look in the list to use it. **None**, at the top, uses no
+  look.
+- **Strength** blends the look in, from 0 to 100% (the default).
+- **Fit this camera's look…** opens the camera match. See
+  [Fitting your camera's look](camera-match.md).
+- **Rename…** renames the chosen look. Every picture in the open
+  folder, every preset and every snapshot that uses it takes the new
+  name. Edits in other folders aren't reached: they show the old name
+  as missing, and the old name's files stay until nothing in reach
+  still needs them.
+- **Remove this look…** moves the chosen look's files to the trash,
+  after you confirm.
+- **Reset** goes back to no look at full strength.
+
+Looks fitted by the camera match are grouped by camera, with the
+open frame's camera first and marked "this camera". Each fitted look
+is made for one display curve. If it has no version for this picture's
+curve, the section says so and offers a button such as **Refit under
+AgX…**.
+
+To add your own, put `.cube` files or HaldCLUT `.png` files in the
+`greycard/looks` folder in your data directory. If you have no looks
+yet, the section names the folder.
 
 ## White balance
 
@@ -182,56 +213,37 @@ Three wheels: **Shadows**, **Mid-tones** and **Highlights**.
 - Drag in a wheel to set its color. The angle is the hue, and the
   distance from the center is the strength.
 - Double-click a wheel to clear it.
+- Click a wheel, or its name, to choose it. The chosen wheel has a
+  ring around it and its name in the accent color.
 - Click a wheel's name to show it larger for finer control. Click it
-  again to shrink it.
-- **Hue** (0 to 360°) and **Strength** (0 to 100%) set the wheel you
-  last used, by number. Its name is shown brighter.
+  again to shrink it. Either click chooses the wheel without moving
+  its point.
+- **Hue** (0 to 360°) and **Strength** (0 to 100%) set the chosen
+  wheel by number. Choose a wheel by its name to fine-tune it from
+  where it stands.
 - **Balance** (−100 to +100) moves the split between shadows and
   highlights.
 - **Reset** clears all three wheels.
 
+Each change is a step in the history that names the wheel, such as
+"Color grading shadows 40°".
+
 ## Tint
 
-Tints the whole picture toward one color.
+Tints the whole picture toward one color, as a colored filter would.
+A blue tint over a warm scene cools it: colors far from the tint get
+duller on the way to it rather than turning into other colors, and
+greys take the tint's hue.
 
 - Drag in the ring. The angle sets the hue, and the distance from the
   center sets the amount. Double-click the ring to clear it.
 - **Hue** (0 to 360°) is for fine adjustment. **Amount** goes from 0
   to 100%.
 - The small swatch shows what a mid grey turns into.
-- **Reset** clears the tint.
-
-This section has no switch. An **Amount** of 0 means no tint.
-
-## Look
-
-A look is a color table laid over the finished picture. It can be a
-film preset, a LUT you bought or made, or a look fitted to your
-camera's JPEGs.
-
-- Click a look in the list to use it. **None**, at the top, uses no
-  look.
-- **Strength** blends the look in, from 0 to 100% (the default).
-- **Fit this camera's look…** opens the camera match. See
-  [Fitting your camera's look](camera-match.md).
-- **Rename…** renames the chosen look. Every picture in the open
-  folder, every preset and every snapshot that uses it takes the new
-  name. Edits in other folders aren't reached: they show the old name
-  as missing, and the old name's files stay until nothing in reach
-  still needs them.
-- **Remove this look…** moves the chosen look's files to the trash,
-  after you confirm.
-- **Reset** goes back to no look at full strength.
-
-Looks fitted by the camera match are grouped by camera, with the
-open frame's camera first and marked "this camera". Each fitted look
-is made for one display curve. If it has no version for this picture's
-curve, the section says so and offers a button such as **Refit under
-AgX…**.
-
-To add your own, put `.cube` files or HaldCLUT `.png` files in the
-`greycard/looks` folder in your data directory. If you have no looks
-yet, the section names the folder.
+- The switch at the title turns the tint off and on, keeping its hue
+  and amount, like any other section.
+- **Reset** clears the hue and the amount and leaves the switch as it
+  is. The history calls it "Color tint reset".
 
 ## Noise
 

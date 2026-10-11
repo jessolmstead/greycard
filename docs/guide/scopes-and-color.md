@@ -20,7 +20,7 @@ cull. Pick one from the row under it:
 | **Vector** | the colors on a wheel: grey in the middle, stronger color further out, with a line where skin tones fall |
 
 The scope you pick is remembered. The histogram also shows behind the
-curve in **CURVES**.
+curve in **CURVES**, on the Develop tab and in a mask.
 
 The scopes read the picture as it will be written, in the color space
 set in the export sheet, not the camera's raw data.

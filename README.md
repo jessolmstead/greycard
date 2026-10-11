@@ -56,10 +56,12 @@ lays a preset on each, and can write a backup copy, every file hashed
 and read back before it counts and nothing ever written to the card.
 Culling is a keyboard job on the camera's own JPEG, with a side by
 side compare, and ratings, flags and labels travel to Lightroom and
-darktable through XMP. Select several frames and sync one's settings
-across them, lay a preset over all of them, or export them all with
-a saved export preset and a watermark, into a subfolder beside each
-raw, now or from a queue later, or from a script with no window.
+darktable through XMP. The filmstrip and the grid show each frame as
+edited, with a mark on the ones you have edited or exported. Select
+several frames and sync one's settings across them, down to one
+slider or one mask, lay a preset over all of them, or export them all
+with a saved export preset and a watermark, into a subfolder beside
+each raw, now or from a queue later, or from a script with no window.
 
 **Your library, wherever it is.** Your folders show as a tree with
 their counts. A shoot on a NAS is culled from local previews without
