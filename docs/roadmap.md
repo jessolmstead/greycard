@@ -47,6 +47,11 @@ A set opens in a lightbox for judging it whole, frames gather into
 collections and smart collections that survive a move, and a mask has
 its own Detail.
 
+- [ ] A Draw button in the Crop section, one shot: the next drag
+      anywhere on the picture draws a fresh crop held to the aspect,
+      since a drag inside the crop moves it and a crop at the full
+      frame leaves nowhere outside to start; Alt and a drag inside the
+      crop as the same thing without the button
 - [ ] Detail in a mask: Texture, Clarity and Dehaze in a mask's look,
       beside its Light and Color, so a face is smoothed or a distant
       ridge dehazed without touching the rest; the bands and the
