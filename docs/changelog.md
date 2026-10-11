@@ -29,6 +29,11 @@ note a first tester reads.
   through a shoot stays fast
   ([§274](https://github.com/jessolmstead/greycard/blob/master/docs/notes/274-the-shot-lines-in-cull-mode-and-the-export-choosers-memory.md))
 
+### Color and editing
+
+- The Look section sits at the top of the Develop tab, above White
+  balance, since the look is set first
+
 ### Masks
 
 - A Whole person mask takes its edge from the Subject model's matte

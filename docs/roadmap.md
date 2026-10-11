@@ -418,8 +418,8 @@ clears or a tester asks for it.
 - [ ] The develop sections in an order of the user's: a list of
       section names in settings, the panel a repeater over it with each
       slot instantiating the section its name says, the Masks tab
-      following the same order, White balance pinned at the top and
-      Monitor, Proof and Demosaic at the bottom, and up and down
+      following the same order, Look and White balance pinned at the
+      top and Monitor, Proof and Demosaic at the bottom, and up and down
       buttons for it in the Settings sheet. Goes with the develop
       panel's move out of app.slint, since that is the same rewiring
 - [ ] Resizable side panes: drag the left pane's and the develop

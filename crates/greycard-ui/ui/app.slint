@@ -2115,6 +2115,26 @@ export component App inherits Window {
                             renamed => { root.renamed(); }
                             view-changed => { root.view-changed(); }
                         }
+                        if root.panel-tab == "Develop": LookSection {
+                            collapsed-look <=> root.collapsed-look;
+                            look-name <=> root.look-name;
+                            look-strength <=> root.look-strength;
+                            look-rows: root.look-rows;
+                            look-mismatch: root.look-mismatch;
+                            look-refit: root.look-refit;
+                            look-refit-asked => { root.look-refit-asked(); }
+                            look-group-toggled(key) => { root.look-group-toggled(key); }
+                            look-note: root.look-note;
+                            look-warning: root.look-warning;
+                            look-fitted: root.look-fitted;
+                            look-picked => { root.look-picked(); }
+                            look-removable: root.look-removable;
+                            look-remove-asked => { root.look-remove-asked(); }
+                            look-renamable: root.look-renamable;
+                            look-rename-asked => { root.look-rename-asked(); }
+                            match-asked => { root.match-asked(); }
+                            view-changed => { root.view-changed(); }
+                        }
                         if root.panel-tab == "Develop": WhiteBalanceSection {
                             as-shot <=> root.as-shot;
                             collapsed-wb <=> root.collapsed-wb;
@@ -2280,26 +2300,6 @@ export component App inherits Window {
                             hue-circle: root.hue-circle;
                             tint-changed => { root.tint-changed(); }
                             tint-reset => { root.tint-reset(); }
-                        }
-                        if root.panel-tab == "Develop": LookSection {
-                            collapsed-look <=> root.collapsed-look;
-                            look-name <=> root.look-name;
-                            look-strength <=> root.look-strength;
-                            look-rows: root.look-rows;
-                            look-mismatch: root.look-mismatch;
-                            look-refit: root.look-refit;
-                            look-refit-asked => { root.look-refit-asked(); }
-                            look-group-toggled(key) => { root.look-group-toggled(key); }
-                            look-note: root.look-note;
-                            look-warning: root.look-warning;
-                            look-fitted: root.look-fitted;
-                            look-picked => { root.look-picked(); }
-                            look-removable: root.look-removable;
-                            look-remove-asked => { root.look-remove-asked(); }
-                            look-renamable: root.look-renamable;
-                            look-rename-asked => { root.look-rename-asked(); }
-                            match-asked => { root.match-asked(); }
-                            view-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop": NoiseSection {
                             noise-enabled <=> root.noise-enabled;
