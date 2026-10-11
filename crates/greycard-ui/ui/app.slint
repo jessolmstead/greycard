@@ -864,8 +864,11 @@ export component App inherits Window {
     // What the Portrait switch shows: whether the crop is tall. The
     // stored flag says that for a named ratio; under "Original" it
     // says "the other way from the frame", so on a tall plane the
-    // two read opposite.
-    out property <bool> portrait-shown: root.portrait != (root.aspect-name == "Original" && root.plane-tall);
+    // two read opposite. Under Free nothing reads the flag, so the
+    // switch is off and greyed (`portrait-live`).
+    out property <bool> portrait-live: root.aspect-name != "Free";
+    out property <bool> portrait-shown: root.portrait-live
+        && root.portrait != (root.aspect-name == "Original" && root.plane-tall);
     in property <length> crop-left;
     in property <length> crop-top;
     in property <length> crop-width;
@@ -2444,6 +2447,7 @@ export component App inherits Window {
                             aspect-custom <=> root.aspect-custom;
                             portrait <=> root.portrait;
                             portrait-shown: root.portrait-shown;
+                            portrait-live: root.portrait-live;
                             crop-toggled => { root.crop-toggled(); }
                             geometry-changed => { root.geometry-changed(); }
                             guide-dropped => { root.guide-dropped(); }

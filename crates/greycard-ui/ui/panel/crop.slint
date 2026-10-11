@@ -14,6 +14,7 @@ export component CropSection inherits Section {
     in-out property <string> aspect-custom;
     in-out property <bool> portrait;
     in property <bool> portrait-shown;
+    in property <bool> portrait-live: true;
     callback crop-toggled();
     callback geometry-changed();
     callback guide-dropped();
@@ -54,14 +55,19 @@ export component CropSection inherits Section {
     }
     // Shows whether the crop is tall, which is the stored flag but
     // under "Original" on a tall plane (see `portrait-shown`). A
-    // click flips the flag, and so what is shown, either way.
+    // click flips the flag, and so what is shown, either way. Under
+    // Free nothing reads the flag, so the switch is greyed and a
+    // click is nothing.
     Toggle {
         label: "Portrait";
         checked: root.portrait-shown;
+        enabled: root.portrait-live;
         follows: true;
         toggled => {
-            root.portrait = !root.portrait;
-            root.geometry-changed();
+            if (root.portrait-live) {
+                root.portrait = !root.portrait;
+                root.geometry-changed();
+            }
         }
     }
 }

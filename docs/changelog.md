@@ -16,7 +16,7 @@ The strip and the grid show each frame as edited, made in the background
 for frames edited without being opened. The copy settings and preset
 sheets copy one slider or one mask, and Check all. A tint cools or warms
 without turning hues through green and magenta, and a mask keeps its
-own white balance. A wide round of fixes to bugs 0.5.0 shipped: a
+own white balance. A wide round of fixes to bues 0.5.0 shipped: a
 pasted learned mask drawn from the wrong frame, history rows lost on a
 click back, a snapshot that could not be restored, the crop's Portrait
 switch, the grading wheels' sliders, and the mouse wheel's step.
@@ -24,45 +24,32 @@ switch, the grading wheels' sliders, and the mouse wheel's step.
 ### Culling and the grid
 
 - An edited frame shows its edit in the strip, the grid, the cull loupe
-  and compare, kept from the open frame's own develop when its edit is
-  saved or the frame is left; a frame reset to the default shows the
+  and compare; a frame reset to the default shows the
   camera's picture again
   ([§278](https://github.com/jessolmstead/greycard/blob/master/docs/notes/278-thumbnails-from-the-edit-part-one.md))
-- A frame edited without being opened (a sync, a preset or a paste over
+- A frame edited without being opened (a sync, a preset, or a paste over
   the selection, a save joined from another machine, a folder opened
   with its edits on disk) gets its edit's picture in the strip and the
   grid from a reduced develop in the background, held off while you
   work on an open frame; a frame on an offline root shows its own
   edit's picture by the key the index keeps
   ([§285](https://github.com/jessolmstead/greycard/blob/master/docs/notes/285-thumbnails-from-the-edit-part-two.md))
-- A pencil on a grid tile or strip cell marks a frame whose edit is
-  not the default, and a second mark one that has been exported; the
-  export mark stays through an undo, and a frame reset to the default
-  shows neither
+- A pencil on a grid tile or strip cell marks an edited frame
+  and a second mark one that has been exported
   ([§276](https://github.com/jessolmstead/greycard/blob/master/docs/notes/276-marks-for-edited-and-exported-frames.md))
-- Cull mode shows the body and lens and the exposure under the file's
-  name, as edit mode does, read from the library index so stepping
-  through a shoot stays fast
+- Cull mode shows the shot's metadata
   ([§274](https://github.com/jessolmstead/greycard/blob/master/docs/notes/274-the-shot-lines-in-cull-mode-and-the-export-choosers-memory.md))
 
 ### Color and editing
 
 - The Look section sits at the top of the Develop tab, above White
-  balance, since the look is set first
-- A tint blends a color toward the tint's hue in Oklab instead of
-  turning its hue the short way round, so a blue tint on a warm
-  portrait cools the coat and the skin instead of sending them through
-  green and magenta; the same for a mask's tint. Thumbnails made from
-  edits are remade once
+  balance, since it's typically set first
+- Fixed issues with the Tint tool
   ([§286](https://github.com/jessolmstead/greycard/blob/master/docs/notes/286-a-tint-is-a-blend-not-a-turn.md))
 
 ### Masks
 
-- A Whole person mask takes its edge from the Subject model's matte
-  inside the person, so loose hair against the sky is kept and the edge
-  is as fine as a part's; where two people touch the split stays; a
-  machine without the Subject model is offered it once and keeps the
-  coarser edge meanwhile
+- Improvements to Whole Person masking accuracy
   ([§279](https://github.com/jessolmstead/greycard/blob/master/docs/notes/279-whole-persons-edge-from-subjects-matte.md))
 - A mask's overlay turns off by itself when a slider in the mask's look
   moves, so the edit is seen; feather, range, invert and the brush keep
@@ -70,8 +57,7 @@ switch, the grading wheels' sliders, and the mouse wheel's step.
   ([§277](https://github.com/jessolmstead/greycard/blob/master/docs/notes/277-the-overlay-steps-aside-for-a-look-edit.md))
 - A mask's white balance keeps its temperature and tint while its switch
   is off, so the switch compares the mask's light with the global's; a
-  double-click on either slider forgets the light and puts the mask
-  back to following the global
+  double-click resets them to global
   ([§283](https://github.com/jessolmstead/greycard/blob/master/docs/notes/283-a-masks-white-balance-keeps-its-light-while-off.md))
 
 ### Presets and copying

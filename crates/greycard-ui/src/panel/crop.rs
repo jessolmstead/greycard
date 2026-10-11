@@ -1214,4 +1214,88 @@ mod tests {
         let [_, _, w, h] = crop_px(&app, 4000.0, 6000.0);
         assert!((w / h - 16.0 / 9.0).abs() < 1e-3, "{w} by {h}");
     }
+    /// The user's case: a frame upright from the camera's tag alone,
+    /// the aspect Free and no crop. Nothing reads the switch under
+    /// Free, so it is off and greyed, and a click changes neither the
+    /// flag nor the crop. A click used to flip a flag nothing read and
+    /// pin the whole frame as a crop, so the switch read on over the
+    /// same picture and the next click read off.
+    #[test]
+    fn the_switch_is_off_and_still_under_free() {
+        let app = window(4);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(4));
+        app.invoke_select(1);
+        let generation = state.borrow().generation;
+        crate::panel::deliver::deliver(
+            &app,
+            crate::worker::Outcome::Developed {
+                generation,
+                turn: 0,
+                image: crate::worker::Developed::Halves(std::sync::Arc::new(
+                    crate::worker::Halves {
+                        width: 4000,
+                        height: 6000,
+                        pixels: Vec::new(),
+                    },
+                )),
+                guide: std::sync::Arc::new(crate::finish::Guide::NONE),
+                white: crate::worker::WhiteBase::IDENTITY,
+                seconds: 0.1,
+                detail: None,
+                sharpen: None,
+                dehaze: None,
+                sources: Vec::new(),
+                learned: crate::worker::LearnedReport::Off,
+                fills: crate::worker::FillReport::default(),
+            },
+        );
+        {
+            let mut st = state.borrow_mut();
+            st.pending.take().expect("the develop landed");
+            st.source_size = st.shown_size;
+            crate::panel::viewport::settle_source_size(&mut st);
+            crate::panel::viewport::show_source_shape(&st, &app);
+        }
+        app.set_crop_mode(true);
+        app.set_panel_tab("Crop".into());
+        assert_eq!(app.get_aspect_name(), "Free");
+        assert!(!app.get_geo_has_crop());
+        let before = super::read_geometry(&app);
+        for _ in 0..2 {
+            click_portrait(&app);
+            assert_eq!(
+                super::read_geometry(&app),
+                before,
+                "a click under Free moved it"
+            );
+            assert!(!app.get_portrait_shown());
+            let g = super::read_geometry(&app);
+            let c = g.effective_crop(4000.0, 6000.0);
+            assert!(
+                c.h * 6000.0 > c.w * 4000.0,
+                "the whole tall frame went wide"
+            );
+        }
+        assert!(!app.get_portrait_live(), "the switch is live under Free");
+        // Live again under a ratio, and a click there is a click.
+        pick(&app, "3:2");
+        assert!(app.get_portrait_live() && app.get_portrait_shown());
+        click_portrait(&app);
+        assert!(!app.get_portrait_shown());
+        let [_, _, w, h] = crop_px(&app, 4000.0, 6000.0);
+        assert!((w / h - 1.5).abs() < 1e-3, "{w} by {h} is not wide");
+        // A Crop-tab quarter turn lays the tall develop on its side
+        // once: the develop does not carry the edit's turns, so the
+        // plane is wide and "Original" on it reads off.
+        app.invoke_geometry_turned(1);
+        pick(&app, "Original");
+        assert!(!app.get_plane_tall() && !app.get_portrait_shown());
+        let g = super::read_geometry(&app);
+        let c = g.effective_crop(4000.0, 6000.0);
+        let (pw, ph) = g.plane_size(4000.0, 6000.0);
+        assert!(
+            c.w * pw > c.h * ph,
+            "a turned tall frame's own shape is wide"
+        );
+    }
 }
