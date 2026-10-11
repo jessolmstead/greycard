@@ -39,6 +39,10 @@ and smart collections that survive a move.
       a gain under its weight, on the CPU and the GPU alike, in the
       export, the viewport and the reduced develop; a Detail section
       on the Masks tab and a history row (§287)
+- [ ] A snapshot's row says what a click does: a restore icon beside
+      the bin, or "click to restore" on hover, since the row is the only
+      way back and nothing names it; and a rating or flag key pressed
+      while the filter would hide the frame tells the user where it went
 - [ ] Lightbox over a collection, or the picks until collections
       exist: the grid with everything that gets in the way of judging
       consistency taken out. Tiles at a chosen size up to a handful
