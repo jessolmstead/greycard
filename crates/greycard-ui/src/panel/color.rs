@@ -335,15 +335,30 @@ pub(crate) fn global_temp_tint(st: &mut State, panel: WhiteKey) -> Option<(f32, 
     Some((tt.cct as f32, tt.duv as f32))
 }
 
-/// The panel's mask white balance: on, temperature, tint.
+/// The panel's mask white balance: on, the light its sliders name;
+/// switched off, that light kept; and off with none kept, following
+/// the global.
 pub(crate) fn panel_local_white(app: &App) -> LocalWhite {
+    let (temperature, tint) = (
+        app.get_local_temperature() as f64,
+        app.get_local_tint() as f64,
+    );
     if app.get_local_wb_on() {
-        LocalWhite::Absolute {
-            temperature: app.get_local_temperature() as f64,
-            tint: app.get_local_tint() as f64,
-        }
+        LocalWhite::Absolute { temperature, tint }
+    } else if app.get_local_wb_kept() {
+        LocalWhite::Kept { temperature, tint }
     } else {
         LocalWhite::Off
+    }
+}
+
+/// Where a mask's sliders start that hold no light of their own: the
+/// global's white, held to their range.
+fn start_at_global(st: &mut State, app: &App) {
+    let key = (app.get_as_shot(), app.get_temperature(), app.get_tint());
+    if let Some((temperature, tint)) = global_temp_tint(st, key) {
+        app.set_local_temperature(temperature.clamp(2000.0, 12000.0));
+        app.set_local_tint(tint.clamp(-0.05, 0.05));
     }
 }
 
@@ -359,9 +374,12 @@ pub(crate) fn panel_white((as_shot, temperature, tint): WhiteKey) -> WhiteBalanc
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
-    // A mask's own white balance switched: on, it starts where the
-    // global stands, As shot read as the kelvin and Duv it means, so
-    // the picture under the mask holds still until a slider moves.
+    // A mask's own white balance switched. Off, the sliders keep the
+    // light they name, as every switched-off section keeps its values,
+    // so the switch compares the two. On, that light comes back; with
+    // none kept (a mask new, or reset) it starts where the global
+    // stands, As shot read as the kelvin and Duv it means, so the
+    // picture under the mask holds still until a slider moves.
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_local_wb_toggled(move || {
@@ -369,13 +387,27 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                 return;
             };
             if app.get_local_wb_on() {
-                let key = (app.get_as_shot(), app.get_temperature(), app.get_tint());
-                let found = global_temp_tint(&mut state.borrow_mut(), key);
-                if let Some((temperature, tint)) = found {
-                    app.set_local_temperature(temperature.clamp(2000.0, 12000.0));
-                    app.set_local_tint(tint.clamp(-0.05, 0.05));
+                if !app.get_local_wb_kept() {
+                    start_at_global(&mut state.borrow_mut(), &app);
                 }
+                app.set_local_wb_kept(true);
             }
+            app.invoke_view_changed();
+        });
+    }
+    // A double-click on its Temperature or Tint: both are one light,
+    // so both are forgotten, the switch goes off and the mask follows
+    // the global; the sliders show the global's white, where the next
+    // switch on starts.
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_local_wb_reset(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            app.set_local_wb_on(false);
+            app.set_local_wb_kept(false);
+            start_at_global(&mut state.borrow_mut(), &app);
             app.invoke_view_changed();
         });
     }

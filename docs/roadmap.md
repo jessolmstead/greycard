@@ -65,10 +65,6 @@ and smart collections that survive a move.
       alone; "Adjustments" named Masks, with each mask listed by name
       to copy on its own, and whether the masks replace the target's
       or join them; the same list for a preset's parts
-- [ ] A mask's white balance keeps its temperature and tint while its
-      switch is off, so the switch compares the mask's light with the
-      global's; a double-click on either slider resets both and puts
-      the mask back to following the global
 
 ## Tracks
 

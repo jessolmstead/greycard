@@ -20,6 +20,9 @@ export component WhiteBalanceSection inherits Section {
     // Whether the sliders move the picture.
     property <bool> live: root.raw-input && (root.local ? root.on : !root.as-shot);
     callback develop-changed();
+    // A mask's: a double-click on Temperature or Tint forgets the
+    // light it names, both at once, and the mask follows the global.
+    callback local-reset();
 
     title: "WHITE BALANCE";
     icon: @image-url("../icons/thermometer.svg");
@@ -46,6 +49,8 @@ export component WhiteBalanceSection inherits Section {
         value <=> root.temperature;
         text: round(root.temperature) + " K";
         changed(v) => { root.develop-changed(); }
+        owner-resets: root.local;
+        reset => { root.local-reset(); }
     }
     EditSlider {
         label: "Tint";
@@ -59,6 +64,8 @@ export component WhiteBalanceSection inherits Section {
         value <=> root.tint;
         text: round(root.tint * 1000) / 1000;
         changed(v) => { root.develop-changed(); }
+        owner-resets: root.local;
+        reset => { root.local-reset(); }
     }
     HorizontalLayout {
         spacing: Theme.space-2;

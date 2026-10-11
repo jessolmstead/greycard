@@ -315,10 +315,12 @@ fn look(b: &Look, a: &Look, prefix: &str) -> Vec<String> {
 
 /// A mask's white balance that moved, in the global's words.
 fn local_white(b: &crate::LocalWhite, a: &crate::LocalWhite) -> String {
-    use crate::LocalWhite::{Absolute, Off};
+    use crate::LocalWhite::{Absolute, Kept, Off};
     match (b, a) {
-        (_, Off) => "White balance off".to_string(),
-        (Off, Absolute { .. }) => "White balance on".to_string(),
+        // The light forgotten: the mask follows the global again.
+        (_, Off) => "White balance reset".to_string(),
+        (_, Kept { .. }) => "White balance off".to_string(),
+        (Off | Kept { .. }, Absolute { .. }) => "White balance on".to_string(),
         (
             Absolute {
                 temperature: t0,
@@ -743,7 +745,15 @@ mod tests {
             tint: -0.002,
         };
         assert_eq!(describe(&warmer, &tinted, &[]), "Sky: Tint -0.002");
-        assert_eq!(describe(&tinted, &after, &[]), "Sky: White balance off");
+        let mut off = tinted.clone();
+        off.adjustments[0].look.white_balance = crate::LocalWhite::Kept {
+            temperature: 3200.0,
+            tint: -0.002,
+        };
+        assert_eq!(describe(&tinted, &off, &[]), "Sky: White balance off");
+        assert_eq!(describe(&off, &tinted, &[]), "Sky: White balance on");
+        assert_eq!(describe(&tinted, &after, &[]), "Sky: White balance reset");
+        assert_eq!(describe(&off, &after, &[]), "Sky: White balance reset");
         let mut e = base.clone();
         e.bw.enabled = true;
         assert_eq!(describe(&base, &e, &[]), "Black and white on");

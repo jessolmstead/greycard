@@ -116,6 +116,7 @@ pub(crate) fn white_from_neutral(
     // weight the patch is then grey.
     if st.target.is_some() && app.get_panel_tab() == "Masks" {
         app.set_local_wb_on(true);
+        app.set_local_wb_kept(true);
         app.set_local_temperature((tt.cct as f32).clamp(2000.0, 12000.0));
         app.set_local_tint((tt.duv as f32).clamp(-0.05, 0.05));
         drop(st);
@@ -1942,11 +1943,10 @@ mod tests {
     /// at the global's white, As shot read as its kelvin and Duv, and
     /// the Neutral dropper on the Masks tab sets the mask's and leaves
     /// the global's alone.
-    #[test]
-    fn a_masks_white_balance_starts_at_the_globals_and_takes_the_dropper() {
+    /// A daylight frame open with one mask, "Lamp", chosen on the Masks
+    /// tab: the frame's As shot white as a temperature and tint.
+    fn a_lamp_mask(app: &App, state: &Rc<RefCell<State>>) -> greycard_core::TempTint {
         use greycard_core::color::{WhitePoint, profile_from_frame, resolve_white_balance};
-        let app = window(1);
-        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
         app.invoke_select(0);
         let frame = daylight_frame();
         let profile = profile_from_frame(&frame).unwrap();
@@ -1966,20 +1966,31 @@ mod tests {
         app.set_panel_tab("Masks".into());
         app.set_target(1);
         app.set_as_shot(true);
+        shot.temp_tint
+    }
+
+    #[test]
+    fn a_masks_white_balance_starts_at_the_globals_and_takes_the_dropper() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        let shot = a_lamp_mask(&app, &state);
         app.set_local_temperature(9000.0);
         app.set_local_wb_on(true);
         app.invoke_local_wb_toggled();
         assert!(
-            (app.get_local_temperature() as f64 - shot.temp_tint.cct).abs() < 1.0,
+            (app.get_local_temperature() as f64 - shot.cct).abs() < 1.0,
             "{} against {}",
             app.get_local_temperature(),
-            shot.temp_tint.cct
+            shot.cct
         );
-        assert!((app.get_local_tint() as f64 - shot.temp_tint.duv).abs() < 1e-4);
-        // A custom global is taken as it stands.
+        assert!((app.get_local_tint() as f64 - shot.duv).abs() < 1e-4);
+        // A custom global is taken as it stands, by a mask with no
+        // light of its own: one reset.
         app.set_as_shot(false);
         app.set_temperature(4100.0);
         app.set_tint(0.003);
+        app.invoke_local_wb_reset();
+        app.set_local_wb_on(true);
         app.invoke_local_wb_toggled();
         assert_eq!(app.get_local_temperature(), 4100.0);
         assert_eq!(app.get_local_tint(), 0.003);
@@ -2003,12 +2014,117 @@ mod tests {
         );
         assert_eq!(app.get_temperature(), 4100.0);
         assert_eq!(app.get_tint(), 0.003);
-        // Off, the mask has none, and the global look never carries one.
+        // Off, the mask's light reaches nothing, and the global look
+        // never carries one.
         app.set_local_wb_on(false);
         let edit = read_edit(&app, &state.borrow().edit, Some(0));
-        assert!(edit.adjustments[0].look.white_balance.is_off());
+        assert!(edit.adjustments[0].look.white_balance.temp_tint().is_none());
         app.set_local_wb_on(true);
         let edit = read_edit(&app, &state.borrow().edit, None);
         assert!(edit.look().white_balance.is_off());
+    }
+
+    /// A mask's white balance switched off keeps its light, and on
+    /// again brings it back rather than the global's, so the switch
+    /// compares the two; each switch is a step. A double-click on its
+    /// Temperature or Tint forgets the light: the switch goes off, the
+    /// mask follows the global, and the next switch on starts there.
+    #[test]
+    fn a_masks_white_balance_keeps_its_light_while_switched_off() {
+        use greycard_edit::LocalWhite;
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        let shot = a_lamp_mask(&app, &state);
+        let settle = || {
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+                crate::panel::edit::SAVE_MS + 100,
+            ));
+            slint::platform::update_timers_and_animations();
+        };
+        settle();
+        let stored = || {
+            state.borrow().sidecars[0].current.adjustments[0]
+                .look
+                .white_balance
+        };
+        let steps = || state.borrow().sidecars[0].history.len();
+        let lamp = LocalWhite::Absolute {
+            temperature: 3300.0,
+            tint: -0.004f32 as f64,
+        };
+        app.set_local_wb_on(true);
+        app.invoke_local_wb_toggled();
+        app.set_local_temperature(3300.0);
+        app.set_local_tint(-0.004);
+        app.invoke_view_changed();
+        settle();
+        assert_eq!(stored(), lamp);
+        let before = steps();
+
+        // Off: the light is kept, and the picture is the global's.
+        app.set_local_wb_on(false);
+        app.invoke_local_wb_toggled();
+        settle();
+        let LocalWhite::Absolute { temperature, tint } = lamp else {
+            unreachable!()
+        };
+        assert_eq!(stored(), LocalWhite::Kept { temperature, tint });
+        assert!(stored().temp_tint().is_none());
+        assert_eq!(steps(), before + 1, "switching off is a step");
+        assert_eq!(app.get_local_temperature(), 3300.0);
+
+        // On: the same light, not the global's.
+        app.set_local_wb_on(true);
+        app.invoke_local_wb_toggled();
+        settle();
+        assert_eq!(stored(), lamp);
+        assert_eq!(steps(), before + 2, "switching on is a step");
+
+        // Through the sidecar's file and a fresh panel: off, then shown
+        // again, the panel holds the kept light and brings it back.
+        app.set_local_wb_on(false);
+        app.invoke_local_wb_toggled();
+        settle();
+        let json = state.borrow().sidecars[0].to_json();
+        let read: greycard_edit::Sidecar = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            read.current.adjustments[0].look.white_balance,
+            LocalWhite::Kept { temperature, tint }
+        );
+        app.set_local_temperature(9000.0);
+        app.set_local_wb_kept(false);
+        {
+            let mut st = state.borrow_mut();
+            st.edit = read.current.clone();
+            crate::panel::edit::show_edit(&st, &read.current, &app, Some(0));
+        }
+        assert!(!app.get_local_wb_on());
+        assert!(app.get_local_wb_kept());
+        assert_eq!(app.get_local_temperature(), 3300.0);
+        app.set_local_wb_on(true);
+        app.invoke_local_wb_toggled();
+        assert_eq!(app.get_local_temperature(), 3300.0);
+        assert_eq!(app.get_local_tint(), -0.004);
+        settle();
+        assert_eq!(stored(), lamp);
+
+        // The reset gesture: the light forgotten, both at once, the
+        // switch off, the sliders at the global's white.
+        let before = steps();
+        app.invoke_local_wb_reset();
+        settle();
+        assert!(!app.get_local_wb_on());
+        assert!(!app.get_local_wb_kept());
+        assert_eq!(stored(), LocalWhite::Off);
+        assert_eq!(steps(), before + 1, "a reset is a step");
+        assert!((app.get_local_temperature() as f64 - shot.cct).abs() < 1.0);
+        // And on again, it starts at the global's, as a new mask does.
+        app.set_as_shot(false);
+        app.set_temperature(6100.0);
+        app.set_tint(0.001);
+        app.set_local_wb_on(true);
+        app.invoke_local_wb_toggled();
+        assert_eq!(app.get_local_temperature(), 6100.0);
+        assert_eq!(app.get_local_tint(), 0.001);
     }
 }

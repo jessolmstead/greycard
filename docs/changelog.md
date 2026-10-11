@@ -41,6 +41,11 @@ note a first tester reads.
   moves, so the edit is seen; feather, range, invert and the brush keep
   it showing
   ([§277](https://github.com/jessolmstead/greycard/blob/master/docs/notes/277-the-overlay-steps-aside-for-a-look-edit.md))
+- A mask's white balance keeps its temperature and tint while its switch
+  is off, so the switch compares the mask's light with the global's; a
+  double-click on either slider forgets the light and puts the mask
+  back to following the global
+  ([§283](https://github.com/jessolmstead/greycard/blob/master/docs/notes/283-a-masks-white-balance-keeps-its-light-while-off.md))
 
 ### Export
 

@@ -668,17 +668,23 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_tint_hue(look.tint.hue);
     app.set_tint_amount(look.tint.amount);
     show_tint(app);
-    // A mask's own white balance. Off, its sliders keep what they
-    // last said; turning it on starts them at the global's
-    // (`local-wb-toggled`).
+    // A mask's own white balance: on, or switched off with its light
+    // kept, the sliders show that light; off with none kept, they keep
+    // what they last said, and turning it on starts them at the
+    // global's (`local-wb-toggled`).
     // Held to the sliders' range, as the finish reads it.
-    match look.white_balance.clamped() {
-        LocalWhite::Absolute { temperature, tint } => {
-            app.set_local_wb_on(true);
+    let white = look.white_balance.clamped();
+    match white {
+        LocalWhite::Absolute { temperature, tint } | LocalWhite::Kept { temperature, tint } => {
+            app.set_local_wb_on(matches!(white, LocalWhite::Absolute { .. }));
+            app.set_local_wb_kept(true);
             app.set_local_temperature(temperature as f32);
             app.set_local_tint(tint as f32);
         }
-        LocalWhite::Off => app.set_local_wb_on(false),
+        LocalWhite::Off => {
+            app.set_local_wb_on(false);
+            app.set_local_wb_kept(false);
+        }
     }
     app.set_detail_enabled(edit.detail.enabled);
     app.set_detail_texture(edit.detail.texture);

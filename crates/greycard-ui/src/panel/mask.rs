@@ -1468,24 +1468,33 @@ mod tests {
     }
 
     /// A mask picked with the panel's read-back unlike the stored look
-    /// (a local white in f64 and an empty curve from a foreign sidecar)
-    /// does not hide at the first toggle.
+    /// (a local white in f64, on or kept while off, and an empty curve
+    /// from a foreign sidecar) does not hide at the first toggle; the
+    /// white balance's own switch, a look control, does.
     #[test]
     fn a_stored_look_the_panel_reads_back_differently_does_not_hide() {
-        let app = window(1);
-        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
-        app.set_panel_tab("Masks".into());
-        app.invoke_new_mask();
-        state.borrow_mut().edit.adjustments[0].look.white_balance =
-            greycard_edit::white::LocalWhite::Absolute {
-                temperature: 5123.4567,
-                tint: 0.0031,
-            };
-        state.borrow_mut().edit.adjustments[0].look.curves.red = Vec::new();
-        app.invoke_target_changed(1);
-        app.set_show_mask(true);
-        app.invoke_view_changed();
-        assert!(app.get_show_mask());
+        use greycard_edit::white::LocalWhite;
+        let (temperature, tint) = (5123.4567, 0.0031);
+        // On, and switched off with the light kept.
+        for white in [
+            LocalWhite::Absolute { temperature, tint },
+            LocalWhite::Kept { temperature, tint },
+        ] {
+            let app = window(1);
+            let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+            app.set_panel_tab("Masks".into());
+            app.invoke_new_mask();
+            state.borrow_mut().edit.adjustments[0].look.white_balance = white;
+            state.borrow_mut().edit.adjustments[0].look.curves.red = Vec::new();
+            app.invoke_target_changed(1);
+            app.set_show_mask(true);
+            app.invoke_view_changed();
+            assert!(app.get_show_mask(), "{white:?}");
+            // The white balance's switch is a look control: it hides it.
+            app.set_local_wb_on(!app.get_local_wb_on());
+            app.invoke_local_wb_toggled();
+            assert!(!app.get_show_mask(), "{white:?}");
+        }
     }
 
     /// An undo or a history click that changes only the look rewrites

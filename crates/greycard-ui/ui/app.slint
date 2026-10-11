@@ -971,8 +971,15 @@ export component App inherits Window {
     in-out property <bool> local-wb-on: false;
     in-out property <float> local-temperature: 5500;
     in-out property <float> local-tint: 0;
-    // Its switch: turned on, it starts at the global's white.
+    // Whether the sliders hold a light of the mask's own, on or
+    // switched off; false, the mask follows the global.
+    in-out property <bool> local-wb-kept: false;
+    // Its switch: turned on, it brings back the light it kept, or
+    // starts at the global's white when there is none.
     callback local-wb-toggled();
+    // A double-click on its Temperature or Tint: the light forgotten,
+    // the switch off, the mask following the global.
+    callback local-wb-reset();
     in-out property <bool> denoise: false;
     in-out property <float> denoise-strength: 1.5;
     // The learned denoiser's tier by name, "off" for the engine's own.
@@ -2128,6 +2135,7 @@ export component App inherits Window {
                             switchable: true;
                             on <=> root.local-wb-on;
                             switched => { root.local-wb-toggled(); }
+                            local-reset => { root.local-wb-reset(); }
                             collapsed-wb <=> root.collapsed-wb;
                             picking <=> root.picking;
                             pick-started(a) => { root.pick-started(a); }

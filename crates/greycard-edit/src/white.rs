@@ -22,12 +22,24 @@ use serde::{Deserialize, Serialize};
 /// A look's white balance. Off on every look but a mask's: the
 /// picture's own is the edit's [`crate::WhiteBalance`], in the develop.
 ///
-/// Tagged by `mode`, so a way of saying it that a later build adds (a
-/// shift relative to the global, say) reads here as off rather than
-/// failing the sidecar, and a sidecar from before any of it, with no
+/// Three states, so the switch and the light are each kept: on, a
+/// light named ([`LocalWhite::Absolute`]); switched off with that light
+/// kept for when it goes on again ([`LocalWhite::Kept`]), as every
+/// other switched-off adjustment keeps its values, so the switch
+/// compares the two; and off with nothing kept ([`LocalWhite::Off`]),
+/// following the global, so switching it on starts at the global's
+/// white.
+///
+/// Written as a `mode`, `absolute` or `off`, with the temperature and
+/// tint beside it whenever there are any: `{"mode":"off",
+/// "temperature":3200.0,"tint":0.002}` is a kept light. A build from
+/// before the kept light reads that as off, as it read every `off`. A
+/// mode this build does not know (a shift relative to the global, say)
+/// reads as off with nothing kept, whatever comes with it, rather than
+/// failing the sidecar; and a sidecar from before any of it, with no
 /// field at all, reads as off too.
 #[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
-#[serde(tag = "mode", rename_all = "snake_case")]
+#[serde(from = "Wire", into = "Wire")]
 pub enum LocalWhite {
     /// The light here is this, whatever the global says: a correlated
     /// color temperature in kelvin and a tint as Duv, positive toward
@@ -38,17 +50,67 @@ pub enum LocalWhite {
     /// Each field has a default, so a hand-edited sidecar missing one
     /// keeps the rest of its edit: a temperature left out is daylight,
     /// [`DEFAULT_TEMPERATURE`], and a tint left out is none.
-    Absolute {
-        #[serde(default = "default_temperature")]
-        temperature: f64,
-        #[serde(default)]
-        tint: f64,
-    },
-    /// No white balance of its own: the develop's. Last, as serde
-    /// wants the variant an unknown mode reads as.
+    Absolute { temperature: f64, tint: f64 },
+    /// Switched off, the develop's white on the picture, and the light
+    /// named while on kept for when it goes on again. No pixel reads it.
+    Kept { temperature: f64, tint: f64 },
+    /// No white balance of its own and none kept: the develop's.
     #[default]
-    #[serde(other)]
     Off,
+}
+
+/// How a [`LocalWhite`] is written: the mode, and the light beside it.
+#[derive(Serialize, Deserialize)]
+struct Wire {
+    #[serde(default)]
+    mode: Mode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    temperature: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tint: Option<f64>,
+}
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Mode {
+    Absolute,
+    #[default]
+    Off,
+    /// A mode a later build writes: off here, and its values are not a
+    /// light this build would know how to bring back.
+    #[serde(other)]
+    Unknown,
+}
+
+impl From<Wire> for LocalWhite {
+    fn from(w: Wire) -> Self {
+        let temperature = w.temperature.unwrap_or(DEFAULT_TEMPERATURE);
+        let tint = w.tint.unwrap_or(0.0);
+        match w.mode {
+            Mode::Absolute => Self::Absolute { temperature, tint },
+            Mode::Off if w.temperature.is_some() || w.tint.is_some() => {
+                Self::Kept { temperature, tint }
+            }
+            Mode::Off | Mode::Unknown => Self::Off,
+        }
+    }
+}
+
+impl From<LocalWhite> for Wire {
+    fn from(w: LocalWhite) -> Self {
+        let (mode, light) = match w {
+            LocalWhite::Absolute { temperature, tint } => {
+                (Mode::Absolute, Some((temperature, tint)))
+            }
+            LocalWhite::Kept { temperature, tint } => (Mode::Off, Some((temperature, tint))),
+            LocalWhite::Off => (Mode::Off, None),
+        };
+        Wire {
+            mode,
+            temperature: light.map(|l| l.0),
+            tint: light.map(|l| l.1),
+        }
+    }
 }
 
 /// The temperatures a mask's white balance takes, kelvin: the panel's
@@ -59,13 +121,19 @@ pub const TINT_RANGE: f64 = 0.05;
 /// A temperature a sidecar left out: the panel's slider's default.
 pub const DEFAULT_TEMPERATURE: f64 = 5500.0;
 
-fn default_temperature() -> f64 {
-    DEFAULT_TEMPERATURE
-}
-
 impl LocalWhite {
+    /// Off with nothing kept: what a sidecar leaves out.
     pub fn is_off(&self) -> bool {
         *self == Self::Off
+    }
+
+    /// As the picture takes it: a kept light reaches no pixel, so it is
+    /// off. What the develop key reads.
+    pub fn acting(self) -> Self {
+        match self {
+            Self::Kept { .. } => Self::Off,
+            other => other,
+        }
     }
 
     /// Brought into the panel's range: a temperature from 2000 to
@@ -83,15 +151,22 @@ impl LocalWhite {
                     tint: tint.clamp(-TINT_RANGE, TINT_RANGE),
                 }
             }
+            Self::Kept { temperature, tint } if temperature.is_finite() && tint.is_finite() => {
+                Self::Kept {
+                    temperature: temperature.clamp(TEMPERATURE_RANGE.0, TEMPERATURE_RANGE.1),
+                    tint: tint.clamp(-TINT_RANGE, TINT_RANGE),
+                }
+            }
             _ => Self::Off,
         }
     }
 
     /// The temperature and tint it asks for, when on, held to the
-    /// panel's range ([`LocalWhite::clamped`]).
+    /// panel's range ([`LocalWhite::clamped`]); `None` while off, a
+    /// light kept or not.
     pub fn temp_tint(&self) -> Option<TempTint> {
         match self.clamped() {
-            Self::Off => None,
+            Self::Off | Self::Kept { .. } => None,
             Self::Absolute { temperature, tint } => Some(TempTint {
                 cct: temperature,
                 duv: tint,
@@ -171,6 +246,77 @@ mod tests {
             rawcolor::Calibration::new(CalibrationIlluminant::StandardA, mat),
             rawcolor::Calibration::new(CalibrationIlluminant::D65, mat),
         )
+    }
+
+    /// Switched off, a mask's light is kept and written beside `off`;
+    /// it comes back through an edit's sidecar, reaches no pixel, and a
+    /// sidecar from before, with `off` and nothing beside it or no
+    /// field at all, comes back off with nothing kept.
+    #[test]
+    fn a_switched_off_light_is_kept_through_the_sidecar() {
+        let kept = LocalWhite::Kept {
+            temperature: 3200.0,
+            tint: 0.002,
+        };
+        let json = serde_json::to_string(&kept).unwrap();
+        assert_eq!(json, r#"{"mode":"off","temperature":3200.0,"tint":0.002}"#);
+        assert_eq!(serde_json::from_str::<LocalWhite>(&json).unwrap(), kept);
+        assert_eq!(
+            serde_json::to_string(&LocalWhite::Off).unwrap(),
+            r#"{"mode":"off"}"#
+        );
+        assert_eq!(
+            serde_json::from_str::<LocalWhite>(r#"{"mode":"off"}"#).unwrap(),
+            LocalWhite::Off
+        );
+        // Kept, it is no light on the picture.
+        assert!(kept.temp_tint().is_none());
+        let p = profile();
+        let base = white_balance_at(
+            &p,
+            TempTint {
+                cct: 5500.0,
+                duv: 0.0,
+            },
+        )
+        .unwrap();
+        assert!(WhiteShift::new(p, &base).local(&kept).is_none());
+        assert_eq!(kept.acting(), LocalWhite::Off);
+        // Through an edit and back.
+        let mut edit = crate::Edit::default();
+        edit.adjustments.push(crate::Adjustment {
+            id: 1,
+            ..Default::default()
+        });
+        edit.adjustments[0].look.white_balance = kept;
+        let read = crate::Edit::from_json(&edit.to_json()).unwrap();
+        assert_eq!(read.adjustments[0].look.white_balance, kept);
+        assert_eq!(read, edit);
+        // Off with nothing kept is left out, as it always was.
+        edit.adjustments[0].look.white_balance = LocalWhite::Off;
+        let look = serde_json::to_value(&edit.adjustments[0].look).unwrap();
+        assert!(look.get("white_balance").is_none(), "{look}");
+        // A sidecar from before the kept light: the field left out.
+        let old = crate::Edit::from_json(
+            r#"{"version":4,"adjustments":[{"id":1,"look":{"light":{"exposure":0.5}}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(old.adjustments[0].look.white_balance, LocalWhite::Off);
+        assert_eq!(old.adjustments[0].look.light.exposure, 0.5);
+        // And a build from before reads the kept light as off: its
+        // schema, tagged by mode with off for anything else.
+        #[derive(Debug, PartialEq, Deserialize)]
+        #[serde(tag = "mode", rename_all = "snake_case")]
+        #[allow(dead_code)]
+        enum Before {
+            Absolute {
+                temperature: f64,
+                tint: f64,
+            },
+            #[serde(other)]
+            Off,
+        }
+        assert_eq!(serde_json::from_str::<Before>(&json).unwrap(), Before::Off);
     }
 
     #[test]

@@ -350,6 +350,10 @@ export component EditSlider inherits Rectangle {
     // slider shows its multiplier, so a typed one is the multiplier.
     in property <float> scale: 1;
     callback changed(float);
+    // A slider whose default is not a number of its own: the
+    // double-click calls `reset` and leaves the value to the owner.
+    in property <bool> owner-resets: false;
+    callback reset();
     accessible-role: slider;
     accessible-label: root.label;
     accessible-value: root.text;
@@ -493,8 +497,12 @@ export component EditSlider inherits Rectangle {
             }
         }
         double-clicked => {
-            root.value = root.default;
-            root.changed(root.value);
+            if (root.owner-resets) {
+                root.reset();
+            } else {
+                root.value = root.default;
+                root.changed(root.value);
+            }
         }
         // The wheel moves a focused slider, or any slider with Shift
         // held; otherwise it passes through. A mouse wheel's notch is

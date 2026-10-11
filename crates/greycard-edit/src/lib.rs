@@ -165,7 +165,7 @@ pub struct Look {
     /// A mask's own white balance, on the developed picture before
     /// the rest of the look ([`white`]). Off on the global look, which
     /// never reads it: the picture's white is the edit's, in the
-    /// develop. Left out of a sidecar while off.
+    /// develop. Left out of a sidecar while off with no light kept.
     #[serde(skip_serializing_if = "LocalWhite::is_off")]
     pub white_balance: LocalWhite,
 }

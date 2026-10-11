@@ -4759,6 +4759,13 @@ mod tests {
             blue(&warm),
             blue(&off)
         );
+        // Switched off with that light kept, it is the global's picture
+        // to the last bit.
+        let kept = render(greycard_edit::LocalWhite::Kept {
+            temperature: 2800.0,
+            tint: 0.0,
+        });
+        assert!(kept == off, "a kept light reaches no pixel");
     }
 
     /// A last develop whose CA ran on the GPU is not handed to an export:

@@ -116,11 +116,13 @@ impl Edit {
     ) -> u64 {
         // What reaches no pixel is taken out: the version the edit was
         // written at (a migration that changes nothing changes no
-        // picture), and an adjustment's name.
+        // picture), an adjustment's name, and the light a mask's
+        // switched-off white balance keeps for when it goes on again.
         let mut edit = self.clone();
         edit.version = 0;
         for a in &mut edit.adjustments {
             a.name.clear();
+            a.look.white_balance = a.look.white_balance.acting();
         }
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"greycard develop key\0");
@@ -268,6 +270,42 @@ mod tests {
         edit.lens.profile = true;
         edit.lens.enabled = false;
         assert_eq!(key(&edit, None), key(&edit, Some("anything")));
+    }
+
+    /// A mask's white balance switched off is another picture; the
+    /// light it keeps for the switch reaches no pixel and is not in the
+    /// key, so two frames off at the global share one whatever they
+    /// keep.
+    #[test]
+    fn a_masks_kept_white_is_not_in_the_key() {
+        use crate::LocalWhite;
+        let mut edit = Edit::default();
+        edit.adjustments.push(crate::Adjustment {
+            id: 1,
+            ..Default::default()
+        });
+        let none = key(&edit, None);
+        edit.adjustments[0].look.white_balance = LocalWhite::Absolute {
+            temperature: 3200.0,
+            tint: 0.002,
+        };
+        let on = key(&edit, None);
+        assert_ne!(on, none, "a mask's own white is another picture");
+        edit.adjustments[0].look.white_balance = LocalWhite::Kept {
+            temperature: 3200.0,
+            tint: 0.002,
+        };
+        assert_eq!(key(&edit, None), none, "switched off, the global's");
+        edit.adjustments[0].look.white_balance = LocalWhite::Kept {
+            temperature: 8000.0,
+            tint: -0.01,
+        };
+        assert_eq!(key(&edit, None), none, "whatever it keeps");
+        edit.adjustments[0].look.white_balance = LocalWhite::Absolute {
+            temperature: 3200.0,
+            tint: 0.002,
+        };
+        assert_eq!(key(&edit, None), on, "and back on, the same picture");
     }
 
     #[test]
