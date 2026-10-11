@@ -76,13 +76,6 @@ fn mark_png(entry: &Entry) -> Option<PathBuf> {
     }
 }
 
-#[cfg(test)]
-thread_local! {
-    /// What the folder chooser answers in a test, in place of asking:
-    /// `Some(None)` for each beside its own file.
-    pub(crate) static CHOSEN: RefCell<Option<Option<PathBuf>>> = const { RefCell::new(None) };
-}
-
 /// The count at the sheet's foot.
 pub(crate) fn show_queue(st: &State, app: &App) {
     app.set_export_queue_sets(st.export_queue.len() as i32);
@@ -144,8 +137,8 @@ pub(crate) fn open_at_launch(st: &mut State, app: &App, settings: Option<&Path>,
 }
 
 /// Add to queue, the set's sidecars in hand: what Export would take
-/// from `pressed` and `frames` now, into a folder the desktop's chooser
-/// names or, with a subfolder on the sheet, into that beside each
+/// from `pressed` and `frames` now, into the folder the sheet's Folder
+/// row shows or, with a subfolder on the sheet, into that beside each
 /// frame, appended to the queue. Nothing is exported.
 fn queue_pressed(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: &[usize]) {
     if state.borrow().export_choosing {
@@ -163,7 +156,8 @@ fn queue_pressed(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: 
         return;
     }
     // A subfolder that is not one would stop the run; one that is
-    // needs no chooser, being beside each frame.
+    // goes beside each frame, and none goes into the folder the
+    // sheet's Folder row shows, as Export would.
     let sub = match sheet.subfolder() {
         Ok(sub) => sub,
         Err(e) => {
@@ -177,60 +171,13 @@ fn queue_pressed(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: 
         app.set_status("nothing to queue".into());
         return;
     }
-    if sub.is_some() {
-        add(&mut state.borrow_mut(), app, entry);
-        return;
-    }
-    #[cfg(test)]
-    if let Some(folder) = CHOSEN.with(|c| c.borrow_mut().take()) {
-        add(&mut state.borrow_mut(), app, Entry { folder, ..entry });
-        return;
-    }
-    let start = crate::panel::deliver::export_start(&state.borrow(), &raw);
-    state.borrow_mut().export_choosing = true;
-    app.set_status(
-        format!(
-            "choosing where the {} queued go...",
-            queue::frames(entry.frames.len())
-        )
-        .into(),
-    );
-    let weak = app.as_weak();
-    export::choose_folder("Queue an export to a folder", start, move |chosen| {
-        let _ = weak.upgrade_in_event_loop(move |app| {
-            let Some(state) = STATE.with(|s| s.borrow().clone()) else {
-                return;
-            };
-            let mut st = state.borrow_mut();
-            let Some(folder) = answered(&mut st, chosen) else {
-                st.export_choosing = false;
-                app.set_status("nothing queued".into());
-                return;
-            };
-            add(&mut st, &app, Entry { folder, ..entry });
-        });
-    });
-}
-
-/// What the folder chooser answered, for the entry's folder: none when
-/// it was canceled; some none when there was no chooser to ask, so each
-/// frame goes beside its own file when the queue runs, as a set with no
-/// chooser goes; and a folder chosen, which the next chooser opens on.
-pub(crate) fn answered(
-    st: &mut State,
-    chosen: anyhow::Result<Option<PathBuf>>,
-) -> Option<Option<PathBuf>> {
-    match chosen {
-        Ok(Some(folder)) => {
-            crate::panel::deliver::remember_export_last_folder(st, &folder);
-            Some(Some(folder))
-        }
-        Ok(None) => None,
-        Err(e) => {
-            tracing::warn!("folder chooser: {e:#}; queued to go beside each file");
-            Some(None)
-        }
-    }
+    let mut st = state.borrow_mut();
+    // Whether the folder is still there is looked at when the queue
+    // runs, which stops on one that is not.
+    let folder = sub
+        .is_none()
+        .then(|| crate::panel::deliver::sheet_folder(&st, &raw));
+    add(&mut st, app, Entry { folder, ..entry });
 }
 
 /// An entry of `frames` under `sheet`, its folder still to be named.
@@ -731,7 +678,8 @@ mod tests {
         }
         app.invoke_export_preset_chosen("Web".into());
         app.set_exposure(0.5);
-        CHOSEN.with(|c| *c.borrow_mut() = Some(Some(dir.join("out"))));
+        // The folder the sheet's row shows, last chosen: no chooser.
+        state.borrow_mut().export_last_folder = Some(dir.join("out"));
         app.invoke_export_queue_add();
 
         let st = state.borrow();
@@ -770,21 +718,24 @@ mod tests {
         assert_eq!(export_queue::load(&queue_file(&dir))[0], queued);
 
         // A second set: the count says both.
-        state.borrow_mut().picked = vec![0];
-        CHOSEN.with(|c| *c.borrow_mut() = Some(None));
+        // None chosen: the frame's own folder, as the row shows it.
+        {
+            let mut st = state.borrow_mut();
+            st.picked = vec![0];
+            st.export_last_folder = None;
+        }
         app.invoke_export_queue_add();
         assert_eq!(app.get_export_queue_line(), "2 sets, 3 frames queued");
         assert_eq!(app.get_status(), "1 frame queued; 2 sets in the queue");
         let second = state.borrow().export_queue[1].clone();
         assert_eq!(second.sheet.size, "1024");
         assert_eq!(second.preset, None, "an edited sheet names no preset");
-        assert_eq!(second.folder, None);
+        assert_eq!(second.folder.as_deref(), Some(dir.as_path()));
 
-        // With a subfolder on the sheet, no chooser is asked: the
-        // entry goes beside each frame, into it.
+        // With a subfolder on the sheet, the entry goes beside each
+        // frame, into it.
         app.set_export_subfolder("export".into());
         app.invoke_export_queue_add();
-        assert!(CHOSEN.with(|c| c.borrow().is_none()));
         let third = state.borrow().export_queue[2].clone();
         assert_eq!(third.folder, None);
         assert_eq!(
@@ -1177,7 +1128,6 @@ mod tests {
         app.set_export_mark(crate::sheet::MARK_IMAGE.into());
         app.set_export_mark_image("".into());
         app.set_export_open(false);
-        CHOSEN.with(|c| *c.borrow_mut() = Some(None));
         app.invoke_export_queue_add();
         assert!(state.borrow().export_queue.is_empty());
         assert!(app.get_export_open());
@@ -1186,7 +1136,6 @@ mod tests {
             "{}",
             app.get_status()
         );
-        CHOSEN.with(|c| c.borrow_mut().take());
         crate::testing::remove_dir_retry(&dir);
     }
 

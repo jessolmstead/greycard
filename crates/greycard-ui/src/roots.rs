@@ -5788,8 +5788,11 @@ pub(crate) mod tests {
         crate::rows::land_pending(&state, &app, &worker);
         let st = state.borrow();
         assert_eq!(st.current, Some(2), "the export opened nothing");
-        assert!(st.export_choosing, "a set of one, into a folder");
-        assert_eq!(app.get_status(), "choosing where to export y.tif...");
+        // A set of one, into the folder the sheet shows for it.
+        let set = st.exporting.clone().expect("the set");
+        assert_eq!(set.total, 1);
+        assert_eq!(set.folder.as_deref(), files[1].parent());
+        set.cancel();
         drop(st);
         state.borrow_mut().index_reader = None;
         drop(state);
@@ -5820,7 +5823,7 @@ pub(crate) mod tests {
             st.picked = vec![1, 2];
             assert!(!st.from_row[1].read);
         }
-        crate::panel::export_queue::CHOSEN.with(|c| *c.borrow_mut() = Some(Some(dir.join("out"))));
+        state.borrow_mut().export_last_folder = Some(dir.join("out"));
         app.invoke_export_queue_add();
         assert!(state.borrow().export_queue.is_empty(), "waiting");
         // Into culling, on to y; then the read lands.

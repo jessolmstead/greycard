@@ -42,8 +42,8 @@ pub struct Sheet {
     /// Increment, Overwrite or Skip.
     #[serde(rename = "export_on_exists")]
     pub on_exists: String,
-    /// A folder under each frame's own to export into, with no chooser
-    /// asked; empty to ask.
+    /// A folder under each frame's own to export into; empty for the
+    /// one folder the sheet's Folder row shows.
     #[serde(rename = "export_subfolder")]
     pub subfolder: String,
     /// All, No edit or None.
@@ -136,8 +136,8 @@ impl Sheet {
         OnExists::from_name(&self.on_exists).unwrap_or_default()
     }
 
-    /// The folder under each frame's own that an export goes into
-    /// without a chooser, none when the sheet asks for one. Only names
+    /// The folder under each frame's own that an export goes into,
+    /// none when the sheet writes to its one folder. Only names
     /// going down are taken (`export`, `export/web`): a path that is
     /// whole or climbs out would land the frames of a set wherever it
     /// pointed rather than beside each.
@@ -187,33 +187,7 @@ impl Sheet {
         }
     }
 
-    /// The export sheet's main button for a set of `count` frames:
-    /// with a subfolder it says where the files go and has no ellipsis
-    /// (no dialog follows); with none, the chooser's ellipsis; with
-    /// one the export would refuse, neither (the click only explains).
-    pub fn export_label(typed: &str, count: usize, room: usize) -> String {
-        let (name, problem) = Self::subfolder_shown(typed);
-        let frames = if count > 1 {
-            format!("Export {count} frames")
-        } else {
-            "Export".to_string()
-        };
-        if !name.is_empty() {
-            // `room` is the whole label's; the name gets what the rest
-            // leaves, never less than a few characters.
-            let head = format!("{frames} to ");
-            let left = room.saturating_sub(head.chars().count()).max(4);
-            format!("{head}{}", Self::elide_front(&name, left))
-        } else if !problem.is_empty() {
-            frames
-        } else if count > 1 {
-            format!("{frames}...")
-        } else {
-            "Choose file...".to_string()
-        }
-    }
-
-    /// `name` kept to `room` characters for a button, the front cut
+    /// `name` kept to `room` characters for a label, the front cut
     /// off (the end of a path is the folder that matters) and marked.
     pub fn elide_front(name: &str, room: usize) -> String {
         let count = name.chars().count();
@@ -550,19 +524,11 @@ mod tests {
         assert!(shown("../out").0.is_empty() && !shown("../out").1.is_empty());
         assert!(shown(".").0.is_empty() && !shown(".").1.is_empty());
         assert_eq!(Sheet::elide_front("export", 10), "export");
-        // The button: the chooser, the folder, or neither.
-        let label = Sheet::export_label;
-        assert_eq!(label("", 1, 60), "Choose file...");
-        assert_eq!(label("  ", 3, 60), "Export 3 frames...");
-        assert_eq!(label(" ./export/web/ ", 1, 60), "Export to export/web");
-        assert_eq!(label("export", 4, 60), "Export 4 frames to export");
-        assert_eq!(label("../out", 1, 60), "Export");
-        assert_eq!(label("/tmp/x", 2, 60), "Export 2 frames");
         assert_eq!(
             Sheet::elide_front("exports/for-the-web", 10),
             "\u{2026}r-the-web"
         );
-        // A settings file from before the field reads as asking.
+        // A settings file from before the field reads as none.
         let old: Sheet = serde_json::from_str(r#"{"export_format":"PNG"}"#).unwrap();
         assert_eq!(old.subfolder(), Ok(None));
     }

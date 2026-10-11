@@ -1334,20 +1334,25 @@ export component App inherits Window {
     in-out property <int> frame-height: 0;
     /// The typed text as a long edge, or 0 when it is not a size.
     pure callback custom-edge(string) -> int;
-    /// The typed Subfolder as the export reads it: its name, the
-    /// export button's label for it, a set of that size and room for so
-    /// many characters, and why it is refused (each empty when
-    /// there is nothing to say).
+    /// The typed Subfolder as the export reads it: its name, and why
+    /// it is refused (each empty when there is nothing to say).
     pure callback export-subfolder-name(string) -> string;
-    pure callback export-button-label(string, int, int) -> string;
     pure callback export-subfolder-problem(string) -> string;
+    /// The export sheet's Folder row for a typed subfolder, the frame
+    /// (its name and its row), the turn below and room for so many
+    /// characters.
+    pure callback export-folder-line(string, string, int, int, int) -> string;
+    /// Counts the folders chosen, so the row reads the new one.
+    in property <int> export-folder-turn;
+    /// The row's Choose button.
+    callback export-folder-choose();
     in-out property <string> export-space: "sRGB";
     in-out property <bool> export-embed: true;
     in-out property <string> export-sharpen: "Standard";
     /// What an export does when a file of that name is already there.
     in-out property <string> export-on-exists: "Increment";
-    /// A folder under each frame's own to export into without asking
-    /// where; empty to ask.
+    /// A folder under each frame's own to export into; empty for the
+    /// folder the sheet's Folder row shows.
     in-out property <string> export-subfolder: "";
     /// What the file says of where it came from: All, No edit, None.
     in-out property <string> export-metadata: "All";
@@ -3189,7 +3194,10 @@ export component App inherits Window {
         frame-height <=> root.frame-height;
         custom-edge(a) => { return root.custom-edge(a); }
         export-subfolder-name(a) => { return root.export-subfolder-name(a); }
-        export-button-label(a, b, c) => { return root.export-button-label(a, b, c); }
+        export-folder-line(a, b, c, d, e) => { return root.export-folder-line(a, b, c, d, e); }
+        frame-index: root.selected;
+        export-folder-turn: root.export-folder-turn;
+        export-folder-choose => { root.export-folder-choose(); }
         export-subfolder-problem(a) => { return root.export-subfolder-problem(a); }
         export-space <=> root.export-space;
         export-embed <=> root.export-embed;

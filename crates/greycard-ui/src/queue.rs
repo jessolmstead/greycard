@@ -251,6 +251,11 @@ pub fn named(
             || sources.iter().any(|s| same_file(path, s))
             || (on_exists == OnExists::Increment && path.exists())
     };
+    // A folder chosen that is a frame's own is beside it all the same:
+    // the camera's `X.JPG` there is never offered to be written over by
+    // the raw's `X.jpg`. Asked once a folder of the set, not a frame,
+    // since the file system is asked.
+    let mut own_chosen: std::collections::HashMap<PathBuf, bool> = Default::default();
     sources
         .iter()
         .map(|source| {
@@ -261,7 +266,12 @@ pub fn named(
             let ext = format.extension();
             let own = || source.parent().map(Path::to_path_buf).unwrap_or_default();
             let (folder, beside) = match (folder, sub) {
-                (Some(f), _) => (f.to_path_buf(), false),
+                (Some(f), _) => {
+                    let mine = *own_chosen
+                        .entry(own())
+                        .or_insert_with_key(|own| same_file(f, own));
+                    (f.to_path_buf(), mine)
+                }
                 (None, Some(sub)) => (own().join(sub), false),
                 (None, None) => (own(), true),
             };
@@ -495,10 +505,17 @@ mod tests {
             Format::Tiff,
             OnExists::Increment,
         );
-        assert_eq!(tiff, vec![a.join("IMG_3.tif")]);
-        // A raw's export never lands on the camera's JPEG beside it,
-        // which is a frame of the set too; that JPEG's own export
-        // takes the `.greycard` name.
+        // The frame's own folder chosen is beside it: `.greycard` in any
+        // format, as with no folder.
+        assert_eq!(tiff, vec![a.join("IMG_3.greycard.tif")]);
+        // A raw alone into its own folder never names the camera's
+        // JPEG beside it, under any policy: Overwrite would offer to
+        // write over the camera's original.
+        for on_exists in [OnExists::Increment, OnExists::Overwrite, OnExists::Skip] {
+            let alone = names(&[a.join("X.CR3")], Some(a), None, Format::Jpeg, on_exists);
+            assert_eq!(alone, vec![a.join("X.greycard.jpg")], "{on_exists:?}");
+        }
+        // A raw and the camera's JPEG beside it, both of the set.
         let pair = names(
             &[a.join("X.CR3"), a.join("X.jpg")],
             Some(a),
@@ -506,7 +523,10 @@ mod tests {
             Format::Jpeg,
             OnExists::Increment,
         );
-        assert_eq!(pair, vec![a.join("X-1.jpg"), a.join("X.greycard.jpg")]);
+        assert_eq!(
+            pair,
+            vec![a.join("X.greycard.jpg"), a.join("X.greycard-1.jpg")]
+        );
         // The same in any case: one file on macOS and Windows.
         let upper = names(
             &[a.join("A.CR3"), a.join("A.JPG")],
@@ -515,7 +535,19 @@ mod tests {
             Format::Jpeg,
             OnExists::Increment,
         );
-        assert_eq!(upper, vec![a.join("A-1.jpg"), a.join("A.greycard.jpg")]);
+        assert_eq!(
+            upper,
+            vec![a.join("A.greycard.jpg"), a.join("A.greycard-1.jpg")]
+        );
+        // Into another folder, the frame's own name.
+        let other = names(
+            &[a.join("X.CR3")],
+            Some(Path::new("b")),
+            None,
+            Format::Jpeg,
+            OnExists::Increment,
+        );
+        assert_eq!(other, vec![Path::new("b").join("X.jpg")]);
         // Beside the files, a source already named `.greycard` is not
         // written over by another frame's export.
         let beside = names(

@@ -41,16 +41,6 @@ pub(crate) fn listed(names: &[String]) -> String {
     }
 }
 
-/// Where an export of `raw` goes without a chooser: beside it, as
-/// `NAME.greycard.EXT`, which no camera writes.
-pub(crate) fn export_path(raw: &std::path::Path, format: export::Format) -> PathBuf {
-    let stem = raw
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "export".into());
-    raw.with_file_name(format!("{stem}.greycard.{}", format.extension()))
-}
-
 /// The export sheet's choices as the panel holds them.
 pub(crate) fn read_sheet(app: &App) -> Sheet {
     Sheet {
@@ -167,22 +157,27 @@ fn keep_presets(st: &State, app: &App) {
     settings.save_to(path);
 }
 
-/// Where an export's chooser opens: the folder the last one answered
-/// with, else the folder of `raw`. The disk is not asked here, on the
-/// window's thread: a folder gone since is dealt with where the
-/// chooser is asked (`export::ask`).
-pub(crate) fn export_start(st: &State, raw: &Path) -> PathBuf {
+/// The folder an export of `raw` writes to when the sheet names no
+/// subfolder: the one the sheet's Folder row shows and its chooser
+/// opens on. The folder last chosen, else the folder of `raw`. The
+/// disk is not asked here, on the window's thread: whether the folder
+/// still takes files is looked at where it is about to be written to
+/// (`check_folder`), and a chooser opened on one gone since opens on
+/// its nearest parent (`export::ask`).
+pub(crate) fn sheet_folder(st: &State, raw: &Path) -> PathBuf {
     st.export_last_folder
         .clone()
         .or_else(|| raw.parent().map(Path::to_path_buf))
         .unwrap_or_default()
 }
 
-/// A chooser answered with `folder`: the next one opens there, in
-/// this run and, written at once as a preset is, in the next. Not
-/// from a snapshot or a batch run (`State::settings_file`).
-pub(crate) fn remember_export_last_folder(st: &mut State, folder: &Path) {
+/// A chooser answered with `folder`: exports go there and the next
+/// chooser opens there, in this run and, written at once as a preset
+/// is, in the next; the sheet's Folder row reads it again. Not
+/// written from a snapshot or a batch run (`State::settings_file`).
+pub(crate) fn remember_export_last_folder(st: &mut State, app: &App, folder: &Path) {
     st.export_last_folder = Some(folder.to_path_buf());
+    app.set_export_folder_turn(app.get_export_folder_turn().wrapping_add(1));
     let Some(path) = &st.settings_file else {
         return;
     };
@@ -670,22 +665,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 &path,
                 preset,
             );
-            let mut said = match &note {
-                Some(note) => format!(" ({note})"),
-                None => String::new(),
-            };
             // What the edit asked for and the file went without: the
             // status line says so, and the log says what.
             for item in &left_out {
                 tracing::warn!("{}: {item}", file_name(&source));
             }
-            let parts = crate::ai::parts_left_out(&left_out);
-            let missing = left_out.len() - parts.0 - parts.1;
-            if missing > 0 {
-                said.push_str(&format!(", without {}", left_out_words(missing)));
-            }
-            said.push_str(&crate::ai::parts_words(false, parts));
-            app.set_status(format!("exported {} in {seconds:.2} s{said}", file_name(&path)).into());
+            app.set_status(exported_line(&path, seconds, note.as_deref(), &left_out).into());
             tracing::info!("exported {} in {seconds:.2} s", path.display());
             // A rename or a file written over is worth the terminal.
             if let Some(note) = &note {
@@ -942,11 +927,18 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     left_out,
                 } => {
                     tracing::info!("exported {at}: {} in {seconds:.2} s", path.display());
-                    if let Some(note) = note {
+                    if let Some(note) = &note {
                         tracing::warn!("exported {}: {note}", path.display());
                     }
                     for item in &left_out {
                         tracing::warn!("{}: {item}", file_name(&source));
+                    }
+                    // A set of one ends on the file's own line, as the
+                    // frame on screen always has: its name, a rename,
+                    // what it went without.
+                    if set.total == 1 {
+                        let line = exported_line(&path, seconds, note.as_deref(), &left_out);
+                        state.borrow_mut().export_one_line = Some((set.clone(), line));
                     }
                     crate::panel::history::record_export(
                         &mut state.borrow_mut(),
@@ -959,6 +951,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 }
                 queue::Done::Skipped { path } => {
                     tracing::warn!("skipped {at}: {} is there already", path.display());
+                    if set.total == 1 {
+                        let line =
+                            format!("{} is there already: nothing exported", file_name(&path));
+                        state.borrow_mut().export_one_line = Some((set.clone(), line));
+                    }
                 }
                 // One line for the frame; the rest of the set goes on.
                 queue::Done::Failed { message } => {
@@ -970,12 +967,19 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         }
         Outcome::SetDone { set, tally } => {
             let mut st = state.borrow_mut();
-            let line = queue::finished_line(
-                &tally,
-                set.total,
-                &set.place(),
-                set.started.elapsed().as_secs_f64(),
-            );
+            let one = st
+                .export_one_line
+                .take()
+                .filter(|(of, _)| Arc::ptr_eq(of, &set) && set.total == 1)
+                .map(|(_, line)| line);
+            let line = one.unwrap_or_else(|| {
+                queue::finished_line(
+                    &tally,
+                    set.total,
+                    &set.place(),
+                    set.started.elapsed().as_secs_f64(),
+                )
+            });
             // Said on the terminal without -v when not all went.
             if tally.failed.is_empty() && tally.canceled == 0 {
                 tracing::info!("{line}");
@@ -1039,6 +1043,28 @@ pub(crate) fn set_frames_of(st: &mut State, app: &App, frames: &[usize]) -> SetF
             (st.files[f].clone(), edit, st.sidecars[f].turn, seed)
         })
         .collect()
+}
+
+/// The status line for one file written: its name, how long, a rename
+/// ("was there already: ...") or a write over, and what the edit went
+/// without.
+pub(crate) fn exported_line(
+    path: &Path,
+    seconds: f64,
+    note: Option<&str>,
+    left_out: &[String],
+) -> String {
+    let mut said = match note {
+        Some(note) => format!(" ({note})"),
+        None => String::new(),
+    };
+    let parts = crate::ai::parts_left_out(left_out);
+    let missing = left_out.len() - parts.0 - parts.1;
+    if missing > 0 {
+        said.push_str(&format!(", without {}", left_out_words(missing)));
+    }
+    said.push_str(&crate::ai::parts_words(false, parts));
+    format!("exported {} in {seconds:.2} s{said}", file_name(path))
 }
 
 /// "one thing the edit names that ...", "2 things": what a status line
@@ -1219,14 +1245,213 @@ fn overwrite_answered(st: &mut State, app: &App, answer: i32) {
     );
 }
 
-/// The Subfolder field as the export reads it: the button and the
-/// line under the field say where the files go, or why they won't.
+/// The Subfolder field as the export reads it: the line under the
+/// field says where the files go, or why they won't.
 fn wire_subfolder(app: &App) {
     app.on_export_subfolder_name(|typed| Sheet::subfolder_shown(&typed).0.into());
-    app.on_export_button_label(|typed, set, room| {
-        Sheet::export_label(&typed, set.max(1) as usize, room.max(0) as usize).into()
-    });
     app.on_export_subfolder_problem(|typed| Sheet::subfolder_shown(&typed).1.into());
+}
+
+/// What the sheet's Folder row says for a Subfolder field reading
+/// `typed`, the frame on screen and room for `room` characters: the
+/// subfolder beside each original when one is typed, else the folder
+/// Export writes to ([`sheet_folder`]), cut at the front so its leaf
+/// shows. Empty for a subfolder the export refuses (the line under the
+/// field says why) and with no frame.
+pub(crate) fn folder_line(st: &State, typed: &str, room: usize) -> String {
+    let (sub, problem) = Sheet::subfolder_shown(typed);
+    if !problem.is_empty() {
+        return String::new();
+    }
+    if !sub.is_empty() {
+        const BESIDE: &str = " beside each original";
+        let left = room.saturating_sub(BESIDE.len()).max(4);
+        return format!("{}{BESIDE}", Sheet::elide_front(&sub, left));
+    }
+    let Some(raw) = st.current.and_then(|c| st.files.get(c)) else {
+        return String::new();
+    };
+    Sheet::elide_front(&sheet_folder(st, raw).display().to_string(), room.max(4))
+}
+
+#[cfg(test)]
+thread_local! {
+    /// What the folder chooser answers in a test, in place of asking:
+    /// `Some(folder)`, or none (and when nothing is set) a cancel.
+    pub(crate) static CHOSEN: RefCell<Option<Option<PathBuf>>> = const { RefCell::new(None) };
+    /// The folder the last chooser asked in a test opened on.
+    pub(crate) static ASKED: RefCell<Option<PathBuf>> = const { RefCell::new(None) };
+}
+
+/// Ask the desktop for the folder exports go to, opening on `start`;
+/// `then` has the answer on the window's thread. A test answers at
+/// once with [`CHOSEN`].
+fn ask_folder(
+    app: &App,
+    start: PathBuf,
+    then: impl FnOnce(&App, anyhow::Result<Option<PathBuf>>) + Send + 'static,
+) {
+    #[cfg(test)]
+    {
+        ASKED.with(|a| *a.borrow_mut() = Some(start));
+        let answer = CHOSEN.with(|c| c.borrow_mut().take()).flatten();
+        then(app, Ok(answer));
+    }
+    #[cfg(not(test))]
+    {
+        let weak = app.as_weak();
+        export::choose_folder("Export to a folder", start, move |chosen| {
+            let _ = weak.upgrade_in_event_loop(move |app| then(&app, chosen));
+        });
+    }
+}
+
+/// Why `folder` cannot take an export, none when it can: it is there,
+/// it is a folder, and a file can be made in it (one is, and removed
+/// at once: the permission bits do not say what a share or a
+/// read-only mount allows).
+pub(crate) fn folder_problem(folder: &Path) -> Option<String> {
+    folder_problem_probing(folder, probe_name)
+}
+
+/// The name of the check's file for `attempt`: of this run and this
+/// moment.
+fn probe_name(attempt: u32) -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    format!(
+        ".greycard-write-check-{}-{nanos}-{attempt}",
+        std::process::id()
+    )
+}
+
+/// [`folder_problem`] with the check's file named by `name`. A name
+/// taken already (another check's, left by a crash) is passed over for
+/// a second, never read as the folder taking files, and never removed.
+fn folder_problem_probing(folder: &Path, name: impl Fn(u32) -> String) -> Option<String> {
+    let shown = folder.display();
+    match std::fs::metadata(folder) {
+        Err(_) => return Some(format!("{shown} is not there")),
+        Ok(m) if !m.is_dir() => return Some(format!("{shown} is not a folder")),
+        Ok(_) => {}
+    }
+    for attempt in 0..2 {
+        let probe = folder.join(name(attempt));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+        {
+            Ok(file) => {
+                drop(file);
+                let _ = std::fs::remove_file(&probe);
+                return None;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => break,
+        }
+    }
+    Some(format!("{shown} cannot be written to"))
+}
+
+/// [`folder_problem`] for `folder`, on a thread of its own since the
+/// folder may be on a mount that keeps it waiting, and `then` with the
+/// answer on the window's thread. A test looks at once.
+fn check_folder(
+    app: &App,
+    folder: PathBuf,
+    then: impl FnOnce(&App, Option<String>) + Send + 'static,
+) {
+    #[cfg(test)]
+    {
+        let problem = folder_problem(&folder);
+        let held = HELD.with(|h| match h.borrow_mut().as_mut() {
+            Some(held) => {
+                held.push(Box::new(move |app: &App| then(app, problem)));
+                None
+            }
+            None => Some((then, problem)),
+        });
+        if let Some((then, problem)) = held {
+            then(app, problem);
+        }
+    }
+    #[cfg(not(test))]
+    {
+        let weak = app.as_weak();
+        std::thread::spawn(move || {
+            let problem = folder_problem(&folder);
+            let _ = weak.upgrade_in_event_loop(move |app| then(&app, problem));
+        });
+    }
+}
+
+/// A look at a folder held unanswered in a test: answered by calling it.
+#[cfg(test)]
+pub(crate) type Held = Box<dyn FnOnce(&App)>;
+
+#[cfg(test)]
+thread_local! {
+    /// Looks at a folder held unanswered in a test, as a slow mount
+    /// holds them, while this is some.
+    pub(crate) static HELD: RefCell<Option<Vec<Held>>> = const { RefCell::new(None) };
+}
+
+/// The Folder row's Choose button: the chooser, on the folder the row
+/// shows. A folder chosen is where exports go from now on, and a typed
+/// subfolder is cleared, since it would otherwise still win. An export
+/// whose folder is still being looked at is overtaken: its answer is
+/// dropped, and Export is pressed again for the new folder.
+fn choose_export_folder(state: &Rc<RefCell<State>>, app: &App) {
+    let start = {
+        let st = state.borrow();
+        if st.exporting.is_some() || st.export_choosing {
+            return;
+        }
+        let Some(raw) = st.current.and_then(|c| st.files.get(c)) else {
+            return;
+        };
+        sheet_folder(&st, raw)
+    };
+    // An export still waiting on its look is not started: said with
+    // the chooser's answer, since the status line shows that last.
+    let overtaken = {
+        let mut st = state.borrow_mut();
+        st.export_checks += 1;
+        st.export_choosing = true;
+        st.export_looking.take()
+    };
+    app.set_status("choosing the folder exports go to...".into());
+    ask_folder(app, start, move |app, chosen| {
+        let Some(state) = STATE.with(|s| s.borrow().clone()) else {
+            return;
+        };
+        let mut st = state.borrow_mut();
+        st.export_choosing = false;
+        let mut line = match chosen {
+            Ok(Some(folder)) => {
+                remember_export_last_folder(&mut st, app, &folder);
+                if !app.get_export_subfolder().trim().is_empty() {
+                    app.set_export_subfolder("".into());
+                    show_edited(app, &st.export_presets);
+                }
+                format!("exports go to {}", folder.display())
+            }
+            Ok(None) => "the export folder is as it was".to_string(),
+            Err(e) => {
+                tracing::warn!("folder chooser: {e:#}");
+                "the desktop offered no folder chooser".to_string()
+            }
+        };
+        if let Some(waiting) = overtaken {
+            line.push_str(&format!(
+                "; the export waiting on {} was not started",
+                waiting.display()
+            ));
+        }
+        app.set_status(line.into());
+    });
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
@@ -1258,6 +1483,25 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
         });
     }
     wire_subfolder(app);
+    {
+        let state = state.clone();
+        app.on_export_folder_line(move |typed, _name, _index, _turn, room| {
+            // Read while the state is lent out (a layout asked for from
+            // inside a borrow), it says nothing rather than panic.
+            let Ok(st) = state.try_borrow() else {
+                return slint::SharedString::default();
+            };
+            folder_line(&st, &typed, room.max(0) as usize).into()
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_export_folder_choose(move || {
+            if let Some(app) = app_weak.upgrade() {
+                choose_export_folder(&state, &app);
+            }
+        });
+    }
     // The sheet's typed size, read the way the export reads it.
     app.on_custom_edge(|text| export::parse_edge(&text).map_or(0, |n| n as i32));
     // Any choice on the sheet: is it still the preset?
@@ -1404,24 +1648,23 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 }
 
 /// The export pressed on `pressed`, the set's sidecars in hand: that
-/// frame under the panel's edit, and `frames` as the set, into a folder
-/// chosen when they are two or more. A pressed frame no longer on
-/// screen when the sidecars came in (the user moved on while they were
-/// read) is exported under its own sidecar's edit, never the panel's,
-/// and as a set of one: the worker's open picture is another frame's.
+/// frame under the panel's edit, and `frames` as the set, into the
+/// sheet's folder. A pressed frame no longer on screen when the
+/// sidecars came in (the user moved on while they were read) is
+/// exported under its own sidecar's edit, never the panel's.
 fn export_frames(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: &[usize]) {
     {
         let st = state.borrow();
-        // One set at a time, and one chooser for it: a second
-        // would start a set the first could not be told from.
+        // One set at a time, and one folder asked about for it: a
+        // second would start a set the first could not be told from.
         if st.exporting.is_some() || st.export_choosing {
             return;
         }
     }
-    let Some((raw, edit, frames, on_screen)) = pressed_frames(state, app, pressed, frames) else {
+    let Some((raw, _, frames, _)) = pressed_frames(state, app, pressed, frames) else {
         return;
     };
-    export_gathered(state, app, raw, edit, frames, on_screen);
+    export_gathered(state, app, raw, frames);
 }
 
 /// The frames of a set, each as `set_frames` gives it.
@@ -1484,18 +1727,11 @@ pub(crate) fn pressed_frames(
     }
 }
 
-/// The export of what [`pressed_frames`] took: with a subfolder on the
-/// sheet, the set into it beside each frame and no chooser; else one
-/// frame on screen to a file the desktop's chooser names, and the set
-/// into a folder.
-fn export_gathered(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    raw: PathBuf,
-    edit: Edit,
-    frames: SetFrames,
-    on_screen: bool,
-) {
+/// The export of what [`pressed_frames`] took, as a set whatever its
+/// size, with no dialog: with a subfolder on the sheet, into it beside
+/// each frame; else into the folder the sheet's Folder row shows for
+/// `raw`, each frame under its own name there.
+fn export_gathered(state: &Rc<RefCell<State>>, app: &App, raw: PathBuf, frames: SetFrames) {
     let preset = preset_in_use(app);
     let sheet = read_sheet(app);
     let settings = sheet.settings();
@@ -1531,101 +1767,79 @@ fn export_gathered(
         }
         Ok(None) => {}
     }
-    // Two frames or more, or a frame no longer on screen: the set,
-    // into a folder.
-    if frames.len() > 1 || !on_screen {
-        let start = export_start(&state.borrow(), &raw);
-        let weak = app.as_weak();
-        state.borrow_mut().export_choosing = true;
-        app.set_status(
-            match frames.as_slice() {
-                [(one, ..)] => format!("choosing where to export {}...", file_name(one)),
-                _ => format!("choosing where to export {} frames...", frames.len()),
-            }
-            .into(),
-        );
-        export::choose_folder("Export to a folder", start, move |chosen| {
-            let _ = weak.upgrade_in_event_loop(move |app| {
-                let folder = match chosen {
-                    Ok(Some(folder)) => Some(folder),
-                    Ok(None) => {
-                        if let Some(state) = STATE.with(|s| s.borrow().clone()) {
-                            state.borrow_mut().export_choosing = false;
-                        }
-                        app.set_status("export canceled".into());
-                        return;
-                    }
-                    // No chooser to ask: each beside its own
-                    // file, under a name no camera writes.
-                    Err(e) => {
-                        tracing::warn!("folder chooser: {e:#}; exporting each beside its file");
-                        None
-                    }
-                };
-                // The window's state, from its own thread.
-                let Some(state) = STATE.with(|s| s.borrow().clone()) else {
-                    return;
-                };
-                let mut st = state.borrow_mut();
-                if let Some(folder) = &folder {
-                    remember_export_last_folder(&mut st, folder);
-                }
-                start_or_ask(
-                    &mut st, &app, frames, folder, None, settings, on_exists, preset,
-                );
-            });
-        });
-        return;
-    }
-    let suggested = raw.with_extension(settings.format.extension());
-    // In the folder the last chooser answered with, under the
-    // frame's own name.
-    let suggested = match (suggested.file_name(), export_start(&state.borrow(), &raw)) {
-        (Some(name), start) if raw.parent() != Some(start.as_path()) => start.join(name),
-        _ => suggested,
+    // Into the folder the Folder row shows, with no dialog, once it
+    // is known to take files: one that is gone or will not take them
+    // is said, and the chooser asked instead, so the files never go
+    // anywhere the row did not name. The look holds nothing up: a
+    // later Export or a Choose overtakes it, and its answer is dropped.
+    let folder = sheet_folder(&state.borrow(), &raw);
+    let check = {
+        let mut st = state.borrow_mut();
+        st.export_checks += 1;
+        st.export_looking = Some(folder.clone());
+        st.export_checks
     };
-    let weak = app.as_weak();
-    app.set_status("choosing where to export...".into());
-    export::choose_path(suggested, settings.format, move |chosen| {
-        let _ = weak.upgrade_in_event_loop(move |app| {
-            // A path the user picked in the desktop's chooser
-            // is a path the chooser asked them to confirm; the
-            // sheet's policy is for the paths the editor
-            // decides by itself.
-            let (path, on_exists) = match chosen {
-                Ok(Some(path)) => {
-                    if let (Some(dir), Some(state)) =
-                        (path.parent(), STATE.with(|s| s.borrow().clone()))
-                    {
-                        remember_export_last_folder(&mut state.borrow_mut(), dir);
-                    }
-                    (path, export::OnExists::Overwrite)
+    app.set_status(format!("exporting to {}...", folder.display()).into());
+    let go = move |app: &App, folder: PathBuf| {
+        let Some(state) = STATE.with(|s| s.borrow().clone()) else {
+            return;
+        };
+        let mut st = state.borrow_mut();
+        start_or_ask(
+            &mut st,
+            app,
+            frames,
+            Some(folder),
+            None,
+            settings,
+            on_exists,
+            preset,
+        );
+    };
+    check_folder(app, folder.clone(), move |app, problem| {
+        let Some(state) = STATE.with(|s| s.borrow().clone()) else {
+            return;
+        };
+        {
+            let mut st = state.borrow_mut();
+            // Overtaken while the folder was looked at, by a later
+            // Export or a Choose, which say so themselves.
+            if st.export_checks != check {
+                tracing::info!("a look at {} answered too late", folder.display());
+                return;
+            }
+            st.export_looking = None;
+            // Another export under way since: this one is not started.
+            if st.exporting.is_some() || st.export_choosing {
+                app.set_status("not exported: another export is under way".into());
+                return;
+            }
+        }
+        let Some(why) = problem else {
+            return go(app, folder);
+        };
+        tracing::warn!("export folder: {why}");
+        app.set_status(format!("{why}: choose another folder").into());
+        state.borrow_mut().export_choosing = true;
+        ask_folder(app, folder, move |app, chosen| {
+            if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                let mut st = state.borrow_mut();
+                st.export_choosing = false;
+                if let Ok(Some(folder)) = &chosen {
+                    remember_export_last_folder(&mut st, app, folder);
                 }
-                Ok(None) => {
-                    app.set_status("export canceled".into());
-                    return;
-                }
+            }
+            match chosen {
+                Ok(Some(folder)) => go(app, folder),
+                Ok(None) => app.set_status(format!("not exported: {why}").into()),
                 Err(e) => {
-                    // No chooser to ask: beside the file, under a
-                    // name no camera writes.
-                    tracing::warn!("file chooser: {e:#}; exporting beside the file");
-                    (export_path(&raw, settings.format), on_exists)
+                    tracing::warn!("folder chooser: {e:#}");
+                    app.set_status(
+                        format!("not exported: {why}, and the desktop offered no folder chooser")
+                            .into(),
+                    );
                 }
-            };
-            app.set_status(format!("exporting {}...", file_name(&path)).into());
-            app.set_busy(true);
-            WORKER.with(|w| {
-                if let Some(w) = &*w.borrow() {
-                    w.send(Job::Export {
-                        edit,
-                        path,
-                        settings,
-                        on_exists,
-                        source: raw,
-                        preset,
-                    });
-                }
-            });
+            }
         });
     });
 }
@@ -1750,67 +1964,279 @@ mod tests {
         crate::testing::remove_dir_retry(&dir);
     }
 
-    /// The folder an export's chooser last answered with is where the
-    /// next one opens: in this run, after a restart (the settings
-    /// file), and while it is still there. A preset that names a
-    /// subfolder asks nothing, so it keeps its own place.
+    /// What the sheet's Folder row says, as the sheet asks it.
+    fn row(app: &App, room: i32) -> String {
+        let typed = app.get_export_subfolder();
+        app.invoke_export_folder_line(typed, "".into(), 0, app.get_export_folder_turn(), room)
+            .to_string()
+    }
+
+    /// The Folder row shows where Export writes: the frame's own folder
+    /// until one is chosen, then the folder last chosen, in this run and
+    /// after a restart (the settings file). Its Choose button opens the
+    /// chooser on the folder shown, and an answer is the new folder, in
+    /// the row and in the file; a cancel leaves it. A preset that names
+    /// a subfolder shows that beside each original and leaves the
+    /// remembered folder alone; one that names none shows the remembered
+    /// folder, and its chooser opens there.
     #[test]
-    fn the_chooser_opens_where_the_last_export_went() {
+    fn the_folder_row_shows_where_the_export_goes_and_choose_sets_it() {
         let app = crate::testing::window(1);
-        let (state, _worker) = crate::testing::retouch_state(&app);
         let dir = crate::testing::scratch_dir("export-folder");
+        let raw = dir.join("shoot").join("a.cr3");
+        let (state, _worker) = crate::testing::state_for(&app, vec![raw.clone()]);
         let out = dir.join("out");
         std::fs::create_dir_all(&out).unwrap();
         let file = dir.join("greycard").join("settings.json");
         settings::Settings::default().save_to(&file);
-        state.borrow_mut().settings_file = Some(file.clone());
-        let raw = dir.join("shoot").join("a.cr3");
+        {
+            let mut st = state.borrow_mut();
+            st.settings_file = Some(file.clone());
+            st.current = Some(0);
+        }
+        let shown = |p: &Path| p.display().to_string();
 
         // Nothing chosen yet: the frame's own folder.
-        assert_eq!(export_start(&state.borrow(), &raw), dir.join("shoot"));
+        assert_eq!(sheet_folder(&state.borrow(), &raw), dir.join("shoot"));
+        assert_eq!(row(&app, 500), shown(&dir.join("shoot")));
 
-        // Chosen: the same sheet, closed and reopened, starts there.
-        remember_export_last_folder(&mut state.borrow_mut(), &out);
-        app.set_export_open(false);
-        app.set_export_open(true);
-        assert_eq!(export_start(&state.borrow(), &raw), out);
+        // Choose: the chooser opens on the folder shown, and its
+        // answer is the row's and the file's at once.
+        CHOSEN.with(|c| *c.borrow_mut() = Some(Some(out.clone())));
+        app.invoke_export_folder_choose();
+        assert_eq!(
+            ASKED.with(|a| a.borrow_mut().take()),
+            Some(dir.join("shoot"))
+        );
+        assert_eq!(
+            state.borrow().export_last_folder.as_deref(),
+            Some(out.as_path())
+        );
+        assert_eq!(row(&app, 500), shown(&out));
+        assert_eq!(
+            settings::Settings::load_from(&file).export_last_folder,
+            out.to_string_lossy()
+        );
+        assert!(!state.borrow().export_choosing);
+        assert_eq!(app.get_status(), format!("exports go to {}", shown(&out)));
 
-        // And after a restart: the file has it, and the state is
-        // built from the file.
-        // The close writes the file from the panel and the state, as
-        // `run` does; the next start reads it back.
+        // A cancel leaves it, and the next chooser opens where the
+        // last answer was.
+        app.invoke_export_folder_choose();
+        assert_eq!(ASKED.with(|a| a.borrow_mut().take()), Some(out.clone()));
+        assert_eq!(row(&app, 500), shown(&out));
+        assert_eq!(app.get_status(), "the export folder is as it was");
+
+        // Cut at the front, so the folder's own name shows.
+        let narrow = row(&app, 12);
+        assert_eq!(narrow.chars().count(), 12, "{narrow}");
+        assert!(
+            narrow.starts_with('\u{2026}') && narrow.ends_with("out"),
+            "{narrow}"
+        );
+
+        // A preset with a subfolder: beside each original, the
+        // remembered folder kept.
+        state.borrow_mut().export_presets = vec![
+            ExportPreset {
+                name: "Beside".into(),
+                sheet: Sheet {
+                    subfolder: "web".into(),
+                    ..Sheet::default()
+                },
+            },
+            ExportPreset {
+                name: "Plain".into(),
+                sheet: Sheet::default(),
+            },
+        ];
+        app.invoke_export_preset_chosen("Beside".into());
+        assert_eq!(row(&app, 500), "web beside each original");
+        assert_eq!(sheet_folder(&state.borrow(), &raw), out);
+        // Choosing a folder there clears the subfolder, which would
+        // otherwise still win, and the preset reads as edited.
+        let other = dir.join("other");
+        CHOSEN.with(|c| *c.borrow_mut() = Some(Some(other.clone())));
+        app.invoke_export_folder_choose();
+        assert_eq!(app.get_export_subfolder(), "");
+        assert!(app.get_export_preset_edited());
+        assert_eq!(row(&app, 500), shown(&other));
+
+        // A preset with none: the remembered folder, and Choose opens
+        // the chooser there.
+        app.invoke_export_preset_chosen("Plain".into());
+        assert_eq!(row(&app, 500), shown(&other));
+        app.invoke_export_folder_choose();
+        assert_eq!(ASKED.with(|a| a.borrow_mut().take()), Some(other.clone()));
+
+        // A subfolder the export refuses: the row says nothing, the line
+        // under the field says why.
+        app.set_export_subfolder("../out".into());
+        assert_eq!(row(&app, 500), "");
+        app.set_export_subfolder("".into());
+
+        // After a restart, last, since a second window's state is the
+        // one this thread's callbacks find from then on: the close
+        // writes the file from the panel and the state, as `run` does;
+        // the next start reads it back.
         let mut closing = crate::panel::startup::remember(&app);
         crate::panel::startup::take_state_choices(&mut closing, &state.borrow());
         closing.save_to(&file);
         let kept = settings::Settings::load_from(&file);
-        assert_eq!(kept.export_last_folder, out.to_string_lossy());
+        assert_eq!(kept.export_last_folder, other.to_string_lossy());
         let app2 = crate::testing::window(1);
-        let (second, _worker) = crate::testing::retouch_state(&app2);
-        second.borrow_mut().export_last_folder = crate::panel::startup::remembered_folder(&kept);
-        assert_eq!(export_start(&second.borrow(), &raw), out);
+        let (second, _worker) = crate::testing::state_for(&app2, vec![raw.clone()]);
+        {
+            let mut st = second.borrow_mut();
+            st.export_last_folder = crate::panel::startup::remembered_folder(&kept);
+            st.current = Some(0);
+        }
+        assert_eq!(row(&app2, 500), shown(&other));
+        crate::testing::remove_dir_retry(&dir);
+    }
 
-        // A preset with a subfolder fills the sheet with its own
-        // location and leaves the remembered chooser folder alone.
-        state.borrow_mut().export_presets = vec![ExportPreset {
-            name: "Beside".into(),
-            sheet: Sheet {
-                subfolder: "web".into(),
-                ..Sheet::default()
-            },
-        }];
-        app.invoke_export_preset_chosen("Beside".into());
-        assert_eq!(
-            read_sheet(&app).subfolder().unwrap().unwrap(),
-            PathBuf::from("web")
+    /// A small picture the editor opens, of our own writing.
+    fn picture(path: &Path) {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        image::RgbImage::from_fn(48, 32, |x, y| {
+            image::Rgb([(x * 5) as u8, (y * 7) as u8, ((x + y) * 3) as u8])
+        })
+        .save(path)
+        .unwrap();
+    }
+
+    /// Export writes into the folder the row shows, with no dialog: the
+    /// frame on screen under its own name there, the file on disk. A
+    /// file of that name already there is the overwrite sheet's
+    /// question under Overwrite, as for a set. A folder that is gone or
+    /// will not take files is said, and the chooser asked on it; a
+    /// cancel exports nothing, an answer exports there.
+    #[test]
+    fn export_writes_into_the_shown_folder_with_no_dialog() {
+        let app = crate::testing::window(1);
+        let dir = crate::testing::scratch_dir("export-shown");
+        let source = dir.join("shoot").join("frame.png");
+        picture(&source);
+        let out = dir.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let (state, _worker) = crate::testing::state_for(&app, vec![source.clone()]);
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(0);
+            st.export_last_folder = Some(out.clone());
+        }
+        ASKED.with(|a| a.borrow_mut().take());
+
+        app.invoke_export();
+        assert!(ASKED.with(|a| a.borrow().is_none()), "no dialog");
+        let set = state.borrow().exporting.clone().expect("the set, at once");
+        assert_eq!(set.total, 1);
+        assert_eq!(set.folder.as_deref(), Some(out.as_path()));
+        assert_eq!(set.sub, None);
+        // The frame's own name, in the format's extension.
+        let written = out.join("frame.jpg");
+        let start = Instant::now();
+        while !written.exists() {
+            assert!(
+                start.elapsed() < Duration::from_secs(60),
+                "the worker writes {}",
+                written.display()
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        // Nothing beside the frame, nothing left over from the check.
+        let names = |d: &Path| -> Vec<String> {
+            let mut names: Vec<String> = std::fs::read_dir(d)
+                .unwrap()
+                .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect();
+            names.sort();
+            names
+        };
+        assert!(
+            !names(&dir.join("shoot"))
+                .iter()
+                .any(|n| n.ends_with(".jpg")),
+            "{:?}",
+            names(&dir.join("shoot"))
         );
-        assert_eq!(export_start(&state.borrow(), &raw), out);
+        assert!(
+            !names(&out).iter().any(|n| n.contains("write-check")),
+            "{:?}",
+            names(&out)
+        );
+        // Wait for the set to be let go of, as its end would.
+        state.borrow_mut().exporting = None;
 
-        // The queue's chooser answering remembers it the same way.
-        let queued = dir.join("queued");
-        let told =
-            crate::panel::export_queue::answered(&mut state.borrow_mut(), Ok(Some(queued.clone())));
-        assert_eq!(told, Some(Some(queued.clone())));
-        assert_eq!(export_start(&state.borrow(), &raw), queued);
+        // That name is there now: under Overwrite, the sheet asks.
+        app.set_export_on_exists("Overwrite".into());
+        app.invoke_export();
+        assert!(app.get_overwrite_open());
+        assert_eq!(
+            app.get_overwrite_files()
+                .iter()
+                .map(|f| f.to_string())
+                .collect::<Vec<_>>(),
+            [written.display().to_string()]
+        );
+        app.invoke_overwrite_answered(0);
+        assert!(state.borrow().exporting.is_none());
+        app.set_export_on_exists("Increment".into());
+
+        // Gone since it was chosen: said, and the chooser asked on it.
+        let gone = dir.join("unplugged");
+        state.borrow_mut().export_last_folder = Some(gone.clone());
+        app.invoke_export();
+        assert_eq!(ASKED.with(|a| a.borrow_mut().take()), Some(gone.clone()));
+        assert_eq!(
+            app.get_status(),
+            format!("not exported: {} is not there", gone.display())
+        );
+        assert!(state.borrow().exporting.is_none());
+        assert!(!state.borrow().export_choosing);
+        assert!(!gone.exists(), "never made");
+        // Answered: there, and it is the folder from now on.
+        let again = dir.join("again");
+        std::fs::create_dir_all(&again).unwrap();
+        CHOSEN.with(|c| *c.borrow_mut() = Some(Some(again.clone())));
+        app.invoke_export();
+        let set = state.borrow().exporting.clone().expect("the set");
+        assert_eq!(set.folder.as_deref(), Some(again.as_path()));
+        assert_eq!(
+            state.borrow().export_last_folder.as_deref(),
+            Some(again.as_path())
+        );
+        let start = Instant::now();
+        while !again.join("frame.jpg").exists() {
+            assert!(start.elapsed() < Duration::from_secs(60), "written");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        state.borrow_mut().exporting = None;
+
+        // A folder that will not take files: said the same way.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = dir.join("locked");
+            std::fs::create_dir_all(&locked).unwrap();
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+            // Not where permissions are not kept (root).
+            if folder_problem(&locked).is_some() {
+                state.borrow_mut().export_last_folder = Some(locked.clone());
+                app.invoke_export();
+                assert_eq!(ASKED.with(|a| a.borrow_mut().take()), Some(locked.clone()));
+                assert_eq!(
+                    app.get_status(),
+                    format!("not exported: {} cannot be written to", locked.display())
+                );
+                assert!(state.borrow().exporting.is_none());
+            }
+            std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        assert_eq!(
+            folder_problem(&written),
+            Some(format!("{} is not a folder", written.display()))
+        );
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -1940,35 +2366,41 @@ mod tests {
         assert!(set.place().starts_with("into export"), "{}", set.place());
     }
 
-    /// The button the sheet shows says what a click does, by the same
-    /// reading of the Subfolder field the export goes by: the Rust
-    /// callback the sheet binds is the one asked here.
+    /// The sheet's primary button reads Export, for one frame and for a
+    /// set alike, since no dialog follows; the chooser is the Folder
+    /// row's Choose button, and there is no Choose file. The row names a
+    /// typed subfolder by the reading the export goes by, cut at the
+    /// front; one the export refuses stops the click.
     #[test]
-    fn the_export_button_names_the_subfolder_it_will_use() {
+    fn the_primary_button_reads_export_and_the_row_names_the_subfolder() {
         let app = crate::testing::window(2);
-        wire_subfolder(&app);
-        let label = |typed: &str, set: i32| app.invoke_export_button_label(typed.into(), set, 60);
-        for typed in ["", "   "] {
-            assert_eq!(label(typed, 1), "Choose file...");
-            assert_eq!(label(typed, 3), "Export 3 frames...");
-        }
-        assert_eq!(label("export", 1), "Export to export");
-        assert_eq!(label("export", 4), "Export 4 frames to export");
+        let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.invoke_select(0);
+        let count = |label: &str| crate::testing::count_labeled(&app, label);
+        let closed = count("Export");
+        app.set_export_open(true);
+        assert_eq!(count("Export") - closed, 2, "the title and the button");
+        assert_eq!(count("Choose file..."), 0);
+        assert_eq!(count("Choose..."), 1, "the Folder row's");
+        assert_eq!(count("Add to queue"), 1);
+        assert_eq!(count("/nowhere"), 1, "the frame's own folder");
+        // A set: the title counts the frames, the button is the same.
+        app.set_set_count(3);
+        assert_eq!(count("Export 3 frames"), 1);
+        assert_eq!(count("Export") - closed, 1, "the button");
+
         let long = "a-very-long-subfolder/for-the-web-gallery";
-        // Cut at the front to the room the button has.
-        let narrow = app.invoke_export_button_label(long.into(), 1, 20);
-        assert_eq!(narrow.chars().count(), 20, "{narrow}");
-        assert!(narrow.starts_with("Export to \u{2026}"), "{narrow}");
-        assert!(narrow.ends_with("gallery"), "{narrow}");
-        assert_eq!(label(long, 1), format!("Export to {long}"));
+        app.set_export_subfolder(long.into());
+        assert_eq!(row(&app, 500), format!("{long} beside each original"));
+        assert_eq!(row(&app, 30), "\u{2026}-gallery beside each original");
         assert_eq!(app.invoke_export_subfolder_name(long.into()), long);
         for typed in ["../out", "/tmp/x", "."] {
-            assert_eq!(label(typed, 1), "Export", "{typed}");
             assert!(!app.invoke_export_subfolder_problem(typed.into()).is_empty());
-            // And a click on it is refused, as the label implies.
+            // And a click on it is refused.
             let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
             state.borrow_mut().current = Some(0);
             app.set_export_subfolder(typed.into());
+            assert_eq!(row(&app, 500), "", "{typed}");
             app.set_export_open(false);
             app.invoke_export();
             assert!(app.get_export_open(), "{typed}");
@@ -2169,8 +2601,16 @@ mod tests {
             let (at, size) = shown(&app, label).unwrap_or_else(|| panic!("{label} on show"));
             at.y + size.height
         };
-        // Every button in the window, below the choices.
-        for label in ["Cancel", "Add to queue...", "Export the queue", "Clear"] {
+        // Every button in the window, below the choices, and the
+        // Folder row with them.
+        for label in [
+            "/nowhere",
+            "Choose...",
+            "Cancel",
+            "Add to queue",
+            "Export the queue",
+            "Clear",
+        ] {
             assert!(
                 bottom(label) <= height,
                 "{label} at {} in {height}",
@@ -2179,6 +2619,7 @@ mod tests {
         }
         let (title, _) = shown(&app, "Export").expect("the title");
         let (cancel, _) = shown(&app, "Cancel").expect("Cancel");
+        let (folder, _) = shown(&app, "/nowhere").expect("the Folder row");
         // The watermark's strength is past the fold, until the choices
         // are scrolled to it.
         assert!(
@@ -2190,7 +2631,10 @@ mod tests {
             wheel(&app, format.x + 4.0, format.y + 4.0, -60.0);
         }
         let (opacity, size) = shown(&app, "Opacity").expect("scrolled to Opacity");
-        assert!(opacity.y + size.height <= cancel.y, "above the buttons");
+        assert!(
+            opacity.y + size.height <= folder.y,
+            "above the folder and buttons"
+        );
         assert_eq!(
             shown(&app, "Export").expect("the title").0,
             title,
@@ -2201,5 +2645,238 @@ mod tests {
             cancel,
             "the buttons stay"
         );
+        assert_eq!(
+            shown(&app, "/nowhere").expect("the Folder row").0,
+            folder,
+            "the folder stays"
+        );
+    }
+
+    /// A set of one ends on the file's own line, as the frame on screen
+    /// always did: its name, the rename Increment made and what the edit
+    /// went without, none of which a set's count says. A set of two ends
+    /// on the count.
+    #[test]
+    fn a_set_of_one_ends_on_the_file_s_own_line() {
+        let app = crate::testing::window(2);
+        let dir = crate::testing::scratch_dir("export-one-line");
+        std::fs::create_dir_all(&dir).unwrap();
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(0);
+            st.export_last_folder = Some(dir.clone());
+        }
+        app.invoke_export();
+        let set = state.borrow().exporting.clone().expect("the set");
+        assert_eq!(set.total, 1);
+        // Taken off the worker's own answers: the frame was renamed and
+        // went without a look.
+        let source = state.borrow().files[0].clone();
+        let path = dir.join("IMG_0000-1.jpg");
+        let note = "IMG_0000.jpg was there already: wrote IMG_0000-1.jpg";
+        let left_out = vec!["look Faded: not on this machine".to_string()];
+        let done = |done| Outcome::SetFrameDone {
+            set: set.clone(),
+            index: 0,
+            source: source.clone(),
+            edit: Edit::default(),
+            done,
+        };
+        deliver(
+            &app,
+            done(queue::Done::Exported {
+                path: path.clone(),
+                seconds: 1.25,
+                note: Some(note.into()),
+                left_out: left_out.clone(),
+            }),
+        );
+        let tally = queue::Tally {
+            exported: 1,
+            ..queue::Tally::default()
+        };
+        deliver(
+            &app,
+            Outcome::SetDone {
+                set: set.clone(),
+                tally,
+            },
+        );
+        let line = app.get_status().to_string();
+        assert_eq!(line, exported_line(&path, 1.25, Some(note), &left_out));
+        assert!(
+            line.starts_with("exported IMG_0000-1.jpg in 1.25 s"),
+            "{line}"
+        );
+        assert!(line.contains("was there already"), "{line}");
+        assert!(
+            line.contains(", without one thing the edit names"),
+            "{line}"
+        );
+        assert!(state.borrow().export_one_line.is_none());
+        assert!(state.borrow().exporting.is_none());
+
+        // Skipped under Skip: the file's own line too, not a count of
+        // nothing.
+        app.invoke_export();
+        let set = state.borrow().exporting.clone().expect("the set");
+        let done = |done| Outcome::SetFrameDone {
+            set: set.clone(),
+            index: 0,
+            source: source.clone(),
+            edit: Edit::default(),
+            done,
+        };
+        deliver(
+            &app,
+            done(queue::Done::Skipped {
+                path: dir.join("IMG_0000.jpg"),
+            }),
+        );
+        let tally = queue::Tally {
+            skipped: 1,
+            ..queue::Tally::default()
+        };
+        deliver(&app, Outcome::SetDone { set, tally });
+        assert_eq!(
+            app.get_status(),
+            "IMG_0000.jpg is there already: nothing exported"
+        );
+
+        // Two frames: the count, as before.
+        state.borrow_mut().picked = vec![0, 1];
+        app.invoke_export();
+        let set = state.borrow().exporting.clone().expect("the set of two");
+        assert_eq!(set.total, 2);
+        let tally = queue::Tally {
+            exported: 2,
+            ..queue::Tally::default()
+        };
+        deliver(&app, Outcome::SetDone { set, tally });
+        assert!(
+            app.get_status().starts_with("exported 2 frames"),
+            "{}",
+            app.get_status()
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A look at the folder that has not answered (a mount that keeps
+    /// it waiting) holds nothing up: Choose still opens, and a second
+    /// Export overtakes it; the first look's answer, come late, starts
+    /// nothing, and only the last one's exports.
+    #[test]
+    fn a_look_at_the_folder_that_is_slow_to_answer_holds_nothing_up() {
+        let app = crate::testing::window(1);
+        let dir = crate::testing::scratch_dir("export-slow-look");
+        let (first, second) = (dir.join("first"), dir.join("second"));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(0);
+            st.export_last_folder = Some(first.clone());
+        }
+        HELD.with(|h| *h.borrow_mut() = Some(Vec::new()));
+        app.invoke_export();
+        assert!(state.borrow().exporting.is_none(), "still looking");
+        assert!(!state.borrow().export_choosing, "nothing held up");
+
+        // Choose works meanwhile, and overtakes the look.
+        CHOSEN.with(|c| *c.borrow_mut() = Some(Some(second.clone())));
+        app.invoke_export_folder_choose();
+        assert_eq!(
+            state.borrow().export_last_folder.as_deref(),
+            Some(second.as_path())
+        );
+        assert_eq!(
+            app.get_status(),
+            format!(
+                "exports go to {}; the export waiting on {} was not started",
+                second.display(),
+                first.display()
+            )
+        );
+        // Export again: a second look, at the new folder.
+        app.invoke_export();
+        let held = HELD.with(|h| h.borrow_mut().take()).expect("held");
+        assert_eq!(held.len(), 2);
+        let mut held = held.into_iter();
+        // The first answers late: dropped.
+        (held.next().unwrap())(&app);
+        assert!(
+            state.borrow().exporting.is_none(),
+            "the late answer starts nothing"
+        );
+        // The second: the export, into the folder chosen.
+        (held.next().unwrap())(&app);
+        let set = state.borrow().exporting.clone().expect("the set");
+        assert_eq!(set.folder.as_deref(), Some(second.as_path()));
+        set.cancel();
+
+        // A look that answers with an export under way since (the
+        // queue's, say): not started, and said.
+        HELD.with(|h| *h.borrow_mut() = Some(Vec::new()));
+        state.borrow_mut().exporting = None;
+        app.invoke_export();
+        state.borrow_mut().exporting = Some(set);
+        let held = HELD.with(|h| h.borrow_mut().take()).expect("held");
+        for answer in held {
+            answer(&app);
+        }
+        assert_eq!(
+            app.get_status(),
+            "not exported: another export is under way"
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The Folder row follows the frame, not its name: two frames of one
+    /// name in two folders show two folders.
+    #[test]
+    fn the_folder_row_follows_the_frame_not_its_name() {
+        let app = crate::testing::window(2);
+        let files = vec![
+            PathBuf::from("/nowhere/card-one/IMG_0001.CR3"),
+            PathBuf::from("/nowhere/card-two/IMG_0001.CR3"),
+        ];
+        let (_state, _worker) = crate::testing::state_for(&app, files);
+        app.invoke_select(0);
+        app.set_export_open(true);
+        let count = |label: &str| crate::testing::count_labeled(&app, label);
+        assert_eq!(count("/nowhere/card-one"), 1);
+        app.invoke_select(1);
+        assert_eq!(app.get_file_name(), "IMG_0001.CR3");
+        assert_eq!(count("/nowhere/card-two"), 1);
+        assert_eq!(count("/nowhere/card-one"), 0);
+    }
+
+    /// A probe name taken already is passed over, never read as the
+    /// folder taking files, and no probe is left behind.
+    #[test]
+    fn the_folder_check_leaves_nothing_and_assumes_nothing() {
+        let dir = crate::testing::scratch_dir("export-probe");
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(folder_problem(&dir), None);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0, "nothing left");
+        // The first name taken, by a check a crash left: the second.
+        let left = dir.join("left-by-a-crash");
+        std::fs::write(&left, b"kept").unwrap();
+        let names = |attempt: u32| match attempt {
+            0 => "left-by-a-crash".to_string(),
+            _ => "second".to_string(),
+        };
+        assert_eq!(folder_problem_probing(&dir, names), None);
+        assert!(!dir.join("second").exists(), "removed");
+        // Every name taken: not read as the folder taking files.
+        assert_eq!(
+            folder_problem_probing(&dir, |_| "left-by-a-crash".to_string()),
+            Some(format!("{} cannot be written to", dir.display()))
+        );
+        // And the file that was there is left as it was.
+        assert_eq!(std::fs::read(&left).unwrap(), b"kept");
+        crate::testing::remove_dir_retry(&dir);
     }
 }

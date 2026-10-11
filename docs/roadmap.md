@@ -43,11 +43,6 @@ and export are smoothed.
       sheet's foot is never under the Dock or the task bar; a lower
       preferred height first, the platform's work area if that is not
       enough; tried on a Mac (#21, §298)
-- [ ] The export sheet shows the folder it will write to (the last one
-      used, or the shoot's export subfolder) with a Choose button beside
-      it, and Export writes there without a dialog; the chooser only
-      when another folder is wanted, and "Choose File" reads "Export"
-      (#22, beside §274)
 - [ ] Detail in a mask: Texture, Clarity and Dehaze in a mask's look,
       beside its Light and Color, so a face is smoothed or a distant
       ridge dehazed without touching the rest; the bands and the

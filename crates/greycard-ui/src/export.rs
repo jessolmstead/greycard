@@ -67,6 +67,8 @@ impl Format {
         }
     }
 
+    /// The file chooser's filter for the format.
+    #[cfg(test)]
     fn globs(self) -> &'static [&'static str] {
         match self {
             Format::Jpeg => &["*.jpg", "*.jpeg"],
@@ -693,7 +695,7 @@ const SOFTWARE: &str = concat!("greycard ", env!("CARGO_PKG_VERSION"));
 
 /// What a file chooser is being asked for. The desktop portal and the
 /// native dialogs answer the same request in their own ways, so the
-/// three calls below build one of these and hand it to `ask`.
+/// two calls below build one of these and hand it to `ask`.
 struct Ask {
     /// The dialog's title.
     title: &'static str,
@@ -708,35 +710,9 @@ struct Ask {
     directory: bool,
 }
 
-/// Ask the desktop where to save. `done` gets the path, none when the
-/// user canceled, or the error when there was no chooser to ask.
-pub fn choose_path(
-    suggested: PathBuf,
-    format: Format,
-    done: impl FnOnce(Result<Option<PathBuf>>) + Send + 'static,
-) {
-    ask(
-        Ask {
-            title: "Export",
-            folder: suggested.parent().unwrap_or(Path::new("/")).to_path_buf(),
-            name: Some(
-                suggested
-                    .file_name()
-                    .map(|n| n.to_string_lossy().into_owned())
-                    .unwrap_or_default(),
-            ),
-            filter: (
-                format.name().to_string(),
-                format.globs().iter().map(|g| g.to_string()).collect(),
-            ),
-            directory: false,
-        },
-        done,
-    );
-}
-
-/// Ask the desktop for a file to open, the same way: `start` is the
-/// folder to open on, `filter` a name and its globs.
+/// Ask the desktop for a file to open: `start` is the folder to open
+/// on, `filter` a name and its globs. `done` gets the path, none when
+/// the user canceled, or the error when there was no chooser to ask.
 pub fn choose_open(
     title: &'static str,
     start: PathBuf,

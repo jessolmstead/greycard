@@ -971,8 +971,21 @@ pub(crate) struct State {
     /// A set being exported, until its last frame is done with: held
     /// to cancel it and to know its outcomes from a stale set's.
     pub(crate) exporting: Option<Arc<queue::Set>>,
-    /// The folder chooser for a set is up: Export waits for its answer.
+    /// A folder chooser for an export is up, or the overwrite sheet:
+    /// Export waits for the answer.
     pub(crate) export_choosing: bool,
+    /// How many looks at an export's folder have begun: an answer of
+    /// an earlier one (a mount that kept it waiting, overtaken by
+    /// another Export or a Choose) is dropped. A look holds nothing
+    /// up, so a folder that never answers never stops Export.
+    pub(crate) export_checks: u64,
+    /// The folder the latest look is at, while it has not answered: a
+    /// Choose that overtakes it says the export was not started.
+    pub(crate) export_looking: Option<PathBuf>,
+    /// The line a set of one frame ends on, made as its frame is done:
+    /// the file's name, a rename and what the edit went without, which
+    /// a set's count does not say.
+    pub(crate) export_one_line: Option<(Arc<queue::Set>, String)>,
     /// A set that would write over files that are there, held while
     /// the overwrite sheet asks; `export_choosing` is up meanwhile.
     pub(crate) export_pending: Option<crate::panel::deliver::Pending>,
@@ -989,7 +1002,8 @@ pub(crate) struct State {
     /// The export presets, as the settings file keeps them.
     pub(crate) export_presets: Vec<sheet::ExportPreset>,
     /// The folder an export's chooser last answered with, where the
-    /// next one opens; the settings file keeps it across runs.
+    /// next export goes and the next chooser opens; the settings file
+    /// keeps it across runs.
     pub(crate) export_last_folder: Option<PathBuf>,
     /// Where a preset saved, chosen or deleted is written at once;
     /// none for a snapshot or a batch run, which leave the user's
@@ -1260,6 +1274,9 @@ impl State {
             encoded_lut_for: None,
             exporting: None,
             export_choosing: false,
+            export_checks: 0,
+            export_looking: None,
+            export_one_line: None,
             export_pending: None,
             export_queue: Vec::new(),
             export_queue_file: None,

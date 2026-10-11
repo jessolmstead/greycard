@@ -21,6 +21,17 @@ note a first tester reads.
   chosen mask's name and switches are their own MASK section
   ([§300](https://github.com/jessolmstead/greycard/blob/master/docs/notes/300-the-adjustments-list-stays-pinned.md))
 
+### Export
+
+- The export sheet names the folder it will write to, the last one
+  chosen or the frame's own, with a Choose button beside it, and
+  Export writes there with no dialog; "Choose file..." is gone. A
+  frame exported into its own folder is named `X.greycard.jpg`, and a
+  name already taken follows the sheet's "If it exists" choice, where
+  the save dialog used to overwrite. A folder that is missing or not
+  writable says so and opens the chooser
+  ([§301](https://github.com/jessolmstead/greycard/blob/master/docs/notes/301-the-export-sheet-names-its-folder.md))
+
 ### Fixes
 
 - A two-finger touchpad scroll over the picture pans it; a mouse

@@ -66,20 +66,26 @@ export component ExportSheet inherits Rectangle {
     in-out property <int> frame-height;
     pure callback custom-edge(string) -> int;
     pure callback export-subfolder-name(string) -> string;
-    pure callback export-button-label(string, int, int) -> string;
     pure callback export-subfolder-problem(string) -> string;
-    /// The folder an export goes into without a chooser, as the export
-    /// reads the Subfolder field; empty when it asks where.
+    /// The folder an export goes into beside each frame, as the export
+    /// reads the Subfolder field; empty when there is none.
     property <string> sub-name: root.export-subfolder-name(root.export-subfolder);
     property <string> sub-problem: root.export-subfolder-problem(root.export-subfolder);
-    /// The primary button: what it does, and no ellipsis when no
-    /// dialog follows.
-    property <string> export-label: root.export-button-label(root.export-subfolder, root.set-count, root.label-room);
-    /// How many characters of its label the primary button holds: the
-    /// sheet's full row less the icon and paddings, at a conservative
-    /// 7px a character (font-sm, medium weight; the system font sets
-    /// the real width, so the button also elides what still overflows).
-    property <int> label-room: max(12, floor((root.sheet-width - 2 * Theme.space-5 - Theme.icon - 3 * Theme.space-3) / 7px));
+    /// The Folder row: where Export writes, as the export itself will
+    /// decide it (the typed subfolder, the frame by its name and its
+    /// row, since two frames of one name in two folders are two places,
+    /// and the last folder chosen, which `export-folder-turn` counts),
+    /// cut at the front to `folder-room` characters so the leaf shows.
+    pure callback export-folder-line(string, string, int, int, int) -> string;
+    in property <int> frame-index;
+    in property <int> export-folder-turn;
+    /// The row's Choose button: the folder chooser.
+    callback export-folder-choose();
+    property <string> folder-line: root.export-folder-line(root.export-subfolder, root.file-name, root.frame-index, root.export-folder-turn, root.folder-room);
+    /// How many characters the row's folder holds: the sheet's row
+    /// less its label, the button and the gaps, at a conservative 7px
+    /// a character; the text also elides whatever still overflows.
+    property <int> folder-room: max(8, floor((root.sheet-width - 2 * Theme.space-5 - 68px - 88px - 2 * Theme.space-2) / 7px));
     /// The long edge the sheet asks for; 0 is the picture's own.
     pure function export-edge() -> int {
         if (root.export-size == "Full") { return 0; }
@@ -300,7 +306,7 @@ export component ExportSheet inherits Rectangle {
                         LineEdit {
                             horizontal-stretch: 1;
                             text <=> root.export-subfolder;
-                            placeholder-text: "None: ask where";
+                            placeholder-text: "None: the folder below";
                         }
                     }
                     // Always there, so the sheet does not move as the
@@ -404,6 +410,25 @@ export component ExportSheet inherits Rectangle {
                 padding: Theme.space-5;
                 padding-top: Theme.space-3;
                 spacing: Theme.space-3;
+                // Where Export writes, in the footer rather than among
+                // the choices: it is what the button below acts on, so
+                // it stays in view with it however short the window.
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    Text { text: "Folder"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                    Text {
+                        text: root.folder-line;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        vertical-alignment: center;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                    PanelButton {
+                        text: "Choose...";
+                        clicked => { root.export-folder-choose(); }
+                    }
+                }
                 HorizontalLayout {
                     spacing: Theme.space-2;
                     PanelButton {
@@ -412,16 +437,13 @@ export component ExportSheet inherits Rectangle {
                     }
                     // What Export would send, kept to be sent later.
                     PanelButton {
-                        text: "Add to queue...";
+                        text: "Add to queue";
                         clicked => { root.export-open = false; root.queue-add(); }
                     }
                 }
-                // Its own row in every state, so the footer keeps its
-                // shape however long the label; a long subfolder is cut
-                // at the front to fit, and the end of anything that
-                // still does not is elided.
+                // Into the folder the row shows, with no dialog.
                 PanelButton {
-                    text: root.export-label;
+                    text: "Export";
                     icon: @image-url("../icons/image-down.svg");
                     primary: true;
                     enabled: root.sub-problem == "";

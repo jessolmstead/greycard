@@ -131,7 +131,10 @@ pub enum Job {
         stamp: u64,
     },
     /// Write the open frame under `edit` to `path`, doing what
-    /// `on_exists` says if a file of that name is there already.
+    /// `on_exists` says if a file of that name is there already. The
+    /// window sends every export as a set now, the frame on screen as
+    /// a set of one; the tests still drive this one.
+    #[cfg_attr(not(test), allow(dead_code))]
     Export {
         edit: Edit,
         path: PathBuf,
