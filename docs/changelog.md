@@ -10,6 +10,15 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
+## 0.7.0
+
+### Fixes
+
+- The color mixer's dropper puts itself down after one pick, as the
+  white balance and range droppers do; its button or Esc still puts
+  it down without a pick
+  ([§296](https://github.com/jessolmstead/greycard/blob/master/docs/notes/296-the-mixers-dropper-is-one-pick.md))
+
 ## 0.6.0, 2026-10-10
 
 The strip and the grid show each frame as edited, made in the background

@@ -306,3 +306,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§293. The grading's sliders follow the chosen wheel](notes/293-the-gradings-sliders-follow-the-chosen-wheel.md) (2026-10-10)
 - [§294. The tint has a switch](notes/294-the-tint-has-a-switch.md) (2026-10-10)
 - [§295. A Draw button for the crop, and Alt to draw inside it](notes/295-a-draw-button-for-the-crop-and-alt-to-draw-inside-it.md) (2026-10-10)
+- [§296. The mixer's dropper is one pick](notes/296-the-mixers-dropper-is-one-pick.md) (2026-10-11)

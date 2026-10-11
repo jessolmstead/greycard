@@ -129,9 +129,10 @@ export component Viewport inherits Rectangle {
         property <length> down-y;
         property <bool> dragged;
         // Whether the press put a dropper down: latched there, so a
-        // single-shot dropper (White, Range, Defringe) that lets go of
-        // `picking` inside its own press handler still keeps the
-        // release from reading as a plain click and zooming.
+        // single-shot dropper (White, Range on the press, the Mixer on
+        // the release) that lets go of `picking` inside its own
+        // handler still keeps the release from reading as a plain
+        // click and zooming.
         property <bool> picked-down;
         // Whether the press went to a tool placing on the picture,
         // latched for the same reason: the person a part is of is

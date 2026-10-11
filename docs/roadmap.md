@@ -45,7 +45,6 @@ and export are smoothed.
       above the Masks tab's scrolling sections, at most six rows tall
       with its own scroll, so Global or another mask is one click from
       any slider (#18)
-- [ ] The mixer's dropper puts itself down after one pick (#20)
 - [ ] The export sheet scrolls on a short screen, and a scroll under
       any sheet never reaches the picture (#21)
 - [ ] The export sheet shows the folder it will write to (the last one

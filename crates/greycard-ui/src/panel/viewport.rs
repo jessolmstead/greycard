@@ -1482,10 +1482,18 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            if st.picking.take().is_some() {
-                st.curve_drag = None;
-                drop(st);
-                app.invoke_view_changed();
+            let Some(picked) = st.picking.take() else {
+                return;
+            };
+            st.curve_drag = None;
+            drop(st);
+            app.invoke_view_changed();
+            // The mixer's dropper is one pick, as the white's is: the
+            // press chose the band, the drag moved it, and the release
+            // puts the dropper down. The curve's stays in hand, a
+            // point a click, until Esc or its button.
+            if matches!(picked, Picking::Mixer { .. }) {
+                app.invoke_stop_placing();
             }
         });
     }
@@ -1705,6 +1713,53 @@ mod tests {
         click(&app, 600.0, 400.0);
         assert!(!zoomed.get(), "a pick must not zoom the view");
         assert_eq!(app.get_range_hue(), 200.0, "the hue moved");
+    }
+
+    /// The mixer's dropper is one pick: the release that ends the
+    /// press (and any drag after it) puts the dropper down, so the
+    /// cursor is the hand again; its button and Esc put it down
+    /// before a pick. Drives the installed callbacks; the press itself
+    /// needs a developed picture to sample, so the test stands in for
+    /// it with what the press leaves behind.
+    #[test]
+    fn a_pick_puts_the_mixer_dropper_down() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+
+        app.invoke_pick_started("Mixer".into());
+        assert_eq!(app.get_picking(), "Mixer", "the button puts it in hand");
+        state.borrow_mut().picking = Some(Picking::Mixer {
+            band: 2,
+            hue0: 0.0,
+            sat0: 0.0,
+            at: (10.0, 10.0),
+        });
+        app.invoke_pick_dragged(30.0, 0.0);
+        assert!(app.get_mixer_hue() > 0.0, "the drag moved the band");
+        app.invoke_pick_released();
+        assert_eq!(app.get_picking(), "", "the pick put the dropper down");
+        assert!(state.borrow().picking.is_none());
+
+        // Its button again, before a pick, takes it back.
+        app.invoke_pick_started("Mixer".into());
+        app.invoke_pick_started("Mixer".into());
+        assert_eq!(app.get_picking(), "");
+
+        // And Esc.
+        app.invoke_pick_started("Mixer".into());
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert_eq!(app.get_picking(), "");
+
+        // The Curve's dropper is a point a click and stays in hand.
+        app.invoke_pick_started("Curve".into());
+        state.borrow_mut().picking = Some(Picking::Curve {
+            channel: Channel::Rgb,
+            index: 0,
+            y0: 0.5,
+            at: 10.0,
+        });
+        app.invoke_pick_released();
+        assert_eq!(app.get_picking(), "Curve", "a curve pick leaves it in hand");
     }
 
     #[test]
