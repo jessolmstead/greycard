@@ -235,3 +235,12 @@ hands.
   exist; the file has no field for it yet.
 - A smart collection's count, and moving a collection between machines,
   stay with the carry item on the roadmap.
+
+**Added the same day.** Windows CI failed seven of the eight panel
+tests at teardown: the window's read-only index reader was still open
+when the test removed its folder, and SQLite on Windows opens its files
+without `FILE_SHARE_DELETE`, so the removal gets "being used by another
+process" (the cull test's reader and the pairing test met the same
+wall). A test-only `teardown` now drops the writer, clears the reader
+and drops the app, the worker and the state before the folder goes.
+

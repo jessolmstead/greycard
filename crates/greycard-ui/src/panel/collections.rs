@@ -815,6 +815,27 @@ mod tests {
         }
     }
 
+    /// The test's folder removed, everything that holds a file in it
+    /// let go first: the writer, and the window's reader, which the
+    /// window's callbacks keep alive past a drop of the test's state
+    /// (Windows refuses to remove a file SQLite has open).
+    fn teardown(s: Setup) {
+        let Setup {
+            dir,
+            writer,
+            app,
+            state,
+            worker,
+            ..
+        } = s;
+        drop(writer);
+        state.borrow_mut().index_reader = None;
+        drop(app);
+        drop(worker);
+        drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// The list, each frame as its folder and its name.
     fn names(st: &State) -> Vec<String> {
         st.files
@@ -972,8 +993,7 @@ mod tests {
         // Kept on disk: a new session reads the same collection back.
         let back = crate::collections::Store::load(s.dir.join(crate::collections::DIR));
         assert_eq!(back.list, state.borrow().collections.list);
-        drop(s.writer);
-        crate::testing::remove_dir_retry(&s.dir);
+        teardown(s);
     }
 
     /// A drag in the grid moves a frame in the collection's own order;
@@ -1060,8 +1080,7 @@ mod tests {
             hints(&s, &id),
             ["shoot/z.tif", "shoot/x.tif", "shoot/y.tif"]
         );
-        drop(s.writer);
-        crate::testing::remove_dir_retry(&s.dir);
+        teardown(s);
     }
 
     /// A reference to a picture nothing has is kept and said; a file
@@ -1115,8 +1134,7 @@ mod tests {
         assert_eq!(refs.as_array().unwrap().len(), 2, "the missing one kept");
         assert_eq!(names(&s.state.borrow()), ["shoot/x.tif"]);
         assert_eq!(marks(&s.app), [true]);
-        drop(s.writer);
-        crate::testing::remove_dir_retry(&s.dir);
+        teardown(s);
     }
 
     /// With no index to read, a pass's rewrite heals nothing it cannot
@@ -1152,8 +1170,7 @@ mod tests {
             file_of(&s, &id)["refs"][0]["hint"],
             s.files[0].to_string_lossy().as_ref()
         );
-        drop(s.writer);
-        crate::testing::remove_dir_retry(&s.dir);
+        teardown(s);
     }
 
     /// The filter bar's Save... keeps the filter as a smart collection;
@@ -1206,8 +1223,7 @@ mod tests {
         app.invoke_collection_sheet_done();
         assert!(state.borrow().collections.smart.is_empty());
         assert!(!file.exists());
-        drop(s.writer);
-        crate::testing::remove_dir_retry(&s.dir);
+        teardown(s);
     }
 
     /// A collection made with the frames in it, saved, by the shoot's
@@ -1266,8 +1282,7 @@ mod tests {
             }
         );
         drop(st);
-        drop(s.writer);
-        crate::testing::remove_dir_retry(&s.dir);
+        teardown(s);
     }
 
     /// The keys come back to the window when the sheet closes: B asks
@@ -1295,8 +1310,7 @@ mod tests {
         assert_eq!(app.get_status(), "1 frame added to Picks");
         assert_eq!(state.borrow().collections.list[0].refs.len(), 2);
         let _ = worker;
-        drop(s.writer);
-        crate::testing::remove_dir_retry(&s.dir);
+        teardown(s);
     }
 
     /// Save... keeps the view's own scope: a folder of a root's tree is
@@ -1358,7 +1372,6 @@ mod tests {
             app.get_status(),
             "a smart collection is saved from a root's view, not a collection's"
         );
-        drop(s.writer);
-        crate::testing::remove_dir_retry(&s.dir);
+        teardown(s);
     }
 }
