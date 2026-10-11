@@ -96,6 +96,11 @@ note a first tester reads.
 
 ### Fixes
 
+- The Crop tab's Portrait switch means one thing, the crop is tall, on
+  every photo and under Original too; a ratio picked on a photo shot on
+  end starts tall, and toggling the switch keeps the crop's area, so
+  toggling twice gives back the crop you had instead of a smaller one
+  ([§291](https://github.com/jessolmstead/greycard/blob/master/docs/notes/291-the-portrait-switch-follows-the-frame-and-a-toggle-keeps-the-crop.md))
 - A snapshot can be restored after it is taken: typing its name ends
   with a click anywhere else, so the row goes back to being a button;
   it used to stay in naming mode until Enter, taking every later click

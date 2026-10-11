@@ -11,7 +11,8 @@ use crate::panel::mask::{ask_for, bake_locals};
 use crate::panel::retouch::patch_outlines;
 use crate::panel::viewport::{
     ViewMap, display_key, drawn_picture, effective_zoom, proof_settings, schedule_snapshot,
-    settle_source_size, source_to_view, sync_display, write_screenshot, zoom_label,
+    settle_source_size, show_crop_on_view, show_source_shape, source_to_view, sync_display,
+    write_screenshot, zoom_label,
 };
 use crate::*;
 
@@ -1083,6 +1084,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             );
                         }
                     }
+                    show_source_shape(st, &app);
+                    if app.get_crop_mode() {
+                        show_crop_on_view(st, &app, &edit.geometry);
+                    }
                     let Some(renderer) = st.renderer.as_mut() else {
                         return;
                     };
@@ -1160,26 +1165,6 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         display_curve,
                         source_turn: lag,
                     };
-                    if app.get_crop_mode() {
-                        // The crop's rectangle in view pixels, for the overlay.
-                        let scale = app.window().scale_factor();
-                        let c = edit.geometry.effective_crop(sw, sh);
-                        let (sw, sh) = edit.geometry.plane_size(sw, sh);
-                        let to_view = |fx: f32, fy: f32| {
-                            (
-                                ((fx - frame.origin.0 - st.center.0) * zoom + vw as f32 / 2.0)
-                                    / scale,
-                                ((fy - frame.origin.1 - st.center.1) * zoom + vh as f32 / 2.0)
-                                    / scale,
-                            )
-                        };
-                        let (l, t) = to_view(c.x * sw, c.y * sh);
-                        let (r, b) = to_view((c.x + c.w) * sw, (c.y + c.h) * sh);
-                        app.set_crop_left(l);
-                        app.set_crop_top(t);
-                        app.set_crop_width(r - l);
-                        app.set_crop_height(b - t);
-                    }
                     // The navigator's rectangle: what the view shows of
                     // the frame, as fractions of it.
                     {

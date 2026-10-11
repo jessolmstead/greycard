@@ -218,6 +218,49 @@ pub(crate) fn settle_source_size(st: &mut State) {
     }
 }
 
+/// Whether the picture the crop is measured on stands taller than
+/// wide, for the Portrait switch (`portrait-shown` in the window),
+/// which under "Original" reads the stored flag against it: the
+/// picture as the viewport draws it ([`drawn_picture`]).
+pub(crate) fn show_source_shape(st: &State, app: &App) {
+    let ((w, h), _) = drawn_picture(st);
+    let tall = h > w;
+    if app.get_source_tall() != tall {
+        app.set_source_tall(tall);
+    }
+}
+
+/// The crop's rectangle on the view while cropping, for the overlay:
+/// `geometry`'s crop, on the picture as the viewport draws it
+/// ([`drawn_picture`]) and through the same mapping, so the outline
+/// stands on the screen exactly as the crop will cut the picture
+/// under it.
+pub(crate) fn show_crop_on_view(st: &State, app: &App, geometry: &Geometry) {
+    let ((dw, dh), _) = drawn_picture(st);
+    let (sw, sh) = (dw as f32, dh as f32);
+    let frame = geometry.bounds(sw, sh);
+    let scale = app.window().scale_factor();
+    let (vw, vh) = (
+        app.get_view_width().max(1) as u32,
+        app.get_view_height().max(1) as u32,
+    );
+    let zoom = effective_zoom(st, vw, vh);
+    let c = geometry.effective_crop(sw, sh);
+    let (pw, ph) = geometry.plane_size(sw, sh);
+    let to_view = |fx: f32, fy: f32| {
+        (
+            ((fx - frame.origin.0 - st.center.0) * zoom + vw as f32 / 2.0) / scale,
+            ((fy - frame.origin.1 - st.center.1) * zoom + vh as f32 / 2.0) / scale,
+        )
+    };
+    let (l, t) = to_view(c.x * pw, c.y * ph);
+    let (r, b) = to_view((c.x + c.w) * pw, (c.y + c.h) * ph);
+    app.set_crop_left(l);
+    app.set_crop_top(t);
+    app.set_crop_width(r - l);
+    app.set_crop_height(b - t);
+}
+
 /// What a dropper's press chose, to move with the drag after it.
 pub(crate) enum Picking {
     /// A point on a curve: which, its y when pressed, and the press's

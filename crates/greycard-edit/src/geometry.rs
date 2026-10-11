@@ -333,6 +333,49 @@ impl Geometry {
         g
     }
 
+    /// The geometry with `aspect` picked from the panel's list in
+    /// place of the one it holds, on a source `w` by `h`, and the
+    /// `portrait` flag set the way the pick asks.
+    ///
+    /// A named ratio is written landscape and the flag turns it, so
+    /// the flag alone says which way up it goes. Picked where no
+    /// ratio was held (the aspect free or the frame's own, or no
+    /// crop to keep the way up of), it takes the plane's own way up:
+    /// a 3:2 picked on a frame shot on end is a tall 3:2, where a
+    /// flag left false made it wide. One ratio picked over another
+    /// leaves the flag as it is, so a tall 3:2 changed to 4:3 is a
+    /// tall 4:3, and whatever the flag was turned to by hand stays.
+    ///
+    /// `Original` reads the flag against the plane's own shape, so
+    /// left on from a tall ratio it would turn a tall frame's
+    /// "Original" wide; picked, it leaves the crop the frame's way
+    /// up, flag off. (The panel's switch shows whether the crop is
+    /// tall, so it reads on for that on a tall frame; under
+    /// "Original" it is the flag the other way from a tall plane,
+    /// mapped there and never stored.) Free reads no flag and leaves
+    /// it be. The same aspect picked again, and a source of no size,
+    /// change nothing.
+    pub fn with_aspect(&self, aspect: Aspect, w: f32, h: f32) -> Self {
+        let mut g = self.clone();
+        if aspect == self.aspect {
+            return g;
+        }
+        g.aspect = aspect;
+        match aspect {
+            Aspect::Ratio { .. }
+                if !matches!(self.aspect, Aspect::Ratio { .. }) || self.crop.is_none() =>
+            {
+                let (pw, ph) = self.plane_size(w, h);
+                if pw >= 1.0 && ph >= 1.0 {
+                    g.portrait = ph > pw;
+                }
+            }
+            Aspect::Original => g.portrait = false,
+            Aspect::Ratio { .. } | Aspect::Free => {}
+        }
+        g
+    }
+
     /// The geometry for a source that has itself been turned
     /// `quarters` quarter turns clockwise under it: the frame's own
     /// orientation changed (`Sidecar::turn`), so everything the
@@ -1890,6 +1933,69 @@ mod tests {
             H
         ));
         assert!(Handle::from_index(8) == Some(Handle::Move) && Handle::from_index(9).is_none());
+    }
+
+    #[test]
+    fn a_ratio_picked_takes_the_planes_way_up_once() {
+        let three_two = Aspect::from_name("3:2", "");
+        let four_three = Aspect::from_name("4:3", "");
+        let crop = Some(Crop {
+            x: 0.1,
+            y: 0.1,
+            w: 0.5,
+            h: 0.5,
+        });
+        // A frame shot on end, nothing held: 3:2 picked is tall.
+        let upright = Geometry::default().with_aspect(three_two, H, W);
+        assert!(upright.portrait && upright.aspect == three_two);
+        let (pw, ph) = upright.plane_size(H, W);
+        assert!(upright.aspect.ratio(pw, ph, upright.portrait).unwrap() < 1.0);
+        // A landscape frame, or one turned on its side by the edit,
+        // takes it landscape, from "Original" as from free.
+        let original = Geometry {
+            aspect: Aspect::Original,
+            portrait: true,
+            crop,
+            ..Default::default()
+        };
+        assert!(!original.with_aspect(three_two, W, H).portrait);
+        let turned = Geometry {
+            turns: 1,
+            ..Default::default()
+        };
+        assert!(!turned.with_aspect(three_two, H, W).portrait);
+        assert!(turned.with_aspect(three_two, W, H).portrait);
+        // One ratio over another keeps the flag, whichever way it was
+        // turned by hand; with no crop to keep the way up of, the
+        // plane's is taken again.
+        let held = Geometry {
+            aspect: three_two,
+            portrait: false,
+            crop,
+            ..Default::default()
+        };
+        assert!(!held.with_aspect(four_three, H, W).portrait);
+        let flipped = Geometry {
+            portrait: true,
+            ..held.clone()
+        };
+        assert!(flipped.with_aspect(four_three, W, H).portrait);
+        let uncropped = Geometry {
+            crop: None,
+            ..held.clone()
+        };
+        assert!(uncropped.with_aspect(four_three, H, W).portrait);
+        // The same aspect again is no pick at all.
+        assert_eq!(flipped.with_aspect(three_two, W, H), flipped);
+        // "Original" is the frame's own shape, flag off; free leaves it.
+        assert!(!flipped.with_aspect(Aspect::Original, H, W).portrait);
+        assert!(flipped.with_aspect(Aspect::Free, H, W).portrait);
+        // A source of no size says nothing about which way up.
+        assert!(
+            !Geometry::default()
+                .with_aspect(three_two, 0.0, 0.0)
+                .portrait
+        );
     }
 
     #[test]

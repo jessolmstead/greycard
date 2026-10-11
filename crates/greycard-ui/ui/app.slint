@@ -849,6 +849,23 @@ export component App inherits Window {
     in-out property <string> aspect-name: "Free";
     in-out property <string> aspect-custom: "65:24";
     in-out property <bool> portrait: false;
+    // The aspect the crop was last shown or fitted under, as
+    // `panel::crop::aspect_key` writes it, so a pick from the list
+    // knows what it was picked over; and the size, in plane pixels
+    // squared, a change of the crop's shape was asked to keep, until
+    // the crop moves (0 for none).
+    in-out property <string> aspect-fitted: "Free";
+    in-out property <float> crop-kept-area: 0;
+    // Whether the picture the crop is measured on stands taller than
+    // wide (`viewport::show_source_shape`), and so whether the plane,
+    // turned by the edit's quarters, does.
+    in property <bool> source-tall: false;
+    out property <bool> plane-tall: root.source-tall != (root.geo-turns == 1 || root.geo-turns == 3);
+    // What the Portrait switch shows: whether the crop is tall. The
+    // stored flag says that for a named ratio; under "Original" it
+    // says "the other way from the frame", so on a tall plane the
+    // two read opposite.
+    out property <bool> portrait-shown: root.portrait != (root.aspect-name == "Original" && root.plane-tall);
     in property <length> crop-left;
     in property <length> crop-top;
     in property <length> crop-width;
@@ -2426,6 +2443,7 @@ export component App inherits Window {
                             aspect-name <=> root.aspect-name;
                             aspect-custom <=> root.aspect-custom;
                             portrait <=> root.portrait;
+                            portrait-shown: root.portrait-shown;
                             crop-toggled => { root.crop-toggled(); }
                             geometry-changed => { root.geometry-changed(); }
                             guide-dropped => { root.guide-dropped(); }

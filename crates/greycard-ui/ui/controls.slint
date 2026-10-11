@@ -545,11 +545,14 @@ export component EditSlider inherits Rectangle {
     }
 }
 
-// A switch with a label.
+// A switch with a label. With `follows`, `checked` is the owner's
+// binding to keep: a click or a key only asks, through `toggled`, and
+// the switch shows whatever the owner's state comes to.
 export component Toggle inherits Rectangle {
     in property <string> label;
     in-out property <bool> checked: false;
     in property <bool> enabled: true;
+    in property <bool> follows: false;
     callback toggled();
     height: Theme.control-height;
     property <bool> active: enabled && (ta.has-hover || ta.pressed || fs.has-focus);
@@ -588,7 +591,9 @@ export component Toggle inherits Rectangle {
         enabled: root.enabled;
         key-pressed(e) => {
             if (e.text == " " || e.text == Key.Return) {
-                root.checked = !root.checked;
+                if (!root.follows) {
+                    root.checked = !root.checked;
+                }
                 root.toggled();
                 return accept;
             }
@@ -600,7 +605,9 @@ export component Toggle inherits Rectangle {
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
         clicked => {
             fs.focus();
-            root.checked = !root.checked;
+            if (!root.follows) {
+                root.checked = !root.checked;
+            }
             root.toggled();
         }
     }

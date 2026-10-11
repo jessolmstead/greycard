@@ -15,9 +15,58 @@ pub(crate) fn show_geometry(geometry: &Geometry, app: &App) {
         app.set_aspect_custom(custom.into());
     }
     app.set_portrait(geometry.portrait);
+    app.set_aspect_fitted(aspect_key(geometry.aspect).into());
 }
 
+/// An aspect as one string, for the panel to hold what the crop was
+/// last fitted under: the list's name, or "Custom" and its ratio.
+pub(crate) fn aspect_key(aspect: Aspect) -> String {
+    match aspect.name() {
+        (name, None) => name.to_string(),
+        (_, Some(custom)) => format!("Custom {custom}"),
+    }
+}
+
+/// The inverse of [`aspect_key`].
+fn aspect_of_key(key: &str) -> Aspect {
+    match key.strip_prefix("Custom ") {
+        Some(custom) => Aspect::from_name("Custom", custom),
+        None => Aspect::from_name(key, ""),
+    }
+}
+
+/// After the aspect list, the custom box or the Portrait switch:
+/// the switch set the way a new aspect asks
+/// ([`Geometry::with_aspect`]), against the aspect the crop was
+/// fitted under before. Where the switch itself moved, the aspect
+/// has not, and the switch stays where the hand put it.
+///
+/// The custom box asks on every key, and a ratio half typed ("16:")
+/// reads as free. That is no pick of Free: were it taken for one,
+/// the "16:9" a key later would be a ratio picked over Free and
+/// would set aside a switch set by hand. So it is passed over, and
+/// the aspect before it stands.
+pub(crate) fn pick_aspect(app: &App, sw: f32, sh: f32) {
+    if sw >= 1.0 && sh >= 1.0 {
+        app.set_source_tall(sh > sw);
+    }
+    let geometry = read_geometry(app);
+    if geometry.aspect == Aspect::Free && app.get_aspect_name() == "Custom" {
+        return;
+    }
+    let was = Geometry {
+        aspect: aspect_of_key(app.get_aspect_fitted().as_str()),
+        ..geometry.clone()
+    };
+    app.set_portrait(was.with_aspect(geometry.aspect, sw, sh).portrait);
+    app.set_aspect_fitted(aspect_key(geometry.aspect).into());
+}
+
+/// Every crop the panel takes comes through here, so whatever a
+/// change of shape was asked to keep is let go the moment anything
+/// else moves the crop.
 pub(crate) fn set_crop(app: &App, crop: Option<Crop>) {
+    app.set_crop_kept_area(0.0);
     app.set_geo_has_crop(crop.is_some());
     if let Some(c) = crop {
         app.set_geo_crop_x(c.x);
@@ -30,6 +79,20 @@ pub(crate) fn set_crop(app: &App, crop: Option<Crop>) {
 /// After the angle or aspect changed: keep the crop where it is if it
 /// still fits and keeps the shape asked; otherwise the largest crop
 /// about its center with that shape, no bigger than it was.
+///
+/// "No bigger" is measured two ways. The same shape that no longer
+/// fits (an angle, a keystone) is never wider or taller than it was:
+/// a turn of the picture never grows the crop. A new shape (another
+/// ratio, or the Portrait switch) keeps the crop's area instead,
+/// since capping each side at the old crop's took a wide crop turned
+/// tall down to the old height, and the next turn back down again,
+/// so every toggle shrank it. Area rather than the longer edge, so
+/// that a square picked from 65:24 keeps as much of the picture as
+/// the band did rather than growing to the band's length. The area
+/// asked for is kept on the panel (`crop-kept-area`) until anything
+/// else moves the crop, so a shape the plane cannot hold at that
+/// area, fitted smaller, still turns back to the crop it came from:
+/// toggling twice is where it started.
 ///
 /// `settled` is `!Edit::needs_frame()` for the edit on the panel, and
 /// nothing is touched without it. An edit still waiting on the
@@ -64,8 +127,18 @@ pub(crate) fn refit_crop(app: &App, sw: f32, sh: f32, settled: bool) {
     if fitted.w < 1e-4 || fitted.h < 1e-4 {
         fitted = geometry.largest_fit((0.5, 0.5), ratio, sw, sh);
     }
+    let mut kept = 0.0;
     if geometry.crop.is_some() {
-        let shrink = (current.w / fitted.w).min(current.h / fitted.h).min(1.0);
+        let shrink = if shape_ok {
+            (current.w / fitted.w).min(current.h / fitted.h).min(1.0)
+        } else {
+            let area = |c: &Crop| c.w * pw * c.h * ph;
+            kept = match app.get_crop_kept_area() {
+                a if a > 0.0 => a,
+                _ => area(&current),
+            };
+            (kept / area(&fitted)).sqrt().min(1.0)
+        };
         let (cx, cy) = fitted.center();
         fitted = Crop {
             x: cx - fitted.w * shrink / 2.0,
@@ -75,6 +148,7 @@ pub(crate) fn refit_crop(app: &App, sw: f32, sh: f32, settled: bool) {
         };
     }
     set_crop(app, Some(fitted));
+    app.set_crop_kept_area(kept);
 }
 
 /// The geometry as the panel shows it.
@@ -242,6 +316,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
                     !st.edit.needs_frame(),
                 )
             };
+            pick_aspect(&app, sw, sh);
             refit_crop(&app, sw, sh, settled);
             app.invoke_view_changed();
         });
@@ -259,6 +334,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
             app.set_geo_flip(false);
             set_crop(&app, None);
             app.set_aspect_name("Free".into());
+            app.set_aspect_fitted("Free".into());
             app.set_portrait(false);
             app.set_level_mode(false);
             app.set_guide_mode("".into());
@@ -404,8 +480,8 @@ mod tests {
     use std::rc::Rc;
 
     use super::{refit_crop, show_geometry};
-    use crate::App;
     use crate::testing::{drag, retouch_state, window};
+    use crate::{App, Crop};
     use i_slint_backend_testing::ElementHandle;
     use slint::ComponentHandle;
 
@@ -785,5 +861,357 @@ mod tests {
         app.invoke_geometry_changed();
         let (w, h) = (app.get_geo_crop_w() * sw, app.get_geo_crop_h() * sh);
         assert!(w > h, "{w} by {h} is not on its side");
+    }
+
+    /// The crop as the panel holds it, in plane pixels of a source
+    /// `sw` by `sh` with no turn: left, top, width, height.
+    fn crop_px(app: &App, sw: f32, sh: f32) -> [f32; 4] {
+        [
+            app.get_geo_crop_x() * sw,
+            app.get_geo_crop_y() * sh,
+            app.get_geo_crop_w() * sw,
+            app.get_geo_crop_h() * sh,
+        ]
+    }
+
+    /// An aspect picked from the list, as the Crop tab picks it.
+    fn pick(app: &App, name: &str) {
+        app.set_aspect_name(name.into());
+        app.invoke_geometry_changed();
+    }
+
+    /// The Portrait switch, clicked where it is drawn.
+    fn click_portrait(app: &App) {
+        let (at, size) = crate::testing::labeled(app, "Portrait");
+        crate::testing::click(app, at.x + size.width - 12.0, at.y + size.height / 2.0);
+    }
+
+    /// A frame shot on end, 4000 by 6000 as it is developed: a named
+    /// ratio picked on it is tall, with the switch on to say so. It
+    /// went straight to landscape, the switch read false until it
+    /// was flipped by hand.
+    #[test]
+    fn a_ratio_picked_on_a_tall_frame_is_tall_with_the_switch_on() {
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        let (sw, sh) = (4000.0, 6000.0);
+        state.borrow_mut().source_size = (4000, 6000);
+        app.set_panel_tab("Crop".into());
+        assert!(!app.get_portrait());
+
+        pick(&app, "3:2");
+        assert!(app.get_portrait(), "the switch took the frame's way up");
+        let [_, _, w, h] = crop_px(&app, sw, sh);
+        assert!((h / w - 1.5).abs() < 1e-3, "{w} by {h} is not a tall 3:2");
+        // A 3:2 frame on end is its own tall 3:2.
+        assert!((w - sw).abs() < 1.0 && (h - sh).abs() < 1.0, "{w} by {h}");
+
+        // Another ratio over it keeps the switch, either way it is.
+        pick(&app, "4:3");
+        assert!(app.get_portrait());
+        let [_, _, w, h] = crop_px(&app, sw, sh);
+        assert!((h / w - 4.0 / 3.0).abs() < 1e-3, "{w} by {h}");
+        click_portrait(&app);
+        assert!(!app.get_portrait(), "the click reached the switch");
+        pick(&app, "16:9");
+        assert!(!app.get_portrait(), "a ratio over a ratio kept the switch");
+        let [_, _, w, h] = crop_px(&app, sw, sh);
+        assert!((w / h - 16.0 / 9.0).abs() < 1e-3, "{w} by {h}");
+
+        // "Original" is the frame's own shape whatever the switch
+        // said, and reads tall; a ratio after it takes the frame's
+        // way up again.
+        click_portrait(&app);
+        assert!(app.get_portrait());
+        pick(&app, "Original");
+        assert!(app.get_portrait_shown() && !app.get_portrait());
+        let [_, _, w, h] = crop_px(&app, sw, sh);
+        assert!(
+            (h / w - 1.5).abs() < 1e-3,
+            "{w} by {h} is not the frame's shape"
+        );
+        pick(&app, "5:4");
+        assert!(app.get_portrait());
+
+        // Reset puts the switch off and the aspect free.
+        app.invoke_geometry_reset();
+        assert!(!app.get_portrait() && app.get_aspect_name() == "Free");
+        pick(&app, "1:1");
+        assert!(app.get_portrait(), "after a reset a ratio is a fresh pick");
+
+        // A landscape frame takes the switch off.
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        state.borrow_mut().source_size = (6000, 4000);
+        app.set_portrait(true);
+        pick(&app, "3:2");
+        assert!(!app.get_portrait());
+    }
+
+    /// Every toggle of the switch took the crop down to the last
+    /// one's shorter side, so the crop shrank toggle by toggle.
+    /// Toggled twice it is the crop it was; a tall crop of a wide
+    /// frame, which cannot be as large as the wide one, still turns
+    /// back to the wide one in full.
+    #[test]
+    fn toggling_the_switch_twice_gives_back_the_crop() {
+        for (source, start) in [
+            ((4000u32, 6000u32), None),
+            ((6000, 4000), None),
+            // A small crop drawn off the middle, that fits both ways.
+            (
+                (6000, 4000),
+                Some(Crop {
+                    x: 0.1,
+                    y: 0.2,
+                    w: 0.3,
+                    h: 0.3,
+                }),
+            ),
+        ] {
+            let app = window(1);
+            let (state, _worker) = retouch_state(&app);
+            state.borrow_mut().source_size = source;
+            let (sw, sh) = (source.0 as f32, source.1 as f32);
+            app.set_panel_tab("Crop".into());
+            if let Some(c) = start {
+                super::set_crop(&app, Some(c));
+            }
+            pick(&app, "3:2");
+            let first = crop_px(&app, sw, sh);
+            let area = first[2] * first[3];
+            for round in 0..3 {
+                click_portrait(&app);
+                let turned = crop_px(&app, sw, sh);
+                assert!(
+                    (turned[2] / turned[3] - first[3] / first[2]).abs() < 1e-3,
+                    "{source:?} round {round}: {turned:?} is not {first:?} turned"
+                );
+                assert!(
+                    turned[2] * turned[3] <= area * 1.0001,
+                    "{source:?} round {round}: grew"
+                );
+                click_portrait(&app);
+                let back = [
+                    app.get_geo_crop_x(),
+                    app.get_geo_crop_y(),
+                    app.get_geo_crop_w(),
+                    app.get_geo_crop_h(),
+                ];
+                let want = [first[0] / sw, first[1] / sh, first[2] / sw, first[3] / sh];
+                assert!(
+                    back.iter().zip(want).all(|(a, b)| (a - b).abs() < 1e-4),
+                    "{source:?} round {round}: {back:?} is not {want:?}"
+                );
+            }
+        }
+
+        // Where the turned shape fits, it keeps the area exactly:
+        // a 3:2 crop at the middle of a 3:2 frame on end, half its
+        // width, turned wide.
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        state.borrow_mut().source_size = (4000, 6000);
+        app.set_panel_tab("Crop".into());
+        pick(&app, "3:2");
+        super::set_crop(
+            &app,
+            Some(Crop {
+                x: 0.25,
+                y: 0.25,
+                w: 0.5,
+                h: 0.5,
+            }),
+        );
+        click_portrait(&app);
+        let [_, _, w, h] = crop_px(&app, 4000.0, 6000.0);
+        assert!(
+            (w - 3000.0).abs() < 1.0 && (h - 2000.0).abs() < 1.0,
+            "{w} by {h}"
+        );
+
+        // And a turn of the picture still never grows it: the crop
+        // left by the turn is no wider and no taller than before.
+        let before = crop_px(&app, 4000.0, 6000.0);
+        app.set_geo_angle(8.0);
+        app.invoke_geometry_changed();
+        let after = crop_px(&app, 4000.0, 6000.0);
+        assert!(
+            after[2] <= before[2] + 1e-2 && after[3] <= before[3] + 1e-2,
+            "{after:?} grew past {before:?}"
+        );
+        app.set_geo_angle(0.0);
+        app.invoke_geometry_changed();
+        let level = crop_px(&app, 4000.0, 6000.0);
+        assert!(
+            level[2] <= after[2] + 1e-2 && level[3] <= after[3] + 1e-2,
+            "leveling again grew it: {level:?} past {after:?}"
+        );
+    }
+
+    /// A develop that lands tall, at the size the engine's own
+    /// orientation step gives a 6000 by 4000 sensor tagged
+    /// orientation 8, with 3:2 picked: the outline on the viewport
+    /// stands tall, the way the picture under it does.
+    #[test]
+    fn a_tall_develop_shows_a_tall_crop_outline_on_screen() {
+        use greycard_core::develop::orient;
+        use greycard_core::image::WorkingImage;
+        use greycard_core::raw::Orientation;
+        let app = window(4);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(4));
+        app.invoke_select(1);
+        // The engine's own orientation step, on a sensor of the
+        // frame's shape, says what size the develop lands at.
+        let tag = Orientation::from_exif(8).expect("8 is a tag");
+        let upright = orient(WorkingImage::new(6, 4), tag);
+        let size = (upright.width as u32 * 1000, upright.height as u32 * 1000);
+        assert_eq!(size, (4000, 6000));
+        let generation = state.borrow().generation;
+        crate::panel::deliver::deliver(
+            &app,
+            crate::worker::Outcome::Developed {
+                generation,
+                turn: 0,
+                image: crate::worker::Developed::Halves(std::sync::Arc::new(
+                    crate::worker::Halves {
+                        width: size.0,
+                        height: size.1,
+                        pixels: Vec::new(),
+                    },
+                )),
+                guide: std::sync::Arc::new(crate::finish::Guide::NONE),
+                white: crate::worker::WhiteBase::IDENTITY,
+                seconds: 0.1,
+                detail: None,
+                sharpen: None,
+                dehaze: None,
+                sources: Vec::new(),
+                learned: crate::worker::LearnedReport::Off,
+                fills: crate::worker::FillReport::default(),
+            },
+        );
+        // What the render does with a develop that has landed.
+        {
+            let mut st = state.borrow_mut();
+            st.pending.take().expect("the develop landed");
+            st.source_size = st.shown_size;
+            crate::panel::viewport::settle_source_size(&mut st);
+            assert_eq!(st.source_size, (4000, 6000));
+        }
+        app.set_crop_mode(true);
+        app.set_panel_tab("Crop".into());
+        pick(&app, "3:2");
+        assert!(app.get_portrait());
+        crate::panel::viewport::show_crop_on_view(
+            &state.borrow(),
+            &app,
+            &super::read_geometry(&app),
+        );
+        let (w, h) = (app.get_crop_width(), app.get_crop_height());
+        assert!(
+            w > 0.0 && (h / w - 1.5).abs() < 1e-2,
+            "{w} by {h} on screen"
+        );
+        // Flipped, it lies on its side on the screen too.
+        click_portrait(&app);
+        crate::panel::viewport::show_crop_on_view(
+            &state.borrow(),
+            &app,
+            &super::read_geometry(&app),
+        );
+        let (w, h) = (app.get_crop_width(), app.get_crop_height());
+        assert!(
+            h > 0.0 && (w / h - 1.5).abs() < 1e-2,
+            "{w} by {h} on screen"
+        );
+    }
+
+    /// The Portrait switch says whether the crop is tall, under
+    /// "Original" too, where the stored flag means "the other way
+    /// from the frame": on a tall frame the two read opposite, and
+    /// the panel maps one to the other. Nothing stored changes
+    /// meaning, so an edit saved under "Original" with the flag on
+    /// opens as it was, wide, with the switch reading off.
+    #[test]
+    fn the_switch_reads_tall_under_original_as_under_a_ratio() {
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        let (sw, sh) = (4000.0, 6000.0);
+        state.borrow_mut().source_size = (4000, 6000);
+        app.set_panel_tab("Crop".into());
+
+        pick(&app, "Original");
+        assert!(app.get_portrait_shown(), "a tall frame's own shape is tall");
+        assert!(!app.get_portrait(), "and the stored flag is off for it");
+        let [_, _, w, h] = crop_px(&app, sw, sh);
+        assert!((w - sw).abs() < 1.0 && (h - sh).abs() < 1.0, "{w} by {h}");
+
+        click_portrait(&app);
+        assert!(!app.get_portrait_shown(), "the click turned the switch off");
+        assert!(app.get_portrait(), "by turning the stored flag on");
+        let [_, _, w, h] = crop_px(&app, sw, sh);
+        assert!((w / h - 1.5).abs() < 1e-3, "{w} by {h} is not wide");
+
+        // A named ratio on the same frame: tall is the flag on.
+        pick(&app, "3:2");
+        let [_, _, w, h] = crop_px(&app, sw, sh);
+        assert!(h > w && app.get_portrait_shown() && app.get_portrait());
+
+        // A sidecar saved under "Original", flag on: wide on a tall
+        // frame, as it rendered when it was saved.
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        state.borrow_mut().source_size = (4000, 6000);
+        app.set_panel_tab("Crop".into());
+        let stored = Crop {
+            x: 0.0,
+            y: (1.0 - 4000.0 / 1.5 / 6000.0) / 2.0,
+            w: 1.0,
+            h: 4000.0 / 1.5 / 6000.0,
+        };
+        let geometry = crate::Geometry {
+            aspect: crate::Aspect::Original,
+            portrait: true,
+            crop: Some(stored),
+            ..Default::default()
+        };
+        show_geometry(&geometry, &app);
+        crate::panel::viewport::show_source_shape(&state.borrow(), &app);
+        assert!(!app.get_portrait_shown() && app.get_portrait());
+        assert_eq!(
+            super::read_geometry(&app),
+            geometry,
+            "opening it changed it"
+        );
+        // A move that is not a pick leaves both alone.
+        app.invoke_geometry_changed();
+        assert_eq!(super::read_geometry(&app), geometry);
+        assert!(!app.get_portrait_shown());
+    }
+
+    /// The custom box asks on every key. "16:" reads as no ratio at
+    /// all, and taken for a pick of Free it made the "16:9" a key
+    /// later a fresh pick, which set the switch to the frame's way up
+    /// over the one the user had set by hand.
+    #[test]
+    fn a_custom_ratio_typed_key_by_key_keeps_a_switch_set_by_hand() {
+        let app = window(1);
+        let (state, _worker) = retouch_state(&app);
+        state.borrow_mut().source_size = (4000, 6000);
+        app.set_panel_tab("Crop".into());
+        pick(&app, "3:2");
+        assert!(app.get_portrait());
+        click_portrait(&app);
+        assert!(!app.get_portrait(), "set wide by hand");
+        app.set_aspect_custom("".into());
+        pick(&app, "Custom");
+        for typed in ["1", "16", "16:", "16:9"] {
+            app.set_aspect_custom(typed.into());
+            app.invoke_geometry_changed();
+            assert!(!app.get_portrait(), "{typed:?} set the switch aside");
+        }
+        let [_, _, w, h] = crop_px(&app, 4000.0, 6000.0);
+        assert!((w / h - 16.0 / 9.0).abs() < 1e-3, "{w} by {h}");
     }
 }
