@@ -15,6 +15,13 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] The Tint section has no on/off switch, globally or in a mask,
+      where every other section has one; add it, off acting as no tint
+      and the hue and amount kept
+- [ ] The Portrait switch reads off over a tall crop on a portrait
+      frame in the user's build of §291, and a click shows only on the
+      second; likely the quarter-turn count in `plane-tall` against a
+      picture already standing turned
 ## Open Questions
 
 - Default exposure is 0.8 stops up across the board. Is that too much?
