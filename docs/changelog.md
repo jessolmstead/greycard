@@ -12,6 +12,15 @@ note a first tester reads.
 
 ## 0.7.0
 
+### Masks
+
+- The Adjustments list (Global, each mask with its switch, New mask)
+  stays pinned above the Masks tab's sections, so Global or another
+  mask is one click away from any slider; it shows up to six rows as
+  the window's height allows and scrolls inside itself past them. The
+  chosen mask's name and switches are their own MASK section
+  ([§300](https://github.com/jessolmstead/greycard/blob/master/docs/notes/300-the-adjustments-list-stays-pinned.md))
+
 ### Fixes
 
 - A two-finger touchpad scroll over the picture pans it; a mouse

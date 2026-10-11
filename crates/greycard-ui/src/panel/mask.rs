@@ -2890,4 +2890,267 @@ mod tests {
         assert_eq!(the_shape(&state), linear);
         assert!(state.borrow().mask_drag.is_none());
     }
+
+    /// Let the sections' folding and any other animation run out, so
+    /// positions read are where the layout settles. An animation
+    /// starts when its property is next read, not when what it
+    /// follows changes: the layout is read first, then the clock run.
+    fn settle_layout(app: &App) {
+        for _ in 0..2 {
+            placed(app, "Global");
+            i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(500));
+            slint::platform::update_timers_and_animations();
+        }
+    }
+
+    /// Where each element labeled `label` is, whatever its role, top
+    /// first.
+    fn placed(app: &App, label: &str) -> Vec<(slint::LogicalPosition, slint::LogicalSize)> {
+        use i_slint_backend_testing::ElementHandle;
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+        let mut found: Vec<_> = ElementHandle::find_by_accessible_label(app, label)
+            .map(|e| (e.absolute_position(), e.size()))
+            .collect();
+        found.sort_by(|a, b| a.0.y.total_cmp(&b.0.y));
+        found
+    }
+
+    /// The Adjustments list is pinned above the Masks tab's sections:
+    /// with the sections scrolled down to the tint, the last of them, Global
+    /// and each mask are still in sight, where they were before the
+    /// scroll and above what the sections show, and a click on a row
+    /// chooses it.
+    #[test]
+    fn the_adjustments_list_stays_in_reach_from_far_down_the_tab() {
+        use crate::testing::buttons;
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        settle_layout(&app);
+        let global_at = buttons(&app, "Global")[0].0;
+
+        // Far down: the tint's Amount, at the foot of the tab, is in
+        // the view under the list.
+        let (amount, _) = crate::testing::labeled(&app, "Amount");
+        assert!(app.get_panel_scroll() < -1500.0, "the sections scrolled");
+        let global = buttons(&app, "Global");
+        assert_eq!(global.len(), 1);
+        assert_eq!(global[0].0.y, global_at.y, "the list does not scroll");
+        let foot = placed(&app, "New mask")[0];
+        assert!(
+            foot.0.y + foot.1.height <= amount.y,
+            "the list is above the view"
+        );
+        let (at, size) = global[0];
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(app.get_target(), 0);
+        assert_eq!(state.borrow().target, None);
+
+        // And from far down to another mask.
+        app.invoke_target_changed(1);
+        settle_layout(&app);
+        crate::testing::labeled(&app, "Amount");
+        assert!(app.get_panel_scroll() < -1500.0, "the sections scrolled");
+        let second = buttons(&app, "Mask 2");
+        assert_eq!(second.len(), 1);
+        let (at, size) = second[0];
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(app.get_target(), 2);
+        assert_eq!(state.borrow().target, Some(1));
+    }
+
+    /// A long list holds at most six rows and scrolls inside itself,
+    /// so New mask and the sections under it keep their place; the
+    /// chosen row is kept in sight, at the list's foot after New mask
+    /// and back at its head on Global.
+    #[test]
+    fn a_long_adjustments_list_scrolls_inside_itself() {
+        use crate::testing::buttons;
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        settle_layout(&app);
+        // Global alone: the list's top, and how far below it New mask is.
+        let top = buttons(&app, "Global")[0].0.y;
+        let alone = placed(&app, "New mask")[0].0.y - top;
+        app.invoke_new_mask();
+        settle_layout(&app);
+        let pitch = buttons(&app, "Mask 1")[0].0.y - top;
+        assert!(pitch > 0.0);
+
+        for _ in 1..10 {
+            app.invoke_new_mask();
+        }
+        settle_layout(&app);
+        assert_eq!(app.get_target(), 10);
+        let new_mask = placed(&app, "New mask")[0];
+        assert!(
+            (new_mask.0.y - top - (alone + 5.0 * pitch)).abs() < 1.0,
+            "six rows shown, not eleven: New mask {} below the list's top",
+            new_mask.0.y - top
+        );
+        let chosen = buttons(&app, "Mask 10")[0];
+        assert!(chosen.0.y >= top - 0.5, "the chosen row is in sight");
+        assert!(chosen.0.y + chosen.1.height <= new_mask.0.y);
+        // Scrolled up out of the list, and so out of sight.
+        assert!(buttons(&app, "Global").is_empty(), "Global scrolled out");
+
+        app.invoke_target_changed(0);
+        settle_layout(&app);
+        let global = buttons(&app, "Global")[0];
+        assert!((global.0.y - top).abs() < 0.5, "Global back at the head");
+        let (at, size) = buttons(&app, "Mask 3")[0];
+        assert!(at.y + size.height <= new_mask.0.y);
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(app.get_target(), 3);
+
+        // Deleted down to three masks from the list's foot (a delete
+        // leaves Global chosen), it is short again and nothing is
+        // left scrolled away.
+        for last in (4..=10).rev() {
+            app.invoke_target_changed(last);
+            settle_layout(&app);
+            app.invoke_delete_adjustment();
+            settle_layout(&app);
+        }
+        assert_eq!(app.get_adjustment_names().row_count(), 4);
+        let global = buttons(&app, "Global")[0];
+        assert!((global.0.y - top).abs() < 0.5, "Global at the head again");
+        let new_mask = placed(&app, "New mask")[0];
+        assert!((new_mask.0.y - top - (alone + 3.0 * pitch)).abs() < 1.0);
+    }
+
+    /// Folded, the list is its header alone, and the header names
+    /// the chosen row.
+    #[test]
+    fn the_folded_adjustments_list_names_the_chosen_row() {
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        app.set_collapsed_adjustments(true);
+        settle_layout(&app);
+        assert!(
+            placed(&app, "New mask").is_empty(),
+            "the rows are folded away"
+        );
+        assert!(placed(&app, "Mask 2").is_empty());
+        assert_eq!(placed(&app, "Mask 1").len(), 1, "the header's note");
+    }
+
+    /// Where the bottom of the panel's footer (Fit and Export) is: the
+    /// lowest "Fit", since the zoom's words say "Fit" too, higher up.
+    fn footer_y(app: &App) -> f32 {
+        placed(app, "Fit").last().expect("the footer").0.y
+    }
+
+    /// In a short window, or under a tall scope, the list gives up
+    /// rows before the panel gives up room: with ten masks, the footer
+    /// is where it is on Develop, not pushed down under the strip,
+    /// whichever scope is over the panel.
+    #[test]
+    fn a_short_panel_keeps_its_footer_with_a_long_list() {
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        for _ in 0..10 {
+            app.invoke_new_mask();
+        }
+        let shown = |app: &App| {
+            (0..=10)
+                .filter(|i| !crate::testing::buttons(app, &format!("Mask {i}")).is_empty())
+                .count()
+        };
+        for scope in ["RGB", "Wave", "Vector"] {
+            app.set_scope(scope.into());
+            for height in [650.0, 700.0, 800.0, 900.0] {
+                app.window()
+                    .set_size(slint::LogicalSize::new(1500.0, height));
+                app.set_panel_tab("Develop".into());
+                settle_layout(&app);
+                let develop = footer_y(&app);
+                app.set_panel_tab("Masks".into());
+                settle_layout(&app);
+                let rows = shown(&app);
+                // The vectorscope is as tall as the panel is wide:
+                // under it, below about 780 px, even one row and New
+                // mask are more than the panel has.
+                if scope != "Vector" || height >= 800.0 {
+                    assert!(
+                        (footer_y(&app) - develop).abs() < 0.5,
+                        "{scope} at {height}: the footer stays put"
+                    );
+                }
+                assert!(rows >= 1, "{scope} at {height}: a row in sight");
+                assert!(
+                    !placed(&app, "Mask 10").is_empty(),
+                    "{scope} at {height}: the chosen row is in sight"
+                );
+            }
+        }
+        // And with the room, all six.
+        app.set_scope("RGB".into());
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 1100.0));
+        settle_layout(&app);
+        assert_eq!(shown(&app), 6, "six rows in a tall window");
+    }
+
+    /// The chosen row is in sight when the list is built again: on
+    /// coming back to the Masks tab, and when the rows change under a
+    /// target that does not.
+    #[test]
+    fn the_chosen_row_is_in_sight_when_the_list_comes_back() {
+        use crate::testing::buttons;
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        for _ in 0..10 {
+            app.invoke_new_mask();
+        }
+        app.invoke_target_changed(9);
+        settle_layout(&app);
+        assert_eq!(buttons(&app, "Mask 9").len(), 1);
+        app.set_panel_tab("Develop".into());
+        settle_layout(&app);
+        app.set_panel_tab("Masks".into());
+        settle_layout(&app);
+        assert_eq!(buttons(&app, "Mask 9").len(), 1, "Mask 9 in sight again");
+
+        // Global chosen and the list scrolled to its foot by the wheel,
+        // then fewer rows with Global still chosen and the list as tall
+        // as before, as another photo or an undo leaves it: the list
+        // shows the chosen row again, Global at its head.
+        app.invoke_target_changed(0);
+        settle_layout(&app);
+        let (global, size) = buttons(&app, "Global")[0];
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(global.x + size.width / 2.0, global.y + 40.0),
+                delta_x: 0.0,
+                delta_y: -400.0,
+            });
+        settle_layout(&app);
+        assert!(
+            buttons(&app, "Global").is_empty(),
+            "the wheel scrolled the list"
+        );
+        let names: Vec<slint::SharedString> = std::iter::once("Global".into())
+            .chain((1..=8).map(|i| format!("Mask {i}").into()))
+            .collect();
+        app.set_adjustment_names(std::rc::Rc::new(slint::VecModel::from(names)).into());
+        app.set_adjustment_on(std::rc::Rc::new(slint::VecModel::from(vec![true; 8])).into());
+        settle_layout(&app);
+        let head = buttons(&app, "Global");
+        assert_eq!(head.len(), 1, "Global in sight");
+        assert_eq!(head[0].0.y, global.y, "Global at the head");
+    }
 }

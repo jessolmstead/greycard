@@ -39,10 +39,6 @@ collections and smart collections that survive a move, a mask has its
 own Detail, and the first tester's rough edges on masks, the touchpad
 and export are smoothed.
 
-- [ ] The Adjustments list (Global, each mask, New mask) stays pinned
-      above the Masks tab's scrolling sections, at most six rows tall
-      with its own scroll, so Global or another mask is one click from
-      any slider (#18)
 - [ ] The window opens no taller than the screen's visible area, so a
       sheet's foot is never under the Dock or the task bar; a lower
       preferred height first, the platform's work area if that is not

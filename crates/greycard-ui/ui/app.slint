@@ -12,7 +12,7 @@ import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 export { Typing, TypedNumber } from "controls.slint";
 import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
-import { AdjustmentsSection } from "panel/mask.slint";
+import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
 import { PresetsSection } from "panel/presets.slint";
 import { WhiteBalanceSection, ColorSection, MixerSection, BlackWhiteSection, GradingSection, TintSection } from "panel/color.slint";
@@ -693,6 +693,7 @@ export component App inherits Window {
     // Which sections are folded away; kept between runs.
     in-out property <bool> collapsed-navigator: false;
     in-out property <bool> collapsed-adjustments: false;
+    in-out property <bool> collapsed-mask: false;
     in-out property <bool> collapsed-wb: false;
     in-out property <bool> collapsed-light: false;
     in-out property <bool> collapsed-curves: false;
@@ -2015,7 +2016,7 @@ export component App inherits Window {
                 // The file, what it was shot at and the scopes stay
                 // at the top while the sections scroll under them, so
                 // the histogram is in sight of whatever slider moves it.
-                PanelHead {
+                head := PanelHead {
                     culling <=> root.culling;
                     file-name: root.file-name;
                     shot-camera: root.shot-camera;
@@ -2044,7 +2045,7 @@ export component App inherits Window {
                 // masks and the retouch on tabs of their own. The bar
                 // stays put above the sections, so it is always within
                 // reach however far a tab has scrolled.
-                VerticalLayout {
+                tabs := VerticalLayout {
                     padding-left: Theme.space-4;
                     padding-right: Theme.space-4;
                     padding-top: Theme.space-2;
@@ -2064,8 +2065,40 @@ export component App inherits Window {
                         }
                     }
                 }
+                // The Masks tab's list of what the panel edits, pinned
+                // as the bar is: whatever slider is in hand, Global or
+                // another mask is one click away. The sections scroll
+                // under it, and the scroll counts from its foot, so
+                // the list's own height never moves what they show.
+                if root.panel-tab == "Masks": VerticalLayout {
+                    padding-left: Theme.space-4;
+                    padding-right: Theme.space-4;
+                    padding-top: Theme.space-2;
+                    AdjustmentsList {
+                        // What the panel has under its head (the
+                        // scope, whose height is the scope's), the tab
+                        // bar and over the footer, none of which reads
+                        // the list.
+                        room: root.height - root.strip-h - head.preferred-height - tabs.preferred-height - panel-foot.height;
+                        adjustment-names <=> root.adjustment-names;
+                        target <=> root.target;
+                        adjustment-on <=> root.adjustment-on;
+                        collapsed-adjustments <=> root.collapsed-adjustments;
+                        target-changed(a) => { root.target-changed(a); }
+                        adjustment-toggled(a) => { root.adjustment-toggled(a); }
+                        new-mask => { root.new-mask(); }
+                        delete-adjustment => { root.delete-adjustment(); }
+                    }
+                }
                 ScrollView {
                     content-y <=> root.panel-scroll;
+                    // Under a tall scope in a short window the pinned
+                    // list, down to its one row, can still want more
+                    // than the panel has: there the sections' view
+                    // gives up the rest of its room (std's own floor
+                    // is 50 px) before the footer is pushed under the
+                    // strip.
+                    min-height: root.panel-tab == "Masks" ? 0px : 50px;
                     VerticalLayout {
                         alignment: start;
                         padding: Theme.space-4;
@@ -2111,7 +2144,7 @@ export component App inherits Window {
                             archive-rejects-asked(i) => { root.archive-rejects-asked(i); }
                             focus-keys => { keys.focus(); }
                         }
-                        if root.panel-tab == "Masks": AdjustmentsSection {
+                        if root.panel-tab == "Masks" && root.target > 0: AdjustmentsSection {
                             adjustment-names <=> root.adjustment-names;
                             target <=> root.target;
                             mask-invert <=> root.mask-invert;
@@ -2131,7 +2164,7 @@ export component App inherits Window {
                             pick-started(a) => { root.pick-started(a); }
                             show-mask <=> root.show-mask;
                             show-mask-toggled => { root.show-mask-toggled(); }
-                            collapsed-adjustments <=> root.collapsed-adjustments;
+                            collapsed-mask <=> root.collapsed-mask;
                             placing <=> root.placing;
                             adjustment-name <=> root.adjustment-name;
                             component-names <=> root.component-names;
@@ -2139,7 +2172,6 @@ export component App inherits Window {
                             shape-invert <=> root.shape-invert;
                             component <=> root.component;
                             shape-mode <=> root.shape-mode;
-                            adjustment-on <=> root.adjustment-on;
                             placing-into <=> root.placing-into;
                             component-kind <=> root.component-kind;
                             component-heading: root.component-heading;
@@ -2147,10 +2179,6 @@ export component App inherits Window {
                             brush-feather <=> root.brush-feather;
                             brush-flow <=> root.brush-flow;
                             brush-op <=> root.brush-op;
-                            target-changed(a) => { root.target-changed(a); }
-                            adjustment-toggled(a) => { root.adjustment-toggled(a); }
-                            new-mask => { root.new-mask(); }
-                            delete-adjustment => { root.delete-adjustment(); }
                             add-shape(a, b) => { root.add-shape(a, b); }
                             add-part(a, b) => { root.add-part(a, b); }
                             parts-menu-shown <=> root.parts-menu-shown;
@@ -2529,7 +2557,7 @@ export component App inherits Window {
                         }
                     }
                 }
-                Rectangle {
+                panel-foot := Rectangle {
                     height: Theme.control-height + 2 * Theme.space-3 + 1px;
                     background: Theme.surface;
                     Rectangle { y: 0; height: 1px; width: 100%; background: Theme.border; }

@@ -747,6 +747,7 @@ pub(crate) const FOLDS: &[Fold] = &[
         App::get_collapsed_adjustments,
         App::set_collapsed_adjustments,
     ),
+    ("mask", App::get_collapsed_mask, App::set_collapsed_mask),
     (
         "white-balance",
         App::get_collapsed_wb,
