@@ -2942,6 +2942,16 @@ export component App inherits Window {
         clicked => { root.left-hidden = !root.left-hidden; keys.focus(); }
     }
 
+    // Under every sheet, over everything else: a wheel or a touchpad's
+    // swipe that the sheet does not take (its dimmed surround, its
+    // header and buttons, a list already at its end) stops here, and
+    // never zooms the picture or scrolls a pane or the grid behind it.
+    // Each sheet's surround takes the presses already; a TouchArea
+    // passes a scroll it has no handler for to whatever is beneath.
+    if root.sheet-open(): TouchArea {
+        scroll-event(e) => { return accept; }
+    }
+
     // The model sheet: a download offered, with its license, until
     // answered.
     if root.fetch-open: ModelSheet {

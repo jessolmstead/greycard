@@ -14,6 +14,10 @@ note a first tester reads.
 
 ### Fixes
 
+- A wheel or touchpad scroll over an open sheet, its dimmed surround,
+  its buttons or a list at its end no longer zooms the picture behind
+  it
+  ([§298](https://github.com/jessolmstead/greycard/blob/master/docs/notes/298-a-sheet-keeps-the-wheel.md))
 - A drag anywhere on a radial or linear mask's body moves the mask;
   before, only the center handle did and a drag elsewhere panned the
   picture. The handles keep their meanings, a click on the body still

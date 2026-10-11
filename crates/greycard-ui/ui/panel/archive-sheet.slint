@@ -135,7 +135,7 @@ export component ArchiveCard inherits Rectangle {
     height: 2 * Theme.space-3 + 3px + Theme.space-2 + Theme.control-height;
     border-radius: Theme.radius-md;
     background: #000000c8;
-    TouchArea { }
+    TouchArea { scroll-event(e) => { return accept; } }
     track := Rectangle {
         x: Theme.space-3;
         y: Theme.space-3;

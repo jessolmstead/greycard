@@ -43,8 +43,10 @@ and export are smoothed.
       above the Masks tab's scrolling sections, at most six rows tall
       with its own scroll, so Global or another mask is one click from
       any slider (#18)
-- [ ] The export sheet scrolls on a short screen, and a scroll under
-      any sheet never reaches the picture (#21)
+- [ ] The window opens no taller than the screen's visible area, so a
+      sheet's foot is never under the Dock or the task bar; a lower
+      preferred height first, the platform's work area if that is not
+      enough; tried on a Mac (#21, §298)
 - [ ] The export sheet shows the folder it will write to (the last one
       used, or the shoot's export subfolder) with a Choose button beside
       it, and Export writes there without a dialog; the chooser only

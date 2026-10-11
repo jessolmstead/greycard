@@ -2062,4 +2062,144 @@ mod tests {
         state.borrow_mut().exporting = None;
         crate::testing::remove_dir_retry(&dir);
     }
+
+    /// Where the element a screen reader knows as `label` is, and how
+    /// big, if it is on show: the topmost of several.
+    fn shown(app: &App, label: &str) -> Option<(slint::LogicalPosition, slint::LogicalSize)> {
+        use i_slint_backend_testing::ElementHandle;
+        // A control a property has just brought in is built on the
+        // next event: a pointer move at the corner, where nothing is.
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+        ElementHandle::find_by_accessible_label(app, label)
+            .map(|e| (e.absolute_position(), e.size()))
+            .min_by(|a, b| a.0.y.total_cmp(&b.0.y))
+    }
+
+    fn wheel(app: &App, x: f32, y: f32, delta_y: f32) {
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(x, y),
+                delta_x: 0.0,
+                delta_y,
+            });
+    }
+
+    #[test]
+    fn a_wheel_over_an_open_sheet_leaves_the_picture_alone() {
+        let app = crate::testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 600.0));
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        // Where the picture is and how big: each wheel is judged on its
+        // own, as a swipe out and its swipe back would cancel.
+        let view = || {
+            let st = state.borrow();
+            (st.zoom, st.center)
+        };
+        // Left of any sheet's card, over the picture.
+        let (x, y) = (400.0, 300.0);
+        let before = view();
+        wheel(&app, x, y, 60.0);
+        assert_ne!(view(), before, "with no sheet up, the wheel zooms there");
+        let still = |at: (f32, f32), what: &str| {
+            for delta in [60.0, -60.0, 15.0, -15.0] {
+                let before = view();
+                wheel(&app, at.0, at.1, delta);
+                assert_eq!(view(), before, "{what}, by {delta}");
+            }
+        };
+
+        type Open = fn(&App, bool);
+        let sheets: [(&str, Open); 7] = [
+            ("export", |a, on| a.set_export_open(on)),
+            ("preset", |a, on| a.set_preset_open(on)),
+            ("import", |a, on| a.set_import_open(on)),
+            ("settings", |a, on| a.set_settings_open(on)),
+            ("archive", |a, on| a.set_archive_open(on)),
+            ("sync", |a, on| a.set_sync_open(on)),
+            ("match", |a, on| a.set_match_open(on)),
+        ];
+        for (name, open) in sheets {
+            open(&app, true);
+            // Its surround, and the middle of the window, where its
+            // card is.
+            still((x, y), &format!("the {name} sheet's surround"));
+            still((750.0, 300.0), &format!("the {name} sheet's card"));
+            open(&app, false);
+        }
+
+        // The export sheet's own header and buttons, outside its
+        // scrolled choices, and those choices scrolled to either end.
+        app.set_export_mark("Text".into());
+        app.set_export_open(true);
+        let (title, _) = shown(&app, "Export").expect("the title");
+        let (cancel, size) = shown(&app, "Cancel").expect("Cancel");
+        let (format, _) = shown(&app, "Format").expect("the Format row");
+        still((title.x + 4.0, title.y + 4.0), "the export sheet's header");
+        still(
+            (cancel.x + size.width / 2.0, cancel.y + size.height / 2.0),
+            "the export sheet's buttons",
+        );
+        for _ in 0..20 {
+            still((format.x + 4.0, format.y + 4.0), "the choices");
+        }
+    }
+
+    #[test]
+    fn the_export_sheet_fits_a_short_window_and_its_choices_scroll() {
+        let app = crate::testing::window(1);
+        // Just over the shortest the window goes.
+        let height = 520.0;
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, height));
+        let (_state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
+        app.invoke_select(0);
+        // Everything that makes it tall: a watermark's block and the
+        // queue's row.
+        app.set_export_mark("Text".into());
+        app.set_export_queue_sets(2);
+        app.set_export_queue_line("2 sets waiting".into());
+        app.set_export_open(true);
+
+        let bottom = |label: &str| {
+            let (at, size) = shown(&app, label).unwrap_or_else(|| panic!("{label} on show"));
+            at.y + size.height
+        };
+        // Every button in the window, below the choices.
+        for label in ["Cancel", "Add to queue...", "Export the queue", "Clear"] {
+            assert!(
+                bottom(label) <= height,
+                "{label} at {} in {height}",
+                bottom(label)
+            );
+        }
+        let (title, _) = shown(&app, "Export").expect("the title");
+        let (cancel, _) = shown(&app, "Cancel").expect("Cancel");
+        // The watermark's strength is past the fold, until the choices
+        // are scrolled to it.
+        assert!(
+            shown(&app, "Opacity").is_none(),
+            "the choices are taller than their view"
+        );
+        let (format, _) = shown(&app, "Format").expect("the Format row");
+        for _ in 0..20 {
+            wheel(&app, format.x + 4.0, format.y + 4.0, -60.0);
+        }
+        let (opacity, size) = shown(&app, "Opacity").expect("scrolled to Opacity");
+        assert!(opacity.y + size.height <= cancel.y, "above the buttons");
+        assert_eq!(
+            shown(&app, "Export").expect("the title").0,
+            title,
+            "the header stays"
+        );
+        assert_eq!(
+            shown(&app, "Cancel").expect("Cancel").0,
+            cancel,
+            "the buttons stay"
+        );
+    }
 }
