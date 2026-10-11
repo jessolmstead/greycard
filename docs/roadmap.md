@@ -56,6 +56,12 @@ and smart collections that survive a move.
       changes the hash, a hand order of their own; a sidebar list, add
       and remove from the grid and the strip, a smart one saved from
       the filter bar (§273)
+- [ ] The copy settings sheet: check and uncheck all; each section a
+      heading with its sliders under it (Detail: Texture, Clarity,
+      Dehaze; Light: the six; and so on) so one slider can be copied
+      alone; "Adjustments" named Masks, with each mask listed by name
+      to copy on its own, and whether the masks replace the target's
+      or join them; the same list for a preset's parts
 
 ## Tracks
 
@@ -367,6 +373,10 @@ for testing are in `docs/test-frames.md`.
 - [ ] Panorama stitching: feature matching and RANSAC for the coarse
       homography, registration for refinement, multi-band blend from
       the focus stack (§71)
+- [ ] A center for the vignette: two sliders or a drag on the picture
+      to move the shape off the frame's middle, as darktable has and
+      Lightroom has not; the center kept as fractions of the frame so
+      it sits on the crop
 - [ ] A Compress slider in the Light section: the guide plane of §85
       pulled toward mid grey by a strength, so bright regions come down
       and dark ones up together and the texture inside each rides on
