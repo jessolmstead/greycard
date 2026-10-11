@@ -1121,6 +1121,9 @@ mod tests {
     /// Edit hooks that want every file but those in `kept`, and record
     /// the makings, in order, into `log`; each says it kept pictures.
     /// Two at once, none alone.
+    /// Hooks that record each making into `log` and keep every picture,
+    /// one making at a time so the log is the order the pool chose and
+    /// not the order the threads happened to run.
     fn edit_hooks(log: Arc<Mutex<Vec<String>>>, kept: &'static [usize]) -> EditHooks {
         EditHooks {
             wants: Arc::new(move |path| !kept.contains(&index_of(path))),
@@ -1128,7 +1131,7 @@ mod tests {
                 log.lock().unwrap().push(format!("e{}", index_of(path)));
                 Ok(true)
             }),
-            at_once: Arc::new(|| (2, None)),
+            at_once: Arc::new(|| (1, None)),
             alone: Arc::new(|_| false),
         }
     }
@@ -1189,11 +1192,9 @@ mod tests {
         pool.hold(false);
         let order = until_logged(&log, 6);
         assert_eq!(order[0], "p3", "the preview before every edit");
-        let mut edits = order[1..].to_vec();
-        // Two at once on four threads: the two nearest the range shown
-        // begin together, in either order, and the rest follow outward.
-        edits[..2].sort();
-        assert_eq!(edits, ["e1", "e2", "e0", "e4", "e5"]);
+        // One at a time, so this is the pool's order: the frames
+        // nearest the range shown first, the rest outward.
+        assert_eq!(order[1..], ["e2", "e1", "e0", "e4", "e5"]);
         let mut kept = Vec::new();
         while kept.len() < 5 {
             let (what, i) = rx.recv_timeout(WAIT).unwrap();
