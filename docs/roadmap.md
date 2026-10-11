@@ -32,6 +32,14 @@ The grid and the strip show each edited frame as edited, a set opens
 in a lightbox for judging it whole, and frames gather into collections
 and smart collections that survive a move.
 
+- [ ] Detail in a mask: Texture, Clarity and Dehaze in a mask's look,
+      beside its Light and Color, so a face is smoothed or a distant
+      ridge dehazed without touching the rest; the bands and the
+      transmission made once in the develop and each mask's amount
+      a gain under its weight, on the CPU and the GPU alike, in the
+      export, the viewport and the reduced develop; a Detail section
+      on the Masks tab, a history row, a copy sheet part (design to
+      come as its own section)
 - [ ] Lightbox over a collection, or the picks until collections
       exist: the grid with everything that gets in the way of judging
       consistency taken out. Tiles at a chosen size up to a handful
