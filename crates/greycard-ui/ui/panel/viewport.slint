@@ -7,6 +7,9 @@ import { Pt, MaskBox, MaskPick, PersonBox, CompareTile } from "../structs.slint"
 import { CropHandle, ThumbBadges, PanelButton } from "../controls.slint";
 
 export component Viewport inherits Rectangle {
+    /// A name is being typed in a panel's text box: the pointer
+    /// crossing the picture leaves the keys where they are.
+    in property <bool> typing: false;
     callback zoom(float, length, length);
     callback pan(length, length);
     callback toggle-zoom(length, length);
@@ -144,9 +147,11 @@ export component Viewport inherits Rectangle {
             : self.pressed ? MouseCursor.grabbing : MouseCursor.grab;
         // The keys belong to the picture whenever the pointer is
         // on it, or the last press was: a clicked slider keeps
-        // them while the pointer stays on the panel.
+        // them while the pointer stays on the panel. Not while a
+        // name is being typed somewhere: the pointer crossing the
+        // picture must not end the typing; a press on it does.
         changed has-hover => {
-            if (self.has-hover) { root.focus-keys(); }
+            if (self.has-hover && !root.typing) { root.focus-keys(); }
         }
         pointer-event(e) => {
             if (e.kind == PointerEventKind.down) {
@@ -714,7 +719,7 @@ export component Viewport inherits Rectangle {
         guide := TouchArea {
             mouse-cursor: MouseCursor.crosshair;
             changed has-hover => {
-                if (self.has-hover) { root.focus-keys(); }
+                if (self.has-hover && !root.typing) { root.focus-keys(); }
             }
             pointer-event(e) => {
                 if (e.button != PointerEventButton.left) { return; }

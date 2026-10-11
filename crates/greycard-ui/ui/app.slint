@@ -1878,6 +1878,7 @@ export component App inherits Window {
             // viewport clips, or that work is drawn over the left bar
             // and the filmstrip and takes their clicks besides.
             view := Viewport {
+                typing: root.snapshot-editing >= 0;
                 zoom(a, b, c) => { root.zoom(a, b, c); }
                 pan(a, b) => { root.pan(a, b); }
                 toggle-zoom(a, b) => { root.toggle-zoom(a, b); }

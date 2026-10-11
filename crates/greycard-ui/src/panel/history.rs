@@ -1674,7 +1674,14 @@ mod tests {
             "the new row waits for its name"
         );
         testing::type_text(&app, "Keep");
-        // A click on the picture, nowhere near the row.
+        // The pointer crossing the picture does not end the naming:
+        // the picture takes the keys on hover otherwise.
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(750.0, 450.0),
+            });
+        assert_eq!(app.get_snapshot_editing(), 0, "a hover leaves the naming");
+        // A click on the picture, nowhere near the row, ends it.
         testing::click(&app, 750.0, 450.0);
         assert_eq!(app.get_snapshot_editing(), -1, "the naming ended");
         assert_eq!(state.borrow().sidecars[0].snapshots[0].name, "Keep");

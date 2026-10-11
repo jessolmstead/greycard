@@ -15,6 +15,11 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] Color grading: the hue, saturation and luminance sliders follow
+      the wheel last dragged, not the wheel chosen or expanded, so a
+      wheel other than the last one touched cannot be fine-tuned with
+      the sliders; the chosen wheel should be marked plainly and
+      choosing or expanding one should hand it the sliders
 ## Open Questions
 
 - Default exposure is 0.8 stops up across the board. Is that too much?
@@ -421,6 +426,11 @@ clears or a tester asks for it.
       top and Monitor, Proof and Demosaic at the bottom, and up and down
       buttons for it in the Settings sheet. Goes with the develop
       panel's move out of app.slint, since that is the same rewiring
+- [ ] The picture takes the keys when the pointer enters it, so a text
+      box in a panel (the filter, a custom aspect, a mask's name) loses
+      the keys the moment the pointer crosses the picture; a typing flag
+      the panels' text boxes set should hold the keys until a press, as
+      a snapshot's name does since §290
 - [ ] Resizable side panes: drag the left pane's and the develop
       panel's inner edge, today's widths the minimum, about 500 px the
       most, each kept in the settings; first see what a viewport
