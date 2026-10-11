@@ -72,6 +72,11 @@ export component Viewport inherits Rectangle {
     callback crop-draw-pressed(length, length);
     callback crop-draw-dragged(length, length);
     callback crop-draw-released();
+    // Draw in hand (the CROP section's button): the crop's handles
+    // stand aside, so the next press anywhere on the picture, inside
+    // the crop too, reaches the picture's own area and a drag there
+    // draws; its release, or a click that never dragged, puts it down.
+    in-out property <bool> crop-draw-armed;
     callback level-end(length, length, length, length);
     callback guide-stroke(length, length, length, length);
     in property <[Pt]> guide-kept;
@@ -208,6 +213,11 @@ export component Viewport inherits Rectangle {
                     root.place-released();
                 } else if (self.crop-drawing) {
                     root.crop-draw-released();
+                    root.crop-draw-armed = false;
+                } else if (root.crop-draw-armed && e.button == PointerEventButton.left) {
+                    // Draw in hand and nothing drawn: put down, the
+                    // crop left as it was and no zoom either.
+                    root.crop-draw-armed = false;
                 } else if (!self.dragged && e.button == PointerEventButton.left) {
                     // A click on the empty picture lets go
                     // of a chosen repair, as Esc does.
@@ -223,6 +233,7 @@ export component Viewport inherits Rectangle {
                 // coming.
                 if (self.crop-drawing) {
                     root.crop-draw-released();
+                    root.crop-draw-armed = false;
                 }
                 self.menu-down = false;
                 self.picked-down = false;
@@ -493,6 +504,49 @@ export component Viewport inherits Rectangle {
             dropped => { root.patch-dropped(); }
         }
     }
+    // Alt and a press on the crop, its body or a handle: a fresh crop
+    // drawn from there, as a press outside it draws one, rather than
+    // the one there moved or resized. Alt is latched on the press,
+    // since a handle's own `alt` follows the key on every move, and
+    // the press point is kept in the picture area's own coordinates,
+    // which is what the draw callbacks take.
+    property <bool> crop-alt-down;
+    property <bool> crop-alt-drawing;
+    property <length> crop-alt-x;
+    property <length> crop-alt-y;
+    function crop-grabbed(i: int, alt: bool, x: length, y: length) {
+        root.crop-alt-down = alt;
+        root.crop-alt-drawing = false;
+        if (alt) {
+            root.crop-alt-x = x - ta.absolute-position.x;
+            root.crop-alt-y = y - ta.absolute-position.y;
+        } else {
+            root.crop-pressed(i);
+        }
+    }
+    function crop-moved(i: int, dx: length, dy: length) {
+        if (!root.crop-alt-down) {
+            root.crop-dragged(i, dx, dy);
+            return;
+        }
+        // The same few pixels a drag outside the crop must clear.
+        if (!root.crop-alt-drawing && (abs(dx) > 4px || abs(dy) > 4px)) {
+            root.crop-alt-drawing = true;
+            root.crop-draw-pressed(root.crop-alt-x, root.crop-alt-y);
+        }
+        if (root.crop-alt-drawing) {
+            root.crop-draw-dragged(root.crop-alt-x + dx, root.crop-alt-y + dy);
+        }
+    }
+    function crop-dropped() {
+        if (!root.crop-alt-down) {
+            root.crop-released();
+        } else if (root.crop-alt-drawing) {
+            root.crop-draw-released();
+        }
+        root.crop-alt-down = false;
+        root.crop-alt-drawing = false;
+    }
     // The crop: shade outside, a rule of thirds inside, eight
     // handles and the whole to move.
     if root.crop-mode && !root.placeholder: Rectangle {
@@ -508,9 +562,13 @@ export component Viewport inherits Rectangle {
             id: 8;
             x: cl; y: ct; width: cw; height: ch;
             cursor: MouseCursor.move;
-            grabbed(i) => { root.crop-pressed(i); }
-            dragged(i, dx, dy) => { root.crop-dragged(i, dx, dy); }
-            dropped => { root.crop-released(); }
+            enabled: !root.crop-draw-armed;
+            grabbed(i) => {
+                root.crop-grabbed(i, self.alt, self.absolute-position.x + self.mouse-x,
+                    self.absolute-position.y + self.mouse-y);
+            }
+            dragged(i, dx, dy) => { root.crop-moved(i, dx, dy); }
+            dropped => { root.crop-dropped(); }
         }
         Rectangle { x: cl; y: ct; width: cw; height: ch; border-width: 1px; border-color: #ffffffcc; }
         Rectangle { x: cl + cw / 3; y: ct; width: 1px; height: ch; background: #ffffff40; }
@@ -533,14 +591,18 @@ export component Viewport inherits Rectangle {
             width: 20px;
             height: 20px;
             cursor: h.cursor;
+            enabled: !root.crop-draw-armed;
             Rectangle {
                 x: 5px; y: 5px; width: 10px; height: 10px;
                 background: #ffffff;
                 border-radius: 2px;
             }
-            grabbed(i) => { root.crop-pressed(i); }
-            dragged(i, dx, dy) => { root.crop-dragged(i, dx, dy); }
-            dropped => { root.crop-released(); }
+            grabbed(i) => {
+                root.crop-grabbed(i, self.alt, self.absolute-position.x + self.mouse-x,
+                    self.absolute-position.y + self.mouse-y);
+            }
+            dragged(i, dx, dy) => { root.crop-moved(i, dx, dy); }
+            dropped => { root.crop-dropped(); }
         }
     }
     // The chosen mask shape: its outline and its handles.

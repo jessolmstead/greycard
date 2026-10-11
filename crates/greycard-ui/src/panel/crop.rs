@@ -736,6 +736,189 @@ mod tests {
         );
     }
 
+    /// The crop set to `c` (fractions of the plane) and the overlay's
+    /// rectangle with it, as the render step would leave them: what
+    /// a drag on the picture then finds there.
+    fn crop_at(app: &App, c: [f32; 4]) {
+        app.set_geo_has_crop(true);
+        app.set_geo_crop_x(c[0]);
+        app.set_geo_crop_y(c[1]);
+        app.set_geo_crop_w(c[2]);
+        app.set_geo_crop_h(c[3]);
+        let (l, t) = local(app, (c[0], c[1]));
+        let (r, b) = local(app, (c[0] + c[2], c[1] + c[3]));
+        app.set_crop_left(l);
+        app.set_crop_top(t);
+        app.set_crop_width(r - l);
+        app.set_crop_height(b - t);
+    }
+
+    fn crop_is(app: &App, want: [f32; 4]) {
+        let got = [
+            app.get_geo_crop_x(),
+            app.get_geo_crop_y(),
+            app.get_geo_crop_w(),
+            app.get_geo_crop_h(),
+        ];
+        assert!(
+            got.iter().zip(want).all(|(g, w)| (g - w).abs() < 5e-3),
+            "{got:?} vs {want:?}"
+        );
+    }
+
+    /// The crop at the whole frame, in crop mode, on the Crop tab so
+    /// the section's Draw button is there to press.
+    fn full_frame_setup(app: &App) -> slint::LogicalPosition {
+        let (_state, base) = draw_setup(app);
+        crop_at(app, [0.0, 0.0, 1.0, 1.0]);
+        app.set_panel_tab("Crop".into());
+        base
+    }
+
+    fn click_draw(app: &App) {
+        let (at, size) = crate::testing::labeled(app, "Draw");
+        crate::testing::click(app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+    }
+
+    #[test]
+    fn a_drag_inside_a_whole_frame_crop_still_moves_it_and_draws_nothing() {
+        let app = window(1);
+        let base = full_frame_setup(&app);
+        drag(
+            &app,
+            &[at(&app, base, (0.3, 0.3)), at(&app, base, (0.6, 0.5))],
+        );
+        // A move with nowhere to go: the crop stays the whole frame,
+        // where a draw would have left the drag's own rectangle.
+        crop_is(&app, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn draw_then_a_drag_inside_the_crop_draws_a_fresh_one_once() {
+        let app = window(1);
+        let base = full_frame_setup(&app);
+        click_draw(&app);
+        assert!(app.get_crop_draw_armed(), "the button put Draw in hand");
+        drag(
+            &app,
+            &[at(&app, base, (0.3, 0.3)), at(&app, base, (0.6, 0.5))],
+        );
+        crop_is(&app, [0.3, 0.3, 0.3, 0.2]);
+        assert!(!app.get_crop_draw_armed(), "the release put it down");
+        // One shot: the next drag inside moves the crop just drawn.
+        crop_at(&app, [0.3, 0.3, 0.3, 0.2]);
+        let press = at(&app, base, (0.45, 0.4));
+        drag(&app, &[press, (press.0 + 40.0, press.1)]);
+        let scale = app.window().scale_factor();
+        crop_is(&app, [0.3 + 40.0 * scale / SW, 0.3, 0.3, 0.2]);
+    }
+
+    #[test]
+    fn draw_then_a_click_puts_it_down_and_leaves_the_crop() {
+        let app = window(1);
+        let base = full_frame_setup(&app);
+        let zoomed = Rc::new(RefCell::new(false));
+        let counted = zoomed.clone();
+        app.on_toggle_zoom(move |_, _| *counted.borrow_mut() = true);
+        click_draw(&app);
+        let p = at(&app, base, (0.5, 0.5));
+        crate::testing::click(&app, p.0, p.1);
+        assert!(!app.get_crop_draw_armed());
+        assert!(
+            !*zoomed.borrow(),
+            "the click that put Draw down did not zoom"
+        );
+        crop_is(&app, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn escape_puts_draw_down() {
+        let app = window(1);
+        let base = full_frame_setup(&app);
+        click_draw(&app);
+        assert!(app.get_crop_draw_armed());
+        // The keys are the window's again once the pointer is on the
+        // picture: the button clicked last holds them until then, and
+        // the disabled handles let the picture's area see the hover.
+        let p = at(&app, base, (0.5, 0.5));
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(p.0, p.1),
+            });
+        crate::testing::press(&app, slint::platform::Key::Escape);
+        assert!(!app.get_crop_draw_armed());
+        assert!(app.get_crop_mode(), "Escape spent on Draw, not crop mode");
+        drag(
+            &app,
+            &[at(&app, base, (0.3, 0.3)), at(&app, base, (0.6, 0.5))],
+        );
+        crop_is(&app, [0.0, 0.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn leaving_crop_mode_puts_draw_down() {
+        let app = window(1);
+        let _base = full_frame_setup(&app);
+        // By the section's own button.
+        click_draw(&app);
+        let (at, size) = crate::testing::labeled(&app, "Done");
+        crate::testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert!(!app.get_crop_mode());
+        assert!(!app.get_crop_draw_armed());
+        // From outside the section (the tab, culling): put down by the
+        // next event the window handles.
+        click_draw(&app);
+        assert!(app.get_crop_mode(), "Draw brings crop mode with it");
+        assert!(app.get_crop_draw_armed());
+        app.set_crop_mode(false);
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(0.0, 0.0),
+            });
+        assert!(!app.get_crop_draw_armed());
+    }
+
+    #[test]
+    fn alt_and_a_drag_inside_the_crop_draws_without_the_button() {
+        let app = window(1);
+        let base = full_frame_setup(&app);
+        let alt: slint::SharedString = slint::platform::Key::Alt.into();
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::KeyPressed { text: alt.clone() });
+        drag(
+            &app,
+            &[at(&app, base, (0.3, 0.3)), at(&app, base, (0.6, 0.5))],
+        );
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::KeyReleased { text: alt });
+        crop_is(&app, [0.3, 0.3, 0.3, 0.2]);
+        assert!(!app.get_crop_draw_armed());
+        // Alt let go: a drag inside moves again.
+        crop_at(&app, [0.3, 0.3, 0.3, 0.2]);
+        let press = at(&app, base, (0.45, 0.4));
+        drag(&app, &[press, (press.0 + 40.0, press.1)]);
+        let scale = app.window().scale_factor();
+        crop_is(&app, [0.3 + 40.0 * scale / SW, 0.3, 0.3, 0.2]);
+    }
+
+    #[test]
+    fn a_crop_drawn_with_draw_holds_the_aspect() {
+        let app = window(1);
+        let base = full_frame_setup(&app);
+        app.set_aspect_name("3:2".into());
+        click_draw(&app);
+        drag(
+            &app,
+            &[at(&app, base, (0.2, 0.2)), at(&app, base, (0.5, 0.7))],
+        );
+        let (w, h) = (app.get_geo_crop_w() * SW, app.get_geo_crop_h() * SH);
+        assert!(
+            w < 0.99 * SW,
+            "a fresh crop, not the whole frame: {w} by {h}"
+        );
+        assert!((w / h - 1.5).abs() < 0.02, "{w} by {h} is not 3:2");
+    }
+
     /// The frame is measured as it is selected, culled or turned, so
     /// an edit normally reaches the panel already brought up to
     /// date. Where nothing can say which way up the frame is — no

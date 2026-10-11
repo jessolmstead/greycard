@@ -63,6 +63,14 @@ switch, the grading wheels' sliders, and the mouse wheel's step.
   double-click resets them to global
   ([§283](https://github.com/jessolmstead/greycard/blob/master/docs/notes/283-a-masks-white-balance-keeps-its-light-while-off.md))
 
+### Crop
+
+- A Draw button in the Crop section: press it and the next drag anywhere
+  on the picture draws a fresh crop held to the aspect, so a crop at the
+  full frame can be redrawn without shrinking it first; Alt and a drag
+  inside the crop does the same where the desktop leaves Alt free
+  ([§295](https://github.com/jessolmstead/greycard/blob/master/docs/notes/295-a-draw-button-for-the-crop-and-alt-to-draw-inside-it.md))
+
 ### Presets and copying
 
 - The copy settings sheet and the preset sheet list each section as a

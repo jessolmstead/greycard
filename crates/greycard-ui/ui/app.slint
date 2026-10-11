@@ -284,6 +284,7 @@ export component App inherits Window {
             if (root.placing != "" || root.picking != "") { root.stop-placing(); }
             if (root.guide-mode != "") { root.guide-mode = ""; root.guide-dropped(); }
             root.level-mode = false;
+            root.crop-draw-armed = false;
             // The sheet's own `init` lays it out and reports.
         } else {
             root.strip-relay();
@@ -633,6 +634,13 @@ export component App inherits Window {
     // The perspective guide: "" when it is not in hand, else the way
     // the two lines being traced should run, "Vertical" or "Horizontal".
     in-out property <string> guide-mode: "";
+    // The crop's Draw in hand: the next drag on the picture draws a
+    // fresh crop wherever it starts. Put down on leaving crop mode,
+    // and by the level or a guide taken up in its place.
+    in-out property <bool> crop-draw-armed: false;
+    changed crop-mode => { if (!root.crop-mode) { root.crop-draw-armed = false; } }
+    changed level-mode => { if (root.level-mode) { root.crop-draw-armed = false; } }
+    changed guide-mode => { if (root.guide-mode != "") { root.crop-draw-armed = false; } }
     // Local adjustments: the list (Global first), which one the panel
     // edits (0 is global), that one's own controls, and the kind of
     // shape being drawn in the viewport, if any.
@@ -1495,9 +1503,11 @@ export component App inherits Window {
     callback update-open();
     callback update-dismissed();
     /// Whether a viewport tool is in hand: a shape being placed, a
-    /// dropper, a perspective guide, the level. Escape puts each down.
+    /// dropper, a perspective guide, the level, the crop's Draw. Escape
+    /// puts each down.
     pure function tool-in-hand() -> bool {
-        return root.placing != "" || root.picking != "" || root.guide-mode != "" || root.level-mode;
+        return root.placing != "" || root.picking != "" || root.guide-mode != "" || root.level-mode
+            || root.crop-draw-armed;
     }
     /// Whether the export sheet can open now: a frame open, nothing
     /// developing or exporting, not culling.
@@ -1648,6 +1658,7 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.patch != -1) { root.patch-changed(-1); return accept; }
             if (e.text == Key.Escape && root.guide-mode != "") { root.guide-mode = ""; root.guide-dropped(); return accept; }
             if (e.text == Key.Escape && root.level-mode) { root.level-mode = false; return accept; }
+            if (e.text == Key.Escape && root.crop-draw-armed) { root.crop-draw-armed = false; return accept; }
             // A set being exported stops before Escape means anything
             // else: the sheet is gone by then, and this is its cancel.
             // Once stopping, Escape is the window's again.
@@ -1951,6 +1962,7 @@ export component App inherits Window {
                 crop-draw-pressed(a, b) => { root.crop-draw-pressed(a, b); }
                 crop-draw-dragged(a, b) => { root.crop-draw-dragged(a, b); }
                 crop-draw-released => { root.crop-draw-released(); }
+                crop-draw-armed <=> root.crop-draw-armed;
                 level-end(a, b, c, d) => { root.level-end(a, b, c, d); }
                 guide-stroke(a, b, c, d) => { root.guide-stroke(a, b, c, d); }
                 guide-kept: root.guide-kept;
@@ -2451,6 +2463,7 @@ export component App inherits Window {
                             portrait <=> root.portrait;
                             portrait-shown: root.portrait-shown;
                             portrait-live: root.portrait-live;
+                            crop-draw-armed <=> root.crop-draw-armed;
                             crop-toggled => { root.crop-toggled(); }
                             geometry-changed => { root.geometry-changed(); }
                             guide-dropped => { root.guide-dropped(); }

@@ -20,6 +20,13 @@ The tab has three sections: **CROP**, **ROTATE** and **PERSPECTIVE**.
    - Drag inside the rectangle to move it.
    - Drag anywhere outside the rectangle to draw a new crop from that
      point.
+   - Click **Draw**, then drag anywhere on the picture, inside the
+     crop too, to draw a new one from where you press; this is the way
+     to start over when the crop already fills the frame, and Draw
+     lets go after the one drag, or when you press Esc.
+   - Holding Alt as you drag inside the rectangle draws a new crop
+     the same way, though some desktops keep Alt and a drag for moving
+     windows.
 3. Click **Done**, or switch to another tab. The picture shows
    cropped.
 
