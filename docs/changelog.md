@@ -68,6 +68,9 @@ note a first tester reads.
 
 ### Fixes
 
+- A mouse wheel's click on a slider is one step every click; it used to
+  alternate one step and two, so Exposure moved by 0.05 then 0.10
+  ([§284](https://github.com/jessolmstead/greycard/blob/master/docs/notes/284-a-wheel-click-on-a-slider-is-one-step.md))
 - A mask's curve editor shows its histogram as soon as the mask is
   chosen, and the global editor keeps its own on the way back to the
   Develop tab; both stood empty until a slider or a point was touched

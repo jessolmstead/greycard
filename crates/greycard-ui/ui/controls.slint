@@ -505,14 +505,22 @@ export component EditSlider inherits Rectangle {
             }
         }
         // The wheel moves a focused slider, or any slider with Shift
-        // held; otherwise it passes through. A mouse wheel's notch is
-        // one step; a touchpad's small deltas add up to steps.
+        // held; otherwise it passes through. A mouse wheel's click is
+        // one step: one event of a notch or more, whatever the
+        // platform makes a click in pixels (60 on one, 15 on another),
+        // so clicks never add up to two steps and never to none. A
+        // touchpad's small deltas add up to steps.
         scroll-event(e) => {
             if (!root.enabled || !(e.modifiers.shift || fs.has-focus)) { return reject; }
+            if (abs(e.delta-y != 0 ? e.delta-y : e.delta-x) >= root.notch * 1px) {
+                root.scroll-acc = 0;
+                root.nudge(((e.delta-y != 0 ? e.delta-y : e.delta-x) > 0 ? 1 : -1) * root.step);
+                return accept;
+            }
             root.scroll-acc += (e.delta-y != 0 ? e.delta-y : e.delta-x) / 1px;
             if (abs(root.scroll-acc) >= root.notch) {
-                root.nudge((root.scroll-acc > 0 ? 1 : -1) * floor(abs(root.scroll-acc) / root.notch) * root.step);
-                root.scroll-acc -= (root.scroll-acc > 0 ? 1 : -1) * floor(abs(root.scroll-acc) / root.notch) * root.notch;
+                root.nudge((root.scroll-acc > 0 ? 1 : -1) * root.step);
+                root.scroll-acc = 0;
             }
             return accept;
         }

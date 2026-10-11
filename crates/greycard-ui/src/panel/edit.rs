@@ -939,4 +939,55 @@ mod tests {
         app.set_picking("".into());
         assert!(edit_to_develop(&app, &edit).lens.defringe);
     }
+
+    /// A mouse wheel's click is one step of the slider, whatever the
+    /// platform makes a click in pixels. Slint hands the window 60 a
+    /// click, and a slider counting 40-pixel notches made the clicks
+    /// alternate one step and two. A touchpad's small deltas still add
+    /// up to a step.
+    #[test]
+    fn a_wheel_click_on_a_slider_is_one_step() {
+        use crate::testing;
+        use slint::platform::WindowEvent;
+
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        app.set_exposure(0.0);
+        let (at, size) = testing::labeled(&app, "Exposure");
+        let center = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+        // A click on the slider focuses it, so the wheel is its own.
+        testing::click(&app, center.0, center.1);
+        let scroll = |delta_y: f32| {
+            app.window().dispatch_event(WindowEvent::PointerScrolled {
+                position: slint::LogicalPosition::new(center.0, center.1),
+                delta_x: 0.0,
+                delta_y,
+            });
+        };
+        let exposure = || (app.get_exposure() * 100.0).round() / 100.0;
+
+        for (i, want) in [0.05, 0.10, 0.15, 0.20].into_iter().enumerate() {
+            scroll(60.0);
+            assert_eq!(exposure(), want, "click {}", i + 1);
+        }
+        scroll(-60.0);
+        assert_eq!(exposure(), 0.15, "a click back is one step back");
+        // A platform giving a smaller click, still one step each.
+        scroll(45.0);
+        scroll(45.0);
+        assert_eq!(exposure(), 0.25);
+        // A touchpad's deltas add up: two of 15 are nothing, the third
+        // is the step, and the remainder does not carry.
+        scroll(15.0);
+        scroll(15.0);
+        assert_eq!(exposure(), 0.25);
+        scroll(15.0);
+        assert_eq!(exposure(), 0.30);
+        scroll(15.0);
+        assert_eq!(exposure(), 0.30);
+    }
 }
