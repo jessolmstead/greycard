@@ -167,58 +167,59 @@ pub(crate) fn labeled(app: &App, label: &str) -> (slint::LogicalPosition, slint:
         });
         ElementHandle::find_by_accessible_label(app, label).next()
     };
-    let height = app
-        .window()
-        .size()
-        .to_logical(app.window().scale_factor())
-        .height;
-    // The panel's view ends above its footer (Fit and Export) and the
-    // strip, not at the window's bottom: a control under the footer is
-    // found and drawn over, and a click there lands on the footer. How
-    // far down the footer sits depends on the system's font, so it is
-    // looked up rather than assumed: the lowest "Fit", since the zoom's
-    // words say "Fit" too, higher up.
-    let bottom = ElementHandle::find_by_accessible_label(app, "Fit")
-        .map(|e| e.absolute_position().y)
-        .reduce(f32::max)
-        .unwrap_or(height)
-        - 40.0;
-    // The view starts under what is pinned above it: on the Masks
-    // tab, the Adjustments list, which ends with "New mask", or folded
-    // its header alone; a control scrolled up behind that list is
-    // found but cannot be clicked. Looked up once the layout has its
-    // shape, as `find` does.
+    // The panel's view, measured rather than guessed: it starts under
+    // the tab bar and, on the Masks tab, the Adjustments list pinned
+    // above it, and ends over the footer. What sits above a control
+    // depends on the machine (the note naming the profile directory,
+    // the looks in the store), and a step longer than the view lets a
+    // control jump from under its foot to half behind the tab bar,
+    // where a click at its middle misses it. Looked up once the layout
+    // has its shape, as `find` does.
     app.window().dispatch_event(WindowEvent::PointerMoved {
         position: slint::LogicalPosition::new(0.0, 0.0),
     });
-    let top = ["New mask", "ADJUSTMENTS"]
-        .into_iter()
-        .flat_map(|label| ElementHandle::find_by_accessible_label(app, label))
-        .map(|e| e.absolute_position().y + e.size().height)
-        .reduce(f32::max)
-        .unwrap_or(0.0)
-        .max(80.0);
-    // The panel's scroll only builds what is in view: down it a
-    // screen at a time from the top until the control is there, then
+    let view = || {
+        let view = ElementHandle::find_by_element_id(app, "App::panel-view").next()?;
+        let sections = ElementHandle::find_by_element_id(app, "App::panel-sections").next()?;
+        let (at, size) = (view.absolute_position(), view.size());
+        // As far as the view scrolls: the sections' foot at its own,
+        // where a wheel stops.
+        let end = (sections.size().height - size.height).max(0.0);
+        Some((at.y, at.y + size.height, end))
+    };
+    let (top, bottom, _) = view().unwrap_or_else(|| {
+        let height = app
+            .window()
+            .size()
+            .to_logical(app.window().scale_factor())
+            .height;
+        (80.0, height, 0.0)
+    });
+    let scroll_to = |to: f32| {
+        let end = view().map_or(f32::INFINITY, |(_, _, end)| end);
+        app.set_panel_scroll(to.clamp(-end, 0.0));
+    };
+    // The panel's scroll only builds what is in view: down it most of
+    // a view at a time from the top until the control is there, then
     // to where it is well inside the view.
-    app.set_panel_scroll(0.0);
+    scroll_to(0.0);
     for _ in 0..40 {
         if let Some(element) = find() {
-            let at = element.absolute_position();
-            // In the pinned list itself, above the view: there already.
-            if at.y > 80.0 && at.y + element.size().height <= top {
-                return (at, element.size());
+            let (at, size) = (element.absolute_position(), element.size());
+            // Above the view (the tab bar, the pinned list): there
+            // already.
+            if at.y > 80.0 && at.y + size.height <= top {
+                return (at, size);
             }
-            if at.y > top && at.y + element.size().height < bottom {
-                return (at, element.size());
+            if at.y >= top && at.y + size.height <= bottom {
+                return (at, size);
             }
-            app.set_panel_scroll(app.get_panel_scroll() - (at.y - (top + bottom) / 2.0));
+            scroll_to(app.get_panel_scroll() - (at.y - (top + bottom) / 2.0));
             let element = find().unwrap_or_else(|| panic!("{label:?} scrolled away"));
             return (element.absolute_position(), element.size());
         }
-        // Less than the view's own height, which on the Masks tab is
-        // what the pinned list leaves, so nothing falls between steps.
-        app.set_panel_scroll(app.get_panel_scroll() - ((bottom - top) * 0.8).max(40.0));
+        // Less than the view's height, so nothing falls between steps.
+        scroll_to(app.get_panel_scroll() - ((bottom - top) * 0.8).max(40.0));
     }
     panic!("nothing labeled {label:?}");
 }

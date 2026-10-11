@@ -2162,7 +2162,8 @@ export component App inherits Window {
                         delete-adjustment => { root.delete-adjustment(); }
                     }
                 }
-                ScrollView {
+                // Named so the tests find the view's own edges.
+                panel-view := ScrollView {
                     content-y <=> root.panel-scroll;
                     // Under a tall scope in a short window the pinned
                     // list, down to its one row, can still want more
@@ -2171,7 +2172,7 @@ export component App inherits Window {
                     // is 50 px) before the footer is pushed under the
                     // strip.
                     min-height: root.panel-tab == "Masks" ? 0px : 50px;
-                    VerticalLayout {
+                    panel-sections := VerticalLayout {
                         alignment: start;
                         padding: Theme.space-4;
                         padding-top: Theme.space-2;

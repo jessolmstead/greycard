@@ -72,3 +72,12 @@ that the list is pinned, so pressing it far down a mask's sliders left
 the new mask's controls out of sight. The button's handler sets the
 sections' scroll to zero before it asks for the mask.
 
+**And the same evening.** The tests' `labeled` helper, which scrolls
+the panel until a control is in view, guessed the view's edges and
+stepped by 0.8 of that guess, which came to more than the view's real
+height; "Exposure value" then landed a few pixels under the tab bar,
+1.2 px inside the view here and outside it on the CI runners, where a
+row above it is a little shorter. Two typed-field tests failed there
+and nowhere else. The helper now reads the view's own top and bottom
+(`panel-view`) and clamps its scroll to what the sections can give.
+
