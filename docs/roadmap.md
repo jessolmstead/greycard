@@ -15,6 +15,8 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
+- [ ] The histogram in a mask's curve editor is empty until a slider or
+      a point is touched, then it appears
 
 ## Open Questions
 
