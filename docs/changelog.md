@@ -96,6 +96,11 @@ note a first tester reads.
 
 ### Fixes
 
+- Clicking back in the History panel keeps the rows above the click,
+  and a click on a greyed row goes forward to it every time; a jump that
+  needed no new develop used to leave the newer state's masks and look
+  behind, and the next save cut the rows above
+  ([§289](https://github.com/jessolmstead/greycard/blob/master/docs/notes/289-a-history-click-keeps-the-rows-above-it.md))
 - A mouse wheel's click on a slider is one step every click; it used to
   alternate one step and two, so Exposure moved by 0.05 then 0.10
   ([§284](https://github.com/jessolmstead/greycard/blob/master/docs/notes/284-a-wheel-click-on-a-slider-is-one-step.md))

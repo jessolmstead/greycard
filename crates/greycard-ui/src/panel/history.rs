@@ -386,10 +386,17 @@ pub(crate) fn take_current_settled(st: &mut State, app: &App, worker: &Worker) {
     }
     show_edit(st, &edit, app, st.target);
     show_history(st, app);
-    if edit.same_develop(&st.edit) {
+    // The panel's edit is the state's whether or not the engine has
+    // to develop again: `read_edit` takes from it all the panel does
+    // not show (the masks, the global look while a mask is chosen),
+    // so one left behind on the state just moved from made the next
+    // read of the panel news to the history, and its save cut the
+    // rows above the one clicked.
+    let develop = !edit.same_develop(&st.edit);
+    st.edit = edit;
+    if !develop {
         app.window().request_redraw();
     } else {
-        st.edit = edit;
         st.generation += 1;
         // A preset or a sync's own words, left for an earlier
         // generation's develop to carry (`status_after_develop`): that
@@ -1528,5 +1535,120 @@ mod tests {
         }
         land(&app, &state, vec![developed]);
         assert!(state.borrow().edit.retouch.patches[0].source.is_none());
+    }
+
+    /// The rests a slider's timers wait out: the develop's debounce
+    /// and the panel's save, fired as the event loop fires them.
+    fn rest() {
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(
+            crate::panel::edit::SAVE_MS + 1,
+        ));
+        slint::platform::update_timers_and_animations();
+    }
+
+    /// Click the history's row for the state at `index`.
+    fn click_state(app: &App, state: &Rc<RefCell<State>>, index: usize) {
+        let row = state.borrow().sidecars[0]
+            .row_of_state(index)
+            .expect("a row for every state");
+        app.invoke_history_clicked(row as i32);
+    }
+
+    /// The global exposure of every state, oldest first, and where
+    /// the current one sits.
+    fn walk(state: &Rc<RefCell<State>>) -> (Vec<f32>, usize) {
+        let st = state.borrow();
+        let s = &st.sidecars[0];
+        let all = (0..s.states())
+            .map(|i| s.state(i).unwrap().light.exposure)
+            .collect();
+        (all, s.position())
+    }
+
+    /// A click back in the history with a mask chosen, over states
+    /// that differ only in what the finish draws (the global look
+    /// here): nothing recorded by whatever comes after it, and the
+    /// rows above it still there to click forward to. The panel's
+    /// edit kept the newest state's global look and masks behind the
+    /// chosen mask's look, since that jump needed no develop, so the
+    /// next read of the panel was news to the history and its save
+    /// cut the rows above.
+    #[test]
+    fn a_click_back_keeps_the_rows_above_it_through_what_follows() {
+        let app = crate::testing::window(2);
+        let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
+        app.invoke_select(0);
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        save(&app, &state);
+        // Four global steps, each saved as the save timer saves it.
+        app.invoke_target_changed(0);
+        for ev in [0.2, 0.4, 0.6, 0.8] {
+            app.set_exposure(ev);
+            app.invoke_view_changed();
+            rest();
+        }
+        let steps = vec![0.0, 0.0, 0.2, 0.4, 0.6, 0.8];
+        assert_eq!(walk(&state), (steps.clone(), 5));
+        // The mask chosen again, as it was when the rows were clicked.
+        app.invoke_target_changed(1);
+
+        // Two back, and the panel reads as that state.
+        click_state(&app, &state, 3);
+        assert_eq!(walk(&state), (steps.clone(), 3));
+        let panel_is_current = |state: &Rc<RefCell<State>>| {
+            let st = state.borrow();
+            read_edit(&app, &st.edit, st.target) == st.sidecars[0].current
+        };
+        assert!(
+            panel_is_current(&state),
+            "the panel reads as the row clicked"
+        );
+        assert_eq!(undone(&app), [true, true, false, false, false, false]);
+
+        // A develop landing, the timers running out, and nothing moves.
+        land(&app, &state, Vec::new());
+        rest();
+        save(&app, &state);
+        assert_eq!(walk(&state), (steps.clone(), 3));
+
+        // Away to the other frame and back.
+        app.invoke_select(1);
+        app.invoke_select(0);
+        rest();
+        assert_eq!(walk(&state), (steps.clone(), 3));
+
+        // Forward a row, then straight on to the newest.
+        click_state(&app, &state, 4);
+        assert_eq!(walk(&state), (steps.clone(), 4));
+        assert!(panel_is_current(&state));
+        click_state(&app, &state, 5);
+        rest();
+        assert_eq!(walk(&state), (steps.clone(), 5));
+
+        // Back past the mask's making, two clicks in a row with the
+        // timers running out after: the mask goes with the state, and
+        // comes back with the one forward.
+        click_state(&app, &state, 2);
+        click_state(&app, &state, 0);
+        rest();
+        assert_eq!(walk(&state), (steps.clone(), 0));
+        assert!(state.borrow().edit.adjustments.is_empty());
+        assert!(panel_is_current(&state));
+        click_state(&app, &state, 3);
+        rest();
+        assert_eq!(walk(&state), (steps.clone(), 3));
+        assert_eq!(state.borrow().edit.adjustments.len(), 1);
+        assert!(panel_is_current(&state));
+
+        // An undo and a redo go the same way.
+        app.invoke_undo();
+        rest();
+        assert_eq!(walk(&state), (steps.clone(), 2));
+        assert!(panel_is_current(&state));
+        app.invoke_redo();
+        rest();
+        assert_eq!(walk(&state), (steps, 3));
     }
 }

@@ -298,3 +298,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§286. A tint is a blend, not a turn](notes/286-a-tint-is-a-blend-not-a-turn.md) (2026-10-10)
 - [§287. Detail in a mask](notes/287-detail-in-a-mask.md) (2026-10-10)
 - [§288. Parts of a section, single masks, and check all on the copy settings sheet](notes/288-parts-single-masks-and-check-all-on-the-copy-settings-sheet.md) (2026-10-10)
+- [§289. A history click keeps the rows above it](notes/289-a-history-click-keeps-the-rows-above-it.md) (2026-10-10)
