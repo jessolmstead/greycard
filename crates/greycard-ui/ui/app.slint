@@ -948,12 +948,13 @@ export component App inherits Window {
     callback grade-chose(int);
     callback grade-changed();
     callback grade-reset();
-    // A tint toward one hue: the hue in Oklab degrees, how far 0 to
-    // 1, off at nothing. The track is the Oklab hue circle at the
-    // grading wheels' lightness and chroma, a stop every thirty
-    // degrees, so which color each way goes to reads without
-    // dragging; `tint-color` is what a mid grey becomes under the
-    // tint as it stands, which the window works out.
+    // A tint toward one hue: the section's switch, the hue in Oklab
+    // degrees, how far 0 to 1, nothing at 0. The track is the Oklab
+    // hue circle at the grading wheels' lightness and chroma, a stop
+    // every thirty degrees, so which color each way goes to reads
+    // without dragging; `tint-color` is what a mid grey becomes under
+    // the tint as it is set, which the window works out.
+    in-out property <bool> tint-enabled: true;
     in-out property <float> tint-hue: 0;
     in-out property <float> tint-amount: 0;
     in property <color> tint-color: #8c8c8c;
@@ -2309,11 +2310,12 @@ export component App inherits Window {
                         // A tint toward one hue, the last thing the
                         // Oklab pass does: Lightroom's local Color,
                         // and a look's, so the global picture and
-                        // every mask can carry one. No switch: the
-                        // amount at nothing is off.
+                        // every mask can carry one, each with its
+                        // switch.
                         if root.panel-tab == "Develop" || (root.panel-tab == "Masks" && root.target > 0): TintSection {
                             collapsed-tint <=> root.collapsed-tint;
                             target-name <=> root.target-name;
+                            tint-enabled <=> root.tint-enabled;
                             tint-hue <=> root.tint-hue;
                             tint-amount <=> root.tint-amount;
                             tint-color: root.tint-color;
@@ -2325,6 +2327,7 @@ export component App inherits Window {
                             hue-circle: root.hue-circle;
                             tint-changed => { root.tint-changed(); }
                             tint-reset => { root.tint-reset(); }
+                            view-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop": NoiseSection {
                             noise-enabled <=> root.noise-enabled;

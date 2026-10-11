@@ -3140,10 +3140,7 @@ mod tests {
         // alone would ask for is not entered, so the picture is the
         // picture.
         let grey = [MID_GREY; 3];
-        let idle = Tint {
-            hue: 210.0,
-            amount: 0.0,
-        };
+        let idle = Tint::new(210.0, 0.0);
         let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let plain = Baked {
             light: Light::default(),
@@ -3169,10 +3166,7 @@ mod tests {
         }
         // Mid grey at a full amount lands on the hue, with the chroma
         // `tint.rs` promises: the picture's own grey, colored.
-        let full = Tint {
-            hue: 210.0,
-            amount: 1.0,
-        };
+        let full = Tint::new(210.0, 1.0);
         let out = tinted(grey, &full);
         assert!((hue(out) - 210.0).abs() < 0.5, "{:?}", oklab(out));
         let want = Tint::floor(oklab(grey)[0]);
@@ -3184,10 +3178,7 @@ mod tests {
         // b, between itself and its own chroma on the tint's hue: a
         // blend toward the hue, not a turn round to it.
         let red = [0.5, 0.05, 0.05];
-        let half = Tint {
-            hue: 210.0,
-            amount: 0.5,
-        };
+        let half = Tint::new(210.0, 0.5);
         let blended = oklab(tinted(red, &half));
         let was = oklab(red);
         let (s, c) = 210f32.to_radians().sin_cos();
@@ -3207,10 +3198,7 @@ mod tests {
             (l[1] * l[1] + l[2] * l[2]).sqrt()
         };
         let px = [0.4, 0.12, 0.06];
-        let tint = Tint {
-            hue: 40.0,
-            amount: 1.0,
-        };
+        let tint = Tint::new(40.0, 1.0);
         // The tint runs after the conversion, so a mono picture takes
         // it: that is what hand-coloring a black and white is. The
         // conversion still holds against everything that scales
@@ -3265,17 +3253,11 @@ mod tests {
         );
         // Two masks at half a hue each are one at the hue between them.
         let east = Baked {
-            tint: Tint {
-                hue: 0.0,
-                amount: 0.5,
-            },
+            tint: Tint::new(0.0, 0.5),
             ..global.clone()
         };
         let north = Baked {
-            tint: Tint {
-                hue: 90.0,
-                amount: 0.5,
-            },
+            tint: Tint::new(90.0, 0.5),
             ..global.clone()
         };
         let both = finish_pixel(grey, &global, &[(&east, 1.0), (&north, 1.0)], &m);

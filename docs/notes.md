@@ -303,3 +303,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§291. The Portrait switch follows the frame, and a toggle keeps the crop](notes/291-the-portrait-switch-follows-the-frame-and-a-toggle-keeps-the-crop.md) (2026-10-10)
 - [§292. A learned mask's raster belongs to the frame it was made on](notes/292-a-learned-masks-raster-belongs-to-the-frame-it-was-made-on.md) (2026-10-10)
 - [§293. The grading's sliders follow the chosen wheel](notes/293-the-gradings-sliders-follow-the-chosen-wheel.md) (2026-10-10)
+- [§294. The tint has a switch](notes/294-the-tint-has-a-switch.md) (2026-10-10)

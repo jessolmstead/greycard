@@ -3959,10 +3959,10 @@ mod tests {
         if has("color") {
             look.color = color;
         }
-        // The tint: hue 0 to 360, amount 0 to 1.
+        // The tint: its switch, hue 0 to 360, amount 0 to 1.
         let tint = Tint {
-            hue: rng.range(0.0, 360.0),
-            amount: rng.slider(p, 0.0, 1.0, 0.0),
+            enabled: !rng.chance(0.15),
+            ..Tint::new(rng.range(0.0, 360.0), rng.slider(p, 0.0, 1.0, 0.0))
         };
         if has("tint") {
             look.tint = tint;

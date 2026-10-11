@@ -91,23 +91,31 @@ pub(crate) fn choose_grade_range(app: &App, i: usize) {
     app.window().request_redraw();
 }
 
-/// The tint as the panel shows it: the hue round the circle and the
-/// amount held to its ends, which is what everything downstream of
-/// the two sliders wants.
+/// The tint as the panel shows it: the section's switch, the hue
+/// round the circle and the amount held to its ends, which is what
+/// everything downstream of the two sliders wants.
 pub(crate) fn panel_tint(app: &App) -> Tint {
     Tint {
-        hue: app.get_tint_hue().rem_euclid(360.0),
-        amount: app.get_tint_amount().clamp(0.0, 1.0),
+        enabled: app.get_tint_enabled(),
+        ..Tint::new(
+            app.get_tint_hue().rem_euclid(360.0),
+            app.get_tint_amount().clamp(0.0, 1.0),
+        )
     }
 }
 
 /// The tint's ring, its swatch and its Hue reading: the ring's marker
 /// where the two sliders put it, a square of what a mid grey becomes
-/// under the tint as it stands, which is the tint's whole effect, and
+/// under the tint as it is set, which is the tint's whole effect, and
 /// the hue to a tenth of a degree, which is finer than Slint's own
-/// rounding says.
+/// rounding says. With the switch off the swatch still shows the tint
+/// the sliders hold, dimmed with the ring, as a switched-off section's
+/// controls keep their values.
 pub(crate) fn show_tint(app: &App) {
-    let tint = panel_tint(app);
+    let tint = Tint {
+        enabled: true,
+        ..panel_tint(app)
+    };
     let [a, b] = tint.applied(greycard_edit::tint::MID_LIGHTNESS, 0.0, 0.0);
     let c = finish::oklab_to_srgb([greycard_edit::tint::MID_LIGHTNESS, a, b])
         .map(|v| (v * 255.0).round().clamp(0.0, 255.0) as u8);
@@ -849,5 +857,114 @@ mod tests {
             Grading::default(),
             "the global's wheels untouched"
         );
+    }
+
+    /// The tint's switch, on a target: off, the hue and the amount
+    /// stay on the panel and in the edit while the tint does nothing;
+    /// on again, the same tint. Each flip is a history row of its own,
+    /// it survives a trip through `show_edit`, and it touches no other
+    /// target's tint.
+    fn the_tint_switches_and_keeps_its_values(
+        app: &App,
+        state: &Rc<RefCell<State>>,
+        prefix: &str,
+        tint_of: impl Fn(&Edit) -> Tint,
+        other_of: impl Fn(&Edit) -> Tint,
+    ) {
+        use greycard_edit::history::describe;
+        let edit = || {
+            let st = state.borrow();
+            crate::panel::edit::read_edit(app, &st.edit, st.target)
+        };
+        assert!(app.get_tint_enabled(), "a new tint is on");
+        app.set_tint_hue(210.0);
+        app.set_tint_amount(0.4);
+        app.invoke_tint_changed();
+        let on = edit();
+        let tinted = Tint::new(210.0, 0.4);
+        assert_eq!(tint_of(&on), tinted);
+        let swatch = app.get_tint_color();
+        assert_ne!(swatch, slint::Color::from_rgb_u8(0x8c, 0x8c, 0x8c));
+
+        // Off: the values kept, the vector the shader is handed zero.
+        app.set_tint_enabled(false);
+        app.invoke_view_changed();
+        let off = edit();
+        let switched_off = Tint {
+            enabled: false,
+            ..tinted
+        };
+        assert_eq!(tint_of(&off), switched_off);
+        assert_eq!(tint_of(&off).vector(), [0.0, 0.0]);
+        assert_eq!(other_of(&off), Tint::OFF, "the other target's untouched");
+        assert_eq!((app.get_tint_hue(), app.get_tint_amount()), (210.0, 0.4));
+        assert_eq!(app.get_tint_color(), swatch, "the swatch keeps the tint");
+        assert_eq!(describe(&on, &off, &[]), format!("{prefix}Color tint off"));
+
+        // Through `show_edit`: the panel on, then shown the edit, off
+        // again with its values, and read back the same.
+        app.set_tint_enabled(true);
+        app.set_tint_amount(0.0);
+        {
+            let st = state.borrow();
+            crate::panel::edit::show_edit(&st, &off, app, st.target);
+        }
+        assert!(!app.get_tint_enabled());
+        assert_eq!((app.get_tint_hue(), app.get_tint_amount()), (210.0, 0.4));
+        assert_eq!(app.get_tint_color(), swatch);
+        assert_eq!(edit(), off);
+
+        // On again: the same tint, and its own row.
+        app.set_tint_enabled(true);
+        app.invoke_view_changed();
+        let again = edit();
+        assert_eq!(tint_of(&again), tinted);
+        assert_eq!(
+            describe(&off, &again, &[]),
+            format!("{prefix}Color tint on")
+        );
+    }
+
+    #[test]
+    fn the_global_tint_switches_off_and_on() {
+        use crate::testing;
+        let app = testing::window(1);
+        let (state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Develop".into());
+        the_tint_switches_and_keeps_its_values(
+            &app,
+            &state,
+            "",
+            |e| e.tint,
+            |e| e.adjustments.first().map_or(Tint::OFF, |a| a.look.tint),
+        );
+    }
+
+    #[test]
+    fn a_masks_tint_switches_off_and_on_and_hides_the_overlay() {
+        use crate::testing;
+        let app = testing::window(1);
+        let (state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        assert_eq!(app.get_target(), 1);
+        let name = app.get_adjustment_name().to_string();
+        the_tint_switches_and_keeps_its_values(
+            &app,
+            &state,
+            &format!("{name}: "),
+            |e| e.adjustments[0].look.tint,
+            |e| e.tint,
+        );
+        // The switch is a look control: with the overlay showing, a
+        // flip either way hides it, as a slider does.
+        for on in [false, true] {
+            app.set_show_mask(true);
+            app.set_tint_enabled(on);
+            app.invoke_view_changed();
+            assert!(!app.get_show_mask(), "switched {on} hides the overlay");
+        }
     }
 }

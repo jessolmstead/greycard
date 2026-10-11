@@ -665,6 +665,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_grade_balance(look.grading.balance);
     show_grade_range(app);
     draw_wheels(app);
+    app.set_tint_enabled(look.tint.enabled);
     app.set_tint_hue(look.tint.hue);
     app.set_tint_amount(look.tint.amount);
     show_tint(app);

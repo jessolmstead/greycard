@@ -1590,6 +1590,27 @@ mod tests {
     }
 
     #[test]
+    fn the_tint_s_switch_goes_with_its_section() {
+        // Tint has no parts: the switch is carried and compared with
+        // the hue and the amount, as a whole section's is.
+        let from = Edit {
+            tint: crate::Tint {
+                enabled: false,
+                ..crate::Tint::new(210.0, 0.4)
+            },
+            ..Edit::default()
+        };
+        let mut onto = Edit {
+            tint: crate::Tint::new(210.0, 0.4),
+            ..Edit::default()
+        };
+        assert!(!Section::Tint.same(&from, &onto), "only the switch differs");
+        Section::Tint.copy(&from, &mut onto);
+        assert!(!onto.tint.enabled);
+        assert!(Section::Tint.same(&from, &onto));
+    }
+
+    #[test]
     fn a_part_carries_its_slider_and_leaves_the_rest_of_the_section() {
         let from = busy();
         let mut onto = Edit::default();

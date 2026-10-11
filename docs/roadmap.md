@@ -15,9 +15,7 @@ the reasoning lives in `docs/notes.md`.
 
 ## Bugs
 
-- [ ] The Tint section has no on/off switch, globally or in a mask,
-      where every other section has one; add it, off acting as no tint
-      and the hue and amount kept
+
 ## Open Questions
 
 - Default exposure is 0.8 stops up across the board. Is that too much?

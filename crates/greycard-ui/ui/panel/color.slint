@@ -532,6 +532,7 @@ export component GradingSection inherits Section {
 export component TintSection inherits Section {
     in-out property <bool> collapsed-tint;
     in-out property <string> target-name;
+    in-out property <bool> tint-enabled;
     in-out property <float> tint-hue;
     in-out property <float> tint-amount;
     in property <color> tint-color;
@@ -543,11 +544,17 @@ export component TintSection inherits Section {
     in property <brush> hue-circle;
     callback tint-changed();
     callback tint-reset();
+    callback view-changed();
 
     title: "TINT";
     owner: root.target-name;
     icon: @image-url("../icons/palette.svg");
     collapsed <=> root.collapsed-tint;
+    // Off, the ring, the sliders and the swatch keep the tint
+    // and dim, and the picture is as if there were none.
+    switchable: true;
+    on <=> root.tint-enabled;
+    switched => { root.view-changed(); }
     // The hue ring: a drag sets the hue by
     // the angle and the amount by the
     // distance from the center, which is a
@@ -563,6 +570,7 @@ export component TintSection inherits Section {
         CurveEditor {
             width: 176px;
             picture: root.tint-image;
+            enabled: root.tint-enabled;
             background: transparent;
             pressed(x, y) => { root.tint-press(x, y); }
             moved(x, y) => { root.tint-move(x, y); }
@@ -573,6 +581,7 @@ export component TintSection inherits Section {
     }
     EditSlider {
         label: "Hue";
+        enabled: root.tint-enabled;
         // The Oklab hue circle along the
         // track: which color each way is,
         // the ring's own rim unrolled.
@@ -591,6 +600,7 @@ export component TintSection inherits Section {
     }
     EditSlider {
         label: "Amount";
+        enabled: root.tint-enabled;
         minimum: 0;
         maximum: 1;
         default: 0;
@@ -604,7 +614,8 @@ export component TintSection inherits Section {
         spacing: Theme.space-2;
         alignment: end;
         // What a mid grey becomes under the
-        // tint as it stands.
+        // tint as it is set, dimmed with the
+        // ring while the switch is off.
         Rectangle {
             width: Theme.control-height;
             height: Theme.control-height - 6px;
@@ -613,6 +624,7 @@ export component TintSection inherits Section {
             border-width: 1px;
             border-color: Theme.border-strong;
             background: root.tint-color;
+            opacity: root.tint-enabled ? 1 : 0.4;
         }
         Rectangle { horizontal-stretch: 1; }
         PanelButton {

@@ -359,10 +359,14 @@ fn grading(b: &crate::Grading, a: &crate::Grading) -> String {
 /// The tint that moved. "Color tint", not "Tint": the white
 /// balance's Duv already answers to that name.
 fn tint(b: &crate::Tint, a: &crate::Tint) -> String {
-    // Off only when it was on: picking a hue with the amount still at
-    // nothing is the ordinary way round, and turns nothing off.
-    if a.amount <= 0.0 && b.amount > 0.0 {
-        "Color tint off".to_string()
+    // The switch, as every section's reads. Then Reset, which puts the
+    // hue and the amount back to nothing: only when there was a tint,
+    // since picking a hue with the amount still at nothing is the
+    // ordinary way round and resets nothing.
+    if b.enabled != a.enabled {
+        switched("Color tint", a.enabled)
+    } else if a.amount <= 0.0 && a.hue == 0.0 && b.amount > 0.0 {
+        "Color tint reset".to_string()
     } else if b.hue != a.hue && b.amount == a.amount {
         format!("Color tint {:.0}°", a.hue)
     } else if b.amount != a.amount && b.hue == a.hue {
@@ -719,15 +723,26 @@ mod tests {
         e.tint.amount = 0.5;
         assert_eq!(describe(&base, &e, &[]), "Color tint 50%");
         let mut e = base.clone();
-        e.tint = crate::Tint {
-            hue: 210.0,
-            amount: 0.5,
-        };
+        e.tint = crate::Tint::new(210.0, 0.5);
         let mut back = e.clone();
         back.tint.hue = 40.0;
         assert_eq!(describe(&e, &back, &[]), "Color tint 40°");
+        // Reset: the hue and the amount back to nothing.
+        let mut reset = e.clone();
+        reset.tint = crate::Tint::OFF;
+        assert_eq!(describe(&e, &reset, &[]), "Color tint reset");
+        // The switch, which leaves the hue and the amount where they
+        // were, reads as every section's switch does.
+        let mut off = e.clone();
+        off.tint.enabled = false;
+        assert_eq!(describe(&e, &off, &[]), "Color tint off");
+        assert_eq!(describe(&off, &e, &[]), "Color tint on");
+        // An amount dragged to nothing is the amount, not a reset.
         back.tint.amount = 0.0;
-        assert_eq!(describe(&e, &back, &[]), "Color tint off");
+        assert_eq!(describe(&e, &back, &[]), "Color tint");
+        let mut drained = e.clone();
+        drained.tint.amount = 0.0;
+        assert_eq!(describe(&e, &drained, &[]), "Color tint 0%");
         // A hue picked before the amount is moved turns nothing off:
         // the amount was at nothing already.
         let mut picked = base.clone();
@@ -769,6 +784,10 @@ mod tests {
         let mut after = e.clone();
         after.adjustments[0].look.tint.amount = 0.4;
         assert_eq!(describe(&e, &after, &[]), "Sky: Color tint 40%");
+        let mut switched_off = after.clone();
+        switched_off.adjustments[0].look.tint.enabled = false;
+        assert_eq!(describe(&after, &switched_off, &[]), "Sky: Color tint off");
+        assert_eq!(describe(&switched_off, &after, &[]), "Sky: Color tint on");
         // And its white balance, in the global's words.
         let mut warm = after.clone();
         warm.adjustments[0].look.white_balance = crate::LocalWhite::Absolute {
