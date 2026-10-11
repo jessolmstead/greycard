@@ -14,6 +14,14 @@ note a first tester reads.
 
 ### Masks
 
+- A mask has its own Detail: Texture, Clarity and Dehaze beside its
+  Light and Color, so a face is smoothed or a distant ridge dehazed
+  without touching the rest. A DETAIL section on the Masks tab with its
+  switch, in the viewport, the export and the strip's pictures alike,
+  with a history row. A whole-frame mask matches the global Detail for
+  each slider on its own; a mask's Dehaze with its own Texture or
+  Clarity reads the haze from before them (the design's limit, §287)
+  ([§302](https://github.com/jessolmstead/greycard/blob/master/docs/notes/302-detail-in-a-mask-built.md))
 - The Adjustments list (Global, each mask with its switch, New mask)
   stays pinned above the Masks tab's sections, so Global or another
   mask is one click away from any slider; it shows up to six rows as

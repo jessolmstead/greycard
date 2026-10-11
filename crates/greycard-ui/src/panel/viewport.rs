@@ -1194,6 +1194,19 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             }
             crate::panel::mask::look_edited(&mut st, &app);
+            // A mask's Detail that needs a plane the develop has not
+            // made: the panel's edit is the develop's, once the
+            // pointer has rested, as a develop slider's is.
+            if crate::panel::mask::detail_asks(&mut st, &app) {
+                st.edit = read_edit(&app, &st.edit, st.target);
+                crate::panel::edit::develop_soon(
+                    &mut st,
+                    state.clone(),
+                    worker.clone(),
+                    app.as_weak(),
+                );
+                return;
+            }
             app.window().request_redraw();
             schedule_save(&mut st, app.as_weak());
         });

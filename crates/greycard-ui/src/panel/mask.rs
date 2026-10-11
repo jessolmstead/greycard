@@ -531,6 +531,30 @@ pub(crate) fn look_edited(st: &mut State, app: &App) {
     }
 }
 
+/// Whether the panel's edit asks for a detail plane the shown develop
+/// did not come with: a mask's Texture, Clarity or Dehaze moved off
+/// zero (or its section, its adjustment or a shape switched on under
+/// one) where no mask asked for that plane before. Its amounts are
+/// the finish's and need no develop; a plane does. One no longer
+/// asked for is left where it is until the next develop.
+/// A plane already asked for and on its way counts as there, so a
+/// slider dragged on while that develop runs asks for no second one;
+/// the asking is recorded here.
+pub(crate) fn detail_asks(st: &mut State, app: &App) -> bool {
+    let wants = read_edit(app, &st.edit, st.target).detail_wants();
+    let (has, asked) = (st.planes_wants, st.planes_asked);
+    let coming = greycard_edit::DetailWants {
+        texture: has.texture || asked.texture,
+        clarity: has.clarity || asked.clarity,
+        haze: has.haze || asked.haze,
+    };
+    if coming.covers(&wants) {
+        return false;
+    }
+    st.planes_asked = wants;
+    true
+}
+
 /// How far the pointer moves, in the masks' units, before a stroke
 /// takes another point: a texel of the raster.
 pub(crate) const MIN_STEP: f32 = 1.0 / greycard_edit::brush::RASTER_WIDTH as f32;
@@ -1469,6 +1493,114 @@ mod tests {
         app.invoke_view_changed();
         assert!(!app.get_show_mask(), "every look change hides it");
         assert!(state.borrow().show_mask_kept.is_none());
+    }
+
+    /// A mask's Detail: its sliders read into the mask's look and not
+    /// the picture's, a slider moved hides the overlay, its history
+    /// row, a round trip through the sidecar's JSON and `show_edit`;
+    /// and the develop asked for again only when the moved slider asks
+    /// for a plane the shown develop did not come with.
+    #[test]
+    fn a_masks_detail_is_its_own_and_a_look_control() {
+        use greycard_edit::history::describe;
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        state.borrow_mut().edit.adjustments[0]
+            .mask
+            .components
+            .push(greycard_edit::mask::Component::default());
+        let edit = || {
+            let st = state.borrow();
+            read_edit(&app, &st.edit, st.target)
+        };
+        let before = edit();
+        assert_eq!(before.adjustments[0].look.detail, Default::default());
+        app.set_show_mask(true);
+        app.set_local_texture(-0.5);
+        app.invoke_view_changed();
+        assert!(!app.get_show_mask(), "a Detail slider is a look control");
+        let after = edit();
+        assert_eq!(after.adjustments[0].look.detail.texture, -0.5);
+        assert_eq!(
+            after.detail, before.detail,
+            "the picture's Detail untouched"
+        );
+        let name = app.get_adjustment_name().to_string();
+        assert_eq!(
+            describe(&before, &after, &[]),
+            format!("{name}: Texture -50")
+        );
+        // No texture plane came with the shown develop: the panel's
+        // edit is the one sent to be developed.
+        assert_eq!(state.borrow().edit.adjustments[0].look.detail.texture, -0.5);
+        // Moved again while that develop is on its way: no second one.
+        app.set_local_texture(-0.6);
+        app.invoke_view_changed();
+        assert_eq!(state.borrow().edit.adjustments[0].look.detail.texture, -0.5);
+        // That develop fails: the plane is not coming, and the next
+        // move asks again.
+        let generation = state.borrow().generation;
+        crate::panel::deliver::deliver(
+            &app,
+            crate::worker::Outcome::Failed {
+                generation,
+                message: "failed on purpose".into(),
+            },
+        );
+        assert_eq!(state.borrow().planes_asked, Default::default());
+        app.set_local_texture(-0.55);
+        app.invoke_view_changed();
+        assert_eq!(
+            state.borrow().edit.adjustments[0].look.detail.texture,
+            -0.55
+        );
+        assert!(state.borrow().planes_asked.texture);
+        // It lands with the plane; a slider moved is the finish's alone.
+        {
+            let mut st = state.borrow_mut();
+            st.planes_wants.texture = true;
+            st.planes_asked = Default::default();
+        }
+        app.set_local_texture(-0.8);
+        app.invoke_view_changed();
+        assert_eq!(
+            state.borrow().edit.adjustments[0].look.detail.texture,
+            -0.55
+        );
+        assert_eq!(edit().adjustments[0].look.detail.texture, -0.8);
+        // Dehaze asks for the haze, which is not there.
+        app.set_local_dehaze(0.3);
+        app.invoke_view_changed();
+        assert_eq!(state.borrow().edit.adjustments[0].look.detail.dehaze, 0.3);
+        // Through the sidecar's JSON and back onto the panel.
+        let saved = edit();
+        let back = greycard_edit::Edit::from_json(&saved.to_json()).unwrap();
+        assert_eq!(back, saved);
+        app.set_local_texture(0.0);
+        app.set_local_dehaze(0.0);
+        app.set_local_detail_enabled(false);
+        {
+            let st = state.borrow();
+            show_edit(&st, &back, &app, st.target);
+        }
+        assert!(app.get_local_detail_enabled());
+        assert_eq!(
+            (app.get_local_texture(), app.get_local_dehaze()),
+            (-0.8, 0.3)
+        );
+        assert_eq!(
+            edit().adjustments[0].look.detail,
+            back.adjustments[0].look.detail
+        );
+        // The switch: off keeps the sliders, and is its own row.
+        app.set_local_detail_enabled(false);
+        app.invoke_view_changed();
+        let off = edit();
+        assert_eq!(describe(&back, &off, &[]), format!("{name}: Detail off"));
+        assert_eq!(off.adjustments[0].look.detail.texture, -0.8);
     }
 
     /// A look change while a tool is in hand hides the overlay and

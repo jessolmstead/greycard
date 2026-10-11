@@ -149,6 +149,13 @@ struct Params {
     /// CPU's; in z the sample's exposure, the global one without the
     /// baseline.
     range: [f32; 4],
+    /// The masks' Detail (`crate::detail`): the airlight in xyz and in
+    /// w whether there are planes to read; the gains and the dehaze's
+    /// strength and floor; the develop's clip level in x (none under
+    /// zero) and the fade's start as a share of it in y.
+    detail: [f32; 4],
+    detail_k: [f32; 4],
+    detail_clip: [f32; 4],
 }
 
 /// What of the picture the view's masks read, as `Params::range.x`
@@ -193,6 +200,9 @@ struct LocalGpu {
     pad0: f32,
     /// This adjustment's tint as a vector, in x and y.
     tint: [f32; 4],
+    /// Its own Texture, Clarity and Dehaze amounts (`Baked::detail`),
+    /// put on from the detail planes.
+    detail: [f32; 4],
     /// Its own white balance's matrix, rows, in the first three of
     /// each; the first row's fourth is one when it has one.
     white: [[f32; 4]; 3],
@@ -364,6 +374,7 @@ fn locals_gpu(locals: &[Local]) -> LocalsGpu {
                 let v = b.tint.vector();
                 [v[0], v[1], 0.0, 0.0]
             },
+            detail: [b.detail[0], b.detail[1], b.detail[2], 0.0],
             white: match &b.white {
                 Some(m) => [
                     [m[0][0], m[0][1], m[0][2], 1.0],
@@ -681,6 +692,15 @@ pub struct Renderer {
     /// Its `Params::guide`: the source pixels the texture covers, and
     /// whether there is a plane to read.
     guide_cover: [f32; 4],
+    /// The masks' detail planes, Rgba16Float at the source's size:
+    /// texture, clarity and haze (`crate::detail::DetailPlanes`). A
+    /// texel of nothing when there are none.
+    detail: gpu::Texture,
+    /// The planes it holds, to know them again (`set_detail`).
+    detail_of: Option<std::sync::Weak<crate::detail::DetailPlanes>>,
+    /// Its `Params::detail` and `Params::detail_clip`.
+    detail_meta: [f32; 4],
+    detail_clip: [f32; 4],
     /// The look table the picture finishes through.
     look: LookTable,
     /// Working space to the output's, rows: the export's space, so
@@ -984,6 +1004,17 @@ impl Renderer {
                     },
                     count: None,
                 },
+                // The masks' detail planes.
+                gpu::BindGroupLayoutEntry {
+                    binding: 12,
+                    visibility: gpu::ShaderStages::FRAGMENT,
+                    ty: gpu::BindingType::Texture {
+                        sample_type: gpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: gpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
                 // The look table. Read by node, not sampled: the
                 // interpolation is tetrahedral, so it needs no
                 // sampler and takes no filtering.
@@ -1062,6 +1093,7 @@ impl Renderer {
             ],
         };
         let guide = Self::guide_texture(device, 1, 1);
+        let detail = Self::detail_texture(device, 1, 1);
         let output = crate::export::Space::Srgb.matrix();
         Self {
             scopes: Scopes::new(device),
@@ -1081,6 +1113,10 @@ impl Renderer {
             brushes: Brushes::empty(device),
             guide,
             guide_cover: [1.0, 1.0, 0.0, 0.0],
+            detail,
+            detail_of: None,
+            detail_meta: [1.0, 1.0, 1.0, 0.0],
+            detail_clip: [-1.0, 0.0, 0.0, 0.0],
             look,
             output,
             oklab: crate::finish::Oklab::for_working_space(),
@@ -1437,6 +1473,14 @@ impl Renderer {
                 v.light.exposure,
                 v.weigh_by.map(|k| k as f32 + 1.0).unwrap_or(0.0),
             ],
+            detail: self.detail_meta,
+            detail_k: [
+                greycard_core::develop::local_contrast::TEXTURE_GAIN,
+                greycard_core::develop::local_contrast::CLARITY_GAIN,
+                greycard_core::develop::dehaze::FULL_STRENGTH,
+                greycard_core::develop::dehaze::MIN_TRANSMISSION,
+            ],
+            detail_clip: self.detail_clip,
         };
         // Each draw has its own uniform buffer, since two draws share a
         // submission.
@@ -1523,6 +1567,7 @@ impl Renderer {
             let lut_view = lut.create_view(&Default::default());
             let brushes_view = self.brushes.view();
             let guide_view = self.guide.create_view(&Default::default());
+            let detail_view = self.detail.create_view(&Default::default());
             let look_view = self.look.texture.create_view(&Default::default());
             let bind_group = self.device.create_bind_group(&gpu::BindGroupDescriptor {
                 label: Some("viewport"),
@@ -1575,6 +1620,10 @@ impl Renderer {
                     gpu::BindGroupEntry {
                         binding: 11,
                         resource: gpu::BindingResource::TextureView(&look_view),
+                    },
+                    gpu::BindGroupEntry {
+                        binding: 12,
+                        resource: gpu::BindingResource::TextureView(&detail_view),
                     },
                 ],
             });
@@ -2035,6 +2084,88 @@ impl Renderer {
         self.guide_cover = [w as f32 * cover, h as f32 * cover, 1.0, 0.0];
         self.scopes.image_changed = true;
         self.redraw = true;
+    }
+
+    fn detail_texture(device: &gpu::Device, width: u32, height: u32) -> gpu::Texture {
+        device.create_texture(&gpu::TextureDescriptor {
+            label: Some("detail planes"),
+            size: gpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: gpu::TextureDimension::D2,
+            format: gpu::TextureFormat::Rgba16Float,
+            usage: gpu::TextureUsages::TEXTURE_BINDING | gpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        })
+    }
+
+    /// Put the masks' detail planes on the GPU, or take them down: the
+    /// planes of the develop the source is, at its size, read at the
+    /// texel the source is read at.
+    ///
+    /// The same planes landing again with a develop that kept them are
+    /// not uploaded again: 360 MB at 45 MP.
+    pub fn set_detail(&mut self, planes: Option<&Arc<crate::detail::DetailPlanes>>) {
+        if let (Some(p), Some(up)) = (planes, self.detail_of.as_ref().and_then(|w| w.upgrade()))
+            && Arc::ptr_eq(p, &up)
+        {
+            return;
+        }
+        self.redraw = true;
+        self.scopes.image_changed = true;
+        self.detail_of = planes.map(Arc::downgrade);
+        let Some(planes) = planes.filter(|p| p.width > 0 && p.height > 0) else {
+            if self.detail_meta[3] != 0.0 {
+                self.detail = Self::detail_texture(&self.device, 1, 1);
+            }
+            self.detail_meta = [1.0, 1.0, 1.0, 0.0];
+            self.detail_clip = [-1.0, 0.0, 0.0, 0.0];
+            return;
+        };
+        // The shader reads them only at the source's size; another
+        // size is a bug in whoever carried them, said here.
+        if let Some(source) = &self.source {
+            crate::detail::fits(
+                (planes.width, planes.height),
+                source.width() as usize,
+                source.height() as usize,
+                "the viewport",
+            );
+        }
+        let (w, h) = (planes.width as u32, planes.height as u32);
+        self.detail = Self::detail_texture(&self.device, w, h);
+        self.queue.write_texture(
+            gpu::TexelCopyTextureInfo {
+                texture: &self.detail,
+                mip_level: 0,
+                origin: gpu::Origin3d::ZERO,
+                aspect: gpu::TextureAspect::All,
+            },
+            bytemuck::cast_slice(&planes.data),
+            gpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(w * 8),
+                rows_per_image: Some(h),
+            },
+            gpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        let a = planes.meta.airlight;
+        self.detail_meta = [a[0], a[1], a[2], 1.0];
+        let clip = planes.meta.clip_level;
+        self.detail_clip = [
+            if clip.is_finite() { clip } else { -1.0 },
+            greycard_core::develop::local_contrast::CLIP_FADE,
+            0.0,
+            0.0,
+        ];
     }
 
     /// Show a developed picture that is on the GPU already: an
@@ -3233,6 +3364,7 @@ mod tests {
                 |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
                 |_, _| (0.0, None),
                 None,
+                None,
                 look.filter(|l| !l.is_off()),
                 &to_out,
                 |v: f32| v,
@@ -3658,6 +3790,7 @@ mod tests {
                 |_, _| (0.0, None),
                 None,
                 None,
+                None,
                 &to_out,
                 |v| (v * 255.0).round() as u8,
             );
@@ -3760,7 +3893,7 @@ mod tests {
     /// The parts of an edit the parity test draws, a bit each, so a
     /// failing edit can be drawn again with one part left at its
     /// default to see which part the difference is in.
-    const PARTS: [&str; 19] = [
+    const PARTS: [&str; 20] = [
         "light",
         "light switch",
         "point curves",
@@ -3780,6 +3913,7 @@ mod tests {
         "output space",
         "display curve",
         "local white",
+        "local detail",
     ];
 
     fn part(name: &str) -> u32 {
@@ -3798,6 +3932,9 @@ mod tests {
         /// one (the test's `guides`).
         guide: Option<usize>,
         space: crate::export::Space,
+        /// The detail planes are handed to both sides (the test's
+        /// `planes`), for the masks' Detail to read.
+        planes: bool,
     }
 
     /// A point curve: the ends at x 0 and 1, up to three points
@@ -4267,6 +4404,21 @@ mod tests {
                 a.look.white_balance = greycard_edit::LocalWhite::Absolute { temperature, tint };
             }
         }
+        // Each mask's Detail, over the panel's ranges, its switch off
+        // now and then, and the planes there most of the time: after
+        // the local white, for the same reason.
+        for a in &mut edit.adjustments {
+            let detail = greycard_edit::Detail {
+                enabled: !rng.chance(0.15),
+                texture: rng.slider(0.5, -1.0, 1.0, 0.0),
+                clarity: rng.slider(0.5, -1.0, 1.0, 0.0),
+                dehaze: rng.slider(0.5, -1.0, 1.0, 0.0),
+            };
+            if has("local detail") {
+                a.look.detail = detail;
+            }
+        }
+        let planes = !rng.chance(0.2) && has("local detail");
         Case {
             edit,
             rasters,
@@ -4281,6 +4433,40 @@ mod tests {
                 space
             } else {
                 crate::export::Space::Srgb
+            },
+            planes,
+        }
+    }
+
+    /// Detail planes for the parity test: bands of a few stops either
+    /// way and a haze from nothing to most of the way, varying pixel to
+    /// pixel, so a plane read at the wrong texel shows; the airlight
+    /// warm, and the clip at one, where the frame has highlights past.
+    fn parity_planes(w: usize, h: usize) -> crate::detail::DetailPlanes {
+        let mut rng = Rng::new(7, u64::MAX - 1);
+        let data = (0..w * h)
+            .flat_map(|_| {
+                [
+                    rng.range(-1.5, 1.5),
+                    rng.range(-1.0, 1.0),
+                    rng.range(0.0, 0.9),
+                    0.0,
+                ]
+            })
+            .map(half::f16::from_f32)
+            .collect();
+        crate::detail::DetailPlanes {
+            width: w,
+            height: h,
+            data,
+            meta: crate::detail::DetailMeta {
+                airlight: [0.9, 0.86, 0.8],
+                clip_level: 1.0,
+            },
+            wants: greycard_edit::DetailWants {
+                texture: true,
+                clarity: true,
+                haze: true,
             },
         }
     }
@@ -4511,6 +4697,17 @@ mod tests {
         image: &WorkingImage,
         edit: &greycard_edit::Edit,
     ) -> (Vec<u8>, Vec<u8>) {
+        both_sides_with(device, queue, image, edit, None)
+    }
+
+    /// [`both_sides`] with the masks' detail planes handed to each.
+    fn both_sides_with(
+        device: &gpu::Device,
+        queue: &gpu::Queue,
+        image: &WorkingImage,
+        edit: &greycard_edit::Edit,
+        planes: Option<&Arc<crate::detail::DetailPlanes>>,
+    ) -> (Vec<u8>, Vec<u8>) {
         let (w, h) = (image.width, image.height);
         let shift = crate::testing::white_shift();
         let locals: Vec<Local> = edit
@@ -4520,6 +4717,8 @@ mod tests {
             .collect();
         let mut renderer = Renderer::new(device, queue);
         renderer.upload(&crate::worker::Halves::from_image(image, None));
+        renderer.set_detail(planes);
+        let bands = planes.map(|p| p.to_image());
         let view = View {
             center: (w as f32 / 2.0, h as f32 / 2.0),
             plane: (w as f32, h as f32),
@@ -4548,11 +4747,151 @@ mod tests {
                 (stops, None)
             },
             None,
+            bands.as_ref().zip(planes.map(|p| &p.meta)),
             None,
             &crate::export::Space::Srgb.matrix(),
             |v| (v * 255.0).round() as u8,
         );
         (cpu, gpu)
+    }
+
+    /// A mask's Detail timed on the GPU at 24 and 45 MP: the planes'
+    /// upload, and a 2560 by 1440 draw of the whole frame with and
+    /// without a mask asking, each read back so the time is the
+    /// device's. A measurement, so ignored.
+    #[test]
+    #[ignore = "a measurement"]
+    fn a_masks_detail_timed_on_the_gpu() {
+        let Some((device, queue)) = device("the masks' Detail timing") else {
+            return;
+        };
+        for (w, h) in [(6000usize, 4000usize), (8192, 5464)] {
+            let image = WorkingImage {
+                width: w,
+                height: h,
+                data: (0..w * h * 3)
+                    .map(|i| 0.05 + (i % 97) as f32 / 200.0)
+                    .collect(),
+            };
+            let planes = Arc::new(crate::detail::DetailPlanes {
+                width: w,
+                height: h,
+                data: (0..w * h * 4)
+                    .map(|i| half::f16::from_f32((i % 13) as f32 / 20.0 - 0.3))
+                    .collect(),
+                meta: crate::detail::DetailMeta {
+                    airlight: [0.9, 0.86, 0.8],
+                    clip_level: 1.0,
+                },
+                wants: greycard_edit::DetailWants {
+                    texture: true,
+                    clarity: true,
+                    haze: true,
+                },
+            });
+            let mut renderer = Renderer::new(&device, &queue);
+            renderer.upload(&crate::worker::Halves::from_image(&image, None));
+            let look = Look {
+                detail: greycard_edit::Detail {
+                    enabled: true,
+                    texture: -0.5,
+                    clarity: 0.3,
+                    dehaze: 0.3,
+                },
+                ..Default::default()
+            };
+            let mut edit = greycard_edit::Edit::default();
+            edit.adjustments.push(everywhere(look));
+            let locals: Vec<Local> = edit
+                .adjustments
+                .iter()
+                .map(|a| Local::of(a, vec![None], None))
+                .collect();
+            let (vw, vh) = (2560u32, 1440u32);
+            let view = View {
+                center: (w as f32 / 2.0, h as f32 / 2.0),
+                plane: (w as f32, h as f32),
+                frame_size: (w as f32, h as f32),
+                zoom: (vw as f32 / w as f32).min(vh as f32 / h as f32),
+                locals,
+                ..View::with_look(&edit)
+            };
+            let draw = |renderer: &mut Renderer| {
+                let mut best = f64::INFINITY;
+                for _ in 0..5 {
+                    renderer.redraw = true;
+                    let started = std::time::Instant::now();
+                    let target = renderer.render(vw, vh, &view).0;
+                    renderer.read_back(&target).expect("read back");
+                    best = best.min(started.elapsed().as_secs_f64());
+                }
+                best
+            };
+            let without = draw(&mut renderer);
+            let started = std::time::Instant::now();
+            renderer.set_detail(Some(&planes));
+            let target = renderer.render(1, 1, &view).0;
+            renderer.read_back(&target).expect("read back");
+            let upload = started.elapsed().as_secs_f64();
+            let with = draw(&mut renderer);
+            eprintln!(
+                "{w}x{h}: the planes up in {:.0} ms; a {vw}x{vh} draw {:.1} ms without them, \
+                 {:.1} ms with a mask's three",
+                upload * 1e3,
+                without * 1e3,
+                with * 1e3
+            );
+        }
+    }
+
+    /// A mask's Detail on both sides: Texture, Clarity and Dehaze over
+    /// the whole frame from the planes of the picture, the shader the
+    /// CPU's to two levels; nothing without the planes, and nothing
+    /// with the section off.
+    #[test]
+    fn a_masks_detail_on_both_sides() {
+        let Some((device, queue)) = device("the masks' Detail check") else {
+            return;
+        };
+        let image = parity_frame();
+        let planes = crate::detail::DetailPlanes::make(
+            &image,
+            None,
+            1.0,
+            greycard_edit::DetailWants {
+                texture: true,
+                clarity: true,
+                haze: true,
+            },
+        )
+        .map(Arc::new)
+        .expect("planes");
+        let look = Look {
+            detail: greycard_edit::Detail {
+                enabled: true,
+                texture: 0.8,
+                clarity: -0.6,
+                dehaze: 0.7,
+            },
+            ..Default::default()
+        };
+        let mut edit = greycard_edit::Edit::default();
+        edit.adjustments.push(everywhere(look));
+        let (cpu, gpu) = both_sides_with(&device, &queue, &image, &edit, Some(&planes));
+        let worst = cpu.iter().zip(&gpu).map(|(a, b)| a.abs_diff(*b)).max();
+        assert!(worst <= Some(2), "{worst:?}");
+        let (bare, bare_gpu) = both_sides_with(&device, &queue, &image, &edit, None);
+        assert!(bare != cpu, "the Detail did nothing");
+        let worst = bare
+            .iter()
+            .zip(&bare_gpu)
+            .map(|(a, b)| a.abs_diff(*b))
+            .max();
+        assert!(worst <= Some(2), "{worst:?}");
+        edit.adjustments[0].look.detail.enabled = false;
+        let (off, off_gpu) = both_sides_with(&device, &queue, &image, &edit, Some(&planes));
+        assert_eq!(off, bare);
+        assert_eq!(off_gpu, bare_gpu);
     }
 
     /// The stacked corner the random draws found the shader's display
@@ -4750,6 +5089,7 @@ mod tests {
                 |_, _| (0.0, None),
                 None,
                 None,
+                None,
                 &crate::export::Space::Srgb.matrix(),
                 |v| (v * 255.0).round() as u8,
             )
@@ -4814,7 +5154,8 @@ mod tests {
     /// learned raster (Subject) present or missing, and luminance and
     /// color windows, in every mode, a look table, a source of a scene
     /// or a picture already rendered, an output space and a guide
-    /// plane.
+    /// plane; and each mask's Detail, read from a random set of detail
+    /// planes.
     ///
     /// Both sides are built from the edit the way the app builds them:
     /// the locals by `Local::of`, as the viewport and the export bake
@@ -4921,6 +5262,8 @@ mod tests {
         let pool = raster_pool(seed, aspect);
         let tables = look_tables();
         let shift = crate::testing::white_shift();
+        let planes = Arc::new(parity_planes(w, h));
+        let planes_image = planes.to_image();
         let mut renderer = Renderer::new(&device, &queue);
         renderer.upload(&crate::worker::Halves::from_image(&image, None));
         // The picture with each channel in turn moved by `NUDGE` of the
@@ -4996,6 +5339,8 @@ mod tests {
             renderer.set_output(case.space.matrix());
             let guide = case.guide.map(|k| &guides[k]);
             renderer.set_guide(guide.unwrap_or(&crate::finish::Guide::NONE));
+            renderer.set_detail(case.planes.then_some(&planes));
+            let detail = case.planes.then_some((&planes_image, &planes.meta));
             let view = View {
                 center: (w as f32 / 2.0, h as f32 / 2.0),
                 plane: (w as f32, h as f32),
@@ -5033,6 +5378,7 @@ mod tests {
                     |x, y| ((x as f32 + 0.5) / iw, (y as f32 + 0.5) / iw),
                     frame_at,
                     guide.filter(|_| reads).map(|g| (g, iw)),
+                    detail,
                     look,
                     &case.space.matrix(),
                     |v: f32| v,

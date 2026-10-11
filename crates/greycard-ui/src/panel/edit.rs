@@ -399,6 +399,14 @@ pub(crate) fn read_look(app: &App) -> Look {
         // A mask's alone: the global look's is never read
         // (`Edit::set_look`), and is shown off.
         white_balance: crate::panel::color::panel_local_white(app),
+        // A mask's alone too: the picture's Detail is the edit's own
+        // (`Edit::set_look`), from the Develop tab's section.
+        detail: greycard_edit::Detail {
+            enabled: app.get_local_detail_enabled(),
+            texture: app.get_local_texture(),
+            clarity: app.get_local_clarity(),
+            dehaze: app.get_local_dehaze(),
+        },
     }
 }
 
@@ -687,6 +695,12 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
             app.set_local_wb_kept(false);
         }
     }
+    // A mask's own Detail; the global look's is the default, never
+    // shown, since its section is on the Masks tab alone.
+    app.set_local_detail_enabled(look.detail.enabled);
+    app.set_local_texture(look.detail.texture);
+    app.set_local_clarity(look.detail.clarity);
+    app.set_local_dehaze(look.detail.dehaze);
     app.set_detail_enabled(edit.detail.enabled);
     app.set_detail_texture(edit.detail.texture);
     app.set_detail_clarity(edit.detail.clarity);

@@ -360,6 +360,7 @@ pub fn render(
     guide: Option<&finish::Guide>,
     kind: finish::Source,
     white: Option<&greycard_edit::WhiteShift>,
+    detail: Option<(&WorkingImage, &crate::detail::DetailMeta)>,
 ) -> Rendered {
     render_framed(
         image,
@@ -372,6 +373,7 @@ pub fn render(
         guide,
         kind,
         white,
+        detail,
     )
 }
 
@@ -380,6 +382,10 @@ pub fn render(
 /// already reduced, as the pictures kept of an edit are made, so the
 /// masks, the guide plane and the vignette are placed by the frame and
 /// not by the reduced copy's pixels.
+///
+/// `detail` is the masks' bands ([`crate::detail::DetailPlanes`])
+/// brought into the frame as `image` was, the same size as it: they
+/// are resized here with the picture, by the same filter.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_framed(
     image: &WorkingImage,
@@ -392,7 +398,20 @@ pub(crate) fn render_framed(
     guide: Option<&finish::Guide>,
     kind: finish::Source,
     white: Option<&greycard_edit::WhiteShift>,
+    detail: Option<(&WorkingImage, &crate::detail::DetailMeta)>,
 ) -> Rendered {
+    // The bands with the picture through its resize, when one reads
+    // them and they are the picture's size.
+    let detail = detail
+        .filter(|_| {
+            edit.adjustments
+                .iter()
+                .any(|a| a.enabled && !a.mask.is_empty() && a.look.detail.enabled)
+        })
+        .filter(|(d, _)| {
+            crate::detail::fits((d.width, d.height), image.width, image.height, "the export")
+        });
+    let detail_fitted = detail.and_then(|(d, _)| fit(d, settings.long_edge));
     let fitted;
     // The range masks read the picture from before the output
     // sharpen, so an export at any size samples the stage the
@@ -479,6 +498,7 @@ pub(crate) fn render_framed(
         .filter(|g| !g.data.is_empty())
         .filter(|_| reads_guide(edit))
         .map(|g| (g, sw));
+    let detail = detail.map(|(d, meta)| (detail_fitted.as_ref().unwrap_or(d), meta));
     let pixels = match settings.format {
         Format::Tiff => Pixels::Sixteen(finish::finish_with(
             image,
@@ -488,6 +508,7 @@ pub(crate) fn render_framed(
             position,
             frame_at,
             guide,
+            detail,
             look.as_ref(),
             &m,
             |v| (v * 65535.0).round() as u16,
@@ -500,6 +521,7 @@ pub(crate) fn render_framed(
             position,
             frame_at,
             guide,
+            detail,
             look.as_ref(),
             &m,
             |v| (v * 255.0).round() as u8,
@@ -1193,6 +1215,7 @@ mod tests {
                 None,
                 finish::Source::Scene,
                 None,
+                None,
             );
             let Pixels::Sixteen(p) = rendered.pixels else {
                 panic!("a TIFF is sixteen bits")
@@ -1279,6 +1302,7 @@ mod tests {
             None,
             finish::Source::Scene,
             None,
+            None,
         );
         let Pixels::Sixteen(p) = &rendered.pixels else {
             panic!("a TIFF is sixteen bits")
@@ -1306,6 +1330,7 @@ mod tests {
                 1.0,
                 None,
                 finish::Source::Scene,
+                None,
                 None,
             ),
             &jpeg,
@@ -1361,6 +1386,7 @@ mod tests {
                 1.0,
                 None,
                 finish::Source::Scene,
+                None,
                 None,
             );
             let origin = Origin {
@@ -1473,6 +1499,7 @@ mod tests {
                 None,
                 finish::Source::Scene,
                 None,
+                None,
             );
             let path = dir.join(format!("m-{}.{}", policy.name(), format.extension()));
             write(&rendered, &settings, &path, Some(&metadata), &origin).unwrap();
@@ -1540,6 +1567,7 @@ mod tests {
                 1.0,
                 None,
                 finish::Source::Scene,
+                None,
                 None,
             );
             mark(&mut r, settings).unwrap();

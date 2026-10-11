@@ -349,6 +349,70 @@ impl Model {
     }
 }
 
+impl Model {
+    /// The haze at every full-size pixel of `image`, the picture the
+    /// model was fitted on: one less the model's line in the pixel's
+    /// luminance, before the floor and the bound the apply puts on it.
+    /// Of a model fitted at a strength of one ([`Reduced::fit`]), the
+    /// transmission at a strength `s` is `1 - s * haze`, and
+    /// [`local_clearing`] bounds it as the apply does.
+    pub fn haze(&self, image: &WorkingImage) -> Vec<f32> {
+        let (w, h) = (image.width, image.height);
+        assert_eq!(
+            (w.div_ceil(self.factor), h.div_ceil(self.factor)),
+            (self.width, self.height),
+            "a model fitted on a picture of another size"
+        );
+        let columns = taps(w, self.width, self.factor);
+        let mut out = vec![0f32; w * h];
+        out.par_chunks_mut(w.max(1))
+            .zip(image.data.par_chunks(w.max(1) * 3))
+            .enumerate()
+            .for_each(|(y, (out, row))| {
+                let (y0, y1, fy) = tap(y, self.height, self.factor);
+                let rw = self.width;
+                for ((o, px), &(x0, x1, fx)) in
+                    out.iter_mut().zip(row.as_chunks::<3>().0).zip(&columns)
+                {
+                    let lerp = |p: &[f32]| {
+                        let top = p[y0 * rw + x0] + (p[y0 * rw + x1] - p[y0 * rw + x0]) * fx;
+                        let bottom = p[y1 * rw + x0] + (p[y1 * rw + x1] - p[y1 * rw + x0]) * fx;
+                        top + (bottom - top) * fy
+                    };
+                    let lum = LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2];
+                    *o = 1.0 - (lerp(&self.a) * lum + lerp(&self.b));
+                }
+            });
+        out
+    }
+}
+
+/// What a mask's Dehaze takes off the transmission at a pixel `px`,
+/// one less it, from the haze there ([`Model::haze`]) at a strength
+/// `s` (the amount times [`FULL_STRENGTH`]), bounded as the apply
+/// bounds the global's: the transmission no less than the pixel's own
+/// dark channel over `airlight` says, floored at [`MIN_TRANSMISSION`]
+/// and under one when haze is taken out; at least one and at most
+/// `1 - s` when it is put in. Nothing at a strength of nothing.
+///
+/// Kept as what is taken off rather than the transmission itself, so
+/// the pixel is cleared as `(px - A u) / (1 - u)`: the global's
+/// `(px - A) / t + A` is the same, but near black it is the difference
+/// of two numbers near the airlight, and on a dark pixel brought up
+/// several stops afterward by a mask's exposure the rounding of that
+/// difference shows.
+#[inline]
+pub fn local_clearing(haze: f32, s: f32, px: &[f32; 3], airlight: &[f32; 3]) -> f32 {
+    if s > 0.0 {
+        let own = s * dark_ratio(px, airlight);
+        (s * haze).min(own).clamp(0.0, 1.0 - MIN_TRANSMISSION)
+    } else if s < 0.0 {
+        (s * haze).clamp(s, 0.0)
+    } else {
+        0.0
+    }
+}
+
 /// The dark channel of one pixel over the airlight: the least of its
 /// channels' ratios, held to 0..1. Above the airlight a pixel is
 /// brighter than any haze could make it, and says nothing about the
@@ -492,7 +556,20 @@ impl Reduced {
     /// zero, or the picture is empty, and the dehaze does nothing.
     pub fn model(&self, options: &DehazeOptions) -> Option<Model> {
         let amount = options.amount.clamp(-1.0, 1.0);
-        let strength = amount * FULL_STRENGTH;
+        self.fit_at(amount, amount * FULL_STRENGTH)
+    }
+
+    /// Fit the model at a strength given as it is, unclamped: the
+    /// haze a mask's Dehaze reads is the fit at a strength of one
+    /// ([`Model::haze`]), past where the amount's end puts it. The
+    /// fit is linear in the strength, slope and intercept less one
+    /// both its multiples, so the model at any strength is that one's
+    /// scaled.
+    pub fn fit(&self, strength: f32) -> Option<Model> {
+        self.fit_at(strength / FULL_STRENGTH, strength)
+    }
+
+    fn fit_at(&self, amount: f32, strength: f32) -> Option<Model> {
         let (rw, rh) = (self.width, self.height);
         if strength == 0.0 || rw == 0 || rh == 0 {
             return None;
@@ -1310,5 +1387,26 @@ clipped 1700x30: ede667fe46900a45 41000000 41000000 41000000 3f051eb8 2 0.520000
         assert_eq!(plane[0], 0.0);
         assert_eq!(plane[2 * w + 3], 9.0);
         assert_eq!(plane[w * h - 1], (h - 2) as f32 * w as f32 + (w - 2) as f32);
+    }
+
+    /// The haze at a strength of one, scaled and bounded at a pixel,
+    /// is the transmission the apply puts on at any amount, in and out.
+    #[test]
+    fn the_haze_scaled_is_the_transmission_at_any_amount() {
+        let (image, _) = hazed(&clear_scene(96, 64), [0.8, 0.82, 0.85]);
+        let reduced = Reduced::new(&image);
+        let unit = reduced.fit(1.0).expect("a model");
+        let haze = unit.haze(&image);
+        for amount in [1.0, 0.6, 0.2, -0.4, -1.0] {
+            let options = DehazeOptions { amount };
+            let (_, map) = dehaze_with_map(&mut image.clone(), &options);
+            let s = amount * FULL_STRENGTH;
+            let a = reduced.airlight();
+            for (i, px) in image.data.as_chunks::<3>().0.iter().enumerate() {
+                let t = 1.0 - local_clearing(haze[i], s, px, &a);
+                assert!((t - map[i]).abs() < 2e-5, "{amount} at {i}: {t} {}", map[i]);
+            }
+        }
+        assert_eq!(local_clearing(0.7, 0.0, &[0.1; 3], &[0.8; 3]), 0.0);
     }
 }

@@ -156,6 +156,8 @@ pub(crate) struct Developed {
     pub(crate) guide: Arc<crate::finish::Guide>,
     pub(crate) kind: crate::finish::Source,
     pub(crate) white: Option<greycard_edit::WhiteShift>,
+    /// The masks' bands, of `image`.
+    pub(crate) detail: Option<Arc<crate::detail::DetailPlanes>>,
     /// How long each step took, seconds: the decode, the develop to
     /// the binned picture, the rest to the finish.
     pub(crate) decode: f64,
@@ -334,6 +336,15 @@ pub(crate) fn develop(
             None
         });
     }
+    // The masks' bands, of the picture at this size, as the worker
+    // makes them of the full one.
+    let detail = crate::detail::DetailPlanes::make(
+        &image,
+        edit.detail.options(),
+        clip_level,
+        edit.detail_wants(),
+    )
+    .map(Arc::new);
     if let Some(options) = edit.detail.options() {
         local_contrast(&mut image, &options, clip_level);
     }
@@ -351,6 +362,7 @@ pub(crate) fn develop(
         guide,
         kind,
         white,
+        detail,
         decode,
         develop,
         rest: started.elapsed().as_secs_f64(),
@@ -803,6 +815,7 @@ impl Reducer {
             guide: Some(developed.guide.clone()),
             kind: developed.kind,
             white: developed.white.clone(),
+            detail: developed.detail.clone(),
         };
         let made = self
             .pool()

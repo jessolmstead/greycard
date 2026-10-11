@@ -2010,7 +2010,8 @@ fn display(
         f32::INFINITY,
         None,
         kind,
-        // No masks, so no white of theirs.
+        // No masks, so no white of theirs, and no bands.
+        None,
         None,
     );
     let crate::export::Pixels::Eight(data) = rendered.pixels else {

@@ -797,6 +797,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                                 Developed::Texture(texture) => renderer.set_source(texture.clone()),
                             }
                             renderer.set_guide(&landed.guide);
+                            renderer.set_detail(landed.planes.as_ref());
                         }
                         cull_frame(st, &app, &state);
                         return;
@@ -1097,6 +1098,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                             Developed::Texture(texture) => renderer.set_source(texture.clone()),
                         }
                         renderer.set_guide(&landed.guide);
+                        renderer.set_detail(landed.planes.as_ref());
                     }
                     sync_display(
                         &mut st.lut_for,
@@ -2028,6 +2030,7 @@ mod tests {
             1.0,
             None,
             finish::Source::Scene,
+            None,
             None,
         );
         export::mark(&mut rendered, &settings).unwrap();

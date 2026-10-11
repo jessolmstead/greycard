@@ -312,3 +312,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§299. A two-finger scroll over the picture pans](notes/299-a-two-finger-scroll-over-the-picture-pans.md) (2026-10-11)
 - [§300. The Adjustments list stays pinned above the Masks tab](notes/300-the-adjustments-list-stays-pinned.md) (2026-10-11)
 - [§301. The export sheet names its folder](notes/301-the-export-sheet-names-its-folder.md) (2026-10-11)
+- [§302. Detail in a mask, built](notes/302-detail-in-a-mask-built.md) (2026-10-11)

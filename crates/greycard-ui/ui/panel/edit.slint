@@ -165,6 +165,9 @@ export component NoiseSection inherits Section {
 
 export component DetailSection inherits Section {
     in-out property <bool> collapsed-detail;
+    // A mask's own Detail names the mask it is under, as the other
+    // sections of its look do; empty for the picture's.
+    in-out property <string> target-name;
     in-out property <bool> detail-enabled;
     in-out property <float> detail-texture;
     in-out property <float> detail-clarity;
@@ -173,6 +176,7 @@ export component DetailSection inherits Section {
 
     title: "DETAIL";
     icon: @image-url("../icons/blend.svg");
+    owner: root.target-name;
     collapsed <=> root.collapsed-detail;
     switchable: true;
     on <=> root.detail-enabled;

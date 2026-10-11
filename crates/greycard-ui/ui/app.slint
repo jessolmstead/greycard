@@ -1032,6 +1032,12 @@ export component App inherits Window {
     in-out property <float> detail-texture: 0;
     in-out property <float> detail-clarity: 0;
     in-out property <float> detail-dehaze: 0;
+    // The chosen mask's own Detail: its switch and its three sliders,
+    // put on at the finish by the mask's weight.
+    in-out property <bool> local-detail-enabled: true;
+    in-out property <float> local-texture: 0;
+    in-out property <float> local-clarity: 0;
+    in-out property <float> local-dehaze: 0;
     in-out property <bool> sharpen: true;
     // The lens: what the database found for the file, whether it
     // found anything, whether there is a database at all, and the
@@ -2381,6 +2387,19 @@ export component App inherits Window {
                             tint-changed => { root.tint-changed(); }
                             tint-reset => { root.tint-reset(); }
                             view-changed => { root.view-changed(); }
+                        }
+                        // The chosen mask's own Texture, Clarity and
+                        // Dehaze: a look control, put on at the finish
+                        // from the bands the develop keeps beside the
+                        // picture.
+                        if root.panel-tab == "Masks" && root.target > 0: DetailSection {
+                            collapsed-detail <=> root.collapsed-detail;
+                            target-name <=> root.target-name;
+                            detail-enabled <=> root.local-detail-enabled;
+                            detail-texture <=> root.local-texture;
+                            detail-clarity <=> root.local-clarity;
+                            detail-dehaze <=> root.local-dehaze;
+                            develop-changed => { root.view-changed(); }
                         }
                         if root.panel-tab == "Develop": NoiseSection {
                             noise-enabled <=> root.noise-enabled;

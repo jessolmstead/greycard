@@ -4,6 +4,7 @@
 //! export, with local adjustments blended in where their masks say.
 //! The reference the shader in `viewport.wgsl` is held to.
 
+use crate::detail::DetailMeta;
 use std::sync::Arc;
 
 use greycard_core::color::Matrix3;
@@ -45,6 +46,11 @@ pub struct Baked {
     /// is in the develop. Made by [`Local::of`], which has the
     /// develop's white to make it from.
     pub white: Option<Matrix3>,
+    /// A local's own Texture, Clarity and Dehaze amounts, each held to
+    /// the slider's ends, and nothing while its section is off. Never
+    /// the global's, whose Detail is in the develop. Put on at the
+    /// finish from the develop's bands (`crate::detail`).
+    pub detail: [f32; 3],
 }
 
 /// What the finish is handed. A raw's develop is a scene, which the
@@ -97,6 +103,12 @@ impl Baked {
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
             white: None,
+            detail: if look.detail.enabled {
+                [look.detail.texture, look.detail.clarity, look.detail.dehaze]
+                    .map(|v| v.clamp(-1.0, 1.0))
+            } else {
+                [0.0; 3]
+            },
         }
     }
 
@@ -410,7 +422,9 @@ pub fn finish_pixel(
     locals: &[(&Baked, f32)],
     to_out: &[[f32; 3]; 3],
 ) -> [f32; 3] {
-    finish_pixel_with(px, global, locals, 0.0, None, None, None, None, to_out)
+    finish_pixel_with(
+        px, global, locals, 0.0, None, None, None, None, None, to_out,
+    )
 }
 
 /// `finish_pixel` through a look table. The tests' way in to the one
@@ -422,7 +436,7 @@ pub fn finish_pixel_look(
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
 ) -> [f32; 3] {
-    finish_pixel_with(px, global, &[], 0.0, None, None, None, look, to_out)
+    finish_pixel_with(px, global, &[], 0.0, None, None, None, None, look, to_out)
 }
 
 /// `finish_pixel` with `stops` more exposure at this pixel, the
@@ -448,14 +462,24 @@ pub fn finish_pixel_with(
     grain: Option<[f32; 3]>,
     reference: Option<[f32; 2]>,
     guide: Option<f32>,
+    detail: Option<([f32; 3], &DetailMeta)>,
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
 ) -> [f32; 3] {
-    // The locals' white balances first, on the developed picture, as
-    // the develop's own is under everything else: the look after it
-    // reads the picture at the white the masks ask for. The masks'
-    // weights were read before it (`finish_with`), so a range mask
-    // never moves under its own white.
+    // The masks' Detail first, from the develop's bands at this pixel,
+    // on the developed picture in the develop's white, as the develop
+    // puts the global's on: the dehaze's airlight and its bound are of
+    // that picture, and the fade toward the clip reads it.
+    let mut px = px;
+    if let Some((bands, meta)) = detail
+        && let Some(k) = crate::detail::amounts(locals)
+    {
+        px = crate::detail::apply(px, bands, k, meta);
+    }
+    // Then the locals' white balances, as the develop's own is under
+    // everything else: the look after it reads the picture at the
+    // white the masks ask for. The masks' weights were read before it
+    // (`finish_with`), so a range mask never moves under its own white.
     let (px, reference) = match white_at(locals) {
         Some(m) => rebalanced(px, reference, &m),
         None => (px, reference),
@@ -1198,6 +1222,12 @@ fn decode(v: f32) -> f32 {
 /// `sampled` is the picture the range masks read ([`sample`]) when it
 /// is not `image`: an export's, from before its output sharpen, the
 /// same size. The mixer reads `image`.
+///
+/// `detail` is the develop's bands for the masks' Detail
+/// ([`crate::detail::DetailPlanes`]) brought into the frame with the
+/// picture, by the same geometry and resize, so a pixel's bands are at
+/// that pixel of it: three channels, texture, clarity and haze, the
+/// size of `image`.
 #[allow(clippy::too_many_arguments)]
 pub fn finish_with<T: Copy + Default + Send>(
     image: &WorkingImage,
@@ -1207,6 +1237,7 @@ pub fn finish_with<T: Copy + Default + Send>(
     position: impl Fn(usize, usize) -> (f32, f32) + Sync,
     frame: impl Fn(usize, usize) -> (f32, Option<[f32; 3]>) + Sync,
     guide: Option<(&Guide, f32)>,
+    detail: Option<(&WorkingImage, &DetailMeta)>,
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
     quantize: impl Fn(f32) -> T + Sync,
@@ -1230,6 +1261,17 @@ pub fn finish_with<T: Copy + Default + Send>(
             _ => Some(local_ab(source.unwrap_or(image))),
         });
     let exposure = global.light.exposure;
+    // The bands only where a local puts some on, and only of the
+    // picture's own size.
+    let detail = detail
+        .filter(|_| {
+            locals
+                .iter()
+                .any(|l| l.enabled && l.baked.detail != [0.0; 3])
+        })
+        .filter(|(d, _)| {
+            crate::detail::fits((d.width, d.height), image.width, image.height, "the finish")
+        });
     let mut out = vec![T::default(); image.width * image.height * 3];
     out.par_chunks_mut(image.width * 3)
         .zip(image.data.par_chunks(image.width * 3))
@@ -1267,7 +1309,8 @@ pub fn finish_with<T: Copy + Default + Send>(
                     g = guide.map(|(plane, sw)| plane.at(u * sw, v * sw));
                 }
                 let (stops, grain) = frame(x, y);
-                *o = finish_pixel_with(*px, global, &on, stops, grain, ab, g, look, to_out)
+                let bands = detail.map(|(d, meta)| (d.pixel(x, y), meta));
+                *o = finish_pixel_with(*px, global, &on, stops, grain, ab, g, bands, look, to_out)
                     .map(&quantize);
             }
         });
@@ -1381,6 +1424,7 @@ mod tests {
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
             white: None,
+            detail: [0.0; 3],
         };
         finish_pixel(px, &global, &[], m)
     }
@@ -1402,6 +1446,7 @@ mod tests {
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
             white: None,
+            detail: [0.0; 3],
         }
     }
 
@@ -1493,6 +1538,7 @@ mod tests {
             |_, _| (0.0, 0.0),
             |_, _| (0.0, None),
             None,
+            None,
             Some(&look),
             &m,
             |v| (v * 255.0).round() as u8,
@@ -1510,6 +1556,7 @@ mod tests {
             &[],
             |_, _| (0.0, 0.0),
             |_, _| (0.0, None),
+            None,
             None,
             None,
             &m,
@@ -2098,6 +2145,7 @@ mod tests {
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
             white: None,
+            detail: [0.0; 3],
         };
         let g = guide.map(|g| g.at(x as f32 + 0.5, y as f32 + 0.5));
         let px = image.pixel(x, y);
@@ -2109,6 +2157,7 @@ mod tests {
             None,
             None,
             g,
+            None,
             None,
             &crate::export::Space::Srgb.matrix(),
         )[1]
@@ -3112,6 +3161,7 @@ mod tests {
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
             white: None,
+            detail: [0.0; 3],
         };
         let m = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
         let out = finish_pixel(px, &global, &[], &m);
@@ -3152,6 +3202,7 @@ mod tests {
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
             white: None,
+            detail: [0.0; 3],
         };
         let bare = Baked {
             tint: idle,
@@ -3234,6 +3285,7 @@ mod tests {
             source: Source::Scene,
             display_curve: DisplayCurve::Channels,
             white: None,
+            detail: [0.0; 3],
         };
         let local = Baked {
             tint,
@@ -3404,6 +3456,7 @@ mod tests {
             std::slice::from_ref(&local),
             |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
             |_, _| (0.0, None),
+            None,
             None,
             None,
             &m,
@@ -3650,6 +3703,7 @@ mod tests {
                 |_, _| (0.0, None),
                 None,
                 None,
+                None,
                 &m,
                 |v| (v * 255.0).round() as u8,
             )
@@ -3708,6 +3762,7 @@ mod tests {
             std::slice::from_ref(&lum),
             |x, y| ((x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / w as f32),
             |_, _| (0.0, None),
+            None,
             None,
             None,
             &m,
@@ -3806,6 +3861,7 @@ mod shipped_presets {
             &[],
             |_, _| (0.0, 0.0),
             |_, _| (0.0, None),
+            None,
             None,
             None,
             &crate::export::Space::Srgb.matrix(),

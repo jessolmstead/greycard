@@ -21,6 +21,7 @@ mod cells;
 mod clipboard;
 mod cull;
 mod delete;
+mod detail;
 mod display;
 mod edited;
 mod entry;
@@ -1061,6 +1062,14 @@ pub(crate) struct State {
     /// (`mask::look_edited`), so the next change can tell a look slider
     /// from a shape control.
     pub(crate) look_seen: RefCell<Option<greycard_edit::Look>>,
+    /// The detail planes the shown develop came with: a mask's Detail
+    /// moved to ask for one it lacks develops again
+    /// (`panel::mask::detail_asks`).
+    pub(crate) planes_wants: greycard_edit::DetailWants,
+    /// The planes a develop has been asked for by a mask's Detail and
+    /// has not yet brought: none asked for twice while one is on its
+    /// way. Cleared when a develop lands.
+    pub(crate) planes_asked: greycard_edit::DetailWants,
     pub(crate) generation: u64,
     /// Whether the command line asked for a snapshot, a screenshot or
     /// an export. All three wait for a picture, and nobody is reading
@@ -1303,6 +1312,8 @@ impl State {
             view_kept: None,
             show_mask_kept: None,
             look_seen: RefCell::new(None),
+            planes_wants: Default::default(),
+            planes_asked: Default::default(),
             generation: 0,
             batch: false,
             failed: false,

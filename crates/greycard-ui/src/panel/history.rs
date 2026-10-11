@@ -1395,6 +1395,7 @@ mod tests {
                     },
                 )),
                 guide: std::sync::Arc::new(crate::finish::Guide::NONE),
+                planes: None,
                 white: crate::worker::WhiteBase::IDENTITY,
                 seconds: 0.1,
                 detail: None,

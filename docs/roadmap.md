@@ -43,13 +43,6 @@ and export are smoothed.
       sheet's foot is never under the Dock or the task bar; a lower
       preferred height first, the platform's work area if that is not
       enough; tried on a Mac (#21, §298)
-- [ ] Detail in a mask: Texture, Clarity and Dehaze in a mask's look,
-      beside its Light and Color, so a face is smoothed or a distant
-      ridge dehazed without touching the rest; the bands and the
-      transmission made once in the develop and each mask's amount
-      a gain under its weight, on the CPU and the GPU alike, in the
-      export, the viewport and the reduced develop; a Detail section
-      on the Masks tab and a history row (§287)
 - [ ] Lightbox over a collection, or the picks until collections
       exist: the grid with everything that gets in the way of judging
       consistency taken out. Tiles at a chosen size up to a handful

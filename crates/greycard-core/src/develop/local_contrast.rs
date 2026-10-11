@@ -166,52 +166,189 @@ pub(crate) fn local_contrast_with_step(
     clip_level: f32,
     clarity_step: usize,
 ) -> LocalContrastStats {
+    with_bands_at_step(image, options, clip_level, clarity_step, false, false).0
+}
+
+/// The two bands of a picture, each in stops, one value a pixel: what
+/// the op puts on as a gain at an amount, before the amount and the
+/// fade toward the clip. A mask's Texture and Clarity are put on from
+/// these at the finish, by the mask's weight, where the global's are
+/// put on here.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Bands {
+    /// Texture's band: the log luminance less its guided base at the
+    /// texture radius. The global puts on `k * texture` stops.
+    pub texture: Option<Vec<f32>>,
+    /// Clarity's band: the low-passed log less its guided base at the
+    /// clarity radius, times the mid-tone weight of that base. The
+    /// global puts on `k * clarity` stops.
+    pub clarity: Option<Vec<f32>>,
+}
+
+/// The bands of `image` that are asked for, and the op left undone.
+pub fn bands(image: &WorkingImage, texture: bool, clarity: bool) -> Bands {
+    let (_, clarity_radius) = radii(image.width, image.height);
+    let log = (texture || clarity).then(|| log_of(image));
+    run_bands(
+        log,
+        image.width,
+        image.height,
+        None,
+        clarity_step(clarity_radius),
+        texture,
+        clarity,
+    )
+}
+
+/// [`local_contrast`], and the bands asked for beside it, read off the
+/// same filters the op ran: a band the op does not run for is made
+/// all the same when it is asked for.
+pub fn local_contrast_with_bands(
+    image: &mut WorkingImage,
+    options: &LocalContrastOptions,
+    clip_level: f32,
+    texture: bool,
+    clarity: bool,
+) -> (LocalContrastStats, Bands) {
+    let (_, clarity_radius) = radii(image.width, image.height);
+    with_bands_at_step(
+        image,
+        options,
+        clip_level,
+        clarity_step(clarity_radius),
+        texture,
+        clarity,
+    )
+}
+
+fn with_bands_at_step(
+    image: &mut WorkingImage,
+    options: &LocalContrastOptions,
+    clip_level: f32,
+    clarity_step: usize,
+    want_texture: bool,
+    want_clarity: bool,
+) -> (LocalContrastStats, Bands) {
     let (w, h) = (image.width, image.height);
     let (texture_radius, clarity_radius) = radii(w, h);
     let stats = LocalContrastStats {
         texture_radius,
         clarity_radius,
     };
-    if options.is_identity() || w == 0 || h == 0 {
-        return stats;
-    }
-    let n = w * h;
+    let runs = !options.is_identity() || want_texture || want_clarity;
+    let log = runs.then(|| log_of(image));
+    let bands = run_bands(
+        log,
+        w,
+        h,
+        Some((image, options, clip_level)),
+        clarity_step,
+        want_texture,
+        want_clarity,
+    );
+    (stats, bands)
+}
 
-    // Log luminance in stops about mid grey.
-    let mut log: Vec<f32> = vec![0.0; n];
+/// Log luminance in stops about mid grey.
+fn log_of(image: &WorkingImage) -> Vec<f32> {
+    let mut log: Vec<f32> = vec![0.0; image.width * image.height];
     log.par_iter_mut()
         .zip(image.data.par_chunks(3))
         .for_each(|(l, px)| {
             let y = LUMA[0] * px[0] + LUMA[1] * px[1] + LUMA[2] * px[2];
             *l = (y.max(FLOOR) / MID_GREY).log2();
         });
+    log
+}
+
+/// The filters on `log`, the picture's log luminance, for the op on
+/// `apply`'s picture at its amounts when there is one, and for the
+/// bands asked for.
+fn run_bands(
+    log: Option<Vec<f32>>,
+    w: usize,
+    h: usize,
+    mut apply: Option<(&mut WorkingImage, &LocalContrastOptions, f32)>,
+    clarity_step: usize,
+    want_texture: bool,
+    want_clarity: bool,
+) -> Bands {
+    let mut bands = Bands::default();
+    let (texture_radius, clarity_radius) = radii(w, h);
+    let amounts = apply
+        .as_ref()
+        .map_or(LocalContrastOptions::default(), |(_, o, _)| **o);
+    let texture = amounts.texture != 0.0 || want_texture;
+    let clarity = amounts.clarity != 0.0 || want_clarity;
+    let Some(mut log) = log.filter(|_| (texture || clarity) && w > 0 && h > 0) else {
+        bands.texture = want_texture.then(|| vec![0.0; w * h]);
+        bands.clarity = want_clarity.then(|| vec![0.0; w * h]);
+        return bands;
+    };
+    let n = w * h;
 
     // Each band is a shift in stops put on as a gain, a power of two
     // of it, on all three channels, and the two gains compose. The
     // op holds the log and the three scratch planes, four in all.
     let mut scratch = Scratch::new(n);
-    if options.texture != 0.0 {
-        let k = options.texture.clamp(-1.0, 1.0) * TEXTURE_GAIN;
+    if texture {
         scratch.guided_filter(&log, w, h, texture_radius, TEXTURE_EPSILON);
-        apply_shift(image, &log, &scratch.a, clip_level, |_| k);
+        if let Some((image, _, clip_level)) = apply.as_mut()
+            && amounts.texture != 0.0
+        {
+            let k = amounts.texture.clamp(-1.0, 1.0) * TEXTURE_GAIN;
+            apply_shift(image, &log, &scratch.a, *clip_level, |_| k);
+        }
+        if want_texture {
+            bands.texture = Some(
+                log.par_iter()
+                    .zip(scratch.a.par_iter())
+                    .map(|(&u, &b)| u - b)
+                    .collect(),
+            );
+        }
     }
-    if options.clarity != 0.0 {
+    if clarity {
         // The log is done with: low-passed in place, it is the top
         // of Clarity's band, and the guided filter of it the bottom.
         for _ in 0..2 {
             box_mean(&mut log, &mut scratch.tmp, w, h, texture_radius);
         }
-        let k = options.clarity.clamp(-1.0, 1.0) * CLARITY_GAIN;
         if clarity_step > 1 {
             scratch.coarse_guided_filter(&log, w, h, clarity_radius, CLARITY_EPSILON, clarity_step);
         } else {
             scratch.guided_filter(&log, w, h, clarity_radius, CLARITY_EPSILON);
         }
-        apply_shift(image, &log, &scratch.a, clip_level, |b| {
-            k * midtone_weight(b)
-        });
+        if let Some((image, _, clip_level)) = apply.as_mut()
+            && amounts.clarity != 0.0
+        {
+            let k = amounts.clarity.clamp(-1.0, 1.0) * CLARITY_GAIN;
+            apply_shift(image, &log, &scratch.a, *clip_level, |b| {
+                k * midtone_weight(b)
+            });
+        }
+        if want_clarity {
+            bands.clarity = Some(
+                log.par_iter()
+                    .zip(scratch.a.par_iter())
+                    .map(|(&u, &b)| midtone_weight(b) * (u - b))
+                    .collect(),
+            );
+        }
     }
-    stats
+    bands
+}
+
+/// The fade toward the clip the op puts its gain under, at a pixel
+/// whose brightest channel is `brightest`: one well under the clip,
+/// nothing at it. What a mask's bands are put on under at the finish.
+#[inline]
+pub fn clip_fade(brightest: f32, clip_level: f32) -> f32 {
+    if clip_level.is_finite() {
+        1.0 - smoothstep(clip_level * CLIP_FADE, clip_level, brightest)
+    } else {
+        1.0
+    }
 }
 
 /// Put `k(base) * (upper - base)` stops on the picture as a gain,
@@ -223,19 +360,13 @@ fn apply_shift(
     clip_level: f32,
     k: impl Fn(f32) -> f32 + Sync,
 ) {
-    let fade_from = clip_level * CLIP_FADE;
     image
         .data
         .par_chunks_mut(3)
         .zip(upper.par_iter())
         .zip(base.par_iter())
         .for_each(|((px, &u), &b)| {
-            let brightest = px[0].max(px[1]).max(px[2]);
-            let clip = if clip_level.is_finite() {
-                1.0 - smoothstep(fade_from, clip_level, brightest)
-            } else {
-                1.0
-            };
+            let clip = clip_fade(px[0].max(px[1]).max(px[2]), clip_level);
             let gain = (clip * k(b) * (u - b)).exp2();
             px[0] *= gain;
             px[1] *= gain;
@@ -1102,6 +1233,82 @@ mod tests {
             }
             assert!(worst < 0.01, "clarity {amount}: {worst} stops");
         }
+    }
+
+    /// A colored picture with texture at every scale and a few
+    /// pixels past the clip.
+    fn colored(w: usize, h: usize) -> WorkingImage {
+        let mut image = WorkingImage::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                let fine = ((x * 7 + y * 13) % 5) as f32 / 5.0;
+                let coarse = ((x as f32 / 23.0).sin() * (y as f32 / 17.0).cos() + 1.0) / 2.0;
+                let v = 0.02 + 0.5 * coarse + 0.1 * fine;
+                let i = (y * w + x) * 3;
+                image.data[i] = v * 1.1;
+                image.data[i + 1] = v;
+                image.data[i + 2] = v * 0.8;
+                if (x / 9 + y / 11) % 13 == 0 {
+                    image.data[i] = 1.2;
+                }
+            }
+        }
+        image
+    }
+
+    /// The bands put on as the global puts them, one after the other
+    /// with the clip read again before the second, are the op's own
+    /// picture; the bands made on their own are the ones made with
+    /// the op; and asking for them leaves the op's picture as it was.
+    #[test]
+    fn the_bands_put_on_by_hand_are_the_op() {
+        let image = colored(160, 120);
+        let clip = 1.0;
+        for options in [
+            texture(0.7),
+            clarity(-0.6),
+            LocalContrastOptions {
+                texture: -0.5,
+                clarity: 0.8,
+            },
+        ] {
+            let mut op = image.clone();
+            local_contrast(&mut op, &options, clip);
+            let mut with = image.clone();
+            let (_, made) = local_contrast_with_bands(&mut with, &options, clip, true, true);
+            assert_eq!(with.data, op.data, "asking for the bands moved the op");
+            let alone = bands(&image, true, true);
+            assert_eq!(alone, made);
+            let (tb, cb) = (made.texture.unwrap(), made.clarity.unwrap());
+            let mut by_hand = image.clone();
+            for ((px, &t), &c) in by_hand
+                .data
+                .as_chunks_mut::<3>()
+                .0
+                .iter_mut()
+                .zip(&tb)
+                .zip(&cb)
+            {
+                for (k, band) in [
+                    (options.texture * TEXTURE_GAIN, t),
+                    (options.clarity * CLARITY_GAIN, c),
+                ] {
+                    let fade = clip_fade(px[0].max(px[1]).max(px[2]), clip);
+                    let gain = (fade * k * band).exp2();
+                    px.iter_mut().for_each(|v| *v *= gain);
+                }
+            }
+            for (a, b) in by_hand.data.iter().zip(&op.data) {
+                assert!(
+                    (a - b).abs() <= 1e-5 * b.abs().max(1.0),
+                    "{a} {b} {options:?}"
+                );
+            }
+        }
+        // Only what is asked for.
+        let only = bands(&image, false, true);
+        assert!(only.texture.is_none() && only.clarity.is_some());
+        assert_eq!(bands(&image, false, false), Bands::default());
     }
 
     #[test]

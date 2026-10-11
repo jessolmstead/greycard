@@ -112,7 +112,7 @@ fn changes(b: &Edit, a: &Edit) -> Vec<String> {
         out.push("Lens".to_string());
     }
     if b.detail != a.detail {
-        out.push(detail(b, a));
+        out.push(detail(&b.detail, &a.detail));
     }
     if b.sharpen != a.sharpen {
         out.push(match (b.sharpen.enabled, a.sharpen.enabled) {
@@ -220,8 +220,8 @@ fn noise(b: &Edit, a: &Edit) -> String {
     }
 }
 
-fn detail(b: &Edit, a: &Edit) -> String {
-    let (x, y) = (&b.detail, &a.detail);
+/// The Detail control that moved, the global's or a mask's.
+fn detail(x: &crate::Detail, y: &crate::Detail) -> String {
     let moved = [
         x.enabled != y.enabled,
         x.texture != y.texture,
@@ -302,6 +302,9 @@ fn look(b: &Look, a: &Look, prefix: &str) -> Vec<String> {
             "{prefix}{}",
             local_white(&b.white_balance, &a.white_balance)
         ));
+    }
+    if b.detail != a.detail {
+        out.push(format!("{prefix}{}", detail(&b.detail, &a.detail)));
     }
     out
 }
@@ -816,6 +819,20 @@ mod tests {
         assert_eq!(describe(&off, &tinted, &[]), "Sky: White balance on");
         assert_eq!(describe(&tinted, &after, &[]), "Sky: White balance reset");
         assert_eq!(describe(&off, &after, &[]), "Sky: White balance reset");
+        // And its Detail, in the global's words.
+        let mut smooth = after.clone();
+        smooth.adjustments[0].look.detail.texture = -0.5;
+        assert_eq!(describe(&after, &smooth, &[]), "Sky: Texture -50");
+        let mut clear = smooth.clone();
+        clear.adjustments[0].look.detail.clarity = 0.3;
+        assert_eq!(describe(&smooth, &clear, &[]), "Sky: Clarity +30");
+        let mut hazed = clear.clone();
+        hazed.adjustments[0].look.detail.dehaze = 0.25;
+        assert_eq!(describe(&clear, &hazed, &[]), "Sky: Dehaze +25");
+        let mut detail_off = hazed.clone();
+        detail_off.adjustments[0].look.detail.enabled = false;
+        assert_eq!(describe(&hazed, &detail_off, &[]), "Sky: Detail off");
+        assert_eq!(describe(&detail_off, &hazed, &[]), "Sky: Detail on");
         let mut e = base.clone();
         e.bw.enabled = true;
         assert_eq!(describe(&base, &e, &[]), "Black and white on");

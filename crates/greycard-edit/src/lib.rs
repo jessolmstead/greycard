@@ -168,6 +168,38 @@ pub struct Look {
     /// develop. Left out of a sidecar while off with no light kept.
     #[serde(skip_serializing_if = "LocalWhite::is_off")]
     pub white_balance: LocalWhite,
+    /// A mask's own Texture, Clarity and Dehaze, put on at the finish
+    /// by its weight from the bands the develop keeps beside the
+    /// picture. Never read on the global look, whose Detail is the
+    /// edit's own, before the sharpen. Left out of a sidecar at its
+    /// default.
+    #[serde(skip_serializing_if = "Detail::is_default")]
+    pub detail: Detail,
+}
+
+/// Which of the detail bands some mask asks the develop for: the
+/// texture and clarity bands and the haze, each made only when an
+/// enabled mask with something in it has that slider off zero under
+/// its section's switch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct DetailWants {
+    pub texture: bool,
+    pub clarity: bool,
+    pub haze: bool,
+}
+
+impl DetailWants {
+    /// Whether any band is wanted at all.
+    pub fn any(&self) -> bool {
+        self.texture || self.clarity || self.haze
+    }
+
+    /// Whether planes made for these hold every one `other` asks for.
+    pub fn covers(&self, other: &DetailWants) -> bool {
+        (self.texture || !other.texture)
+            && (self.clarity || !other.clarity)
+            && (self.haze || !other.haze)
+    }
 }
 
 /// A local adjustment: a look where a mask says, with a stable id so
@@ -240,6 +272,7 @@ impl Edit {
             grading: self.grading,
             tint: self.tint,
             white_balance: LocalWhite::Off,
+            detail: Detail::default(),
         }
     }
 
@@ -251,7 +284,24 @@ impl Edit {
         self.grading = look.grading;
         self.tint = look.tint;
         // `look.white_balance` is a mask's alone: the picture's white
-        // is `white_balance`, in the develop.
+        // is `white_balance`, in the develop. So is `look.detail`: the
+        // picture's is `detail`, before the sharpen.
+    }
+
+    /// The detail bands the masks ask for ([`DetailWants`]).
+    pub fn detail_wants(&self) -> DetailWants {
+        let mut wants = DetailWants::default();
+        for a in self
+            .adjustments
+            .iter()
+            .filter(|a| a.enabled && !a.mask.is_empty() && a.look.detail.enabled)
+        {
+            let d = &a.look.detail;
+            wants.texture |= d.texture != 0.0;
+            wants.clarity |= d.clarity != 0.0;
+            wants.haze |= d.dehaze != 0.0;
+        }
+        wants
     }
 
     /// The look of a target: an adjustment by index, or the global
@@ -647,6 +697,11 @@ impl Default for Detail {
 }
 
 impl Detail {
+    /// Whether this is the default: on, every slider at zero.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+
     /// The engine's options, or none when off or when both sliders
     /// rest, which is the same picture.
     pub fn options(&self) -> Option<LocalContrastOptions> {
@@ -817,7 +872,10 @@ impl Edit {
 
     /// Whether two edits develop the same image; the rest is the viewport's.
     pub fn same_develop(&self, other: &Edit) -> bool {
-        self.same_patched(other) && self.detail == other.detail && self.sharpen == other.sharpen
+        self.same_patched(other)
+            && self.detail == other.detail
+            && self.sharpen == other.sharpen
+            && self.detail_wants() == other.detail_wants()
     }
 
     /// Whether the developed picture before its local contrast, its
@@ -2493,6 +2551,143 @@ fn hide_folder(dir: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn masked(detail: Detail) -> Edit {
+        let mut edit = Edit::default();
+        edit.adjustments.push(Adjustment {
+            id: 1,
+            name: "Skin".into(),
+            mask: mask::Mask {
+                components: vec![mask::Component::default()],
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+        edit.adjustments[0].look.detail = detail;
+        edit
+    }
+
+    /// A mask's Detail is written only when it is set, reads back
+    /// whole, and a sidecar without it reads as none.
+    #[test]
+    fn a_masks_detail_is_in_the_sidecar_only_when_set() {
+        let plain = masked(Detail::default());
+        let look = serde_json::to_value(&plain.adjustments[0].look).unwrap();
+        assert!(look.get("detail").is_none(), "{look}");
+        let set = masked(Detail {
+            texture: -0.5,
+            dehaze: 0.25,
+            ..Detail::default()
+        });
+        let read = Edit::from_json(&set.to_json()).unwrap();
+        assert_eq!(read, set);
+        let old = Edit::from_json(
+            r#"{"version":4,"adjustments":[{"id":1,"look":{"light":{"exposure":0.5}}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(old.adjustments[0].look.detail, Detail::default());
+        assert_eq!(old.adjustments[0].look.light.exposure, 0.5);
+    }
+
+    /// A build from before reads a look with a Detail in it as the
+    /// look without: the look has no `deny_unknown_fields`.
+    #[test]
+    fn a_build_before_reads_a_masks_detail_as_nothing() {
+        #[derive(Debug, Deserialize)]
+        #[serde(default)]
+        #[allow(dead_code)]
+        #[derive(Default)]
+        struct Before {
+            light: Light,
+            curves: Curves,
+            mixer: Mixer,
+            color: Color,
+            grading: Grading,
+            tint: Tint,
+            white_balance: LocalWhite,
+        }
+        let set = masked(Detail {
+            texture: -0.5,
+            ..Detail::default()
+        });
+        let json = serde_json::to_value(&set.adjustments[0].look).unwrap();
+        assert!(json.get("detail").is_some(), "{json}");
+        let before: Before = serde_json::from_value(json).unwrap();
+        assert_eq!(before.light, set.adjustments[0].look.light);
+        assert_eq!(before.tint, set.adjustments[0].look.tint);
+    }
+
+    /// The global look never carries one: the picture's Detail is the
+    /// edit's own, and setting the global look leaves it alone.
+    #[test]
+    fn the_global_look_never_reads_a_detail() {
+        let mut edit = Edit::default();
+        edit.detail.texture = 0.4;
+        assert_eq!(edit.look().detail, Detail::default());
+        let mut look = edit.look();
+        look.detail.texture = -1.0;
+        edit.set_look(look);
+        assert_eq!(edit.detail.texture, 0.4);
+    }
+
+    /// Which bands the masks ask for, and that a change in which is a
+    /// new develop while a change of amount is not.
+    #[test]
+    fn the_bands_wanted_follow_the_masks_that_ask() {
+        assert!(!Edit::default().detail_wants().any());
+        let quiet = masked(Detail::default());
+        assert!(!quiet.detail_wants().any());
+        let texture = masked(Detail {
+            texture: -0.5,
+            ..Detail::default()
+        });
+        assert_eq!(
+            texture.detail_wants(),
+            DetailWants {
+                texture: true,
+                ..Default::default()
+            }
+        );
+        assert!(!texture.same_develop(&quiet));
+        let mut more = texture.clone();
+        more.adjustments[0].look.detail.texture = -0.8;
+        assert!(more.same_develop(&texture));
+        // Off by the section's switch, by the adjustment's, or with
+        // nothing in the mask: nothing asked.
+        for off in [
+            {
+                let mut e = texture.clone();
+                e.adjustments[0].look.detail.enabled = false;
+                e
+            },
+            {
+                let mut e = texture.clone();
+                e.adjustments[0].enabled = false;
+                e
+            },
+            {
+                let mut e = texture.clone();
+                e.adjustments[0].mask.components.clear();
+                e
+            },
+        ] {
+            assert!(!off.detail_wants().any(), "{off:?}");
+        }
+        let all = masked(Detail {
+            texture: 0.1,
+            clarity: 0.2,
+            dehaze: -0.3,
+            ..Detail::default()
+        });
+        assert_eq!(
+            all.detail_wants(),
+            DetailWants {
+                texture: true,
+                clarity: true,
+                haze: true,
+            }
+        );
+    }
 
     /// Version 4 changed what `Original` means, so every sidecar
     /// written before it has to go on rendering as it did. The old

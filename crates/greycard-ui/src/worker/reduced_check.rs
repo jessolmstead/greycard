@@ -162,6 +162,18 @@ fn drawn(seed: u64, k: u64, looks: &[String]) -> Edit {
         edit.grain.amount = g.range(0.2, 1.0);
         edit.grain.size = g.range(0.3, 2.0);
     }
+    // A mask's Texture and Dehaze, from a generator of their own for
+    // the same reason, so the masks' detail planes are made and
+    // carried through the reduced develop as through the full one.
+    let mut d = Rng::new(seed ^ 0x6465_7461, k);
+    if let Some(a) = edit.adjustments.first_mut() {
+        if d.chance(0.6) {
+            a.look.detail.texture = d.signed(-1.0, 1.0);
+        }
+        if d.chance(0.5) {
+            a.look.detail.dehaze = d.signed(-1.0, 1.0);
+        }
+    }
     edit
 }
 
@@ -372,6 +384,7 @@ fn the_reduced_develop_is_the_full_one_within_the_limit() {
                 guide: Some(developed.guide.clone()),
                 kind: developed.kind,
                 white: developed.white.clone(),
+                detail: developed.detail.clone(),
             };
             let made = crate::edited::make(&developed.image, &finish);
             let reduced_ms = started.elapsed().as_secs_f64() * 1e3;
@@ -518,6 +531,7 @@ fn the_reduced_develop_of_the_samples_timed() {
                 guide: Some(developed.guide.clone()),
                 kind: developed.kind,
                 white: developed.white.clone(),
+                detail: developed.detail.clone(),
             };
             let before_finish = started.elapsed().as_secs_f64();
             let made = crate::edited::make(&developed.image, &finish);
@@ -552,4 +566,185 @@ fn the_reduced_develop_of_the_samples_timed() {
         }
     }
     crate::testing::remove_dir_retry(&scratch);
+}
+
+/// A mask's Detail measured on the sample raws (`GREYCARD_SAMPLES`,
+/// `GREYCARD_SAMPLE_FILES`): the develop's time with no mask asking,
+/// with a mask asking for the texture band, and for all three planes,
+/// the planes' own share; and how far a whole-frame mask's Texture at
+/// -0.5, put on after the sharpen, lands from the global's at -0.5
+/// put on before it, the sharpen at its default, as Oklab ΔE times 100
+/// over the frame. Built optimized (`--release`) for the times.
+#[test]
+#[ignore = "needs GREYCARD_SAMPLES; a measurement"]
+fn a_masks_detail_measured() {
+    let raws = sample_raws();
+    let lenses = None;
+    let whole = |detail: greycard_edit::Detail| {
+        let mut a = greycard_edit::Adjustment {
+            id: 1,
+            name: "whole".into(),
+            ..Default::default()
+        };
+        a.mask.components.push(Component {
+            shape: Shape::Linear {
+                from: [0.5, 10.0],
+                to: [0.5, 11.0],
+            },
+            ..Default::default()
+        });
+        a.look.detail = detail;
+        a
+    };
+    let skin = greycard_edit::Detail {
+        texture: -0.5,
+        ..Default::default()
+    };
+    let all = greycard_edit::Detail {
+        texture: -0.5,
+        clarity: 0.3,
+        dehaze: 0.3,
+        ..Default::default()
+    };
+    let settings = crate::export::Settings {
+        format: crate::export::Format::Jpeg,
+        sharpen: crate::export::Sharpen::Off,
+        metadata: crate::export::Metadata::None,
+        ..Default::default()
+    };
+    for path in &raws {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let mut plain = Edit::default();
+        plain.sharpen.enabled = true;
+        plain.noise.enabled = false;
+        let mut global = plain.clone();
+        global.detail = skin;
+        let mut masked = plain.clone();
+        masked.adjustments.push(whole(skin));
+        let mut every = plain.clone();
+        every.adjustments.push(whole(all));
+        let timed = |edit: &Edit| {
+            // Twice, the second timed: the first pays for the decode
+            // cache and the pools.
+            let _ = FrameDevelop::develop(path, edit, lenses);
+            let started = Instant::now();
+            let d = FrameDevelop::develop(path, edit, lenses).expect("developed");
+            (d, started.elapsed().as_secs_f64())
+        };
+        let (_, t_plain) = timed(&plain);
+        let (mut g, t_global) = timed(&global);
+        let (mut m, t_masked) = timed(&masked);
+        let (_, t_every) = timed(&every);
+        let size = (g.image.width, g.image.height);
+        let started = Instant::now();
+        let _ = crate::detail::DetailPlanes::make(&g.image, None, 1.0, every.detail_wants());
+        let t_planes = started.elapsed().as_secs_f64();
+        let eight = |r: crate::export::Rendered| match r.pixels {
+            crate::export::Pixels::Eight(p) => p,
+            crate::export::Pixels::Sixteen(_) => unreachable!(),
+        };
+        let a = eight(g.finish(&global, &settings));
+        let b = eight(m.finish(&masked, &settings));
+        let (mean, p99) = delta_e(&a, &b);
+        eprintln!(
+            "{name} {}x{} ({:.1} MP): develop {t_plain:.2} s plain, {t_global:.2} s global \
+             Texture, {t_masked:.2} s a mask's Texture, {t_every:.2} s a mask's three; the three \
+             planes alone {t_planes:.2} s; the order against the sharpen ΔE mean {mean:.3}, \
+             p99 {p99:.3}",
+            size.0,
+            size.1,
+            (size.0 * size.1) as f64 / 1e6,
+        );
+    }
+}
+
+/// The develop's latency on the GPU's path with a mask asking for its
+/// Detail, on the sample raws: a develop that makes the patched picture
+/// again (a white balance moved) with no mask asking and with a mask
+/// asking for all three planes, which are made on a thread of their
+/// own beside the GPU's work; and a move of the global's Texture with
+/// the mask asking, which keeps the planes. Each the best of three.
+/// With `GREYCARD_PLANES_CPU=1`, on the CPU's path instead.
+#[test]
+#[ignore = "needs GREYCARD_SAMPLES and a GPU; a measurement"]
+fn a_masks_detail_on_the_gpu_path_timed() {
+    let raws = sample_raws();
+    let on_cpu = std::env::var_os("GREYCARD_PLANES_CPU").is_some();
+    let all = greycard_edit::Detail {
+        texture: -0.5,
+        clarity: 0.3,
+        dehaze: 0.3,
+        ..Default::default()
+    };
+    for path in &raws {
+        let name = path.file_name().unwrap().to_string_lossy().into_owned();
+        let (input, _) = timed_open(path).expect("opened");
+        let mut gpu = if on_cpu {
+            None
+        } else {
+            Some(greycard_gpu::Context::own().expect("a GPU"))
+        };
+        let mut base = None;
+        let mut ai = Ai::new();
+        let deliver: Deliver = Arc::new(|_| {});
+        let mut run = |edit: &Edit, base: &mut Option<Base>| {
+            let started = Instant::now();
+            let (outcome, _) = develop_job(
+                &input, edit, 0, 1, base, &mut None, &mut ai, None, None, &mut gpu, &deliver,
+            );
+            assert!(matches!(outcome, Outcome::Developed { .. }));
+            started.elapsed().as_secs_f64()
+        };
+        let mut plain = Edit::default();
+        plain.sharpen.enabled = true;
+        plain.noise.enabled = false;
+        let mut masked = plain.clone();
+        let mut a = greycard_edit::Adjustment {
+            id: 1,
+            ..Default::default()
+        };
+        a.mask.components.push(Component::default());
+        a.look.detail = all;
+        masked.adjustments.push(a);
+        // The white moved each time, so the patched picture is new.
+        let mut moved = |edit: &Edit, base: &mut Option<Base>| {
+            let mut best = f64::INFINITY;
+            for k in 0..4 {
+                let mut e = edit.clone();
+                e.white_balance = greycard_edit::WhiteBalance::Custom {
+                    temperature: 5000.0 + 100.0 * k as f64,
+                    tint: 0.0,
+                };
+                let t = run(&e, base);
+                if k > 0 {
+                    best = best.min(t);
+                }
+            }
+            best
+        };
+        let t_plain = moved(&plain, &mut base);
+        let t_masked = moved(&masked, &mut base);
+        // The global's Texture moved under a mask asking for the haze:
+        // the patched picture is the same, and the planes are kept.
+        let mut global = masked.clone();
+        let mut best = f64::INFINITY;
+        for k in 0..4 {
+            global.detail.texture = 0.1 * (k + 1) as f32;
+            let t = run(&global, &mut base);
+            if k > 0 {
+                best = best.min(t);
+            }
+        }
+        let size = base
+            .as_ref()
+            .map(|b| (b.image.width, b.image.height))
+            .unwrap_or_default();
+        eprintln!(
+            "{name} ({:.1} MP, {}): a white moved {t_plain:.2} s with no mask asking, \
+             {t_masked:.2} s with a mask asking for all three planes; the global's \
+             Texture moved with the mask asking {best:.2} s",
+            (size.0 * size.1) as f64 / 1e6,
+            if on_cpu { "CPU" } else { "GPU" },
+        );
+    }
 }

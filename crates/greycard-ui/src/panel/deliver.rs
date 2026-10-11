@@ -26,6 +26,8 @@ pub(crate) struct Landed {
     pub(crate) image: Developed,
     /// The tone equalizer's guide plane for it.
     pub(crate) guide: Arc<finish::Guide>,
+    /// The masks' detail planes for it, when a mask asks for them.
+    pub(crate) planes: Option<Arc<crate::detail::DetailPlanes>>,
     /// The white balance it was developed at.
     pub(crate) white: WhiteBase,
     pub(crate) generation: u64,
@@ -426,6 +428,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             turn,
             image,
             guide,
+            planes,
             white,
             seconds,
             detail,
@@ -437,7 +440,13 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
         } => {
             release_thumbnails();
             let mut st = state.borrow_mut();
-            if generation != st.generation || st.cull.is_some() {
+            if generation != st.generation {
+                return;
+            }
+            if st.cull.is_some() {
+                // Culling takes the develop and not its planes: a mask's
+                // Detail asks again when the panel is back.
+                st.planes_asked = Default::default();
                 return;
             }
             // The saved edit's pictures, from this develop.
@@ -584,9 +593,12 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // where the last frame's develop stood.
             st.shown_size = (image.width(), image.height());
             st.shown_turn = st.current.map(|c| (c, turn % 4));
+            st.planes_wants = planes.as_ref().map(|p| p.wants).unwrap_or_default();
+            st.planes_asked = Default::default();
             st.pending = Some(Landed {
                 image,
                 guide,
+                planes,
                 white,
                 generation,
             });
@@ -631,6 +643,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if generation == st.generation {
                 app.set_status(format!("failed: {message}").into());
                 app.set_busy(false);
+                // The planes it was asked for are not coming: a mask's
+                // Detail moved again asks for them again.
+                st.planes_asked = Default::default();
                 // Nothing is coming: the old picture shows the panel's
                 // look, and a camera picture standing in for a develop
                 // that failed comes down with it.

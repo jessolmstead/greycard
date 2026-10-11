@@ -817,6 +817,9 @@ pub(crate) struct Finish {
     pub(crate) guide: Option<Arc<crate::finish::Guide>>,
     pub(crate) kind: crate::finish::Source,
     pub(crate) white: Option<greycard_edit::WhiteShift>,
+    /// The masks' bands, of the developed picture `source` is the size
+    /// of, when a mask asks for them.
+    pub(crate) detail: Option<Arc<crate::detail::DetailPlanes>>,
 }
 
 /// The pictures of an edit, as they are kept: the larger one and each
@@ -954,6 +957,23 @@ pub(crate) fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
     let (w, h) = fitted_size(finish.full, &edit.geometry);
     let fitted = crate::export::fit_exact(image, w, h);
     let image = fitted.as_ref().unwrap_or(image);
+    // The masks' bands by the same steps: reduced by the whole factor
+    // the picture was, framed, and fitted.
+    let detail = finish.detail.as_ref().map(|planes| {
+        let mut bands = if (planes.width, planes.height) == (reduced.width, reduced.height) {
+            planes.to_image()
+        } else {
+            // Averaged straight from the half floats, with no
+            // full-size copy of three f32 channels in between.
+            let bands = planes.to_image_reduced(factor_for(finish.full, &edit.geometry));
+            let (rw, rh) = (reduced.width as u32, reduced.height as u32);
+            crate::export::fit_exact(&bands, rw, rh).unwrap_or(bands)
+        };
+        if !edit.geometry.is_identity() {
+            bands = crate::geometry::apply(&bands, &edit.geometry);
+        }
+        crate::export::fit_exact(&bands, w, h).unwrap_or(bands)
+    });
     let (sw, sh) = (finish.source.0 as f32, finish.source.1 as f32);
     let frame_width = edit.geometry.frame(sw, sh).size.0;
     let settings = crate::export::Settings {
@@ -975,6 +995,7 @@ pub(crate) fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
         finish.guide.as_deref(),
         finish.kind,
         finish.white.as_ref(),
+        detail.as_ref().zip(finish.detail.as_ref().map(|p| &p.meta)),
     );
     let crate::export::Pixels::Eight(rgb) = rendered.pixels else {
         unreachable!("a JPEG's pixels are eight bits")

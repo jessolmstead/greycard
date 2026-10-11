@@ -154,6 +154,14 @@ struct Params {
     // nothing at zero), whose coverage then goes out in the alpha for
     // `scope.wgsl` to read. Only the scopes' analysis draw sets it.
     range: vec4<f32>,
+    // The masks' Detail (`detail.rs`): the airlight in xyz and in w
+    // whether there are planes to read; Texture's and Clarity's gains,
+    // the dehaze's full strength and its floor on the transmission;
+    // the develop's clip level in x (none under zero) and where the
+    // fade toward it starts, as a share of it, in y.
+    detail: vec4<f32>,
+    detail_k: vec4<f32>,
+    detail_clip: vec4<f32>,
 };
 
 // A local adjustment: its look's parameters as the global ones are
@@ -179,6 +187,9 @@ struct Local {
     pad0: f32,
     // This adjustment's tint as a vector, in xy.
     tint: vec4<f32>,
+    // Its own Texture, Clarity and Dehaze amounts, in xyz: nothing
+    // while its section is off.
+    detail: vec4<f32>,
     // Its own white balance: the rows of the working-space matrix that
     // takes the developed picture to it, in xyz, and in white0.w
     // whether it has one (`Baked::white` in `finish.rs`).
@@ -235,6 +246,9 @@ struct Look {
 };
 
 const MAX_LOCALS: u32 = 16u;
+// What `detail::NEGLIGIBLE` is: a summed Detail amount under it is
+// nothing, and one under twice it rises to itself (`detail::soft`).
+const DETAIL_NEGLIGIBLE: f32 = 1e-3;
 
 // The mixer's band centers in Oklab hue, degrees, as `mixer.rs` has them.
 const BAND_CENTERS: array<f32, 8> = array<f32, 8>(25.0, 60.0, 100.0, 140.0, 195.0, 265.0, 300.0, 335.0);
@@ -285,6 +299,11 @@ const LUMA: vec3<f32> = vec3<f32>(0.2627, 0.6780, 0.0593);
 // sampled: the interpolation is tetrahedral and the hardware's is
 // not. Two nodes an axis of identity when there is no look.
 @group(0) @binding(11) var look_lut: texture_3d<f32>;
+// The masks' detail planes at the source's size, read where the source
+// is: Texture's band, Clarity's (its mid-tone weight in it), both in
+// stops, and the haze (`DetailPlanes` in `detail.rs`). A texel of
+// nothing when no mask asks.
+@group(0) @binding(12) var detail_planes: texture_2d<f32>;
 
 @vertex
 fn vs_main(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
@@ -319,7 +338,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if (p.cubic.x < 0.5) {
         t4 = textureSampleLevel(src, samp, tex_at / vec2<f32>(textureDimensions(src)), 0.0);
     } else {
-        t4 = sample_cubic(tex_at);
+        t4 = sample_cubic(src, tex_at);
     }
     // The second path: the camera's JPEG, display-referred sRGB
     // already, so none of the look, the tone, the curves or the
@@ -393,12 +412,18 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     var wm1 = p.w1.xyz;
     var wm2 = p.w2.xyz;
     var whited = false;
+    // The masks' Detail amounts here, summed by their weights, as
+    // `detail::amounts` sums them.
+    var detail_k = vec3<f32>(0.0);
     for (var k = 0u; k < count; k = k + 1u) {
         let l = locals[k];
         let m = mask_at(l, uv, sample);
         weights[k] = m;
         let w = m * f32(l.enabled);
         if (w <= 0.0) { continue; }
+        if (any(l.detail.xyz != vec3<f32>(0.0))) {
+            detail_k = detail_k + w * l.detail.xyz;
+        }
         if (l.white0.w > 0.5) {
             wm0 = wm0 + w * (l.white0.xyz - p.w0.xyz);
             wm1 = wm1 + w * (l.white1.xyz - p.w1.xyz);
@@ -431,7 +456,27 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     // holds it: two stacked flattenings cannot flatten past it, and
     // `pow` of zero to a power of zero or under is undefined here.
     look.contrast = max(look.contrast, MIN_CONTRAST);
-    var c = vec3<f32>(dot(wm0, t), dot(wm1, t), dot(wm2, t)) * exp2(look.exposure);
+    // The masks' Detail on the developed picture, before any white,
+    // as `finish_pixel_with` puts it on, from the planes read where
+    // the source was.
+    // Through the threshold as `detail::soft`: nothing under
+    // `NEGLIGIBLE`, a ramp to twice it, then the amount as it is.
+    let ka = abs(detail_k);
+    let ramp = sign(detail_k) * 2.0 * (ka - vec3<f32>(DETAIL_NEGLIGIBLE));
+    detail_k = select(detail_k, ramp, ka < vec3<f32>(2.0 * DETAIL_NEGLIGIBLE));
+    detail_k = select(detail_k, vec3<f32>(0.0), ka < vec3<f32>(DETAIL_NEGLIGIBLE));
+    let detailed = any(detail_k != vec3<f32>(0.0));
+    var td = t;
+    if (detailed && p.detail.w > 0.5 && all(textureDimensions(detail_planes) == textureDimensions(src))) {
+        var bands: vec4<f32>;
+        if (p.cubic.x < 0.5) {
+            bands = planes_at(tex_at);
+        } else {
+            bands = sample_cubic(detail_planes, tex_at);
+        }
+        td = detail_at(t, bands.xyz, detail_k);
+    }
+    var c = vec3<f32>(dot(wm0, td), dot(wm1, td), dot(wm2, td)) * exp2(look.exposure);
     // The pass only where it would change something, as
     // `oklab_pass_acts` in `finish.rs`: not for the switches alone.
     var mixer_acts = false;
@@ -464,7 +509,7 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
             var m = mean;
             if (whited) {
                 let w = transpose(mat3x3<f32>(p.w0.xyz, p.w1.xyz, p.w2.xyz));
-                let shown = w * t;
+                let shown = w * td;
                 let lin = from_oklab(vec3<f32>(to_oklab(shown).x, mean));
                 let rel = transpose(mat3x3<f32>(wm0, wm1, wm2)) * inverse3(w);
                 m = to_oklab(rel * lin).yz;
@@ -714,6 +759,28 @@ fn guide_at(pos: vec2<f32>) -> f32 {
     let t10 = textureLoad(guide, vec2<i32>(b.x, a.y), 0).r;
     let t01 = textureLoad(guide, vec2<i32>(a.x, b.y), 0).r;
     let t11 = textureLoad(guide, b, 0).r;
+    let top = t00 + (t10 - t00) * f.x;
+    let bottom = t01 + (t11 - t01) * f.x;
+    return top + (bottom - top) * f.y;
+}
+
+// The detail planes at a source position, read by texel and
+// interpolated in f32 as `guide_at` reads the guide: the bilinear the
+// sampler gives the picture, without the sampler's own rounding of
+// the weights, which a plane that changes a stop from one pixel to the
+// next would show.
+fn planes_at(pos: vec2<f32>) -> vec4<f32> {
+    let size = vec2<i32>(textureDimensions(detail_planes));
+    let g = pos - vec2<f32>(0.5);
+    let lo = floor(g);
+    let f = g - lo;
+    let last = size - vec2<i32>(1);
+    let a = clamp(vec2<i32>(lo), vec2<i32>(0), last);
+    let b = clamp(vec2<i32>(lo) + vec2<i32>(1), vec2<i32>(0), last);
+    let t00 = textureLoad(detail_planes, a, 0);
+    let t10 = textureLoad(detail_planes, vec2<i32>(b.x, a.y), 0);
+    let t01 = textureLoad(detail_planes, vec2<i32>(a.x, b.y), 0);
+    let t11 = textureLoad(detail_planes, b, 0);
     let top = t00 + (t10 - t00) * f.x;
     let bottom = t01 + (t11 - t01) * f.x;
     return top + (bottom - top) * f.y;
@@ -1121,18 +1188,60 @@ fn cubic_weights(t: f32) -> vec4<f32> {
     return 0.5 * vec4<f32>(-t3 + 2.0 * t2 - t, 3.0 * t3 - 5.0 * t2 + 2.0, -3.0 * t3 + 4.0 * t2 + t, t3 - t2);
 }
 
-// The source at a position, pixel centers at halves, edges clamped.
-fn sample_cubic(s: vec2<f32>) -> vec4<f32> {
+// The fade toward the clip the masks' Texture and Clarity gains are
+// put on under, from the pixel's brightest channel, as `clip_fade` in
+// the engine's local contrast.
+fn detail_fade(c: vec3<f32>) -> f32 {
+    let clip = p.detail_clip.x;
+    if (clip < 0.0) {
+        return 1.0;
+    }
+    return 1.0 - smoothstep(clip * p.detail_clip.y, clip, max(c.r, max(c.g, c.b)));
+}
+
+// The masks' Detail at a pixel, as `detail::apply`: Texture's band as
+// a gain under the fade, then Clarity's with the fade read again, then
+// the haze cleared by the transmission at the summed amount, bounded
+// as the engine's dehaze bounds the global's (`local_clearing`), and
+// put on as what it takes off the transmission, `u`, as that has it.
+// `k` is the masks' amounts summed by their weights.
+fn detail_at(c_in: vec3<f32>, bands: vec3<f32>, k: vec3<f32>) -> vec3<f32> {
+    var c = c_in;
+    let kt = k.x * p.detail_k.x;
+    if (kt != 0.0) {
+        c = c * exp2(detail_fade(c) * kt * bands.x);
+    }
+    let kc = k.y * p.detail_k.y;
+    if (kc != 0.0) {
+        c = c * exp2(detail_fade(c) * kc * bands.y);
+    }
+    let s = clamp(k.z, -1.0, 1.0) * p.detail_k.z;
+    if (s != 0.0) {
+        let a = p.detail.xyz;
+        var u: f32;
+        if (s > 0.0) {
+            let dark = clamp(min(c.r / a.r, min(c.g / a.g, c.b / a.b)), 0.0, 1.0);
+            u = clamp(min(s * bands.z, s * dark), 0.0, 1.0 - p.detail_k.w);
+        } else {
+            u = clamp(s * bands.z, s, 0.0);
+        }
+        c = (c - a * u) / (1.0 - u);
+    }
+    return c;
+}
+
+// A texture at a position, pixel centers at halves, edges clamped.
+fn sample_cubic(tex: texture_2d<f32>, s: vec2<f32>) -> vec4<f32> {
     let f = floor(s - 0.5);
     let wx = cubic_weights(s.x - 0.5 - f.x);
     let wy = cubic_weights(s.y - 0.5 - f.y);
-    let limit = vec2<i32>(textureDimensions(src)) - vec2<i32>(1, 1);
+    let limit = vec2<i32>(textureDimensions(tex)) - vec2<i32>(1, 1);
     var out = vec4<f32>(0.0);
     for (var j = 0; j < 4; j = j + 1) {
         let sy = clamp(i32(f.y) + j - 1, 0, limit.y);
         for (var i = 0; i < 4; i = i + 1) {
             let sx = clamp(i32(f.x) + i - 1, 0, limit.x);
-            out = out + wx[i] * wy[j] * textureLoad(src, vec2<i32>(sx, sy), 0);
+            out = out + wx[i] * wy[j] * textureLoad(tex, vec2<i32>(sx, sy), 0);
         }
     }
     return out;

@@ -327,6 +327,9 @@ pub enum Outcome {
         /// The tone equalizer's plane for this develop, for the
         /// viewport's own texture.
         guide: Arc<crate::finish::Guide>,
+        /// The bands the masks' Detail is put on from, when a mask
+        /// asks for one ([`crate::detail::DetailPlanes`]).
+        planes: Option<Arc<crate::detail::DetailPlanes>>,
         white: WhiteBase,
         seconds: f64,
         /// What the local contrast did, when it ran, and where: on
@@ -2078,6 +2081,21 @@ fn finish_export(
         &framed
     };
     let clip_level = base.map(|b| b.clip_level).unwrap_or(f32::INFINITY);
+    // The masks' bands through the same geometry as the picture, when
+    // they were made for this edit and this picture's size.
+    let planes = base
+        .and_then(|b| b.planes.as_ref())
+        .filter(|k| k.serves_edit(edit))
+        .map(|k| &k.planes)
+        .filter(|p| (p.width as u32, p.height as u32) == source);
+    let detail = planes.map(|p| {
+        let bands = p.to_image();
+        if edit.geometry.is_identity() {
+            bands
+        } else {
+            crate::geometry::apply(&bands, &edit.geometry)
+        }
+    });
     let rendered = crate::export::render(
         image,
         edit,
@@ -2088,6 +2106,7 @@ fn finish_export(
         base.map(|b| &*b.guide),
         base.map(|b| b.source).unwrap_or_default(),
         base.and_then(Base::white_shift).as_ref(),
+        detail.as_ref().zip(planes.map(|p| &p.meta)),
     );
     (rendered, left_out)
 }
@@ -2362,6 +2381,11 @@ fn keep_open(
             guide: Some(base.guide.clone()),
             kind: base.source,
             white: base.white_shift(),
+            detail: base
+                .planes
+                .as_ref()
+                .filter(|k| k.serves_edit(&keep.edit))
+                .map(|k| k.planes.clone()),
             edit: keep.edit,
         },
     };
@@ -2751,6 +2775,162 @@ struct Base {
     /// mask's own white balance is resolved through too
     /// ([`Base::white_shift`]); `None` for a picture that is not a raw.
     profile: Option<Arc<CameraProfile>>,
+    /// The bands the masks' Detail reads, with what they were made
+    /// from, kept for the next develop: a mask's slider moves no
+    /// develop, and a move elsewhere that leaves these alone should
+    /// not make them again.
+    planes: Option<KeptPlanes>,
+}
+
+/// The masks' bands ([`crate::detail::DetailPlanes`]) with what they
+/// were made from: the patched picture, the bands asked for, and the
+/// global's local contrast the haze was read after (none without a
+/// haze, or with the global's Texture and Clarity at rest).
+struct KeptPlanes {
+    patched: Arc<WorkingImage>,
+    wants: greycard_edit::DetailWants,
+    haze_after: Option<LocalContrastOptions>,
+    planes: Arc<crate::detail::DetailPlanes>,
+}
+
+impl KeptPlanes {
+    /// Whether these serve a develop of `patched` asking for `wants`
+    /// with the global's local contrast `global`: the same picture,
+    /// every band asked for, and a haze read after that contrast.
+    fn serve(
+        &self,
+        patched: &Arc<WorkingImage>,
+        wants: &greycard_edit::DetailWants,
+        global: Option<LocalContrastOptions>,
+    ) -> bool {
+        Arc::ptr_eq(&self.patched, patched)
+            && self.wants.covers(wants)
+            && (!wants.haze || self.haze_after == global)
+    }
+
+    /// Whether these hold what `edit`'s masks read, for a finish of
+    /// the picture they were made beside.
+    fn serves_edit(&self, edit: &Edit) -> bool {
+        let wants = edit.detail_wants();
+        self.wants.covers(&wants) && (!wants.haze || self.haze_after == edit.detail.options())
+    }
+}
+
+/// The masks' bands for a develop: none asked for, kept from the last,
+/// or being made on a thread of their own beside the develop.
+enum PlanesJob {
+    Nothing,
+    Kept(Arc<crate::detail::DetailPlanes>),
+    Making {
+        made: std::sync::mpsc::Receiver<Option<crate::detail::DetailPlanes>>,
+        // Held for its drop alone.
+        _cancel: CancelOnDrop,
+        patched: Arc<WorkingImage>,
+        wants: greycard_edit::DetailWants,
+        haze_after: Option<LocalContrastOptions>,
+        started: Instant,
+    },
+}
+
+impl PlanesJob {
+    /// Start making the planes of `patched` on a thread of their own:
+    /// on the GPU's path the CPU is otherwise idle while the device
+    /// works, so they cost the develop nothing they do not overlap. A
+    /// thread and not the pool's `spawn`, whose panic would end the
+    /// process; a panic here drops the sender, and the develop goes on
+    /// without the planes. The bands `reuse` holds (planes of the same
+    /// picture whose haze was read after another global local
+    /// contrast) are taken from it, so a move of the global's Texture
+    /// or Clarity makes the haze alone again. A develop that ends
+    /// without taking the planes up cancels them (`Drop`).
+    fn start(
+        patched: Arc<WorkingImage>,
+        global: Option<LocalContrastOptions>,
+        clip_level: f32,
+        wants: greycard_edit::DetailWants,
+        reuse: Option<Arc<crate::detail::DetailPlanes>>,
+    ) -> Self {
+        let (send, made) = std::sync::mpsc::channel();
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let haze_after = global.filter(|_| wants.haze);
+        let (picture, stop) = (patched.clone(), cancel.clone());
+        let spawned = std::thread::Builder::new()
+            .name("detail planes".into())
+            .spawn(move || {
+                let planes = crate::detail::DetailPlanes::make_with(
+                    &picture,
+                    haze_after,
+                    clip_level,
+                    wants,
+                    reuse.as_deref(),
+                    &stop,
+                );
+                if stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    tracing::debug!("the masks' detail bands: the develop ended; dropped");
+                } else if send.send(planes).is_err() {
+                    tracing::debug!("the masks' detail bands: nobody waiting; dropped");
+                }
+            });
+        match spawned {
+            Ok(_) => Self::Making {
+                made,
+                _cancel: CancelOnDrop(cancel),
+                patched,
+                wants,
+                haze_after,
+                started: Instant::now(),
+            },
+            Err(e) => {
+                tracing::warn!("the masks' detail bands: no thread to make them on: {e}");
+                Self::Nothing
+            }
+        }
+    }
+
+    /// The planes for the develop being delivered, waited for if they
+    /// are still being made, and kept in `b` for the next.
+    fn land(&mut self, b: &mut Base) -> Option<Arc<crate::detail::DetailPlanes>> {
+        match std::mem::replace(self, Self::Nothing) {
+            Self::Nothing => None,
+            Self::Kept(planes) => Some(planes),
+            Self::Making {
+                made,
+                patched,
+                wants,
+                haze_after,
+                started,
+                ..
+            } => {
+                let waited = Instant::now();
+                let planes = made.recv().ok().flatten().map(Arc::new);
+                tracing::info!(
+                    "the masks' detail bands in {:.3} s, {:.3} s of it waited for",
+                    started.elapsed().as_secs_f64(),
+                    waited.elapsed().as_secs_f64()
+                );
+                b.planes = planes.clone().map(|planes| KeptPlanes {
+                    patched,
+                    wants,
+                    haze_after,
+                    planes,
+                });
+                planes
+            }
+        }
+    }
+}
+
+/// The planes' thread's stop, set when the job that started it goes:
+/// a develop that fails or is given up before its delivery stops the
+/// planes it started, and the thread gives up between the bands and
+/// the haze and sends nothing. Set after a landing too, when the
+/// thread is done and it stops nothing.
+struct CancelOnDrop(Arc<std::sync::atomic::AtomicBool>);
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
 }
 
 impl Base {
@@ -3056,6 +3236,7 @@ fn develop_job(
                 pre: None,
                 uploaded: None,
                 haze: None,
+                planes: None,
                 ca_on_gpu: false,
                 stand_in: None,
                 profile: None,
@@ -3214,6 +3395,32 @@ fn develop_job(
         b.patched = Some((retouch, image.clone(), whole));
         image
     };
+    // The masks' bands, when a mask asks for one: kept from the last
+    // develop when they were made from this picture and hold every
+    // band asked for, made otherwise on the CPU on a thread of their
+    // own while the develop goes on, whichever path the picture takes,
+    // and taken up where the develop is delivered (`PlanesJob::land`).
+    //
+    // The haze is read after the global's local contrast, as the
+    // global's dehaze is fitted; a move of the global's Texture or
+    // Clarity makes the haze again and keeps the bands.
+    let wants = edit.detail_wants();
+    let global = edit.detail.options();
+    let mut planes = match &b.planes {
+        _ if !wants.any() => {
+            b.planes = None;
+            PlanesJob::Nothing
+        }
+        Some(k) if k.serve(&patched, &wants, global) => PlanesJob::Kept(k.planes.clone()),
+        kept => {
+            let reuse = kept
+                .as_ref()
+                .filter(|k| Arc::ptr_eq(&k.patched, &patched))
+                .map(|k| k.planes.clone());
+            b.planes = None;
+            PlanesJob::start(patched.clone(), global, b.clip_level, wants, reuse)
+        }
+    };
     // The local contrast and the dehaze on one copy of the patched
     // picture, on the CPU; none when neither is asked for.
     let clip_level = b.clip_level;
@@ -3257,6 +3464,7 @@ fn develop_job(
             });
             match sharpened {
                 Ok((stats, texture)) => {
+                    let planes = planes.land(b);
                     let pre = b.pre.as_ref().expect("made, or kept");
                     let seconds = start.elapsed().as_secs_f64();
                     note_developed(
@@ -3278,6 +3486,7 @@ fn develop_job(
                             turn,
                             image: Developed::Texture(texture),
                             guide: b.guide.clone(),
+                            planes,
                             white: b.white,
                             seconds,
                             detail: pre
@@ -3324,6 +3533,7 @@ fn develop_job(
                 let mut ran = Ran::default();
                 match detail_on_gpu(ctx, b, &patched, edit, true, &mut ran) {
                     Ok(Some(made)) => {
+                        let planes = planes.land(b);
                         let texture = made.texture.expect("a viewport texture was asked for");
                         let seconds = start.elapsed().as_secs_f64();
                         note_developed(
@@ -3344,6 +3554,7 @@ fn develop_job(
                                 turn,
                                 image: Developed::Texture(texture),
                                 guide: b.guide.clone(),
+                                planes,
                                 white: b.white,
                                 seconds,
                                 detail: made.detail.map(|s| (s, DetailRan::Gpu)),
@@ -3415,6 +3626,7 @@ fn develop_job(
             turn,
             image: Developed::Halves(halves),
             guide: b.guide.clone(),
+            planes: planes.land(b),
             white: b.white,
             seconds,
             detail: detail.map(|(s, secs)| (s, DetailRan::Cpu(secs))),
@@ -3792,6 +4004,7 @@ fn turn_base(
     b.stamp = stamp;
     b.patched = None;
     b.haze = None;
+    b.planes = None;
     let kept = b.pre.take().is_some() | b.uploaded.take().is_some();
     if kept && let Some(ctx) = gpu {
         ctx.release();
@@ -3823,6 +4036,7 @@ fn engine_base(
         pre: None,
         uploaded: None,
         haze: None,
+        planes: None,
         ca_on_gpu: false,
         stand_in: None,
         profile: None,
@@ -3885,6 +4099,7 @@ fn learned_base(
             pre: None,
             uploaded: None,
             haze: None,
+            planes: None,
             ca_on_gpu: l.ca_on_gpu,
             stand_in: None,
             profile: None,
@@ -4805,6 +5020,7 @@ mod tests {
                 pre: None,
                 uploaded: None,
                 haze: None,
+                planes: None,
                 ca_on_gpu: false,
                 stand_in: None,
                 profile: None,
@@ -4847,6 +5063,7 @@ mod tests {
             pre: None,
             uploaded: None,
             haze: None,
+            planes: None,
             ca_on_gpu: false,
             stand_in: None,
             profile: None,
@@ -5821,6 +6038,7 @@ mod tests {
                 guide: Some(b.guide.clone()),
                 kind: b.source,
                 white: b.white_shift(),
+                detail: None,
             };
             let cache: ThumbCache = Arc::new(Mutex::new(Some(
                 Thumbs::at(
@@ -6535,6 +6753,7 @@ mod tests {
                 pixels: vec![half::f16::ZERO; 4],
             })),
             guide: Arc::new(crate::finish::Guide::NONE),
+            planes: None,
             white: WhiteBase::IDENTITY,
             seconds: 0.0,
             detail: None,
@@ -7403,6 +7622,7 @@ mod tests {
                         |_, _| (0.0, None),
                         None,
                         None,
+                        None,
                         &to_out,
                         |v| (v.clamp(0.0, 1.0) * 255.0).round() as u8,
                     )
@@ -7419,6 +7639,7 @@ mod tests {
                         &[],
                         |x, y| (x as f32, y as f32),
                         |_, _| (0.0, None),
+                        None,
                         None,
                         None,
                         &to_out,
