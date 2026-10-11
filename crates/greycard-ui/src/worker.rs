@@ -183,6 +183,13 @@ pub enum Job {
         /// judged against in saying whether this is an edit at all.
         iso: crate::edited::Iso,
     },
+    /// Make the learned masks' rasters of the frame at `path` under
+    /// its sidecar's edit and put them in the mask cache, so the
+    /// reduced develop of its pictures (`reduced`) can read them: the
+    /// lowest thing the worker does, taken only when nothing else is
+    /// queued. Answered with `EditedKept` so the frame is asked for
+    /// again.
+    MasksFor(PathBuf),
     /// Fetch a model into the store; on its own thread.
     Fetch {
         model: &'static greycard_ai::Model,
@@ -499,6 +506,10 @@ struct Queue {
     /// left at once still has its picture in hand when its save is seen.
     keeps: std::collections::VecDeque<Job>,
     exports: std::collections::VecDeque<Job>,
+    /// Frames whose learned masks the reduced develop found missing
+    /// from the mask cache (`Job::MasksFor`): made here, behind
+    /// everything else, since each is a decode and a model run.
+    masks_for: std::collections::VecDeque<PathBuf>,
     /// A Subject model arrived since the one loaded, if any: drop it,
     /// so the next Subject mask picks up the new file rather than the
     /// one already running.
@@ -546,6 +557,9 @@ pub struct Worker {
     /// Which frames show their edit, and the pictures made from it, in
     /// the same cache (`edited`).
     edited: Arc<crate::edited::Edited>,
+    /// The reduced develops of the edit's pictures in the pool
+    /// (`reduced`).
+    reducer: Arc<crate::reduced::Reducer>,
 }
 
 impl Worker {
@@ -599,18 +613,74 @@ impl Worker {
                 Arc::new(move |path| previews.make(path).map(drop))
             },
         };
+        let reducer = Arc::new(crate::reduced::Reducer::new());
+        let edits = crate::thumbpool::EditHooks {
+            wants: {
+                let (reducer, edited) = (reducer.clone(), edited.clone());
+                Arc::new(move |path| reducer.wants(&edited, path))
+            },
+            make: {
+                let (reducer, edited, queue) = (reducer.clone(), edited.clone(), queue.clone());
+                Arc::new(move |path| match reducer.make(&edited, path) {
+                    Ok(kept) => Ok(kept),
+                    // The worker makes the masks, behind everything
+                    // else, and the frame is asked for again after.
+                    Err(crate::reduced::Why::AskMasks(which)) => {
+                        tracing::info!(
+                            "the edit's pictures of {}: {} not in the mask cache; the worker is asked",
+                            crate::panel::browser::file_name(path),
+                            which.join(", ")
+                        );
+                        let (lock, cv) = &*queue;
+                        let mut q = lock.lock().expect("worker queue");
+                        if !q.masks_for.iter().any(|p| p == path) {
+                            q.masks_for.push_back(path.to_path_buf());
+                        }
+                        cv.notify_one();
+                        Ok(false)
+                    }
+                    // Asked already: the worker's answer brings it back.
+                    Err(crate::reduced::Why::Masks(_)) => Ok(false),
+                    Err(why) => Err(why),
+                })
+            },
+            at_once: {
+                let (edited, threads) = (edited.clone(), crate::thumbpool::default_threads());
+                // For a measurement: how many at once whatever the window
+                // is doing.
+                let fixed = std::env::var("GREYCARD_REDUCED_AT_ONCE")
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok())
+                    .filter(|&n| n > 0);
+                Arc::new(move || match fixed {
+                    Some(n) => (n, None),
+                    None => crate::reduced::begin(threads, edited.any_open(), edited.idle_for()),
+                })
+            },
+            alone: {
+                let reducer = reducer.clone();
+                Arc::new(move |path| reducer.alone(path))
+            },
+        };
         let pool = crate::thumbpool::Pool::with_lookup(
             crate::thumbpool::default_threads(),
             lookup,
             make,
             deliver.clone(),
         )
-        .with_previews(hooks);
+        .with_previews(hooks)
+        .with_edits(edits);
         let pool = Arc::new(if batched { pool.batched() } else { pool });
-        let (q, d, p, e) = (queue.clone(), deliver.clone(), pool.clone(), edited.clone());
+        let (q, d, p, e, r) = (
+            queue.clone(),
+            deliver.clone(),
+            pool.clone(),
+            edited.clone(),
+            reducer.clone(),
+        );
         let thread = std::thread::Builder::new()
             .name("greycard worker".into())
-            .spawn(move || run(q, d, p, e))
+            .spawn(move || run(q, d, p, e, r))
             .expect("spawning the worker");
         Self {
             queue,
@@ -621,6 +691,7 @@ impl Worker {
             pool,
             previews,
             edited,
+            reducer,
         }
     }
 
@@ -628,6 +699,24 @@ impl Worker {
     /// edited, and the culling loupe looks their pictures up.
     pub(crate) fn edited(&self) -> Arc<crate::edited::Edited> {
         self.edited.clone()
+    }
+
+    /// The frame open in the editor, or none: culling, the grid, or no
+    /// frame. While there is one, the reduced develops run one at a
+    /// time and the learned masks for them wait (`Job::MasksFor`); the
+    /// pool and the worker look again when it changes.
+    pub(crate) fn set_open_frame(&self, path: Option<PathBuf>) {
+        if self.edited.set_open(path) {
+            self.pool.wake();
+            let (_, cv) = &*self.queue;
+            cv.notify_one();
+        }
+    }
+
+    /// The roots on a network mount: a frame under one has the reduced
+    /// develop of its pictures alone.
+    pub(crate) fn set_network_roots(&self, roots: Vec<PathBuf>) {
+        self.reducer.set_network(roots);
     }
 
     /// The local previews, for the culling loupe's decode threads,
@@ -763,12 +852,18 @@ impl Worker {
 
     pub fn send(&self, job: Job) {
         if let Job::Fetch { model } = job {
-            let deliver = self.deliver.clone();
+            let (deliver, reducer) = (self.deliver.clone(), self.reducer.clone());
             std::thread::Builder::new()
                 .name("greycard fetch".into())
                 .spawn(move || {
                     let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                        fetch(model, &*deliver)
+                        if fetch(model, &*deliver) {
+                            // The frames whose pictures waited on a model
+                            // are tried again: their cells ask.
+                            for path in reducer.models_arrived() {
+                                deliver(Outcome::EditedKept { path });
+                            }
+                        }
                     }));
                     if let Err(payload) = held {
                         deliver(Outcome::FetchFailed {
@@ -912,7 +1007,22 @@ impl Worker {
                     iso,
                 });
             }
-            job => q.develop = Some(job),
+            job => {
+                // The frame being opened is the open frame from here:
+                // the pool must not develop it for its pictures while
+                // the open is on its way.
+                if let Job::Open { path, .. } = &job
+                    && self.edited.set_open(Some(path.clone()))
+                {
+                    self.pool.wake();
+                }
+                // The editor is being worked in: the queue waits for it
+                // to be quiet again.
+                if matches!(job, Job::Open { .. } | Job::Develop { .. }) {
+                    self.edited.touch();
+                }
+                q.develop = Some(job);
+            }
         }
         cv.notify_one();
     }
@@ -1008,7 +1118,9 @@ pub(crate) fn order_thumbnails(pending: &mut [(usize, PathBuf)], first: usize, l
 }
 
 /// Fetch a model, reporting as it comes.
-fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) {
+/// Fetch `model` into the store, saying how it goes; whether it is
+/// there now.
+fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) -> bool {
     let name = model.name;
     let store = match greycard_ai::Store::user() {
         Ok(s) => s,
@@ -1018,7 +1130,7 @@ fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) {
                 name,
                 message: e.to_string(),
             });
-            return;
+            return false;
         }
     };
     let mut last = Instant::now();
@@ -1033,6 +1145,7 @@ fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) {
             });
         }
     });
+    let fetched = result.is_ok();
     deliver(match result {
         Ok(()) => Outcome::Fetched { model },
         Err(e) => Outcome::FetchFailed {
@@ -1041,6 +1154,7 @@ fn fetch(model: &'static greycard_ai::Model, deliver: &dyn Fn(Outcome)) {
             message: e.to_string(),
         },
     });
+    fetched
 }
 
 /// Fetch the lens database, reporting as it comes, and hand it to the
@@ -1072,6 +1186,9 @@ fn fetch_lenses(queue: &Arc<(Mutex<Queue>, Condvar)>, deliver: &dyn Fn(Outcome))
             let (lock, cv) = &**queue;
             lock.lock().expect("worker queue").lenses = Some(db);
             cv.notify_one();
+            // The index's keys are made under the new name from here,
+            // before the window asks it to clear the old ones.
+            greycard_library::set_lens_database(crate::edited::lens_database());
             deliver(Outcome::LensesFetched);
         }
         Err(e) => deliver(Outcome::LensesFetchFailed {
@@ -1152,6 +1269,7 @@ fn run(
     deliver: Deliver,
     pool: Arc<crate::thumbpool::Pool>,
     edited: Arc<crate::edited::Edited>,
+    reducer: Arc<crate::reduced::Reducer>,
 ) {
     let (lock, cv) = &*queue;
     let mut ai = Ai::new();
@@ -1163,6 +1281,11 @@ fn run(
         .ok()
         .and_then(|s| s.load())
         .map(|(db, _)| Arc::new(db));
+    reducer.set_lenses(lenses.clone());
+    // The learned models for the masks of frames not open
+    // (`Job::MasksFor`), made on the first such frame and dropped when
+    // none is waiting, as `set_ai` is for a set's frames.
+    let mut masks_ai: Option<Ai> = None;
     let cache = greycard_ai::DenoiseCache::user()
         .inspect_err(|e| tracing::warn!("no denoise cache: {e}"))
         .ok();
@@ -1212,6 +1335,7 @@ fn run(
                 }
                 if let Some(db) = q.lenses.take() {
                     lenses = Some(db);
+                    reducer.set_lenses(lenses.clone());
                     edited.set_lenses(crate::edited::lens_database());
                     discard_base(&mut base, gpu.as_ref());
                     learned = None;
@@ -1238,6 +1362,13 @@ fn run(
                 }
                 if let Some(job) = q.exports.pop_front() {
                     break job;
+                }
+                // Not while a frame is open in the editor: a decode and
+                // a model run beside the develop the user waits on.
+                if !edited.any_open()
+                    && let Some(path) = q.masks_for.pop_front()
+                {
+                    break Job::MasksFor(path);
                 }
                 if device.is_some() {
                     // Nothing else to do: build the context now, off
@@ -1680,6 +1811,34 @@ fn run(
                 };
                 deliver(outcome);
             }
+            Job::MasksFor(path) => {
+                let ai = masks_ai.get_or_insert_with(Ai::new);
+                // Given way between two shapes to a develop, a save or a
+                // frame opened: the rest is made after, from the front.
+                let waiting = || {
+                    let q = lock.lock().expect("worker queue");
+                    q.develop.is_some() || !q.keeps.is_empty() || edited.any_open()
+                };
+                match masks_for(&path, ai, lenses.as_deref(), &waiting) {
+                    MasksMade::All => {
+                        reducer.masks_done(&path, true);
+                        deliver(Outcome::EditedKept { path });
+                    }
+                    // A frame tried and found wanting stays so until a
+                    // model is fetched: asked again now, it would be
+                    // decoded and developed again for the same answer.
+                    MasksMade::Short => reducer.masks_done(&path, false),
+                    MasksMade::GaveWay => {
+                        lock.lock()
+                            .expect("worker queue")
+                            .masks_for
+                            .push_front(path);
+                    }
+                }
+                if lock.lock().expect("worker queue").masks_for.is_empty() {
+                    masks_ai = None;
+                }
+            }
             Job::People => {
                 picking = true;
                 let people = match &base {
@@ -1720,6 +1879,7 @@ fn run(
             }
         }
         if developing {
+            edited.touch();
             pool.set_limit(pool.threads());
             // A save that was waiting for this develop: its pictures now.
             if let Some(keep) = pending.take() {
@@ -2097,10 +2257,12 @@ fn keep_open(
         return None;
     };
     let key = edited.key_of(&keep.edit);
-    // Kept already (a save that changed nothing of the picture, or a
-    // develop of an edit kept before): the cells are asked again only
-    // when they were showing something else.
-    if edited.all_kept(&hash, key) {
+    // Kept already from a develop of the frame (a save that changed
+    // nothing of the picture, or a develop of an edit kept before): the
+    // cells are asked again only when they were showing something else.
+    // The reduced develop's pictures of the key do not count: this
+    // develop's take their place.
+    if edited.all_kept_by(&hash, key, crate::edited::EDITED_RECIPE) {
         if edited.settle_key(&path, &hash, key, keep.iso) {
             said(path);
         }
@@ -2108,7 +2270,7 @@ fn keep_open(
     }
     // Being made already, from a save or a develop just before: that
     // making says when it is kept, and nothing waits here.
-    let marked = edited.mark(&hash, key)?;
+    let marked = edited.mark(&hash, key, crate::edited::EDITED_RECIPE)?;
     // The develop in hand of this edit at this turn: the frame's turn is
     // not in the key, but the picture in hand is turned by it, and the
     // making takes it back out.
@@ -2191,6 +2353,7 @@ fn keep_open(
         finish: crate::edited::Finish {
             turn: keep.turn,
             source,
+            full: source,
             rasters,
             clip_level: base.clip_level,
             guide: Some(base.guide.clone()),
@@ -2204,6 +2367,100 @@ fn keep_open(
         crate::edited::keep(&on, job, |path| deliver(Outcome::EditedKept { path }))
     }));
     None
+}
+
+/// How [`masks_for`] ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MasksMade {
+    /// Every learned shape's raster is in the cache (or the edit draws
+    /// none any more): the frame is asked for again.
+    All,
+    /// Not every one could be made (a model missing or failing, the
+    /// develop refused): the frame waits for a model to be fetched.
+    Short,
+    /// It gave way between two shapes to a develop, a save, or a frame
+    /// opened in the editor; the shapes made so far are in the cache.
+    GaveWay,
+}
+
+/// The learned masks of the frame at `path` under its sidecar's edit,
+/// made and put in the mask cache (`Job::MasksFor`): the frame is
+/// decoded and developed reduced for the picture the models see, and
+/// each learned shape the edit draws is made as an export of the frame
+/// would make it, `waiting` asked between two whether to give way. The
+/// rasters go in the cache the open frame's masks are read from, made
+/// from the reduced develop's picture, which the models see at their
+/// own 2048 anyway.
+fn masks_for(
+    path: &std::path::Path,
+    ai: &mut Ai,
+    lenses: Option<&greycard_lens::Database>,
+    waiting: &dyn Fn() -> bool,
+) -> MasksMade {
+    let name = crate::panel::browser::file_name(path);
+    let started = Instant::now();
+    let (sidecar, _, trouble) = crate::panel::browser::load_sidecar_said(path, true);
+    let edit = sidecar.current;
+    let turn = sidecar.turn;
+    if trouble.is_some() {
+        tracing::info!("the masks of {name}: its sidecar could not be read");
+        return MasksMade::Short;
+    }
+    if !crate::reduced::draws_learned(&edit) {
+        return MasksMade::All;
+    }
+    let developed = match crate::reduced::develop(path, &edit, turn, lenses) {
+        Ok(developed) => developed,
+        Err(why) => {
+            tracing::info!("the masks of {name}: not made: {why}");
+            return MasksMade::Short;
+        }
+    };
+    ai.forget(Some(path.to_path_buf()));
+    let (mut made, mut wanted) = (0, 0);
+    for a in &edit.adjustments {
+        if !a.enabled || a.mask.is_empty() {
+            continue;
+        }
+        for (i, c) in a.mask.live() {
+            if !c.shape.is_learned() || !crate::ai::prompted(&c.shape) {
+                continue;
+            }
+            if wanted > 0 && waiting() {
+                tracing::info!(
+                    "the masks of {name}: {made} made, giving way to the editor; the rest after"
+                );
+                return MasksMade::GaveWay;
+            }
+            wanted += 1;
+            match ai.raster(
+                1,
+                &developed.image,
+                &edit,
+                developed.kind,
+                turn,
+                (a.id, i),
+                &c.shape,
+                None,
+            ) {
+                Ok(_) => made += 1,
+                Err(why) => tracing::info!(
+                    "the masks of {name}: {}'s {} shape: {why}",
+                    a.name,
+                    c.shape.name()
+                ),
+            }
+        }
+    }
+    tracing::info!(
+        "the masks of {name}: {made} of {wanted} made for the reduced develop in {:.1} s",
+        started.elapsed().as_secs_f64()
+    );
+    if made == wanted {
+        MasksMade::All
+    } else {
+        MasksMade::Short
+    }
 }
 
 /// A frame developed once on the CPU, as an export of a frame that is
@@ -2304,6 +2561,7 @@ impl Blame {
             | Job::Fetch { .. }
             | Job::FetchLenses
             | Job::Gpu
+            | Job::MasksFor(_)
             | Job::Keep { .. } => Blame::Nobody,
         }
     }
@@ -2339,7 +2597,7 @@ pub(crate) fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
 /// A whole number of quarter turns clockwise as an orientation, for
 /// a picture that was already turned by its own tag at decode; None
 /// for no turn at all.
-fn quarters(turn: u8) -> Option<greycard_core::raw::Orientation> {
+pub(crate) fn quarters(turn: u8) -> Option<greycard_core::raw::Orientation> {
     use greycard_core::raw::Orientation;
     match turn % 4 {
         1 => Some(Orientation::Rotate90),
@@ -2635,6 +2893,19 @@ fn correct_lens(
     db: Option<&greycard_lens::Database>,
 ) -> WorkingImage {
     let (make, model, shot) = input.identity();
+    correct_lens_of(image, make, model, shot, edit, db)
+}
+
+/// [`correct_lens`] for a frame named by its body and its shot: the
+/// reduced develop's, which has no `Input`.
+pub(crate) fn correct_lens_of(
+    image: WorkingImage,
+    make: &str,
+    model: &str,
+    shot: &Shot,
+    edit: &Edit,
+    db: Option<&greycard_lens::Database>,
+) -> WorkingImage {
     let profile = db
         .and_then(|db| db.profile_for(make, model, shot))
         .map(|p| p.correction(image.width, image.height, shot, greycard_lens::Wanted::ALL));
@@ -4009,6 +4280,9 @@ fn srgb_encode(v: f32) -> f32 {
         1.055 * v.powf(1.0 / 2.4) - 0.055
     }
 }
+
+#[cfg(test)]
+mod reduced_check;
 
 #[cfg(test)]
 mod tests {
@@ -5422,7 +5696,7 @@ mod tests {
         assert!(half.data.iter().all(|v| (*v - 0.25).abs() < 1e-6));
     }
 
-    fn thumb_scratch(name: &str) -> PathBuf {
+    pub(super) fn thumb_scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "greycard-thumbjob-{name}-{}-{}",
             std::process::id(),
@@ -5538,6 +5812,7 @@ mod tests {
                 edit: edit.clone(),
                 turn: 0,
                 source,
+                full: source,
                 rasters: Default::default(),
                 clip_level: b.clip_level,
                 guide: Some(b.guide.clone()),
@@ -5563,7 +5838,7 @@ mod tests {
                     developed: crate::edited::Developed::Full(image.clone()),
                     factor,
                     read_back: None,
-                    marked: edited.mark(&hash, 1).unwrap(),
+                    marked: edited.mark(&hash, 1, crate::edited::EDITED_RECIPE).unwrap(),
                     iso: None,
                     finish: finish(),
                 },
@@ -5606,7 +5881,7 @@ mod tests {
                         developed: crate::edited::Developed::Reduced(reduced),
                         factor,
                         read_back: Some(read),
-                        marked: edited.mark(&hash, 2).unwrap(),
+                        marked: edited.mark(&hash, 2, crate::edited::EDITED_RECIPE).unwrap(),
                         iso: None,
                         finish: finish(),
                     },

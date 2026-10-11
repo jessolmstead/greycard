@@ -96,6 +96,11 @@ pub(crate) struct FromRow {
     /// develop. The frame stands in still, and nothing is written over
     /// the file; the next request for it reads it again.
     pub(crate) unread: Option<String>,
+    /// The develop key of the frame's edit as the row has it, so its
+    /// edit's pictures are found without the sidecar being read, its
+    /// root offline included; `None` for a row not yet read for one, or
+    /// one whose edit could not be read.
+    pub(crate) develop_key: Option<u64>,
 }
 
 impl FromRow {
@@ -110,6 +115,7 @@ impl FromRow {
             iso: None,
             sidecar: None,
             unread: None,
+            develop_key: None,
         }
     }
 
@@ -124,6 +130,7 @@ impl FromRow {
             iso: Some(row.iso),
             sidecar: row.sidecar_hash.clone(),
             unread: None,
+            develop_key: row.develop_key.filter(|&k| k != 0),
         }
     }
 }
@@ -1124,7 +1131,7 @@ pub(crate) fn apply_row(st: &mut State, i: usize, row: &RowMeta) -> bool {
     let raw = !greycard_core::picture::is_picture_path(&st.files[i]);
     let next = FromRow::of(row);
     let edited = from.edited != next.edited;
-    let rewritten = from.sidecar != next.sidecar;
+    let rewritten = from.sidecar != next.sidecar || from.develop_key != next.develop_key;
     let turned = from.turns != next.turns || edited || from.exported != next.exported;
     *from = next;
     // Whether it shows an edit, and under what key, as the row now says.

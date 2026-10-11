@@ -712,6 +712,9 @@ fn heard(st: &mut State, app: &App, generation: u64, message: Message) {
             st.looks = greycard_edit::look::list();
             st.look_for = None;
             show_looks(st, &st.edit.look_lut, app);
+            // The frames not open that use a table it wrote show it
+            // too, once the pool has made their pictures again.
+            crate::edited::looks_moved(st);
             app.window().request_redraw();
         }
     }

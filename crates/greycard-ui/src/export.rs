@@ -553,6 +553,15 @@ pub(crate) fn fit(image: &WorkingImage, long_edge: Option<u32>) -> Option<Workin
     let scale = edge as f64 / long as f64;
     let w = ((image.width as f64 * scale).round() as u32).max(1);
     let h = ((image.height as f64 * scale).round() as u32).max(1);
+    fit_exact(image, w, h)
+}
+
+/// `image` resampled to `w` by `h` as [`fit`] resamples it, up or down;
+/// `None` when it is that size already.
+pub(crate) fn fit_exact(image: &WorkingImage, w: u32, h: u32) -> Option<WorkingImage> {
+    if (image.width as u32, image.height as u32) == (w, h) {
+        return None;
+    }
     let src: image::ImageBuffer<image::Rgb<f32>, &[f32]> =
         image::ImageBuffer::from_raw(image.width as u32, image.height as u32, &image.data[..])?;
     let out = image::imageops::resize(&src, w, h, image::imageops::FilterType::Lanczos3);

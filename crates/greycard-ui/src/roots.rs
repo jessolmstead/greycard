@@ -645,6 +645,10 @@ pub(crate) fn take_built(st: &mut State, built: Built) -> bool {
     }
     st.library.remote = remote;
     st.library.watcher = watcher;
+    // The reduced develop of a frame under one of these runs alone.
+    if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
+        worker.set_network_roots(st.library.remote.iter().map(|(r, _)| r.clone()).collect());
+    }
     restart_poll(st);
     true
 }

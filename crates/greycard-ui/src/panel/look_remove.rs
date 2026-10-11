@@ -523,6 +523,7 @@ pub(crate) fn land(st: &mut State, app: &App, done: Done) {
     look::forget();
     st.look_for = None;
     show_looks(st, &st.edit.look_lut, app);
+    crate::edited::looks_moved(st);
     app.window().request_redraw();
 }
 

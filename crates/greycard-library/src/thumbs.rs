@@ -556,8 +556,9 @@ impl Thumbs {
         removed
     }
 
-    /// The tag under `recipe` whose entries for `hash` were written last,
-    /// whatever its stamp: for a caller that cannot say which stamp it
+    /// The tag under any of `recipes` whose entries for `hash` were
+    /// written last, whatever its stamp: for a caller that cannot say
+    /// which stamp it
     /// wants (the editor's frame whose edit cannot be read, its root
     /// offline) and takes the last one kept. One tag for the hash, the
     /// same at every size, so a frame's sizes never mix two pictures. An
@@ -566,7 +567,7 @@ impl Thumbs {
     /// time the modification time stands in, which is the last used, and
     /// a tie goes to the larger stamp. One listing of the hash's fan-out
     /// folder; nothing is read or decoded.
-    pub fn newest(&self, hash: &str, recipe: u16) -> Option<Tag> {
+    pub fn newest(&self, hash: &str, recipes: &[u16]) -> Option<Tag> {
         let fan = self.root.join(hash.get(..2).unwrap_or("__"));
         std::fs::read_dir(&fan)
             .ok()?
@@ -574,7 +575,7 @@ impl Thumbs {
             .filter_map(|entry| {
                 let name = entry.file_name();
                 let (_, tag) = parse_name(name.to_str()?, hash)?;
-                (tag.recipe == recipe).then_some(())?;
+                recipes.contains(&tag.recipe).then_some(())?;
                 let meta = entry.metadata().ok()?;
                 let when = meta.created().or_else(|_| meta.modified()).ok()?;
                 Some(((when, tag.stamp), tag))
@@ -1001,17 +1002,27 @@ mod tests {
         cache.put(&key, 256, at(edited, 41), &thumb).unwrap();
         cache.put(&key, 2048, at(edited, 41), &big).unwrap();
         cache.put(&other, 128, at(edited, 41), &thumb).unwrap();
-        assert_eq!(cache.newest(&key, edited), Some(at(edited, 41)));
+        assert_eq!(cache.newest(&key, &[edited]), Some(at(edited, 41)));
         // Another copy's key beside it, written later.
         std::thread::sleep(std::time::Duration::from_millis(20));
         cache.put(&key, 128, at(edited, 42), &thumb).unwrap();
         cache.put(&key, 2048, at(edited, 42), &big).unwrap();
-        assert_eq!(cache.newest(&key, edited), Some(at(edited, 42)));
-        assert_eq!(cache.newest(&key, camera), Some(at(camera, 7)));
+        assert_eq!(cache.newest(&key, &[edited]), Some(at(edited, 42)));
+        assert_eq!(cache.newest(&key, &[camera]), Some(at(camera, 7)));
         // A hit on the older key moves its recency, not which was made last.
         std::thread::sleep(std::time::Duration::from_millis(20));
         assert!(cache.get(&key, 256, at(edited, 41)).is_some());
-        assert_eq!(cache.newest(&key, edited), Some(at(edited, 42)));
+        assert_eq!(cache.newest(&key, &[edited]), Some(at(edited, 42)));
+        // Under either of two recipes, the one written last of both.
+        let reduced = 0x8002;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        cache.put(&other, 128, at(reduced, 43), &thumb).unwrap();
+        assert_eq!(cache.newest(&other, &[edited]), Some(at(edited, 41)));
+        assert_eq!(
+            cache.newest(&other, &[edited, reduced]),
+            Some(at(reduced, 43))
+        );
+        assert_eq!(cache.remove_tag(&other, at(reduced, 43)), 1);
         // One frame's key moved on: its pictures go, the other copy's stay.
         assert_eq!(cache.remove_tag(&key, at(edited, 41)), 3);
         assert!(cache.has(&key, 128, at(edited, 42)) && cache.has(&key, 2048, at(edited, 42)));
@@ -1020,7 +1031,7 @@ mod tests {
         assert!(cache.has(&other, 128, at(edited, 41)));
         assert_eq!(cache.known_split(), Some(cache.split()));
         assert_eq!(cache.remove_tag(&key, at(edited, 42)), 2);
-        assert_eq!(cache.newest(&key, edited), None);
+        assert_eq!(cache.newest(&key, &[edited]), None);
         assert!(cache.get(&key, 128, at(camera, 7)).is_some());
         assert_eq!(cache.known_split(), Some(cache.split()));
         assert_eq!(cache.remove_tag(&"ff".repeat(32), at(edited, 1)), 0);

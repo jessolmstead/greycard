@@ -169,6 +169,67 @@ impl Sidecar {
     }
 }
 
+/// What every develop key made now is made under, beside each edit's
+/// own: [`DEVELOP_RECIPE`], the lens database's name as the caller gives
+/// it, and the look and profile directories as they stand (each file's
+/// name, length and modification time; not their contents, which only
+/// the files an edit names are read for). A store of keys made under
+/// another (the index's) holds keys that may no longer be the edits'
+/// own: a recipe raised, a lens database fetched or wiped with its
+/// cache, a look refitted or a profile replaced.
+pub fn keys_made_under(lenses: Option<&str>) -> String {
+    keys_made_under_in(
+        crate::look::store_dir().as_deref(),
+        crate::camera::store_dir().as_deref(),
+        lenses,
+    )
+}
+
+/// [`keys_made_under`] with the directories named: for the tests.
+pub fn keys_made_under_in(
+    looks: Option<&Path>,
+    profiles: Option<&Path>,
+    lenses: Option<&str>,
+) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for dir in [looks, profiles] {
+        hasher.update(b"\0dir\0");
+        let Some(dir) = dir else {
+            continue;
+        };
+        let mut files: Vec<(String, u64, u128)> = std::fs::read_dir(dir)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|e| {
+                let meta = e.metadata().ok().filter(|m| m.is_file())?;
+                let when = meta
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_nanos());
+                Some((
+                    e.file_name().to_string_lossy().into_owned(),
+                    meta.len(),
+                    when,
+                ))
+            })
+            .collect();
+        files.sort();
+        for (name, len, when) in files {
+            hasher.update(&(name.len() as u64).to_le_bytes());
+            hasher.update(name.as_bytes());
+            hasher.update(&len.to_le_bytes());
+            hasher.update(&when.to_le_bytes());
+        }
+    }
+    let files = hasher.finalize();
+    format!(
+        "recipe {DEVELOP_RECIPE}; lenses {lenses:?}; files {}",
+        &files.to_hex()[..16]
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -353,6 +414,45 @@ mod tests {
         assert_ne!(
             edit.develop_key_in(Some(&looks), Some(&profiles), None),
             with
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// What a store of keys was made under moves with a refit of any
+    /// look (its length, or its time alone), with the lens database's
+    /// name (a fetch, or the cache it lives in wiped), and names the
+    /// recipe, so a raise of it is another; and it stands while nothing
+    /// moves.
+    #[test]
+    fn what_the_keys_are_made_under_moves_with_a_refit_the_lenses_and_the_recipe() {
+        let dir = scratch("made-under");
+        let (looks, profiles) = (dir.join("looks"), dir.join("profiles"));
+        std::fs::create_dir_all(&looks).unwrap();
+        std::fs::create_dir_all(&profiles).unwrap();
+        let table = looks.join("Fitted.cube");
+        std::fs::write(&table, "LUT_3D_SIZE 2\n").unwrap();
+        let under = |lenses| keys_made_under_in(Some(&looks), Some(&profiles), lenses);
+        let first = under(Some("lensfun 1"));
+        assert!(
+            first.starts_with(&format!("recipe {DEVELOP_RECIPE};")),
+            "{first}"
+        );
+        assert_eq!(under(Some("lensfun 1")), first, "nothing moved");
+        assert_ne!(under(None), first, "the lens database's cache wiped");
+        assert_ne!(under(Some("lensfun 2")), first, "another database");
+        // A refit of the same length: its time alone moves.
+        let file = std::fs::File::options().write(true).open(&table).unwrap();
+        file.set_modified(SystemTime::now() + std::time::Duration::from_secs(5))
+            .unwrap();
+        drop(file);
+        let refit = under(Some("lensfun 1"));
+        assert_ne!(refit, first, "a refit");
+        std::fs::write(profiles.join("Body.dcp"), b"one").unwrap();
+        assert_ne!(under(Some("lensfun 1")), refit, "a profile added");
+        assert_ne!(
+            keys_made_under_in(None, None, None),
+            keys_made_under_in(Some(&looks), None, None),
+            "a directory that is there with a file in it is not none"
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }

@@ -160,6 +160,10 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
     app.set_compare_text(cull.compare.to_string().into());
     let reach = cull.reach;
     st.cull = Some(cull);
+    // No frame is being edited while culling.
+    if let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) {
+        worker.set_open_frame(None);
+    }
     // Fitted, as a file opens; at the start the command line's zoom
     // stands, so `--zoom 1` opens the loupe at 1:1.
     if st.current.is_some() {

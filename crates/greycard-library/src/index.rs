@@ -222,6 +222,11 @@ struct Row {
     missing: bool,
     /// Whether the maker's tags have been read into the row.
     style_read: bool,
+    /// The row says its sidecar holds a develop.
+    edited: bool,
+    /// The develop key of its edit, as last read; `None` until a pass
+    /// reads the sidecar for it (a row from before schema 9).
+    develop_key: Option<i64>,
 }
 
 /// Whether a path is one the index holds: a raw or a picture, as
@@ -585,13 +590,15 @@ fn row_from(r: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<Row> {
         sidecar_hash: r.get(from + 4)?,
         missing: r.get::<_, Option<i64>>(from + 5)?.is_some(),
         style_read: r.get::<_, i64>(from + 6)? != 0,
+        edited: r.get::<_, i64>(from + 7)? != 0,
+        develop_key: r.get(from + 8)?,
     })
 }
 
 fn rows_in_folder(conn: &Connection, folder: &[u8]) -> Result<HashMap<Vec<u8>, Row>> {
     let mut stmt = conn.prepare_cached(
-        "SELECT path, id, size, mtime, sidecar, sidecar_hash, missing_since, style_read \
-         FROM files WHERE folder = ?",
+        "SELECT path, id, size, mtime, sidecar, sidecar_hash, missing_since, style_read, \
+         edited, develop_key FROM files WHERE folder = ?",
     )?;
     let rows = stmt.query_map(params![folder], |r| {
         Ok((r.get::<_, Vec<u8>>(0)?, row_from(r, 1)?))
@@ -603,8 +610,8 @@ fn row_at(conn: &Connection, path: &[u8]) -> Result<Option<Row>> {
     use rusqlite::OptionalExtension;
     Ok(conn
         .prepare_cached(
-            "SELECT id, size, mtime, sidecar, sidecar_hash, missing_since, style_read \
-             FROM files WHERE path = ?",
+            "SELECT id, size, mtime, sidecar, sidecar_hash, missing_since, style_read, \
+             edited, develop_key FROM files WHERE path = ?",
         )?
         .query_row(params![path], |r| row_from(r, 0))
         .optional()?)
@@ -746,7 +753,14 @@ fn sidecar_of(raw: &Path) -> Option<SidecarNow> {
 }
 
 impl Row {
+    /// Whether the sidecar beside the frame is the one the row mirrors,
+    /// so nothing of it need be read again. An edited row with no
+    /// develop key yet (from before schema 9) is read again whatever
+    /// its hash, once, to fill it.
     fn same_sidecar(&self, now: Option<&SidecarNow>) -> bool {
+        if now.is_some() && self.edited && self.develop_key.is_none() {
+            return false;
+        }
         match now {
             None => self.sidecar.is_none() && self.sidecar_hash.is_none(),
             Some(s) => {
@@ -1432,6 +1446,11 @@ pub(crate) struct Summary {
     /// from, judged against the frame's ISO when the row is written
     /// (`edited` leaves it out).
     pub(crate) blend: Option<f32>,
+    /// The develop key of the edit, when there is an edit to read it
+    /// from, made with the lens database as named
+    /// ([`crate::lens_database`]); 0 for a develop whose edit could
+    /// not be read, so the row is not read again for it every pass.
+    pub(crate) develop_key: Option<u64>,
 }
 
 /// The `.gcd`'s JSON read for what the row mirrors of it, before the
@@ -1581,12 +1600,23 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
     }
     // The blend is judged at the write, where the row's ISO is.
     let edited = p.stepped || p.unreadable || !crate::is_default_edit(&sidecar.current, raw, None);
+    // The key is of any edit in the file, so a frame counted as edited
+    // at the write (by its blend) has one too; a develop with no edit
+    // to read gets the mark that says so.
+    let develop_key = if p.current.is_some() {
+        Some(sidecar.develop_key(crate::lens_database().as_deref()))
+    } else if edited {
+        Some(0)
+    } else {
+        None
+    };
     Summary {
         meta: sidecar.meta,
         edited,
         exported: p.exported,
         blend: p.current.as_ref().map(|c| c.noise.learned_strength),
         turns: crate::pack_turns(sidecar.current.geometry.shown_turns(sidecar.turn)),
+        develop_key,
     }
 }
 
@@ -1620,9 +1650,16 @@ fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
         || summary
             .blend
             .is_some_and(|b| !crate::blend_is_default(b, iso));
+    // An edited row always has a key, so it is not read again for one:
+    // the edit's, or the mark for an edit that could not be read.
+    let develop_key = summary
+        .develop_key
+        .or(edited.then_some(0))
+        .map(|k| k as i64);
     tx.prepare_cached(
         "UPDATE files SET sidecar = ?, sidecar_hash = ?, sidecar_mtime = ?, rating = ?, \
-         flag = ?, label = ?, keywords = ?, edited = ?, turns = ?, exported = ? WHERE id = ?",
+         flag = ?, label = ?, keywords = ?, edited = ?, turns = ?, exported = ?, \
+         develop_key = ? WHERE id = ?",
     )?
     .execute(params![
         sidecar.and_then(|s| s.path.as_deref().map(path_bytes)),
@@ -1635,6 +1672,7 @@ fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
         i64::from(edited),
         i64::from(summary.turns),
         i64::from(summary.exported),
+        develop_key,
         id
     ])?;
     tx.prepare_cached("DELETE FROM keywords WHERE file = ?")?
@@ -3862,7 +3900,7 @@ pub(crate) mod tests {
                      ALTER TABLE files DROP COLUMN edited;
                      ALTER TABLE files DROP COLUMN turns;
                      ALTER TABLE files DROP COLUMN whole_hash;
-                     ALTER TABLE files DROP COLUMN exported;
+                     ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
                      PRAGMA user_version = 2;",
                 )
                 .unwrap();
@@ -4121,6 +4159,151 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// A schema 8 library gains the develop key column empty; the next
+    /// pass over a folder reads the sidecar of each edited row without
+    /// a key and fills it, and nothing else of the folder is read. The
+    /// key is the edit's own, as the editor makes it.
+    #[test]
+    fn a_schema_8_library_fills_its_develop_keys_on_the_next_pass() {
+        use greycard_edit::Edit;
+        let dir = scratch("schema8");
+        // The frames are pictures: the second's sidecar carries a raw's
+        // default edit, which on a picture is an edit, so two rows are
+        // edited and the third, with no sidecar, is not.
+        let (edited, _rated, plain) = shoot(&dir);
+        let mut brightened = Edit::for_picture();
+        brightened.light.exposure = 0.7;
+        let mut s = Sidecar {
+            current: brightened.clone(),
+            ..Sidecar::default()
+        };
+        s.save(&edited).unwrap();
+        let db = dir.join("library.sqlite");
+        let key_of = |lib: &mut Library, p: &Path| -> Option<i64> {
+            lib.conn_mut()
+                .query_row(
+                    "SELECT develop_key FROM files WHERE path = ?",
+                    params![path_bytes(p)],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&dir, &mut quiet()).unwrap();
+            assert_eq!(
+                key_of(&mut lib, &edited),
+                Some(brightened.develop_key(None) as i64),
+                "the key is written with the row"
+            );
+            assert_eq!(key_of(&mut lib, &plain), None, "no sidecar, no key");
+            lib.conn_mut()
+                .execute_batch(
+                    "ALTER TABLE files DROP COLUMN develop_key; PRAGMA user_version = 8;",
+                )
+                .unwrap();
+        }
+        let mut lib = Library::open(&db).unwrap();
+        assert_eq!(
+            key_of(&mut lib, &edited),
+            None,
+            "the column comes back empty"
+        );
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(
+            report.meta_refreshed, 2,
+            "the edited rows alone: {report:?}"
+        );
+        assert_eq!(
+            key_of(&mut lib, &edited),
+            Some(brightened.develop_key(None) as i64)
+        );
+        // Filled, the next pass reads nothing again.
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.meta_refreshed, 0, "{report:?}");
+        // The lens database changing clears the keys, and the pass
+        // after fills them under its name.
+        crate::set_lens_database(Some("elsewhere 2026".into()));
+        assert_eq!(lib.clear_develop_keys().unwrap(), 2);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.meta_refreshed, 2, "{report:?}");
+        assert_eq!(
+            key_of(&mut lib, &edited),
+            Some(brightened.develop_key(Some("elsewhere 2026")) as i64)
+        );
+        crate::set_lens_database(None);
+        drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// What the rows' develop keys were made under is kept in the
+    /// index, and a library settled under anything else (a look
+    /// refitted, the lens database's cache wiped, the recipe raised)
+    /// has every key cleared, for the next pass to make anew; settled
+    /// under the same, before or after a reopen, it keeps them.
+    #[test]
+    fn the_develop_keys_go_when_what_they_were_made_under_moves() {
+        use greycard_edit::Edit;
+        let dir = scratch("made-under");
+        let (edited, _rated, _plain) = shoot(&dir);
+        let mut brightened = Edit::for_picture();
+        brightened.light.exposure = 0.7;
+        Sidecar {
+            current: brightened,
+            ..Sidecar::default()
+        }
+        .save(&edited)
+        .unwrap();
+        let db = dir.join("library.sqlite");
+        let key_of = |lib: &mut Library| -> Option<i64> {
+            lib.conn_mut()
+                .query_row(
+                    "SELECT develop_key FROM files WHERE path = ?",
+                    params![path_bytes(&edited)],
+                    |r| r.get(0),
+                )
+                .unwrap()
+        };
+        let first = "recipe 1; lenses None; files 00";
+        let mut lib = Library::open(&db).unwrap();
+        assert_eq!(
+            lib.settle_develop_keys_under(first).unwrap(),
+            Some(0),
+            "nothing to clear in a new library, and what it is under kept"
+        );
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert!(key_of(&mut lib).is_some());
+        assert_eq!(lib.settle_develop_keys_under(first).unwrap(), None);
+        drop(lib);
+        let mut lib = Library::open(&db).unwrap();
+        assert_eq!(lib.settle_develop_keys_under(first).unwrap(), None);
+        assert!(
+            key_of(&mut lib).is_some(),
+            "a reopen under the same keeps them"
+        );
+        for (under, why) in [
+            ("recipe 1; lenses None; files 01", "a look refitted"),
+            (
+                "recipe 1; lenses Some(\"/x/lensfun 2026\"); files 01",
+                "the lens database fetched",
+            ),
+            ("recipe 1; lenses None; files 01", "its cache wiped"),
+            ("recipe 2; lenses None; files 01", "the recipe raised"),
+        ] {
+            assert_eq!(
+                lib.settle_develop_keys_under(under).unwrap(),
+                Some(2),
+                "{why}: both edited rows' keys go"
+            );
+            assert_eq!(key_of(&mut lib), None, "{why}");
+            let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+            assert_eq!(report.meta_refreshed, 2, "{why}: {report:?}");
+            assert!(key_of(&mut lib).is_some(), "{why}: made anew");
+        }
+        drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A schema 7 library comes up with the exports its sidecars
     /// record and without the develop a history-only reset made.
     #[test]
@@ -4164,7 +4347,7 @@ pub(crate) mod tests {
                 )
                 .unwrap();
             lib.conn_mut()
-                .execute_batch("ALTER TABLE files DROP COLUMN exported; PRAGMA user_version = 7;")
+                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; PRAGMA user_version = 7;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -4199,6 +4382,9 @@ pub(crate) mod tests {
             s,
             Summary {
                 edited: true,
+                // The mark for a develop whose edit cannot be read: the
+                // row is not read again for a key every pass.
+                develop_key: Some(0),
                 ..Summary::default()
             }
         );
@@ -4223,7 +4409,7 @@ pub(crate) mod tests {
                     "ALTER TABLE files DROP COLUMN edited;
                      ALTER TABLE files DROP COLUMN turns;
                      ALTER TABLE files DROP COLUMN whole_hash;
-                     ALTER TABLE files DROP COLUMN exported;
+                     ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
                      PRAGMA user_version = 3;",
                 )
                 .unwrap();
@@ -4442,7 +4628,7 @@ pub(crate) mod tests {
             lib.conn_mut()
                 .execute_batch(
                     "DROP TABLE pending; DROP TABLE archive_writes;
-                     ALTER TABLE files DROP COLUMN exported;
+                     ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
                      PRAGMA user_version = 5;",
                 )
                 .unwrap();
@@ -4492,7 +4678,7 @@ pub(crate) mod tests {
                 )
                 .unwrap();
             lib.conn_mut()
-                .execute_batch("ALTER TABLE files DROP COLUMN exported; PRAGMA user_version = 6;")
+                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; PRAGMA user_version = 6;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -4734,7 +4920,7 @@ pub(crate) mod tests {
         {
             let conn = rusqlite::Connection::open(&db).unwrap();
             conn.execute_batch(crate::SCHEMA).unwrap();
-            conn.execute_batch("ALTER TABLE files DROP COLUMN exported;")
+            conn.execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;")
                 .unwrap();
             conn.pragma_update(None, "application_id", crate::APPLICATION_ID)
                 .unwrap();
@@ -4788,7 +4974,7 @@ pub(crate) mod tests {
             lib.conn_mut()
                 .execute_batch(
                     "ALTER TABLE files DROP COLUMN whole_hash;
-                     ALTER TABLE files DROP COLUMN exported;
+                     ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
                      PRAGMA user_version = 4;",
                 )
                 .unwrap();

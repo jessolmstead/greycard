@@ -554,6 +554,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let mut st = state.borrow_mut();
             st.profiles = greycard_edit::camera::list();
             show_profiles(&st, &st.edit.camera.profile, &app);
+            // A profile put there by hand is the edits' that name it.
+            crate::edited::looks_moved(&mut st);
         });
     }
     // A camera profile chosen in the panel: the edit says so, the
@@ -586,6 +588,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             st.looks = greycard_edit::look::list();
             st.look_for = None;
             show_looks(&st, &st.edit.look_lut, &app);
+            // A table put there or replaced by hand is the edits' that
+            // name it.
+            crate::edited::looks_moved(&mut st);
             app.window().request_redraw();
         });
     }

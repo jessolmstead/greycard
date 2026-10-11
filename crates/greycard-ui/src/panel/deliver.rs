@@ -372,6 +372,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 .unwrap_or_default();
             st.profiles = greycard_edit::camera::list();
             st.looks = greycard_edit::look::list();
+            // Read on each open, so a look or a profile changed by hand
+            // since is caught here too.
+            crate::edited::looks_moved(&mut st);
             // Another file, so the embedded profile behind the
             // white balance is another one too.
             st.white_profile = None;
@@ -880,6 +883,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             let mut st = state.borrow_mut();
             st.fetching = false;
             app.set_status("the lens profiles are ready".into());
+            // The develop keys in the index were made with the old
+            // database; the next pass over each folder makes them anew.
+            if let Some(indexer) = &st.index {
+                indexer.keys_stale();
+            }
             // The worker looks the open file up again on its next
             // open; ask it now, so the panel says what it found. Not
             // in culling, whose leaving opens the file anyway.

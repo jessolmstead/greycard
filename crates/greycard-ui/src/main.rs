@@ -43,6 +43,7 @@ mod panel;
 mod placeholder;
 mod previews;
 mod queue;
+mod reduced;
 mod render;
 mod report;
 mod roots;

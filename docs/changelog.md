@@ -19,6 +19,13 @@ note a first tester reads.
   saved or the frame is left; a frame reset to the default shows the
   camera's picture again
   ([§278](https://github.com/jessolmstead/greycard/blob/master/docs/notes/278-thumbnails-from-the-edit-part-one.md))
+- A frame edited without being opened (a sync, a preset or a paste over
+  the selection, a save joined from another machine, a folder opened
+  with its edits on disk) gets its edit's picture in the strip and the
+  grid from a reduced develop in the background, held off while you
+  work on an open frame; a frame on an offline root shows its own
+  edit's picture by the key the index keeps
+  ([§285](https://github.com/jessolmstead/greycard/blob/master/docs/notes/285-thumbnails-from-the-edit-part-two.md))
 - A pencil on a grid tile or strip cell marks a frame whose edit is
   not the default, and a second mark one that has been exported; the
   export mark stays through an undo, and a frame reset to the default

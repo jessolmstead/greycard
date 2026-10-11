@@ -87,7 +87,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 8;
+pub const SCHEMA_VERSION: i32 = 9;
 
 /// The steps a library is brought up by in place rather than rebuilt:
 /// from the version on the left to the next, the statements on the
@@ -117,6 +117,12 @@ pub const SCHEMA_VERSION: i32 = 8;
 /// `edited` is, so a schema 7 row's sidecar hash is cleared and the
 /// next pass over its folder fills it; the same pass counts a frame as
 /// `edited` by the edit applied, not by a history left behind a reset.
+/// Schema 9 adds the develop key of the sidecar's edit (`develop_key`,
+/// `greycard_edit::Edit::develop_key`, the name the pictures made from
+/// the edit are kept under), read by the same pass; no hash is cleared
+/// this time: an edited row with no key yet has its sidecar read again
+/// on the next pass over its folder ([`index`]'s `same_sidecar`), and
+/// nothing else is read.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -144,7 +150,37 @@ const MIGRATIONS: &[(i32, &str)] = &[
         "ALTER TABLE files ADD COLUMN exported INTEGER NOT NULL DEFAULT 0;
          UPDATE files SET sidecar_hash = NULL WHERE sidecar IS NOT NULL;",
     ),
+    (
+        8,
+        "ALTER TABLE files ADD COLUMN develop_key INTEGER;
+         CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    ),
 ];
+
+/// The index's own facts about itself, by name: `develop_keys`, what
+/// the rows' develop keys were made under
+/// ([`Library::settle_develop_keys`]). Part of [`SCHEMA`] and the step
+/// from schema 8.
+const META_SCHEMA: &str =
+    "CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);";
+
+/// The lens database the editor develops with, named as
+/// `Edit::develop_key` takes it (where it was found and when it was
+/// made), for the keys the index writes: set by the editor before the
+/// index runs and again when the database is fetched. `None` for none.
+static LENS_DATABASE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// Name the lens database the index's develop keys are made with; see
+/// [`LENS_DATABASE`]. The keys already written were made with the old
+/// name, so the caller clears them ([`Library::clear_develop_keys`]).
+pub fn set_lens_database(name: Option<String>) {
+    *LENS_DATABASE.lock().expect("lens database name") = name;
+}
+
+/// The lens database's name as last set.
+pub fn lens_database() -> Option<String> {
+    LENS_DATABASE.lock().expect("lens database name").clone()
+}
 
 /// The tables for a frame's sidecar on its archive copy (§233), part
 /// of [`SCHEMA`] and the step from schema 5. `archive_writes` keeps,
@@ -229,7 +265,8 @@ CREATE TABLE IF NOT EXISTS files (
     edited        INTEGER NOT NULL DEFAULT 0,
     turns         INTEGER NOT NULL DEFAULT 0,
     whole_hash    TEXT,
-    exported      INTEGER NOT NULL DEFAULT 0
+    exported      INTEGER NOT NULL DEFAULT 0,
+    develop_key   INTEGER
 );
 CREATE INDEX IF NOT EXISTS files_folder ON files(folder);
 CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
@@ -241,6 +278,7 @@ CREATE TABLE IF NOT EXISTS keywords (
     PRIMARY KEY (file, word)
 );
 CREATE INDEX IF NOT EXISTS keywords_word ON keywords(word);
+CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
 
 /// What we last wrote to a frame's sidecar on an archive copy
@@ -314,7 +352,8 @@ const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash
 /// The columns [`RowMeta`] is read from, in the order `row_meta`
 /// reads them, after the path.
 const META_COLUMNS: &str = "files.id, files.hash, files.mtime, files.rating, files.flag, files.label, \
-    files.keywords, files.edited, files.turns, files.exported, files.iso, files.sidecar_hash";
+    files.keywords, files.edited, files.turns, files.exported, files.iso, files.sidecar_hash, \
+    files.develop_key";
 
 /// Whether the learned denoiser's `blend` is what nobody has touched:
 /// the default, or what the first open or export of a raw seeds from
@@ -575,6 +614,12 @@ pub struct RowMeta {
     /// sidecar changed under a frame it holds, when nothing else the row
     /// mirrors moved (another edit of the same kind).
     pub sidecar_hash: Option<String>,
+    /// The develop key of the sidecar's edit (`Edit::develop_key`, the
+    /// name the pictures made from the edit are kept under), as the
+    /// index last read it; `None` for a row not yet read for it (a row
+    /// from before schema 9, until the next pass over its folder), and
+    /// `Some(0)` for an edited frame whose edit could not be read.
+    pub develop_key: Option<u64>,
 }
 
 impl RowMeta {
@@ -1851,6 +1896,59 @@ impl Library {
             .execute("DELETE FROM files WHERE missing_since IS NOT NULL", [])?)
     }
 
+    /// Take every develop key out: what they were made under changed
+    /// (the lens database, a look, the recipe), so each edited row's
+    /// sidecar is read again on the next pass over its folder and the
+    /// key made anew. How many rows had one.
+    pub fn clear_develop_keys(&mut self) -> Result<usize> {
+        Ok(self.conn.execute(
+            "UPDATE files SET develop_key = NULL WHERE develop_key IS NOT NULL",
+            [],
+        )?)
+    }
+
+    /// The develop keys in the rows against what keys are made under
+    /// now ([`greycard_edit::key::keys_made_under`], with the lens
+    /// database as [`set_lens_database`] last named it): when the
+    /// index's were made under something else (the recipe raised, the
+    /// lens database fetched or its cache wiped, a look refitted while
+    /// the editor was away), every key is cleared for the next pass over
+    /// each folder to make anew, and what they will be made under is
+    /// kept. `Some` with how many were cleared when they were; `None`
+    /// when they stand.
+    pub fn settle_develop_keys(&mut self) -> Result<Option<usize>> {
+        let under = greycard_edit::key::keys_made_under(lens_database().as_deref());
+        self.settle_develop_keys_under(&under)
+    }
+
+    /// [`Library::settle_develop_keys`] against `under`, given.
+    pub fn settle_develop_keys_under(&mut self, under: &str) -> Result<Option<usize>> {
+        let tx = self.conn.transaction()?;
+        // A library made at this schema before the table was part of it.
+        tx.execute_batch(META_SCHEMA)?;
+        let was: Option<String> = tx
+            .query_row(
+                "SELECT value FROM meta WHERE name = 'develop_keys'",
+                [],
+                |r| r.get(0),
+            )
+            .optional()?;
+        if was.as_deref() == Some(under) {
+            return Ok(None);
+        }
+        let cleared = tx.execute(
+            "UPDATE files SET develop_key = NULL WHERE develop_key IS NOT NULL",
+            [],
+        )?;
+        tx.execute(
+            "INSERT INTO meta (name, value) VALUES ('develop_keys', ?) \
+             ON CONFLICT(name) DO UPDATE SET value = excluded.value",
+            params![under],
+        )?;
+        tx.commit()?;
+        Ok(Some(cleared))
+    }
+
     /// Forget the rows of these files, whatever state they are in; how
     /// many went. For a delete the editor made itself: the files are
     /// gone on purpose, so their rows are not kept missing for a move
@@ -2197,6 +2295,7 @@ fn row_meta(row: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<RowMeta> {
         exported: row.get::<_, i64>(from + 9)? != 0,
         iso: row.get::<_, Option<i64>>(from + 10)?.map(|v| v as u32),
         sidecar_hash: row.get(from + 11)?,
+        develop_key: row.get::<_, Option<i64>>(from + 12)?.map(|v| v as u64),
     })
 }
 

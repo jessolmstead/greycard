@@ -554,6 +554,17 @@ pub(crate) struct SkyReport {
     pub(crate) outline: Option<greycard_ai::Mask>,
 }
 
+/// Whether a learned mask's raster can be had ([`Ai::raster_ready`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Ready {
+    /// In the disk cache.
+    Cached,
+    /// Not made yet; its model is in the store.
+    ToMake,
+    /// Not made, and its model, named, is not in the store.
+    NoModel(&'static str),
+}
+
 /// Why a fill was not made: the patch is left as it was either way.
 #[derive(Debug, Clone)]
 pub enum NoFill {
@@ -920,6 +931,80 @@ impl Ai {
             (turn % 4).hash(&mut h);
         }
         Some(root.join(format!("{:016x}.png", h.finish())))
+    }
+
+    /// Whether the raster for `shape` of the frame at `file` at `turn`
+    /// can be had, asked before anything of the frame is decoded: from
+    /// the disk cache (a file in its slot; its aspect is checked when it
+    /// is read), or made by a model in the store, or not at all until a
+    /// model is fetched. Nothing is loaded.
+    pub(crate) fn raster_ready(&mut self, file: &Path, shape: &Shape, turn: u8) -> Ready {
+        if self.file.as_deref() != Some(file) {
+            self.forget(Some(file.to_path_buf()));
+        }
+        if self
+            .cached_path(shape, None, turn)
+            .is_some_and(|p| p.is_file())
+        {
+            return Ready::Cached;
+        }
+        // A Sky is the prior's to make, SAM only sharpening its outline.
+        let model = match shape {
+            Shape::Sky { .. } => Some(&SKY),
+            _ => model_for(shape, self.store.as_ref(), &[]),
+        };
+        match model {
+            Some(m) if !self.store.as_ref().is_some_and(|s| s.have(m)) => Ready::NoModel(m.name),
+            _ => Ready::ToMake,
+        }
+    }
+
+    /// Where the raster for `shape` of `file` at `turn` is kept on disk:
+    /// for a test that puts one there as the worker would.
+    #[cfg(test)]
+    pub(crate) fn cached_path_of(
+        &mut self,
+        file: &Path,
+        shape: &Shape,
+        turn: u8,
+    ) -> Option<PathBuf> {
+        if self.file.as_deref() != Some(file) {
+            self.forget(Some(file.to_path_buf()));
+        }
+        self.cached_path(shape, None, turn)
+    }
+
+    /// Models from `store`, with the disk cache of the rasters beside
+    /// it: for a test of the reduced develop's masks.
+    #[cfg(test)]
+    pub(crate) fn for_test_on_disk(store: Store) -> Self {
+        Self {
+            store: Some(store),
+            ..Self::new()
+        }
+    }
+
+    /// The raster for `shape` of the frame at `file` from the disk cache
+    /// alone, for a develop of aspect `aspect` (height over width) at
+    /// `turn`: nothing is loaded and no model runs. The reduced
+    /// develop's, which keeps no picture of a frame whose masks are not
+    /// made yet.
+    pub(crate) fn cached_raster(
+        &mut self,
+        file: &Path,
+        shape: &Shape,
+        turn: u8,
+        aspect: f32,
+    ) -> Option<Arc<Raster>> {
+        if self.file.as_deref() != Some(file) {
+            self.forget(Some(file.to_path_buf()));
+        }
+        let height = ((RASTER_WIDTH as f32 * aspect).round() as usize).max(1);
+        let path = self.cached_path(shape, None, turn)?;
+        // A row either way is the same aspect rounded at another size:
+        // the open frame's develop and the reduced one's halved mosaic.
+        let data = read_raster_near(&path, height)?;
+        Some(Arc::new(Raster::from_data(aspect, RASTER_WIDTH, data)))
     }
 
     /// The raster for `shape`, from the cache when it was made for this
@@ -1986,6 +2071,15 @@ fn dump(rgb: &Rgb8, mask: &greycard_ai::Mask, refined: &greycard_ai::Mask) {
 fn read_raster(path: &Path, height: usize) -> Option<Vec<u8>> {
     let img = image::open(path).ok()?.into_luma8();
     if img.width() as usize != RASTER_WIDTH || img.height() as usize != height {
+        return None;
+    }
+    Some(img.into_raw())
+}
+
+/// [`read_raster`], a row more or less than `height` taken too.
+fn read_raster_near(path: &Path, height: usize) -> Option<Vec<u8>> {
+    let img = image::open(path).ok()?.into_luma8();
+    if img.width() as usize != RASTER_WIDTH || (img.height() as usize).abs_diff(height) > 1 {
         return None;
     }
     Some(img.into_raw())

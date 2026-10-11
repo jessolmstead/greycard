@@ -1298,6 +1298,7 @@ fn settle(st: &mut State, app: &App) {
         st.looks = list_in(store());
         st.look_for = None;
         show_looks(st, &st.edit.look_lut, app);
+        crate::edited::looks_moved(st);
         show_history(st, app);
         app.set_look_rename_working(false);
         app.set_look_rename_open(false);

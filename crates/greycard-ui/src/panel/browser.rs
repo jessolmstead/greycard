@@ -2208,6 +2208,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             st.strip_shown = Some((first, last));
             worker.want_thumbnails(f, l);
+            crate::edited::note_editing(&st, &worker, false);
         });
     }
     // The grid's layout, asked of the pure arithmetic in `grid` so
@@ -2338,6 +2339,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             // After the pushes, which clear the queue's order.
             worker.want_thumbnails(st.shown[first], st.shown[last]);
+            // In the grid, no frame is being edited.
+            crate::edited::note_editing(&st, &worker, true);
         });
     }
     // The desktop's folder chooser, for the Open folder button and

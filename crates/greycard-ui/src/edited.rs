@@ -54,6 +54,18 @@ use crate::worker::ThumbCache;
 /// is `greycard_edit::key::DEVELOP_RECIPE`'s.
 pub(crate) const EDITED_RECIPE: u16 = 0x8001;
 
+/// The recipe the pictures the reduced develop made are kept under
+/// (`reduced`): the edit's too, and looked up after
+/// [`EDITED_RECIPE`]'s, but made from the binned mosaic with no capture
+/// sharpen and no denoise. The open frame's develop makes the edit's
+/// pictures under [`EDITED_RECIPE`] when the frame is opened, and they
+/// take these ones' place.
+pub(crate) const REDUCED_RECIPE: u16 = 0x8002;
+
+/// Both recipes of the edit's pictures, in the order they are looked
+/// up.
+const EDIT_RECIPES: [u16; 2] = [EDITED_RECIPE, REDUCED_RECIPE];
+
 /// The long edge of the larger picture, the one the culling loupe and
 /// compare show: the local previews' own.
 pub(crate) const BIG: u32 = crate::previews::SIZE;
@@ -78,11 +90,20 @@ enum Want {
     Unread,
 }
 
-/// A frame held as edited: what is known of its key, and its ISO.
+/// A frame held as edited: what is known of its key, its ISO, and the
+/// key its row in the index gave, if any.
+///
+/// The row's key is a first guess only: the index made it when it last
+/// read the sidecar, under the looks, the lens database and the recipe
+/// as they were then. Online the sidecar's own key is read the first
+/// time a picture of the frame is looked up and wins; the row's stands
+/// only for a frame whose sidecar cannot be read (its root offline),
+/// where it is better than the picture kept last for the content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Held {
     want: Want,
     iso: Iso,
+    row: Option<u64>,
 }
 
 impl Held {
@@ -90,6 +111,27 @@ impl Held {
         Self {
             want: Want::Read,
             iso,
+            row: None,
+        }
+    }
+
+    /// Held with its key to be read, and the key its row gives as the
+    /// guess for when it cannot be.
+    fn from_row(iso: Iso, key: Option<u64>) -> Self {
+        Self {
+            want: Want::Read,
+            iso,
+            row: key,
+        }
+    }
+
+    /// What it shows when its sidecar is not read: the key found, else
+    /// the row's, else the picture kept last for its content.
+    fn unread(&self) -> Shows {
+        match (self.want, self.row) {
+            (Want::Key(k), _) => Shows::Edit(k),
+            (_, Some(k)) => Shows::Edit(k),
+            _ => Shows::Newest,
         }
     }
 }
@@ -120,15 +162,32 @@ pub(crate) struct Edited {
     /// when it was made ([`lens_database`]): part of every key whose
     /// edit corrects the lens by its profile.
     lenses: Mutex<Option<String>>,
+    /// The frame open in the editor, whose pictures the worker keeps
+    /// from its own develop: the reduced develop never takes it, and
+    /// runs one at a time while there is one (`thumbpool`). None while
+    /// culling, in the grid, or with no frame open.
+    open: Mutex<Option<PathBuf>>,
+    /// When the window last asked for a develop or one ended: the
+    /// reduced develops wait for the editor to be quiet
+    /// (`reduced::begin`).
+    touched: Mutex<Instant>,
+    /// The look and profile directories the keys read: the user's
+    /// (`None`), or a test's.
+    dirs: Mutex<Option<(PathBuf, PathBuf)>>,
+    /// What the keys found so far were made under
+    /// (`greycard_edit::key::keys_made_under`): a look or a profile
+    /// written, refitted, renamed or removed since moves it
+    /// ([`Edited::files_moved`]).
+    made_under: Mutex<String>,
 }
 
-type InHand = Arc<Mutex<std::collections::HashSet<(String, u64)>>>;
+type InHand = Arc<Mutex<std::collections::HashSet<(String, u64, u16)>>>;
 
 /// A picture in hand on the keeping thread, let go when the making that
 /// holds it is done or dropped unbegun.
 pub(crate) struct Marked {
     in_hand: InHand,
-    which: (String, u64),
+    which: (String, u64, u16),
 }
 
 impl Drop for Marked {
@@ -157,13 +216,71 @@ pub(crate) fn lens_database() -> Option<String> {
 
 impl Edited {
     pub(crate) fn new(cache: ThumbCache) -> Self {
-        Self {
+        let this = Self {
             cache,
             wants: Mutex::new(HashMap::new()),
             keeper: Keeper::default(),
             in_hand: Arc::default(),
             lenses: Mutex::new(lens_database()),
+            open: Mutex::new(None),
+            touched: Mutex::new(Instant::now()),
+            dirs: Mutex::new(None),
+            made_under: Mutex::new(String::new()),
+        };
+        *this.made_under.lock().expect("made under") = this.under_now();
+        // The index makes its keys with the same name.
+        greycard_library::set_lens_database(this.lenses());
+        this
+    }
+
+    /// The frame open in the editor, or none (culling, the grid, no
+    /// frame). Whether that changed.
+    pub(crate) fn set_open(&self, path: Option<PathBuf>) -> bool {
+        let mut open = self.open.lock().expect("open frame");
+        let changed = *open != path;
+        *open = path;
+        changed
+    }
+
+    /// Whether `path` is the frame open in the editor.
+    pub(crate) fn is_open(&self, path: &Path) -> bool {
+        self.open.lock().expect("open frame").as_deref() == Some(path)
+    }
+
+    /// A develop was asked for, or ended.
+    pub(crate) fn touch(&self) {
+        *self.touched.lock().expect("touched") = Instant::now();
+    }
+
+    /// How long since a develop was last asked for or ended.
+    pub(crate) fn idle_for(&self) -> std::time::Duration {
+        self.touched.lock().expect("touched").elapsed()
+    }
+
+    /// Whether any frame is open in the editor.
+    pub(crate) fn any_open(&self) -> bool {
+        self.open.lock().expect("open frame").is_some()
+    }
+
+    /// The ISO the frame is held with, as its row gave it.
+    pub(crate) fn iso_of(&self, path: &Path) -> Iso {
+        self.wants().get(path).and_then(|h| h.iso)
+    }
+
+    /// The key the frame at `path` wants the reduced develop of its
+    /// pictures under: held as edited under a key none of whose pictures
+    /// are all kept, not the open frame, with a cache to keep them in;
+    /// `None` otherwise. Reads the sidecar for the key when that is not
+    /// known yet, so on a thumbnail's thread.
+    pub(crate) fn wants_develop(&self, path: &Path) -> Option<u64> {
+        if self.is_open(path) || !self.holds(path) || !self.cache_on() {
+            return None;
         }
+        let Shows::Edit(key) = self.shows(path) else {
+            return None;
+        };
+        let hash = greycard_library::hash_file(path).ok()?;
+        (!self.all_kept(&hash, key)).then_some(key)
     }
 
     fn wants(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Held>> {
@@ -183,28 +300,91 @@ impl Edited {
         if *lenses == now {
             return false;
         }
-        *lenses = now;
+        *lenses = now.clone();
         drop(lenses);
+        greycard_library::set_lens_database(now);
+        *self.made_under.lock().expect("made under") = self.under_now();
+        self.read_all_again();
+        true
+    }
+
+    /// Every frame held under a key found has its key read again from
+    /// its sidecar when it is next looked up.
+    fn read_all_again(&self) {
         for held in self.wants().values_mut() {
             held.want = Want::Read;
         }
+    }
+
+    /// What keys are made under now: the recipe, the lens database, the
+    /// look and profile directories as they stand.
+    fn under_now(&self) -> String {
+        let lenses = self.lenses();
+        match &*self.dirs.lock().expect("key dirs") {
+            Some((looks, profiles)) => greycard_edit::key::keys_made_under_in(
+                Some(looks),
+                Some(profiles),
+                lenses.as_deref(),
+            ),
+            None => greycard_edit::key::keys_made_under(lenses.as_deref()),
+        }
+    }
+
+    /// A look or a profile may have been written, refitted, renamed or
+    /// removed (the camera match's fit, a look removed or renamed, the
+    /// LOOK or CAMERA PROFILE section read again): when what the keys
+    /// are made under moved, every frame held under a key has it read
+    /// again, as a new lens database has (`set_lenses`). Whether it
+    /// moved, which is when the cells ask again and the index's keys go.
+    /// A listing of the two directories; nothing is read.
+    pub(crate) fn files_moved(&self) -> bool {
+        let now = self.under_now();
+        let mut was = self.made_under.lock().expect("made under");
+        if *was == now {
+            return false;
+        }
+        *was = now;
+        drop(was);
+        self.read_all_again();
         true
+    }
+
+    /// The frames held as edited.
+    pub(crate) fn held_paths(&self) -> Vec<PathBuf> {
+        self.wants().keys().cloned().collect()
+    }
+
+    /// The keys read with the looks and profiles in these directories:
+    /// for a test.
+    #[cfg(test)]
+    pub(crate) fn set_dirs(&self, looks: PathBuf, profiles: PathBuf) {
+        *self.dirs.lock().expect("key dirs") = Some((looks, profiles));
+        *self.made_under.lock().expect("made under") = self.under_now();
     }
 
     /// The key of `edit` under the lens database the develop reads now.
     pub(crate) fn key_of(&self, edit: &Edit) -> u64 {
-        edit.develop_key(self.lenses().as_deref())
+        let lenses = self.lenses();
+        match &*self.dirs.lock().expect("key dirs") {
+            Some((looks, profiles)) => {
+                edit.develop_key_in(Some(looks), Some(profiles), lenses.as_deref())
+            }
+            None => edit.develop_key(lenses.as_deref()),
+        }
     }
 
     /// A new list: these frames are held as edited (true) or not, each
-    /// with its ISO. Each edited one's key is read again from its
-    /// sidecar when it is next looked up; the frames of other lists are
-    /// forgotten.
-    pub(crate) fn note_all(&self, list: impl IntoIterator<Item = (PathBuf, bool, Iso)>) {
+    /// with its ISO and the key its row gives, if any. An edited one
+    /// without a key from its row has it read from its sidecar when it
+    /// is next looked up; the frames of other lists are forgotten.
+    pub(crate) fn note_all(
+        &self,
+        list: impl IntoIterator<Item = (PathBuf, bool, Iso, Option<u64>)>,
+    ) {
         let wants: HashMap<PathBuf, Held> = list
             .into_iter()
-            .filter(|(_, edited, _)| *edited)
-            .map(|(path, _, iso)| (path, Held::read(iso)))
+            .filter(|(_, edited, _, _)| *edited)
+            .map(|(path, _, iso, key)| (path, Held::from_row(iso, key)))
             .collect();
         *self.wants() = wants;
     }
@@ -224,18 +404,29 @@ impl Edited {
 
     /// What the window holds of one frame changed (its row came in, or
     /// its sidecar was read): held as edited or not from now on, a key
-    /// already found kept. Whether that turned it from one to the other,
-    /// which is when its pictures change.
-    pub(crate) fn hold(&self, path: &Path, edited: bool, iso: Iso) -> bool {
+    /// already found kept unless the row gives another than it gave
+    /// before, when the sidecar is read again (the row's key is the
+    /// guess for when it cannot be). Whether that changed what it
+    /// shows, which is when its pictures change.
+    pub(crate) fn hold(&self, path: &Path, edited: bool, iso: Iso, key: Option<u64>) -> bool {
         let mut wants = self.wants();
         match (edited, wants.get_mut(path)) {
             (true, None) => {
-                wants.insert(path.to_path_buf(), Held::read(iso));
+                wants.insert(path.to_path_buf(), Held::from_row(iso, key));
                 true
             }
             (true, Some(held)) => {
                 held.iso = iso;
-                false
+                // Another key from the row: the sidecar moved under it,
+                // and its own key is read again on the next lookup.
+                match key {
+                    Some(k) if held.row != Some(k) => {
+                        held.row = Some(k);
+                        held.want = Want::Read;
+                        true
+                    }
+                    _ => false,
+                }
             }
             (false, Some(_)) => {
                 wants.remove(path);
@@ -260,32 +451,37 @@ impl Edited {
         }
     }
 
-    /// The frame's pictures are kept under `key`: it shows them from now
-    /// on, and the pictures of the key it showed before are taken out of
-    /// the cache. Only that key's: another copy of the same content may
-    /// show its own. Whether that changed what it shows.
+    /// The frame's pictures are kept under `key`, or its sidecar was
+    /// found to make `key`: it shows them from now on, and the pictures
+    /// of the key it showed before are taken out of the cache. Only that
+    /// key's, a key it was found to show and not its row's guess:
+    /// another copy of the same content may show its own. Whether that
+    /// changed what it shows.
     pub(crate) fn settle_key(&self, path: &Path, hash: &str, key: u64, iso: Iso) -> bool {
         let was = self.shown_key(path);
         if let Some(old) = was.filter(|&old| old != key) {
             self.remove_key(hash, old);
         }
+        let row = self.wants().get(path).and_then(|h| h.row);
         self.wants().insert(
             path.to_path_buf(),
             Held {
                 want: Want::Key(key),
                 iso,
+                row,
             },
         );
         was != Some(key)
     }
 
+    /// Every picture of `key` for content `hash` taken out, under both
+    /// recipes; how many.
     fn remove_key(&self, hash: &str, key: u64) -> usize {
-        let tag = Tag {
-            recipe: EDITED_RECIPE,
-            stamp: key,
-        };
         match self.cache.lock().expect("thumbnail cache").as_mut() {
-            Some(cache) => cache.remove_tag(hash, tag),
+            Some(cache) => EDIT_RECIPES
+                .iter()
+                .map(|&recipe| cache.remove_tag(hash, Tag { recipe, stamp: key }))
+                .sum(),
             None => 0,
         }
     }
@@ -300,67 +496,59 @@ impl Edited {
         };
         match held.want {
             Want::Key(k) => Shows::Edit(k),
-            Want::Unread => Shows::Newest,
+            Want::Unread => held.unread(),
             Want::Read => {
-                let read = read_key(path, held.iso, self.lenses().as_deref());
+                let read = read_key(path, held.iso, |e| self.key_of(e));
                 let mut wants = self.wants();
                 // A save or a keep since the read began has the last word.
                 if wants.get(path) != Some(&held) {
                     drop(wants);
                     return self.shows(path);
                 }
-                let (want, shows) = match read {
-                    Read::Key(k) => (Want::Key(k), Shows::Edit(k)),
+                let want = match read {
+                    Read::Key(k) => Want::Key(k),
                     Read::Default => {
                         wants.remove(path);
                         return Shows::Camera;
                     }
-                    Read::Unread => (Want::Unread, Shows::Newest),
+                    Read::Unread => Want::Unread,
                 };
-                wants.insert(
-                    path.to_path_buf(),
-                    Held {
-                        want,
-                        iso: held.iso,
-                    },
-                );
-                shows
+                let now = Held { want, ..held };
+                wants.insert(path.to_path_buf(), now);
+                now.unread()
             }
         }
     }
 
-    /// What a frame whose file and sidecar are out of reach shows:
-    /// the edit's picture kept last for its content when the window
-    /// holds it as edited. Nothing of it is read.
+    /// What a frame whose file and sidecar are out of reach shows: the
+    /// pictures of the key found when one was, else of the key its row
+    /// gave, else the edit's picture kept last for its content, when the
+    /// window holds it as edited. Nothing of it is read.
     pub(crate) fn shows_offline(&self, path: &Path) -> Shows {
-        if self.wants().contains_key(path) {
-            Shows::Newest
-        } else {
-            Shows::Camera
+        match self.wants().get(path) {
+            Some(held) => held.unread(),
+            None => Shows::Camera,
         }
     }
 
     /// The picture of the edit kept for content `hash` at `size`, as
-    /// `shows` says, or `None`: the camera's then stands in. The JPEG is
-    /// decoded outside the cache's lock.
+    /// `shows` says, or `None`: the camera's then stands in. The open
+    /// frame's develop's picture first, then the reduced develop's. The
+    /// JPEG is decoded outside the cache's lock.
     pub(crate) fn lookup(&self, hash: &str, size: u32, shows: Shows) -> Option<Thumb> {
-        let tag = match shows {
-            Shows::Camera => return None,
-            Shows::Edit(k) => Tag {
-                recipe: EDITED_RECIPE,
-                stamp: k,
-            },
-            Shows::Newest => self
-                .cache
-                .lock()
-                .expect("thumbnail cache")
-                .as_ref()?
-                .newest(hash, EDITED_RECIPE)?,
-        };
-        let bytes = {
+        let (tag, bytes) = {
             let cache = self.cache.lock().expect("thumbnail cache");
             let cache = cache.as_ref().filter(|c| c.cap() > 0)?;
-            cache.read(hash, size, tag)?
+            let tags: Vec<Tag> = match shows {
+                Shows::Camera => return None,
+                Shows::Edit(k) => EDIT_RECIPES
+                    .iter()
+                    .map(|&recipe| Tag { recipe, stamp: k })
+                    .collect(),
+                Shows::Newest => vec![cache.newest(hash, &EDIT_RECIPES)?],
+            };
+            tags.into_iter()
+                .find_map(|tag| Some((tag, cache.read(hash, size, tag)?)))?
         };
         let thumb = greycard_library::thumbs::decode(&bytes, tag);
         if let Some(cache) = self.cache.lock().expect("thumbnail cache").as_mut() {
@@ -369,13 +557,20 @@ impl Edited {
         thumb
     }
 
-    /// Whether every picture of the edit is kept for `hash` under `key`:
-    /// a save that changed nothing of the picture (a rating) makes none.
+    /// Whether every picture of the edit is kept for `hash` under `key`,
+    /// by either develop: a save that changed nothing of the picture (a
+    /// rating) makes none.
     pub(crate) fn all_kept(&self, hash: &str, key: u64) -> bool {
-        let tag = Tag {
-            recipe: EDITED_RECIPE,
-            stamp: key,
-        };
+        EDIT_RECIPES
+            .iter()
+            .any(|&recipe| self.all_kept_by(hash, key, recipe))
+    }
+
+    /// Whether every picture of the edit is kept for `hash` under `key`
+    /// and `recipe`: the open frame's develop asks after its own alone,
+    /// so it takes the reduced develop's pictures' place.
+    pub(crate) fn all_kept_by(&self, hash: &str, key: u64, recipe: u16) -> bool {
+        let tag = Tag { recipe, stamp: key };
         let cache = self.cache.lock().expect("thumbnail cache");
         cache.as_ref().is_some_and(|c| {
             c.cap() > 0
@@ -386,10 +581,12 @@ impl Edited {
         })
     }
 
-    /// The picture of content `hash` under `key` taken in hand, or
-    /// `None` when it is in hand already.
-    pub(crate) fn mark(&self, hash: &str, key: u64) -> Option<Marked> {
-        let which = (hash.to_string(), key);
+    /// The picture of content `hash` under `key` by `recipe` taken in
+    /// hand, or `None` when it is in hand already. Each develop marks
+    /// its own: a frame opened while the reduced develop of it is under
+    /// way has its pictures made from its own develop all the same.
+    pub(crate) fn mark(&self, hash: &str, key: u64, recipe: u16) -> Option<Marked> {
+        let which = (hash.to_string(), key, recipe);
         let fresh = self
             .in_hand
             .lock()
@@ -423,10 +620,11 @@ impl Edited {
         held || removed > 0
     }
 
-    /// Keep `made` for content `hash` under `key` as frame `path`'s, and
-    /// take the pictures of the key it showed before out of the cache.
-    /// The encoding is done outside the cache's lock. Answers the bytes
-    /// kept.
+    /// Keep `made`, from the open frame's develop, for content `hash`
+    /// under `key` as frame `path`'s, and take the pictures of the key
+    /// it showed before out of the cache, and the reduced develop's of
+    /// this key, which these replace. The encoding is done outside the
+    /// cache's lock. Answers the bytes kept.
     pub(crate) fn store(
         &self,
         path: &Path,
@@ -435,10 +633,50 @@ impl Edited {
         iso: Iso,
         made: &Made,
     ) -> std::io::Result<u64> {
+        let bytes = self.put_made(
+            hash,
+            Tag {
+                recipe: EDITED_RECIPE,
+                stamp: key,
+            },
+            made,
+        )?;
+        if let Some(cache) = self.cache.lock().expect("thumbnail cache").as_mut() {
+            cache.remove_tag(
+                hash,
+                Tag {
+                    recipe: REDUCED_RECIPE,
+                    stamp: key,
+                },
+            );
+        }
+        self.settle_key(path, hash, key, iso);
+        Ok(bytes)
+    }
+
+    /// Keep `made`, from the reduced develop, for content `hash` under
+    /// `key`, unless the open frame's develop kept its own meanwhile:
+    /// `None` then. The frame was settled on the key before its develop
+    /// began (`reduced`), so nothing of what it shows moves here.
+    pub(crate) fn store_reduced(
+        &self,
+        hash: &str,
+        key: u64,
+        made: &Made,
+    ) -> std::io::Result<Option<u64>> {
+        if self.all_kept_by(hash, key, EDITED_RECIPE) {
+            return Ok(None);
+        }
         let tag = Tag {
-            recipe: EDITED_RECIPE,
+            recipe: REDUCED_RECIPE,
             stamp: key,
         };
+        self.put_made(hash, tag, made).map(Some)
+    }
+
+    /// The pictures of `made` encoded and written under `tag`; the bytes
+    /// written.
+    fn put_made(&self, hash: &str, tag: Tag, made: &Made) -> std::io::Result<u64> {
         let mut encoded = Vec::with_capacity(made.thumbs.len() + 1);
         for (size, thumb) in &made.thumbs {
             encoded.push((
@@ -451,17 +689,14 @@ impl Edited {
             greycard_library::thumbs::encode(&made.big, tag, crate::previews::QUALITY)?,
         ));
         let mut bytes = 0;
-        {
-            let mut cache = self.cache.lock().expect("thumbnail cache");
-            let Some(cache) = cache.as_mut().filter(|c| c.cap() > 0) else {
-                return Ok(0);
-            };
-            for (size, entry) in &encoded {
-                cache.put_bytes(hash, *size, tag, entry)?;
-                bytes += entry.len() as u64;
-            }
+        let mut cache = self.cache.lock().expect("thumbnail cache");
+        let Some(cache) = cache.as_mut().filter(|c| c.cap() > 0) else {
+            return Ok(0);
+        };
+        for (size, entry) in &encoded {
+            cache.put_bytes(hash, *size, tag, entry)?;
+            bytes += entry.len() as u64;
         }
-        self.settle_key(path, hash, key, iso);
         Ok(bytes)
     }
 
@@ -483,7 +718,7 @@ enum Read {
 
 /// A frame's key, from its sidecar on disk as the window reads it (the
 /// XMP beside it included), or why there is none.
-fn read_key(path: &Path, iso: Iso, lenses: Option<&str>) -> Read {
+fn read_key(path: &Path, iso: Iso, key_of: impl Fn(&Edit) -> u64) -> Read {
     let (sidecar, _, trouble) = crate::panel::browser::load_sidecar_said(path, true);
     if trouble.is_some() {
         return Read::Unread;
@@ -491,7 +726,7 @@ fn read_key(path: &Path, iso: Iso, lenses: Option<&str>) -> Read {
     if !is_edited(path, &sidecar.current, iso) {
         return Read::Default;
     }
-    Read::Key(sidecar.develop_key(lenses))
+    Read::Key(key_of(&sidecar.current))
 }
 
 /// Whether `edit` is an edit of the frame at `path`, by the rule the
@@ -572,6 +807,11 @@ pub(crate) struct Finish {
     /// The developed picture's size before the geometry, which the
     /// masks and the guide plane are placed by.
     pub(crate) source: (u32, u32),
+    /// The full develop's size before the geometry: `source` for the
+    /// open frame's develop, twice it for the reduced develop's. The
+    /// picture is made at the size an export at [`BIG`] of the full
+    /// develop has ([`fitted_size`]).
+    pub(crate) full: (u32, u32),
     pub(crate) rasters: HashMap<(u64, usize), Arc<Raster>>,
     pub(crate) clip_level: f32,
     pub(crate) guide: Option<Arc<crate::finish::Guide>>,
@@ -707,7 +947,12 @@ pub(crate) fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
         framed = crate::geometry::apply(reduced, &edit.geometry);
         &framed
     };
-    let fitted = crate::export::fit(image, Some(BIG));
+    // At the size an export at BIG of the full develop has, to the
+    // pixel, so the two agree and so does the grain laid on each, which
+    // is placed by the output's own pixels: a crop rounded at another
+    // scale would put the picture a pixel off it.
+    let (w, h) = fitted_size(finish.full, &edit.geometry);
+    let fitted = crate::export::fit_exact(image, w, h);
     let image = fitted.as_ref().unwrap_or(image);
     let (sw, sh) = (finish.source.0 as f32, finish.source.1 as f32);
     let frame_width = edit.geometry.frame(sw, sh).size.0;
@@ -749,6 +994,33 @@ pub(crate) fn make(reduced: &WorkingImage, finish: &Finish) -> Made {
     Made { big, thumbs }
 }
 
+/// The size an export at [`BIG`] of a full develop of `full` under
+/// `geometry` has: the geometry's frame as `geometry::apply` cuts it, then
+/// brought to [`BIG`] on its long edge as `export::fit` brings it, or left
+/// when it is no larger.
+pub(crate) fn fitted_size(full: (u32, u32), geometry: &Geometry) -> (u32, u32) {
+    let (w, h) = framed_size(full, geometry);
+    let long = w.max(h);
+    if long <= BIG {
+        return (w.max(1), h.max(1));
+    }
+    let scale = BIG as f64 / long as f64;
+    (
+        ((w as f64 * scale).round() as u32).max(1),
+        ((h as f64 * scale).round() as u32).max(1),
+    )
+}
+
+/// The size of a develop of `full` once `geometry` has framed it, as
+/// `geometry::apply` cuts it.
+pub(crate) fn framed_size(full: (u32, u32), geometry: &Geometry) -> (u32, u32) {
+    if geometry.is_identity() {
+        return full;
+    }
+    let frame = geometry.frame(full.0 as f32, full.1 as f32);
+    (frame.size.0 as u32, frame.size.1 as u32)
+}
+
 /// A finished picture turned back by the frame's shown turns, so the
 /// strip's and the loupe's own turn at draw time puts it back: a turn is
 /// undone by the turn the other way, and a mirror with a turn is its own
@@ -765,8 +1037,8 @@ pub(crate) fn unturned(thumb: Thumb, (turns, flip): (u8, bool)) -> Thumb {
 }
 
 /// `picture` area-averaged to `size` on its long edge; left as it is
-/// when it is no larger.
-fn shrunk(picture: &Thumb, size: u32) -> Thumb {
+/// when it is no larger. How every made size is made from the 2048.
+pub(crate) fn shrunk(picture: &Thumb, size: u32) -> Thumb {
     let (w, h) = (picture.width, picture.height);
     let long = w.max(h);
     if long <= size {
@@ -880,11 +1152,74 @@ fn held_edited(st: &crate::State, i: usize) -> bool {
     }
 }
 
+/// Frame `i`'s develop key as its row gave it, while the row stands in
+/// for the sidecar (`rows::FromRow::develop_key`).
+fn key_of(st: &crate::State, i: usize) -> Option<u64> {
+    st.from_row
+        .get(i)
+        .filter(|r| !r.read)
+        .and_then(|r| r.develop_key)
+}
+
+/// The look or profile directory may have changed under the window (a
+/// fit or a refit of the camera match, a look removed or renamed, the
+/// LOOK or CAMERA PROFILE section opened, which reads its directory
+/// again and so picks up a file put there by hand): when what the keys
+/// are made under moved, every edited frame's key is read again, its
+/// cells ask for their pictures again (a frame whose key moved shows the
+/// camera's until the pool has made its new ones), and the index's keys
+/// are cleared to be made anew by the next pass.
+pub(crate) fn looks_moved(st: &mut crate::State) {
+    let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) else {
+        return;
+    };
+    if !worker.edited().files_moved() {
+        return;
+    }
+    let held: std::collections::HashSet<PathBuf> =
+        worker.edited().held_paths().into_iter().collect();
+    tracing::info!(
+        "the edit's pictures: the look or profile directory changed; {} edited frame(s) read again",
+        held.len()
+    );
+    for i in 0..st.files.len() {
+        if held.contains(&st.files[i]) {
+            ask_again(st, &worker, i);
+        }
+    }
+    if st.cull.is_some() {
+        crate::panel::cull::cull_refresh(st);
+    }
+    if let Some(indexer) = &st.index {
+        indexer.keys_stale();
+    }
+}
+
+/// What the window is doing, as the reduced develops go by it: the frame
+/// open in the editor, or none while culling, in the grid (`grid`), or
+/// with no frame. Said on every report of the strip's or the grid's
+/// range, and on the way into culling.
+pub(crate) fn note_editing(st: &crate::State, worker: &crate::worker::Worker, grid: bool) {
+    let open = st
+        .current
+        .filter(|_| st.cull.is_none() && !grid)
+        .and_then(|c| st.files.get(c).cloned());
+    worker.set_open_frame(open);
+}
+
 /// A new list in the window: the worker is told which of its frames
-/// are edited, before their thumbnails are asked for.
+/// are edited, and under what key where the index knows, before their
+/// thumbnails are asked for.
 pub(crate) fn note_list(st: &crate::State, worker: &crate::worker::Worker) {
-    let list: Vec<(PathBuf, bool, Iso)> = (0..st.files.len())
-        .map(|i| (st.files[i].clone(), held_edited(st, i), iso_of(st, i)))
+    let list: Vec<(PathBuf, bool, Iso, Option<u64>)> = (0..st.files.len())
+        .map(|i| {
+            (
+                st.files[i].clone(),
+                held_edited(st, i),
+                iso_of(st, i),
+                key_of(st, i),
+            )
+        })
         .collect();
     worker.edited().note_all(list);
 }
@@ -964,7 +1299,7 @@ pub(crate) fn refresh(st: &mut crate::State, i: usize) {
     };
     if worker
         .edited()
-        .hold(&path, held_edited(st, i), iso_of(st, i))
+        .hold(&path, held_edited(st, i), iso_of(st, i), key_of(st, i))
     {
         kept(st, &worker, &path);
     }
@@ -972,7 +1307,8 @@ pub(crate) fn refresh(st: &mut crate::State, i: usize) {
 
 /// Frame `i`'s sidecar changed on disk under the window, as its row now
 /// says (another machine's save joined, a pass that found it rewritten):
-/// its key is read again, and its cells ask for their pictures again.
+/// its key is the row's when the row has one, else read again; and its
+/// cells ask for their pictures again.
 pub(crate) fn changed(st: &mut crate::State, i: usize) {
     let Some(path) = st.files.get(i).cloned() else {
         return;
@@ -980,10 +1316,15 @@ pub(crate) fn changed(st: &mut crate::State, i: usize) {
     let Some(worker) = crate::WORKER.with(|w| w.borrow().clone()) else {
         return;
     };
-    if worker
-        .edited()
-        .note(&path, held_edited(st, i), iso_of(st, i))
-    {
+    let (edited, iso) = (held_edited(st, i), iso_of(st, i));
+    let moved = match key_of(st, i) {
+        Some(key) => {
+            worker.edited().hold(&path, edited, iso, Some(key));
+            true
+        }
+        None => worker.edited().note(&path, edited, iso),
+    };
+    if moved {
         kept(st, &worker, &path);
     }
 }
@@ -995,14 +1336,18 @@ pub(crate) fn kept(st: &mut crate::State, worker: &crate::worker::Worker, path: 
     let Some(i) = st.files.iter().position(|f| f == path) else {
         return;
     };
+    ask_again(st, worker, i);
+    if st.cull.is_some() {
+        crate::panel::cull::cull_refresh(st);
+    }
+}
+
+/// Frame `i`'s cells ask for their pictures again and the loupe drops
+/// its copy; the loupe's refresh is the caller's.
+fn ask_again(st: &mut crate::State, worker: &crate::worker::Worker, i: usize) {
     worker.send(crate::rows::thumb_job(st, i));
-    let mut culling = false;
     for cull in [st.cull.as_mut(), st.hold.as_mut()].into_iter().flatten() {
         cull.cache.forget(i);
-        culling = true;
-    }
-    if culling && st.cull.is_some() {
-        crate::panel::cull::cull_refresh(st);
     }
 }
 
@@ -1447,18 +1792,166 @@ mod tests {
         crate::testing::remove_dir_retry(&rig.dir);
     }
 
+    /// A frame edited without being opened: its sidecar saved on disk
+    /// with a brightening, the window holding it as edited, its
+    /// thumbnail asked for. The camera's comes first, then the pool's
+    /// reduced develop makes the edit's pictures behind it and says so,
+    /// and the next ask is the edit's, brighter, at the made size and
+    /// at 2048; asked again, nothing is made again. The open frame is
+    /// never the pool's.
+    #[test]
+    fn a_frame_edited_without_being_opened_is_developed_reduced_by_the_pool() {
+        let rig = rig("reduced");
+        let other = rig.dir.join("other.png");
+        let picture = image::RgbImage::from_fn(600, 400, |x, y| {
+            image::Rgb([(30 + x / 12) as u8, (40 + y / 10) as u8, 50])
+        });
+        picture.save(&other).unwrap();
+        let mut edit = Edit::for_picture();
+        edit.light.exposure = 1.5;
+        let mut sidecar = greycard_edit::Sidecar {
+            current: edit.clone(),
+            ..greycard_edit::Sidecar::default()
+        };
+        sidecar.save(&other).unwrap();
+        let edited = rig.worker.edited();
+        edited.note_all([
+            (rig.png.clone(), false, None, None),
+            (other.clone(), true, None, None),
+        ]);
+        assert!(
+            edited.wants_develop(&rig.png).is_none(),
+            "the open frame is the worker's"
+        );
+        assert!(edited.wants_develop(&other).is_some());
+        let ask = || {
+            rig.worker.send(crate::worker::Job::Thumbnail {
+                index: 1,
+                path: other.clone(),
+            });
+        };
+        ask();
+        let camera = loop {
+            if let Heard::Thumb { mean, .. } = rig.next() {
+                break mean;
+            }
+        };
+        // The pool develops it behind the thumbnail and says so.
+        loop {
+            if let Heard::Kept(path) = rig.next() {
+                assert_eq!(path, other);
+                break;
+            }
+        }
+        let hash = greycard_library::hash_file(&other).unwrap();
+        let key = edited.key_of(&edit);
+        assert!(edited.all_kept(&hash, key), "every size kept under the key");
+        assert!(
+            edited.wants_develop(&other).is_none(),
+            "nothing more wanted"
+        );
+        ask();
+        let brightened = loop {
+            if let Heard::Thumb { mean, .. } = rig.next() {
+                break mean;
+            }
+        };
+        assert!(
+            brightened > camera + 20.0,
+            "the edit's picture is the brighter: {camera} then {brightened}"
+        );
+        let big = edited
+            .lookup(&hash, BIG, Shows::Edit(key))
+            .expect("the 2048 picture");
+        assert_eq!(big.width.max(big.height), 600, "no larger than the frame");
+        // Nothing else is said: no second making.
+        assert!(
+            rig.heard
+                .recv_timeout(std::time::Duration::from_millis(300))
+                .is_err(),
+            "quiet"
+        );
+        rig.quiet();
+    }
+
+    /// The reduced develop's pictures of a key stand for the frame until
+    /// it is opened: its own develop's are then made in their place,
+    /// under their own recipe, and the reduced develop's go. One that
+    /// lands after them keeps nothing.
+    #[test]
+    fn the_open_frame_s_pictures_take_the_reduced_develop_s_place() {
+        let rig = rig("replace");
+        let edited = rig.worker.edited();
+        let mut bright = Edit::for_picture();
+        bright.light.exposure = 1.0;
+        let hash = greycard_library::hash_file(&rig.png).unwrap();
+        let key = edited.key_of(&bright);
+        // A flat dark picture standing for the reduced develop's.
+        let big = Thumb {
+            width: 600,
+            height: 400,
+            rgb: vec![12; 600 * 400 * 3],
+        };
+        let made = Made {
+            thumbs: crate::grid::MADE
+                .iter()
+                .map(|&size| (size, shrunk(&big, size)))
+                .collect(),
+            big,
+        };
+        assert!(edited.store_reduced(&hash, key, &made).unwrap().is_some());
+        edited.settle_key(&rig.png, &hash, key, None);
+        assert!(edited.all_kept(&hash, key));
+        assert!(!edited.all_kept_by(&hash, key, EDITED_RECIPE));
+        let (_, _, reduced) = rig.thumb();
+        assert!(
+            reduced < 20.0,
+            "the reduced develop's is shown: {reduced:.1}"
+        );
+        rig.save(&bright, 0);
+        rig.kept();
+        assert!(edited.all_kept_by(&hash, key, EDITED_RECIPE));
+        assert!(
+            !crate::grid::MADE.iter().chain([BIG].iter()).any(|&size| {
+                edited.cache.lock().unwrap().as_ref().unwrap().has(
+                    &hash,
+                    size,
+                    Tag {
+                        recipe: REDUCED_RECIPE,
+                        stamp: key,
+                    },
+                )
+            }),
+            "the reduced develop's are gone"
+        );
+        let (_, _, own) = rig.thumb();
+        assert!(own > reduced + 20.0, "the develop's own: {own:.1}");
+        assert!(
+            edited.store_reduced(&hash, key, &made).unwrap().is_none(),
+            "a reduced develop landing after keeps nothing"
+        );
+        rig.quiet();
+    }
+
     /// A picture in hand is not taken in hand again until its making is
-    /// done or dropped; another key, or another frame's content, is.
+    /// done or dropped; another key, another frame's content, or the
+    /// other develop's making of it is.
     #[test]
     fn a_picture_in_hand_is_made_once() {
         let edited = Edited::new(Arc::new(Mutex::new(None)));
-        let first = edited.mark("ab", 7).expect("free");
-        assert!(edited.mark("ab", 7).is_none(), "in hand");
-        let other = edited.mark("ab", 8).expect("another key");
-        let elsewhere = edited.mark("cd", 7).expect("another content");
+        let first = edited.mark("ab", 7, EDITED_RECIPE).expect("free");
+        assert!(edited.mark("ab", 7, EDITED_RECIPE).is_none(), "in hand");
+        let other = edited.mark("ab", 8, EDITED_RECIPE).expect("another key");
+        let elsewhere = edited
+            .mark("cd", 7, EDITED_RECIPE)
+            .expect("another content");
+        let reduced = edited
+            .mark("ab", 7, REDUCED_RECIPE)
+            .expect("the reduced develop's own");
+        assert!(edited.mark("ab", 7, REDUCED_RECIPE).is_none());
         drop(first);
-        assert!(edited.mark("ab", 7).is_some(), "let go");
-        drop((other, elsewhere));
+        assert!(edited.mark("ab", 7, EDITED_RECIPE).is_some(), "let go");
+        drop((other, elsewhere, reduced));
     }
 
     /// A frame held as edited from its row or its sidecar, and let go,
@@ -1468,14 +1961,30 @@ mod tests {
         let edited = Edited::new(Arc::new(Mutex::new(None)));
         let path = Path::new("/x/IMG_0001.CR3");
         assert!(!edited.holds(path));
-        assert!(edited.hold(path, true, None));
-        assert!(!edited.hold(path, true, None));
+        assert!(edited.hold(path, true, None, None));
+        assert!(!edited.hold(path, true, None, None));
         assert!(edited.settle_key(path, "ab", 5, None));
         assert!(!edited.settle_key(path, "ab", 5, None));
-        assert!(!edited.hold(path, true, None), "a key found stays");
+        assert!(!edited.hold(path, true, None, None), "a key found stays");
         assert_eq!(edited.shows(path), Shows::Edit(5));
-        assert_eq!(edited.shows_offline(path), Shows::Newest);
-        assert!(edited.hold(path, false, None));
+        // A key known serves a frame out of reach too; one not known
+        // falls to the picture kept last for the content.
+        assert_eq!(edited.shows_offline(path), Shows::Edit(5));
+        // The row's key moves the frame to it, and the same key again
+        // is no change.
+        assert!(edited.hold(path, true, None, Some(9)));
+        assert!(!edited.hold(path, true, None, Some(9)));
+        assert_eq!(edited.shows(path), Shows::Edit(9));
+        assert_eq!(edited.shows_offline(path), Shows::Edit(9));
+        assert!(edited.hold(path, false, None, None));
+        assert_eq!(edited.shows_offline(path), Shows::Camera);
+        assert!(edited.note(path, true, None));
+        assert_eq!(
+            edited.shows_offline(path),
+            Shows::Newest,
+            "a key to be read"
+        );
+        assert!(edited.hold(path, false, None, None));
         assert_eq!(edited.shows(path), Shows::Camera);
         assert!(!edited.note(path, false, None), "neither was nor is");
         assert!(edited.note(path, true, None));
@@ -1488,7 +1997,7 @@ mod tests {
             Shows::Newest,
             "read again, from a sidecar that is not there"
         );
-        edited.note_all([(PathBuf::from("/x/IMG_0002.CR3"), true, None)]);
+        edited.note_all([(PathBuf::from("/x/IMG_0002.CR3"), true, None, None)]);
         assert!(!edited.holds(path), "another list's frames go");
     }
 

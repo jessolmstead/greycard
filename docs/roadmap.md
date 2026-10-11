@@ -38,12 +38,6 @@ The grid and the strip show each edited frame as edited, a set opens
 in a lightbox for judging it whole, and frames gather into collections
 and smart collections that survive a move.
 
-- [ ] Thumbnails from the edit, part two: the reduced develop in the
-      pool for frames edited without being opened (a sync, a preset
-      over the selection, a paste, a join), fed from the save's non-open
-      branch and the sync's take and join, with its ΔE check against
-      the export at 360 and 2048; a develop key column in the index so
-      an offline frame shows its own edit; part one landed (§270, §278)
 - [ ] Lightbox over a collection, or the picks until collections
       exist: the grid with everything that gets in the way of judging
       consistency taken out. Tiles at a chosen size up to a handful

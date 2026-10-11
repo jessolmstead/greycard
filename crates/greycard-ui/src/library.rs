@@ -83,6 +83,10 @@ enum Ask {
     File(PathBuf),
     /// Forget these files' rows: the window deleted the files.
     Forget(Vec<PathBuf>),
+    /// The lens database changed: every develop key in the index was
+    /// made with the old one and is cleared, to be filled by the next
+    /// pass over each folder.
+    KeysStale,
     /// Drop the archive writes owed by frames under this root, or to
     /// it: the root was taken out of the library (§233).
     ForgetPendingUnder(PathBuf),
@@ -345,6 +349,12 @@ impl Indexer {
         if self.asks.send(Ask::File(path)).is_err() {
             self.files_waiting.fetch_sub(1, Ordering::SeqCst);
         }
+    }
+
+    /// The lens database was fetched or updated: the develop keys in
+    /// the index are cleared (`Ask::KeysStale`).
+    pub(crate) fn keys_stale(&self) {
+        let _ = self.asks.send(Ask::KeysStale);
     }
 
     /// Forget the rows of files the window has deleted. A pass under
@@ -791,6 +801,18 @@ fn serve(
         }
     };
     told(Told::Opened(path.clone()));
+    // The develop keys in the rows were made under a recipe, a lens
+    // database and the looks and profiles as they were then: any of
+    // those moved since (a cache wiped, a refit while the editor was
+    // away, a build that raised the recipe), they are cleared here for
+    // the passes to make anew.
+    match lib.settle_develop_keys() {
+        Ok(Some(n)) => tracing::info!(
+            "index: {n} develop key(s) cleared, made under what the develop is not any more"
+        ),
+        Ok(None) => {}
+        Err(e) => tracing::warn!("index: the develop keys were not checked: {e}"),
+    }
     let wanted = &*waits.wanted;
     let files_waiting = &*waits.files;
     let leaving = || wanted.load(Ordering::SeqCst) == LEAVING;
@@ -899,6 +921,19 @@ fn serve(
                 Ask::Forget(paths) => {
                     files_waiting.fetch_sub(1, Ordering::SeqCst);
                     forget.extend(paths);
+                }
+                Ask::KeysStale => {
+                    match lib.clear_develop_keys() {
+                        Ok(n) => tracing::info!(
+                            "index: {n} develop key(s) cleared: what they are made under moved"
+                        ),
+                        Err(e) => tracing::warn!("index: the develop keys were not cleared: {e}"),
+                    }
+                    // What they will be made under from here, so the
+                    // next launch does not clear them again.
+                    if let Err(e) = lib.settle_develop_keys() {
+                        tracing::warn!("index: what the develop keys are made under: {e}");
+                    }
                 }
                 Ask::ForgetPendingUnder(root) => match lib.clear_pending_under(&root) {
                     Ok(n) if n > 0 => {

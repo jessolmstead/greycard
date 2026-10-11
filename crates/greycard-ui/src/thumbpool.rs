@@ -18,8 +18,14 @@
 //!
 //! Behind the thumbnails, and only when no thumbnail is waiting to be
 //! begun, each frame whose thumbnail found no local preview kept has
-//! one made (`previews`): the lowest thing the pool does, never while
-//! it is held, and in the thumbnails' order, the frames shown first.
+//! one made (`previews`): never while the pool is held, and in the
+//! thumbnails' order, the frames shown first. Behind those again, each
+//! frame whose thumbnail found its edit's pictures not kept has them
+//! made by the reduced develop (`reduced`): the lowest thing the pool
+//! does, never while it is held, the frames shown first, and a thread
+//! always left for a thumbnail; one at a time while a frame is open in
+//! the editor and two while culling or browsing (`reduced::at_once`),
+//! and a frame under a root on a network mount alone.
 //!
 //! What the threads finish goes to the window one call each, or
 //! through an [`Outbox`] ([`Pool::batched`], the editor's). A warm
@@ -30,10 +36,10 @@
 //! for as many as pile up before the window takes them, and the
 //! window takes them a slice at a time, the files it shows first.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use greycard_library::thumbs::Thumb;
 
@@ -60,6 +66,27 @@ pub(crate) struct PreviewHooks {
 
 pub(crate) type OwesFn = dyn Fn(&Path) -> bool + Send + Sync;
 pub(crate) type MakePreviewFn = dyn Fn(&Path) -> anyhow::Result<()> + Send + Sync;
+
+/// The edit's pictures behind the previews: whether a file whose
+/// thumbnail was just delivered wants them made (held as edited, its
+/// pictures not kept under its key), and the making of them, which
+/// says whether any were kept. A making that kept them has the window
+/// told (`Outcome::EditedKept`). `at_once` says how many may be in hand
+/// now, asked as each is begun; `alone` whether a file's making runs
+/// with no other beside it.
+#[derive(Clone)]
+pub(crate) struct EditHooks {
+    pub(crate) wants: Arc<WantsFn>,
+    pub(crate) make: Arc<MakeEditFn>,
+    pub(crate) at_once: Arc<AtOnceFn>,
+    pub(crate) alone: Arc<WantsFn>,
+}
+
+pub(crate) type WantsFn = dyn Fn(&Path) -> bool + Send + Sync;
+/// How many edits may be in hand now, and, when that holds one back
+/// only for a while (`reduced::begin`), when to look again.
+pub(crate) type AtOnceFn = dyn Fn() -> (usize, Option<Duration>) + Send + Sync;
+pub(crate) type MakeEditFn = dyn Fn(&Path) -> Result<bool, crate::reduced::Why> + Send + Sync;
 
 /// How many threads make thumbnails on a machine of `cores`: half of
 /// them, at least two and at most eight. The develop runs on rayon's
@@ -223,6 +250,19 @@ struct Pending {
     /// The range the waiting previews are ordered for; cleared when
     /// one is added.
     previews_wanted: Option<(usize, usize)>,
+    /// The frames whose edit's pictures are waiting to be made, in the
+    /// order wanted: begun only when no thumbnail and no preview can
+    /// be.
+    edits: VecDeque<(usize, PathBuf)>,
+    /// The same frames, to be asked of without a walk of the queue.
+    edits_queued: HashSet<PathBuf>,
+    /// The range the waiting edits are ordered for; cleared when one
+    /// is added.
+    edits_wanted: Option<(usize, usize)>,
+    /// How many edits are being made now, and whether one of them runs
+    /// alone.
+    edits_busy: usize,
+    edits_alone: bool,
     /// The long edge pictures are made at now; `THUMB_WIDTH` until
     /// the grid asks otherwise. Read as each is begun.
     size: Option<u32>,
@@ -266,6 +306,8 @@ pub(crate) struct Pool {
     outbox: Option<Arc<Outbox>>,
     /// The local previews made behind the thumbnails, if any.
     previews: Option<PreviewHooks>,
+    /// The edit's pictures made behind the previews, if any.
+    edits: Option<EditHooks>,
 }
 
 impl Pool {
@@ -302,7 +344,15 @@ impl Pool {
             deliver,
             outbox: None,
             previews: None,
+            edits: None,
         }
+    }
+
+    /// Make the edit's pictures behind the previews for each file
+    /// delivered that `hooks` says wants them. Before the first push.
+    pub(crate) fn with_edits(mut self, hooks: EditHooks) -> Self {
+        self.edits = Some(hooks);
+        self
     }
 
     /// Make a local preview behind each thumbnail delivered whose file
@@ -336,13 +386,14 @@ impl Pool {
         if !q.started {
             q.started = true;
             for n in 0..self.threads {
-                let (shared, lookup, make, deliver, outbox, previews) = (
+                let (shared, lookup, make, deliver, outbox, previews, edits) = (
                     self.shared.clone(),
                     self.lookup.clone(),
                     self.make.clone(),
                     self.deliver.clone(),
                     self.outbox.clone(),
                     self.previews.clone(),
+                    self.edits.clone(),
                 );
                 // Straight to the window, or into the outbox with the
                 // window told only when it is not already.
@@ -357,7 +408,14 @@ impl Pool {
                 let spawned = std::thread::Builder::new()
                     .name(format!("greycard thumbnails {n}"))
                     .spawn(move || {
-                        serve(&shared, lookup.as_deref(), &*make, previews.as_ref(), &send)
+                        serve(
+                            &shared,
+                            lookup.as_deref(),
+                            &*make,
+                            previews.as_ref(),
+                            edits.as_ref(),
+                            &send,
+                        )
                     });
                 if let Err(e) = spawned {
                     tracing::warn!("thumbnail thread {n} not started: {e}");
@@ -398,6 +456,10 @@ impl Pool {
             q.previews_wanted = Some((first, last));
             order_thumbnails(q.previews.make_contiguous(), first, last);
         }
+        if q.edits.len() >= 2 && q.edits_wanted != Some((first, last)) {
+            q.edits_wanted = Some((first, last));
+            order_thumbnails(q.edits.make_contiguous(), first, last);
+        }
         if q.jobs.len() < 2 || q.wanted == Some((first, last)) {
             return;
         }
@@ -424,6 +486,9 @@ impl Pool {
         q.wanted = None;
         q.previews.clear();
         q.previews_wanted = None;
+        q.edits.clear();
+        q.edits_queued.clear();
+        q.edits_wanted = None;
         q.epoch += 1;
         drop(q);
         // Finished for the old list and not yet taken in: the window
@@ -459,6 +524,13 @@ impl Pool {
         self.threads
     }
 
+    /// Something a thread waits on outside the pool changed (how many
+    /// edits may be in hand): each looks again.
+    pub(crate) fn wake(&self) {
+        let _q = self.lock();
+        self.shared.cv.notify_all();
+    }
+
     /// Stop the threads once each has finished what it has in hand.
     pub(crate) fn stop(&self) {
         self.lock().stopping = true;
@@ -472,6 +544,14 @@ impl Drop for Pool {
     }
 }
 
+/// What a thread of the pool took in hand.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum What {
+    Thumb,
+    Preview,
+    Edit,
+}
+
 /// A thread of the pool: the next picture wanted that no other thread
 /// has in hand, made, and delivered unless the folder has changed
 /// since it was begun. While the pool is held, or as many are being
@@ -482,16 +562,19 @@ impl Drop for Pool {
 ///
 /// With nothing of the thumbnails' to begin and room to make, a local
 /// preview owed is made instead; it is delivered to nobody, since it
-/// is for the cache.
+/// is for the cache. With no preview to begin either, the edit's
+/// pictures of a frame that wants them are made, and the window is told
+/// when they are kept.
 fn serve(
     shared: &Shared,
     lookup: Option<&LookupFn>,
     make: &MakeFn,
     previews: Option<&PreviewHooks>,
+    edits: Option<&EditHooks>,
     deliver: &dyn Fn(Outcome),
 ) {
     loop {
-        let (index, path, size, epoch, full, preview) = {
+        let (index, path, size, epoch, full, what) = {
             let mut q = shared.pending.lock().expect("thumbnail pool");
             loop {
                 if q.stopping {
@@ -517,7 +600,7 @@ fn serve(
                     };
                     q.making.push(path.clone());
                     let size = crate::grid::made_size(q.size.unwrap_or(THUMB_WIDTH));
-                    break (index, path, size, q.epoch, full, false);
+                    break (index, path, size, q.epoch, full, What::Thumb);
                 }
                 // The lowest of all: a preview, only when no thumbnail
                 // can be begun and two more may be made, so one thread
@@ -537,13 +620,75 @@ fn serve(
                     q.busy += 1;
                     let (index, path) = q.previews.remove(at).expect("a preview at a found place");
                     q.making.push(path.clone());
-                    break (index, path, 0, q.epoch, true, true);
+                    break (index, path, 0, q.epoch, true, What::Preview);
                 }
-                q = shared.cv.wait(q).expect("thumbnail pool");
+                // Lower still: the edit's pictures, a decode and a
+                // develop each, so one or two at a time (as `at_once`
+                // says now), one under a network root with nothing
+                // beside it, and like a preview never on the last thread.
+                let mut again = None;
+                let edit = edits.filter(|h| {
+                    if q.held || q.busy + 1 >= q.limit || q.edits_alone || q.edits.is_empty() {
+                        return false;
+                    }
+                    let (at_once, later) = (h.at_once)();
+                    again = later;
+                    q.edits_busy < at_once
+                });
+                let at = edit.and_then(|h| {
+                    let p = &*q;
+                    p.edits
+                        .iter()
+                        .position(|(_, f)| {
+                            !p.making.contains(f) && (p.edits_busy == 0 || !(h.alone)(f))
+                        })
+                        .map(|at| (at, (h.alone)(&p.edits[at].1)))
+                });
+                if let Some((at, alone)) = at {
+                    q.busy += 1;
+                    q.edits_busy += 1;
+                    q.edits_alone = alone;
+                    let (index, path) = q.edits.remove(at).expect("an edit at a found place");
+                    q.edits_queued.remove(&path);
+                    q.making.push(path.clone());
+                    break (index, path, 0, q.epoch, true, What::Edit);
+                }
+                // An edit held back only until the editor is quiet is
+                // looked at again then, with nothing else to wake for it.
+                q = match again {
+                    Some(after) => shared.cv.wait_timeout(q, after).expect("thumbnail pool").0,
+                    None => shared.cv.wait(q).expect("thumbnail pool"),
+                };
             }
         };
         let started = Instant::now();
-        if preview {
+        if what == What::Edit {
+            let hooks = edits.expect("an edit only with hooks");
+            let made =
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hooks.make)(&path)));
+            {
+                let mut q = shared.pending.lock().expect("thumbnail pool");
+                if let Some(at) = q.making.iter().position(|f| *f == path) {
+                    q.making.swap_remove(at);
+                }
+                q.busy -= 1;
+                q.edits_busy -= 1;
+                q.edits_alone = false;
+                shared.cv.notify_all();
+            }
+            match made {
+                Ok(Ok(true)) => deliver(Outcome::EditedKept { path }),
+                Ok(Ok(false)) => {}
+                Ok(Err(why)) => tracing::info!("the edit's pictures of {}: {why}", path.display()),
+                Err(payload) => tracing::warn!(
+                    "the edit's pictures of {}: the making panicked: {}",
+                    path.display(),
+                    panic_message(payload.as_ref())
+                ),
+            }
+            continue;
+        }
+        if what == What::Preview {
             let hooks = previews.expect("a preview only with hooks");
             let made =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hooks.make)(&path)));
@@ -627,6 +772,21 @@ fn serve(
             if q.epoch == epoch && !q.previews.iter().any(|(_, f)| *f == path) {
                 q.previews.push_back((index, path.clone()));
                 q.previews_wanted = None;
+                shared.cv.notify_one();
+            }
+        }
+        // And the edit's pictures behind it, if the frame wants them. A
+        // frame already in hand is queued again: its edit may have moved
+        // since that making began, and a making finds its pictures kept
+        // and does nothing when it has not.
+        if let Some(hooks) = edits
+            && matches!(made, Ok(Ok(_)))
+            && (hooks.wants)(&path)
+        {
+            let mut q = shared.pending.lock().expect("thumbnail pool");
+            if q.epoch == epoch && q.edits_queued.insert(path.clone()) {
+                q.edits.push_back((index, path.clone()));
+                q.edits_wanted = None;
                 shared.cv.notify_one();
             }
         }
@@ -923,6 +1083,220 @@ mod tests {
         pool.push(7, file(7));
         receive(&rx, 1);
         assert_eq!(until_logged(&log, 1), ["p7"]);
+    }
+
+    /// Edit hooks that want every file but those in `kept`, and record
+    /// the makings, in order, into `log`; each says it kept pictures.
+    /// Two at once, none alone.
+    fn edit_hooks(log: Arc<Mutex<Vec<String>>>, kept: &'static [usize]) -> EditHooks {
+        EditHooks {
+            wants: Arc::new(move |path| !kept.contains(&index_of(path))),
+            make: Arc::new(move |path| {
+                log.lock().unwrap().push(format!("e{}", index_of(path)));
+                Ok(true)
+            }),
+            at_once: Arc::new(|| (2, None)),
+            alone: Arc::new(|_| false),
+        }
+    }
+
+    /// Hooks whose makings each wait on `gate` and record into `log`,
+    /// `at_once` and `alone` as given.
+    fn gated_hooks(
+        log: Arc<Mutex<Vec<String>>>,
+        gate: mpsc::Receiver<()>,
+        at_once: Arc<AtOnceFn>,
+        alone: Arc<WantsFn>,
+    ) -> EditHooks {
+        let gate = Mutex::new(gate);
+        EditHooks {
+            wants: Arc::new(|_| true),
+            make: Arc::new(move |path| {
+                log.lock().unwrap().push(format!("e{}", index_of(path)));
+                gate.lock().unwrap().recv_timeout(WAIT).expect("let go");
+                Ok(false)
+            }),
+            at_once,
+            alone,
+        }
+    }
+
+    /// The edit's pictures come after every thumbnail and every
+    /// preview, the frames shown first; a file with its pictures kept
+    /// wants none; and each kept has the window told.
+    #[test]
+    fn the_edits_are_made_after_the_previews_the_frames_shown_first() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let lookup: Lookup = Arc::new(|_, _| Some(picture()));
+        let (tx, rx) = mpsc::channel();
+        let tx = Mutex::new(tx);
+        let deliver: Deliver = Arc::new(move |outcome| match outcome {
+            Outcome::Thumbnail { index, .. } => tx.lock().unwrap().send(("t", index)).unwrap(),
+            Outcome::EditedKept { path } => {
+                tx.lock().unwrap().send(("e", index_of(&path))).unwrap()
+            }
+            _ => {}
+        });
+        let pool = Pool::with_lookup(4, lookup, instant(), deliver)
+            .with_previews(preview_hooks(log.clone(), &[0, 1, 2, 4, 5]))
+            .with_edits(edit_hooks(log.clone(), &[3]));
+        pool.hold(true);
+        for i in 0..6 {
+            pool.push(i, file(i));
+        }
+        let mut thumbs = Vec::new();
+        while thumbs.len() < 6 {
+            let (what, i) = rx.recv_timeout(WAIT).unwrap();
+            assert_eq!(what, "t");
+            thumbs.push(i);
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(log.lock().unwrap().is_empty(), "nothing while held");
+        pool.want(2, 3);
+        pool.hold(false);
+        let order = until_logged(&log, 6);
+        assert_eq!(order[0], "p3", "the preview before every edit");
+        let mut edits = order[1..].to_vec();
+        // Two at once on four threads: the two nearest the range shown
+        // begin together, in either order, and the rest follow outward.
+        edits[..2].sort();
+        assert_eq!(edits, ["e1", "e2", "e0", "e4", "e5"]);
+        let mut kept = Vec::new();
+        while kept.len() < 5 {
+            let (what, i) = rx.recv_timeout(WAIT).unwrap();
+            assert_eq!(what, "e");
+            kept.push(i);
+        }
+        kept.sort();
+        assert_eq!(kept, [0, 1, 2, 4, 5]);
+    }
+
+    /// Edits are made at most two at once on four threads, one on two,
+    /// and never on the last thread: a thumbnail asked for meanwhile is
+    /// made at once beside them.
+    #[test]
+    fn edits_are_made_two_at_once_and_leave_a_thread_for_the_thumbnails() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (gate_tx, gate) = mpsc::channel::<()>();
+        let hooks = gated_hooks(
+            log.clone(),
+            gate,
+            Arc::new(|| (crate::reduced::at_once(4, false), None)),
+            Arc::new(|_| false),
+        );
+        let (deliver, rx) = collector();
+        let pool = Pool::new(4, instant(), deliver).with_edits(hooks);
+        for i in 0..4 {
+            pool.push(i, file(i));
+        }
+        receive(&rx, 4);
+        until_logged(&log, 2);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(log.lock().unwrap().len(), 2, "two at once, no more");
+        pool.push(7, file(7));
+        assert_eq!(receive(&rx, 1), [(7, true)], "made beside the edits");
+        for _ in 0..6 {
+            gate_tx.send(()).unwrap();
+        }
+        until_logged(&log, 5);
+
+        // On two threads, one at a time.
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (gate_tx, gate) = mpsc::channel::<()>();
+        let hooks = gated_hooks(
+            log.clone(),
+            gate,
+            Arc::new(|| (crate::reduced::at_once(2, false), None)),
+            Arc::new(|_| false),
+        );
+        let (deliver, rx) = collector();
+        let pool = Pool::new(2, instant(), deliver).with_edits(hooks);
+        for i in 0..3 {
+            pool.push(i, file(i));
+        }
+        receive(&rx, 3);
+        until_logged(&log, 1);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(log.lock().unwrap().len(), 1, "one at a time on two");
+        for _ in 0..4 {
+            gate_tx.send(()).unwrap();
+        }
+        until_logged(&log, 3);
+    }
+
+    /// One at a time while a frame is open in the editor, two once it is
+    /// not (the pool woken to begin the second); and a frame under a
+    /// network root alone, with nothing begun beside it.
+    #[test]
+    fn edits_are_one_at_a_time_while_editing_and_alone_on_a_network_root() {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (gate_tx, gate) = mpsc::channel::<()>();
+        let editing = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let at_once = {
+            let editing = editing.clone();
+            Arc::new(move || {
+                (
+                    crate::reduced::at_once(8, editing.load(std::sync::atomic::Ordering::SeqCst)),
+                    None,
+                )
+            })
+        };
+        let hooks = gated_hooks(log.clone(), gate, at_once, Arc::new(|_| false));
+        let (deliver, rx) = collector();
+        let pool = Pool::new(8, instant(), deliver).with_edits(hooks);
+        for i in 0..4 {
+            pool.push(i, file(i));
+        }
+        receive(&rx, 4);
+        until_logged(&log, 1);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(log.lock().unwrap().len(), 1, "one while editing");
+        editing.store(false, std::sync::atomic::Ordering::SeqCst);
+        pool.wake();
+        until_logged(&log, 2);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(log.lock().unwrap().len(), 2, "two while browsing");
+        for _ in 0..4 {
+            gate_tx.send(()).unwrap();
+        }
+        until_logged(&log, 4);
+
+        // Files 0 and 2 are under a network root: each begins only with
+        // nothing in hand, and nothing begins beside it.
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let (gate_tx, gate) = mpsc::channel::<()>();
+        let hooks = gated_hooks(
+            log.clone(),
+            gate,
+            Arc::new(|| (2, None)),
+            Arc::new(|path| [0, 2].contains(&index_of(path))),
+        );
+        let (deliver, rx) = collector();
+        let lookup: Lookup = Arc::new(|_, _| Some(picture()));
+        let pool = Pool::with_lookup(8, lookup, instant(), deliver).with_edits(hooks);
+        pool.hold(true);
+        for i in 0..4 {
+            pool.push(i, file(i));
+        }
+        receive(&rx, 4);
+        pool.want(0, 3);
+        pool.hold(false);
+        until_logged(&log, 1);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(*log.lock().unwrap(), ["e0"], "the network frame alone");
+        gate_tx.send(()).unwrap();
+        // Then the two local ones together; the second network frame
+        // waits for both.
+        until_logged(&log, 3);
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(*log.lock().unwrap(), ["e0", "e1", "e3"]);
+        gate_tx.send(()).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        assert_eq!(log.lock().unwrap().len(), 3, "not beside the one left");
+        gate_tx.send(()).unwrap();
+        until_logged(&log, 4);
+        assert_eq!(log.lock().unwrap()[3], "e2");
+        gate_tx.send(()).unwrap();
     }
 
     /// A scroll while a picture is in hand re-orders what is left,
