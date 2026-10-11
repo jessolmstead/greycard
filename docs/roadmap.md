@@ -33,7 +33,7 @@ The grid and the strip show each edited frame as edited, the copy
 settings sheet copies one slider or one mask, a tint cools without
 turning hues, and the mask, history, snapshot and crop bugs of 0.5.0
 are gone. Everything for it is on master; what is left is the cut:
-the guide's update, the version bump and the tag.
+the version bump and the tag.
 
 
 ## Then: 0.7.0
@@ -441,6 +441,20 @@ clears or a tester asks for it.
       and the guides' overlays cover the picture so a hover never hands
       the keys back; the button should give the keys up on click, or the
       overlay should take the hover
+- [ ] A drag anywhere on a radial or linear mask's body moves the
+      mask, not the picture; today only the center handle does (#16)
+- [ ] A two-finger touchpad scroll over the picture pans, and only a
+      wheel's click or a pinch zooms, telling them apart as §284 tells
+      a click from a touchpad (#17)
+- [ ] A Done on the Masks tab that leaves the active mask without
+      changing tabs (#18)
+- [ ] The mixer's dropper puts itself down after one pick (#20)
+- [ ] The export sheet scrolls on a short screen, and a scroll under
+      any sheet never reaches the picture (#21)
+- [ ] The export chooser skipped when the last folder is known, with a
+      way to pick another, and "Choose File" reads "Export" (#22,
+      beside §274)
+- [ ] A border, or a framed preview, at export (#19)
 - [ ] Resizable side panes: drag the left pane's and the develop
       panel's inner edge, today's widths the minimum, about 500 px the
       most, each kept in the settings; first see what a viewport
