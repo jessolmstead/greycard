@@ -382,6 +382,7 @@ pub(crate) fn thumb_for(path: &Path, meta: &Meta, marks: (bool, bool)) -> Thumb 
         offline: false,
         edited: marks.0,
         exported: marks.1,
+        collected: false,
     }
 }
 
@@ -995,6 +996,7 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
             Thumb {
                 offline,
                 failed: st.thumb_failed[f] && st.thumb_base[f].is_none() && !offline,
+                collected: crate::panel::collections::collected(st, f),
                 ..thumb_for(&st.files[f], &st.sidecars[f].meta, frame_marks(st, f))
             }
         })
@@ -1009,6 +1011,8 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     settle_pictures(st, app);
 
     app.set_reject_count(reject_count(st) as i32);
+    // A smart collection is lit while the bar says its filter.
+    crate::panel::collections::show(st, app);
     // A frame the filter now hides leaves the set: a key or a sync
     // must not reach a frame nobody can see is chosen.
     st.picked = selection::prune(&st.picked, &st.shown, st.current);

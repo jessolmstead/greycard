@@ -19,6 +19,7 @@ mod camera_match;
 mod carry;
 mod cells;
 mod clipboard;
+mod collections;
 mod cull;
 mod delete;
 mod detail;
@@ -675,6 +676,9 @@ pub(crate) struct State {
     pub(crate) facets_last: RefCell<Vec<(filter::Facet, Vec<greycard_library::FacetCount>)>>,
     /// The library's roots, their counts and their watcher.
     pub(crate) library: roots::Library,
+    /// The collections and smart collections, and what the browser
+    /// marks with them.
+    pub(crate) collections: collections::Store,
     /// The folder open, as the Open folder button names it, and the
     /// folders opened before it.
     pub(crate) recent: panel::recent::Recent,
@@ -1178,6 +1182,7 @@ impl State {
             index_pass_ready: false,
             facets_last: RefCell::new(Vec::new()),
             library: roots::Library::default(),
+            collections: collections::Store::default(),
             recent: panel::recent::Recent::default(),
             tree: tree::Tree::default(),
             camera_match: Default::default(),
@@ -1357,6 +1362,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::recent::install(app, &state, &worker);
     panel::camera_match::install(app, &state);
     roots::install(app, &state, &worker);
+    panel::collections::install(app, &state, &worker);
     tree::install(app, &state, &worker);
     report::install(app, &state);
     update::install(app, &state);

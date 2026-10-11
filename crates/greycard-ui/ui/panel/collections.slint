@@ -1,0 +1,199 @@
+// The collections in the grid's left pane, under the roots and the
+// folders: a row a collection, its sets muted before its name and its
+// frame count at its right, the smart ones (saved filters) after the
+// rest with a mark of their own, the one open lit, and at the foot a
+// way to make one. A right-click on a row offers a new name, capture
+// order for one filled by hand, and deleting it, which deletes its file
+// and touches no frame.
+
+import { Theme } from "../theme.slint";
+import { Section } from "../controls.slint";
+import { CollectionChip } from "../structs.slint";
+
+component CollectionRow inherits Rectangle {
+    in property <CollectionChip> chip;
+    in property <bool> ctrl-click-menu;
+    callback clicked();
+    callback menu(length, length);
+    pure callback menu-shown() -> bool;
+    height: Theme.control-height - 6px;
+    border-radius: Theme.radius-sm;
+    background: root.chip.on ? Theme.selection : (ta.has-hover ? Theme.hover : transparent);
+    accessible-role: button;
+    accessible-label: (root.chip.set == "" ? "" : root.chip.set + "/") + root.chip.name;
+    accessible-description: root.chip.smart ? "smart collection" : "collection";
+    accessible-value: root.chip.smart ? "" : root.chip.count;
+    accessible-item-selectable: true;
+    accessible-item-selected: root.chip.on;
+    accessible-action-default => { root.clicked(); }
+    animate background { duration: Theme.quick; }
+    ta := TouchArea {
+        property <bool> skip;
+        mouse-cursor: MouseCursor.pointer;
+        pointer-event(e) => {
+            if (e.kind != PointerEventKind.down) { return; }
+            // As a root's row: the press that closes a menu is nothing
+            // more, and a right-click asks for the row's own.
+            let closing = root.menu-shown();
+            let ctrl-menu = root.ctrl-click-menu && e.button == PointerEventButton.left
+                && e.modifiers.meta;
+            let asks = e.button == PointerEventButton.right || ctrl-menu;
+            self.skip = closing || asks || e.button != PointerEventButton.left;
+            if (asks) {
+                root.menu(self.absolute-position.x + self.mouse-x,
+                    self.absolute-position.y + self.mouse-y);
+            }
+        }
+        clicked => {
+            if (self.skip) { return; }
+            root.clicked();
+        }
+    }
+    HorizontalLayout {
+        padding-left: 0;
+        padding-right: Theme.space-2;
+        spacing: Theme.space-1;
+        if root.chip.smart: Image {
+            source: @image-url("../icons/sparkles.svg");
+            colorize: Theme.text-muted;
+            width: 12px;
+            height: 12px;
+            y: (parent.height - self.height) / 2;
+        }
+        if root.chip.set != "": Text {
+            text: root.chip.set + " /";
+            color: Theme.text-muted;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            overflow: elide;
+            horizontal-stretch: 0;
+            max-width: 120px;
+        }
+        Text {
+            text: root.chip.name;
+            color: root.chip.on || ta.has-hover ? Theme.text : Theme.text-secondary;
+            font-size: Theme.font-xs;
+            font-weight: root.chip.on ? Theme.weight-medium : Theme.weight-regular;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            overflow: elide;
+        }
+        if root.chip.capture: Text {
+            text: "by time";
+            color: Theme.text-muted;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+        if !root.chip.smart: Text {
+            text: root.chip.count;
+            color: Theme.text-muted;
+            font-size: Theme.font-xs;
+            vertical-alignment: center;
+            horizontal-stretch: 0;
+        }
+    }
+}
+
+export component CollectionsSection inherits Section {
+    in property <[CollectionChip]> collections;
+    in property <bool> ctrl-click-menu;
+    in-out property <bool> collapsed-collections;
+    /// A collection chosen, by its id.
+    callback picked(string);
+    callback rename(string);
+    callback delete(string);
+    /// Capture order turned on or off for a collection, by its id.
+    callback capture-toggled(string);
+    /// A new, empty collection asked for.
+    callback add();
+    callback focus-keys();
+    callback menu-done();
+    pure callback menu-shown() -> bool;
+    property <string> menu-id;
+    property <bool> menu-smart;
+    property <bool> menu-capture;
+
+    title: "COLLECTIONS";
+    icon: @image-url("../icons/bookmark.svg");
+    collapsed <=> root.collapsed-collections;
+
+    function open-menu(c: CollectionChip, x: length, y: length) {
+        root.focus-keys();
+        root.menu-id = c.id;
+        root.menu-smart = c.smart;
+        root.menu-capture = c.capture;
+        menu.show({ x: x - list.absolute-position.x, y: y - list.absolute-position.y });
+    }
+
+    list := VerticalLayout {
+        spacing: 1px;
+        menu := ContextMenuArea {
+            width: 0px;
+            height: 0px;
+            enabled: false;
+            Menu {
+                MenuItem {
+                    title: "Rename...";
+                    activated => { root.rename(root.menu-id); root.menu-done(); }
+                }
+                if !root.menu-smart: MenuItem {
+                    title: "Capture order";
+                    checkable: true;
+                    checked: root.menu-capture;
+                    activated => { root.capture-toggled(root.menu-id); root.menu-done(); }
+                }
+                MenuSeparator { }
+                MenuItem {
+                    title: "Delete...";
+                    activated => { root.delete(root.menu-id); root.menu-done(); }
+                }
+            }
+        }
+        for c in root.collections: CollectionRow {
+            chip: c;
+            ctrl-click-menu: root.ctrl-click-menu;
+            menu-shown => { return root.menu-shown(); }
+            clicked => { root.picked(c.id); root.focus-keys(); }
+            menu(x, y) => { root.open-menu(c, x, y); }
+        }
+        if root.collections.length == 0: Text {
+            text: "No collections yet";
+            color: Theme.text-muted;
+            font-size: Theme.font-xs;
+            wrap: word-wrap;
+        }
+        new-link := Rectangle {
+            height: Theme.control-height - 6px;
+            border-radius: Theme.radius-sm;
+            background: new-ta.has-hover ? Theme.hover : transparent;
+            accessible-role: button;
+            accessible-label: "+ New collection...";
+            accessible-action-default => { root.add(); }
+            new-ta := TouchArea {
+                property <bool> skip;
+                mouse-cursor: MouseCursor.pointer;
+                pointer-event(e) => {
+                    if (e.kind == PointerEventKind.down) {
+                        self.skip = root.menu-shown() || e.button != PointerEventButton.left;
+                    }
+                }
+                clicked => {
+                    if (self.skip) { return; }
+                    root.focus-keys();
+                    root.add();
+                }
+            }
+            HorizontalLayout {
+                padding-right: Theme.space-2;
+                Text {
+                    text: "+ New collection...";
+                    color: new-ta.has-hover ? Theme.text : Theme.text-secondary;
+                    font-size: Theme.font-xs;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
+            }
+        }
+    }
+}

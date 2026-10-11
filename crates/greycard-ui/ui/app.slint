@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow } from "structs.slint";
+import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -48,6 +48,8 @@ import { RootSheet } from "panel/root-sheet.slint";
 import { FolderName, RecentMenu } from "panel/recent.slint";
 import { FoldersSection } from "panel/folders.slint";
 import { RootsSection } from "panel/roots.slint";
+import { CollectionsSection } from "panel/collections.slint";
+import { CollectionSheet } from "panel/collection-sheet.slint";
 
 export component App inherits Window {
     title: "greycard";
@@ -448,6 +450,39 @@ export component App inherits Window {
     callback library-root-rename(string);
     /// A root's menu turned its archive mark on or off, by its path.
     callback library-root-archive(string);
+    /// The collections, in the left pane with the grid
+    /// (`panel::collections`): a row each, a click opens one, its menu
+    /// renames it, sorts it by capture time or deletes it.
+    in property <[CollectionChip]> collections: [];
+    in-out property <bool> collapsed-collections: false;
+    callback collection-picked(string);
+    callback collection-rename(string);
+    callback collection-delete(string);
+    callback collection-capture(string);
+    callback collection-new();
+    /// The frame menu's Add to collection, by its place in
+    /// `collection-names` (-1 for a new one), and Remove from the one
+    /// open; B adds the selection to the collection open, or the last
+    /// one added to, or takes it out when it is all in it already.
+    in property <[string]> collection-names: [];
+    in property <string> collection-open: "";
+    callback collection-menu-add(int);
+    callback collection-menu-remove();
+    callback collection-key();
+    /// The grid shows a collection in its own order: a drag moves a
+    /// frame, from its row to before another's.
+    in property <bool> collection-reorder: false;
+    callback collection-moved(int, int);
+    /// The filter bar's Save...: the filter kept as a smart collection.
+    callback filter-save-smart();
+    /// The collection sheet: a name asked for, or a delete.
+    in-out property <bool> collection-sheet-open: false;
+    in property <string> collection-sheet-title;
+    in property <string> collection-sheet-note;
+    in property <bool> collection-sheet-asks-name: true;
+    in property <string> collection-sheet-verb: "Save";
+    in-out property <string> collection-sheet-name;
+    callback collection-sheet-done();
     // The archive roots (`panel::archive`, notes §197, §216).
     /// The grid header's Back up or Bring back: its words, empty for
     /// none, and its choices by name.
@@ -1616,7 +1651,7 @@ export component App inherits Window {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
             || root.delete-open || root.look-remove-open || root.look-rename-open || root.overwrite-open || root.archive-open || root.archive-rejects-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
-            || root.root-sheet-open;
+            || root.root-sheet-open || root.collection-sheet-open;
     }
 
     // A value typed into a field, set or let go: the keys are the
@@ -1638,6 +1673,9 @@ export component App inherits Window {
     changed archive-rejects-open => {
         if (!root.archive-rejects-open && !root.sheet-open()) { keys.focus(); }
     }
+    changed collection-sheet-open => {
+        if (!root.collection-sheet-open && !root.sheet-open()) { keys.focus(); }
+    }
 
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
     forward-focus: keys;
@@ -1655,6 +1693,7 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.fetch-open) { root.fetch-answered(false); return accept; }
             if (e.text == Key.Escape && root.preset-open) { root.preset-open = false; return accept; }
             if (e.text == Key.Escape && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
+            if (e.text == Key.Escape && root.collection-sheet-open) { root.collection-sheet-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
             if (e.text == Key.Escape && root.delete-open) { root.delete-answered(0); return accept; }
             if (e.text == Key.Escape && root.look-remove-open) { root.look-remove-answered(0); return accept; }
@@ -1759,6 +1798,14 @@ export component App inherits Window {
             }
             if ((e.text == "g" || e.text == "G") && !e.modifiers.control && !root.sheet-open()) {
                 root.grid-open = !root.grid-open;
+                return accept;
+            }
+            // B, as Lightroom has it for its quick collection: the
+            // selection into the collection open, or the last one added
+            // to, or out of it when it is all in it already.
+            if ((e.text == "b" || e.text == "B") && !e.modifiers.control && !e.modifiers.alt
+                && !e.modifiers.meta && !root.sheet-open()) {
+                root.collection-key();
                 return accept;
             }
             // Culling: Return or Escape leaves it on the frame the
@@ -2745,6 +2792,12 @@ export component App inherits Window {
         filter-label-toggled(a) => { root.filter-label-toggled(a); }
         filter-exact-toggled => { root.filter-exact-toggled(); }
         filter-text-edited(a) => { root.filter-text-edited(a); }
+        filter-save-smart => { root.filter-save-smart(); }
+        // No Save... over a collection: its list is no place a filter
+        // can be kept over.
+        filter-can-save: root.collection-open == "";
+        reorder: root.collection-reorder;
+        frame-moved(a, b) => { root.collection-moved(a, b); }
         filter-cleared => { root.filter-cleared(); }
         // Said here only with the pane, which says it under Import,
         // put away.
@@ -2899,6 +2952,20 @@ export component App inherits Window {
                     folded(p) => { root.folder-tree-folded(p); }
                     subfolders-changed => { root.folder-tree-subfolders-changed(); }
                     focus-keys => { keys.focus(); }
+                }
+                // The collections, beside the roots and the folders.
+                if root.grid-open: CollectionsSection {
+                    collections: root.collections;
+                    ctrl-click-menu: root.ctrl-click-menu;
+                    collapsed-collections <=> root.collapsed-collections;
+                    picked(id) => { root.collection-picked(id); }
+                    rename(id) => { root.collection-rename(id); }
+                    delete(id) => { root.collection-delete(id); }
+                    capture-toggled(id) => { root.collection-capture(id); }
+                    add => { root.collection-new(); }
+                    focus-keys => { keys.focus(); }
+                    menu-done => { root.menu-done(); }
+                    menu-shown => { return root.menu-shown(); }
                 }
                 // The presets: a click lays one over the edit, the
                 // bin removes it, and the edit is saved or a
@@ -3168,6 +3235,17 @@ export component App inherits Window {
         preset-saved => { root.preset-saved(); }
     }
 
+    // The collection sheet: a name for a new collection, a smart one
+    // or a renamed one, or whether to delete one.
+    if root.collection-sheet-open: CollectionSheet {
+        open <=> root.collection-sheet-open;
+        title: root.collection-sheet-title;
+        note: root.collection-sheet-note;
+        asks-name: root.collection-sheet-asks-name;
+        verb: root.collection-sheet-verb;
+        name <=> root.collection-sheet-name;
+        done => { root.collection-sheet-done(); }
+    }
     // The root sheet: a root's name, from its row's menu.
     if root.root-sheet-open: RootSheet {
         open <=> root.root-sheet-open;
@@ -3314,6 +3392,10 @@ export component App inherits Window {
         back-count: root.back-count;
         back-to: root.back-to;
         move-back => { root.move-back-asked(); root.menu-done(); }
+        collections: root.collection-names;
+        collection-open: root.collection-open;
+        collection-add(i) => { root.collection-menu-add(i); root.menu-done(); }
+        collection-remove => { root.collection-menu-remove(); root.menu-done(); }
         archive(i) => { root.archive-menu-picked(i); root.menu-done(); }
         copy => { root.menu-copy(); root.menu-done(); }
         paste => { root.paste-asked(); root.menu-done(); }

@@ -12,6 +12,16 @@ note a first tester reads.
 
 ## 0.7.0
 
+### Library
+
+- Collections: gather frames from anywhere in the library into a
+  collection from the frame menu or with B, open it from the left
+  pane's COLLECTIONS list, drag to reorder it; a frame stays in it
+  through a move or another tool's rewrite of the file, and a frame
+  that cannot be found is counted rather than dropped. The filter
+  bar's Save... keeps a filter as a smart collection
+  ([§304](https://github.com/jessolmstead/greycard/blob/master/docs/notes/304-collections-and-smart-collections-built.md))
+
 ### Masks
 
 - A mask has its own Detail: Texture, Clarity and Dehaze beside its

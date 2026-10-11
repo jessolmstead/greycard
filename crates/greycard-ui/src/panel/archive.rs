@@ -209,7 +209,7 @@ pub(crate) fn side(st: &State) -> Side {
             Some(dir) => side_of_path(st, &dir.clone(), Some(dir)),
             None => Side::None,
         },
-        View::Roots(None) => Side::None,
+        View::Roots(None) | View::Collection { .. } => Side::None,
         View::Roots(Some(r)) => side_of_path(st, r, Some(r.clone())),
         View::Branch { folder, .. } => side_of_path(st, folder, Some(folder.clone())),
     }

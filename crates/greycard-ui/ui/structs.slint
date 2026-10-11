@@ -53,6 +53,8 @@ export struct Thumb {
     /// owns what they mean; see `greycard_library::develop_marks`.
     edited: bool,
     exported: bool,
+    /// The picture is in a collection: a third mark beside those two.
+    collected: bool,
 }
 
 /// One of the strip's or the grid's cells: the browser's row it
@@ -124,6 +126,22 @@ export struct FacetChip {
     key: string,
     count: int,
     on: bool,
+}
+
+/// A collection's row in the left pane.
+export struct CollectionChip {
+    /// The id its file is named by.
+    id: string,
+    name: string,
+    /// The sets it sits in, slashed (`Clients/2026`); empty for none.
+    set: string,
+    /// Its frames, the missing among them; unused for a smart one.
+    count: int,
+    on: bool,
+    /// A saved filter, not a list.
+    smart: bool,
+    /// Open, and shown by the time taken rather than its own order.
+    capture: bool,
 }
 
 /// One of the library's roots, as the grid's left pane lists it: the

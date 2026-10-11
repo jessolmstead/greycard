@@ -80,6 +80,10 @@ pub(crate) enum View {
         folder: PathBuf,
         deep: bool,
     },
+    /// A collection, by its id: its pictures from the index, each
+    /// once, in the collection's own order, or with `capture` by the
+    /// time each was taken.
+    Collection { id: String, capture: bool },
 }
 
 impl View {
@@ -97,6 +101,15 @@ impl View {
             View::Roots(None) => (all.to_vec(), false),
             View::Roots(Some(r)) => (vec![r.clone()], false),
             View::Branch { folder, deep, .. } => (vec![folder.clone()], !deep),
+            View::Collection { .. } => (Vec::new(), false),
+        }
+    }
+
+    /// The collection this view shows, by its id.
+    pub(crate) fn collection(&self) -> Option<&str> {
+        match self {
+            View::Collection { id, .. } => Some(id),
+            _ => None,
         }
     }
 }
@@ -824,7 +837,7 @@ pub(crate) fn show(st: &State, app: &App) {
     let on = match &st.view {
         View::Roots(r) => Some(r.clone()),
         View::Branch { root, .. } => Some(Some(root.clone())),
-        View::Folder => None,
+        View::Folder | View::Collection { .. } => None,
     };
     let chips: Vec<RootChip> = roots
         .iter()
@@ -859,6 +872,8 @@ pub(crate) fn show(st: &State, app: &App) {
     crate::tree::show(st, app);
     // The header's Back up or Bring back, by where the view is now.
     crate::panel::archive::show(st, app);
+    // The collection open, lit.
+    crate::panel::collections::show(st, app);
 }
 
 /// A root as its row names it: the name the user gave it, else the
@@ -1215,11 +1230,14 @@ fn remove_listed(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, dir
             st.view = View::Roots(None);
             true
         }
-        View::Roots(_) | View::Branch { .. } => true,
+        View::Roots(_) | View::Branch { .. } | View::Collection { .. } => true,
         View::Folder => false,
     };
     crate::tree::want(&mut st, app);
     show(&st, app);
+    // A row gone with the root, outside any pass's report: the marks
+    // asked again, so no reused row wears a member's.
+    crate::panel::collections::members_changed(&mut st, app);
     drop(st);
     if refresh {
         refresh_view(state, app, worker);
@@ -1274,7 +1292,7 @@ fn open_sheet(st: &State, app: &App, dir: &Path) {
 fn roots_of(st: &State, view: &View) -> Vec<PathBuf> {
     match view {
         View::Folder => Vec::new(),
-        View::Roots(None) => st.library.roots.list().to_vec(),
+        View::Roots(None) | View::Collection { .. } => st.library.roots.list().to_vec(),
         View::Roots(Some(r)) | View::Branch { root: r, .. } => vec![r.clone()],
     }
 }
@@ -1400,6 +1418,21 @@ enum Source {
         only: bool,
         rows: Option<Vec<(PathBuf, RowMeta)>>,
         hide: Vec<PathBuf>,
+    },
+    /// A collection's references, shown from the index's rows: each
+    /// one's file found off the window's thread, on the read's own
+    /// connection ([`crate::collections::resolve`]), unless the window
+    /// has no path to the index and found them itself. What the read
+    /// found moved or rewritten, and how many are missing, come back
+    /// with it for the collection's file and the status line.
+    Collection {
+        /// The collection's id: what the read finds is put into this
+        /// one, whatever view is open when it lands.
+        id: String,
+        refs: Vec<crate::collections::Reference>,
+        capture: bool,
+        archives: Vec<PathBuf>,
+        shown: Option<crate::collections::Shown>,
     },
 }
 
@@ -1530,6 +1563,9 @@ pub(crate) struct Found {
     canonical: Vec<(PathBuf, PathBuf)>,
     on_screen: OnScreen,
     seconds: f64,
+    /// A collection's read: its id, how many of its references are
+    /// missing, and those found moved or rewritten.
+    collection: Option<(String, usize, Vec<crate::collections::Change>)>,
 }
 
 /// One root's look, out on a thread of its own: its answer when it has
@@ -1702,7 +1738,52 @@ impl Look {
             .index
             .as_deref()
             .and_then(|p| greycard_library::Library::open_read_only(p).ok());
-        let files = match self.source {
+        // A collection's references found in the index, here off the
+        // window's thread, and listed from there as a view of the roots
+        // is: each picture once already, so nothing is hidden.
+        let mut collection = None;
+        let source = match self.source {
+            Source::Collection {
+                id,
+                refs,
+                capture,
+                archives,
+                shown,
+            } => {
+                let shown = match shown {
+                    Some(shown) => Some(shown),
+                    None => match lib
+                        .as_ref()
+                        .map(|l| crate::collections::resolve(l, &refs, &away, &archives, capture))
+                    {
+                        Some(Ok(shown)) => Some(shown),
+                        Some(Err(e)) => {
+                            tracing::warn!("library: {e}");
+                            said = Some(format!("the library index could not be read: {e}"));
+                            None
+                        }
+                        None => {
+                            said = Some("the library index could not be read".to_string());
+                            None
+                        }
+                    },
+                };
+                let listed = shown.map(|s| {
+                    collection = Some((id, s.missing, s.changes));
+                    s.listed
+                });
+                Source::Roots {
+                    roots: Vec::new(),
+                    only: false,
+                    rows: Some(listed.unwrap_or_default()),
+                    hide: Vec::new(),
+                }
+            }
+            source => source,
+        };
+        let files = match source {
+            // Listed as rows above; nothing comes this way.
+            Source::Collection { .. } => None,
             Source::Folder(dir) => {
                 // Looked at first, with the roots' wait: a folder on a
                 // share that has gone away does not answer at all, and
@@ -1958,6 +2039,7 @@ impl Look {
             canonical,
             on_screen,
             seconds,
+            collection,
         }
     }
 }
@@ -2038,6 +2120,7 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
         canonical,
         on_screen,
         seconds,
+        collection,
     } = found;
     {
         let st = state.borrow();
@@ -2049,6 +2132,18 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
         if given_up {
             tracing::debug!("library: a read given up on, or overtaken, came in; dropped");
             return;
+        }
+    }
+    // A collection's references found moved or rewritten: its file
+    // takes their new hashes and hints, whatever the list does next.
+    let mut missing = 0;
+    if let Some((id, gone, changes)) = collection {
+        missing = gone;
+        let mut st = state.borrow_mut();
+        // Into the collection the read was of, by its id: a merge read
+        // of one that lands after another was opened is still its own.
+        if st.collections.apply(&id, &changes) {
+            crate::panel::collections::members_changed(&mut st, app);
         }
     }
     // What the read saw is kept only from a read of the list the window
@@ -2132,7 +2227,7 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
                 _ => None,
             };
             if files.is_empty() && bare.is_none() {
-                take_empty(state, app, worker, view, asked);
+                take_empty(state, app, worker, view, asked, missing);
                 return;
             }
             {
@@ -2152,6 +2247,9 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
             show(&st, app);
             if let Some((folder, deep)) = bare {
                 app.set_status(crate::tree::nothing_in(&folder, deep).into());
+            }
+            if let Some(words) = crate::panel::collections::opened_words(&st, missing) {
+                app.set_status(words.into());
             }
         }
         Purpose::Merge => {
@@ -2225,7 +2323,9 @@ fn take_empty(
     worker: &Rc<Worker>,
     view: View,
     asked: Instant,
+    missing: usize,
 ) {
+    let collection = view.collection().is_some();
     let passing = {
         let mut st = state.borrow_mut();
         st.view = view;
@@ -2237,7 +2337,13 @@ fn take_empty(
     st.library.painted = Some((asked, "the view asked for"));
     crate::tree::want(&mut st, app);
     show(&st, app);
-    if passing {
+    if collection {
+        // Nothing in it, or nothing of it to be found: said, and a
+        // capture waiting on it ends as an empty folder's would.
+        let words = crate::panel::collections::opened_words(&st, missing).unwrap_or_default();
+        app.set_status(words.into());
+        st.library.awaiting = false;
+    } else if passing {
         app.set_status("Nothing indexed under the roots yet; the pass is running".into());
     } else {
         empty_view(&mut st, app);
@@ -2260,6 +2366,42 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         return;
     };
     let asked = Instant::now();
+    if let View::Collection { id, capture } = &view {
+        let Some(c) = st.collections.collection(id) else {
+            app.set_status("that collection is gone".into());
+            return;
+        };
+        let refs = c.refs.clone();
+        let archives = st.library.roots.archives().to_vec();
+        // Found off the window's thread when the window knows where the
+        // index is; here only for a window with a reader and no path
+        // (the tests').
+        let shown = if st.index_path.is_some() {
+            None
+        } else {
+            let away: Vec<PathBuf> = st.library.offline.iter().cloned().collect();
+            match crate::collections::resolve(lib, &refs, &away, &archives, *capture) {
+                Ok(shown) => Some(shown),
+                Err(e) => {
+                    tracing::warn!("library: {e}");
+                    app.set_status(format!("the library index could not be read: {e}").into());
+                    loading_done(&mut st.library, app);
+                    return;
+                }
+            }
+        };
+        let count = refs.len();
+        let source = Source::Collection {
+            id: id.clone(),
+            refs,
+            capture: *capture,
+            archives,
+            shown,
+        };
+        drop(st);
+        send_view(state, app, view, source, count, asked, None);
+        return;
+    }
     let (roots, only) = view.listed(st.library.roots.list());
     let at = match roots.as_slice() {
         [one] => one_root_named(&st.library.roots, [one.as_path()]),
@@ -2292,6 +2434,29 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         roots.len(),
         asked.elapsed().as_secs_f64() * 1e3
     );
+    let source = Source::Roots {
+        roots,
+        only,
+        rows,
+        hide: hidden_under(&st, &view),
+    };
+    drop(st);
+    send_view(state, app, view, source, count, asked, at);
+}
+
+/// A view's read sent off the window's thread: the frame on screen kept
+/// when it is in the new list, the folders looked at again, and the bar
+/// put up if the read is slow.
+fn send_view(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    view: View,
+    source: Source,
+    count: usize,
+    asked: Instant,
+    at: Option<String>,
+) {
+    let mut st = state.borrow_mut();
     st.view_generation += 1;
     // The frame on screen stays on screen when it is in the new list;
     // else the last one open, as a folder's open does.
@@ -2317,12 +2482,7 @@ pub(crate) fn open_view(state: &Rc<RefCell<State>>, app: &App, _worker: &Rc<Work
         token: 0,
         epoch: st.library.readable_epoch,
         roots: every_root(&st, &view),
-        source: Source::Roots {
-            roots,
-            only,
-            rows,
-            hide: hidden_under(&st, &view),
-        },
+        source,
         known: HashSet::new(),
         have: HashSet::new(),
         write: st.write_sidecars,
@@ -2613,9 +2773,36 @@ fn ask(st: &State) -> Option<Look> {
                 every_root(st, &st.view),
             )
         }
+        View::Collection { id, capture } => {
+            let lib = st.index_reader.as_ref()?;
+            let refs = st.collections.collection(id)?.refs.clone();
+            let archives = st.library.roots.archives().to_vec();
+            let shown = if st.index_path.is_some() {
+                None
+            } else {
+                let away: Vec<PathBuf> = st.library.offline.iter().cloned().collect();
+                match crate::collections::resolve(lib, &refs, &away, &archives, *capture) {
+                    Ok(shown) => Some(shown),
+                    Err(e) => {
+                        tracing::debug!("library: {e}; the list kept");
+                        return None;
+                    }
+                }
+            };
+            (
+                Source::Collection {
+                    id: id.clone(),
+                    refs,
+                    capture: *capture,
+                    archives,
+                    shown,
+                },
+                every_root(st, &st.view),
+            )
+        }
     };
     let known = match source {
-        Source::Roots { .. } => st.library.readable.clone(),
+        Source::Roots { .. } | Source::Collection { .. } => st.library.readable.clone(),
         Source::Folder(_) | Source::Files(_) => HashSet::new(),
     };
     Some(Look {
@@ -3058,7 +3245,8 @@ pub(crate) fn background_done(
         let worth =
             changed || under_current || failed || over_unreadable || !report.unreadable.is_empty();
         match st.view.clone() {
-            View::Roots(None) => worth,
+            // A collection's frames can be under any root.
+            View::Roots(None) | View::Collection { .. } => worth,
             View::Roots(Some(r)) => worth && (path.starts_with(&r) || r.starts_with(path)),
             // A folder's own list changes only by a pass over it or over
             // a folder above it; with those under it, by one under it too.
@@ -3276,9 +3464,33 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 /// loop would; how many there were.
 #[cfg(test)]
 pub(crate) fn land_sent(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) -> usize {
+    land_sent_in(state, app, worker, false)
+}
+
+/// [`land_sent`], the reads sent landing last first: a thread that was
+/// sent later and came back sooner.
+#[cfg(test)]
+pub(crate) fn land_sent_last_first(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+) -> usize {
+    land_sent_in(state, app, worker, true)
+}
+
+#[cfg(test)]
+fn land_sent_in(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: &Rc<Worker>,
+    reversed: bool,
+) -> usize {
     let mut landed = 0;
     loop {
-        let looks: Vec<Look> = tests::SENT.with(|s| s.borrow_mut().drain(..).collect());
+        let mut looks: Vec<Look> = tests::SENT.with(|s| s.borrow_mut().drain(..).collect());
+        if reversed {
+            looks.reverse();
+        }
         // The folder trees a landing asked for, built and landed with
         // it; not counted, since they are not reads of the list.
         let trees = crate::tree::land_sent(state, app);

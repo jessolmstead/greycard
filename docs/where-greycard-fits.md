@@ -182,7 +182,7 @@ is in `roadmap.md`; nothing planned is counted as done.
 | Denoise | AI, local | conventional | DeepPRIME | profiled | profiled | profiled, and a raw-domain network that runs locally |
 | Masks | AI people, sky, objects | layers | limited | parametric, drawn | local adjustments | gradient, radial, brush, by lightness and color; subject, object, sky and people's parts by model |
 | Retouch | remove, generative | heal, clone | limited | retouch | spot removal | heal, clone, learned fill |
-| Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; browsable offline, archive backup; collections planned |
+| Library | the catalog is the truth | sessions and catalogs | weak | database plus sidecars | file browser | folders as truth, index as cache; browsable offline, archive backup; collections by content, surviving a move |
 | Culling speed | fast, embedded previews | fast | slow | slow | slow | fast, from the embedded JPEG, or a local preview for an offline or network drive |
 | Tethering | basic | the reference | none | gphoto2 | none | planned |
 | Stacking | HDR, panorama | none | none | none | none | focus, from the command line; HDR and panorama planned |
@@ -208,8 +208,8 @@ tone-mapping choice or edit schema in it.
 
 Anyone on an Intel Mac or on Windows for ARM: ort ships no WebGPU
 ONNX Runtime for either, so there is no build. Anyone with a hundred
-thousand rated and keyworded frames in Lightroom, until collections
-and the catalog import exist. Anyone whose camera rawler does not
+thousand rated and keyworded frames in Lightroom, until the catalog
+import exists. Anyone whose camera rawler does not
 decode; support goes upstream to rawler, not into a fork. Anyone who
 wants a phone app, cloud sync, or a preset marketplace, which are not
 planned.
@@ -307,7 +307,8 @@ to the archive's copy when its own drive goes, and its copies of the
 culled rejects moved aside or deleted from the shoot's side; a library
 index that fills the grid's filter with chips for camera, lens, ISO,
 focal length, day and keyword, with a filter language behind the text
-field; a look fitted
+field; collections and smart collections that hold a picture by its
+content and follow it through a move or a rewrite; a look fitted
 from the camera's own JPEG per body and picture style, with a table
 for each display curve; an Auto white
 balance beside Neutral; a value typed into any slider; scopes that can
@@ -315,7 +316,7 @@ be read for the chosen mask alone; and a check at launch for a newer
 release, which can be turned off.
 
 Planned, in order: the tone controls made to feel right; a generative
-fill; the library's collections; a Lightroom catalog
+fill; a Lightroom catalog
 import; HDR merge and panoramas, and the merges in the browser;
 tethering.
 

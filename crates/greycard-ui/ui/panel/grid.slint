@@ -52,6 +52,20 @@ export component GridSheet inherits Rectangle {
                     + floor(self.menu-at / self.grid-cols) * self.grid-row + self.grid-cell / 2);
         }
     }
+    /// The rows are a collection's own order, which a drag changes.
+    in property <bool> reorder;
+    /// A frame dragged from its row to before the row of the slot, or
+    /// to the end for a slot past the last.
+    callback frame-moved(int, int);
+    /// The slot a drag is over, -1 for none.
+    property <int> drop-slot: -1;
+    /// The slot under a point of the sheet: the gap nearest the point
+    /// in its row, held to the list.
+    function slot-at(x: length, y: length) -> int {
+        let col = clamp(round((x - root.grid-left) / root.grid-pitch), 0, root.grid-cols);
+        let row = max(0, floor((y - root.grid-pad - root.grid-top) / root.grid-row));
+        return min(row * root.grid-cols + col, root.thumbs.length);
+    }
     /// How many frames the selection holds, for the header.
     in property <int> set-count;
     in property <int> meta-stars;
@@ -117,6 +131,10 @@ export component GridSheet inherits Rectangle {
     in property <[FacetRow]> filter-facets-short;
     in property <string> filter-facet-note;
     callback filter-facet-toggled(int, string);
+    /// The filter kept as a smart collection: its name asked for.
+    callback filter-save-smart();
+    /// Whether the bar offers Save...: not over a collection.
+    in property <bool> filter-can-save: true;
     callback filter-star-picked(int);
     callback filter-flag-toggled(int);
     callback filter-label-toggled(int);
@@ -355,6 +373,8 @@ export component GridSheet inherits Rectangle {
                     exact-toggled => { root.filter-exact-toggled(); }
                     text-edited(t) => { root.filter-text-edited(t); }
                     cleared => { root.filter-cleared(); }
+                    can-save: root.filter-can-save;
+                    save-smart => { root.filter-save-smart(); }
                     released => { root.focus-keys(); }
                 }
             }
@@ -590,6 +610,7 @@ export component GridSheet inherits Rectangle {
                             max(Theme.space-1, Theme.space-1 + parent.box - self.height));
                         edited: t.edited;
                         exported: t.exported;
+                        collected: t.collected;
                         glyph: clamp(root.grid-cell / 16, 9px, 18px);
                     }
                     // `clicked` carries no modifiers, so the press
@@ -597,14 +618,43 @@ export component GridSheet inherits Rectangle {
                     // A right-click asks for the menu on the press;
                     // a Mac's Control+click is one, and is then not
                     // also a click.
+                    // In a collection's own order a press dragged past
+                    // a few pixels moves the frame, and the set with it
+                    // when it is in the set, to the slot under the
+                    // pointer; the press is then no click.
                     ct := TouchArea {
                         property <bool> ctrl;
                         property <bool> shift;
                         property <bool> menu;
-                        mouse-cursor: MouseCursor.pointer;
+                        property <bool> dragging;
+                        property <bool> dragged;
+                        property <length> down-x;
+                        property <length> down-y;
+                        mouse-cursor: self.dragging ? MouseCursor.grabbing : MouseCursor.pointer;
+                        moved => {
+                            if (!root.reorder || self.menu || !self.pressed) { return; }
+                            if (!self.dragging && abs(self.mouse-x - self.down-x) + abs(self.mouse-y - self.down-y) > 6px) {
+                                self.dragging = true;
+                            }
+                            if (self.dragging) {
+                                root.drop-slot = root.slot-at(cell.x + self.mouse-x, cell.y + self.mouse-y);
+                            }
+                        }
                         pointer-event(e) => {
                             if (root.side-press(e)) { return; }
+                            if (e.kind == PointerEventKind.up && self.dragging) {
+                                self.dragging = false;
+                                self.dragged = true;
+                                let slot = root.drop-slot;
+                                root.drop-slot = -1;
+                                if (slot >= 0) { root.frame-moved(i, slot); }
+                                return;
+                            }
                             if (e.kind == PointerEventKind.down) {
+                                self.dragged = false;
+                                self.dragging = false;
+                                self.down-x = self.mouse-x;
+                                self.down-y = self.mouse-y;
                                 let closing = root.menu-shown();
                                 self.menu = closing || e.button == PointerEventButton.right
                                     || (root.ctrl-click-menu && e.button == PointerEventButton.left
@@ -625,13 +675,23 @@ export component GridSheet inherits Rectangle {
                             }
                         }
                         clicked => {
-                            if (self.menu) { return; }
+                            if (self.menu || self.dragged) { return; }
                             root.focus-keys();
                             root.frame-clicked(i, self.ctrl, self.shift);
                         }
                         // The frame under the pointer, in the loupe.
                         double-clicked => { if (!self.menu) { root.grid-open = false; } }
                     }
+                }
+                // Where a dragged frame would land: a bar in the gap
+                // before the slot.
+                if root.drop-slot >= 0: Rectangle {
+                    x: root.grid-left + mod(root.drop-slot, root.grid-cols) * root.grid-pitch
+                        - root.grid-gap / 2 - 1px;
+                    y: root.grid-pad + root.grid-top + floor(root.drop-slot / root.grid-cols) * root.grid-row;
+                    width: 2px;
+                    height: root.grid-cell;
+                    background: Theme.accent;
                 }
             }
             // The scroll bar, over the cells at the sheet's right edge.

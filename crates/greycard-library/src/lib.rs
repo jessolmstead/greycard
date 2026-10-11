@@ -43,7 +43,7 @@ pub mod thumbs;
 
 pub use filter::{Facet, Filter, ParseError};
 pub use hash::hash_file;
-pub use index::{Progress, Report, TreeWalk, is_indexed_path, read_meta};
+pub use index::{Progress, Rehash, Report, TreeWalk, is_indexed_path, read_meta};
 pub use roots::{BackupDefault, Change, Pairing, Roots, Watcher};
 pub use thumbs::{Thumb, Thumbs};
 
@@ -638,6 +638,15 @@ pub fn pack_turns((turns, flip): (u8, bool)) -> u8 {
 /// The `turns` column as `(turns, flip)`.
 pub fn unpack_turns(packed: u8) -> (u8, bool) {
     (packed % 4, packed & 4 != 0)
+}
+
+/// A file of one content hash, as [`Library::rows_by_hash`] lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HashRow {
+    pub path: PathBuf,
+    /// As [`Exif::taken`] has it.
+    pub taken: Option<String>,
+    pub row: RowMeta,
 }
 
 /// One chip of a facet: a value the files hold and how many hold it.
@@ -1286,6 +1295,44 @@ impl Library {
         let mut stmt = self.conn.prepare_cached(&sql)?;
         let rows = stmt.query_map(params![hash], entry)?;
         Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The files with this content hash that are on disk as the index
+    /// last saw it, by path, each with what its row mirrors of its
+    /// sidecar and when it was taken: where a collection's reference
+    /// can be shown from.
+    pub fn rows_by_hash(&self, hash: &str) -> Result<Vec<HashRow>> {
+        let sql = format!(
+            "SELECT files.path, files.taken, {META_COLUMNS} FROM files WHERE hash = ? \
+             AND missing_since IS NULL ORDER BY files.path"
+        );
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(params![hash], |r| {
+            Ok(HashRow {
+                path: path_from_bytes(&r.get::<_, Vec<u8>>(0)?),
+                taken: r.get(1)?,
+                row: row_meta(r, 2)?,
+            })
+        })?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The rows, missing ones included, whose content hash is one of
+    /// `hashes`: what a browser marks as a collection's member.
+    pub fn ids_by_hashes<'a>(
+        &self,
+        hashes: impl IntoIterator<Item = &'a str>,
+    ) -> Result<HashSet<i64>> {
+        let mut stmt = self
+            .conn
+            .prepare_cached("SELECT id FROM files WHERE hash = ?")?;
+        let mut ids = HashSet::new();
+        for hash in hashes {
+            for id in stmt.query_map(params![hash], |r| r.get::<_, i64>(0))? {
+                ids.insert(id?);
+            }
+        }
+        Ok(ids)
     }
 
     /// The files with this content hash under any of `roots` (canonical,

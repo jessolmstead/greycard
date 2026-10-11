@@ -183,6 +183,10 @@ export component FilterBar inherits Rectangle {
     callback facet-toggled(int, string);
     callback text-edited(string);
     callback cleared();
+    /// Whether the bar offers to keep its filter as a smart
+    /// collection: the grid's does, the CULLING section's does not.
+    in property <bool> can-save: false;
+    callback save-smart();
     /// The field is done with: the window's keys want it back.
     callback released();
     function grab() {
@@ -371,6 +375,11 @@ export component FilterBar inherits Rectangle {
                 color: root.on ? Theme.text : Theme.text-muted;
                 font-size: Theme.font-xs;
                 vertical-alignment: center;
+            }
+            if root.can-save: PanelButton {
+                text: "Save...";
+                enabled: root.on;
+                clicked => { root.released(); root.save-smart(); }
             }
             PanelButton {
                 text: "Clear";

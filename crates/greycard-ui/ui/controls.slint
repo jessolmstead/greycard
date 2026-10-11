@@ -904,8 +904,9 @@ export component ThumbBadges inherits Rectangle {
 export component ThumbMarks inherits Rectangle {
     in property <bool> edited;
     in property <bool> exported;
+    in property <bool> collected;
     in property <length> glyph: 9px;
-    visible: root.edited || root.exported;
+    visible: root.edited || root.exported || root.collected;
     width: marks.preferred-width;
     height: root.glyph + 6px;
     border-radius: Theme.radius-sm;
@@ -930,6 +931,14 @@ export component ThumbMarks inherits Rectangle {
             height: root.glyph;
             accessible-role: image;
             accessible-label: "Exported";
+        }
+        if root.collected: Image {
+            source: @image-url("icons/bookmark.svg");
+            colorize: Theme.text-secondary;
+            width: root.glyph;
+            height: root.glyph;
+            accessible-role: image;
+            accessible-label: "In a collection";
         }
     }
 }

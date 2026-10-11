@@ -88,6 +88,11 @@ pub struct Report {
     pub changed: usize,
     /// Those files, by path: whose pictures are to be made again.
     pub changed_files: Vec<PathBuf>,
+    /// Of those, the ones whose content hash changed with them: another
+    /// tool rewrote the file in place (a metadata write moves the head
+    /// and the size). A collection that holds the old hash takes the
+    /// new one from here, by the path.
+    pub rehashed: Vec<Rehash>,
     /// Files unchanged whose sidecar changed: the meta written again.
     pub meta_refreshed: usize,
     /// Files whose row was right already.
@@ -120,6 +125,16 @@ pub struct Report {
     pub stopped: bool,
 }
 
+/// A file at a path the index knew, rewritten in place so its content
+/// hash is another: the path, the hash the row had and the one it has
+/// now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rehash {
+    pub path: PathBuf,
+    pub old: String,
+    pub new: String,
+}
+
 impl Report {
     /// Files looked at.
     pub fn seen(&self) -> usize {
@@ -132,6 +147,7 @@ impl Report {
         self.carried += other.carried;
         self.changed += other.changed;
         self.changed_files.extend(other.changed_files);
+        self.rehashed.extend(other.rehashed);
         self.meta_refreshed += other.meta_refreshed;
         self.unchanged += other.unchanged;
         self.styled += other.styled;
@@ -227,6 +243,8 @@ struct Row {
     /// The develop key of its edit, as last read; `None` until a pass
     /// reads the sidecar for it (a row from before schema 9).
     develop_key: Option<i64>,
+    /// The content hash the row holds.
+    hash: String,
 }
 
 /// Whether a path is one the index holds: a raw or a picture, as
@@ -592,13 +610,14 @@ fn row_from(r: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<Row> {
         style_read: r.get::<_, i64>(from + 6)? != 0,
         edited: r.get::<_, i64>(from + 7)? != 0,
         develop_key: r.get(from + 8)?,
+        hash: r.get(from + 9)?,
     })
 }
 
 fn rows_in_folder(conn: &Connection, folder: &[u8]) -> Result<HashMap<Vec<u8>, Row>> {
     let mut stmt = conn.prepare_cached(
         "SELECT path, id, size, mtime, sidecar, sidecar_hash, missing_since, style_read, \
-         edited, develop_key FROM files WHERE folder = ?",
+         edited, develop_key, hash FROM files WHERE folder = ?",
     )?;
     let rows = stmt.query_map(params![folder], |r| {
         Ok((r.get::<_, Vec<u8>>(0)?, row_from(r, 1)?))
@@ -611,7 +630,7 @@ fn row_at(conn: &Connection, path: &[u8]) -> Result<Option<Row>> {
     Ok(conn
         .prepare_cached(
             "SELECT id, size, mtime, sidecar, sidecar_hash, missing_since, style_read, \
-             edited, develop_key FROM files WHERE path = ?",
+             edited, develop_key, hash FROM files WHERE path = ?",
         )?
         .query_row(params![path], |r| row_from(r, 0))
         .optional()?)
@@ -1074,6 +1093,7 @@ fn write_looked(
                 if !wrote_since(&snapshot, &row) && !row.same_sidecar(seen.sidecar) {
                     write_meta(tx, row.id, seen)?;
                 }
+                rehashed(report, path, &row.hash, &hash);
                 report.changed += 1;
                 report.changed_files.push(path.to_path_buf());
             }
@@ -1094,6 +1114,7 @@ fn write_looked(
                     } else {
                         let exif = exif.unwrap_or_else(|| probe(path, report));
                         update_file(tx, row.id, size, mtime, &hash, &exif)?;
+                        rehashed(report, path, &row.hash, &hash);
                         report.changed += 1;
                         report.changed_files.push(path.to_path_buf());
                     }
@@ -1161,6 +1182,18 @@ fn write_looked(
         }
     }
     Ok(())
+}
+
+/// A changed file's hash, said in the report when it is not the one the
+/// row had.
+fn rehashed(report: &mut Report, path: &Path, old: &str, new: &str) {
+    if old != new {
+        report.rehashed.push(Rehash {
+            path: path.to_path_buf(),
+            old: old.to_string(),
+            new: new.to_string(),
+        });
+    }
 }
 
 /// The sidecar as the first phase read it, and what the row mirrors of
@@ -3724,6 +3757,51 @@ pub(crate) mod tests {
         let report = lib.index_tree(&dir, &mut quiet()).unwrap();
         assert_eq!(report.changed, 1, "{report:?}");
         assert_eq!(report.changed_files, [dir.join("b.tif")]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A file rewritten in place under its own name is said with the
+    /// hash its row had and the one it has now; a save of its sidecar
+    /// alone, or a pass that finds it as it was, says none.
+    #[test]
+    fn a_file_rewritten_in_place_is_said_with_both_hashes() {
+        let dir = scratch("rehashed");
+        let a = dir.join("a.tif");
+        write_frame(&a, &R5, 1);
+        write_frame(&dir.join("b.tif"), &R6, 2);
+        let mut lib = Library::open_in_memory().unwrap();
+        let first = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert!(first.rehashed.is_empty());
+        let old = lib.by_path(&a).unwrap().unwrap().hash;
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        write_frame(&a, &A7, 3);
+        let new = crate::hash_file(&a).unwrap();
+        assert_ne!(old, new);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(
+            report.rehashed,
+            [Rehash {
+                path: a.clone(),
+                old: old.clone(),
+                new: new.clone()
+            }]
+        );
+        // The rows of the new hash, and none of the old.
+        let rows = lib.rows_by_hash(&new).unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].path, a);
+        assert!(lib.rows_by_hash(&old).unwrap().is_empty());
+        let ids = lib.ids_by_hashes([new.as_str(), old.as_str()]).unwrap();
+        assert_eq!(ids.len(), 1);
+        // Again, nothing changed: nothing said.
+        let again = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert!(again.rehashed.is_empty());
+        // The editor's own row for the file says it too.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        write_frame(&a, &R6, 4);
+        let one = lib.index_file(&a).unwrap();
+        assert_eq!(one.rehashed.len(), 1);
+        assert_eq!(one.rehashed[0].old, new);
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

@@ -160,8 +160,9 @@ pub(crate) enum Told {
         seconds: f64,
         error: Option<String>,
     },
-    /// Rows after saves are up to date.
-    FilesIndexed,
+    /// Rows after saves are up to date, with the files among them found
+    /// rewritten in place since their last pass, for the collections.
+    FilesIndexed(Vec<greycard_library::Rehash>),
     /// The window's own moves are in the rows: the folders they left
     /// and went to, so a root's tree over them is built again. A move
     /// inside a root moves no root's count, and the folder passes
@@ -1027,12 +1028,14 @@ fn serve(
             told(Told::Moved(moved_through));
         }
         if !files.is_empty() {
+            let mut rehashed = Vec::new();
             for f in &files {
-                if let Err(e) = lib.index_file(f) {
-                    tracing::warn!("index: {}: {e}", f.display());
+                match lib.index_file(f) {
+                    Ok(r) => rehashed.extend(r.rehashed),
+                    Err(e) => tracing::warn!("index: {}: {e}", f.display()),
                 }
             }
-            told(Told::FilesIndexed);
+            told(Told::FilesIndexed(rehashed));
         }
         // After the saves: a save of a frame deleted since is a row
         // written for a file that is gone, and this takes it away.
@@ -1413,6 +1416,7 @@ fn window_pass(
                 report.moved += r.moved;
                 report.changed += r.changed;
                 report.changed_files.extend(r.changed_files);
+                report.rehashed.extend(r.rehashed);
                 report.meta_refreshed += r.meta_refreshed;
                 report.unchanged += r.unchanged;
                 report.styled += r.styled;
@@ -1947,6 +1951,7 @@ pub(crate) fn told(app: &App, told: Told) {
             st.index_path = Some(path);
             open_reader(&mut st, app);
             crate::roots::recount(&mut st);
+            crate::panel::collections::members_changed(&mut st, app);
             // The launch's folder, when it lies under a root, has its
             // root's tree once the index can be read.
             crate::tree::want(&mut st, app);
@@ -1982,6 +1987,11 @@ pub(crate) fn told(app: &App, told: Told) {
                     report.missing,
                 ),
             }
+            // A file another tool rewrote in place heals the collections
+            // that hold it, in the same pass that found it; the marks
+            // follow the rows the pass wrote.
+            crate::panel::collections::healed(&state, app, &report.rehashed);
+            crate::panel::collections::report_landed(&mut state.borrow_mut(), app, &report);
             // What the window knew of the folders under the pass is
             // looked at again by the next read.
             crate::roots::folders_passed(&mut state.borrow_mut(), &path);
@@ -2084,6 +2094,11 @@ pub(crate) fn told(app: &App, told: Told) {
             seconds,
             error,
         } => {
+            // Healed whichever folder the pass was over: the file it
+            // found rewritten is rewritten whether or not the window
+            // is still there.
+            crate::panel::collections::healed(&state, app, &report.rehashed);
+            crate::panel::collections::report_landed(&mut state.borrow_mut(), app, &report);
             if generation != state.borrow().index_generation {
                 return;
             }
@@ -2145,7 +2160,15 @@ pub(crate) fn told(app: &App, told: Told) {
             reread(&state, app, chose || moved);
             app.window().request_redraw();
         }
-        Told::FilesIndexed => reread(&state, app, false),
+        Told::FilesIndexed(rehashed) => {
+            // A save's row moves no member unless the file under it was
+            // rewritten: only then are the marks asked again.
+            if !rehashed.is_empty() {
+                crate::panel::collections::healed(&state, app, &rehashed);
+                crate::panel::collections::members_changed(&mut state.borrow_mut(), app);
+            }
+            reread(&state, app, false);
+        }
         Told::Moved(folders) => {
             let mut st = state.borrow_mut();
             for folder in &folders {
@@ -2161,6 +2184,8 @@ pub(crate) fn told(app: &App, told: Told) {
                     crate::tree::passed(&mut st, folder);
                 }
                 crate::tree::want(&mut st, app);
+                // Rows gone outside any pass's report.
+                crate::panel::collections::members_changed(&mut st, app);
             }
             reread(&state, app, false);
         }
@@ -2685,7 +2710,7 @@ mod tests {
         s.meta.rating = 4;
         s.save(&a).unwrap();
         indexer.file(a.clone());
-        wait(&|t| matches!(t, Told::FilesIndexed));
+        wait(&|t| matches!(t, Told::FilesIndexed(_)));
         assert_eq!(reader.by_path(&a).unwrap().unwrap().meta.rating, 4);
         indexer.stop(Duration::from_secs(20));
         drop(reader);

@@ -37,6 +37,15 @@ export component FrameMenu inherits Rectangle {
     in property <int> back-count;
     in property <string> back-to;
     callback move-back();
+    /// The collections filled by hand, by name, for Add to collection;
+    /// the one open in the browser, by name, for Remove from it, empty
+    /// when no collection is open.
+    in property <[string]> collections;
+    in property <string> collection-open;
+    /// Added to the collection at that place in `collections`, or to a
+    /// new one for -1.
+    callback collection-add(int);
+    callback collection-remove();
     callback copy();
     callback paste();
     /// A rating, a flag or a label ("rating", "flag", "label") and its
@@ -111,6 +120,24 @@ export component FrameMenu inherits Rectangle {
                     enabled: root.can-meta && (n > 0 || root.label != 0);
                     activated => { root.meta("label", n); }
                 }
+            }
+            MenuSeparator { }
+            Menu {
+                title: "Add to collection";
+                for name[i] in root.collections: MenuItem {
+                    title: name;
+                    activated => { root.collection-add(i); }
+                }
+                if root.collections.length > 0: MenuSeparator { }
+                MenuItem {
+                    title: "New collection...";
+                    activated => { root.collection-add(-1); }
+                }
+            }
+            if root.collection-open != "": MenuItem {
+                title: (root.count > 1 ? "Remove " + root.count + " frames from " : "Remove from ")
+                    + root.collection-open;
+                activated => { root.collection-remove(); }
             }
             MenuSeparator { }
             MenuItem {

@@ -314,3 +314,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§301. The export sheet names its folder](notes/301-the-export-sheet-names-its-folder.md) (2026-10-11)
 - [§302. Detail in a mask, built](notes/302-detail-in-a-mask-built.md) (2026-10-11)
 - [§303. The brush and the patch size by the wheel's accumulated delta](notes/303-the-brush-and-the-patch-size-by-the-wheels-accumulated-delta.md) (2026-10-11)
+- [§304. Collections and smart collections, built](notes/304-collections-and-smart-collections-built.md) (2026-10-11)

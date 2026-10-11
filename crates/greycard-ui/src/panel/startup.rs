@@ -540,6 +540,15 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // beside the library.
     {
         let mut st = state.borrow_mut();
+        // The collections, kept beside the library whatever the roots,
+        // into the sidebar's model the window already holds.
+        if let Some(path) = &library_path {
+            let (rows, names) = (st.collections.rows.clone(), st.collections.names.clone());
+            st.collections =
+                crate::collections::Store::load(crate::collections::Store::dir_beside(path));
+            (st.collections.rows, st.collections.names) = (rows, names);
+            crate::panel::collections::show(&st, &app);
+        }
         st.library.poll_every = crate::roots::poll_every(remembered.network_poll_minutes);
         if cli.roots.is_empty() {
             if let Some(path) = &library_path {

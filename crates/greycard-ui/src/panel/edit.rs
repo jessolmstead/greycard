@@ -732,6 +732,11 @@ pub(crate) type Fold = (&'static str, fn(&App) -> bool, fn(&App, bool));
 pub(crate) const FOLDS: &[Fold] = &[
     ("roots", App::get_collapsed_roots, App::set_collapsed_roots),
     (
+        "collections",
+        App::get_collapsed_collections,
+        App::set_collapsed_collections,
+    ),
+    (
         "folders",
         App::get_collapsed_folders,
         App::set_collapsed_folders,

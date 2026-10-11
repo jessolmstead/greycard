@@ -1,0 +1,88 @@
+// The collection sheet: a name for a new collection, for the filter
+// saved as a smart one, or for one renamed; or, with no field, whether
+// to delete one. A slash in the name puts it in sets (`Clients/2026/
+// Cover`). Deleting a collection deletes its file and touches no frame.
+
+import { LineEdit } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { PanelButton } from "../controls.slint";
+
+export component CollectionSheet inherits Rectangle {
+    in-out property <bool> open;
+    in property <string> title;
+    /// A line under the title: what is about to happen.
+    in property <string> note;
+    /// The field is there; without it the sheet is a question.
+    in property <bool> asks-name: true;
+    /// The button that answers it: Save, Create, Delete.
+    in property <string> verb: "Save";
+    in-out property <string> name;
+    callback done();
+
+    background: #000000a0;
+    TouchArea { clicked => { root.open = false; } }
+    Rectangle {
+        width: 480px;
+        height: sheet.preferred-height;
+        background: Theme.surface;
+        border-radius: Theme.radius-lg;
+        border-width: 1px;
+        border-color: Theme.border;
+        drop-shadow-blur: 32px;
+        drop-shadow-color: #00000099;
+        TouchArea { }
+        // As the root sheet's: Escape is taken on the card, since the
+        // field has the focus and a key goes up from it.
+        FocusScope {
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.open = false;
+                    return accept;
+                }
+                if (!root.asks-name && e.text == Key.Return) {
+                    root.done();
+                    return accept;
+                }
+                return reject;
+            }
+            init => { if (!root.asks-name) { self.focus(); } }
+            sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                Text {
+                    text: root.title;
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                if root.note != "": Text {
+                    text: root.note;
+                    font-size: Theme.font-xs;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                if root.asks-name: LineEdit {
+                    text <=> root.name;
+                    placeholder-text: "Name, or Set/Name";
+                    accepted(t) => { root.done(); }
+                    init => { self.focus(); self.select-all(); }
+                }
+                Rectangle { height: Theme.space-2; }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.open = false; }
+                    }
+                    PanelButton {
+                        text: root.verb;
+                        primary: true;
+                        enabled: !root.asks-name || root.name != "";
+                        clicked => { root.done(); }
+                    }
+                }
+            }
+        }
+    }
+}
