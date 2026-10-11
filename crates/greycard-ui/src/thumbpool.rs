@@ -263,6 +263,11 @@ struct Pending {
     /// alone.
     edits_busy: usize,
     edits_alone: bool,
+    /// How many times a thread has looked at all of the above and found
+    /// nothing to begin, before it waits: what a test reads to know the
+    /// pool has declined, rather than not yet looked.
+    #[cfg(test)]
+    looked: u64,
     /// The long edge pictures are made at now; `THUMB_WIDTH` until
     /// the grid asks otherwise. Read as each is begun.
     size: Option<u32>,
@@ -653,6 +658,10 @@ fn serve(
                     q.making.push(path.clone());
                     break (index, path, 0, q.epoch, true, What::Edit);
                 }
+                #[cfg(test)]
+                {
+                    q.looked += 1;
+                }
                 // An edit held back only until the editor is quiet is
                 // looked at again then, with nothing else to wake for it.
                 q = match again {
@@ -968,6 +977,29 @@ mod tests {
         }
     }
 
+    /// Wait until a thread, woken now, has looked at the pool as it
+    /// stands and begun nothing: what a test waits on before it
+    /// asserts that something did not start. Needs a thread not at
+    /// work to look.
+    fn settled(pool: &Pool) {
+        let mark = pool.lock().looked;
+        pool.wake();
+        let started = Instant::now();
+        while pool.lock().looked <= mark {
+            assert!(started.elapsed() < WAIT, "the pool never looked again");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
+    /// Wait until no picture is in hand on any thread.
+    fn until_idle(pool: &Pool) {
+        let started = Instant::now();
+        while pool.lock().busy > 0 {
+            assert!(started.elapsed() < WAIT, "still at work");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+    }
+
     /// Wait until `log` holds `n` entries.
     fn until_logged(log: &Mutex<Vec<String>>, n: usize) -> Vec<String> {
         let started = std::time::Instant::now();
@@ -1003,7 +1035,8 @@ mod tests {
         let mut previews = previews.to_vec();
         previews.sort();
         assert_eq!(previews, ["p0", "p1", "p2", "p4", "p5"]);
-        std::thread::sleep(Duration::from_millis(50));
+        until_idle(&pool);
+        settled(&pool);
         assert_eq!(log.lock().unwrap().len(), 11, "one a file, none for 3");
     }
 
@@ -1051,7 +1084,7 @@ mod tests {
         until_logged(&log, 1);
         pool.push(5, file(5));
         assert_eq!(receive(&rx, 1), [(5, true)], "made beside the preview");
-        std::thread::sleep(Duration::from_millis(50));
+        settled(&pool);
         assert_eq!(log.lock().unwrap().len(), 1, "one preview at a time");
         for _ in 0..3 {
             gate_tx.send(()).unwrap();
@@ -1074,11 +1107,11 @@ mod tests {
             pool.push(i, file(i));
         }
         assert_eq!(receive(&rx, 3).len(), 3, "the hits, held");
-        std::thread::sleep(Duration::from_millis(100));
+        settled(&pool);
         assert!(log.lock().unwrap().is_empty(), "no preview while held");
         pool.forget();
         pool.hold(false);
-        std::thread::sleep(Duration::from_millis(100));
+        settled(&pool);
         assert!(log.lock().unwrap().is_empty(), "dropped with the folder");
         pool.push(7, file(7));
         receive(&rx, 1);
@@ -1150,7 +1183,7 @@ mod tests {
             assert_eq!(what, "t");
             thumbs.push(i);
         }
-        std::thread::sleep(Duration::from_millis(50));
+        settled(&pool);
         assert!(log.lock().unwrap().is_empty(), "nothing while held");
         pool.want(2, 3);
         pool.hold(false);
@@ -1191,7 +1224,7 @@ mod tests {
         }
         receive(&rx, 4);
         until_logged(&log, 2);
-        std::thread::sleep(Duration::from_millis(50));
+        settled(&pool);
         assert_eq!(log.lock().unwrap().len(), 2, "two at once, no more");
         pool.push(7, file(7));
         assert_eq!(receive(&rx, 1), [(7, true)], "made beside the edits");
@@ -1216,7 +1249,7 @@ mod tests {
         }
         receive(&rx, 3);
         until_logged(&log, 1);
-        std::thread::sleep(Duration::from_millis(50));
+        settled(&pool);
         assert_eq!(log.lock().unwrap().len(), 1, "one at a time on two");
         for _ in 0..4 {
             gate_tx.send(()).unwrap();
@@ -1249,12 +1282,12 @@ mod tests {
         }
         receive(&rx, 4);
         until_logged(&log, 1);
-        std::thread::sleep(Duration::from_millis(50));
+        settled(&pool);
         assert_eq!(log.lock().unwrap().len(), 1, "one while editing");
         editing.store(false, std::sync::atomic::Ordering::SeqCst);
         pool.wake();
         until_logged(&log, 2);
-        std::thread::sleep(Duration::from_millis(50));
+        settled(&pool);
         assert_eq!(log.lock().unwrap().len(), 2, "two while browsing");
         for _ in 0..4 {
             gate_tx.send(()).unwrap();
@@ -1282,16 +1315,24 @@ mod tests {
         pool.want(0, 3);
         pool.hold(false);
         until_logged(&log, 1);
-        std::thread::sleep(Duration::from_millis(50));
+        settled(&pool);
         assert_eq!(*log.lock().unwrap(), ["e0"], "the network frame alone");
         gate_tx.send(()).unwrap();
         // Then the two local ones together; the second network frame
         // waits for both.
         until_logged(&log, 3);
-        std::thread::sleep(Duration::from_millis(50));
-        assert_eq!(*log.lock().unwrap(), ["e0", "e1", "e3"]);
+        settled(&pool);
+        // Begun together on two threads, so logged in either order.
+        let mut begun = log.lock().unwrap().clone();
+        begun[1..].sort();
+        assert_eq!(begun, ["e0", "e1", "e3"]);
         gate_tx.send(()).unwrap();
-        std::thread::sleep(Duration::from_millis(50));
+        let started = Instant::now();
+        while pool.lock().edits_busy > 1 {
+            assert!(started.elapsed() < WAIT, "one never finished");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        settled(&pool);
         assert_eq!(log.lock().unwrap().len(), 3, "not beside the one left");
         gate_tx.send(()).unwrap();
         until_logged(&log, 4);
