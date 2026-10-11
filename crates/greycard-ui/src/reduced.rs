@@ -54,7 +54,7 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use greycard_core::develop::DevelopSettings;
@@ -461,7 +461,12 @@ pub(crate) struct Reducer {
     lenses: Mutex<Option<Option<Arc<greycard_lens::Database>>>>,
     /// Reads the mask cache; loads no model.
     ai: Mutex<Ai>,
-    pool: rayon::ThreadPool,
+    /// The develops' threads, made on the first develop and not before:
+    /// every worker has a reducer, and a test suite makes a worker a
+    /// test, so a pool built at once is two to eight threads a test
+    /// that nothing joins, and macOS runs out of threads a thousand
+    /// tests in.
+    pool: OnceLock<rayon::ThreadPool>,
     /// The frames whose learned masks the worker was asked for and has
     /// not made yet, with the key they were asked under, so the ask is
     /// made once.
@@ -510,15 +515,10 @@ impl Reducer {
 
     /// A reducer reading the mask cache and the store through `ai`.
     pub(crate) fn with_ai(ai: Ai) -> Self {
-        let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(Self::threads())
-            .thread_name(|n| format!("greycard reduced develop {n}"))
-            .build()
-            .expect("the reduced develops' threads");
         Self {
             lenses: Mutex::new(None),
             ai: Mutex::new(ai),
-            pool,
+            pool: OnceLock::new(),
             asked: Mutex::default(),
             masks_made: Mutex::default(),
             tried: Mutex::default(),
@@ -526,6 +526,17 @@ impl Reducer {
             network: Mutex::default(),
             develops: AtomicUsize::new(0),
         }
+    }
+
+    /// The develops' pool, built on the first call.
+    fn pool(&self) -> &rayon::ThreadPool {
+        self.pool.get_or_init(|| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(Self::threads())
+                .thread_name(|n| format!("greycard reduced develop {n}"))
+                .build()
+                .expect("the reduced develops' threads")
+        })
     }
 
     /// Whether the frame at `path` wants the reduced develop of its
@@ -766,7 +777,7 @@ impl Reducer {
         let started = Instant::now();
         self.develops.fetch_add(1, Ordering::SeqCst);
         let developed = self
-            .pool
+            .pool()
             .install(|| develop(path, &edit, turn, lenses.as_deref()))?;
         let rasters = rasters(
             &mut self.ai.lock().expect("reduced ai"),
@@ -794,7 +805,7 @@ impl Reducer {
             white: developed.white.clone(),
         };
         let made = self
-            .pool
+            .pool()
             .install(|| crate::edited::make(&developed.image, &finish));
         let making =
             started.elapsed().as_secs_f64() - developed.decode - developed.develop - developed.rest;
@@ -830,6 +841,15 @@ impl Reducer {
 
 #[cfg(test)]
 mod tests {
+    /// A reducer makes no threads until its first develop: a suite of
+    /// a thousand tests makes a worker, and so a reducer, in each.
+    #[test]
+    fn a_reducer_has_no_pool_until_it_develops() {
+        let r = Reducer::new();
+        assert!(r.pool.get().is_none());
+        let _ = r.pool();
+        assert!(r.pool.get().is_some());
+    }
     use super::*;
 
     #[test]
