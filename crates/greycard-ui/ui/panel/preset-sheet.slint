@@ -1,23 +1,26 @@
-// The preset sheet: a name and what the preset carries, until saved
-// or left.
+// The preset sheet: a name and what the preset carries (sections,
+// parts of them, masks), until saved or left.
 
 import { LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
 import { PanelButton } from "../controls.slint";
-import { SectionToggles } from "section-toggles.slint";
+import { CarryList } from "carry-list.slint";
+import { CarryRow } from "../structs.slint";
 
 export component PresetSheet inherits Rectangle {
     in-out property <bool> preset-open;
     in-out property <string> preset-name;
-    in-out property <[string]> preset-section-names;
-    in-out property <[bool]> preset-section-on;
-    callback preset-section-toggled(int, bool);
+    in property <[CarryRow]> preset-rows;
+    in property <int> preset-lines;
+    callback preset-row-toggled(int);
+    callback preset-all(bool);
+    callback preset-join-chosen(bool);
     callback preset-saved();
 
     background: #000000a0;
     TouchArea { clicked => { root.preset-open = false; } }
     Rectangle {
-        width: 560px;
+        width: min(680px, root.width - 2 * Theme.space-5);
         height: preset-sheet.preferred-height;
         background: Theme.surface;
         border-radius: Theme.radius-lg;
@@ -58,10 +61,14 @@ export component PresetSheet inherits Rectangle {
                     color: Theme.text-secondary;
                     wrap: word-wrap;
                 }
-                SectionToggles {
-                    names: root.preset-section-names;
-                    on: root.preset-section-on;
-                    toggled(i, on) => { root.preset-section-toggled(i, on); }
+                CarryList {
+                    rows: root.preset-rows;
+                    lines: root.preset-lines;
+                    // The window less the sheet's name, words and buttons.
+                    max-list-height: root.height - 300px;
+                    toggled(i) => { root.preset-row-toggled(i); }
+                    all(on) => { root.preset-all(on); }
+                    join-chosen(join) => { root.preset-join-chosen(join); }
                 }
                 Rectangle { height: Theme.space-2; }
                 HorizontalLayout {

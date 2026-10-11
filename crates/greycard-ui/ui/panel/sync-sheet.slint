@@ -1,12 +1,13 @@
-// The sync sheet: which of the current frame's sections go over the
-// rest of the selection, until applied or left. The preset sheet's
-// twin, with no name to give: nothing is kept but the frames' own
-// sidecars. A paste opens the same sheet, the sections of the frame
-// copied going over the whole selection.
+// The sync sheet: which of the current frame's sections, parts and
+// masks go over the rest of the selection, until applied or left. The
+// preset sheet's twin, with no name to give: nothing is kept but the
+// frames' own sidecars. A paste opens the same sheet, the settings of
+// the frame copied going over the whole selection.
 
 import { Theme } from "../theme.slint";
 import { PanelButton } from "../controls.slint";
-import { SectionToggles } from "section-toggles.slint";
+import { CarryList } from "carry-list.slint";
+import { CarryRow } from "../structs.slint";
 
 export component SyncSheet inherits Rectangle {
     in-out property <bool> sync-open;
@@ -17,15 +18,17 @@ export component SyncSheet inherits Rectangle {
     /// `paste-from`, over the selection.
     in property <bool> paste;
     in property <string> paste-from;
-    in-out property <[string]> sync-section-names;
-    in-out property <[bool]> sync-section-on;
-    callback sync-section-toggled(int, bool);
+    in property <[CarryRow]> sync-rows;
+    in property <int> sync-lines;
+    callback sync-row-toggled(int);
+    callback sync-all(bool);
+    callback sync-join-chosen(bool);
     callback sync-applied();
 
     background: #000000a0;
     TouchArea { clicked => { root.sync-open = false; } }
     Rectangle {
-        width: 560px;
+        width: min(680px, root.width - 2 * Theme.space-5);
         height: sync-sheet.preferred-height;
         background: Theme.surface;
         border-radius: Theme.radius-lg;
@@ -34,44 +37,60 @@ export component SyncSheet inherits Rectangle {
         drop-shadow-blur: 32px;
         drop-shadow-color: #00000099;
         TouchArea { }
-        sync-sheet := VerticalLayout {
-            padding: Theme.space-5;
-            spacing: Theme.space-3;
-            Text {
-                text: root.paste ? "Paste settings from " + root.paste-from : "Sync settings";
-                font-size: Theme.font-lg;
-                font-weight: Theme.weight-medium;
-                color: Theme.text;
-            }
-            Text {
-                text: root.sync-text;
-                font-size: Theme.font-sm;
-                color: Theme.text;
-                wrap: word-wrap;
-            }
-            Text {
-                text: "Crop and retouch never copy; camera profiles only to the same camera.";
-                font-size: Theme.font-xs;
-                color: Theme.text-secondary;
-                wrap: word-wrap;
-            }
-            SectionToggles {
-                names: root.sync-section-names;
-                on: root.sync-section-on;
-                toggled(i, on) => { root.sync-section-toggled(i, on); }
-            }
-            Rectangle { height: Theme.space-2; }
-            HorizontalLayout {
-                spacing: Theme.space-2;
-                PanelButton {
-                    text: "Cancel";
-                    clicked => { root.sync-open = false; }
+        // A check has the focus, and a key goes up from it and never
+        // reaches the window's keys: Escape is taken here, on the card,
+        // so a click beside it still reaches the scrim.
+        FocusScope {
+            key-pressed(e) => {
+                if (e.text == Key.Escape) {
+                    root.sync-open = false;
+                    return accept;
                 }
-                PanelButton {
-                    text: root.paste ? "Paste" : "Apply";
-                    icon: @image-url("../icons/layers.svg");
-                    primary: true;
-                    clicked => { root.sync-applied(); }
+                return reject;
+            }
+            sync-sheet := VerticalLayout {
+                padding: Theme.space-5;
+                spacing: Theme.space-3;
+                Text {
+                    text: root.paste ? "Paste settings from " + root.paste-from : "Sync settings";
+                    font-size: Theme.font-lg;
+                    font-weight: Theme.weight-medium;
+                    color: Theme.text;
+                }
+                Text {
+                    text: root.sync-text;
+                    font-size: Theme.font-sm;
+                    color: Theme.text;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: "Crop and retouch never copy; camera profiles only to the same camera. A part copied alone leaves the rest of its section as each frame has it.";
+                    font-size: Theme.font-xs;
+                    color: Theme.text-secondary;
+                    wrap: word-wrap;
+                }
+                CarryList {
+                    rows: root.sync-rows;
+                    lines: root.sync-lines;
+                    // The window less the sheet's words and buttons.
+                    max-list-height: root.height - 300px;
+                    toggled(i) => { root.sync-row-toggled(i); }
+                    all(on) => { root.sync-all(on); }
+                    join-chosen(join) => { root.sync-join-chosen(join); }
+                }
+                Rectangle { height: Theme.space-2; }
+                HorizontalLayout {
+                    spacing: Theme.space-2;
+                    PanelButton {
+                        text: "Cancel";
+                        clicked => { root.sync-open = false; }
+                    }
+                    PanelButton {
+                        text: root.paste ? "Paste" : "Apply";
+                        icon: @image-url("../icons/layers.svg");
+                        primary: true;
+                        clicked => { root.sync-applied(); }
+                    }
                 }
             }
         }

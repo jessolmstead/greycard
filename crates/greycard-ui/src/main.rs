@@ -16,6 +16,7 @@ mod agx;
 mod ai;
 mod archive;
 mod camera_match;
+mod carry;
 mod cells;
 mod clipboard;
 mod cull;
@@ -994,19 +995,22 @@ pub(crate) struct State {
     /// The presets, as the store lists them, and the store.
     pub(crate) presets: Vec<Entry>,
     pub(crate) preset_store: Option<preset::Store>,
-    /// The save sheet's choice of sections, in `Section::ALL`'s order.
-    pub(crate) preset_sections: Rc<VecModel<bool>>,
-    /// The sync sheet's, the same way.
-    pub(crate) sync_sections: Rc<VecModel<bool>>,
+    /// The save sheet's checks of sections, parts and masks, and the
+    /// rows the sheet shows of them (`carry`).
+    pub(crate) preset_checks: carry::Checks,
+    pub(crate) preset_rows: carry::Shown,
+    /// The sync sheet's, the same way; a paste's too.
+    pub(crate) sync_checks: carry::Checks,
+    pub(crate) sync_rows: carry::Shown,
     /// The frame and the targets the sync sheet was opened on, so an
     /// Apply can refuse a selection that moved under it.
     pub(crate) sync_asked: Option<(usize, Vec<usize>)>,
     /// The same for a paste: the frame on screen and the frames the
     /// sheet named, so an Apply can refuse a selection that moved.
     pub(crate) paste_asked: Option<(usize, Vec<usize>)>,
-    /// The sections the last sync or paste laid over the selection,
+    /// The checks the last sync or paste laid over the selection,
     /// for the session: a paste's sheet opens with them.
-    pub(crate) sync_last: Option<Vec<Section>>,
+    pub(crate) sync_last: Option<carry::Checks>,
     /// The settings clipboard: an edit copied from a frame, to paste
     /// over the selection (`clipboard`). The session's, never the
     /// system's.
@@ -1262,8 +1266,10 @@ impl State {
             settings_file: None,
             presets: Vec::new(),
             preset_store: None,
-            preset_sections: Rc::new(VecModel::from(vec![false; Section::ALL.len()])),
-            sync_sections: Rc::new(VecModel::from(vec![false; Section::ALL.len()])),
+            preset_checks: carry::Checks::new(Vec::new(), |_| false),
+            preset_rows: carry::Shown::default(),
+            sync_checks: carry::Checks::new(Vec::new(), |_| false),
+            sync_rows: carry::Shown::default(),
             sync_asked: None,
             paste_asked: None,
             sync_last: None,

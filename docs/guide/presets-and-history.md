@@ -13,8 +13,9 @@ The section's heading shows the zoom.
 ## Presets
 
 A preset is a named part of an edit: some sections of it, such as
-**Light** and **Grain**, with your settings. Applying one replaces
-those sections of the frame's edit and leaves the rest alone.
+**Light** and **Grain**, or single sliders of a section, such as
+**Dehaze**, with your settings. Applying one replaces those sections
+and sliders of the frame's edit and leaves the rest alone.
 
 ### Applying a preset
 
@@ -39,18 +40,29 @@ everything they set.
 1. Edit a frame until you like it.
 2. Press **Save...** under the list.
 3. Give the preset a name.
-4. Tick the sections it should carry. They start ticked where your edit
-   differs from the defaults, so the preset holds what you did and
-   nothing else.
+4. Tick what it should carry. Each section is a heading with its
+   sliders under it (Detail: Texture, Clarity, Dehaze), each with its
+   own tick; the heading's tick takes or leaves the whole section, and
+   shows a dash when only some of it is ticked. They start ticked
+   where your edit differs from the defaults, so the preset holds what
+   you did and nothing else. **Check all** and **Uncheck all** set
+   every tick at once.
 5. Press **Save**.
 
 Saving under a name that is already in the list replaces that preset.
 
 Some sections are never ticked for you, because they belong to one
 picture more than to a look: **White balance**, **Lens**,
-**Demosaic**, **Camera profile** and **Adjustments** (the masks). Tick
-them yourself if you want them. A preset never carries the crop, the
-straighten or the retouch, and never the **Display curve** switch.
+**Demosaic**, **Camera profile** and **Masks**. Tick them yourself if
+you want them. Under **Masks** each of the frame's masks is listed by
+name, so a preset can carry one mask alone, and **Replace masks** or
+**Add to masks** says whether the preset's masks take the place of a
+frame's own or join them.
+
+A slider carried alone leaves the rest of its section, and the
+section's switch, as the frame has them. A preset never carries the
+crop, the straighten or the retouch, and never the **Display curve**
+switch.
 
 A preset's **Noise** carries the noise reduction but not the learned
 denoiser, which each frame sets from its own ISO.
@@ -185,9 +197,15 @@ Sync copies the open frame's edit onto the other selected frames.
 3. Press **Sync...** under PRESETS, or **Ctrl+Shift+S**.
 4. Tick the sections to copy, and press **Apply**.
 
-Every section starts ticked except **Adjustments (replaces masks)**,
-because masks are drawn around one picture's subject. Ticking it
-replaces each frame's own masks with the open frame's.
+Every section starts ticked except **Masks**, because masks are drawn
+around one picture's subject. The sheet lists what a preset's does: a
+heading a section, its sliders under it, the open frame's masks by
+name, **Check all** and **Uncheck all**. Untick a slider and only the
+rest of its section goes; tick a single mask and only that mask goes.
+**Replace masks** (the default) takes each frame's own masks away;
+**Add to masks** keeps them and puts the copied ones after. A Sky,
+Subject or People mask carries what it asks for and is found again on
+each frame.
 
 - The crop, the straighten and the retouch are never copied.
 - A camera profile goes only to frames from the same camera. The status
@@ -204,10 +222,10 @@ frames it names are the frames it syncs.
 
 - **Ctrl+C** copies the open frame's whole edit.
 - **Ctrl+V** opens the same sheet, titled **Paste settings from** the
-  copied frame, over the selected frames. Tick the sections and press
+  copied frame, over the selected frames. Tick what to paste and press
   **Paste**.
 
-The sections start as your last sync or paste left them. A paste
+The ticks start as your last sync or paste left them. A paste
 follows the sync's rules: crop, straighten and retouch stay each
 frame's own, and each frame gets one step, "Paste from" the frame you
 copied. The frame you copied from is left as it is.

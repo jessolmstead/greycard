@@ -262,6 +262,7 @@ coarser edge, and clicks can only remove sky.
 ## Masks and other frames
 
 Masks are drawn around one picture, so syncing settings onto other
-frames leaves them out unless you tick **Adjustments (replaces
-masks)**, which replaces each frame's own masks. See
+frames leaves them out unless you tick **Masks**, or one mask under
+it by name. **Replace masks** takes each frame's own away; **Add to
+masks** keeps them and puts the copied ones after. See
 [Presets and history](presets-and-history.md).

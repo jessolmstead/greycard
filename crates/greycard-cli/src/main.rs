@@ -1596,9 +1596,20 @@ fn print_path(path: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
-/// A preset's sections, in a row.
+/// A preset's sections, in a row, then its parts each under its
+/// section's name ("Detail: Dehaze").
 fn section_names(preset: &greycard_edit::Preset) -> String {
-    let names: Vec<&str> = preset.sections.iter().map(|s| s.title()).collect();
+    let names: Vec<String> = preset
+        .sections
+        .iter()
+        .map(|s| s.title().to_string())
+        .chain(
+            preset
+                .parts
+                .iter()
+                .map(|p| format!("{}: {}", p.section().title(), p.title())),
+        )
+        .collect();
     if names.is_empty() {
         "nothing".into()
     } else {

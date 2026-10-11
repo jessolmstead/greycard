@@ -232,10 +232,9 @@ pub(crate) fn import_preset(st: &mut State, app: &App, path: &Path) {
     let name = imported.preset.name.clone();
     match store.save(&imported.preset) {
         Ok(_) => {
-            let sections = imported.preset.sections.len();
             let mut status = format!(
-                "imported {name} ({sections} section{})",
-                if sections == 1 { "" } else { "s" }
+                "imported {name} ({})",
+                preset::carried_words(imported.preset.sections.len(), imported.preset.parts.len())
             );
             if !imported.unmapped.is_empty() {
                 status.push_str(&format!(
@@ -456,6 +455,33 @@ fn fitted_note(st: &State, shown: Option<&greycard_edit::look::Entry>) -> String
     shown
         .and_then(|e| e.fitted_note(&camera))
         .unwrap_or_default()
+}
+
+/// The checks the save sheet opens with over `edit`: of the sections a
+/// preset carries by default, those the edit changed; of one with
+/// parts, the parts it changed, or all of them when only the section's
+/// switch is changed. The masks listed, none checked.
+pub(crate) fn preset_checks(edit: &Edit) -> crate::carry::Checks {
+    let plain = Edit::default();
+    crate::carry::Checks::from_fn(crate::carry::masks_of(edit), |s, j| {
+        if !s.by_default() || s.same(edit, &plain) {
+            return false;
+        }
+        let changed: Vec<bool> = s.parts().map(|p| !p.same(edit, &plain)).collect();
+        if changed.iter().any(|c| *c) {
+            changed[j]
+        } else {
+            true
+        }
+    })
+}
+
+/// Put the save sheet's checks on the sheet.
+pub(crate) fn show_preset_checks(st: &mut State, app: &App) {
+    let st = &mut *st;
+    let lines = st.preset_rows.show(&st.preset_checks);
+    app.set_preset_rows(ModelRc::from(st.preset_rows.model.clone()));
+    app.set_preset_lines(lines);
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
@@ -716,21 +742,51 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             }
             // On to start: what the edit changed, of the sections a
-            // preset carries by default.
+            // preset carries by default, and of a section with parts
+            // the parts it changed.
             let edit = read_edit(&app, &st.edit, st.target);
-            let plain = Edit::default();
-            for (i, s) in Section::ALL.iter().enumerate() {
-                st.preset_sections
-                    .set_row_data(i, s.by_default() && !s.same(&edit, &plain));
-            }
+            drop(st);
+            let mut st = state.borrow_mut();
+            st.preset_checks = preset_checks(&edit);
+            show_preset_checks(&mut st, &app);
             app.set_preset_name("".into());
             app.set_preset_open(true);
         });
     }
+    // The sheet's checks: a row, all of them, and how the masks land.
     {
-        let state = state.clone();
-        app.on_preset_section_toggled(move |i, on| {
-            state.borrow().preset_sections.set_row_data(i as usize, on);
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_preset_row_toggled(move |i| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            if let Some(target) = st.preset_rows.target(i) {
+                st.preset_checks.toggle(target);
+                show_preset_checks(&mut st, &app);
+            }
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_preset_all(move |on| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            st.preset_checks.set_all(on);
+            show_preset_checks(&mut st, &app);
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_preset_join_chosen(move |join| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            st.preset_checks.join = join;
+            show_preset_checks(&mut st, &app);
         });
     }
     {
@@ -745,27 +801,21 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.set_status("a preset needs a name".into());
                 return;
             }
-            let sections: Vec<Section> = Section::ALL
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| st.preset_sections.row_data(*i).unwrap_or(false))
-                .map(|(_, s)| *s)
-                .collect();
-            if sections.is_empty() {
+            let choice = st.preset_checks.choice();
+            if choice.is_empty() {
                 app.set_status("choose what the preset carries".into());
                 return;
             }
             let edit = read_edit(&app, &st.edit, st.target);
-            let preset = Preset::from_edit(&name, &edit, &sections);
+            let preset = Preset::from_choice(&name, &edit, &choice);
             app.set_preset_open(false);
             match st.preset_store.as_ref().map(|s| s.save(&preset)) {
                 Some(Ok(path)) => {
                     app.set_status(
                         format!(
-                            "saved {} ({} section{}) to {}",
+                            "saved {} ({}) to {}",
                             preset.name,
-                            sections.len(),
-                            if sections.len() == 1 { "" } else { "s" },
+                            choice.words(),
                             path.display()
                         )
                         .into(),
@@ -1122,6 +1172,26 @@ mod tests {
         assert_eq!(state.borrow().presets.len(), 2);
         assert_eq!(app.get_preset_confirm_remove(), -1);
         let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A preset of parts alone, imported, says what it carries.
+    #[test]
+    fn an_imported_preset_of_parts_says_its_parts() {
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::retouch_state(&app);
+        let d = crate::testing::scratch_dir("preset-import-parts");
+        std::fs::create_dir_all(&d).unwrap();
+        let file = d.join("haze.gcp");
+        std::fs::write(
+            &file,
+            r#"{"name": "Haze", "sections": [], "parts": ["detail.dehaze"],
+                "edit": {"detail": {"dehaze": 0.3}}}"#,
+        )
+        .unwrap();
+        state.borrow_mut().preset_store = Some(preset::Store::at(d.join("store")));
+        import_preset(&mut state.borrow_mut(), &app, &file);
+        assert_eq!(app.get_status(), "imported Haze (1 part)");
+        crate::testing::remove_dir_retry(&d);
     }
 
     /// A bin asks and removes nothing; the Remove that names the

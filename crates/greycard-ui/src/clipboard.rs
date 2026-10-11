@@ -1,13 +1,13 @@
 //! The settings clipboard: one frame's edit, copied whole, waiting to
 //! be pasted over the selection.
 //!
-//! A paste is a sync with the clipboard between: the sections chosen
-//! on the sync sheet are laid over each frame of the selection by the
-//! same `panel::sync::lay_over_targets` a sync runs, geometry and
-//! retouch left out as a sync leaves them, each frame's step named
-//! "Paste from" the frame copied. The copy is the whole edit, not the
-//! sections: which sections go is asked at the paste, when the frames
-//! they go onto are known.
+//! A paste is a sync with the clipboard between: the sections, parts
+//! and masks chosen on the sync sheet are laid over each frame of the
+//! selection by the same `panel::sync::lay_over_targets` a sync runs,
+//! geometry and retouch left out as a sync leaves them, each frame's
+//! step named "Paste from" the frame copied. The copy is the whole
+//! edit, not the sections: what goes is asked at the paste, when the
+//! frames it goes onto are known.
 //!
 //! It lives in the editor's state, not on the system's clipboard. An
 //! edit is not text, nothing else on the desktop reads it, and a
@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 
 use greycard_edit::history::paste_label;
-use greycard_edit::preset::Section;
+use greycard_edit::preset::{Choice, Section};
 use greycard_edit::{Edit, Preset};
 
 /// A frame's edit, copied, and the file it was copied from.
@@ -69,11 +69,12 @@ impl Clipboard {
             .collect()
     }
 
-    /// The chosen `sections` of the copied edit, as the preset a
-    /// paste lays over each frame: `Preset::from_edit`, as a sync
-    /// builds its own, so a section means the same thing either way.
-    pub(crate) fn preset(&self, sections: &[Section]) -> Preset {
-        Preset::from_edit("", &self.edit, sections)
+    /// What `choice` picks of the copied edit, as the preset a paste
+    /// lays over each frame: `Preset::from_choice`, as a sync builds
+    /// its own, so a section, a part or a mask means the same thing
+    /// either way.
+    pub(crate) fn preset(&self, choice: &Choice) -> Preset {
+        Preset::from_choice("", &self.edit, choice)
     }
 
     /// The source a paste's Noise carries the learned denoiser from,
@@ -153,7 +154,7 @@ mod tests {
         onto.geometry.angle = -4.0;
         // Light alone: the exposure goes, the color and the crop's
         // angle stay the frame's own.
-        let light = clip.preset(&[Section::Light]);
+        let light = clip.preset(&Choice::whole(&[Section::Light]));
         let out = clip.applied(&light, &onto);
         assert_eq!(out.light.exposure, 0.7);
         assert_eq!(out.color.saturation, onto.color.saturation);
@@ -163,7 +164,7 @@ mod tests {
         // Everything a sync offers: still no geometry, and Noise
         // brings the learned denoiser as a sync's does.
         let all: Vec<Section> = Section::ALL.to_vec();
-        let every = clip.preset(&all);
+        let every = clip.preset(&Choice::whole(&all));
         let out = clip.applied(&every, &onto);
         assert_eq!(out.color.saturation, -0.3);
         assert_eq!(out.geometry.angle, -4.0);

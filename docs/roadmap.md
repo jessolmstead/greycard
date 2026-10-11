@@ -54,12 +54,6 @@ and smart collections that survive a move.
       changes the hash, a hand order of their own; a sidebar list, add
       and remove from the grid and the strip, a smart one saved from
       the filter bar (§273)
-- [ ] The copy settings sheet: check and uncheck all; each section a
-      heading with its sliders under it (Detail: Texture, Clarity,
-      Dehaze; Light: the six; and so on) so one slider can be copied
-      alone; "Adjustments" named Masks, with each mask listed by name
-      to copy on its own, and whether the masks replace the target's
-      or join them; the same list for a preset's parts
 
 ## Tracks
 

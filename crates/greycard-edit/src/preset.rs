@@ -46,6 +46,7 @@ pub enum Section {
 impl Section {
     /// In the panel's order.
     pub const ALL: &[Section] = &[
+        Section::Look,
         Section::WhiteBalance,
         Section::Light,
         Section::Color,
@@ -54,7 +55,6 @@ impl Section {
         Section::BlackWhite,
         Section::Grading,
         Section::Tint,
-        Section::Look,
         Section::Noise,
         Section::Lens,
         Section::Detail,
@@ -110,7 +110,7 @@ impl Section {
             Section::Grain => "Grain",
             Section::Demosaic => "Demosaic",
             Section::Camera => "Camera profile",
-            Section::Adjustments => "Adjustments",
+            Section::Adjustments => "Masks",
         }
     }
 
@@ -224,6 +224,480 @@ impl Section {
     }
 }
 
+/// A part of a section: one slider, or the few settings that make one
+/// control in the panel, to carry alone, the rest of its section left
+/// as the picture has it. A section with one control has none and goes
+/// whole. The section's own switch is not a part: it goes only with
+/// the whole section, so a part laid over a picture whose section is
+/// off is there, and shows, once the section is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Part {
+    LightExposure,
+    LightContrast,
+    LightHighlights,
+    LightShadows,
+    LightWhites,
+    LightBlacks,
+    ColorVibrance,
+    ColorSaturation,
+    CurvesParametric,
+    CurvesRgb,
+    CurvesRed,
+    CurvesGreen,
+    CurvesBlue,
+    CurvesRedGreen,
+    CurvesBlueYellow,
+    /// One hue band of the mixer, its hue, saturation and luminance
+    /// together, in `mixer::Band::ALL`'s order.
+    MixerRed,
+    MixerOrange,
+    MixerYellow,
+    MixerGreen,
+    MixerAqua,
+    MixerBlue,
+    MixerPurple,
+    MixerMagenta,
+    /// The eight bands' weights into the grey.
+    BlackWhiteWeights,
+    BlackWhiteStrength,
+    GradingShadows,
+    GradingMidtones,
+    GradingHighlights,
+    GradingBalance,
+    /// The profile's switch and its distortion.
+    LensProfile,
+    /// The profile's vignetting.
+    LensVignetting,
+    /// The profile's lateral chromatic aberration and the one set by
+    /// hand.
+    LensChromaticAberration,
+    /// The distortion set by hand.
+    LensDistortion,
+    LensScale,
+    /// The defringe, its switch and its windows.
+    LensDefringe,
+    DetailTexture,
+    DetailClarity,
+    DetailDehaze,
+    VignetteAmount,
+    VignetteMidpoint,
+    VignetteFeather,
+    VignetteRoundness,
+    GrainAmount,
+    GrainSize,
+    GrainKind,
+}
+
+/// The mixer's parts, band by band.
+const MIXER_PARTS: [Part; crate::mixer::BANDS] = [
+    Part::MixerRed,
+    Part::MixerOrange,
+    Part::MixerYellow,
+    Part::MixerGreen,
+    Part::MixerAqua,
+    Part::MixerBlue,
+    Part::MixerPurple,
+    Part::MixerMagenta,
+];
+
+impl Part {
+    /// Every part, in the panel's order: by section as
+    /// [`Section::ALL`] has them, then down the section.
+    pub const ALL: &[Part] = &[
+        Part::LightExposure,
+        Part::LightContrast,
+        Part::LightHighlights,
+        Part::LightShadows,
+        Part::LightWhites,
+        Part::LightBlacks,
+        Part::ColorVibrance,
+        Part::ColorSaturation,
+        Part::CurvesParametric,
+        Part::CurvesRgb,
+        Part::CurvesRed,
+        Part::CurvesGreen,
+        Part::CurvesBlue,
+        Part::CurvesRedGreen,
+        Part::CurvesBlueYellow,
+        Part::MixerRed,
+        Part::MixerOrange,
+        Part::MixerYellow,
+        Part::MixerGreen,
+        Part::MixerAqua,
+        Part::MixerBlue,
+        Part::MixerPurple,
+        Part::MixerMagenta,
+        Part::BlackWhiteWeights,
+        Part::BlackWhiteStrength,
+        Part::GradingShadows,
+        Part::GradingMidtones,
+        Part::GradingHighlights,
+        Part::GradingBalance,
+        Part::LensProfile,
+        Part::LensVignetting,
+        Part::LensChromaticAberration,
+        Part::LensDistortion,
+        Part::LensScale,
+        Part::LensDefringe,
+        Part::DetailTexture,
+        Part::DetailClarity,
+        Part::DetailDehaze,
+        Part::VignetteAmount,
+        Part::VignetteMidpoint,
+        Part::VignetteFeather,
+        Part::VignetteRoundness,
+        Part::GrainAmount,
+        Part::GrainSize,
+        Part::GrainKind,
+    ];
+
+    /// The section it is a part of.
+    pub fn section(self) -> Section {
+        use Part::*;
+        match self {
+            LightExposure | LightContrast | LightHighlights | LightShadows | LightWhites
+            | LightBlacks => Section::Light,
+            ColorVibrance | ColorSaturation => Section::Color,
+            CurvesParametric | CurvesRgb | CurvesRed | CurvesGreen | CurvesBlue
+            | CurvesRedGreen | CurvesBlueYellow => Section::Curves,
+            MixerRed | MixerOrange | MixerYellow | MixerGreen | MixerAqua | MixerBlue
+            | MixerPurple | MixerMagenta => Section::Mixer,
+            BlackWhiteWeights | BlackWhiteStrength => Section::BlackWhite,
+            GradingShadows | GradingMidtones | GradingHighlights | GradingBalance => {
+                Section::Grading
+            }
+            LensProfile
+            | LensVignetting
+            | LensChromaticAberration
+            | LensDistortion
+            | LensScale
+            | LensDefringe => Section::Lens,
+            DetailTexture | DetailClarity | DetailDehaze => Section::Detail,
+            VignetteAmount | VignetteMidpoint | VignetteFeather | VignetteRoundness => {
+                Section::Vignette
+            }
+            GrainAmount | GrainSize | GrainKind => Section::Grain,
+        }
+    }
+
+    /// The serialized name: the section's, a dot, the part's.
+    pub fn name(self) -> &'static str {
+        use Part::*;
+        match self {
+            LightExposure => "light.exposure",
+            LightContrast => "light.contrast",
+            LightHighlights => "light.highlights",
+            LightShadows => "light.shadows",
+            LightWhites => "light.whites",
+            LightBlacks => "light.blacks",
+            ColorVibrance => "color.vibrance",
+            ColorSaturation => "color.saturation",
+            CurvesParametric => "curves.parametric",
+            CurvesRgb => "curves.rgb",
+            CurvesRed => "curves.red",
+            CurvesGreen => "curves.green",
+            CurvesBlue => "curves.blue",
+            CurvesRedGreen => "curves.red-green",
+            CurvesBlueYellow => "curves.blue-yellow",
+            MixerRed => "mixer.red",
+            MixerOrange => "mixer.orange",
+            MixerYellow => "mixer.yellow",
+            MixerGreen => "mixer.green",
+            MixerAqua => "mixer.aqua",
+            MixerBlue => "mixer.blue",
+            MixerPurple => "mixer.purple",
+            MixerMagenta => "mixer.magenta",
+            BlackWhiteWeights => "black-and-white.weights",
+            BlackWhiteStrength => "black-and-white.strength",
+            GradingShadows => "grading.shadows",
+            GradingMidtones => "grading.midtones",
+            GradingHighlights => "grading.highlights",
+            GradingBalance => "grading.balance",
+            LensProfile => "lens.profile",
+            LensVignetting => "lens.vignetting",
+            LensChromaticAberration => "lens.chromatic-aberration",
+            LensDistortion => "lens.distortion",
+            LensScale => "lens.scale",
+            LensDefringe => "lens.defringe",
+            DetailTexture => "detail.texture",
+            DetailClarity => "detail.clarity",
+            DetailDehaze => "detail.dehaze",
+            VignetteAmount => "vignette.amount",
+            VignetteMidpoint => "vignette.midpoint",
+            VignetteFeather => "vignette.feather",
+            VignetteRoundness => "vignette.roundness",
+            GrainAmount => "grain.amount",
+            GrainSize => "grain.size",
+            GrainKind => "grain.kind",
+        }
+    }
+
+    /// The panel's word for it, under its section's.
+    pub fn title(self) -> &'static str {
+        use Part::*;
+        match self {
+            LightExposure => "Exposure",
+            LightContrast => "Contrast",
+            LightHighlights => "Highlights",
+            LightShadows => "Shadows",
+            LightWhites => "Whites",
+            LightBlacks => "Blacks",
+            ColorVibrance => "Vibrance",
+            ColorSaturation => "Saturation",
+            CurvesParametric => "Parametric",
+            CurvesRgb => "RGB",
+            CurvesRed => "Red",
+            CurvesGreen => "Green",
+            CurvesBlue => "Blue",
+            CurvesRedGreen => "R/G",
+            CurvesBlueYellow => "B/Y",
+            MixerRed => "Red",
+            MixerOrange => "Orange",
+            MixerYellow => "Yellow",
+            MixerGreen => "Green",
+            MixerAqua => "Aqua",
+            MixerBlue => "Blue",
+            MixerPurple => "Purple",
+            MixerMagenta => "Magenta",
+            BlackWhiteWeights => "Weights",
+            BlackWhiteStrength => "Strength",
+            GradingShadows => "Shadows",
+            GradingMidtones => "Mid-tones",
+            GradingHighlights => "Highlights",
+            GradingBalance => "Balance",
+            LensProfile => "Profile",
+            LensVignetting => "Vignetting",
+            LensChromaticAberration => "Chromatic aberration",
+            LensDistortion => "Manual distortion",
+            LensScale => "Scale",
+            LensDefringe => "Defringe",
+            DetailTexture => "Texture",
+            DetailClarity => "Clarity",
+            DetailDehaze => "Dehaze",
+            VignetteAmount => "Amount",
+            VignetteMidpoint => "Midpoint",
+            VignetteFeather => "Feather",
+            VignetteRoundness => "Roundness",
+            GrainAmount => "Amount",
+            GrainSize => "Size",
+            GrainKind => "Type",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|p| p.name() == name)
+    }
+
+    /// Lay this part of `from` over `onto`, the rest of the section
+    /// and its switch left as `onto` has them.
+    pub fn copy(self, from: &Edit, onto: &mut Edit) {
+        use Part::*;
+        let (f, o) = (from, onto);
+        if let Some(b) = MIXER_PARTS.iter().position(|&p| p == self) {
+            o.mixer.hue[b] = f.mixer.hue[b];
+            o.mixer.saturation[b] = f.mixer.saturation[b];
+            o.mixer.luminance[b] = f.mixer.luminance[b];
+            return;
+        }
+        match self {
+            LightExposure => o.light.exposure = f.light.exposure,
+            LightContrast => o.light.tone.contrast = f.light.tone.contrast,
+            LightHighlights => o.light.tone.highlights = f.light.tone.highlights,
+            LightShadows => o.light.tone.shadows = f.light.tone.shadows,
+            LightWhites => o.light.tone.whites = f.light.tone.whites,
+            LightBlacks => o.light.tone.blacks = f.light.tone.blacks,
+            ColorVibrance => o.color.vibrance = f.color.vibrance,
+            ColorSaturation => o.color.saturation = f.color.saturation,
+            CurvesParametric => o.curves.parametric = f.curves.parametric,
+            CurvesRgb => o.curves.rgb = f.curves.rgb.clone(),
+            CurvesRed => o.curves.red = f.curves.red.clone(),
+            CurvesGreen => o.curves.green = f.curves.green.clone(),
+            CurvesBlue => o.curves.blue = f.curves.blue.clone(),
+            CurvesRedGreen => o.curves.red_green = f.curves.red_green.clone(),
+            CurvesBlueYellow => o.curves.blue_yellow = f.curves.blue_yellow.clone(),
+            BlackWhiteWeights => o.bw.weights = f.bw.weights,
+            BlackWhiteStrength => o.bw.strength = f.bw.strength,
+            GradingShadows => o.grading.shadows = f.grading.shadows,
+            GradingMidtones => o.grading.midtones = f.grading.midtones,
+            GradingHighlights => o.grading.highlights = f.grading.highlights,
+            GradingBalance => o.grading.balance = f.grading.balance,
+            LensProfile => {
+                o.lens.profile = f.lens.profile;
+                o.lens.distortion = f.lens.distortion;
+            }
+            LensVignetting => o.lens.vignetting = f.lens.vignetting,
+            LensChromaticAberration => {
+                o.lens.chromatic_aberration = f.lens.chromatic_aberration;
+                o.lens.ca_red = f.lens.ca_red;
+                o.lens.ca_blue = f.lens.ca_blue;
+            }
+            LensDistortion => o.lens.manual = f.lens.manual,
+            LensScale => {
+                o.lens.auto_scale = f.lens.auto_scale;
+                o.lens.scale = f.lens.scale;
+            }
+            LensDefringe => {
+                o.lens.defringe = f.lens.defringe;
+                o.lens.defringe_radius = f.lens.defringe_radius;
+                o.lens.defringe_threshold = f.lens.defringe_threshold;
+                o.lens.defringe_purple_center = f.lens.defringe_purple_center;
+                o.lens.defringe_purple_width = f.lens.defringe_purple_width;
+                o.lens.defringe_purple_amount = f.lens.defringe_purple_amount;
+                o.lens.defringe_green_center = f.lens.defringe_green_center;
+                o.lens.defringe_green_width = f.lens.defringe_green_width;
+                o.lens.defringe_green_amount = f.lens.defringe_green_amount;
+            }
+            DetailTexture => o.detail.texture = f.detail.texture,
+            DetailClarity => o.detail.clarity = f.detail.clarity,
+            DetailDehaze => o.detail.dehaze = f.detail.dehaze,
+            VignetteAmount => o.vignette.amount = f.vignette.amount,
+            VignetteMidpoint => o.vignette.midpoint = f.vignette.midpoint,
+            VignetteFeather => o.vignette.feather = f.vignette.feather,
+            VignetteRoundness => o.vignette.roundness = f.vignette.roundness,
+            GrainAmount => o.grain.amount = f.grain.amount,
+            GrainSize => o.grain.size = f.grain.size,
+            GrainKind => o.grain.kind = f.grain.kind,
+            MixerRed | MixerOrange | MixerYellow | MixerGreen | MixerAqua | MixerBlue
+            | MixerPurple | MixerMagenta => unreachable!("a band, laid above"),
+        }
+    }
+
+    /// Whether this part reads the same in both edits: `b` with the
+    /// part of `a` laid over it is `b`.
+    pub fn same(self, a: &Edit, b: &Edit) -> bool {
+        let mut laid = b.clone();
+        self.copy(a, &mut laid);
+        laid == *b
+    }
+}
+
+impl Serialize for Part {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
+        s.serialize_str(self.name())
+    }
+}
+
+impl<'de> Deserialize<'de> for Part {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+        let name = String::deserialize(d)?;
+        Part::from_name(&name)
+            .ok_or_else(|| serde::de::Error::custom(format!("no part called {name:?}")))
+    }
+}
+
+/// A preset's parts as its file has them: a name this build does not
+/// know (one from a newer build) is passed over with a word in the log
+/// rather than the whole preset refused, and a null is none.
+fn known_parts<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Vec<Part>, D::Error> {
+    let names = Option::<Vec<String>>::deserialize(d)?.unwrap_or_default();
+    Ok(names
+        .iter()
+        .filter_map(|n| {
+            let part = Part::from_name(n);
+            if part.is_none() {
+                log::warn!("preset: no part called {n:?}, passed over");
+            }
+            part
+        })
+        .collect())
+}
+
+/// How a preset's masks land on a picture's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Masks {
+    /// In place of the picture's, as they always have.
+    #[default]
+    Replace,
+    /// After the picture's own, which stay.
+    Join,
+}
+
+impl Masks {
+    pub fn is_replace(&self) -> bool {
+        *self == Masks::Replace
+    }
+}
+
+/// What goes across, as a sheet chooses it: whole sections, parts of
+/// others, which masks, and how they land. [`Preset::from_choice`]
+/// keeps it.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Choice {
+    /// Whole sections. [`Section::Adjustments`] among them carries the
+    /// masks `masks` names.
+    pub sections: Vec<Section>,
+    /// Parts of sections not among `sections`.
+    pub parts: Vec<Part>,
+    /// The masks, by id, when the masks go: `None` for every one.
+    pub masks: Option<Vec<u64>>,
+    pub masks_land: Masks,
+}
+
+impl Choice {
+    /// Whole sections and nothing else: what a sheet chose before it
+    /// had parts.
+    pub fn whole(sections: &[Section]) -> Self {
+        Self {
+            sections: sections.to_vec(),
+            ..Self::default()
+        }
+    }
+
+    /// Whether nothing at all is chosen.
+    pub fn is_empty(&self) -> bool {
+        self.sections.is_empty() && self.parts.is_empty()
+    }
+
+    /// The words for how much goes: "3 sections", "1 part", "2
+    /// sections and 4 parts".
+    pub fn words(&self) -> String {
+        carried_words(self.sections.len(), self.parts.len())
+    }
+}
+
+/// "N sections and M parts", either left out at none.
+pub fn carried_words(sections: usize, parts: usize) -> String {
+    let plural = |n: usize| if n == 1 { "" } else { "s" };
+    match (sections, parts) {
+        (s, 0) => format!("{s} section{}", plural(s)),
+        (0, p) => format!("{p} part{}", plural(p)),
+        (s, p) => format!("{s} section{} and {p} part{}", plural(s), plural(p)),
+    }
+}
+
+impl Section {
+    /// Its parts, in the panel's order; none for a section that is
+    /// one control. The masks' parts are the masks themselves, one
+    /// picture's own, and are not listed here.
+    pub fn parts(self) -> impl Iterator<Item = Part> {
+        Part::ALL
+            .iter()
+            .copied()
+            .filter(move |p| p.section() == self)
+    }
+}
+
+/// `parts` in [`Part::ALL`]'s order, each once, less those of a
+/// section carried whole, which the whole carries already.
+fn parts_in_order(parts: &[Part], whole: &[Section]) -> Vec<Part> {
+    Part::ALL
+        .iter()
+        .copied()
+        .filter(|p| parts.contains(p) && !whole.contains(&p.section()))
+        .collect()
+}
+
+/// Whether `edit` has a mask that is `mask` in all but its id.
+fn has_mask(edit: &Edit, mask: &crate::Adjustment) -> bool {
+    edit.adjustments.iter().any(|a| {
+        crate::Adjustment {
+            id: mask.id,
+            ..a.clone()
+        } == *mask
+    })
+}
+
 /// A preset file's extension.
 pub const EXTENSION: &str = "gcp";
 /// The file in a store that lists the shipped presets put there.
@@ -236,9 +710,25 @@ pub struct Preset {
     /// The schema version of the edit inside.
     pub version: u32,
     pub name: String,
-    /// What it carries, in [`Section::ALL`]'s order, each once.
+    /// What it carries whole, in [`Section::ALL`]'s order, each once.
     pub sections: Vec<Section>,
-    /// The carried sections' settings; the rest at their defaults.
+    /// What it carries of a section it does not carry whole, in
+    /// [`Part::ALL`]'s order, each once. Left out of the file when
+    /// there are none, so a preset of whole sections is written as it
+    /// always was, and a file without it is whole sections.
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "known_parts"
+    )]
+    pub parts: Vec<Part>,
+    /// How the masks it carries land: in place of the picture's, or
+    /// after them. Left out of the file at the first, which is what a
+    /// file without it means.
+    #[serde(default, skip_serializing_if = "Masks::is_replace")]
+    pub masks: Masks,
+    /// The carried sections' and parts' settings; the rest at their
+    /// defaults. Its masks are the ones carried.
     pub edit: Edit,
 }
 
@@ -248,36 +738,95 @@ impl Default for Preset {
             version: VERSION,
             name: String::new(),
             sections: Vec::new(),
+            parts: Vec::new(),
+            masks: Masks::Replace,
             edit: Edit::default(),
         }
     }
 }
 
 impl Preset {
-    /// The chosen sections of `edit`, under a name. What is not
-    /// chosen is not written.
+    /// The chosen sections of `edit`, whole, under a name. What is
+    /// not chosen is not written.
     pub fn from_edit(name: &str, edit: &Edit, sections: &[Section]) -> Self {
+        Self::from_choice(name, edit, &Choice::whole(sections))
+    }
+
+    /// What `choice` picks of `edit`, under a name: its sections whole,
+    /// its parts of the others, and of the masks the ones it names.
+    /// What is not chosen is not written.
+    pub fn from_choice(name: &str, edit: &Edit, choice: &Choice) -> Self {
         let sections: Vec<Section> = Section::ALL
             .iter()
             .copied()
-            .filter(|s| sections.contains(s))
+            .filter(|s| choice.sections.contains(s))
             .collect();
+        let parts = parts_in_order(&choice.parts, &sections);
+        // The masks named, in the picture's order, before the copy
+        // gives them ids of their own.
+        let picked;
+        let source = match &choice.masks {
+            Some(ids) if sections.contains(&Section::Adjustments) => {
+                let mut e = edit.clone();
+                e.adjustments.retain(|a| ids.contains(&a.id));
+                picked = e;
+                &picked
+            }
+            _ => edit,
+        };
         let mut kept = Edit::default();
         for s in &sections {
-            s.copy(edit, &mut kept);
+            s.copy(source, &mut kept);
         }
+        for p in &parts {
+            p.copy(source, &mut kept);
+        }
+        // How masks land says something only when masks go.
+        let masks = if sections.contains(&Section::Adjustments) {
+            choice.masks_land
+        } else {
+            Masks::Replace
+        };
         Self {
             version: VERSION,
             name: name.trim().to_string(),
             sections,
+            parts,
+            masks,
             edit: kept,
         }
     }
 
-    /// Lay the carried sections over `onto`.
+    /// Whether it carries nothing.
+    pub fn is_empty(&self) -> bool {
+        self.sections.is_empty() && self.parts.is_empty()
+    }
+
+    /// Whether the masks it carries join a picture's rather than
+    /// replace them.
+    fn joins_masks(&self) -> bool {
+        self.masks == Masks::Join && self.sections.contains(&Section::Adjustments)
+    }
+
+    /// Lay the carried sections and parts over `onto`. Masks that
+    /// join go after the picture's own, each with an id after theirs,
+    /// and one the picture has already (the same in all but its id)
+    /// is not laid twice, so a second paste adds nothing.
     pub fn apply(&self, onto: &mut Edit) {
         for s in &self.sections {
-            s.copy(&self.edit, onto);
+            if *s == Section::Adjustments && self.joins_masks() {
+                for a in &self.edit.adjustments {
+                    if !has_mask(onto, a) {
+                        let id = onto.next_id();
+                        onto.adjustments.push(crate::Adjustment { id, ..a.clone() });
+                    }
+                }
+            } else {
+                s.copy(&self.edit, onto);
+            }
+        }
+        for p in &self.parts {
+            p.copy(&self.edit, onto);
         }
     }
 
@@ -288,10 +837,17 @@ impl Preset {
         out
     }
 
-    /// Whether `edit` already has every carried section as the
-    /// preset has it.
+    /// Whether `edit` already has every carried section and part as
+    /// the preset has it; masks that join, when it has each of them
+    /// among its own.
     pub fn is_applied(&self, edit: &Edit) -> bool {
-        self.sections.iter().all(|s| s.same(&self.edit, edit))
+        self.sections.iter().all(|s| {
+            if *s == Section::Adjustments && self.joins_masks() {
+                self.edit.adjustments.iter().all(|a| has_mask(edit, a))
+            } else {
+                s.same(&self.edit, edit)
+            }
+        }) && self.parts.iter().all(|p| p.same(&self.edit, edit))
     }
 
     pub fn to_json(&self) -> String {
@@ -320,6 +876,10 @@ impl Preset {
             .copied()
             .filter(|s| preset.sections.contains(s))
             .collect();
+        preset.parts = parts_in_order(&preset.parts, &preset.sections);
+        if !preset.sections.contains(&Section::Adjustments) {
+            preset.masks = Masks::Replace;
+        }
         Ok(preset)
     }
 
@@ -1008,6 +1568,386 @@ mod tests {
             vec![Section::Light]
         );
         assert!(Preset::from_json(r#"{"version": 99, "edit": {"version": 99}}"#).is_err());
+    }
+
+    /// An edit with something set in every part of Light, Detail and
+    /// Curves, so a part copied alone shows against the rest.
+    fn busy() -> Edit {
+        let mut e = Edit::default();
+        e.light.exposure = 1.25;
+        e.light.tone.contrast = 1.3;
+        e.light.tone.highlights = -0.8;
+        e.light.tone.shadows = 0.6;
+        e.light.tone.whites = 0.2;
+        e.light.tone.blacks = -0.1;
+        e.detail.texture = 0.3;
+        e.detail.clarity = 0.4;
+        e.detail.dehaze = 0.5;
+        e.curves.red = vec![[0.0, 0.0], [0.5, 0.62], [1.0, 1.0]];
+        e.curves.blue = vec![[0.0, 0.1], [1.0, 0.9]];
+        e.curves.parametric.lights = 0.4;
+        e
+    }
+
+    #[test]
+    fn a_part_carries_its_slider_and_leaves_the_rest_of_the_section() {
+        let from = busy();
+        let mut onto = Edit::default();
+        onto.light.tone.shadows = -0.3;
+        onto.detail.clarity = -0.2;
+        onto.detail.enabled = false;
+        onto.curves.blue = vec![[0.0, 0.0], [0.4, 0.3], [1.0, 1.0]];
+
+        // Light's exposure alone.
+        let choice = Choice {
+            parts: vec![Part::LightExposure],
+            ..Choice::default()
+        };
+        let p = Preset::from_choice("Exposure", &from, &choice);
+        assert!(p.sections.is_empty());
+        assert_eq!(p.parts, vec![Part::LightExposure]);
+        let out = p.applied(&onto);
+        assert_eq!(out.light.exposure, 1.25);
+        let mut want = onto.clone();
+        want.light.exposure = 1.25;
+        assert_eq!(out, want, "nothing but the exposure moved");
+        assert!(p.is_applied(&out));
+        assert!(!p.is_applied(&onto));
+
+        // Detail's Dehaze alone: Texture and Clarity are the frame's,
+        // and so is the section's switch.
+        let p = Preset::from_choice(
+            "",
+            &from,
+            &Choice {
+                parts: vec![Part::DetailDehaze],
+                ..Choice::default()
+            },
+        );
+        let out = p.applied(&onto);
+        let mut want = onto.clone();
+        want.detail.dehaze = 0.5;
+        assert_eq!(out, want);
+        assert!(!out.detail.enabled, "the switch goes only with the whole");
+
+        // One curve: the red, and not the blue the frame has its own of.
+        let p = Preset::from_choice(
+            "",
+            &from,
+            &Choice {
+                parts: vec![Part::CurvesRed],
+                ..Choice::default()
+            },
+        );
+        let out = p.applied(&onto);
+        let mut want = onto.clone();
+        want.curves.red = from.curves.red.clone();
+        assert_eq!(out, want);
+        assert_eq!(out.curves.parametric, onto.curves.parametric);
+
+        // A part of a section chosen whole is the whole's already.
+        let p = Preset::from_choice(
+            "",
+            &from,
+            &Choice {
+                sections: vec![Section::Detail],
+                parts: vec![Part::DetailDehaze, Part::LightWhites, Part::LightWhites],
+                ..Choice::default()
+            },
+        );
+        assert_eq!(p.sections, vec![Section::Detail]);
+        assert_eq!(p.parts, vec![Part::LightWhites]);
+        let out = p.applied(&onto);
+        assert_eq!(out.detail, from.detail);
+        assert_eq!(out.light.tone.whites, 0.2);
+        assert_eq!(out.light.exposure, onto.light.exposure);
+    }
+
+    #[test]
+    fn every_part_moves_only_itself_and_the_parts_make_the_section() {
+        // A default edit against one with every slider moved: each
+        // part laid alone changes the edit, and all of a section's
+        // parts together are the section, its switch aside.
+        let mut from = busy();
+        from.color.vibrance = 0.2;
+        from.color.saturation = -0.3;
+        from.curves.rgb = vec![[0.0, 0.05], [1.0, 1.0]];
+        from.curves.green = vec![[0.0, 0.05], [1.0, 1.0]];
+        from.curves.red_green = vec![[0.0, 0.45], [1.0, 0.5]];
+        from.curves.blue_yellow = vec![[0.0, 0.55], [1.0, 0.5]];
+        for b in 0..crate::mixer::BANDS {
+            from.mixer.hue[b] = 0.1 * (b as f32 + 1.0);
+        }
+        from.bw.weights = [0.3; crate::mixer::BANDS];
+        from.bw.strength = 0.5;
+        from.grading.shadows.hue = 200.0;
+        from.grading.shadows.saturation = 0.2;
+        from.grading.midtones.saturation = 0.2;
+        from.grading.highlights.saturation = 0.2;
+        from.grading.balance = 0.4;
+        from.lens.profile = !from.lens.profile;
+        from.lens.vignetting = !from.lens.vignetting;
+        from.lens.ca_red = 0.001;
+        from.lens.manual = -0.02;
+        from.lens.scale = 1.1;
+        from.lens.auto_scale = !from.lens.auto_scale;
+        from.lens.defringe = !from.lens.defringe;
+        from.vignette.amount = -0.7;
+        from.vignette.midpoint = 0.3;
+        from.vignette.feather = 0.2;
+        from.vignette.roundness = 0.6;
+        from.grain.amount = 0.4;
+        from.grain.size = 40.0;
+        from.grain.kind = crate::grain::Kind::Tabular;
+        let plain = Edit::default();
+        for &p in Part::ALL {
+            assert!(!p.same(&from, &plain), "{p:?} moves nothing");
+            assert_eq!(Part::from_name(p.name()), Some(p));
+            // Laid alone, it moves no other part.
+            let mut laid = plain.clone();
+            p.copy(&from, &mut laid);
+            for &q in Part::ALL {
+                if q != p {
+                    assert!(q.same(&laid, &plain), "{p:?} moves {q:?}");
+                }
+            }
+        }
+        for &s in Section::ALL {
+            let parts: Vec<Part> = s.parts().collect();
+            if parts.is_empty() {
+                continue;
+            }
+            let mut laid = plain.clone();
+            for p in &parts {
+                p.copy(&from, &mut laid);
+            }
+            let mut whole = plain.clone();
+            s.copy(&from, &mut whole);
+            assert_eq!(laid, whole, "{s:?}'s parts are not the section");
+        }
+        // The sections without parts are the ones that are one choice.
+        let none: Vec<Section> = Section::ALL
+            .iter()
+            .copied()
+            .filter(|s| s.parts().next().is_none())
+            .collect();
+        assert_eq!(
+            none,
+            vec![
+                Section::Look,
+                Section::WhiteBalance,
+                Section::Tint,
+                Section::Noise,
+                Section::Sharpen,
+                Section::Demosaic,
+                Section::Camera,
+                Section::Adjustments,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_preset_with_parts_round_trips_and_an_old_file_is_whole_sections() {
+        let mut from = busy();
+        from.adjustments.push(crate::Adjustment {
+            id: 4,
+            name: "Sky 4".into(),
+            ..Default::default()
+        });
+        let choice = Choice {
+            sections: vec![Section::Color, Section::Adjustments],
+            parts: vec![Part::DetailDehaze, Part::CurvesRed],
+            masks: Some(vec![4]),
+            masks_land: Masks::Join,
+        };
+        let p = Preset::from_choice("Haze", &from, &choice);
+        let json = p.to_json();
+        assert!(json.contains("\"detail.dehaze\""), "{json}");
+        assert!(json.contains("\"masks\": \"join\""), "{json}");
+        assert_eq!(Preset::from_json(&json).unwrap(), p);
+
+        // Whole sections write what they always wrote: no parts, no
+        // masks key.
+        let whole = Preset::from_edit("Old", &from, &[Section::Light]);
+        let json = whole.to_json();
+        assert!(!json.contains("\"parts\""), "{json}");
+        assert!(!json.contains("\"masks\""), "{json}");
+
+        // A file from before parts: whole sections, masks replacing.
+        let old = r#"{"version": 3, "name": "Old", "sections": ["light", "adjustments"],
+                      "edit": {"light": {"exposure": 0.5},
+                               "adjustments": [{"id": 1, "name": "Mask 1"}]}}"#;
+        let p = Preset::from_json(old).unwrap();
+        assert_eq!(p.sections, vec![Section::Light, Section::Adjustments]);
+        assert!(p.parts.is_empty());
+        assert_eq!(p.masks, Masks::Replace);
+        let mut onto = Edit::default();
+        onto.light.tone.shadows = 0.4;
+        onto.adjustments.push(crate::Adjustment {
+            id: 7,
+            name: "Mine".into(),
+            ..Default::default()
+        });
+        let out = p.applied(&onto);
+        assert_eq!(out.light.exposure, 0.5);
+        assert_eq!(out.light.tone.shadows, 0.0, "the whole of Light, as before");
+        let names: Vec<&str> = out.adjustments.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["Mask 1"]);
+
+        // A part this build does not know is passed over, not the file.
+        let newer = r#"{"name": "New", "sections": [], "parts": ["detail.dehaze", "light.glow"],
+                        "edit": {}}"#;
+        assert_eq!(
+            Preset::from_json(newer).unwrap().parts,
+            vec![Part::DetailDehaze]
+        );
+    }
+
+    #[test]
+    fn a_whole_section_preset_writes_what_it_wrote_before_parts() {
+        // The preset as it was before parts and the masks' landing:
+        // these four keys, in this order.
+        #[derive(Serialize)]
+        struct Before<'a> {
+            version: u32,
+            name: &'a str,
+            sections: &'a [&'a str],
+            edit: &'a Edit,
+        }
+        let mut edit = busy();
+        edit.look_lut.strength = 0.7;
+        let p = Preset::from_edit("Warm", &edit, &[Section::Light, Section::Look]);
+        let golden = serde_json::to_string_pretty(&Before {
+            version: VERSION,
+            name: "Warm",
+            // The sections in the panel's order, Look first.
+            sections: &["look", "light"],
+            edit: &p.edit,
+        })
+        .unwrap();
+        assert_eq!(p.to_json(), golden);
+        assert!(p.to_json().starts_with(
+            "{\n  \"version\": 4,\n  \"name\": \"Warm\",\n  \"sections\": [\n    \"look\",\n    \"light\"\n  ],\n  \"edit\": {"
+        ));
+    }
+
+    #[test]
+    fn how_masks_land_is_kept_only_when_masks_go() {
+        let mut from = busy();
+        from.adjustments.push(crate::Adjustment {
+            id: 1,
+            name: "Sky 1".into(),
+            ..Default::default()
+        });
+        // "Add to masks" chosen with no mask ticked: nothing about
+        // masks is written.
+        let p = Preset::from_choice(
+            "",
+            &from,
+            &Choice {
+                sections: vec![Section::Light],
+                masks_land: Masks::Join,
+                ..Choice::default()
+            },
+        );
+        assert_eq!(p.masks, Masks::Replace);
+        assert!(!p.to_json().contains("\"masks\""));
+        // A file that says join with no masks carried reads as replace.
+        let odd = r#"{"name": "X", "sections": ["light"], "masks": "join", "edit": {}}"#;
+        assert_eq!(Preset::from_json(odd).unwrap().masks, Masks::Replace);
+        // With the masks it stays.
+        let p = Preset::from_choice(
+            "",
+            &from,
+            &Choice {
+                sections: vec![Section::Adjustments],
+                masks_land: Masks::Join,
+                ..Choice::default()
+            },
+        );
+        assert_eq!(p.masks, Masks::Join);
+        // A null list of parts is none.
+        let null = r#"{"name": "N", "sections": ["light"], "parts": null, "edit": {}}"#;
+        assert!(Preset::from_json(null).unwrap().parts.is_empty());
+    }
+
+    #[test]
+    fn chosen_masks_replace_the_frames_or_join_them() {
+        let mask = |id: u64, name: &str| crate::Adjustment {
+            id,
+            name: name.into(),
+            ..Default::default()
+        };
+        let from = Edit {
+            adjustments: vec![mask(2, "Sky 2"), mask(5, "Face 5"), mask(6, "Linear 6")],
+            ..Edit::default()
+        };
+        let onto = Edit {
+            adjustments: vec![mask(1, "Mine 1"), mask(3, "Mine 3")],
+            ..Edit::default()
+        };
+
+        // One mask, replacing: the frame's own are gone.
+        let one = |land| Choice {
+            sections: vec![Section::Adjustments],
+            masks: Some(vec![5]),
+            masks_land: land,
+            ..Choice::default()
+        };
+        let p = Preset::from_choice("", &from, &one(Masks::Replace));
+        let out = p.applied(&onto);
+        let names: Vec<&str> = out.adjustments.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["Face 5"]);
+        assert_eq!(out.adjustments[0].id, 1);
+
+        // Joining: the frame's own kept, the mask after them with an
+        // id after theirs.
+        let p = Preset::from_choice("", &from, &one(Masks::Join));
+        let out = p.applied(&onto);
+        let names: Vec<&str> = out.adjustments.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, vec!["Mine 1", "Mine 3", "Face 5"]);
+        let ids: Vec<u64> = out.adjustments.iter().map(|a| a.id).collect();
+        assert_eq!(ids, vec![1, 3, 4]);
+        // Laid again, nothing is added twice.
+        assert!(p.is_applied(&out));
+        assert_eq!(p.applied(&out), out);
+
+        // Every mask, None, is all of them in the picture's order.
+        let p = Preset::from_choice(
+            "",
+            &from,
+            &Choice {
+                sections: vec![Section::Adjustments],
+                masks_land: Masks::Join,
+                ..Choice::default()
+            },
+        );
+        let out = p.applied(&onto);
+        let names: Vec<&str> = out.adjustments.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["Mine 1", "Mine 3", "Sky 2", "Face 5", "Linear 6"]
+        );
+        // The masks named are only read when the masks go.
+        let p = Preset::from_choice(
+            "",
+            &from,
+            &Choice {
+                sections: vec![Section::Light],
+                masks: Some(vec![5]),
+                ..Choice::default()
+            },
+        );
+        assert!(p.edit.adjustments.is_empty());
+        assert_eq!(p.applied(&onto).adjustments, onto.adjustments);
+    }
+
+    #[test]
+    fn carried_words_count_sections_and_parts() {
+        assert_eq!(carried_words(3, 0), "3 sections");
+        assert_eq!(carried_words(1, 0), "1 section");
+        assert_eq!(carried_words(0, 1), "1 part");
+        assert_eq!(carried_words(2, 4), "2 sections and 4 parts");
     }
 
     #[test]

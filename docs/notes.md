@@ -297,3 +297,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§285. Thumbnails from the edit, part two: the reduced develop, its queue, its check, the key in the index](notes/285-thumbnails-from-the-edit-part-two.md) (2026-10-10)
 - [§286. A tint is a blend, not a turn](notes/286-a-tint-is-a-blend-not-a-turn.md) (2026-10-10)
 - [§287. Detail in a mask](notes/287-detail-in-a-mask.md) (2026-10-10)
+- [§288. Parts of a section, single masks, and check all on the copy settings sheet](notes/288-parts-single-masks-and-check-all-on-the-copy-settings-sheet.md) (2026-10-10)

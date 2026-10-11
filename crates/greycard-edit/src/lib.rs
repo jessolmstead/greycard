@@ -1014,7 +1014,7 @@ pub fn apply_preset_into(
     learned_from: Option<&Edit>,
     label: Option<&str>,
 ) -> Vec<usize> {
-    if preset.sections.is_empty() {
+    if preset.is_empty() {
         return Vec::new();
     }
     frames

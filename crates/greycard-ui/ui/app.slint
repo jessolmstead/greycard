@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup } from "structs.slint";
+import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -96,13 +96,15 @@ export component App inherits Window {
     callback set-collapsed();
     /// Ctrl+Shift+S, or the presets' Sync button: the sync sheet.
     callback sync-open-asked();
-    // The sync sheet: the current frame's sections, checked, to lay
-    // over the rest of the set.
+    // The sync sheet: the current frame's sections, parts and masks,
+    // checked, to lay over the rest of the set (`carry.rs`).
     in-out property <bool> sync-open: false;
     in property <string> sync-text: "";
-    in-out property <[string]> sync-section-names: [];
-    in-out property <[bool]> sync-section-on: [];
-    callback sync-section-toggled(int, bool);
+    in property <[CarryRow]> sync-rows: [];
+    in property <int> sync-lines: 0;
+    callback sync-row-toggled(int);
+    callback sync-all(bool);
+    callback sync-join-chosen(bool);
     callback sync-applied();
     /// The sync sheet opened by a paste: the clipboard's sections
     /// over the whole selection, the frame copied from left out.
@@ -718,9 +720,11 @@ export component App inherits Window {
     callback preset-save-open();
     in-out property <bool> preset-open: false;
     in-out property <string> preset-name: "";
-    in-out property <[string]> preset-section-names: [];
-    in-out property <[bool]> preset-section-on: [];
-    callback preset-section-toggled(int, bool);
+    in property <[CarryRow]> preset-rows: [];
+    in property <int> preset-lines: 0;
+    callback preset-row-toggled(int);
+    callback preset-all(bool);
+    callback preset-join-chosen(bool);
     callback preset-saved();
     // The states kept by name, and the steps of the edit newest
     // first: hovering a row shows its state in the viewport, a click
@@ -3047,9 +3051,11 @@ export component App inherits Window {
     if root.preset-open: PresetSheet {
         preset-open <=> root.preset-open;
         preset-name <=> root.preset-name;
-        preset-section-names <=> root.preset-section-names;
-        preset-section-on <=> root.preset-section-on;
-        preset-section-toggled(a, b) => { root.preset-section-toggled(a, b); }
+        preset-rows: root.preset-rows;
+        preset-lines: root.preset-lines;
+        preset-row-toggled(i) => { root.preset-row-toggled(i); }
+        preset-all(on) => { root.preset-all(on); }
+        preset-join-chosen(join) => { root.preset-join-chosen(join); }
         preset-saved => { root.preset-saved(); }
     }
 
@@ -3069,9 +3075,11 @@ export component App inherits Window {
         sync-text: root.sync-text;
         paste: root.sync-paste;
         paste-from: root.clip-from;
-        sync-section-names <=> root.sync-section-names;
-        sync-section-on <=> root.sync-section-on;
-        sync-section-toggled(a, b) => { root.sync-section-toggled(a, b); }
+        sync-rows: root.sync-rows;
+        sync-lines: root.sync-lines;
+        sync-row-toggled(i) => { root.sync-row-toggled(i); }
+        sync-all(on) => { root.sync-all(on); }
+        sync-join-chosen(join) => { root.sync-join-chosen(join); }
         sync-applied => { root.sync-applied(); }
     }
 

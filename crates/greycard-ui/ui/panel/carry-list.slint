@@ -1,0 +1,161 @@
+// What a sheet carries, for the sync, paste and preset sheets: Check
+// all and Uncheck all, then each section a heading with a check and
+// its parts under it, each with its own, and under Masks the frame's
+// masks by name and whether they replace the frames' or join them.
+// Rust lays the rows out (`carry.rs`): two columns of sections, a
+// section's parts two to a line. Past the room the sheet gives it,
+// the list scrolls.
+
+import { ScrollView } from "std-widgets.slint";
+import { Theme } from "../theme.slint";
+import { PanelButton, Segmented } from "../controls.slint";
+import { CarryRow } from "../structs.slint";
+
+// A check: off, on, or "some" for a heading with some of its parts
+// on. It takes the keys as the other controls do: Tab to it, Space or
+// Return to turn it over, a ring while it has the focus.
+component Check inherits Rectangle {
+    in property <string> label;
+    in property <string> a11y;
+    in property <int> state;
+    in property <bool> heading;
+    callback toggled();
+
+    accessible-role: checkbox;
+    accessible-checkable: true;
+    // A heading partly on reads as checked, and says it is partly.
+    accessible-checked: root.state != 0;
+    accessible-description: root.state == 1 ? "partly checked" : "";
+    accessible-label: root.a11y;
+    accessible-action-default => { root.toggled(); }
+
+    box := Rectangle {
+        x: 0;
+        y: (root.height - self.height) / 2;
+        width: 14px;
+        height: 14px;
+        border-radius: Theme.radius-sm;
+        border-width: fs.has-focus ? 2px : root.state == 0 ? 1px : 0;
+        border-color: fs.has-focus || ta.has-hover ? Theme.focus-ring : Theme.border-strong;
+        background: root.state == 0 ? Theme.base : Theme.accent;
+        // The tick, drawn: a short stroke down and a long one up.
+        if root.state == 2: Path {
+            x: 0;
+            y: 0;
+            width: 14px;
+            height: 14px;
+            viewbox-width: 14;
+            viewbox-height: 14;
+            commands: "M 3 7.5 L 6 10.5 L 11 3.5";
+            stroke: #101010;
+            stroke-width: 2px;
+            stroke-line-cap: round;
+            stroke-line-join: round;
+        }
+        // Some: a dash.
+        if root.state == 1: Rectangle {
+            x: 3px;
+            y: 6px;
+            width: 8px;
+            height: 2px;
+            border-radius: 1px;
+            background: #101010;
+        }
+    }
+    Text {
+        x: box.width + Theme.space-2;
+        width: root.width - self.x;
+        height: root.height;
+        text: root.label;
+        font-size: root.heading ? Theme.font-sm : Theme.font-xs;
+        font-weight: root.heading ? Theme.weight-medium : Theme.weight-regular;
+        color: root.state == 0 && !root.heading ? Theme.text-secondary : Theme.text;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+    fs := FocusScope {
+        key-pressed(e) => {
+            if (e.text == " " || e.text == Key.Return) {
+                root.toggled();
+                return accept;
+            }
+            return reject;
+        }
+    }
+    ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => {
+            fs.focus();
+            root.toggled();
+        }
+    }
+}
+
+export component CarryList inherits VerticalLayout {
+    in property <[CarryRow]> rows;
+    /// How many lines the taller column takes.
+    in property <int> lines;
+    /// The most the list itself may take; past it, it scrolls. Never
+    /// less than four lines, however short the window.
+    in property <length> max-list-height: 1000px;
+    callback toggled(int);
+    callback all(bool);
+    callback join-chosen(bool);
+
+    property <length> pitch: 24px;
+    property <length> col-gap: Theme.space-4;
+    property <length> indent: 22px;
+
+    spacing: Theme.space-2;
+    HorizontalLayout {
+        spacing: Theme.space-2;
+        alignment: start;
+        PanelButton {
+            text: "Check all";
+            clicked => { root.all(true); }
+        }
+        PanelButton {
+            text: "Uncheck all";
+            clicked => { root.all(false); }
+        }
+    }
+    ScrollView {
+        height: min(root.lines * root.pitch, max(root.max-list-height, 4 * root.pitch));
+        content-height: grid.height;
+        content-width: self.visible-width;
+        grid := Rectangle {
+            property <length> inner: parent.width - Theme.scrollbar-band;
+            property <length> col-w: (self.inner - root.col-gap) / 2;
+            property <length> part-w: (self.col-w - root.indent) / 2;
+            width: parent.width;
+            height: root.lines * root.pitch;
+            for row[i] in root.rows: Rectangle {
+                x: row.col * (grid.col-w + root.col-gap)
+                    + (row.kind == 0 ? 0 : root.indent)
+                    + (row.kind == 1 ? row.sub * grid.part-w : 0);
+                y: row.line * root.pitch;
+                width: row.kind == 0 ? grid.col-w
+                    : row.kind == 1 ? grid.part-w - Theme.space-1
+                    : grid.col-w - root.indent;
+                height: root.pitch;
+                if row.kind != 2: Check {
+                    width: parent.width;
+                    height: parent.height;
+                    label: row.label;
+                    a11y: row.a11y;
+                    state: row.state;
+                    heading: row.kind == 0;
+                    toggled => { root.toggled(i); }
+                }
+                if row.kind == 2: Segmented {
+                    y: 1px;
+                    width: parent.width;
+                    height: parent.height - 2px;
+                    options: ["Replace masks", "Add to masks"];
+                    current: row.state == 1 ? "Add to masks" : "Replace masks";
+                    selected(o) => { root.join-chosen(o == "Add to masks"); }
+                }
+            }
+        }
+    }
+}

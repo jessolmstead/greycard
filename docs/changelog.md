@@ -65,6 +65,21 @@ note a first tester reads.
   back to following the global
   ([§283](https://github.com/jessolmstead/greycard/blob/master/docs/notes/283-a-masks-white-balance-keeps-its-light-while-off.md))
 
+### Presets and copying
+
+- The copy settings sheet and the preset sheet list each section as a
+  heading with its sliders under it (Detail: Texture, Clarity, Dehaze;
+  Light: the six; the mixer's bands; each curve), so one slider is
+  copied alone, with Check all and Uncheck all; "Adjustments" is now
+  Masks, the frame's masks are listed by name each with its own check,
+  and the pasted masks replace the target's or join them. Presets with
+  parts or joining masks are new keys in the file; older builds read
+  such a preset as its whole sections only
+  ([§288](https://github.com/jessolmstead/greycard/blob/master/docs/notes/288-parts-single-masks-and-check-all-on-the-copy-settings-sheet.md))
+- The copy settings and preset sheets work from the keyboard: Tab to a
+  check, Space or Return to turn it, Escape to leave
+  ([§288](https://github.com/jessolmstead/greycard/blob/master/docs/notes/288-parts-single-masks-and-check-all-on-the-copy-settings-sheet.md))
+
 ### Export
 
 - The export chooser opens where the last export went, in the same

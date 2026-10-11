@@ -469,13 +469,6 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     } else {
         show_filter(&state.borrow(), &app);
     }
-    app.set_preset_section_names(ModelRc::new(VecModel::from(
-        Section::ALL
-            .iter()
-            .map(|s| slint::SharedString::from(s.title()))
-            .collect::<Vec<_>>(),
-    )));
-    app.set_preset_section_on(ModelRc::from(state.borrow().preset_sections.clone()));
     show_presets(&state.borrow(), &app);
     // A snapshot of the grid waits for the pictures its cells show,
     // and one that never comes would hold it until it is killed.

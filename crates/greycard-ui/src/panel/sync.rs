@@ -22,6 +22,7 @@
 //! same sheet over the whole selection, the frame copied from left
 //! out, through the same [`lay_over_targets`].
 
+use crate::carry;
 use crate::clipboard::Clipboard;
 use crate::panel::browser::{
     chosen_frames, file_name, migrate_frame, show_badges, show_thumb, thumb_turns,
@@ -32,6 +33,7 @@ use crate::panel::history::{show_history, take_current};
 use crate::*;
 use greycard_edit::camera::{self, ProfileChoice};
 use greycard_edit::history::{preset_label, preset_over_set_label, sync_label};
+use greycard_edit::preset::Choice;
 
 /// The frames a sync goes onto: the set, less the frame it comes
 /// from.
@@ -52,12 +54,23 @@ fn sync_words(st: &State) -> String {
     )
 }
 
-/// The sheet's word for a section: its panel title, and for the
-/// masks what ticking them does to the frames synced onto.
-fn sync_title(s: Section) -> String {
-    match s {
-        Section::Adjustments => "Adjustments (replaces masks)".to_string(),
-        s => s.title().to_string(),
+/// Put the sync sheet's checks on the sheet: its rows and how tall
+/// the list is.
+pub(crate) fn show_sync_checks(st: &mut State, app: &App) {
+    let st = &mut *st;
+    let lines = st.sync_rows.show(&st.sync_checks);
+    app.set_sync_rows(ModelRc::from(st.sync_rows.model.clone()));
+    app.set_sync_lines(lines);
+}
+
+/// Frame `file`'s edit as the sheet lists its masks from: the panel's
+/// when the panel is the frame's (outside culling), its sidecar's
+/// otherwise.
+fn edit_shown(st: &State, app: &App, file: usize) -> Edit {
+    if st.current == Some(file) && st.cull.is_none() && crate::rows::panel_is_frames(st, file) {
+        read_edit(app, &st.edit, st.target)
+    } else {
+        st.sidecars[file].current.clone()
     }
 }
 
@@ -285,10 +298,12 @@ pub(crate) fn sync_selection(
         return Synced::default();
     };
     let targets = sync_targets(st);
-    sync_onto(st, app, c, &targets, sections, profiles, probe)
+    let choice = Choice::whole(sections);
+    sync_onto(st, app, c, &targets, &choice, profiles, probe)
 }
 
-/// Lay `sections` of frame `from` over `targets`: [`sync_selection`]
+/// Lay what `choice` picks of frame `from` over `targets`:
+/// [`sync_selection`]
 /// with the frames named rather than read from the selection, which is
 /// what a sync pressed on frames whose sidecars were still to be read
 /// runs when they are in. `from` is read from the panel when it is the
@@ -300,14 +315,14 @@ pub(crate) fn sync_onto(
     app: &App,
     from: usize,
     targets: &[usize],
-    sections: &[Section],
+    choice: &Choice,
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> Synced {
     let Some(from_edit) = source_edit(st, app, from) else {
         return Synced::default();
     };
-    let preset = Preset::from_edit("", &from_edit, sections);
+    let preset = Preset::from_choice("", &from_edit, choice);
     let learned_from = preset
         .sections
         .contains(&Section::Noise)
@@ -639,14 +654,14 @@ fn profile_left_off_words(st: &State, synced: &Synced) -> String {
 
 /// The status line after a sync: how much went where, and which
 /// frames kept their own camera profile.
-fn synced_words(st: &State, sections: usize, asked: usize, synced: &Synced) -> String {
+fn synced_words(st: &State, choice: &Choice, asked: usize, synced: &Synced) -> String {
     let plural = |n: usize| if n == 1 { "" } else { "s" };
     let mut said = if synced.moved.is_empty() {
         format!("the other {asked} frame{} had these already", plural(asked))
     } else {
         format!(
-            "synced {sections} section{} onto {} frame{}",
-            plural(sections),
+            "synced {} onto {} frame{}",
+            choice.words(),
             synced.moved.len(),
             plural(synced.moved.len())
         )
@@ -720,16 +735,15 @@ pub(crate) fn copy_settings_of(st: &mut State, app: &App, file: usize) {
     app.set_status(format!("copied the settings of {name}").into());
 }
 
-/// The sections a paste's sheet opens with: the last sync's or
-/// paste's choice this session, else what a sync checks by default.
-fn paste_sections(st: &State) -> Vec<bool> {
-    Section::ALL
-        .iter()
-        .map(|s| match &st.sync_last {
-            Some(last) => last.contains(s),
-            None => s.syncs_by_default(),
-        })
-        .collect()
+/// The checks a paste's sheet opens with, over the copied frame's
+/// masks: the last sync's or paste's this session, else what a sync
+/// checks by default.
+fn paste_checks(st: &State, clip: &Clipboard) -> carry::Checks {
+    let masks = carry::masks_of(&clip.edit);
+    match &st.sync_last {
+        Some(last) => last.with_masks(masks),
+        None => carry::Checks::new(masks, Section::syncs_by_default),
+    }
 }
 
 /// What the paste sheet says it will do: onto which frames, and the
@@ -780,22 +794,14 @@ pub(crate) fn paste_open(st: &mut State, app: &App) {
     }
     st.sync_asked = None;
     st.paste_asked = Some((c, targets.clone()));
-    for (i, on) in paste_sections(st).into_iter().enumerate() {
-        st.sync_sections.set_row_data(i, on);
-    }
-    app.set_sync_section_names(ModelRc::new(VecModel::from(
-        Section::ALL
-            .iter()
-            .map(|s| slint::SharedString::from(sync_title(*s)))
-            .collect::<Vec<_>>(),
-    )));
-    app.set_sync_section_on(ModelRc::from(st.sync_sections.clone()));
+    st.sync_checks = paste_checks(st, &clip);
+    show_sync_checks(st, app);
     app.set_sync_text(paste_words(st, &clip, &targets).into());
     app.set_sync_paste(true);
     app.set_sync_open(true);
 }
 
-/// Lay the clipboard's `sections` over `chosen`, the frame it came
+/// Lay what `choice` picks of the clipboard over `chosen`, the frame it came
 /// from left out: a sync with the clipboard between. The frame on
 /// screen, outside culling, takes it through the panel as a preset
 /// click does (the camera-profile fit checked the same way); the rest,
@@ -811,7 +817,7 @@ pub(crate) fn paste_onto(
     app: &App,
     worker: &Worker,
     chosen: &[usize],
-    sections: &[Section],
+    choice: &Choice,
     profiles: &[camera::Entry],
     probe: impl Fn(&State, usize) -> Option<greycard_core::decode::Probe>,
 ) -> Synced {
@@ -819,7 +825,7 @@ pub(crate) fn paste_onto(
         return Synced::default();
     };
     let targets = clip.targets(chosen, &st.files);
-    let preset = clip.preset(sections);
+    let preset = clip.preset(choice);
     let label = clip.label();
     // Outside culling the frame on screen is the panel's, and what
     // the panel holds is a state first, then the paste over it.
@@ -875,9 +881,8 @@ pub(crate) fn paste_onto(
         )
     } else {
         format!(
-            "pasted {} section{} from {} onto {} frame{}",
-            sections.len(),
-            plural(sections.len()),
+            "pasted {} from {} onto {} frame{}",
+            choice.words(),
             clip.name(),
             synced.moved.len(),
             plural(synced.moved.len())
@@ -898,16 +903,6 @@ pub(crate) fn paste_onto(
         app.set_status(said.into());
     }
     synced
-}
-
-/// The sections checked on the sheet, in `Section::ALL`'s order.
-fn checked(st: &State) -> Vec<Section> {
-    Section::ALL
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| st.sync_sections.row_data(*i).unwrap_or(false))
-        .map(|(_, s)| *s)
-        .collect()
 }
 
 /// Whether a viewport tool is in hand, as the window's
@@ -959,24 +954,47 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             st.sync_asked = Some((c, targets));
             st.paste_asked = None;
             app.set_sync_paste(false);
-            for (i, s) in Section::ALL.iter().enumerate() {
-                st.sync_sections.set_row_data(i, s.syncs_by_default());
-            }
-            app.set_sync_section_names(ModelRc::new(VecModel::from(
-                Section::ALL
-                    .iter()
-                    .map(|s| slint::SharedString::from(sync_title(*s)))
-                    .collect::<Vec<_>>(),
-            )));
-            app.set_sync_section_on(ModelRc::from(st.sync_sections.clone()));
+            let masks = carry::masks_of(&edit_shown(&st, &app, c));
+            st.sync_checks = carry::Checks::new(masks, Section::syncs_by_default);
+            show_sync_checks(&mut st, &app);
             app.set_sync_text(sync_words(&st).into());
             app.set_sync_open(true);
         });
     }
+    // The sheet's checks: a row, all of them, and how the masks land.
     {
-        let state = state.clone();
-        app.on_sync_section_toggled(move |i, on| {
-            state.borrow().sync_sections.set_row_data(i as usize, on);
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_sync_row_toggled(move |i| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            if let Some(target) = st.sync_rows.target(i) {
+                st.sync_checks.toggle(target);
+                show_sync_checks(&mut st, &app);
+            }
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_sync_all(move |on| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            st.sync_checks.set_all(on);
+            show_sync_checks(&mut st, &app);
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_sync_join_chosen(move |join| {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let mut st = state.borrow_mut();
+            st.sync_checks.join = join;
+            show_sync_checks(&mut st, &app);
         });
     }
     {
@@ -986,8 +1004,8 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let sections = checked(&st);
-            if sections.is_empty() {
+            let choice = st.sync_checks.choice();
+            if choice.is_empty() {
                 app.set_status("choose what goes across".into());
                 return;
             }
@@ -1011,7 +1029,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     );
                     return;
                 }
-                st.sync_last = Some(sections.clone());
+                st.sync_last = Some(st.sync_checks.clone());
                 // A request for the chosen frames' sidecars, and the
                 // paste over exactly those frames once they are in.
                 let paths: Vec<PathBuf> = chosen_frames(&st)
@@ -1034,7 +1052,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                             app,
                             worker,
                             &chosen,
-                            &sections,
+                            &choice,
                             &profiles,
                             probe,
                         );
@@ -1065,7 +1083,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             }
             // A paste's sheet opens on this choice from now on.
-            st.sync_last = Some(sections.clone());
+            st.sync_last = Some(st.sync_checks.clone());
             // A request for the source's and the targets' sidecars, and
             // the sync from exactly that frame onto exactly those once
             // they are in: the first path the source, the rest the
@@ -1093,10 +1111,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     let profiles = camera::list();
                     let start = std::time::Instant::now();
                     let mut st = state.borrow_mut();
-                    let synced =
-                        sync_onto(&mut st, app, from, &targets, &sections, &profiles, probe);
+                    let synced = sync_onto(&mut st, app, from, &targets, &choice, &profiles, probe);
                     let took = start.elapsed();
-                    let said = synced_words(&st, sections.len(), targets.len(), &synced);
+                    let said = synced_words(&st, &choice, targets.len(), &synced);
                     tracing::info!("{said} in {:.1} ms", took.as_secs_f64() * 1e3);
                     app.set_status(said.into());
                 }),
@@ -1117,6 +1134,44 @@ mod tests {
     /// 186 apart after a pad of 12.
     fn strip_cell(i: usize) -> (f32, f32) {
         (12.0 + i as f32 * 186.0 + 89.0, 950.0 - 148.0 + 60.0)
+    }
+
+    /// The sheet's headings as its rows read: each section's title
+    /// and how its checks stand, 0 off, 1 some, 2 on.
+    fn headings(app: &App) -> Vec<(String, i32)> {
+        let rows = app.get_sync_rows();
+        (0..rows.row_count())
+            .filter_map(|i| rows.row_data(i))
+            .filter(|r| r.kind == 0)
+            .map(|r| (r.label.to_string(), r.state))
+            .collect()
+    }
+
+    /// The headings as a sync's sheet opens on them: all on but the
+    /// masks.
+    fn defaults() -> Vec<(String, i32)> {
+        Section::ALL
+            .iter()
+            .map(|s| {
+                (
+                    s.title().to_string(),
+                    if s.syncs_by_default() { 2 } else { 0 },
+                )
+            })
+            .collect()
+    }
+
+    /// The sections `on` names checked whole and nothing else, as the
+    /// sheet's Uncheck all and a click on each heading do.
+    fn choose(app: &App, on: impl Fn(Section) -> bool) {
+        app.invoke_sync_all(false);
+        let rows = app.get_sync_rows();
+        for i in 0..rows.row_count() {
+            let r = rows.row_data(i).unwrap();
+            if r.kind == 0 && Section::ALL.iter().any(|s| r.label == s.title() && on(*s)) {
+                app.invoke_sync_row_toggled(i as i32);
+            }
+        }
     }
 
     fn with_modifier(app: &App, key: Key, f: impl FnOnce()) {
@@ -1170,12 +1225,11 @@ mod tests {
             app.get_sync_text(),
             "From IMG_0001.CR3 onto 2 other frames."
         );
-        let on = app.get_sync_section_on();
-        let names = app.get_sync_section_names();
-        assert_eq!(on.row_count(), Section::ALL.len());
-        for (i, s) in Section::ALL.iter().enumerate() {
-            assert_eq!(names.row_data(i).unwrap(), sync_title(*s));
-            assert_eq!(on.row_data(i).unwrap(), *s != Section::Adjustments, "{s:?}");
+        let heads = headings(&app);
+        assert_eq!(heads.len(), Section::ALL.len());
+        for ((name, on), s) in heads.iter().zip(Section::ALL) {
+            assert_eq!(name, s.title());
+            assert_eq!(*on, if *s == Section::Adjustments { 0 } else { 2 }, "{s:?}");
         }
         // Escape leaves the sheet, then a second one the set.
         press(&app, Key::Escape);
@@ -1367,8 +1421,13 @@ mod tests {
         assert_eq!(st.sidecars[2].current.noise.learned_strength, blend(100));
         assert_eq!(st.seed_blend, [false, false, false]);
         assert!(
-            synced_words(&st, 2, 2, &synced)
-                .ends_with("; the camera profile left off IMG_0002.CR3 (made for another camera)")
+            synced_words(
+                &st,
+                &Choice::whole(&[Section::Light, Section::Camera]),
+                2,
+                &synced
+            )
+            .ends_with("; the camera profile left off IMG_0002.CR3 (made for another camera)")
         );
         drop(st);
 
@@ -2184,14 +2243,9 @@ mod tests {
             "Onto 2 frames; IMG_0001.CR3, which they came from, is left as it is."
         );
         // Nobody synced yet this session: the sync's defaults.
-        let on = app.get_sync_section_on();
-        for (i, s) in Section::ALL.iter().enumerate() {
-            assert_eq!(on.row_data(i).unwrap(), s.syncs_by_default(), "{s:?}");
-        }
+        assert_eq!(headings(&app), defaults());
         // Light alone, then Paste.
-        for (i, s) in Section::ALL.iter().enumerate() {
-            app.invoke_sync_section_toggled(i as i32, *s == Section::Light);
-        }
+        choose(&app, |s| s == Section::Light);
         app.invoke_sync_applied();
         assert!(!app.get_sync_open());
         assert_eq!(
@@ -2215,14 +2269,17 @@ mod tests {
             // the set is untouched altogether.
             assert_eq!(st.sidecars[1].current_label, None);
             assert_eq!(st.sidecars[2], Sidecar::default());
-            assert_eq!(st.sync_last.as_deref(), Some(&[Section::Light][..]));
+            assert_eq!(
+                st.sync_last.as_ref().map(|c| c.choice()),
+                Some(Choice::whole(&[Section::Light]))
+            );
         }
         // A second paste opens on the choice the first made, and with
         // nothing new to lay over, records nothing.
         with_control(&app, || press(&app, "v"));
-        let on = app.get_sync_section_on();
-        for (i, s) in Section::ALL.iter().enumerate() {
-            assert_eq!(on.row_data(i).unwrap(), *s == Section::Light, "{s:?}");
+        for ((name, on), s) in headings(&app).iter().zip(Section::ALL) {
+            assert_eq!(name, s.title());
+            assert_eq!(*on, if *s == Section::Light { 2 } else { 0 }, "{s:?}");
         }
         app.invoke_sync_applied();
         assert_eq!(app.get_status(), "the 2 frames had these already");
@@ -2237,10 +2294,7 @@ mod tests {
         // The sync's own sheet still opens on its defaults, as a sync.
         app.invoke_sync_open_asked();
         assert!(!app.get_sync_paste());
-        let on = app.get_sync_section_on();
-        for (i, s) in Section::ALL.iter().enumerate() {
-            assert_eq!(on.row_data(i).unwrap(), s.syncs_by_default(), "{s:?}");
-        }
+        assert_eq!(headings(&app), defaults());
         press(&app, Key::Escape);
         std::fs::remove_dir_all(&dir).expect("the temp dir goes");
     }
@@ -2314,9 +2368,7 @@ mod tests {
         app.invoke_copy_asked();
         app.invoke_select(2);
         app.invoke_paste_asked();
-        for (i, s) in Section::ALL.iter().enumerate() {
-            app.invoke_sync_section_toggled(i as i32, *s == Section::Adjustments);
-        }
+        choose(&app, |s| s == Section::Adjustments);
         app.invoke_sync_applied();
         assert_eq!(
             app.get_status(),
@@ -2427,5 +2479,274 @@ mod tests {
         press(&app, Key::Escape);
         with_control(&app, || press(&app, "c"));
         assert!(state.borrow().clipboard.is_some());
+    }
+
+    /// Where to click the one element on screen a screen reader knows
+    /// as `label`, of `role` when one is given: on a check, its box;
+    /// otherwise its middle. It must be inside the window, so a click
+    /// there lands on it and on nothing else.
+    fn spot(
+        app: &App,
+        label: &str,
+        role: Option<i_slint_backend_testing::AccessibleRole>,
+    ) -> (f32, f32) {
+        use i_slint_backend_testing::ElementHandle;
+        app.window().dispatch_event(WindowEvent::PointerMoved {
+            position: slint::LogicalPosition::new(0.0, 0.0),
+        });
+        let found: Vec<_> = ElementHandle::find_by_accessible_label(app, label)
+            .filter(|e| role.is_none() || e.accessible_role() == role)
+            .collect();
+        assert_eq!(found.len(), 1, "one {label:?} on screen");
+        let (at, size) = (found[0].absolute_position(), found[0].size());
+        let window = app.window().size().to_logical(app.window().scale_factor());
+        assert!(
+            at.x >= 0.0
+                && at.y >= 0.0
+                && at.x + size.width <= window.width
+                && at.y + size.height <= window.height,
+            "{label:?} is off the window"
+        );
+        match role {
+            Some(_) => (at.x + 7.0, at.y + size.height / 2.0),
+            None => (at.x + size.width / 2.0, at.y + size.height / 2.0),
+        }
+    }
+
+    /// A click on the sheet's check `label` ("Detail: Dehaze").
+    fn tick(app: &App, label: &str) {
+        let (x, y) = spot(
+            app,
+            label,
+            Some(i_slint_backend_testing::AccessibleRole::Checkbox),
+        );
+        click(app, x, y);
+    }
+
+    /// A click on the words `label`: a button's, or a choice's.
+    fn press_words(app: &App, label: &str) {
+        let (x, y) = spot(app, label, None);
+        click(app, x, y);
+    }
+
+    fn heading(app: &App, title: &str) -> i32 {
+        headings(app)
+            .into_iter()
+            .find(|(name, _)| name == title)
+            .unwrap_or_else(|| panic!("no heading {title:?}"))
+            .1
+    }
+
+    fn mask(id: u64, name: &str, shape: Shape) -> greycard_edit::Adjustment {
+        greycard_edit::Adjustment {
+            id,
+            name: name.into(),
+            mask: Mask {
+                components: vec![Component {
+                    shape,
+                    ..Default::default()
+                }],
+                invert: false,
+            },
+            ..Default::default()
+        }
+    }
+
+    fn mask_names(edit: &Edit) -> Vec<String> {
+        edit.adjustments.iter().map(|a| a.name.clone()).collect()
+    }
+
+    /// Frame 0 on the panel with a look and two masks, frame 2 with a
+    /// look and a mask of its own, in a window tall enough for the
+    /// sheet's whole list.
+    fn two_frames() -> (App, Rc<RefCell<State>>, Rc<Worker>) {
+        let app = window(3);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 1200.0));
+        let (state, worker) = state_for(&app, folder(3));
+        {
+            let mut st = state.borrow_mut();
+            let mut own = Edit::default();
+            own.light.tone.shadows = -0.5;
+            own.detail.texture = 0.2;
+            own.adjustments = vec![mask(1, "Mine 1", Shape::Subject {})];
+            st.sidecars[2].record(own);
+        }
+        app.invoke_select(0);
+        app.set_exposure(0.7);
+        app.set_contrast(1.3);
+        app.set_detail_texture(0.6);
+        app.set_detail_dehaze(0.4);
+        state.borrow_mut().edit.adjustments = vec![
+            mask(1, "Sky 1", Shape::Sky { picks: Vec::new() }),
+            mask(2, "Face 2", Shape::Subject {}),
+        ];
+        (app, state, worker)
+    }
+
+    #[test]
+    fn the_sheet_sends_one_part_and_one_mask_and_the_rest_stays() {
+        let (app, state, _worker) = two_frames();
+        state.borrow_mut().picked = vec![0, 2];
+        app.invoke_sync_open_asked();
+        assert!(app.get_sync_open());
+        // The frame's masks listed by name under Masks, unchecked as
+        // a sync's masks start.
+        assert_eq!(heading(&app, "Masks"), 0);
+        // Check all, then Uncheck all: every heading follows.
+        press_words(&app, "Check all");
+        assert!(headings(&app).iter().all(|(_, on)| *on == 2));
+        press_words(&app, "Uncheck all");
+        assert!(headings(&app).iter().all(|(_, on)| *on == 0));
+        // Light's Exposure, Detail's Dehaze and the one mask, joining.
+        tick(&app, "Light: Exposure");
+        tick(&app, "Detail: Dehaze");
+        tick(&app, "Masks: Face 2");
+        press_words(&app, "Add to masks");
+        assert_eq!(heading(&app, "Light"), 1);
+        assert_eq!(heading(&app, "Detail"), 1);
+        assert_eq!(heading(&app, "Masks"), 1);
+        assert_eq!(heading(&app, "Color"), 0);
+        app.invoke_sync_applied();
+        assert_eq!(
+            app.get_status(),
+            "synced 1 section and 2 parts onto 1 frame"
+        );
+        let st = state.borrow();
+        let got = &st.sidecars[2].current;
+        assert_eq!(got.light.exposure, 0.7);
+        assert_eq!(got.detail.dehaze, 0.4);
+        // The rest of Light and Detail is the frame's own.
+        assert_eq!(got.light.tone.contrast, 1.0);
+        assert_eq!(got.light.tone.shadows, -0.5);
+        assert_eq!(got.detail.texture, 0.2);
+        // The mask joined the frame's own, after it.
+        assert_eq!(mask_names(got), ["Mine 1", "Face 2"]);
+        assert_eq!(got.adjustments[1].id, 2);
+        assert_eq!(st.sidecars[1], Sidecar::default());
+    }
+
+    #[test]
+    fn a_check_takes_space_and_return_and_tab_moves_on() {
+        let (app, state, _worker) = two_frames();
+        state.borrow_mut().picked = vec![0, 2];
+        app.invoke_sync_open_asked();
+        let dehaze = |app: &App| {
+            let rows = app.get_sync_rows();
+            (0..rows.row_count())
+                .filter_map(|i| rows.row_data(i))
+                .find(|r| r.a11y == "Detail: Dehaze")
+                .unwrap()
+                .state
+        };
+        // A click takes the focus as it turns the check over; the keys
+        // then turn it back and again.
+        tick(&app, "Detail: Dehaze");
+        assert_eq!(dehaze(&app), 0);
+        assert_eq!(heading(&app, "Detail"), 1);
+        press(&app, " ");
+        assert_eq!(dehaze(&app), 2);
+        assert_eq!(heading(&app, "Detail"), 2);
+        press(&app, Key::Return);
+        assert_eq!(dehaze(&app), 0);
+        // Tab leaves it: Space then turns over whatever is next, not
+        // the Dehaze.
+        press(&app, Key::Tab);
+        press(&app, " ");
+        assert_eq!(dehaze(&app), 0);
+        // Escape from a check still leaves the sheet.
+        tick(&app, "Detail: Texture");
+        press(&app, Key::Escape);
+        assert!(!app.get_sync_open());
+    }
+
+    #[test]
+    fn a_mask_pasted_alone_replaces_the_frames_and_the_sheet_remembers() {
+        let (app, state, _worker) = two_frames();
+        app.invoke_copy_asked();
+        app.invoke_select(2);
+        app.invoke_paste_asked();
+        assert!(app.get_sync_paste());
+        press_words(&app, "Uncheck all");
+        tick(&app, "Masks: Sky 1");
+        app.invoke_sync_applied();
+        assert_eq!(
+            app.get_status(),
+            "pasted 1 section from IMG_0000.CR3 onto 1 frame"
+        );
+        {
+            let st = state.borrow();
+            let got = &st.sidecars[2].current;
+            // Replacing, as masks always have: the frame's own gone,
+            // the Sky carried as its ask, to be found on this frame.
+            assert_eq!(mask_names(got), ["Sky 1"]);
+            assert_eq!(
+                got.adjustments[0].mask.components[0].shape,
+                Shape::Sky { picks: Vec::new() }
+            );
+            assert_eq!(got.light.exposure, 0.0, "no Light was chosen");
+            assert_eq!(got.light.tone.shadows, -0.5);
+        }
+        // The next paste opens on that choice: the masks partly on,
+        // the Sky checked, Face not, the rest off.
+        app.invoke_paste_asked();
+        assert_eq!(heading(&app, "Masks"), 1);
+        assert_eq!(heading(&app, "Light"), 0);
+        let rows = app.get_sync_rows();
+        let checked: Vec<String> = (0..rows.row_count())
+            .filter_map(|i| rows.row_data(i))
+            .filter(|r| r.kind == 1 && r.state == 2)
+            .map(|r| r.a11y.to_string())
+            .collect();
+        assert_eq!(checked, ["Masks: Sky 1"]);
+        press(&app, Key::Escape);
+    }
+
+    #[test]
+    fn the_preset_sheet_saves_a_single_part_and_a_single_mask() {
+        let (app, state, _worker) = two_frames();
+        let dir = crate::testing::scratch_dir("preset-parts");
+        state.borrow_mut().preset_store = Some(preset::Store::at(dir.clone()));
+        app.invoke_preset_save_open();
+        assert!(app.get_preset_open());
+        // On to start: only the parts the edit changed.
+        let rows = app.get_preset_rows();
+        let on: Vec<String> = (0..rows.row_count())
+            .filter_map(|i| rows.row_data(i))
+            .filter(|r| r.kind == 1 && r.state == 2)
+            .map(|r| r.a11y.to_string())
+            .collect();
+        assert_eq!(
+            on,
+            [
+                "Light: Exposure",
+                "Light: Contrast",
+                "Detail: Texture",
+                "Detail: Dehaze"
+            ]
+        );
+        press_words(&app, "Uncheck all");
+        tick(&app, "Detail: Dehaze");
+        tick(&app, "Masks: Face 2");
+        app.set_preset_name("Haze".into());
+        app.invoke_preset_saved();
+        assert!(
+            app.get_status()
+                .starts_with("saved Haze (1 section and 1 part)")
+        );
+        let saved = preset::Store::at(dir.clone())
+            .find("Haze")
+            .expect("saved")
+            .preset;
+        assert!(saved.sections == [Section::Adjustments]);
+        assert_eq!(saved.parts, [preset::Part::DetailDehaze]);
+        assert_eq!(mask_names(&saved.edit), ["Face 2"]);
+        // Laid over frame 2's edit: the dehaze, the mask in place of
+        // its own, and nothing else.
+        let out = saved.applied(&state.borrow().sidecars[2].current);
+        assert_eq!(out.detail.dehaze, 0.4);
+        assert_eq!(out.detail.texture, 0.2);
+        assert_eq!(mask_names(&out), ["Face 2"]);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

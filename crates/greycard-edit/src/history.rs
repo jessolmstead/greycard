@@ -515,7 +515,7 @@ fn adjustments(b: &Edit, a: &Edit) -> Vec<String> {
                 vec![y.name.clone()]
             }
         }
-        _ => vec!["Adjustments".to_string()],
+        _ => vec!["Masks".to_string()],
     }
 }
 
