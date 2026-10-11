@@ -778,7 +778,7 @@ export component App inherits Window {
     in-out property <int> snapshot-editing: -1;
     callback snapshot-taken();
     callback snapshot-restored(int);
-    callback snapshot-hovered(int);
+    callback snapshot-hovered(int, string);
     callback snapshot-renamed(int, string);
     callback snapshot-deleted(int);
     in-out property <[HistoryRow]> history-rows: [];
@@ -2997,7 +2997,7 @@ export component App inherits Window {
                     snapshot-editing <=> root.snapshot-editing;
                     snapshot-taken => { root.snapshot-taken(); }
                     snapshot-restored(a) => { root.snapshot-restored(a); }
-                    snapshot-hovered(a) => { root.snapshot-hovered(a); }
+                    snapshot-hovered(a, b) => { root.snapshot-hovered(a, b); }
                     snapshot-renamed(a, b) => { root.snapshot-renamed(a, b); }
                     snapshot-deleted(a) => { root.snapshot-deleted(a); }
                     collapsed-snapshots <=> root.collapsed-snapshots;

@@ -322,6 +322,18 @@ pub(crate) fn peek(st: &mut State, app: &App, edit: Option<Edit>, what: &str) {
     app.window().request_redraw();
 }
 
+/// The status line's words over a snapshot's row: its name and when
+/// it was taken, and what a click on the `part` under the pointer
+/// does ("row", or one of its icons: "restore", "rename", "remove").
+fn snapshot_hint(name: &str, taken: &str, part: &str) -> String {
+    match part {
+        "restore" => format!("{name}, {taken}; click to restore it"),
+        "rename" => format!("{name}, {taken}; click to rename it"),
+        "remove" => format!("{name}, {taken}; click to remove it"),
+        _ => format!("{name}, {taken}; click to restore, double-click to rename"),
+    }
+}
+
 /// A moment as a date and a time, UTC.
 pub(crate) fn date_of(secs: u64) -> String {
     // Howard Hinnant's civil-from-days.
@@ -632,7 +644,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     }
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
-        app.on_snapshot_hovered(move |i| {
+        app.on_snapshot_hovered(move |i, part| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
@@ -646,11 +658,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 .cloned();
             match snapshot {
                 Some(s) => {
-                    let what = format!(
-                        "{}, {}; click to restore, double-click to rename",
-                        s.name,
-                        date_of(s.taken)
-                    );
+                    let what = snapshot_hint(&s.name, &date_of(s.taken), &part);
                     peek(&mut st, &app, Some(s.edit), &what);
                 }
                 None => peek(&mut st, &app, None, ""),
@@ -1687,7 +1695,8 @@ mod tests {
         assert_eq!(app.get_snapshot_editing(), -1, "the naming ended");
         assert_eq!(state.borrow().sidecars[0].snapshots[0].name, "Keep");
 
-        // The row is a button again: a click restores.
+        // The row is a button again: a click restores, once the
+        // double-click's window has passed.
         let (at, size) = testing::labeled(&app, "Keep");
         testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
         assert_eq!(
@@ -1695,6 +1704,7 @@ mod tests {
             -1,
             "a single click does not rename"
         );
+        past_double_click();
         assert!(
             app.get_status()
                 .as_str()
@@ -1702,5 +1712,186 @@ mod tests {
             "{}",
             app.get_status()
         );
+    }
+
+    /// The time a click on a snapshot's row waits before it restores:
+    /// past the double-click's window, fired as the event loop fires
+    /// it.
+    fn past_double_click() {
+        slint::platform::update_timers_and_animations();
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(600));
+        slint::platform::update_timers_and_animations();
+    }
+
+    /// A snapshot's row says what a click does, in its icons: the
+    /// restore icon restores at once, the rename icon opens the name
+    /// and restores nothing, and a double-click on the row renames
+    /// without its first click restoring on the way, which it did
+    /// when the row restored on every click.
+    #[test]
+    fn a_snapshot_s_icons_restore_and_rename_and_a_double_click_only_renames() {
+        use crate::testing;
+        use slint::platform::Key;
+
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        app.invoke_snapshot_taken();
+        testing::type_text(&app, "Base");
+        testing::press(&app, Key::Return);
+        assert_eq!(app.get_snapshot_editing(), -1);
+        assert_eq!(state.borrow().sidecars[0].snapshots[0].name, "Base");
+        // A step past the snapshot, so a restore has somewhere to go.
+        app.set_exposure(1.0);
+        app.invoke_view_changed();
+        rest();
+        let exposure =
+            |state: &Rc<RefCell<State>>| state.borrow().sidecars[0].current.light.exposure;
+        assert_eq!(exposure(&state), 1.0);
+        let middle = |(at, size): (slint::LogicalPosition, slint::LogicalSize)| {
+            (at.x + size.width / 2.0, at.y + size.height / 2.0)
+        };
+
+        // The pencil: its words on hover, then the name open for
+        // typing, and nothing restored, then or later.
+        let (x, y) = middle(testing::labeled(&app, "Rename Base"));
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(x, y),
+            });
+        // The row's hover is a changed handler's, run with the loop.
+        slint::platform::update_timers_and_animations();
+        assert!(
+            app.get_status().as_str().contains("click to rename it"),
+            "{}",
+            app.get_status()
+        );
+        testing::click(&app, x, y);
+        assert_eq!(app.get_snapshot_editing(), 0, "the name is open");
+        past_double_click();
+        assert_eq!(exposure(&state), 1.0, "the rename icon restores nothing");
+        testing::press(&app, Key::Escape);
+        assert_eq!(app.get_snapshot_editing(), -1);
+
+        // A double-click on the row: the name, and no restore.
+        let (x, y) = middle(testing::labeled(&app, "Base"));
+        testing::click(&app, x, y);
+        testing::click(&app, x, y);
+        assert_eq!(app.get_snapshot_editing(), 0, "a double-click renames");
+        past_double_click();
+        assert_eq!(exposure(&state), 1.0, "and its first click did not restore");
+        testing::press(&app, Key::Escape);
+        assert_eq!(app.get_snapshot_editing(), -1);
+
+        // The restore icon: back to the snapshot at once.
+        // The pointer comes to it first, as a hand does, and its
+        // words are up before the press.
+        let (x, y) = middle(testing::labeled(&app, "Restore Base"));
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(x, y),
+            });
+        slint::platform::update_timers_and_animations();
+        assert!(
+            app.get_status().as_str().contains("click to restore it"),
+            "{}",
+            app.get_status()
+        );
+        testing::click(&app, x, y);
+        assert_eq!(exposure(&state), 0.0, "restored");
+        assert_eq!(app.get_snapshot_editing(), -1, "and not renamed");
+        // The hover's words stand over the status while the pointer
+        // stays on the row; away from it, the restore's are there.
+        app.window()
+            .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                position: slint::LogicalPosition::new(750.0, 450.0),
+            });
+        slint::platform::update_timers_and_animations();
+        assert!(
+            app.get_status().as_str().contains("Base restored"),
+            "{}",
+            app.get_status()
+        );
+    }
+
+    /// A frame with a snapshot named `name`, the naming over.
+    fn named_snapshot(app: &App, name: &str) {
+        app.invoke_snapshot_taken();
+        crate::testing::type_text(app, name);
+        crate::testing::press(app, slint::platform::Key::Return);
+        assert_eq!(app.get_snapshot_editing(), -1);
+    }
+
+    /// A restore still waiting out the double-click's window is for
+    /// the frame its row was clicked on: another frame chosen in the
+    /// meantime drops it, rather than restoring the new frame's
+    /// snapshot of that number. Left alone, the wait ends in the
+    /// restore.
+    #[test]
+    fn a_waiting_restore_is_dropped_when_the_frame_changes() {
+        use crate::testing;
+        use std::cell::Cell;
+
+        let app = testing::window(2);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (_state, _worker) = testing::state_for(&app, testing::folder(2));
+        app.invoke_select(0);
+        named_snapshot(&app, "Base");
+        let restores = Rc::new(Cell::new(0));
+        {
+            let restores = restores.clone();
+            app.on_snapshot_restored(move |_| restores.set(restores.get() + 1));
+        }
+        let (at, size) = testing::labeled(&app, "Base");
+        let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+
+        testing::click(&app, x, y);
+        past_double_click();
+        assert_eq!(restores.get(), 1, "a click alone restores");
+
+        // Past the double-click's window, so the next click is a
+        // first click again.
+        past_double_click();
+        testing::click(&app, x, y);
+        app.invoke_select(1);
+        past_double_click();
+        past_double_click();
+        assert_eq!(restores.get(), 1, "nothing restored on either frame");
+    }
+
+    /// The pencil on one row while another row's new name is being
+    /// typed leaves the typing alone: opening the other name would
+    /// take the text box away without ending its naming, and the
+    /// typed name with it.
+    #[test]
+    fn the_pencil_leaves_a_name_being_typed_on_another_row() {
+        use crate::testing;
+
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        named_snapshot(&app, "Base");
+        app.invoke_snapshot_taken();
+        assert_eq!(app.get_snapshot_editing(), 1);
+        testing::type_text(&app, "Two");
+
+        let (at, size) = testing::labeled(&app, "Rename Base");
+        testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_ne!(app.get_snapshot_editing(), 0, "the other name stays shut");
+        if app.get_snapshot_editing() == 1 {
+            testing::press(&app, slint::platform::Key::Return);
+        }
+        assert_eq!(app.get_snapshot_editing(), -1);
+        let names: Vec<String> = state.borrow().sidecars[0]
+            .snapshots
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+        assert_eq!(names, ["Base", "Two"], "the typed name kept");
     }
 }

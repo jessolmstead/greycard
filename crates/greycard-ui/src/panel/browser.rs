@@ -2029,14 +2029,56 @@ fn meta_on(
     if frames.is_empty() {
         return;
     }
+    let was_shown: Vec<bool> = frames.iter().map(|&i| row_of(&st, i).is_some()).collect();
     let (settled, next) = set_meta(&mut st, app, frames, change);
+    // The frames the key took out of the filtered list. Without a
+    // word they are simply gone from the strip and the grid, and read
+    // as lost.
+    let hidden: Vec<usize> = frames
+        .iter()
+        .zip(was_shown)
+        .filter(|&(&i, was)| was && !filter_shows(&st, i))
+        .map(|(&i, _)| i)
+        .collect();
     if st.cull.is_some() {
-        say_notice(&mut st, app, tags::notice(settled));
+        let word = tags::notice(settled);
+        let word = if hidden.is_empty() {
+            word
+        } else {
+            format!("{word}; hidden by the filter")
+        };
+        say_notice(&mut st, app, word);
     }
+    let said = match hidden.as_slice() {
+        [] => None,
+        [i] => Some(tags::hidden_by_filter(
+            settled,
+            &file_name(&st.files[*i]),
+            false,
+            &st.filter.describe(),
+        )),
+        many => Some(tags::hidden_by_filter(
+            settled,
+            &format!("{} frames", many.len()),
+            true,
+            &st.filter.describe(),
+        )),
+    };
+    let generation = st.generation;
     drop(st);
     // The frame left the filtered list: on to the nearest.
     if let (Some(row), true) = (next, may_select) {
         app.invoke_select(row as i32);
+    }
+    // Said after the selection moved on, so the open's own word does
+    // not cover it; and an open that asked for a develop carries it
+    // ahead of the develop's line when that lands.
+    if let Some(said) = said {
+        let mut st = state.borrow_mut();
+        if st.generation != generation && st.cull.is_none() {
+            st.status_after_develop = Some((st.generation, said.clone()));
+        }
+        app.set_status(said.into());
     }
 }
 

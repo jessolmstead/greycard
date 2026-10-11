@@ -315,3 +315,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§302. Detail in a mask, built](notes/302-detail-in-a-mask-built.md) (2026-10-11)
 - [§303. The brush and the patch size by the wheel's accumulated delta](notes/303-the-brush-and-the-patch-size-by-the-wheels-accumulated-delta.md) (2026-10-11)
 - [§304. Collections and smart collections, built](notes/304-collections-and-smart-collections-built.md) (2026-10-11)
+- [§305. A snapshot's row says what a click does; a key that hides a frame says where it went](notes/305-a-snapshots-row-says-what-a-click-does.md) (2026-10-11)

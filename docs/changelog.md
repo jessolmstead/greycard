@@ -39,6 +39,13 @@ note a first tester reads.
   chosen mask's name and switches are their own MASK section
   ([§300](https://github.com/jessolmstead/greycard/blob/master/docs/notes/300-the-adjustments-list-stays-pinned.md))
 
+### Editing
+
+- A snapshot's row carries restore and rename icons beside the bin,
+  the status line names what a click does, and a double-click on the
+  row renames without restoring first
+  ([§305](https://github.com/jessolmstead/greycard/blob/master/docs/notes/305-a-snapshots-row-says-what-a-click-does.md))
+
 ### Export
 
 - The export sheet names the folder it will write to, the last one
@@ -52,6 +59,11 @@ note a first tester reads.
 
 ### Fixes
 
+- A rating, flag or label key that makes the frame fall out of the
+  filter says so on the status line ("rated 0 and hidden by the filter
+  (1 star or more); Clear the filter to see it") instead of the frame
+  vanishing without a word
+  ([§305](https://github.com/jessolmstead/greycard/blob/master/docs/notes/305-a-snapshots-row-says-what-a-click-does.md))
 - The brush and the retouch patch size by the wheel's accumulated
   delta, one step of 1.1x per wheel click's worth, so a touchpad
   scroll no longer resizes them a dozen times a gesture

@@ -3323,6 +3323,66 @@ mod tests {
         assert_eq!(app.get_selected(), 1);
     }
 
+    /// A key that takes the frame out of the filtered list says so on
+    /// the status line, with the filter in its words and the way back,
+    /// and the selection goes on to the next frame shown. Without the
+    /// word a frame rated 0 under a one-star filter was simply gone.
+    /// The same key with no filter on says nothing of the kind.
+    #[test]
+    fn a_rating_under_a_hiding_filter_says_where_the_frame_went() {
+        let app = window(0);
+        let (state, _worker) = state_for(&app, folder(3));
+        {
+            let mut st = state.borrow_mut();
+            for i in 0..3 {
+                st.sidecars[i].meta.set_rating(2);
+            }
+            st.shown = (0..3).collect();
+            st.current = Some(1);
+            app.set_selected(1);
+        }
+        app.invoke_filter_star_picked(1);
+        assert_eq!(state.borrow().shown, vec![0, 1, 2]);
+
+        app.invoke_meta_key("0".into());
+        assert_eq!(state.borrow().shown, vec![0, 2]);
+        assert_eq!(state.borrow().current, Some(2), "on to the next frame");
+        assert_eq!(app.get_selected(), 1);
+        assert_eq!(
+            app.get_status(),
+            "IMG_0001.CR3 rated 0 and hidden by the filter (1 star or more); \
+             Clear the filter to see it"
+        );
+
+        // A flag key that hides the frame says it the same way.
+        app.invoke_meta_key("p".into());
+        app.invoke_filter_flag_toggled(1);
+        assert_eq!(state.borrow().shown, vec![2]);
+        app.invoke_meta_key("u".into());
+        assert!(state.borrow().shown.is_empty());
+        assert!(
+            app.get_status()
+                .as_str()
+                .starts_with("IMG_0002.CR3 unflagged and hidden by the filter"),
+            "{}",
+            app.get_status()
+        );
+
+        // No filter: the same rating key hides nothing and says
+        // nothing of the filter.
+        app.invoke_filter_cleared();
+        app.invoke_select(0);
+        app.set_status("".into());
+        app.invoke_meta_key("0".into());
+        assert_eq!(state.borrow().sidecars[0].meta.rating, 0);
+        assert_eq!(state.borrow().current, Some(0));
+        assert!(
+            !app.get_status().as_str().contains("filter"),
+            "{}",
+            app.get_status()
+        );
+    }
+
     /// Ctrl+Z in culling steps back the ratings, flags and labels the
     /// session gave, newest first, going to each frame it changes;
     /// Ctrl+Shift+Z makes them again. No develop moves, and culling

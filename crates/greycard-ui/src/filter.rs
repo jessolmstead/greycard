@@ -444,8 +444,10 @@ impl Filter {
         let mut parts: Vec<String> = Vec::new();
         match self.stars {
             Stars::AtLeast(0) => {}
+            Stars::AtLeast(1) => parts.push("1 star or more".to_string()),
             Stars::AtLeast(n) => parts.push(format!("{n} stars or more")),
             Stars::Exactly(0) => parts.push("unrated".to_string()),
+            Stars::Exactly(1) => parts.push("exactly 1 star".to_string()),
             Stars::Exactly(n) => parts.push(format!("exactly {n} stars")),
         }
         if !self.flags.is_empty() {

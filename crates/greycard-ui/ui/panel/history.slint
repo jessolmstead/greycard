@@ -6,16 +6,76 @@ import { Theme } from "../theme.slint";
 import { Section, PanelButton } from "../controls.slint";
 import { HistoryRow } from "../structs.slint";
 
+/// A snapshot row's icon: its picture, lit under the pointer, and
+/// named for what a click on it does, which is also how the tests
+/// find it.
+component SnapshotIcon inherits Rectangle {
+    in property <image> icon;
+    in property <string> label;
+    out property <bool> hovered: ta.has-hover;
+    callback clicked();
+    width: Theme.control-height - 4px;
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    Image {
+        source: root.icon;
+        colorize: ta.has-hover ? Theme.text : Theme.text-muted;
+        width: Theme.icon;
+        height: Theme.icon;
+        x: (parent.width - self.width) / 2;
+        y: (parent.height - self.height) / 2;
+    }
+    ta := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 export component SnapshotsSection inherits Section {
     in-out property <int> selected;
     in-out property <[string]> snapshot-names;
     in-out property <int> snapshot-editing;
     callback snapshot-taken();
     callback snapshot-restored(int);
-    callback snapshot-hovered(int);
+    /// The row under the pointer (-1 for none), and the part of it:
+    /// "row", "restore", "rename" or "remove".
+    callback snapshot-hovered(int, string);
     callback snapshot-renamed(int, string);
     callback snapshot-deleted(int);
     in-out property <bool> collapsed-snapshots;
+
+    /// A click on a row restores it, but not at once: a double-click
+    /// renames, and its first click is a click too. So the restore
+    /// waits out the double-click's window, and a second click inside
+    /// it takes the restore back and renames instead. Slint counts a
+    /// second click by its press, within its click interval (500 ms;
+    /// no backend we run on changes it) of the first press, and
+    /// reports the double-click only at its release. So every press
+    /// on the row stops the wait and only a release starts it: a
+    /// second press, however late in the window and however long it
+    /// is held, finds the restore not yet made.
+    ///
+    /// A restore still waiting is for the frame it was clicked on:
+    /// another frame chosen in the meantime drops it.
+    property <int> restore-pending: -1;
+    function hold-restore() {
+        root.restore-pending = -1;
+        restore-wait.running = false;
+    }
+    restore-wait := Timer {
+        interval: 500ms;
+        running: false;
+        triggered => {
+            self.running = false;
+            if (root.restore-pending >= 0) {
+                let i = root.restore-pending;
+                root.restore-pending = -1;
+                root.snapshot-restored(i);
+            }
+        }
+    }
+    changed selected => { root.hold-restore(); }
 
     title: "SNAPSHOTS";
     icon: @image-url("../icons/image.svg");
@@ -37,17 +97,38 @@ export component SnapshotsSection inherits Section {
             snapshot-list := VerticalLayout {
                 padding: 2px;
                 spacing: 2px;
-                for name[i] in root.snapshot-names: Rectangle {
+                for name[i] in root.snapshot-names: snapshot-box := Rectangle {
+                    // What the pointer is over: the row, one of its
+                    // icons, or nothing. The status line names what a
+                    // click there does.
+                    property <string> part: restore.hovered ? "restore"
+                        : rename.hovered ? "rename"
+                        : bin.hovered ? "remove"
+                        : snapshot-row.has-hover ? "row" : "";
+                    changed part => { root.snapshot-hovered(self.part == "" ? -1 : i, self.part); }
                     height: Theme.control-height;
                     border-radius: Theme.radius-sm;
-                    background: snapshot-row.has-hover ? Theme.hover : transparent;
+                    background: self.part != "" ? Theme.hover : transparent;
                     animate background { duration: Theme.quick; }
                     snapshot-row := TouchArea {
                         mouse-cursor: MouseCursor.pointer;
                         enabled: root.selected >= 0 && root.snapshot-editing != i;
-                        clicked => { root.snapshot-restored(i); }
-                        double-clicked => { root.snapshot-editing = i; }
-                        changed has-hover => { root.snapshot-hovered(self.has-hover ? i : -1); }
+                        pointer-event(e) => {
+                            if (e.kind == PointerEventKind.down) { root.hold-restore(); }
+                        }
+                        clicked => {
+                            root.restore-pending = i;
+                            restore-wait.running = true;
+                            restore-wait.restart();
+                        }
+                        // Not while another row's name is being typed:
+                        // its text box would go without ending the
+                        // naming, and what was typed would go with it.
+                        double-clicked => {
+                            root.hold-restore();
+                            if (root.snapshot-editing >= 0) { return; }
+                            root.snapshot-editing = i;
+                        }
                     }
                     HorizontalLayout {
                         padding-left: Theme.space-2;
@@ -55,7 +136,7 @@ export component SnapshotsSection inherits Section {
                         // overflowing list never lets the bin's hit
                         // area sit under it.
                         padding-right: Theme.space-1 + Theme.scrollbar-band;
-                        spacing: Theme.space-2;
+                        spacing: 0px;
                         if root.snapshot-editing == i: LineEdit {
                             text: name;
                             font-size: Theme.font-xs;
@@ -83,25 +164,41 @@ export component SnapshotsSection inherits Section {
                         }
                         if root.snapshot-editing != i: Text {
                             text: name;
-                            color: snapshot-row.has-hover ? Theme.text : Theme.text-secondary;
+                            color: snapshot-box.part != "" ? Theme.text : Theme.text-secondary;
                             font-size: Theme.font-xs;
                             vertical-alignment: center;
                             horizontal-stretch: 1;
                             overflow: elide;
                         }
-                        Rectangle {
-                            width: Theme.control-height - 4px;
-                            Image {
-                                source: @image-url("../icons/trash-2.svg");
-                                colorize: snapshot-bin.has-hover ? Theme.text : Theme.text-muted;
-                                width: Theme.icon;
-                                height: Theme.icon;
-                                x: (parent.width - self.width) / 2;
-                                y: (parent.height - self.height) / 2;
+                        // The row is the only way back to a snapshot,
+                        // so what a click does is on it in pictures:
+                        // back to it, a new name, away. The rename
+                        // icon names it without restoring it.
+                        restore := SnapshotIcon {
+                            icon: @image-url("../icons/undo-2.svg");
+                            label: "Restore " + name;
+                            clicked => {
+                                root.hold-restore();
+                                if (root.selected >= 0) { root.snapshot-restored(i); }
                             }
-                            snapshot-bin := TouchArea {
-                                mouse-cursor: MouseCursor.pointer;
-                                clicked => { root.snapshot-deleted(i); }
+                        }
+                        rename := SnapshotIcon {
+                            icon: @image-url("../icons/pencil.svg");
+                            label: "Rename " + name;
+                            // As the double-click: never over another
+                            // row's name being typed.
+                            clicked => {
+                                root.hold-restore();
+                                if (root.snapshot-editing >= 0) { return; }
+                                root.snapshot-editing = i;
+                            }
+                        }
+                        bin := SnapshotIcon {
+                            icon: @image-url("../icons/trash-2.svg");
+                            label: "Remove " + name;
+                            clicked => {
+                                root.hold-restore();
+                                root.snapshot-deleted(i);
                             }
                         }
                     }

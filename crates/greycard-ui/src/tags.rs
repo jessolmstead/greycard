@@ -58,6 +58,25 @@ pub(crate) fn notice(change: Change) -> String {
     }
 }
 
+/// The status line's words for a key that took frames out of the
+/// filtered list: what the key did, that the filter (`filter`, in its
+/// own words) hid them, and the way back. `who` is the frame's name,
+/// or how many there were. Without it a frame rated under a filter
+/// that no longer wants it is gone from the strip and the grid with
+/// no word, and reads as lost.
+pub(crate) fn hidden_by_filter(change: Change, who: &str, many: bool, filter: &str) -> String {
+    let done = match change {
+        Change::Rating(n) => format!("rated {n}"),
+        Change::Flag(Flag::Pick) => "picked".into(),
+        Change::Flag(Flag::Reject) => "rejected".into(),
+        Change::Flag(Flag::None) => "unflagged".into(),
+        Change::Label(Label::None) => "unlabeled".into(),
+        Change::Label(label) => format!("labeled {}", label.name().to_lowercase()),
+    };
+    let it = if many { "them" } else { "it" };
+    format!("{who} {done} and hidden by the filter ({filter}); Clear the filter to see {it}")
+}
+
 /// The one field that differs between `from` and `to`, as the change
 /// that would take a frame from the one to the other: what an undo
 /// or a redo did to it, in the key's own terms, for the word over

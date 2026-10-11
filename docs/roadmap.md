@@ -49,11 +49,6 @@ and export are smoothed.
       reachable from it so a frame that stands out is matched to its
       neighbors; one key into the loupe on a tile and one back. Reads
       the 2048 picture of §270
-- [ ] A snapshot's row says what a click does: restore and rename
-      icons beside the bin, since the row is the only way back, nothing
-      but the hover names it, and the double-click that renames also
-      restores on its first click; and a rating or flag key pressed
-      while the filter would hide the frame tells the user where it went
 
 ## Tracks
 
