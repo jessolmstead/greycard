@@ -54,8 +54,19 @@ import { CollectionSheet } from "panel/collection-sheet.slint";
 export component App inherits Window {
     title: "greycard";
     icon: @image-url("../../../assets/icon/greycard.svg");
+    // 800 high fits under the menu bar and above the Dock of a 13 or
+    // 14 inch laptop, title bar and all; a screen with less has it cut
+    // to what the screen has (`window_fit`).
     preferred-width: 1500px;
-    preferred-height: 950px;
+    preferred-height: 800px;
+    // The size asked for and the least the layout takes, for the
+    // opening size's fit to the screen (`window_fit`), which runs
+    // before the window exists and holds a size of its own; a window
+    // clamped below the least would only be pushed back up.
+    out property <length> asked-width: self.preferred-width;
+    out property <length> asked-height: self.preferred-height;
+    out property <length> least-width: self.min-width;
+    out property <length> least-height: self.min-height;
     background: Theme.canvas;
     default-font-size: Theme.font-md;
 

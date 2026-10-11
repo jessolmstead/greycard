@@ -2715,6 +2715,9 @@ mod tests {
     #[test]
     fn the_shape_buttons_and_new_mask_each_appear_once() {
         let app = window(1);
+        // The tall desktop window the test was written at.
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
         app.set_panel_tab("Masks".into());
         // Queried only after the mask exists: a query on this window
@@ -2746,12 +2749,20 @@ mod tests {
     #[test]
     fn the_mode_row_is_hidden_until_the_mask_has_a_shape() {
         let empty = window(1);
+        // The tall desktop window the test was written at.
+        empty
+            .window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let (_state, _worker) = crate::testing::state_for(&empty, Vec::new());
         empty.set_panel_tab("Masks".into());
         empty.invoke_new_mask();
         assert_eq!(count_labeled(&empty, "Next shape mode"), 0);
 
         let with_shape = window(1);
+        // The tall desktop window the test was written at.
+        with_shape
+            .window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let (_state, _worker) = crate::testing::state_for(&with_shape, Vec::new());
         with_shape.set_panel_tab("Masks".into());
         with_shape.invoke_new_mask();
@@ -3121,6 +3132,9 @@ mod tests {
     fn a_long_adjustments_list_scrolls_inside_itself() {
         use crate::testing::buttons;
         let app = window(1);
+        // The tall desktop window the test was written at.
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
         app.set_panel_tab("Masks".into());
         settle_layout(&app);

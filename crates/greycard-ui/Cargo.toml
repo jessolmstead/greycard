@@ -22,7 +22,8 @@ greycard-gpu = { path = "../greycard-gpu" }
 greycard-library = { path = "../greycard-library" }
 # The camera match: the fit the Look section runs over a group.
 greycard-match = { path = "../greycard-match" }
-slint = { version = "1.18", features = ["unstable-wgpu-30", "renderer-femtovg-wgpu"] }
+# winit's window behind Slint's, for the monitor the window opens on.
+slint = { version = "1.18", features = ["unstable-wgpu-30", "unstable-winit-030", "renderer-femtovg-wgpu"] }
 bytemuck = { version = "1", features = ["derive"] }
 half = { version = "2", features = ["bytemuck"] }
 lcms2 = "6"

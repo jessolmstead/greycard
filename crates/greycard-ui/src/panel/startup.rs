@@ -121,8 +121,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
         max_texture_dimension_2d: 16384,
         ..wgpu::Limits::default()
     };
+    // No taller or wider than the monitor it opens on leaves room for,
+    // fitted before the window is created.
+    let (fit, fit_slot) = crate::window_fit::handler();
     slint::BackendSelector::new()
         .require_wgpu_30(WGPUConfiguration::Automatic(settings))
+        .with_winit_custom_application_handler(fit)
         .select()
         .context("selecting Slint's wgpu backend")?;
     // The event loop is built now and not yet running: the moment to
@@ -131,6 +135,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     finder::install();
 
     let app = App::new()?;
+    *fit_slot.borrow_mut() = Some(app.as_weak());
     // Which curve the panel shows at the start, for a dump of its
     // picture with `GREYCARD_UI_CURVE`.
     if let Ok(name) = std::env::var("GREYCARD_UI_CURVE_CHANNEL") {

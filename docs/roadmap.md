@@ -36,10 +36,6 @@ collections and smart collections that survive a move, a mask has its
 own Detail, and the first tester's rough edges on masks, the touchpad
 and export are smoothed.
 
-- [ ] The window opens no taller than the screen's visible area, so a
-      sheet's foot is never under the Dock or the task bar; a lower
-      preferred height first, the platform's work area if that is not
-      enough; tried on a Mac (#21, §298)
 - [ ] Lightbox over a collection, or the picks until collections
       exist: the grid with everything that gets in the way of judging
       consistency taken out. Tiles at a chosen size up to a handful

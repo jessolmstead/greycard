@@ -4172,6 +4172,9 @@ mod tests {
     #[test]
     fn the_grids_rejects_menu_asks_what_the_culling_section_asks() {
         let app = window(3);
+        // The tall desktop window the test was written at.
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
         let got = recorded_rejects(&app);
         app.set_reject_count(2);
         app.set_back_count(1);

@@ -64,6 +64,7 @@ mod tree;
 mod update;
 mod watermark;
 mod wheel;
+mod window_fit;
 mod worker;
 mod zoom;
 

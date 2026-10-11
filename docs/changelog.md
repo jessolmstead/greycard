@@ -59,6 +59,12 @@ note a first tester reads.
 
 ### Fixes
 
+- The window opens no taller than its screen: 1500 by 800 by default,
+  and smaller on a screen that has less room below the menu bar and
+  above the Dock or task bar, so the export sheet's buttons stay in
+  reach on a 13 or 14 inch laptop. On Wayland the compositor keeps the
+  say. The log's "window:" line says what was chosen
+  ([§306](https://github.com/jessolmstead/greycard/blob/master/docs/notes/306-the-window-opens-no-taller-than-its-screen.md))
 - A rating, flag or label key that makes the frame fall out of the
   filter says so on the status line ("rated 0 and hidden by the filter
   (1 star or more); Clear the filter to see it") instead of the frame
