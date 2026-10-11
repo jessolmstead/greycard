@@ -14,12 +14,9 @@ note a first tester reads.
 
 The strip and the grid show each frame as edited, made in the background
 for frames edited without being opened. The copy settings and preset
-sheets copy one slider or one mask, and Check all. A tint cools or warms
+sheets offer more granularity, and Check/Uncheck all. A tint cools or warms
 without turning hues through green and magenta, and a mask keeps its
-own white balance. A wide round of fixes to bues 0.5.0 shipped: a
-pasted learned mask drawn from the wrong frame, history rows lost on a
-click back, a snapshot that could not be restored, the crop's Portrait
-switch, the grading wheels' sliders, and the mouse wheel's step.
+own white balance. A wide round of bug fixes.
 
 ### Culling and the grid
 
