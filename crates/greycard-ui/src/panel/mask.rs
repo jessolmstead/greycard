@@ -2681,6 +2681,22 @@ mod tests {
 
     /// With no mask chosen, "New mask" is there and nothing offers a
     /// shape yet: there is no mask to add one to.
+    /// New mask puts the sections back at their top: the new mask's
+    /// name and shapes are in the first section, and the button is in
+    /// reach from any scroll since the list is pinned.
+    #[test]
+    fn new_mask_brings_the_sections_back_to_their_top() {
+        let app = window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.set_panel_scroll(-900.0);
+        let (at, size) = crate::testing::labeled(&app, "New mask");
+        click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(state.borrow().edit.adjustments.len(), 2);
+        assert_eq!(app.get_panel_scroll(), 0.0, "the sections are at their top");
+    }
+
     #[test]
     fn new_mask_is_there_with_nothing_chosen_and_no_shape_button_yet() {
         let app = window(1);

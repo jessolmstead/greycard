@@ -64,3 +64,11 @@ pinned list's foot (or, folded, its header's) as the top of the view
 on the Masks tab, so a control behind the list is not taken as in
 view, and steps by less than that view's height, so a control cannot
 fall between two steps.
+
+**Added the same day.** Trying it, the user asked that New mask bring
+the sections back to their top: a new mask's name and its shapes are
+in the first section, and the button is in reach from any scroll now
+that the list is pinned, so pressing it far down a mask's sliders left
+the new mask's controls out of sight. The button's handler sets the
+sections' scroll to zero before it asks for the mask.
+

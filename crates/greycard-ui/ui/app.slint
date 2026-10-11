@@ -2144,7 +2144,10 @@ export component App inherits Window {
                         collapsed-adjustments <=> root.collapsed-adjustments;
                         target-changed(a) => { root.target-changed(a); }
                         adjustment-toggled(a) => { root.adjustment-toggled(a); }
-                        new-mask => { root.new-mask(); }
+                        // A new mask's name and shapes are in the
+                        // first section, so the sections go back to
+                        // their top for it.
+                        new-mask => { root.panel-scroll = 0px; root.new-mask(); }
                         delete-adjustment => { root.delete-adjustment(); }
                     }
                 }
