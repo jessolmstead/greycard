@@ -1288,17 +1288,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         );
                     }
                     if let Some(b) = fresh {
-                        app.set_curve_image(draw_curve(&app, Some(b.as_slice())));
-                        let clipping = scope::Clipping::of(&b);
-                        let mark = |chans: [bool; 3]| {
-                            let c = scope::Clipping::mark(chans).unwrap_or([0; 3]);
-                            slint::Color::from_rgb_u8(c[0], c[1], c[2])
-                        };
-                        app.set_clip_shadows_lit(clipping.shadows.iter().any(|&c| c));
-                        app.set_clip_shadows_mark(mark(clipping.shadows));
-                        app.set_clip_highlights_lit(clipping.highlights.iter().any(|&c| c));
-                        app.set_clip_highlights_mark(mark(clipping.highlights));
-                        st.bins = Some(b);
+                        bins_read(st, &app, b);
                     }
                     // The variable is the gate; the line is kept at info so
                     // asking for it is enough to get it.
@@ -1503,6 +1493,25 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     } else {
         std::process::ExitCode::SUCCESS
     })
+}
+
+/// A histogram read back from the analysis: the backdrop of the curve
+/// editor, whichever look it edits, and the clipping lamps at the
+/// histogram's corners. A mask's raster landing, or a new weighing,
+/// changes the analysis's key, so it comes this way with no touch of
+/// the panel.
+pub(crate) fn bins_read(st: &mut State, app: &App, bins: Vec<u32>) {
+    app.set_curve_image(draw_curve(app, Some(bins.as_slice())));
+    let clipping = scope::Clipping::of(&bins);
+    let mark = |chans: [bool; 3]| {
+        let c = scope::Clipping::mark(chans).unwrap_or([0; 3]);
+        slint::Color::from_rgb_u8(c[0], c[1], c[2])
+    };
+    app.set_clip_shadows_lit(clipping.shadows.iter().any(|&c| c));
+    app.set_clip_shadows_mark(mark(clipping.shadows));
+    app.set_clip_highlights_lit(clipping.highlights.iter().any(|&c| c));
+    app.set_clip_highlights_mark(mark(clipping.highlights));
+    st.bins = Some(bins);
 }
 
 /// The quit's saves, the window's index reader closed: the open

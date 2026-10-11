@@ -291,3 +291,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§279. Whole person's edge from Subject's matte, as built](notes/279-whole-persons-edge-from-subjects-matte.md) (2026-10-10)
 - [§280. A quit from culling records nothing from the panel](notes/280-a-quit-from-culling-records-nothing-from-the-panel.md) (2026-10-10)
 - [§281. How many frames the camera match develops](notes/281-how-many-frames-the-camera-match-develops.md) (2026-10-10)
+- [§282. A mask's curve editor has its histogram when shown](notes/282-a-masks-curve-editor-has-its-histogram-when-shown.md) (2026-10-10)

@@ -701,4 +701,147 @@ mod tests {
         assert_eq!(points().len(), 2);
         assert_eq!(app.get_curve_selected(), -1);
     }
+
+    fn image_bytes(img: &slint::Image) -> Vec<u8> {
+        img.to_rgba8()
+            .map(|b| b.as_bytes().to_vec())
+            .unwrap_or_default()
+    }
+
+    /// A histogram with something in every bin, as the analysis reads
+    /// one back: red, green and blue, 256 bins each.
+    fn some_bins(lift: u32) -> Vec<u32> {
+        (0..768).map(|i| (i % 256) as u32 * lift + 5).collect()
+    }
+
+    /// A window on a picture with one mask, of `shape`, and the last
+    /// analysis's histogram in hand; the Masks tab showing, nothing
+    /// chosen yet.
+    fn a_mask_of(
+        shape: &str,
+        bins: &[u32],
+    ) -> (App, Rc<RefCell<State>>, Rc<crate::worker::Worker>) {
+        use crate::testing;
+        let app = testing::window(1);
+        let (state, worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+        {
+            let mut st = state.borrow_mut();
+            st.current = Some(0);
+            st.source_size = (1200, 800);
+            st.edit.adjustments.push(greycard_edit::Adjustment {
+                id: 1,
+                name: "Mask 1".into(),
+                enabled: true,
+                mask: greycard_edit::mask::Mask {
+                    components: vec![greycard_edit::mask::Component {
+                        shape: greycard_edit::mask::Shape::of_kind(shape),
+                        ..Default::default()
+                    }],
+                    invert: false,
+                },
+                look: Default::default(),
+            });
+            st.bins = Some(bins.to_vec());
+        }
+        app.set_panel_tab("Masks".into());
+        app.invoke_tab_changed("Masks".into());
+        app.set_curve_mode("Point".into());
+        app.set_curve_channel("RGB".into());
+        (app, state, worker)
+    }
+
+    /// A mask chosen and its Curves opened: the editor has the last
+    /// histogram behind it at once, with no slider or point touched.
+    /// Choosing the mask redraws the editor for the mask's curve while
+    /// the state is held, and the histogram was read through a second
+    /// borrow that found nothing, so the editor stood bare until the
+    /// next analysis, which a switch of target alone does not bring.
+    /// Back on the global look, the same.
+    #[test]
+    fn a_masks_curve_editor_has_its_histogram_when_shown() {
+        let frame = some_bins(3);
+        let (app, state, _worker) = a_mask_of("Radial", &frame);
+        let bare = image_bytes(&draw_curve(&app, None));
+        let drawn = image_bytes(&draw_curve(&app, Some(&frame)));
+        assert_ne!(bare, drawn, "the histogram draws");
+
+        app.invoke_target_changed(1);
+        app.set_collapsed_curves(false);
+        assert_eq!(state.borrow().target, Some(0));
+        assert_eq!(app.get_target(), 1);
+        assert!(!app.get_collapsed_curves());
+        assert_eq!(
+            image_bytes(&app.get_curve_image()),
+            drawn,
+            "the mask's curve editor stood without its histogram"
+        );
+
+        // The global curve, by the Develop tab: the same histogram.
+        app.set_panel_tab("Develop".into());
+        app.invoke_tab_changed("Develop".into());
+        assert_eq!(state.borrow().target, None);
+        assert_eq!(image_bytes(&app.get_curve_image()), drawn);
+    }
+
+    /// A learned mask still being made when its curve editor is shown:
+    /// the editor has the picture's histogram meanwhile, the raster's
+    /// landing does not take it away, the landing changes the locals
+    /// the analysis is keyed on (so a new one is read with no touch),
+    /// and that read is what the editor then shows.
+    #[test]
+    fn a_masks_curve_editor_follows_its_raster_landing() {
+        use crate::panel::mask::bake_locals;
+        use std::sync::Arc;
+
+        let frame = some_bins(3);
+        let (app, state, _worker) = a_mask_of("Sky", &frame);
+        app.invoke_target_changed(1);
+        app.set_collapsed_curves(false);
+        let drawn = image_bytes(&draw_curve(&app, Some(&frame)));
+        assert_eq!(image_bytes(&app.get_curve_image()), drawn);
+
+        let locals = |state: &Rc<RefCell<State>>| {
+            let mut st = state.borrow_mut();
+            let st = &mut *st;
+            bake_locals(&st.edit, &mut st.rasters, &mut st.learned, 2.0 / 3.0, None).0
+        };
+        let waiting = locals(&state);
+        assert!(waiting[0].rasters[0].is_none(), "the sky is not made yet");
+
+        crate::panel::deliver::deliver(
+            &app,
+            crate::worker::Outcome::Mask {
+                key: (1, 0),
+                shape: greycard_edit::mask::Shape::of_kind("Sky"),
+                file: None,
+                raster: Arc::new(greycard_edit::brush::Raster::from_data(
+                    1.0,
+                    4,
+                    vec![255; 16],
+                )),
+                provider: Some("CPU"),
+                seconds: 0.1,
+                note: None,
+                part: None,
+            },
+        );
+        assert_eq!(
+            image_bytes(&app.get_curve_image()),
+            drawn,
+            "the raster's landing took the histogram away"
+        );
+        let landed = locals(&state);
+        assert!(landed[0].rasters[0].is_some());
+        assert_ne!(waiting, landed, "the analysis would not be read again");
+
+        // The analysis read again, weighed by the sky now there.
+        let weighed = some_bins(1);
+        crate::panel::startup::bins_read(&mut state.borrow_mut(), &app, weighed.clone());
+        assert_eq!(
+            image_bytes(&app.get_curve_image()),
+            image_bytes(&draw_curve(&app, Some(&weighed)))
+        );
+        assert_eq!(state.borrow().bins.as_deref(), Some(weighed.as_slice()));
+    }
 }

@@ -20,8 +20,6 @@ the reasoning lives in `docs/notes.md`.
       and skin through magenta; the global tint the same. To become a
       blend in Oklab's a and b toward the tint's vector, never through
       the hues between
-- [ ] The histogram in a mask's curve editor is empty until a slider or
-      a point is touched, then it appears
 
 ## Open Questions
 

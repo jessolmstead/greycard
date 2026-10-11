@@ -610,12 +610,12 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     if curve_points(app, current_channel(app)) != shown {
         select_point(app, None);
     }
-    let bins = STATE.with(|s| {
-        s.borrow()
-            .as_ref()
-            .and_then(|st| st.try_borrow().ok().and_then(|st| st.bins.clone()))
-    });
-    app.set_curve_image(draw_curve(app, bins.as_deref()));
+    // The histogram behind is the last one read, from the state in
+    // hand: every caller holds it borrowed, so a second borrow through
+    // the thread's handle would find nothing and draw the editor bare
+    // until the next analysis, which a switch of target alone does
+    // not bring.
+    app.set_curve_image(draw_curve(app, st.bins.as_deref()));
     app.set_lens_enabled(edit.lens.enabled);
     app.set_lens_profile_on(edit.lens.profile);
     app.set_lens_distortion(edit.lens.distortion);
