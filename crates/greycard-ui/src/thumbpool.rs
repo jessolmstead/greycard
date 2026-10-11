@@ -1191,10 +1191,21 @@ mod tests {
         pool.want(2, 3);
         pool.hold(false);
         let order = until_logged(&log, 6);
-        assert_eq!(order[0], "p3", "the preview before every edit");
-        // One at a time, so this is the pool's order: the frames
+        // The preview is handed out before any edit, but it is made on
+        // its own thread while the first edit begins on another, so
+        // the two may log in either order.
+        assert!(
+            order[..2].contains(&"p3".to_string()),
+            "the preview before every edit: {order:?}"
+        );
+        let edits: Vec<&str> = order
+            .iter()
+            .filter(|s| *s != "p3")
+            .map(String::as_str)
+            .collect();
+        // Edits one at a time, so this is the pool's order: the frames
         // nearest the range shown first, the rest outward.
-        assert_eq!(order[1..], ["e2", "e1", "e0", "e4", "e5"]);
+        assert_eq!(edits, ["e2", "e1", "e0", "e4", "e5"]);
         let mut kept = Vec::new();
         while kept.len() < 5 {
             let (what, i) = rx.recv_timeout(WAIT).unwrap();
