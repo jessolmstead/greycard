@@ -299,3 +299,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§287. Detail in a mask](notes/287-detail-in-a-mask.md) (2026-10-10)
 - [§288. Parts of a section, single masks, and check all on the copy settings sheet](notes/288-parts-single-masks-and-check-all-on-the-copy-settings-sheet.md) (2026-10-10)
 - [§289. A history click keeps the rows above it](notes/289-a-history-click-keeps-the-rows-above-it.md) (2026-10-10)
+- [§290. A new snapshot's name ends with a click away](notes/290-a-new-snapshots-name-ends-with-a-click-away.md) (2026-10-10)

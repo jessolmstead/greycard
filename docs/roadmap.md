@@ -40,9 +40,9 @@ and smart collections that survive a move.
       export, the viewport and the reduced develop; a Detail section
       on the Masks tab and a history row (§287)
 - [ ] A snapshot's row says what a click does: a restore icon beside
-      the bin, or "click to restore" on hover, since the row is the only
-      way back and nothing names it; and a rating or flag key pressed
-      while the filter would hide the frame tells the user where it went
+      the bin, since the row is the only way back and nothing but the
+      hover names it; and a rating or flag key pressed while the filter
+      would hide the frame tells the user where it went
 - [ ] Lightbox over a collection, or the picks until collections
       exist: the grid with everything that gets in the way of judging
       consistency taken out. Tiles at a chosen size up to a handful

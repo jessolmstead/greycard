@@ -96,6 +96,11 @@ note a first tester reads.
 
 ### Fixes
 
+- A snapshot can be restored after it is taken: typing its name ends
+  with a click anywhere else, so the row goes back to being a button;
+  it used to stay in naming mode until Enter, taking every later click
+  as a rename
+  ([§290](https://github.com/jessolmstead/greycard/blob/master/docs/notes/290-a-new-snapshots-name-ends-with-a-click-away.md))
 - Clicking back in the History panel keeps the rows above the click,
   and a click on a greyed row goes forward to it every time; a jump that
   needed no new develop used to leave the newer state's masks and look

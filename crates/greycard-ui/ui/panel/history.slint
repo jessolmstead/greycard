@@ -68,6 +68,17 @@ export component SnapshotsSection inherits Section {
                                 if (e.text == Key.Escape) { root.snapshot-editing = -1; return accept; }
                                 return reject;
                             }
+                            // A click anywhere else ends the naming
+                            // and keeps what was typed, as Enter does:
+                            // left open, the row took every later
+                            // click as a name to edit and could not be
+                            // restored.
+                            changed has-focus => {
+                                if (!self.has-focus && root.snapshot-editing == i) {
+                                    root.snapshot-editing = -1;
+                                    root.snapshot-renamed(i, self.text);
+                                }
+                            }
                             init => { self.focus(); self.select-all(); }
                         }
                         if root.snapshot-editing != i: Text {

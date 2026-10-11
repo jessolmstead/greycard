@@ -1651,4 +1651,48 @@ mod tests {
         rest();
         assert_eq!(walk(&state), (steps, 3));
     }
+
+    /// A snapshot just taken waits for its name. A click anywhere
+    /// else ends the naming and keeps what was typed, and from then on
+    /// a click on the row restores it. Left in naming mode, the row
+    /// took every later click as a name to edit and nothing could
+    /// restore it.
+    #[test]
+    fn a_click_away_from_a_new_snapshot_s_name_ends_the_naming() {
+        use crate::testing;
+
+        let app = testing::window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        let (state, _worker) = testing::state_for(&app, testing::folder(1));
+        app.invoke_select(0);
+
+        app.invoke_snapshot_taken();
+        assert_eq!(
+            app.get_snapshot_editing(),
+            0,
+            "the new row waits for its name"
+        );
+        testing::type_text(&app, "Keep");
+        // A click on the picture, nowhere near the row.
+        testing::click(&app, 750.0, 450.0);
+        assert_eq!(app.get_snapshot_editing(), -1, "the naming ended");
+        assert_eq!(state.borrow().sidecars[0].snapshots[0].name, "Keep");
+
+        // The row is a button again: a click restores.
+        let (at, size) = testing::labeled(&app, "Keep");
+        testing::click(&app, at.x + size.width / 2.0, at.y + size.height / 2.0);
+        assert_eq!(
+            app.get_snapshot_editing(),
+            -1,
+            "a single click does not rename"
+        );
+        assert!(
+            app.get_status()
+                .as_str()
+                .contains("Keep is the current state"),
+            "{}",
+            app.get_status()
+        );
+    }
 }
