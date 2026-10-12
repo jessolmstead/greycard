@@ -1127,8 +1127,7 @@ mod tests {
         tiles.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
         let order: Vec<&str> = tiles.iter().map(|t| t.2).collect();
         assert_eq!(order, ["z.tif", "x.tif", "y.tif"]);
-        drop(s.writer);
-        crate::testing::remove_dir_retry(&s.dir);
+        teardown(s);
     }
 
     /// A reference to a picture nothing has is kept and said; a file
