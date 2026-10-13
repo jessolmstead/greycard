@@ -3143,6 +3143,7 @@ export component App inherits Window {
                     snapshot-hovered(a, b) => { root.snapshot-hovered(a, b); }
                     snapshot-renamed(a, b) => { root.snapshot-renamed(a, b); }
                     snapshot-deleted(a) => { root.snapshot-deleted(a); }
+                    tip(t, x, y) => { root.tip-at(t, x, y); }
                     collapsed-snapshots <=> root.collapsed-snapshots;
                 }
                 // The history: every step, newest first, the

@@ -1798,7 +1798,18 @@ mod tests {
             "{}",
             app.get_status()
         );
+        // Resting on the icon, its name comes up at the pointer too;
+        // the press takes it down.
+        assert_eq!(app.get_tip_text(), "", "no hover text before the rest");
+        i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(800));
+        slint::platform::update_timers_and_animations();
+        assert_eq!(
+            app.get_tip_text(),
+            "Restore",
+            "the icon's word after a rest"
+        );
         testing::click(&app, x, y);
+        assert_eq!(app.get_tip_text(), "", "the press took the hover text down");
         assert_eq!(exposure(&state), 0.0, "restored");
         assert_eq!(app.get_snapshot_editing(), -1, "and not renamed");
         // The hover's words stand over the status while the pointer
