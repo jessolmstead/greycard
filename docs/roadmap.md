@@ -38,6 +38,11 @@ and export are smoothed.
 
 - [ ] Forget missing: a collection's references to files that will not be found again can be dropped from its menu (left open in §304).
 - [ ] Check the window fit on the Mac before the cut: the log's `window:` line should read `monitor 1512x982 at 2.00x, opening at 1432x800`, the window open with no jump and its foot clear of the Dock, and the export sheet's buttons in view; if the Dock covers it, build the true work area (§306).
+- [ ] Virtual copies, part 1: a `versions` list in the sidecar, each a line of its own (edit, history, snapshots, exports), joined per version across machines; a sidecar carrying versions refused whole by older builds rather than emptied (§309)
+- [ ] Virtual copies, part 2: a version is a cell beside its file in the strip and the grid with its own thumbnail and marks; New version (Ctrl+'), New version from the original, Rename, Swap with the original, Delete; a `versions` table in the index (§309)
+- [ ] Virtual copies, part 3: Compare versions puts a frame and its versions side by side in cull mode, named on the plate (§309). Waits on part 2
+- [ ] Virtual copies, part 4: the version's name in the export's file name (`X-Warm.jpg`, Increment and beside as today), in the queue and the records, and `--version` on the headless export (§309). Waits on part 2
+- [ ] Virtual copies, part 5: a collection reference is hash plus version id; two versions of one picture are two tiles; the mark on the version's cell alone (§309). Waits on part 2
 
 ## Tracks
 
@@ -312,9 +317,6 @@ comes across with its ratings and collections.
       of a file, since a whole-file hash over 200 GB is a first pass
       measured in hours. The polling fallback for the watcher landed
       in §188
-- [ ] Virtual copies: named versions in the same sidecar, each with
-      its own edit and history; a collection references hash plus
-      version. Waits on collections
 - [ ] Stacks, in the collections file. Waits on collections
 - [ ] Collections carried across machines: the collections file is per
       machine, so a set gathered on the laptop is not on the desktop;
