@@ -56,6 +56,10 @@ note a first tester reads.
 
 ### Editing
 
+- A word at the pointer over a button that shows only an icon (Undo,
+  Remove, Turn left, Hide panel...), after a short rest; it goes with a
+  press, a key or a scroll
+  ([§311](https://github.com/jessolmstead/greycard/blob/master/docs/notes/311-a-word-at-the-pointer.md))
 - A snapshot's row carries restore and rename icons beside the bin,
   the status line names what a click does, and a double-click on the
   row renames without restoring first

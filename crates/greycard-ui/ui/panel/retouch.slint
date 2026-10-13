@@ -2,7 +2,7 @@
 // feather and opacity, and the repairs by name.
 
 import { Theme } from "../theme.slint";
-import { Section, EditSlider, PanelButton } from "../controls.slint";
+import { TipArea, Section, EditSlider, PanelButton } from "../controls.slint";
 
 export component RetouchSection inherits Section {
     in-out property <bool> retouch-enabled;
@@ -113,6 +113,9 @@ export component RetouchSection inherits Section {
                     }
                     if on: Rectangle {
                         width: Theme.control-height - 4px;
+                        accessible-role: button;
+                        accessible-label: "Remove " + name;
+                        accessible-action-default => { root.delete-patch(); }
                         Image {
                             source: @image-url("../icons/trash-2.svg");
                             colorize: pbin.has-hover ? Theme.text : Theme.text-secondary;
@@ -121,7 +124,8 @@ export component RetouchSection inherits Section {
                             x: (parent.width - self.width) / 2;
                             y: (parent.height - self.height) / 2;
                         }
-                        pbin := TouchArea {
+                        pbin := TipArea {
+                            words: "Remove";
                             mouse-cursor: MouseCursor.pointer;
                             clicked => { root.delete-patch(); }
                         }

@@ -381,7 +381,6 @@ clears or a tester asks for it.
 
 
 #### Editor
-- [ ] Tooltips at the pointer for icon-only buttons (the snapshot row's restore, rename and bin; the mask shapes; Loupe and Lightbox), shown after a short hold and hidden on leave, press or scroll; the status plate keeps its longer sentence. Waits on a tester missing it: the plate already says what each icon does.
 
 - [ ] The learned mask and fill caches keyed by the develop they were
       made from: the window's Export reuses the mask its viewport made

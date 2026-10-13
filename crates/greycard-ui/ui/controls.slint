@@ -4,6 +4,49 @@
 
 import { Theme } from "theme.slint";
 
+// The window's one hover text, written by whatever has rested under the
+// pointer (a `TipArea`) and drawn by the window over everything: it
+// watches `serial`, which moves on every show and every hide, so the
+// same words twice running still show.
+export global Tips {
+    out property <string> text;
+    out property <length> x;
+    out property <length> y;
+    out property <int> serial;
+    public function show(words: string, at-x: length, at-y: length) {
+        self.text = words;
+        self.x = at-x;
+        self.y = at-y;
+        self.serial += 1;
+    }
+}
+
+// A TouchArea for something that shows a picture and no words: after
+// the pointer has rested on it for a moment, `words` (one or two, the
+// absolute minimum) come up at the pointer through `Tips`, and go on
+// leaving, on a press, and wherever the window takes the text down.
+// Empty words, no tip. The accessible label stays the control's own.
+export component TipArea inherits TouchArea {
+    in property <string> words;
+    property <bool> tipped;
+    function untip() {
+        if (root.tipped) {
+            root.tipped = false;
+            Tips.show("", 0, 0);
+        }
+    }
+    Timer {
+        interval: 600ms;
+        running: root.has-hover && !root.tipped && root.words != "";
+        triggered => {
+            root.tipped = true;
+            Tips.show(root.words, root.absolute-position.x, root.absolute-position.y + root.height + 2px);
+        }
+    }
+    changed has-hover => { if (!root.has-hover) { root.untip(); } }
+    pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.untip(); } }
+}
+
 // A switch on its own, smaller than a Toggle's, for a header.
 export component Switch inherits Rectangle {
     in-out property <bool> checked: true;
@@ -619,6 +662,9 @@ export component PanelButton inherits Rectangle {
     in property <image> icon;
     in property <bool> enabled: true;
     in property <bool> primary: false;
+    /// For a button with a picture and no text: its name, a word or
+    /// two, at the pointer after a rest.
+    in property <string> words;
     callback clicked();
     height: Theme.control-height;
     border-radius: Theme.radius-md;
@@ -656,7 +702,8 @@ export component PanelButton inherits Rectangle {
             return reject;
         }
     }
-    ta := TouchArea {
+    ta := TipArea {
+        words: root.words;
         enabled: root.enabled;
         mouse-cursor: root.enabled ? MouseCursor.pointer : MouseCursor.default;
         clicked => { fs.focus(); root.clicked(); }
@@ -961,8 +1008,14 @@ export component ThumbMarks inherits Rectangle {
 export component EdgeArrow inherits Rectangle {
     in property <image> icon;
     in property <bool> quiet: false;
+    in property <string> words;
+    in property <string> label;
     callback clicked();
-    touch := TouchArea {
+    accessible-role: button;
+    accessible-label: root.label;
+    accessible-action-default => { root.clicked(); }
+    touch := TipArea {
+        words: root.words;
         mouse-cursor: pointer;
         clicked => { root.clicked(); }
     }

@@ -2524,4 +2524,67 @@ mod tests {
         assert!((state.borrow().zoom - 1.25).abs() < 1e-4);
         assert_ne!(state.borrow().center, before);
     }
+
+    /// The edge arrows and the undo and redo buttons show a picture
+    /// and no text: each says its word at the pointer after a rest,
+    /// the word names what a press will do, and the press takes it
+    /// down.
+    #[test]
+    fn the_edge_arrows_and_undo_say_their_words_after_a_rest() {
+        use crate::testing::rest_on;
+        let app = window(1);
+        app.window()
+            .set_size(slint::LogicalSize::new(1500.0, 950.0));
+        app.set_can_undo(true);
+        app.set_can_redo(true);
+        let away = || {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(2.0, 2.0),
+                });
+            slint::platform::update_timers_and_animations();
+        };
+        for (label, words) in [
+            ("Undo", "Undo"),
+            ("Redo", "Redo"),
+            ("Right panel", "Hide panel"),
+            ("Strip", "Hide strip"),
+        ] {
+            assert_eq!(app.get_tip_text(), "", "no word before a rest on {label}");
+            rest_on(&app, label);
+            assert_eq!(app.get_tip_text(), words, "{label}");
+            away();
+            assert_eq!(app.get_tip_text(), "", "{label} leaves with the pointer");
+        }
+        // The panel scrolled under a resting pointer takes the word
+        // down; the Develop tab is long enough to scroll.
+        app.set_panel_tab("Develop".into());
+        rest_on(&app, "Undo");
+        assert_eq!(app.get_tip_text(), "Undo");
+        app.set_panel_scroll(-40.0);
+        assert_ne!(app.get_panel_scroll(), 0.0, "the panel scrolls");
+        slint::platform::update_timers_and_animations();
+        assert_eq!(app.get_tip_text(), "", "a scroll took the word down");
+        away();
+        // A key takes the word down, and a panel the key puts away
+        // takes its controls with it: F8 over a resting Undo.
+        away();
+        rest_on(&app, "Undo");
+        assert_eq!(app.get_tip_text(), "Undo");
+        crate::testing::press(&app, slint::platform::Key::F8);
+        slint::platform::update_timers_and_animations();
+        assert_eq!(app.get_tip_text(), "", "a key took the word down");
+        crate::testing::press(&app, slint::platform::Key::F8);
+        away();
+        // The press: the word, then the panel gone and the word with it,
+        // and the arrow's next word is the way back.
+        let (x, y) = rest_on(&app, "Right panel");
+        assert_eq!(app.get_tip_text(), "Hide panel");
+        click(&app, x, y);
+        assert_eq!(app.get_tip_text(), "", "the press took the word down");
+        assert!(app.get_right_hidden());
+        away();
+        rest_on(&app, "Right panel");
+        assert_eq!(app.get_tip_text(), "Show panel");
+    }
 }

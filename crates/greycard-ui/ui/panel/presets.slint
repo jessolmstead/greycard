@@ -6,7 +6,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Section, PanelButton } from "../controls.slint";
+import { Tips, TipArea, Section, PanelButton } from "../controls.slint";
 
 export component PresetsSection inherits Section {
     in-out property <int> selected;
@@ -45,6 +45,8 @@ export component PresetsSection inherits Section {
         max-height: self.preferred-height;
         vertical-stretch: 1;
         ScrollView {
+            // A row scrolled from under a resting pointer takes its word along.
+            changed content-y => { Tips.show("", 0, 0); }
             preset-list := VerticalLayout {
                 padding: 2px;
                 spacing: 2px;
@@ -75,6 +77,9 @@ export component PresetsSection inherits Section {
                         }
                         Rectangle {
                             width: Theme.control-height - 6px;
+                            accessible-role: button;
+                            accessible-label: "Remove " + name;
+                            accessible-action-default => { root.confirm-remove = i; }
                             Image {
                                 source: @image-url("../icons/trash-2.svg");
                                 colorize: preset-bin.has-hover || root.confirm-remove == i ? Theme.text : Theme.text-muted;
@@ -83,7 +88,8 @@ export component PresetsSection inherits Section {
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
                             }
-                            preset-bin := TouchArea {
+                            preset-bin := TipArea {
+                                words: "Remove";
                                 mouse-cursor: MouseCursor.pointer;
                                 clicked => { root.confirm-remove = i; }
                             }

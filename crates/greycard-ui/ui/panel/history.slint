@@ -3,7 +3,7 @@
 
 import { ScrollView, LineEdit } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Section, PanelButton } from "../controls.slint";
+import { Section, PanelButton, TipArea } from "../controls.slint";
 import { HistoryRow } from "../structs.slint";
 
 /// A snapshot row's icon: its picture, lit under the pointer, and
@@ -15,27 +15,9 @@ component SnapshotIcon inherits Rectangle {
     out property <bool> hovered: ta.has-hover;
     callback clicked();
     /// Hover text at the pointer, a word or two, once the pointer has
-    /// rested on the icon for a moment, as a root's cut-short name
-    /// shows whole (roots.slint). The window draws it over everything
-    /// through `tip-at`; empty text takes it down. The label stays the
-    /// screen reader's, with the name in it.
+    /// rested on the icon for a moment (`TipArea`). The label stays
+    /// the screen reader's, with the name in it.
     in property <string> words;
-    callback tip(string, length, length);
-    property <bool> tipped;
-    function untip() {
-        if (root.tipped) {
-            root.tipped = false;
-            root.tip("", 0, 0);
-        }
-    }
-    Timer {
-        interval: 600ms;
-        running: ta.has-hover && !root.tipped;
-        triggered => {
-            root.tipped = true;
-            root.tip(root.words, root.absolute-position.x, root.absolute-position.y + root.height + 2px);
-        }
-    }
     width: Theme.control-height - 4px;
     accessible-role: button;
     accessible-label: root.label;
@@ -48,10 +30,9 @@ component SnapshotIcon inherits Rectangle {
         x: (parent.width - self.width) / 2;
         y: (parent.height - self.height) / 2;
     }
-    ta := TouchArea {
+    ta := TipArea {
+        words: root.words;
         mouse-cursor: MouseCursor.pointer;
-        changed has-hover => { if (!self.has-hover) { root.untip(); } }
-        pointer-event(e) => { if (e.kind == PointerEventKind.down) { root.untip(); } }
         clicked => { root.clicked(); }
     }
 }
@@ -67,9 +48,6 @@ export component SnapshotsSection inherits Section {
     callback snapshot-hovered(int, string);
     callback snapshot-renamed(int, string);
     callback snapshot-deleted(int);
-    /// Hover text from an icon, for the window to draw: see
-    /// `SnapshotIcon.tip`.
-    callback tip(string, length, length);
     in-out property <bool> collapsed-snapshots;
 
     /// A click on a row restores it, but not at once: a double-click
@@ -205,7 +183,6 @@ export component SnapshotsSection inherits Section {
                             icon: @image-url("../icons/undo-2.svg");
                             label: "Restore " + name;
                             words: "Restore";
-                            tip(t, x, y) => { root.tip(t, x, y); }
                             clicked => {
                                 root.hold-restore();
                                 if (root.selected >= 0) { root.snapshot-restored(i); }
@@ -215,7 +192,6 @@ export component SnapshotsSection inherits Section {
                             icon: @image-url("../icons/pencil.svg");
                             label: "Rename " + name;
                             words: "Rename";
-                            tip(t, x, y) => { root.tip(t, x, y); }
                             // As the double-click: never over another
                             // row's name being typed.
                             clicked => {
@@ -228,7 +204,6 @@ export component SnapshotsSection inherits Section {
                             icon: @image-url("../icons/trash-2.svg");
                             label: "Remove " + name;
                             words: "Remove";
-                            tip(t, x, y) => { root.tip(t, x, y); }
                             clicked => {
                                 root.hold-restore();
                                 root.snapshot-deleted(i);

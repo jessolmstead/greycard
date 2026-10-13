@@ -5,7 +5,7 @@
 
 import { LineEdit, ScrollView } from "std-widgets.slint";
 import { Theme } from "../theme.slint";
-import { Section, EditSlider, Toggle, PanelButton, Segmented } from "../controls.slint";
+import { Tips, TipArea, Section, EditSlider, Toggle, PanelButton, Segmented } from "../controls.slint";
 
 // The list: Global, then each mask with its switch, the chosen one
 // with its bin; then New mask. It never scrolls with the sections
@@ -79,6 +79,8 @@ export component AdjustmentsList inherits Section {
         border-color: Theme.border;
         height: min(rows.preferred-height, root.max-rows * root.pitch) + 2px;
         list := ScrollView {
+            // A row scrolled from under a resting pointer takes its word along.
+            changed content-y => { Tips.show("", 0, 0); }
             x: 1px;
             y: 1px;
             width: parent.width - 2px;
@@ -134,6 +136,9 @@ export component AdjustmentsList inherits Section {
                         }
                         if on && i > 0: Rectangle {
                             width: Theme.control-height - 4px;
+                            accessible-role: button;
+                            accessible-label: "Remove " + name;
+                            accessible-action-default => { root.delete-adjustment(); }
                             Image {
                                 source: @image-url("../icons/trash-2.svg");
                                 colorize: bin.has-hover ? Theme.text : Theme.text-secondary;
@@ -142,7 +147,8 @@ export component AdjustmentsList inherits Section {
                                 x: (parent.width - self.width) / 2;
                                 y: (parent.height - self.height) / 2;
                             }
-                            bin := TouchArea {
+                            bin := TipArea {
+                                words: "Remove";
                                 mouse-cursor: MouseCursor.pointer;
                                 clicked => { root.delete-adjustment(); }
                             }
@@ -366,6 +372,9 @@ export component AdjustmentsSection inherits Section {
                             }
                             if root.component-names.length > 1: Rectangle {
                                 width: Theme.control-height - 4px;
+                                accessible-role: button;
+                                accessible-label: "Remove this shape";
+                                accessible-action-default => { root.delete-shape-at(i); }
                                 Text {
                                     text: "\u{00d7}";
                                     color: cross.has-hover ? Theme.text : Theme.text-secondary;
@@ -375,7 +384,8 @@ export component AdjustmentsSection inherits Section {
                                     width: 100%;
                                     height: 100%;
                                 }
-                                cross := TouchArea {
+                                cross := TipArea {
+                                    words: "Remove";
                                     mouse-cursor: MouseCursor.pointer;
                                     clicked => { root.delete-shape-at(i); }
                                 }

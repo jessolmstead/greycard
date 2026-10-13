@@ -353,3 +353,17 @@ pub(crate) fn white_shift() -> greycard_edit::WhiteShift {
     .expect("daylight resolves");
     greycard_edit::WhiteShift::new(profile, &base)
 }
+
+/// The pointer at the middle of the element a screen reader knows as
+/// `label`, resting there past the hold; its place in the window.
+pub(crate) fn rest_on(app: &App, label: &str) -> (f32, f32) {
+    let (at, size) = labeled(app, label);
+    let (x, y) = (at.x + size.width / 2.0, at.y + size.height / 2.0);
+    app.window().dispatch_event(WindowEvent::PointerMoved {
+        position: slint::LogicalPosition::new(x, y),
+    });
+    slint::platform::update_timers_and_animations();
+    i_slint_backend_testing::mock_elapsed_time(std::time::Duration::from_millis(800));
+    slint::platform::update_timers_and_animations();
+    (x, y)
+}

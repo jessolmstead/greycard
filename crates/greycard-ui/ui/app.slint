@@ -7,7 +7,7 @@
 
 import { ScrollView } from "std-widgets.slint";
 import { Theme } from "theme.slint";
-import { EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
+import { Tips, EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
 import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow } from "structs.slint";
@@ -674,6 +674,13 @@ export component App inherits Window {
     property <length> tip-x;
     property <length> tip-y;
     changed left-hidden => { root.tip-text = ""; }
+    changed right-hidden => { root.tip-text = ""; }
+    changed strip-hidden => { root.tip-text = ""; }
+    // What a TipArea has to say, from the controls' own global, and the
+    // panel scrolled from under the pointer takes it down.
+    property <int> tips-serial: Tips.serial;
+    changed tips-serial => { root.tip-at(Tips.text, Tips.x, Tips.y); }
+    changed panel-scroll => { root.tip-text = ""; }
     function recent-menu-at(x: length, y: length) {
         root.tip-text = "";
         if (root.sheet-open()) { return; }
@@ -1791,6 +1798,9 @@ export component App inherits Window {
         }
         focus-gained(reason) => { root.menu-up = false; }
         key-pressed(e) => {
+            // A key takes the hover text down, as it does a tooltip: a
+            // row or a panel the key removes never hears the pointer go.
+            root.tip-text = "";
             // The settings sheet is declared last and so drawn over the
             // rest: Escape closes it first.
             if (e.text == Key.Escape && root.settings-open) { root.settings-open = false; return accept; }
@@ -2841,6 +2851,8 @@ export component App inherits Window {
         width: 16px;
         height: 40px;
         quiet: root.all-hidden();
+        label: "Right panel";
+        words: root.right-hidden ? "Show panel" : "Hide panel";
         icon: root.right-hidden ? @image-url("icons/chevron-left.svg") : @image-url("icons/chevron-right.svg");
         clicked => { root.right-hidden = !root.right-hidden; keys.focus(); }
     }
@@ -2850,6 +2862,8 @@ export component App inherits Window {
         width: 40px;
         height: 16px;
         quiet: root.all-hidden();
+        label: "Strip";
+        words: root.strip-hidden ? "Show strip" : "Hide strip";
         icon: root.strip-hidden ? @image-url("icons/chevron-up.svg") : @image-url("icons/chevron-down.svg");
         clicked => { root.strip-hidden = !root.strip-hidden; keys.focus(); }
     }
@@ -3148,7 +3162,6 @@ export component App inherits Window {
                     snapshot-hovered(a, b) => { root.snapshot-hovered(a, b); }
                     snapshot-renamed(a, b) => { root.snapshot-renamed(a, b); }
                     snapshot-deleted(a) => { root.snapshot-deleted(a); }
-                    tip(t, x, y) => { root.tip-at(t, x, y); }
                     collapsed-snapshots <=> root.collapsed-snapshots;
                 }
                 // The history: every step, newest first, the
@@ -3182,6 +3195,7 @@ export component App inherits Window {
                     icon: @image-url("icons/x.svg");
                     accessible-role: button;
                     accessible-label: "Not now: do not offer " + root.update-version + " again";
+                    words: "Not now";
                     width: Theme.control-height;
                     horizontal-stretch: 0;
                     clicked => { root.update-dismissed(); }
@@ -3211,6 +3225,8 @@ export component App inherits Window {
         width: 16px;
         height: 40px;
         quiet: root.all-hidden() && !root.grid-open;
+        label: "Left panel";
+        words: root.left-hidden ? "Show panel" : "Hide panel";
         icon: root.left-hidden ? @image-url("icons/chevron-right.svg") : @image-url("icons/chevron-left.svg");
         clicked => { root.left-hidden = !root.left-hidden; keys.focus(); }
     }

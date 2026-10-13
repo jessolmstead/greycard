@@ -128,21 +128,33 @@ export component RotateSection inherits Section {
         PanelButton {
             text: "";
             icon: @image-url("../icons/rotate-ccw.svg");
+            words: "Turn left";
+            accessible-role: button;
+            accessible-label: "Turn left";
             clicked => { root.geometry-turned(1); }
         }
         PanelButton {
             text: "";
             icon: @image-url("../icons/rotate-cw.svg");
+            words: "Turn right";
+            accessible-role: button;
+            accessible-label: "Turn right";
             clicked => { root.geometry-turned(-1); }
         }
         PanelButton {
             text: "";
             icon: @image-url("../icons/flip-horizontal.svg");
+            words: "Flip";
+            accessible-role: button;
+            accessible-label: "Flip";
             clicked => { root.geometry-flipped(false); }
         }
         PanelButton {
             text: "";
             icon: @image-url("../icons/flip-vertical.svg");
+            words: "Flip vertical";
+            accessible-role: button;
+            accessible-label: "Flip vertical";
             clicked => { root.geometry-flipped(true); }
         }
     }

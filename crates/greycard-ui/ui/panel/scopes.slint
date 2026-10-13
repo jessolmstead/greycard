@@ -58,12 +58,20 @@ export component PanelHead inherits VerticalLayout {
             }
             PanelButton {
                 icon: @image-url("../icons/rotate-ccw.svg");
+                words: "Undo";
+                accessible-role: button;
+                accessible-label: "Undo";
+                accessible-action-default => { root.undo(); }
                 enabled: root.can-undo;
                 width: Theme.control-height + Theme.space-2;
                 clicked => { root.undo(); }
             }
             PanelButton {
                 icon: @image-url("../icons/rotate-cw.svg");
+                words: "Redo";
+                accessible-role: button;
+                accessible-label: "Redo";
+                accessible-action-default => { root.redo(); }
                 enabled: root.can-redo;
                 width: Theme.control-height + Theme.space-2;
                 clicked => { root.redo(); }

@@ -3315,4 +3315,39 @@ mod tests {
         assert_eq!(head.len(), 1, "Global in sight");
         assert_eq!(head[0].0.y, global.y, "Global at the head");
     }
+
+    /// A mask's bin, a picture and no text, says "Remove" at the
+    /// pointer once the pointer has rested on it, and the word goes
+    /// when the pointer leaves and
+    /// when the bin is pressed.
+    #[test]
+    fn a_mask_s_bin_says_remove_after_a_rest_and_the_word_goes_with_a_press() {
+        use crate::testing::rest_on;
+        use slint::Model;
+
+        let app = window(1);
+        let (_state, _worker) = crate::testing::state_for(&app, Vec::new());
+        app.set_panel_tab("Masks".into());
+        app.invoke_new_mask();
+        app.invoke_target_changed(1);
+        let name = app.get_adjustment_names().row_data(1).expect("the mask");
+        let label = format!("Remove {name}");
+        let away = || {
+            app.window()
+                .dispatch_event(slint::platform::WindowEvent::PointerMoved {
+                    position: slint::LogicalPosition::new(2.0, 2.0),
+                });
+            slint::platform::update_timers_and_animations();
+        };
+
+        assert_eq!(app.get_tip_text(), "", "no word before a rest");
+        let (x, y) = rest_on(&app, &label);
+        assert_eq!(app.get_tip_text(), "Remove", "the bin's word after a rest");
+        away();
+        assert_eq!(app.get_tip_text(), "", "gone with the pointer");
+        rest_on(&app, &label);
+        assert_eq!(app.get_tip_text(), "Remove");
+        click(&app, x, y);
+        assert_eq!(app.get_tip_text(), "", "gone with the press");
+    }
 }
