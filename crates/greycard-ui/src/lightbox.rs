@@ -65,6 +65,11 @@ pub fn cell(width: f32, across: i32) -> f32 {
     (room / across - grid::GAP).floor().max(LEAST)
 }
 
+/// A count read from the settings file, held to [`FEWEST`] and [`MOST`].
+pub fn held(across: i32) -> i32 {
+    across.clamp(FEWEST, MOST)
+}
+
 /// Across after a step toward larger tiles (`by` positive, fewer
 /// across) or smaller ones.
 pub fn step(across: i32, by: i32) -> i32 {
@@ -528,7 +533,6 @@ pub(crate) fn install(
     worker: &std::rc::Rc<Worker>,
 ) {
     app.on_lightbox_cell(cell);
-    app.set_lightbox_across(ACROSS);
     {
         let app_weak = app.as_weak();
         app.on_lightbox_zoom(move |by| {
@@ -1120,6 +1124,25 @@ mod tests {
             (kept.hide_left, kept.hide_right, kept.hide_strip),
             (false, true, false)
         );
+    }
+
+    /// The count a session leaves is what the next one opens with, and
+    /// a file's number outside the range is held to it.
+    #[test]
+    fn the_tiles_across_are_kept_between_sessions() {
+        let (app, _state) = lightbox_window(6);
+        press(&app, "l");
+        press(&app, "-");
+        press(&app, Key::Escape);
+        let kept = crate::panel::startup::remember(&app);
+        assert_eq!(kept.lightbox_across, ACROSS + 1);
+        let dir = std::env::temp_dir().join(format!("greycard-lb-across-{}", std::process::id()));
+        let path = dir.join("settings.json");
+        kept.save_to(&path);
+        let back = crate::settings::Settings::load_from(&path);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(back.lightbox_across, ACROSS + 1);
+        assert_eq!((held(0), held(99), held(-3)), (FEWEST, MOST, FEWEST));
     }
 
     #[test]

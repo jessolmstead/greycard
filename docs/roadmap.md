@@ -37,7 +37,6 @@ own Detail, and the first tester's rough edges on masks, the touchpad
 and export are smoothed.
 
 - [ ] Forget missing: a collection's references to files that will not be found again can be dropped from its menu (left open in §304).
-- [ ] The lightbox keeps its tiles across between sessions (left open in §307).
 - [ ] Check the window fit on the Mac before the cut: the log's `window:` line should read `monitor 1512x982 at 2.00x, opening at 1432x800`, the window open with no jump and its foot clear of the Dock, and the export sheet's buttons in view; if the Dock covers it, build the true work area (§306).
 
 ## Tracks

@@ -253,6 +253,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     app.set_grid_cell(grid::clamp_cell(
         cli.grid_cell.unwrap_or(remembered.grid_cell),
     ));
+    app.set_lightbox_across(crate::lightbox::held(remembered.lightbox_across));
     app.set_grid_open(cli.grid);
     // `--hide-panels` puts all three away for this run, whatever the
     // last one left.
@@ -1847,6 +1848,7 @@ pub(crate) fn remember(app: &App) -> settings::Settings {
         canvas_color: render::canvas_name(app.get_canvas_choice()).to_string(),
         collapsed: read_folds(app),
         grid_cell: app.get_grid_cell(),
+        lightbox_across: app.get_lightbox_across(),
         // The lightbox puts the panes away for as long as it is on:
         // what is kept is how they were before it.
         hide_left: if app.get_lightbox() {

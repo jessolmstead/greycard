@@ -16,7 +16,7 @@ note a first tester reads.
 
 - A lightbox: L over the grid, a collection or the picks shows the
   frames as edited on a dark surround with nothing else drawn, two to
-  six across with + and -, Return into the loupe and back, the sync
+  six across with + and - (the count kept for the next session), Return into the loupe and back, the sync
   sheet from the frame menu, and Escape or L back to the grid. A tile
   keeps its last picture dimmed while a new one is made and says
   "Developing" when it has none yet

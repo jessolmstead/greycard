@@ -57,6 +57,9 @@ pub struct Settings {
     pub collapsed: Vec<String>,
     /// The grid's cell, logical pixels: the zoom it was left at.
     pub grid_cell: f32,
+    /// How many tiles go across the lightbox, as it was left. Held to
+    /// the lightbox's own range when read.
+    pub lightbox_across: i32,
     /// The left pane, the develop panel and the strip, each as put
     /// away (F7, F8, F6, Tab for all three) or not when the window
     /// closed.
@@ -222,6 +225,7 @@ impl Default for Settings {
             canvas_color: crate::render::CANVAS_NAMES[0].into(),
             collapsed: Vec::new(),
             grid_cell: crate::grid::CELL,
+            lightbox_across: crate::lightbox::ACROSS,
             hide_left: false,
             hide_right: false,
             hide_strip: false,
@@ -392,6 +396,7 @@ mod tests {
             canvas_color: "Mid grey".into(),
             collapsed: vec!["grain".into(), "demosaic".into()],
             grid_cell: 256.0,
+            lightbox_across: 5,
             hide_left: true,
             hide_right: false,
             hide_strip: true,
@@ -487,6 +492,14 @@ mod tests {
         // A file from before the choice has none.
         let read: Settings = serde_json::from_str("{}").unwrap();
         assert!(read.match_unchecked.is_empty());
+    }
+
+    #[test]
+    fn a_file_without_the_lightbox_count_opens_it_at_four() {
+        let read: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(read.lightbox_across, 4);
+        let read: Settings = serde_json::from_str(r#"{"lightbox_across": 6}"#).unwrap();
+        assert_eq!(read.lightbox_across, 6);
     }
 
     #[test]

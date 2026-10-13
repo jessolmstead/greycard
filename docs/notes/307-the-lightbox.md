@@ -53,7 +53,8 @@ shapes more than by the 22 pixels.
   left on (an arrow in the loupe steps the frame as it always does).
   G from the loupe leaves to the grid.
 - **+ and -**, and Ctrl with the wheel, step the tiles across: two, a
-  pair side by side, to six, a handful; four when it opens. The steps
+  pair side by side, to six, a handful; four the first time, and after
+  that the count the last session left it at (below). The steps
   are across, not a cell size, so the tiles fill the sheet's width at
   every step; a window resized keeps the count and resizes the tiles.
 - **Tab** is the grid's Tab: the left pane in and out (the grid covers
@@ -190,7 +191,13 @@ in its hand order.
   culling.
 - An unedited frame's tile is the camera's JPEG decoded from the file each
   time it comes into the window; nothing caches it at the tile's size.
-- Tiles across is not kept between sessions.
+- ~~Tiles across is not kept between sessions.~~ Kept since 2026-10-12:
+  the count is saved in the settings file as `lightbox_across` (default
+  4), written with the rest of the panel's choices when the window
+  closes, the way the grid's cell is; a settings file from before has
+  no such field and loads with 4; at startup the saved count is held to
+  the lightbox's range (2 to 6) through `lightbox::held`, so a
+  hand-edited number cannot put the sheet outside it.
 - An offline frame held as edited with no picture of its edit kept waits
   rather than show its local preview.
 - No compare-two-tiles mode beyond two across, and no "dim the rest"
