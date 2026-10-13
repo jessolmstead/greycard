@@ -208,6 +208,14 @@ struct Cli {
     /// written or the run could not begin
     #[arg(long)]
     export: Option<PathBuf>,
+    /// With --export: export this version of each frame, by the name
+    /// the user gave it, rather than the file's own edit; a name two
+    /// versions share takes the first by position and says so. A
+    /// frame with no version of that name is not written, and the run
+    /// exits 1 naming it. (--version prints the build's version, so
+    /// this flag is --version-name)
+    #[arg(long, requires = "export")]
+    version_name: Option<String>,
     /// Measure the camera match under each display curve on the same
     /// frames, with no window, and write a report (report.json and
     /// report.md) into this folder: the library's groups (--library,

@@ -7403,6 +7403,7 @@ pub(crate) mod tests {
                 &app,
                 &files[1],
                 &edit,
+                None,
                 &dir.join("y.jpg"),
                 None,
             );

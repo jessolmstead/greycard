@@ -10,8 +10,9 @@
 //! status line says, so it is tested without a raw or a window.
 
 use crate::export::{Format, OnExists, Settings};
+use crate::naming::safe;
 use greycard_core::output::Resolved;
-use greycard_edit::{Edit, Version};
+use greycard_edit::Edit;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -22,6 +23,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 pub struct Frame {
     pub source: PathBuf,
     pub edit: Edit,
+    /// The version of the file this frame is: none for the file's own
+    /// line (version 0). Its name joins the export's stem ([`named_of`],
+    /// through [`sources_of`]); its id is where the export is recorded.
+    pub version: Option<Version>,
     /// The frame's quarter turns (`Sidecar::turn`).
     pub turn: u8,
     /// A raw with no sidecar yet: its learned-denoiser blend is seeded
@@ -34,6 +39,14 @@ pub struct Frame {
     /// so, as the policy does for a name taken at the moment of
     /// writing.
     pub moved_from: Option<PathBuf>,
+}
+
+/// A version of a file, as the export needs it: the id the sidecar
+/// names it by and the name the user gave it.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Version {
+    pub id: String,
+    pub name: String,
 }
 
 /// What came of one frame.
@@ -236,19 +249,67 @@ pub fn named(
     format: Format,
     on_exists: OnExists,
 ) -> Vec<(PathBuf, Option<PathBuf>)> {
+    let sources: Vec<(PathBuf, Option<String>)> =
+        sources.iter().map(|s| (s.clone(), None)).collect();
+    named_of(&sources, folder, sub, format, on_exists)
+}
+
+/// The stem a version's export takes: `<stem>-<name>`, the name made
+/// file-safe the way an import's name is ([`crate::naming::safe`]:
+/// slashes, colons, quotes and control characters to `_`, whitespace
+/// trimmed), and a name with nothing left in it falling back to
+/// `v<N>`, `N` the position given. Version 0 never comes here: its
+/// stem is the file's.
+///
+/// Virtual copies part 4: to build. The tests below say what it does.
+pub fn version_stem(stem: &str, name: &str, position: usize) -> String {
+    let safe_postfix = safe(name);
+
+    let tail = if safe_postfix.is_empty() {
+        format!("v{position}")
+    } else {
+        safe_postfix
+    };
+
+    format!("{stem}-{tail}")
+}
+
+/// A set's frames as [`named_of`] takes them: each frame's file and
+/// the name of its version, none for the file's own line.
+pub fn sources_of(frames: &[Frame]) -> Vec<(PathBuf, Option<String>)> {
+    frames
+        .iter()
+        .map(|f| (f.source.clone(), f.version.as_ref().map(|v| v.name.clone())))
+        .collect()
+}
+
+/// [`named`] for sources that may each be a version of their file: the
+/// version's name joins the stem through [`version_stem`] before the
+/// extension, the infix and the numbering, so `IMG_0001-Warm.jpg`,
+/// `IMG_0001-Warm.greycard.jpg` beside the raw, and `IMG_0001-Warm-1.jpg`
+/// under Increment, exactly as the file's own export would. Every
+/// name of the set is taken before any is numbered, so a version
+/// named "1" and the original's Increment sort themselves out.
+pub fn named_of(
+    sources: &[(PathBuf, Option<String>)],
+    folder: Option<&Path>,
+    sub: Option<&Path>,
+    format: Format,
+    on_exists: OnExists,
+) -> Vec<(PathBuf, Option<PathBuf>)> {
     let key = |p: &Path| p.to_string_lossy().to_lowercase();
     // Every source of the set is taken before any name is given: a
     // frame's export must never land on another frame's file (a raw's
     // `X.jpg` on the camera's `X.JPG`, which a case-blind file system
     // holds as one), or that frame would be read back from the export.
-    let mut taken: Vec<String> = sources.iter().map(|s| key(s)).collect();
+    let mut taken: Vec<String> = sources.iter().map(|(s, _)| key(s)).collect();
     // Under Increment a file already there is taken too, so a pair
     // sharing a name goes to the next two free ones (`X-1`, `X-2`)
     // rather than the second hunting past the first on its own.
     // Overwrite and Skip leave the name to the policy.
     let clashes = |path: &Path, taken: &[String]| {
         taken.contains(&key(path))
-            || sources.iter().any(|s| same_file(path, s))
+            || sources.iter().any(|(s, _)| same_file(path, s))
             || (on_exists == OnExists::Increment && path.exists())
     };
     // A folder chosen that is a frame's own is beside it all the same:
@@ -258,11 +319,18 @@ pub fn named(
     let mut own_chosen: std::collections::HashMap<PathBuf, bool> = Default::default();
     sources
         .iter()
-        .map(|source| {
+        .enumerate()
+        .map(|(position, (source, version))| {
             let stem = source
                 .file_stem()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_else(|| "export".into());
+            // Virtual copies part 4: a version's name joins the stem
+            // here, before the infix and the numbering below.
+            let stem = match version {
+                Some(name) => version_stem(&stem, name, position),
+                None => stem,
+            };
             let ext = format.extension();
             let own = || source.parent().map(Path::to_path_buf).unwrap_or_default();
             let (folder, beside) = match (folder, sub) {
@@ -711,6 +779,7 @@ mod tests {
             OnExists::Increment,
         );
         let frame = Frame {
+            version: None,
             source: dir.join("X.CR3"),
             edit: Edit::default(),
             turn: 0,
@@ -729,5 +798,114 @@ mod tests {
         };
         assert_eq!(resolve(&set, &plain).note(), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // Virtual copies part 4. These say what the version's name does to
+    // an export's name
+
+    #[test]
+    fn a_version_s_stem_is_the_file_s_stem_and_its_name_made_safe() {
+        assert_eq!(version_stem("IMG_0001", "Warm", 1), "IMG_0001-Warm");
+        assert_eq!(version_stem("IMG_0001", " Warm ", 1), "IMG_0001-Warm");
+        assert_eq!(
+            version_stem("IMG_0001", "B/W: print", 1),
+            "IMG_0001-B_W_ print"
+        );
+        assert_eq!(
+            version_stem("IMG_0001", "\"quoted\"", 1),
+            "IMG_0001-_quoted_"
+        );
+        assert_eq!(
+            version_stem("IMG_0001", "Version 2", 1),
+            "IMG_0001-Version 2"
+        );
+        // Nothing left of the name: the position stands in.
+        assert_eq!(version_stem("IMG_0001", "", 3), "IMG_0001-v3");
+        assert_eq!(version_stem("IMG_0001", "...", 3), "IMG_0001-v3");
+        // Refused characters become `_` and stand; only a name with
+        // nothing left falls back.
+        assert_eq!(version_stem("IMG_0001", "::", 3), "IMG_0001-__");
+    }
+
+    #[test]
+    fn a_version_s_export_is_named_beside_the_original_s_as_the_file_s_own_would_be() {
+        let folder = Path::new("out");
+        let set = vec![
+            (PathBuf::from("a/IMG_0001.CR3"), None),
+            (PathBuf::from("a/IMG_0001.CR3"), Some("Warm".to_string())),
+            (PathBuf::from("a/IMG_0001.CR3"), Some("Cool".to_string())),
+            (PathBuf::from("a/IMG_0002.CR3"), Some("Warm".to_string())),
+        ];
+        let got: Vec<PathBuf> =
+            named_of(&set, Some(folder), None, Format::Jpeg, OnExists::Increment)
+                .into_iter()
+                .map(|(p, _)| p)
+                .collect();
+        assert_eq!(
+            got,
+            vec![
+                folder.join("IMG_0001.jpg"),
+                folder.join("IMG_0001-Warm.jpg"),
+                folder.join("IMG_0001-Cool.jpg"),
+                folder.join("IMG_0002-Warm.jpg"),
+            ]
+        );
+        // Beside the raw, the infix goes after the name.
+        let beside: Vec<PathBuf> =
+            named_of(&set[..2], None, None, Format::Jpeg, OnExists::Increment)
+                .into_iter()
+                .map(|(p, _)| p)
+                .collect();
+        assert_eq!(
+            beside,
+            vec![
+                Path::new("a").join("IMG_0001.greycard.jpg"),
+                Path::new("a").join("IMG_0001-Warm.greycard.jpg"),
+            ]
+        );
+        // Two versions of one name are told apart as two files of one
+        // name are, by the policy's number.
+        let twins = vec![
+            (PathBuf::from("a/IMG_0001.CR3"), Some("Warm".to_string())),
+            (PathBuf::from("a/IMG_0001.CR3"), Some("Warm".to_string())),
+        ];
+        let got: Vec<PathBuf> = named_of(
+            &twins,
+            Some(folder),
+            None,
+            Format::Jpeg,
+            OnExists::Increment,
+        )
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect();
+        assert_eq!(
+            got,
+            vec![
+                folder.join("IMG_0001-Warm.jpg"),
+                folder.join("IMG_0001-Warm-1.jpg")
+            ]
+        );
+        // A version named "1" takes the very name Increment would give
+        // the original; every name is taken before any is numbered, so
+        // the original goes to -2.
+        let one = vec![
+            (PathBuf::from("a/IMG_0001.CR3"), Some("1".to_string())),
+            (PathBuf::from("a/IMG_0001.CR3"), None),
+            (PathBuf::from("a/IMG_0001.jpg"), None),
+        ];
+        let got: Vec<PathBuf> =
+            named_of(&one, Some(folder), None, Format::Jpeg, OnExists::Increment)
+                .into_iter()
+                .map(|(p, _)| p)
+                .collect();
+        assert_eq!(
+            got,
+            vec![
+                folder.join("IMG_0001-1.jpg"),
+                folder.join("IMG_0001.jpg"),
+                folder.join("IMG_0001-2.jpg"),
+            ]
+        );
     }
 }

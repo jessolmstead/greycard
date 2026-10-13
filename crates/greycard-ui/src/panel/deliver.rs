@@ -892,6 +892,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             index,
             source,
             edit,
+            version,
             done,
         } => {
             let at = format!("{} of {}", index + 1, set.total);
@@ -922,6 +923,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                         app,
                         &source,
                         &edit,
+                        version.as_deref(),
                         &path,
                         set.preset.clone(),
                     );
@@ -1088,6 +1090,7 @@ pub(crate) fn start_set(
             |((source, edit, turn, seed_blend), (out, moved_from))| queue::Frame {
                 source,
                 edit,
+                version: None,
                 turn,
                 seed_blend,
                 out,
@@ -2646,6 +2649,7 @@ mod tests {
             index: 0,
             source: source.clone(),
             edit: Edit::default(),
+            version: None,
             done,
         };
         deliver(
@@ -2691,6 +2695,7 @@ mod tests {
             index: 0,
             source: source.clone(),
             edit: Edit::default(),
+            version: None,
             done,
         };
         deliver(

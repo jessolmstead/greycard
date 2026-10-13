@@ -71,6 +71,11 @@ note a first tester reads.
 
 ### Export
 
+- A version of a frame exports as `<name>-<version>.<ext>`, and the
+  headless `--export` takes `--version-name` to pick one; the export is
+  recorded on the version's own history. Nothing in the window makes a
+  version yet
+  ([§313](https://github.com/jessolmstead/greycard/blob/master/docs/notes/313-virtual-copies-part-4-the-version-s-name-in-the-export.md))
 - The export sheet names the folder it will write to, the last one
   chosen or the frame's own, with a Choose button beside it, and
   Export writes there with no dialog; "Choose file..." is gone. A

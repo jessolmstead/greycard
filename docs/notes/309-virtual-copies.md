@@ -34,7 +34,8 @@ write is at schema 5, with or without versions, since the editor has
 no users on 0.6.x for §166's reason to hold (0.6.x reads no sidecar
 this build has touched); and in the join, a version deleted on a copy
 that had seen all of the other copy's saves stays deleted, where §8
-below says it is kept. §312 has the cases.
+below says it is kept. §312 has the cases. Part 4 (§313) names the
+headless flag `--version-name`, since clap owns `--version`.
 
 ## 1. The data model
 

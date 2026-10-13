@@ -323,3 +323,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§310. Forget missing, built](notes/310-forget-missing-built.md) (2026-10-12)
 - [§311. A word at the pointer over an icon-only button](notes/311-a-word-at-the-pointer.md) (2026-10-12)
 - [§312. Virtual copies, part 1: the edit crate](notes/312-virtual-copies-part-1-the-edit-crate.md) (2026-10-12)
+- [§313. Virtual copies, part 4: the version's name in the export](notes/313-virtual-copies-part-4-the-version-s-name-in-the-export.md) (2026-10-12)

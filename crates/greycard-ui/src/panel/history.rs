@@ -107,6 +107,7 @@ pub(crate) fn record_export(
     app: &App,
     source: &Path,
     edit: &Edit,
+    version: Option<&str>,
     written: &Path,
     preset: Option<String>,
 ) {
@@ -133,7 +134,11 @@ pub(crate) fn record_export(
         {
             *seed = false;
         }
-        if !st.sidecars[i].record_export(edit, exported) {
+        let Some(line) = st.sidecars[i].line_mut(version) else {
+            no_version(source, version);
+            return;
+        };
+        if !line.record_export(edit, exported) {
             not_kept(source);
             return;
         }
@@ -145,7 +150,14 @@ pub(crate) fn record_export(
         return;
     }
     if st.write_sidecars
-        && record_export_on_disk(source, edit, exported, st.placement, st.xmp_sidecars)
+        && record_export_on_disk(
+            source,
+            edit,
+            version,
+            exported,
+            st.placement,
+            st.xmp_sidecars,
+        )
     {
         if let Some(indexer) = &st.index {
             indexer.file(source.to_path_buf());
@@ -172,6 +184,17 @@ fn not_kept(source: &Path) {
     );
 }
 
+/// The version the export was of is no longer in the sidecar (deleted,
+/// or taken out by a join since the set was queued): nothing to record
+/// it on.
+fn no_version(source: &Path, version: Option<&str>) {
+    tracing::warn!(
+        "{}: no version {}; export not recorded",
+        file_name(source),
+        version.unwrap_or("(the file's own)")
+    );
+}
+
 /// [`record_export`] for a frame no window holds: its sidecar read
 /// from where it is and brought up to date as an open brings it, the
 /// export noted on the state that is `edit`, and written back where
@@ -182,6 +205,7 @@ fn not_kept(source: &Path) {
 pub(crate) fn record_export_on_disk(
     source: &Path,
     edit: &Edit,
+    version: Option<&str>,
     exported: Exported,
     placement: greycard_edit::Placement,
     xmp: bool,
@@ -206,7 +230,11 @@ pub(crate) fn record_export_on_disk(
     if seed {
         take_seed(&mut sidecar, edit);
     }
-    if !sidecar.record_export(edit, exported) {
+    let Some(line) = sidecar.line_mut(version) else {
+        no_version(source, version);
+        return false;
+    };
+    if !line.record_export(edit, exported) {
         not_kept(source);
         return false;
     }
@@ -733,6 +761,7 @@ mod tests {
             index: 0,
             source: source.to_path_buf(),
             edit: edit.clone(),
+            version: None,
             done: crate::queue::Done::Exported {
                 path,
                 seconds: 1.0,
@@ -848,6 +877,7 @@ mod tests {
                 index: 0,
                 source: source.clone(),
                 edit: Edit::default(),
+                version: None,
                 done: crate::queue::Done::Failed {
                     message: "disk full".into(),
                 },
@@ -993,6 +1023,7 @@ mod tests {
                     index: 0,
                     source: source.clone(),
                     edit: sent.clone(),
+                    version: None,
                     done,
                 },
             );
@@ -1283,6 +1314,7 @@ mod tests {
                     index: i,
                     source: source.clone(),
                     edit: rendered.clone(),
+                    version: None,
                     done: crate::queue::Done::Exported {
                         path: dir.join(format!("{i}.jpg")),
                         seconds: 1.0,
@@ -1360,6 +1392,7 @@ mod tests {
                     index: i,
                     source: files[i].clone(),
                     edit: edits[i].clone(),
+                    version: None,
                     done,
                 },
             );

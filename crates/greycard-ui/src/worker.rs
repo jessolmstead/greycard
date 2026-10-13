@@ -386,6 +386,9 @@ pub enum Outcome {
         /// its learned blend seeded from the ISO when the frame's was
         /// still to be seeded.
         edit: Edit,
+        /// The id of the version the frame was, none for the file's
+        /// own line: the export is recorded on that line.
+        version: Option<String>,
         done: crate::queue::Done,
     },
     /// The set's last frame is done with, whichever way.
@@ -1548,6 +1551,7 @@ fn run(
                 index,
                 source: frame.source,
                 edit: rendered,
+                version: frame.version.map(|v| v.id),
                 done,
             });
             if finished {
@@ -4445,6 +4449,7 @@ mod tests {
                 crate::queue::Frame {
                     source: source.clone(),
                     edit: Edit::default(),
+                    version: None,
                     turn: 0,
                     seed_blend: false,
                     moved_from: None,

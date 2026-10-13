@@ -43,9 +43,6 @@ and export are smoothed.
       Delete (§309)
 - [ ] Virtual copies, part 3: Compare versions side by side in cull mode
       (§309). Waits on part 2
-- [ ] Virtual copies, part 4: the version's name in the export's file name,
-      in the queue and the records, and `--version` on the headless export
-      (§309). Waits on part 2
 - [ ] Virtual copies, part 5: a collection reference is hash plus version
       id; the mark on the version's cell alone (§309). Waits on part 2
 

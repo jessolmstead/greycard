@@ -248,6 +248,34 @@ pub(crate) fn plan(
         }
         crate::files::migrate_from_file(&mut sidecar, &source);
         let mut edit = sidecar.current.clone();
+        let mut frame_version = None;
+
+        if let Some(name) = &cli.version_name {
+            let matching: Vec<_> = sidecar
+                .versions
+                .iter()
+                .filter(|v| v.name == *name)
+                .collect();
+
+            if matching.is_empty() {
+                anyhow::bail!("{} has no version named {name}", source.display());
+            }
+
+            if matching.len() > 1 {
+                tracing::warn!(
+                    "{} has {} versions named {name}; the first is exported",
+                    source.display(),
+                    matching.len()
+                );
+            }
+
+            edit = matching[0].line.current.clone();
+            frame_version = Some(queue::Version {
+                id: matching[0].id.clone(),
+                name: matching[0].name.clone(),
+            });
+        }
+
         // The command line's temperature, exposure and curve, over the
         // first frame's edit and never onto its sidecar.
         if i == first {
@@ -256,6 +284,8 @@ pub(crate) fn plan(
         frames.push(queue::Frame {
             source,
             edit,
+            // The version `--version-name` named, none without it.
+            version: frame_version,
             turn: sidecar.turn,
             seed_blend: seed,
             out: PathBuf::new(),
@@ -264,8 +294,8 @@ pub(crate) fn plan(
     }
 
     let (folder, settings, preset_name) = if into_folder {
-        let sources: Vec<PathBuf> = frames.iter().map(|f| f.source.clone()).collect();
-        for (frame, (out, moved_from)) in frames.iter_mut().zip(queue::named(
+        let sources = queue::sources_of(&frames);
+        for (frame, (out, moved_from)) in frames.iter_mut().zip(queue::named_of(
             &sources,
             Some(target),
             None,
@@ -378,6 +408,7 @@ pub(crate) fn run(plan: Plan) -> Finished {
                 index,
                 source,
                 edit,
+                version,
                 done,
                 ..
             } => {
@@ -412,7 +443,12 @@ pub(crate) fn run(plan: Plan) -> Finished {
                                 at: crate::panel::history::now(),
                             };
                             if crate::panel::history::record_export_on_disk(
-                                &source, &edit, exported, placement, xmp,
+                                &source,
+                                &edit,
+                                version.as_deref(),
+                                exported,
+                                placement,
+                                xmp,
                             ) && let Some((index, roots)) = archive_roots.as_ref()
                             {
                                 // The copy on the archive is not
@@ -918,6 +954,79 @@ mod tests {
                 .current_exports
                 .len(),
             1
+        );
+    }
+
+    /// `--version-name NAME`: the frame goes out under that version's
+    /// edit, with the name in the file's, and the export is recorded on
+    /// the version's line and not the file's own; a name the sidecar
+    /// has not got stops the run with the file in the reason.
+    #[test]
+    fn a_version_named_is_exported_under_its_edit_and_its_name() {
+        let scratch = Scratch::new("version");
+        let source = scratch.0.join("frame.dng");
+        dng(&source, 96, 64);
+        let mut sidecar = Sidecar::default();
+        sidecar.current.light.exposure = -0.3;
+        let id = sidecar.new_version(None, Some("Warm")).unwrap();
+        sidecar.line_mut(Some(&id)).unwrap().record(Edit {
+            light: greycard_edit::Light {
+                exposure: 0.7,
+                ..Default::default()
+            },
+            ..Edit::default()
+        });
+        sidecar
+            .save_in(&source, greycard_edit::Placement::Beside)
+            .unwrap();
+        let out = scratch.0.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let remembered = settings::Settings::default();
+        let planned = plan(
+            &cli(&[
+                source.as_os_str(),
+                "--export".as_ref(),
+                out.as_os_str(),
+                "--version-name".as_ref(),
+                "Warm".as_ref(),
+            ]),
+            &out,
+            &remembered,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(planned.frames[0].edit.light.exposure, 0.7);
+        assert_eq!(
+            planned.frames[0].version.as_ref().map(|v| v.name.as_str()),
+            Some("Warm")
+        );
+        assert_eq!(planned.frames[0].out, out.join("frame-Warm.jpg"));
+        assert!(run(planned).succeeded());
+        assert!(out.join("frame-Warm.jpg").is_file());
+        let kept = Sidecar::load(&source).unwrap().unwrap();
+        assert_eq!(kept.current_exports.len(), 0, "not on the file's own line");
+        let line = kept.line(Some(&id)).unwrap();
+        assert_eq!(line.current_exports.len(), 1);
+        assert!(line.current_exports[0].file.ends_with("frame-Warm.jpg"));
+
+        let refused = plan(
+            &cli(&[
+                source.as_os_str(),
+                "--export".as_ref(),
+                out.as_os_str(),
+                "--version-name".as_ref(),
+                "Cool".as_ref(),
+            ]),
+            &out,
+            &remembered,
+            None,
+            None,
+        );
+        let message = format!("{:#}", refused.err().expect("no such version"));
+        assert!(
+            message.contains("frame.dng") && message.contains("Cool"),
+            "{message}"
         );
     }
 

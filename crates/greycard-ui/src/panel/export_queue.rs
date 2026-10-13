@@ -630,6 +630,7 @@ mod tests {
                 index,
                 source,
                 edit,
+                version: None,
                 done,
             },
         );
@@ -1166,6 +1167,7 @@ mod tests {
                 index: 0,
                 source: files[0].clone(),
                 edit: Edit::default(),
+                version: None,
                 done: exported("/nowhere/out/X.jpg"),
             },
         );
@@ -1218,6 +1220,7 @@ mod tests {
                 index: 0,
                 source,
                 edit: rendered,
+                version: None,
                 done: exported("/nowhere/out/IMG_0000.jpg"),
             },
         );
