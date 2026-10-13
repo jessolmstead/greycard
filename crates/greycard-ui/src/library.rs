@@ -214,23 +214,85 @@ pub(crate) struct Indexer {
     /// A folder the window opened is waiting: a pass in the
     /// background stops at its next batch for it.
     folders_waiting: Arc<AtomicBool>,
+    /// What the thread has in hand: see [`Busy`].
+    busy: Arc<Busy>,
     thread: std::thread::JoinHandle<()>,
+}
+
+/// Whether the indexer has anything in hand, for the window: while it
+/// has, the index may yet change its mind about a file it says is
+/// missing (a pass marks a folder's absent rows missing as it finishes
+/// the folder, and sees a move only when it reaches where the file went).
+#[derive(Debug)]
+pub(crate) struct Busy {
+    /// Asks sent and not yet taken by the thread: counted up before the
+    /// send and down as the thread takes each, so an ask in the channel
+    /// is always counted.
+    owed: AtomicUsize,
+    /// The thread has a pass or an ask in hand. True from its start (the
+    /// library opened, and rebuilt for a schema that moved, before any
+    /// ask), and false only while it waits with nothing but passes set
+    /// aside.
+    working: AtomicBool,
+    /// The roots of the passes set aside because they stopped answering.
+    aside: std::sync::Mutex<Vec<PathBuf>>,
+}
+
+impl Default for Busy {
+    fn default() -> Busy {
+        Busy {
+            owed: AtomicUsize::new(0),
+            working: AtomicBool::new(true),
+            aside: std::sync::Mutex::new(Vec::new()),
+        }
+    }
+}
+
+impl Busy {
+    /// Whether anything is in hand or owed. A pass set aside on a root
+    /// in `offline`, or under a network mount in `far`, is not counted:
+    /// the frames there are kept by whoever asks, and a dead root left
+    /// in the library (or a hung mount below a live one, never offline)
+    /// would otherwise keep the indexer busy for the session.
+    pub(crate) fn any(&self, offline: &HashSet<PathBuf>, far: &[PathBuf]) -> bool {
+        let kept = |root: &PathBuf| {
+            offline.iter().any(|o| root.starts_with(o)) || far.iter().any(|f| root.starts_with(f))
+        };
+        self.owed.load(Ordering::SeqCst) > 0
+            || self.working.load(Ordering::SeqCst)
+            || self
+                .aside
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .any(|root| !kept(root))
+    }
+}
+
+/// Send `ask`, counted owed while it is in the channel.
+fn send(asks: &mpsc::Sender<Ask>, busy: &Busy, ask: Ask) -> bool {
+    busy.owed.fetch_add(1, Ordering::SeqCst);
+    let sent = asks.send(ask).is_ok();
+    if !sent {
+        busy.owed.fetch_sub(1, Ordering::SeqCst);
+    }
+    sent
 }
 
 /// The indexer's ear, for a thread that is not the window's: the
 /// watcher hands its changes on through this.
 #[derive(Clone)]
-pub(crate) struct Asker(mpsc::Sender<Ask>);
+pub(crate) struct Asker(mpsc::Sender<Ask>, Arc<Busy>);
 
 impl Asker {
     pub(crate) fn changes(&self, changes: Vec<Change>) {
-        let _ = self.0.send(Ask::Changes(changes));
+        send(&self.0, &self.1, Ask::Changes(changes));
     }
 
     /// A tree pass over each of `roots`, for the timer: see
     /// [`queue_poll`].
     pub(crate) fn poll(&self, roots: Vec<PathBuf>) {
-        let _ = self.0.send(Ask::Poll(roots));
+        send(&self.0, &self.1, Ask::Poll(roots));
     }
 }
 
@@ -300,10 +362,12 @@ impl Indexer {
         let wanted = Arc::new(AtomicU64::new(0));
         let files_waiting = Arc::new(AtomicUsize::new(0));
         let folders_waiting = Arc::new(AtomicBool::new(false));
+        let busy = Arc::new(Busy::default());
         let waits = Waits {
             wanted: wanted.clone(),
             files: files_waiting.clone(),
             folders: folders_waiting.clone(),
+            busy: busy.clone(),
         };
         let thread = std::thread::Builder::new()
             .name("greycard index".into())
@@ -313,14 +377,25 @@ impl Indexer {
             wanted,
             files_waiting,
             folders_waiting,
+            busy,
             thread,
         })
+    }
+
+    /// Whether a pass is under way, or anything asked and not yet done:
+    /// see [`Busy::any`].
+    pub(crate) fn busy(&self, offline: &HashSet<PathBuf>, far: &[PathBuf]) -> bool {
+        self.busy.any(offline, far)
+    }
+
+    fn ask(&self, ask: Ask) -> bool {
+        send(&self.asks, &self.busy, ask)
     }
 
     pub(crate) fn folders(&self, dirs: Vec<PathBuf>, generation: u64) {
         self.wanted.store(generation, Ordering::SeqCst);
         self.folders_waiting.store(true, Ordering::SeqCst);
-        let _ = self.asks.send(Ask::Folders { dirs, generation });
+        self.ask(Ask::Folders { dirs, generation });
     }
 
     /// The launch pass over the roots, in this order, behind every
@@ -332,22 +407,22 @@ impl Indexer {
     /// [`Indexer::roots`], with the network mounts below them that their
     /// walks leave out, in the one ask.
     pub(crate) fn launch(&self, roots: Vec<PathBuf>, left_out: Vec<PathBuf>) {
-        let _ = self.asks.send(Ask::Roots { roots, left_out });
+        self.ask(Ask::Roots { roots, left_out });
     }
 
     /// The network mounts below the local roots, which their walks
     /// leave out ([`Ask::LeftOut`]).
     pub(crate) fn left_out(&self, points: Vec<PathBuf>) {
-        let _ = self.asks.send(Ask::LeftOut(points));
+        self.ask(Ask::LeftOut(points));
     }
 
     pub(crate) fn asker(&self) -> Asker {
-        Asker(self.asks.clone())
+        Asker(self.asks.clone(), self.busy.clone())
     }
 
     pub(crate) fn file(&self, path: PathBuf) {
         self.files_waiting.fetch_add(1, Ordering::SeqCst);
-        if self.asks.send(Ask::File(path)).is_err() {
+        if !self.ask(Ask::File(path)) {
             self.files_waiting.fetch_sub(1, Ordering::SeqCst);
         }
     }
@@ -355,7 +430,7 @@ impl Indexer {
     /// The lens database was fetched or updated: the develop keys in
     /// the index are cleared (`Ask::KeysStale`).
     pub(crate) fn keys_stale(&self) {
-        let _ = self.asks.send(Ask::KeysStale);
+        self.ask(Ask::KeysStale);
     }
 
     /// Forget the rows of files the window has deleted. A pass under
@@ -367,7 +442,7 @@ impl Indexer {
             return;
         }
         self.files_waiting.fetch_add(1, Ordering::SeqCst);
-        if self.asks.send(Ask::Forget(paths)).is_err() {
+        if !self.ask(Ask::Forget(paths)) {
             self.files_waiting.fetch_sub(1, Ordering::SeqCst);
         }
     }
@@ -376,7 +451,7 @@ impl Indexer {
     /// frames under it, or to it, are dropped (§233). The files' rows
     /// stay, as they always have.
     pub(crate) fn forget_pending_under(&self, root: PathBuf) {
-        let _ = self.asks.send(Ask::ForgetPendingUnder(root));
+        self.ask(Ask::ForgetPendingUnder(root));
     }
 
     /// Take the rows of files the window has moved, each from the
@@ -390,7 +465,7 @@ impl Indexer {
             return;
         }
         self.files_waiting.fetch_add(1, Ordering::SeqCst);
-        if self.asks.send(Ask::Moved(moves)).is_err() {
+        if !self.ask(Ask::Moved(moves)) {
             self.files_waiting.fetch_sub(1, Ordering::SeqCst);
         }
     }
@@ -405,7 +480,7 @@ impl Indexer {
         // The watcher may still hold an `Asker`, so the channel does
         // not close with this end: the thread is woken to see
         // `LEAVING` instead.
-        let _ = self.asks.send(Ask::Leave);
+        self.ask(Ask::Leave);
         drop(self.asks);
         let asked = Instant::now();
         while !self.thread.is_finished() && asked.elapsed() < within {
@@ -428,6 +503,8 @@ struct Waits {
     files: Arc<AtomicUsize>,
     /// A folder pass asked for and not yet taken up.
     folders: Arc<AtomicBool>,
+    /// What the thread has in hand, for the window.
+    busy: Arc<Busy>,
 }
 
 /// The thread's body, a panic in it said to the window rather than
@@ -842,6 +919,8 @@ fn serve(
         while index < hung.jobs.len() {
             match hung.jobs[index].aside.answers.try_recv() {
                 Ok(back) => {
+                    // In hand again before it leaves the set aside.
+                    waits.busy.working.store(true, Ordering::SeqCst);
                     if let Some(passed) = heard(back, told) {
                         let a = hung.jobs.remove(index);
                         tracing::info!("index: the pass over {} came back", a.job.path().display());
@@ -865,6 +944,7 @@ fn serve(
         while index < hung.folders.len() {
             match hung.folders[index].aside.answers.try_recv() {
                 Ok(back) => {
+                    waits.busy.working.store(true, Ordering::SeqCst);
                     if let Some(left) = heard(back, told) {
                         let a = hung.folders.remove(index);
                         hung.answered(&a.key);
@@ -884,20 +964,43 @@ fn serve(
                 }
             }
         }
+        // The roots of the passes set aside, said before the thread
+        // may go idle on them.
+        {
+            let roots: Vec<PathBuf> = hung
+                .jobs
+                .iter()
+                .map(|a| a.key.clone())
+                .chain(hung.folders.iter().map(|a| a.key.clone()))
+                .collect();
+            let mut aside = waits.busy.aside.lock().unwrap_or_else(|e| e.into_inner());
+            if *aside != roots {
+                *aside = roots;
+            }
+        }
         // With a pass to take up again, only what is already waiting;
         // with passes set aside, the next ask or a moment, to look at
-        // them again; with neither, wait for the next ask.
+        // them again; with neither, wait for the next ask. Idle in both
+        // waits: an ask sent meanwhile is counted owed until taken.
         let first = if pending.is_some() || !background.is_empty() {
             waiting.try_recv().ok()
         } else if !hung.jobs.is_empty() || !hung.folders.is_empty() {
+            waits.busy.working.store(false, Ordering::SeqCst);
             match waiting.recv_timeout(Duration::from_millis(200)) {
-                Ok(ask) => Some(ask),
+                Ok(ask) => {
+                    waits.busy.working.store(true, Ordering::SeqCst);
+                    Some(ask)
+                }
                 Err(mpsc::RecvTimeoutError::Timeout) => None,
                 Err(mpsc::RecvTimeoutError::Disconnected) => return,
             }
         } else {
+            waits.busy.working.store(false, Ordering::SeqCst);
             match waiting.recv() {
-                Ok(ask) => Some(ask),
+                Ok(ask) => {
+                    waits.busy.working.store(true, Ordering::SeqCst);
+                    Some(ask)
+                }
                 Err(_) => return,
             }
         };
@@ -908,6 +1011,8 @@ fn serve(
         let mut forget: Vec<PathBuf> = Vec::new();
         let mut moves: Vec<(PathBuf, PathBuf)> = Vec::new();
         for ask in first.into_iter().chain(waiting.try_iter()) {
+            // Taken: in hand now (working is set), owed no more.
+            waits.busy.owed.fetch_sub(1, Ordering::SeqCst);
             match ask {
                 Ask::Moved(more) => {
                     files_waiting.fetch_sub(1, Ordering::SeqCst);
@@ -2225,6 +2330,36 @@ fn reread(state: &Rc<RefCell<State>>, app: &App, changed: bool) {
 }
 
 #[cfg(test)]
+mod busy_tests {
+    use super::*;
+
+    /// An ask in the channel is busy before the thread takes it, and a
+    /// pass set aside on a root counts until that root is offline.
+    #[test]
+    fn busy_counts_an_ask_owed_and_a_pass_aside_on_a_root_not_offline() {
+        let (tx, rx) = mpsc::channel();
+        let busy = Busy::default();
+        busy.working.store(false, Ordering::SeqCst);
+        let none = HashSet::new();
+        assert!(!busy.any(&none, &[]));
+        assert!(send(&tx, &busy, Ask::KeysStale));
+        assert!(busy.any(&none, &[]), "owed while in the channel");
+        let _ = rx.recv().unwrap();
+        busy.owed.fetch_sub(1, Ordering::SeqCst);
+        assert!(!busy.any(&none, &[]));
+        let root = PathBuf::from("/photos/nas");
+        busy.aside.lock().unwrap().push(root.clone());
+        assert!(
+            busy.any(&none, &[]),
+            "a pass set aside on a root not known offline"
+        );
+        assert!(!busy.any(&HashSet::from([root]), &[]));
+        // A network mount below a live root: never offline, kept by far.
+        assert!(!busy.any(&none, &[PathBuf::from("/photos")]));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use greycard_library::fixture::{A7, R5, R6, write_frame};
@@ -2509,6 +2644,43 @@ mod tests {
         // The callbacks hold the state too; its connection goes here.
         state.borrow_mut().index_reader = None;
         drop(state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// The indexer says it is busy from its start until it has nothing
+    /// in hand, and goes idle again after a pass it is asked for: what
+    /// keeps Forget missing from taking a frame a pass still to come
+    /// would find moved.
+    #[test]
+    fn the_indexer_is_busy_from_an_ask_until_its_pass_is_done() {
+        let dir = scratch("busy");
+        let shoot = dir.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        write_frame(&shoot.join("a.tif"), &R6, 1);
+        let db = dir.join("library.sqlite");
+        let (tx, rx) = std::sync::mpsc::channel();
+        let indexer = Indexer::start(db, move |told| {
+            let _ = tx.send(told);
+        })
+        .expect("the indexer starts");
+        let idle = |indexer: &Indexer| {
+            let since = Instant::now();
+            while indexer.busy(&HashSet::new(), &[]) {
+                assert!(since.elapsed() < Duration::from_secs(20), "never idle");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        idle(&indexer);
+        indexer.roots(vec![dir.clone()]);
+        loop {
+            match rx.recv_timeout(Duration::from_secs(20)) {
+                Ok(Told::Background { launch: true, .. }) => break,
+                Ok(_) => {}
+                Err(e) => panic!("{e}"),
+            }
+        }
+        idle(&indexer);
+        indexer.stop(Duration::from_secs(20));
         crate::testing::remove_dir_retry(&dir);
     }
 

@@ -320,3 +320,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§307. The lightbox](notes/307-the-lightbox.md) (2026-10-11)
 - [§308. The single-frame export job comes out](notes/308-the-single-frame-export-job-comes-out.md) (2026-10-12)
 - [§309. Virtual copies](notes/309-virtual-copies.md) (2026-10-12)
+- [§310. Forget missing, built](notes/310-forget-missing-built.md) (2026-10-12)

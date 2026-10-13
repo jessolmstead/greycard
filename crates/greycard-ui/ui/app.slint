@@ -555,13 +555,16 @@ export component App inherits Window {
     callback library-root-archive(string);
     /// The collections, in the left pane with the grid
     /// (`panel::collections`): a row each, a click opens one, its menu
-    /// renames it, sorts it by capture time or deletes it.
+    /// renames it, sorts it by capture time, forgets its missing frames
+    /// or deletes it.
     in property <[CollectionChip]> collections: [];
     in-out property <bool> collapsed-collections: false;
     callback collection-picked(string);
     callback collection-rename(string);
     callback collection-delete(string);
     callback collection-capture(string);
+    callback collection-forget-missing(string);
+    pure callback collection-forgettable(string) -> int;
     callback collection-new();
     /// The frame menu's Add to collection, by its place in
     /// `collection-names` (-1 for a new one), and Remove from the one
@@ -3108,6 +3111,8 @@ export component App inherits Window {
                     rename(id) => { root.collection-rename(id); }
                     delete(id) => { root.collection-delete(id); }
                     capture-toggled(id) => { root.collection-capture(id); }
+                    forget-missing(id) => { root.collection-forget-missing(id); }
+                    forgettable(id) => { return root.collection-forgettable(id); }
                     add => { root.collection-new(); }
                     focus-keys => { keys.focus(); }
                     menu-done => { root.menu-done(); }

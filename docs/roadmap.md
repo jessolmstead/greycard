@@ -36,7 +36,6 @@ collections and smart collections that survive a move, a mask has its
 own Detail, and the first tester's rough edges on masks, the touchpad
 and export are smoothed.
 
-- [ ] Forget missing: a collection's references to files that will not be found again can be dropped from its menu (left open in §304).
 - [ ] Check the window fit on the Mac before the cut: the log's `window:` line should read `monitor 1512x982 at 2.00x, opening at 1432x800`, the window open with no jump and its foot clear of the Dock, and the export sheet's buttons in view; if the Dock covers it, build the true work area (§306).
 - [ ] Virtual copies, part 1: a `versions` list in the sidecar, each a line of its own (edit, history, snapshots, exports), joined per version across machines; a sidecar carrying versions refused whole by older builds rather than emptied (§309)
 - [ ] Virtual copies, part 2: a version is a cell beside its file in the strip and the grid with its own thumbnail and marks; New version (Ctrl+'), New version from the original, Rename, Swap with the original, Delete; a `versions` table in the index (§309)

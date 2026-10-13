@@ -3,7 +3,8 @@
 // frame count at its right, the smart ones (saved filters) after the
 // rest with a mark of their own, the one open lit, and at the foot a
 // way to make one. A right-click on a row offers a new name, capture
-// order for one filled by hand, and deleting it, which deletes its file
+// order for one filled by hand, forgetting the frames of the one open
+// that will not be found again, and deleting it, which deletes its file
 // and touches no frame.
 
 import { Theme } from "../theme.slint";
@@ -105,6 +106,13 @@ export component CollectionsSection inherits Section {
     callback delete(string);
     /// Capture order turned on or off for a collection, by its id.
     callback capture-toggled(string);
+    /// The references found nowhere dropped from a collection, by its id.
+    callback forget-missing(string);
+    /// How many of a collection's references its menu offers to forget,
+    /// asked as the menu opens: none unless it is open, no pass is under
+    /// way, and its last read found references the index has nowhere,
+    /// hinted under no offline root and at no file on disk.
+    pure callback forgettable(string) -> int;
     /// A new, empty collection asked for.
     callback add();
     callback focus-keys();
@@ -113,6 +121,7 @@ export component CollectionsSection inherits Section {
     property <string> menu-id;
     property <bool> menu-smart;
     property <bool> menu-capture;
+    property <int> menu-forgettable;
 
     title: "COLLECTIONS";
     icon: @image-url("../icons/bookmark.svg");
@@ -123,6 +132,7 @@ export component CollectionsSection inherits Section {
         root.menu-id = c.id;
         root.menu-smart = c.smart;
         root.menu-capture = c.capture;
+        root.menu-forgettable = c.smart ? 0 : root.forgettable(c.id);
         menu.show({ x: x - list.absolute-position.x, y: y - list.absolute-position.y });
     }
 
@@ -142,6 +152,11 @@ export component CollectionsSection inherits Section {
                     checkable: true;
                     checked: root.menu-capture;
                     activated => { root.capture-toggled(root.menu-id); root.menu-done(); }
+                }
+                if !root.menu-smart && root.menu-forgettable > 0: MenuItem {
+                    title: root.menu-forgettable == 1 ? "Forget 1 missing frame"
+                        : "Forget \{root.menu-forgettable} missing frames";
+                    activated => { root.forget-missing(root.menu-id); root.menu-done(); }
                 }
                 MenuSeparator { }
                 MenuItem {

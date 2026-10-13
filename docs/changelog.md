@@ -24,6 +24,11 @@ note a first tester reads.
 
 ### Library
 
+- Forget missing: the open collection's menu offers to drop the
+  references whose files are gone for good, never one under an offline
+  root or a drive that is not answering, and never while the library
+  is being indexed
+  ([§310](https://github.com/jessolmstead/greycard/blob/master/docs/notes/310-forget-missing-built.md))
 - Collections: gather frames from anywhere in the library into a
   collection from the frame menu or with B, open it from the left
   pane's COLLECTIONS list, drag to reorder it; a frame stays in it

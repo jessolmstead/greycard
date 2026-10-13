@@ -346,6 +346,10 @@ pub(crate) struct Store {
     /// The sidebar's rows, one model for the session, its rows replaced
     /// only when they change.
     pub(crate) rows: Rc<slint::VecModel<CollectionChip>>,
+    /// The last read of a collection: its id, how many of its
+    /// references were missing, and how many of those Forget missing
+    /// may drop (the rest hinted under an offline root).
+    pub(crate) missing: Option<(String, usize, usize)>,
     /// The sheet's question while it is up.
     pub(crate) asked: Option<crate::panel::collections::Asked>,
     /// The frame menu's names of the collections, one model for the
@@ -718,6 +722,106 @@ impl Store {
         changed
     }
 
+    /// The references of collection `id` the index has nowhere, by the
+    /// same test the status line counts them missing by ([`resolve`],
+    /// asked again here), dropped and the file written. Kept, as perhaps
+    /// only out of reach: one whose hint is under a root in `away`
+    /// (offline), under a network mount in `far`, or in a folder that
+    /// does not answer `answers` (the editor's looks, each with a time
+    /// limit, so a share gone quiet never holds the caller); and one
+    /// whose hint is a file on disk, which a pass has yet to read, or
+    /// that the disk will not say is gone (a folder that cannot be read,
+    /// a mount that died). The disk is asked of a hint only once its
+    /// folder has answered, and a reference is dropped only when the
+    /// disk says its file, or its folder, is not found. With
+    /// no index to ask, or one that will not answer, nothing is known
+    /// gone and nothing changes (`None`). The caller makes sure no pass
+    /// is under way: the index says a file moved is missing until the
+    /// pass reaches where it went.
+    pub(crate) fn forget_missing(
+        &mut self,
+        id: &str,
+        lib: Option<&Library>,
+        away: &[PathBuf],
+        far: &[PathBuf],
+        answers: &Answers<'_>,
+    ) -> Option<Forgot> {
+        let c = self.collection(id)?;
+        let shown = match resolve(lib?, &c.refs, away, &[], false) {
+            Ok(shown) => shown,
+            Err(e) => {
+                tracing::warn!("collection {}: {e}; nothing forgotten", c.name);
+                return None;
+            }
+        };
+        let mut kept_away = shown.away;
+        let (far_off, near): (Vec<&Reference>, Vec<&Reference>) = shown
+            .gone
+            .iter()
+            .partition(|r| far.iter().any(|f| Path::new(&r.hint).starts_with(f)));
+        kept_away += far_off.len();
+        let mut folders: Vec<PathBuf> = Vec::new();
+        for r in &near {
+            if let Some(dir) = Path::new(&r.hint).parent()
+                && !folders.iter().any(|d| d == dir)
+            {
+                folders.push(dir.to_path_buf());
+            }
+        }
+        let answered = if folders.is_empty() {
+            Default::default()
+        } else {
+            answers(&folders)
+        };
+        let mut on_disk = 0;
+        let mut gone: HashSet<&str> = HashSet::new();
+        for r in near {
+            let hint = Path::new(&r.hint);
+            let folder = hint
+                .parent()
+                .and_then(|d| answered.get(d))
+                .copied()
+                .flatten();
+            let absent = |p: &Path| {
+                matches!(
+                    std::fs::symlink_metadata(p),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound
+                )
+            };
+            match folder {
+                None => kept_away += 1,
+                // The folder not there at all: its files neither.
+                Some(false) if hint.parent().is_some_and(absent) => {
+                    gone.insert(r.hash.as_str());
+                }
+                // Gone only when the disk says so of the file itself: a
+                // folder that cannot be read, a mount that has died
+                // under us, any other error, keeps it.
+                Some(_) => match std::fs::symlink_metadata(hint) {
+                    Ok(_) => on_disk += 1,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                        gone.insert(r.hash.as_str());
+                    }
+                    Err(_) => kept_away += 1,
+                },
+            }
+        }
+        let c = self.collection_mut(id)?;
+        let n = c.remove(&gone);
+        if n > 0 {
+            tracing::info!("collection {}: {n} missing forgotten", c.name);
+            self.save(id);
+        }
+        let forgot = Forgot {
+            forgotten: n,
+            missing: shown.missing - n,
+            away: kept_away,
+            on_disk,
+        };
+        self.missing = Some((id.to_string(), forgot.missing, 0));
+        Some(forgot)
+    }
+
     /// What a read of a collection found to change in it, put in: each
     /// reference of `was` takes its new hash and hint. True when the
     /// collection changed, which is then written.
@@ -738,6 +842,24 @@ impl Store {
     }
 }
 
+/// The editor's look at folders, each with a time limit: whether each
+/// is there, or `None` when it did not answer in time.
+pub(crate) type Answers<'a> =
+    dyn Fn(&[PathBuf]) -> std::collections::HashMap<PathBuf, Option<bool>> + 'a;
+
+/// What Forget missing did, by its own fresh read: how many it dropped,
+/// how many are missing still, and of those, how many are perhaps only
+/// out of reach (an offline root, a network mount, a folder that did
+/// not answer) and how many have a file at the hint the index has not
+/// read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Forgot {
+    pub(crate) forgotten: usize,
+    pub(crate) missing: usize,
+    pub(crate) away: usize,
+    pub(crate) on_disk: usize,
+}
+
 /// A reference that a read of its collection found somewhere else: the
 /// hash it had, and the hash and the hint it has now.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -755,6 +877,12 @@ pub(crate) struct Shown {
     pub(crate) listed: Vec<(PathBuf, RowMeta)>,
     /// References with nothing at their hash or their hint.
     pub(crate) missing: usize,
+    /// The missing whose hint is under no root that is away: what
+    /// Forget missing may drop, once it has looked at the disk.
+    pub(crate) gone: Vec<Reference>,
+    /// Of the missing, those hinted under a root that is away: perhaps
+    /// only out of reach, and kept.
+    pub(crate) away: usize,
     /// References found moved or rewritten, for the file.
     pub(crate) changes: Vec<Change>,
 }
@@ -799,6 +927,12 @@ pub(crate) fn resolve(
         if rows.is_empty() || !seen.insert(hash.clone()) {
             if rows.is_empty() {
                 shown.missing += 1;
+                // The index alone: the disk is never asked here.
+                if is_away(Path::new(&r.hint)) {
+                    shown.away += 1;
+                } else {
+                    shown.gone.push(r.clone());
+                }
             }
             continue;
         }
@@ -861,6 +995,11 @@ mod tests {
             hash: hash.into(),
             hint: hint.into(),
         }
+    }
+
+    /// Every folder answers, as the disk says.
+    fn answering(dirs: &[PathBuf]) -> std::collections::HashMap<PathBuf, Option<bool>> {
+        dirs.iter().map(|d| (d.clone(), Some(d.is_dir()))).collect()
     }
 
     fn hashes(c: &Collection) -> Vec<&str> {
@@ -1305,6 +1444,205 @@ mod tests {
             (None, None) => std::cmp::Ordering::Equal,
         });
         assert_eq!(taken, sorted);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Forget missing drops the references the index has nowhere, by the
+    /// status line's own count, and writes the file; a frame under an
+    /// offline root is kept, whether the index still holds its row or
+    /// last saw it missing, and with no index to ask nothing changes.
+    #[test]
+    fn forget_missing_drops_the_gone_and_keeps_the_offline() {
+        let dir = scratch("forget");
+        let (shoot, drive) = (dir.join("shoot"), dir.join("drive"));
+        std::fs::create_dir_all(&shoot).unwrap();
+        std::fs::create_dir_all(&drive).unwrap();
+        let (a, b) = (shoot.join("a.tif"), shoot.join("b.tif"));
+        let (on_drive, lost) = (drive.join("c.tif"), drive.join("d.tif"));
+        write_frame(&a, &R5, 1);
+        write_frame(&b, &R6, 2);
+        write_frame(&on_drive, &A7, 3);
+        write_frame(&lost, &A7, 4);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut |_| {}).unwrap();
+        let hash = |lib: &Library, p: &Path| lib.by_path(p).unwrap().unwrap().hash;
+        let (ha, hb, hc, hd) = (
+            hash(&lib, &a),
+            hash(&lib, &b),
+            hash(&lib, &on_drive),
+            hash(&lib, &lost),
+        );
+        // b deleted and d deleted, each seen missing by a pass; then the
+        // drive unplugged, its rows left as the index has them.
+        std::fs::remove_file(&b).unwrap();
+        std::fs::remove_file(&lost).unwrap();
+        lib.index_tree(&dir, &mut |_| {}).unwrap();
+        assert!(lib.by_path(&lost).unwrap().unwrap().missing);
+        let mut c = Collection::new("Picks");
+        c.add(&[
+            (ha.clone(), a.clone()),
+            (hb.clone(), b.clone()),
+            (hc.clone(), on_drive.clone()),
+            (hd.clone(), lost.clone()),
+            ("feedface".into(), shoot.join("never.tif")),
+        ]);
+        let id = c.id.clone();
+        let mut store = Store {
+            dir: Some(dir.join(DIR)),
+            ..Store::default()
+        };
+        store.list.push(c);
+        store.save(&id);
+        let away = std::slice::from_ref(&drive);
+        let look = answering;
+        let before = resolve(&lib, &store.list[0].refs, away, &[], false).unwrap();
+        assert_eq!(before.missing, 3, "b, d and the never-seen one");
+        let gone: Vec<&str> = before.gone.iter().map(|r| r.hash.as_str()).collect();
+        assert_eq!(gone, [hb.as_str(), "feedface"]);
+        // No index to ask: nothing known gone, nothing changed.
+        assert_eq!(store.forget_missing(&id, None, away, &[], &look), None);
+        assert_eq!(store.list[0].refs.len(), 5);
+        let forgot = store
+            .forget_missing(&id, Some(&lib), away, &[], &look)
+            .unwrap();
+        assert_eq!(
+            forgot,
+            Forgot {
+                forgotten: 2,
+                missing: 1,
+                away: 1,
+                on_disk: 0
+            }
+        );
+        assert_eq!(store.missing, Some((id.clone(), 1, 0)));
+        assert_eq!(hashes(&store.list[0]), [&ha, &hc, &hd]);
+        // The file on disk says so.
+        let file = read_collection(&dir.join(DIR).join(format!("{id}.json"))).unwrap();
+        let on_disk: Vec<&str> = file.refs.iter().map(|r| r.hash.as_str()).collect();
+        assert_eq!(on_disk, [&ha, &hc, &hd]);
+        // The status line's count drops by them; the offline one stays.
+        let after = resolve(&lib, &store.list[0].refs, away, &[], false).unwrap();
+        assert_eq!(after.missing, 1);
+        assert!(after.gone.is_empty());
+        let forgot = store
+            .forget_missing(&id, Some(&lib), away, &[], &look)
+            .unwrap();
+        assert_eq!((forgot.forgotten, forgot.away), (0, 1));
+        // The drive back: d is gone by the same test, and goes.
+        let forgot = store
+            .forget_missing(&id, Some(&lib), &[], &[], &look)
+            .unwrap();
+        assert_eq!((forgot.forgotten, forgot.missing), (1, 0));
+        assert_eq!(hashes(&store.list[0]), [&ha, &hc]);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A reference whose hint is a file on disk the index has not read
+    /// (a pass still to reach it, an index rebuilt) counts missing and
+    /// is never forgotten; one under a network mount is kept without
+    /// its folder being looked at, and one in a folder that does not
+    /// answer is kept.
+    #[test]
+    fn forget_missing_keeps_a_file_on_disk_and_never_looks_at_a_far_one() {
+        let dir = scratch("forget-on-disk");
+        let a = dir.join("a.tif");
+        write_frame(&a, &R5, 1);
+        let (nas, quiet) = (dir.join("nas"), dir.join("quiet"));
+        // An index that has read nothing: as after a rebuild.
+        let lib = Library::open_in_memory().unwrap();
+        let mut c = Collection::new("Unread");
+        c.add(&[
+            ("0123456789abcdef".into(), a.clone()),
+            ("feedface".into(), dir.join("gone.tif")),
+            ("cafebabe".into(), nas.join("b.tif")),
+            ("deadbeef".into(), quiet.join("c.tif")),
+        ]);
+        let id = c.id.clone();
+        let mut store = Store::default();
+        store.list.push(c);
+        let shown = resolve(&lib, &store.list[0].refs, &[], &[], false).unwrap();
+        assert_eq!((shown.missing, shown.gone.len()), (4, 4));
+        let looked = std::cell::RefCell::new(Vec::new());
+        let look = |dirs: &[PathBuf]| {
+            looked.borrow_mut().extend(dirs.iter().cloned());
+            dirs.iter()
+                .map(|d| (d.clone(), (!d.starts_with(&quiet)).then(|| d.is_dir())))
+                .collect()
+        };
+        let far = std::slice::from_ref(&nas);
+        let forgot = store
+            .forget_missing(&id, Some(&lib), &[], far, &look)
+            .unwrap();
+        assert_eq!(
+            forgot,
+            Forgot {
+                forgotten: 1,
+                missing: 3,
+                away: 2,
+                on_disk: 1
+            }
+        );
+        assert_eq!(
+            hashes(&store.list[0]),
+            ["0123456789abcdef", "cafebabe", "deadbeef"]
+        );
+        assert!(
+            !looked.borrow().iter().any(|d| d.starts_with(&nas)),
+            "the network mount is never looked at: {:?}",
+            looked.borrow()
+        );
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A folder that cannot be read answers the look with no, and its
+    /// files' stat fails: not "not found", so they are kept. As after a
+    /// rebuilt index, whose pass left the folder with no rows.
+    #[cfg(unix)]
+    #[test]
+    fn forget_missing_keeps_the_frames_of_a_folder_that_cannot_be_read() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = scratch("forget-locked");
+        let locked = dir.join("locked");
+        std::fs::create_dir_all(&locked).unwrap();
+        let a = locked.join("a.tif");
+        write_frame(&a, &R5, 1);
+        // The mode put back however the test ends: a folder of mode 000
+        // left under target/ stops a `cargo clean`.
+        struct Restore<'a>(&'a Path);
+        impl Drop for Restore<'_> {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let restore = Restore(&locked);
+        // Run as root, the mode stops nothing, and there is nothing to test.
+        let readable = std::fs::read_dir(&locked).is_ok();
+        let lib = Library::open_in_memory().unwrap();
+        let mut c = Collection::new("Locked");
+        c.add(&[
+            ("0123456789abcdef".into(), a.clone()),
+            ("feedface".into(), dir.join("gone").join("b.tif")),
+        ]);
+        let id = c.id.clone();
+        let mut store = Store::default();
+        store.list.push(c);
+        let forgot = store
+            .forget_missing(&id, Some(&lib), &[], &[], &answering)
+            .unwrap();
+        drop(restore);
+        if !readable {
+            assert_eq!(
+                forgot,
+                Forgot {
+                    forgotten: 1,
+                    missing: 1,
+                    away: 1,
+                    on_disk: 0
+                }
+            );
+            assert_eq!(hashes(&store.list[0]), ["0123456789abcdef"]);
+        }
         crate::testing::remove_dir_retry(&dir);
     }
 }

@@ -1564,8 +1564,9 @@ pub(crate) struct Found {
     on_screen: OnScreen,
     seconds: f64,
     /// A collection's read: its id, how many of its references are
-    /// missing, and those found moved or rewritten.
-    collection: Option<(String, usize, Vec<crate::collections::Change>)>,
+    /// missing, the hints of those under no offline root, and those
+    /// found moved or rewritten.
+    collection: Option<(String, usize, Vec<String>, Vec<crate::collections::Change>)>,
 }
 
 /// One root's look, out on a thread of its own: its answer when it has
@@ -1711,6 +1712,36 @@ pub(crate) fn answer_of(path: &Path, wait: Duration) -> Option<bool> {
         .flatten()
 }
 
+/// Each of `paths` looked at as [`answer_of`] looks: whether it is
+/// there, or `None` when it has not answered within `wait` (or its last
+/// look is still out). At most [`LOOKS_AT_ONCE`] at a time, each batch
+/// with the wait shared; once one in a batch has not answered, the rest
+/// are not looked at and are taken for no answer, so the whole holds its
+/// caller for one wait at most and never asks for more threads than that.
+pub(crate) fn answers_of(paths: &[PathBuf], wait: Duration) -> HashMap<PathBuf, Option<bool>> {
+    let mut answers = HashMap::new();
+    let mut quiet = false;
+    for batch in paths.chunks(LOOKS_AT_ONCE) {
+        if quiet {
+            answers.extend(batch.iter().map(|p| (p.clone(), None)));
+            continue;
+        }
+        #[cfg(test)]
+        let got: HashMap<PathBuf, Option<bool>> = batch
+            .iter()
+            .map(|p| (p.clone(), answer_of(p, wait)))
+            .collect();
+        #[cfg(not(test))]
+        let got = CHECKS.answers(batch, wait);
+        quiet = got.values().any(Option::is_none);
+        answers.extend(got);
+    }
+    answers
+}
+
+/// How many paths [`answers_of`] looks at together.
+const LOOKS_AT_ONCE: usize = 16;
+
 /// Whether `root` answers the roots' look: up to 3 s, and at once no
 /// while its last look is still out. The indexer asks it before each
 /// pass over a root, on its own thread.
@@ -1769,7 +1800,8 @@ impl Look {
                     },
                 };
                 let listed = shown.map(|s| {
-                    collection = Some((id, s.missing, s.changes));
+                    let gone = s.gone.into_iter().map(|r| r.hint).collect();
+                    collection = Some((id, s.missing, gone, s.changes));
                     s.listed
                 });
                 Source::Roots {
@@ -2137,9 +2169,22 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
     // A collection's references found moved or rewritten: its file
     // takes their new hashes and hints, whatever the list does next.
     let mut missing = 0;
-    if let Some((id, gone, changes)) = collection {
-        missing = gone;
+    if let Some((id, lost, gone, changes)) = collection {
+        missing = lost;
         let mut st = state.borrow_mut();
+        // What it found missing is kept for the menu's Forget missing
+        // only from a read of the view the window holds now: an older
+        // one landing after a forget would bring the old count back.
+        if st.view_generation == generation {
+            // Those under a network mount are kept by a forget, so not
+            // offered.
+            let far = &st.library.remote;
+            let gone = gone
+                .iter()
+                .filter(|h| !far.iter().any(|(m, _)| Path::new(h).starts_with(m)))
+                .count();
+            st.collections.missing = Some((id.clone(), lost, gone));
+        }
         // Into the collection the read was of, by its id: a merge read
         // of one that lands after another was opened is still its own.
         if st.collections.apply(&id, &changes) {

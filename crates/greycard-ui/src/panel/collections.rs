@@ -344,6 +344,106 @@ fn remove_from(
     }
 }
 
+/// Whether the index may yet change its mind about a missing file: the
+/// launch's look at the roots out, a launch pass left, or anything asked
+/// of the indexer not yet done. A file moved is missing at its old path
+/// until the pass reaches the folder it went to, and a rebuilt index has
+/// every file missing until its passes are done.
+fn indexing(st: &State) -> bool {
+    st.library.starting
+        || st.library.launch_left > 0
+        || st.index.as_ref().is_some_and(|i| {
+            let far: Vec<PathBuf> = st.library.remote.iter().map(|(m, _)| m.clone()).collect();
+            i.busy(&st.library.offline, &far)
+        })
+}
+
+/// How many references of collection `id` its menu offers to forget:
+/// from its last read, while it is open and no pass is under way.
+fn forgettable(st: &State, id: &str) -> usize {
+    if indexing(st) || st.view.collection() != Some(id) {
+        return 0;
+    }
+    match &st.collections.missing {
+        Some((at, _, gone)) if at == id => *gone,
+        _ => 0,
+    }
+}
+
+/// Forget missing, from the open collection's menu: its references
+/// the index has nowhere dropped, read afresh; those hinted under an
+/// offline root or a network mount, in a folder that does not answer
+/// the editor's look (up to its 3 s), or at a file on disk kept;
+/// refused while a pass is under way. The status line is said again
+/// with the count that is left.
+fn forget_missing(state: &Rc<RefCell<State>>, app: &App, id: &str) {
+    let mut st = state.borrow_mut();
+    let st = &mut *st;
+    if st.view.collection() != Some(id) {
+        return;
+    }
+    let name = name_of(st, id);
+    if indexing(st) {
+        app.set_status(
+            format!("the library is being indexed; nothing forgotten from {name} until it is done")
+                .into(),
+        );
+        return;
+    }
+    let away: Vec<PathBuf> = st.library.offline.iter().cloned().collect();
+    let far: Vec<PathBuf> = st.library.remote.iter().map(|(m, _)| m.clone()).collect();
+    // Each folder answers by its root, when it is under one: a handful
+    // of looks rather than one a folder.
+    let roots = &st.library.roots;
+    let look = |dirs: &[PathBuf]| {
+        let anchor = |d: &PathBuf| {
+            roots
+                .root_of(d)
+                .map_or_else(|| d.clone(), Path::to_path_buf)
+        };
+        let mut anchors: Vec<PathBuf> = dirs.iter().map(anchor).collect();
+        anchors.sort();
+        anchors.dedup();
+        let answered = crate::roots::answers_of(&anchors, crate::roots::ROOT_WAIT);
+        dirs.iter()
+            .map(|d| {
+                let at = answered.get(&anchor(d)).copied().flatten();
+                // A root that answered says nothing of the folder; the
+                // file's own stat decides, and keeps it on any doubt. A
+                // root that answered no is offline by the roots' own test,
+                // though the set the window holds may not say so yet (a
+                // drive pulled since the last look): kept, as away.
+                let there = match at {
+                    Some(false) if roots.root_of(d).is_some() => None,
+                    other => other,
+                };
+                (d.clone(), there)
+            })
+            .collect()
+    };
+    let Some(forgot) =
+        st.collections
+            .forget_missing(id, st.index_reader.as_ref(), &away, &far, &look)
+    else {
+        app.set_status(
+            format!("the library index could not be read; nothing forgotten from {name}").into(),
+        );
+        return;
+    };
+    members_changed(st, app);
+    let words = opened_words(st, forgot.missing).unwrap_or_default();
+    let said = match (forgot.forgotten, forgot.away, forgot.on_disk) {
+        (0, 0, 0) => format!("{words}; nothing to forget"),
+        (0, away, 0) => format!(
+            "{words}; nothing forgotten: {} on a drive that is offline or not answering",
+            crate::queue::frames(away)
+        ),
+        (0, _, _) => format!("{words}; nothing forgotten: the index has yet to read some of them"),
+        (n, _, _) => format!("{words}; forgot {n} missing"),
+    };
+    app.set_status(said.into());
+}
+
 /// The sheet put up with its question.
 fn ask(st: &mut State, app: &App, asked: Asked) {
     let (title, note, asks, verb, name) = match &asked {
@@ -610,6 +710,25 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if let Some(app) = app_weak.upgrade() {
                 ask(&mut state.borrow_mut(), &app, Asked::Delete(id.to_string()));
             }
+        });
+    }
+    {
+        let (state, app_weak) = (state.clone(), app.as_weak());
+        app.on_collection_forget_missing(move |id| {
+            if let Some(app) = app_weak.upgrade() {
+                forget_missing(&state, &app, &id);
+            }
+        });
+    }
+    {
+        let state = state.clone();
+        app.on_collection_forgettable(move |id| {
+            // Asked as the menu opens, which the window's own handlers
+            // never hold a borrow across.
+            state
+                .try_borrow()
+                .map(|st| forgettable(&st, &id) as i32)
+                .unwrap_or(0)
         });
     }
     {
@@ -1181,6 +1300,99 @@ mod tests {
         assert_eq!(refs.as_array().unwrap().len(), 2, "the missing one kept");
         assert_eq!(names(&s.state.borrow()), ["shoot/x.tif"]);
         assert_eq!(marks(&s.app), [true]);
+        teardown(s);
+    }
+
+    /// The open collection's row offers to forget its missing frames
+    /// when it has some: the one found nowhere goes, from the list and
+    /// the file, the one hinted under an offline root stays, and the
+    /// status line counts what is left.
+    #[test]
+    fn forget_missing_drops_the_gone_and_keeps_the_offline() {
+        let s = setup("forget");
+        let drive = s.dir.join("drive");
+        let id = {
+            let mut st = s.state.borrow_mut();
+            // A root of the library, unplugged: never made on disk.
+            st.library.roots.add_checked(drive.clone()).unwrap();
+            st.library.offline.insert(drive.clone());
+            let x = st.files.iter().position(|p| *p == s.files[0]).unwrap();
+            let mut frames = frames_of(&st, &[x]);
+            frames.push(("0123456789abcdef".into(), s.dir.join("gone").join("a.tif")));
+            frames.push(("fedcba9876543210".into(), drive.join("b.tif")));
+            let mut c = Collection::new("Kept");
+            c.add(&frames);
+            let id = c.id.clone();
+            st.collections.list.push(c);
+            st.collections.save(&id);
+            id
+        };
+        let (app, state, worker) = (&s.app, &s.state, &s.worker);
+        let chip = |app: &App| {
+            let rows = app.get_collections();
+            (0..rows.row_count())
+                .map(|r| rows.row_data(r).unwrap())
+                .find(|c| c.id.as_str() == id)
+                .unwrap()
+        };
+        show(&state.borrow(), app);
+        let offered = |app: &App| app.invoke_collection_forgettable(id.as_str().into());
+        assert_eq!(offered(app), 0, "nothing offered while closed");
+        app.invoke_collection_picked(id.as_str().into());
+        land_sent(state, app, worker);
+        assert_eq!(names(&state.borrow()), ["shoot/x.tif"]);
+        assert_eq!(
+            app.get_status(),
+            "Kept: 1 frame shown, 2 missing (moved or deleted, and kept until found)"
+        );
+        assert_eq!(offered(app), 1, "the offline one is not offered");
+        // A pass under way: nothing offered, and a press refused.
+        state.borrow_mut().library.launch_left = 1;
+        assert_eq!(offered(app), 0);
+        app.invoke_collection_forget_missing(id.as_str().into());
+        assert_eq!(
+            app.get_status(),
+            "the library is being indexed; nothing forgotten from Kept until it is done"
+        );
+        assert_eq!(hints(&s, &id).len(), 3);
+        state.borrow_mut().library.launch_left = 0;
+        assert_eq!(chip(app).count, 3);
+
+        app.invoke_collection_forget_missing(id.as_str().into());
+        assert_eq!(
+            app.get_status(),
+            "Kept: 1 frame shown, 1 missing (moved or deleted, and kept until found); \
+             forgot 1 missing"
+        );
+        assert_eq!(hints(&s, &id), ["shoot/x.tif", "drive/b.tif"]);
+        assert_eq!(offered(app), 0);
+        // Pressed again: nothing to forget, and the reason is the drive.
+        app.invoke_collection_forget_missing(id.as_str().into());
+        assert_eq!(
+            app.get_status(),
+            "Kept: 1 frame shown, 1 missing (moved or deleted, and kept until found); \
+             nothing forgotten: 1 frame on a drive that is offline or not answering"
+        );
+        // The drive pulled since the window last looked: the set it holds
+        // does not say offline, but the root answers no, and b is kept.
+        state.borrow_mut().library.offline.clear();
+        app.invoke_collection_forget_missing(id.as_str().into());
+        assert_eq!(
+            app.get_status(),
+            "Kept: 1 frame shown, 1 missing (moved or deleted, and kept until found); \
+             nothing forgotten: 1 frame on a drive that is offline or not answering"
+        );
+        assert_eq!(hints(&s, &id), ["shoot/x.tif", "drive/b.tif"]);
+        state.borrow_mut().library.offline.insert(drive.clone());
+        assert_eq!(chip(app).count, 2);
+        assert_eq!(names(&state.borrow()), ["shoot/x.tif"]);
+        // Opened again: the status line's count is the one left.
+        app.invoke_collection_picked(id.as_str().into());
+        land_sent(state, app, worker);
+        assert_eq!(
+            app.get_status(),
+            "Kept: 1 frame shown, 1 missing (moved or deleted, and kept until found)"
+        );
         teardown(s);
     }
 
