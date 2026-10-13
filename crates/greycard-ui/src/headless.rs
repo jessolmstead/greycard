@@ -708,20 +708,30 @@ mod tests {
                 _ => {}
             }
         }
-        worker.send(Job::Export {
-            edit,
-            path: frame.out.clone(),
+        // The edit carries the blend the open seeded: it is not seeded twice.
+        let set = Arc::new(queue::Set::new(
+            1,
+            None,
             settings,
-            on_exists: export::OnExists::Overwrite,
-            source: frame.source.clone(),
-            preset: None,
+            export::OnExists::Overwrite,
+        ));
+        worker.send(Job::ExportSet {
+            set,
+            frames: vec![queue::Frame {
+                edit,
+                seed_blend: false,
+                ..frame.clone()
+            }],
         });
         let written = loop {
-            match rx.recv_timeout(wait).expect("the export lands") {
-                Outcome::Exported { path, .. } => break Some(path),
-                Outcome::ExportFailed { message } => panic!("the export failed: {message}"),
-                Outcome::ExportSkipped { .. } => break None,
-                _ => {}
+            if let Outcome::SetFrameDone { done, .. } =
+                rx.recv_timeout(wait).expect("the export lands")
+            {
+                match done {
+                    queue::Done::Exported { path, .. } => break Some(path),
+                    queue::Done::Failed { message } => panic!("the export failed: {message}"),
+                    _ => break None,
+                }
             }
         };
         worker.stop();

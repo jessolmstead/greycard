@@ -662,44 +662,6 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 }
             }
         }
-        Outcome::Exported {
-            path,
-            seconds,
-            note,
-            source,
-            edit,
-            preset,
-            left_out,
-        } => {
-            // Into the frame's history before a batch run quits below.
-            crate::panel::history::record_export(
-                &mut state.borrow_mut(),
-                app,
-                &source,
-                &edit,
-                &path,
-                preset,
-            );
-            // What the edit asked for and the file went without: the
-            // status line says so, and the log says what.
-            for item in &left_out {
-                tracing::warn!("{}: {item}", file_name(&source));
-            }
-            app.set_status(exported_line(&path, seconds, note.as_deref(), &left_out).into());
-            tracing::info!("exported {} in {seconds:.2} s", path.display());
-            // A rename or a file written over is worth the terminal.
-            if let Some(note) = &note {
-                tracing::warn!("exported {}: {note}", path.display());
-            }
-            app.set_busy(false);
-        }
-        Outcome::ExportSkipped { path } => {
-            app.set_status(
-                format!("{} is there already: nothing exported", file_name(&path)).into(),
-            );
-            tracing::warn!("skipped {}: it is there already", path.display());
-            app.set_busy(false);
-        }
         Outcome::Mask {
             key,
             shape,
@@ -1010,18 +972,6 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // The queue's entry: what is left of it kept, and the next
             // begun unless the set was stopped.
             crate::panel::export_queue::set_done(&mut st, app, &set, &line);
-        }
-        Outcome::ExportFailed { message } => {
-            app.set_status(format!("export failed: {message}").into());
-            app.set_busy(false);
-            tracing::error!("export failed: {message}");
-            // A capture whose keys pressed Export asked for a file that
-            // is not coming: a failure the exit code says.
-            let mut st = state.borrow_mut();
-            if st.batch {
-                st.failed = true;
-                let _ = slint::quit_event_loop();
-            }
         }
     }
 }

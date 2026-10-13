@@ -130,21 +130,6 @@ pub enum Job {
         hash: String,
         stamp: u64,
     },
-    /// Write the open frame under `edit` to `path`, doing what
-    /// `on_exists` says if a file of that name is there already. The
-    /// window sends every export as a set now, the frame on screen as
-    /// a set of one; the tests still drive this one.
-    #[cfg_attr(not(test), allow(dead_code))]
-    Export {
-        edit: Edit,
-        path: PathBuf,
-        settings: crate::export::Settings,
-        on_exists: crate::export::OnExists,
-        /// The frame on screen when it was asked for, and the export
-        /// preset the sheet was then: handed back with `Exported`.
-        source: PathBuf,
-        preset: Option<String>,
-    },
     /// Write a set of frames, each under its own edit and all under
     /// the set's settings: queued as one export a frame, so a develop
     /// asked for meanwhile goes first between any two of them.
@@ -383,30 +368,6 @@ pub enum Outcome {
     Thumbnails(crate::thumbpool::Batch),
     Failed {
         generation: u64,
-        message: String,
-    },
-    Exported {
-        path: PathBuf,
-        seconds: f64,
-        /// What the edit names and the file was written without
-        /// (`left_out_of`, `finish_export`).
-        left_out: Vec<String>,
-        /// What the policy made of a file of that name being there
-        /// already; none when nothing was.
-        note: Option<String>,
-        /// The frame, the edit the file was written under and the
-        /// export preset, as the job had them: what the frame's
-        /// history records.
-        source: PathBuf,
-        edit: Edit,
-        preset: Option<String>,
-    },
-    /// Nothing written: a file of that name was there and the policy
-    /// says to leave it.
-    ExportSkipped {
-        path: PathBuf,
-    },
-    ExportFailed {
         message: String,
     },
     /// Frame `index` of a set is begun; `name` is the name it is
@@ -983,7 +944,7 @@ impl Worker {
             Job::Thumbnail { .. } | Job::CachedThumbnail { .. } => {
                 unreachable!("thumbnails go to the pool above")
             }
-            job @ (Job::Export { .. } | Job::ExportFrame { .. }) => q.exports.push_back(job),
+            job @ Job::ExportFrame { .. } => q.exports.push_back(job),
             Job::ExportSet { set, frames } => {
                 for (index, frame) in frames.into_iter().enumerate() {
                     q.exports.push_back(Job::ExportFrame {
@@ -1730,63 +1691,6 @@ fn run(
                         image.and_then(|i| base.as_ref().map(|b| Last::made(edit, b, i, &outcome)));
                     deliver(outcome);
                 }
-            }
-            Job::Export {
-                edit,
-                path,
-                settings,
-                on_exists,
-                source,
-                preset,
-            } => {
-                let start = Instant::now();
-                // What is already there decides the name before the
-                // work is done, not after it.
-                let resolved = on_exists.resolve(&path);
-                let note = resolved.note();
-                let Some(path) = resolved.path().map(std::path::Path::to_path_buf) else {
-                    deliver(Outcome::ExportSkipped { path });
-                    return;
-                };
-                // The turn is the open file's, which the export
-                // never sets: it develops what is on the screen.
-                let written = open_picture(
-                    &edit,
-                    turn,
-                    input.as_ref(),
-                    &mut last,
-                    &mut base,
-                    &mut learned,
-                    &mut ai,
-                    cache.as_ref(),
-                    lenses.as_deref(),
-                    &deliver,
-                )
-                .and_then(|(image, mut left_out)| {
-                    left_out.extend(write_export(
-                        image,
-                        &edit,
-                        base.as_ref(),
-                        &mut ai,
-                        opened_path.as_deref(),
-                        metadata.as_deref(),
-                        &settings,
-                        &path,
-                    )?);
-                    Ok(left_out)
-                });
-                deliver(match written {
-                    Ok(left_out) => Outcome::Exported {
-                        path,
-                        seconds: start.elapsed().as_secs_f64(),
-                        note,
-                        source,
-                        edit,
-                        preset,
-                        left_out,
-                    },
-                    Err(message) => Outcome::ExportFailed { message },
-                });
             }
             Job::Mask { key, shape, model } => {
                 if matches!(shape, Shape::Part { .. }) {
@@ -2565,7 +2469,6 @@ impl FrameDevelop {
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Blame {
     Develop(u64),
-    Export,
     Mask(Key),
     People,
     Nobody,
@@ -2577,7 +2480,6 @@ impl Blame {
             Job::Open { generation, .. } | Job::Develop { generation, .. } => {
                 Blame::Develop(*generation)
             }
-            Job::Export { .. } => Blame::Export,
             // A frame of a set is caught where it runs, and counted
             // there as the set's failure.
             Job::ExportSet { .. } | Job::ExportFrame { .. } => Blame::Nobody,
@@ -2600,7 +2502,6 @@ impl Blame {
                 generation,
                 message,
             },
-            Blame::Export => Outcome::ExportFailed { message },
             Blame::Mask(key) => Outcome::MaskFailed { key, message },
             Blame::People => Outcome::People {
                 file: None,
@@ -5284,8 +5185,9 @@ mod tests {
             Edit::default(),
             base.as_ref().unwrap(),
             wrong.clone(),
-            &Outcome::ExportSkipped {
-                path: PathBuf::new(),
+            &Outcome::Failed {
+                generation: 0,
+                message: String::new(),
             },
         ));
         let mut learned = None;

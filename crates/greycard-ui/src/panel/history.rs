@@ -713,6 +713,35 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 mod tests {
     use super::*;
 
+    /// A frame exported as a set of one, as the window sends every
+    /// export: what lands is that frame's `Done::Exported`.
+    fn landed(
+        source: &std::path::Path,
+        edit: &Edit,
+        path: PathBuf,
+        preset: Option<String>,
+    ) -> Outcome {
+        let set = crate::queue::Set::new(
+            1,
+            None,
+            crate::export::Settings::default(),
+            crate::export::OnExists::Increment,
+        )
+        .with_preset(preset);
+        Outcome::SetFrameDone {
+            set: Arc::new(set),
+            index: 0,
+            source: source.to_path_buf(),
+            edit: edit.clone(),
+            done: crate::queue::Done::Exported {
+                path,
+                seconds: 1.0,
+                note: None,
+                left_out: Vec::new(),
+            },
+        }
+    }
+
     #[test]
     fn a_moment_reads_as_a_date() {
         assert_eq!(date_of(0), "1970-01-01 00:00 UTC");
@@ -806,26 +835,32 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(2));
         app.invoke_select(0);
         let source = state.borrow().files[0].clone();
-        let landed = |edit: Edit| Outcome::Exported {
-            path: PathBuf::from("/out/IMG_0000.jpg"),
-            seconds: 1.0,
-            note: None,
-            source: source.clone(),
-            edit,
-            preset: None,
-            left_out: Vec::new(),
-        };
+        let set = Arc::new(crate::queue::Set::new(
+            1,
+            None,
+            crate::export::Settings::default(),
+            crate::export::OnExists::Increment,
+        ));
         crate::panel::deliver::deliver(
             &app,
-            Outcome::ExportFailed {
-                message: "disk full".into(),
+            Outcome::SetFrameDone {
+                set,
+                index: 0,
+                source: source.clone(),
+                edit: Edit::default(),
+                done: crate::queue::Done::Failed {
+                    message: "disk full".into(),
+                },
             },
         );
         assert_eq!(marks(&app, 0), (false, false));
 
         // An unedited frame exported: the export mark alone.
         let plain = state.borrow().sidecars[0].current.clone();
-        crate::panel::deliver::deliver(&app, landed(plain));
+        crate::panel::deliver::deliver(
+            &app,
+            landed(&source, &plain, PathBuf::from("/out/IMG_0000.jpg"), None),
+        );
         assert_eq!(marks(&app, 0), (false, true));
         assert_eq!(marks(&app, 1), (false, false));
         assert_eq!(crate::testing::count_labeled(&app, "Exported"), 1);
@@ -853,15 +888,7 @@ mod tests {
         let sent = state.borrow().sidecars[0].current.clone();
         crate::panel::deliver::deliver(
             &app,
-            Outcome::Exported {
-                path: PathBuf::from("/out/IMG_0000.jpg"),
-                seconds: 1.0,
-                note: None,
-                source,
-                edit: sent,
-                preset: None,
-                left_out: Vec::new(),
-            },
+            landed(&source, &sent, PathBuf::from("/out/IMG_0000.jpg"), None),
         );
         assert_eq!(marks(&app, 0), (true, true));
 
@@ -910,15 +937,12 @@ mod tests {
         let states = state.borrow().sidecars[0].states();
         crate::panel::deliver::deliver(
             &app,
-            Outcome::Exported {
-                path: PathBuf::from("/out/IMG_0000.jpg"),
-                seconds: 1.0,
-                note: None,
-                source: source.clone(),
-                edit: sent.clone(),
-                preset: Some("Web".into()),
-                left_out: Vec::new(),
-            },
+            landed(
+                &source,
+                &sent,
+                PathBuf::from("/out/IMG_0000.jpg"),
+                Some("Web".into()),
+            ),
         );
         {
             let st = state.borrow();
@@ -945,20 +969,8 @@ mod tests {
         assert_eq!(undone(&app), [false; 4]);
         assert!(!app.get_history_rows().row_data(1).unwrap().time.is_empty());
 
-        // A failed export, a skipped one, and a set's frame that failed
-        // or was canceled: nothing.
-        crate::panel::deliver::deliver(
-            &app,
-            Outcome::ExportFailed {
-                message: "disk full".into(),
-            },
-        );
-        crate::panel::deliver::deliver(
-            &app,
-            Outcome::ExportSkipped {
-                path: PathBuf::from("/out/IMG_0000.jpg"),
-            },
-        );
+        // A set's frame that failed, was skipped or was canceled:
+        // nothing.
         let set = Arc::new(crate::queue::Set::new(
             1,
             None,
@@ -968,6 +980,9 @@ mod tests {
         for done in [
             crate::queue::Done::Failed {
                 message: "no".into(),
+            },
+            crate::queue::Done::Skipped {
+                path: PathBuf::from("/out/IMG_0000.jpg"),
             },
             crate::queue::Done::Canceled,
         ] {
@@ -1038,15 +1053,7 @@ mod tests {
         let app = crate::testing::window(1);
         let (state, _worker) = crate::testing::state_for(&app, crate::testing::folder(1));
         state.borrow_mut().write_sidecars = true;
-        let exported = |edit: &Edit| Outcome::Exported {
-            path: dir.join("IMG_0100.jpg"),
-            seconds: 1.0,
-            note: None,
-            source: raw.clone(),
-            edit: edit.clone(),
-            preset: None,
-            left_out: Vec::new(),
-        };
+        let exported = |edit: &Edit| landed(&raw, edit, dir.join("IMG_0100.jpg"), None);
         crate::panel::deliver::deliver(&app, exported(&edit));
         let back = Sidecar::load(&raw).unwrap().unwrap();
         assert_eq!(back.saved, 2);
@@ -1150,15 +1157,7 @@ mod tests {
         // always makes of the open file.
         crate::panel::deliver::deliver(
             &app,
-            Outcome::Exported {
-                path: dir.join("IMG_0200.jpg"),
-                seconds: 1.0,
-                note: None,
-                source: raw.clone(),
-                edit: rendered,
-                preset: None,
-                left_out: Vec::new(),
-            },
+            landed(&raw, &rendered, dir.join("IMG_0200.jpg"), None),
         );
         {
             let mut st = state.borrow_mut();
