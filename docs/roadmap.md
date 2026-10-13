@@ -36,6 +36,9 @@ collections and smart collections that survive a move, a mask has its
 own Detail, and the first tester's rough edges on masks, the touchpad
 and export are smoothed.
 
+- [ ] Forget missing: a collection's references to files that will not be found again can be dropped from its menu (left open in §304).
+- [ ] The lightbox keeps its tiles across between sessions (left open in §307).
+- [ ] The single-frame export job goes: the headless parity test moves onto the set job and the variant, its worker arm and its queue and blame arms come out (left open in §301).
 
 ## Tracks
 
@@ -378,6 +381,7 @@ clears or a tester asks for it.
 
 
 #### Editor
+- [ ] Tooltips at the pointer for icon-only buttons (the snapshot row's restore, rename and bin; the mask shapes; Loupe and Lightbox), shown after a short hold and hidden on leave, press or scroll; the status plate keeps its longer sentence. Waits on a tester missing it: the plate already says what each icon does.
 
 - [ ] The learned mask and fill caches keyed by the develop they were
       made from: the window's Export reuses the mask its viewport made
@@ -533,6 +537,7 @@ clears or a tester asks for it.
 
 #### Nice-to-have
 
+- [ ] Zoom bar for grid and lightbox
 - [ ] Flexible dual monitor support
 - [ ] Reference view
 - [ ] Different frameline options when cropping
