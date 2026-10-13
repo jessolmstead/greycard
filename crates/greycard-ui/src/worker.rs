@@ -2331,7 +2331,7 @@ fn masks_for(
     let name = crate::panel::browser::file_name(path);
     let started = Instant::now();
     let (sidecar, _, trouble) = crate::panel::browser::load_sidecar_said(path, true);
-    let edit = sidecar.current;
+    let edit = sidecar.line.current;
     let turn = sidecar.turn;
     if trouble.is_some() {
         tracing::info!("the masks of {name}: its sidecar could not be read");

@@ -73,6 +73,22 @@ pub fn snapshot_label(name: &str) -> String {
     format!("Snapshot: {name}")
 }
 
+/// The first state of a version made as a copy of another: "From
+/// Warm", or "From the original" for a copy of version 0, whose name
+/// is the file's.
+pub fn version_from_label(source: Option<&str>) -> String {
+    match source.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(name) => format!("From {name}"),
+        None => "From the original".to_string(),
+    }
+}
+
+/// The first state of a version made from the default edit rather
+/// than a copy of one ("New version from the original").
+pub fn version_from_defaults_label() -> String {
+    "From the defaults".to_string()
+}
+
 /// A file exported from a state ([`crate::Exported`]), by its name,
 /// extension and all, with the export preset's after it when the
 /// sheet was one: "IMG_0001.jpg · Web". No "Exported" before it: the

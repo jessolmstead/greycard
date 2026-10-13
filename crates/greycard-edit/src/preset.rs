@@ -1848,7 +1848,7 @@ mod tests {
         .unwrap();
         assert_eq!(p.to_json(), golden);
         assert!(p.to_json().starts_with(
-            "{\n  \"version\": 4,\n  \"name\": \"Warm\",\n  \"sections\": [\n    \"look\",\n    \"light\"\n  ],\n  \"edit\": {"
+            "{\n  \"version\": 5,\n  \"name\": \"Warm\",\n  \"sections\": [\n    \"look\",\n    \"light\"\n  ],\n  \"edit\": {"
         ));
     }
 

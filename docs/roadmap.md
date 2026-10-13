@@ -38,9 +38,6 @@ and export are smoothed.
 
 - [ ] Check the window fit on the Mac before the cut: no jump, the foot
       clear of the Dock, the export sheet's buttons in view (§306)
-- [ ] Virtual copies, part 1: versions in the sidecar, each with its own
-      edit, history, snapshots and exports; joined per version across
-      machines (§309)
 - [ ] Virtual copies, part 2: a version is a cell beside its file with its
       own thumbnail and marks; New version, Rename, Swap with the original,
       Delete (§309)

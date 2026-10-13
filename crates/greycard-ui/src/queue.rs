@@ -11,7 +11,7 @@
 
 use crate::export::{Format, OnExists, Settings};
 use greycard_core::output::Resolved;
-use greycard_edit::Edit;
+use greycard_edit::{Edit, Version};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};

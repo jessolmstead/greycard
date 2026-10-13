@@ -24,7 +24,7 @@ use std::collections::{HashMap, HashSet};
 use serde::{Deserialize, Serialize};
 
 use crate::meta::Facts;
-use crate::{Edit, Exported, HISTORY, Sidecar, Snapshot, Step};
+use crate::{Edit, Exported, HISTORY, Line, Sidecar, Snapshot, Step, Version};
 
 /// The parent id of a history's first state: a hash of nothing.
 pub const ZERO_ID: &str = "0000000000000000000000000000000000000000000000000000000000000000";
@@ -271,14 +271,16 @@ pub enum Compared {
 /// other's, or among the copies the other absorbed in a join
 /// ([`Sidecar::absorbed`]); both with revisions and neither in the
 /// other's list; and,
-/// for a copy from before revisions, by state ids. There a copy whose
+/// for a copy from before revisions, by state ids, a line at a time.
+/// There a copy whose
 /// states all stand in order among the other's is behind only when it
 /// also carries nothing the other lacks: the same meta and turn, its
 /// snapshots among the other's, its export records among the other's
-/// on the same states. States are the only thing the ids see, and a
+/// on the same states, and every version of its among the other's,
+/// each line so. States are the only thing the ids see, and a
 /// rating given on the copy that stopped editing is not the kind of
-/// thing to lose for being behind on states. The same states are the
-/// same edit, and anything else diverged.
+/// thing to lose for being behind on states. The same states on every
+/// line are the same edit, and anything else diverged.
 pub fn compare(local: &Sidecar, other: &Sidecar) -> Compared {
     if local == other {
         return Compared::Same;
@@ -296,17 +298,42 @@ pub fn compare(local: &Sidecar, other: &Sidecar) -> Compared {
         }
         return Compared::Diverged;
     }
-    let (li, oi) = (state_ids(local), state_ids(other));
-    if li == oi {
+    let same_lines = local.versions.len() == other.versions.len()
+        && version_ids(local).all(|v| match (local.line(v), other.line(v)) {
+            (Some(a), Some(b)) => state_ids(a) == state_ids(b),
+            _ => false,
+        });
+    if same_lines {
         return Compared::SameEdit;
     }
-    if in_order(&li, &oi) && lacks_nothing(local, other) {
+    if behind(local, other) {
         return Compared::Behind(Side::Local);
     }
-    if in_order(&oi, &li) && lacks_nothing(other, local) {
+    if behind(other, local) {
         return Compared::Behind(Side::Other);
     }
     Compared::Diverged
+}
+
+/// Version 0 (`None`) and every version's id, the way
+/// [`fn@Sidecar::line`] takes them.
+fn version_ids(s: &Sidecar) -> impl Iterator<Item = Option<&str>> {
+    std::iter::once(None).chain(s.versions.iter().map(|v| Some(v.id.as_str())))
+}
+
+/// Whether `a`, by the state ids, stopped where `b` went on and has
+/// nothing `b` lacks: the same meta and turn, and every line of `a`
+/// (version 0's and each version's, by id) with its states standing in
+/// order among `b`'s line of that version and nothing outside them `b`
+/// has not.
+fn behind(a: &Sidecar, b: &Sidecar) -> bool {
+    if a.meta != b.meta || a.turn != b.turn {
+        return false;
+    }
+    version_ids(a).all(|v| match (a.line(v), b.line(v)) {
+        (Some(al), Some(bl)) => in_order(&state_ids(al), &state_ids(bl)) && lacks_nothing(al, bl),
+        _ => false,
+    })
 }
 
 /// Whether every id of `shorter` stands among `longer` in the same
@@ -316,13 +343,10 @@ fn in_order(shorter: &[String], longer: &[String]) -> bool {
     shorter.iter().all(|id| rest.any(|l| l == id))
 }
 
-/// Whether `a` carries nothing outside its states that `b` has not:
-/// the same meta and turn, every snapshot of `a` in `b`, and every
-/// export record of `a` on a state `b` has, with the record.
-fn lacks_nothing(a: &Sidecar, b: &Sidecar) -> bool {
-    if a.meta != b.meta || a.turn != b.turn {
-        return false;
-    }
+/// Whether line `a` carries nothing outside its states that line `b`
+/// has not: every snapshot of `a` in `b`, and every export record of
+/// `a` on a state `b` has, with the record.
+fn lacks_nothing(a: &Line, b: &Line) -> bool {
     if !a.snapshots.iter().all(|s| b.snapshots.contains(s)) {
         return false;
     }
@@ -340,18 +364,17 @@ fn lacks_nothing(a: &Sidecar, b: &Sidecar) -> bool {
 }
 
 /// The export records of every state, oldest first, the current last.
-fn exports_of(sidecar: &Sidecar) -> impl Iterator<Item = &[Exported]> {
-    sidecar
-        .history
+fn exports_of(line: &Line) -> impl Iterator<Item = &[Exported]> {
+    line.history
         .iter()
         .map(|s| s.exports.as_slice())
-        .chain(std::iter::once(sidecar.current_exports.as_slice()))
+        .chain(std::iter::once(line.current_exports.as_slice()))
 }
 
-/// The ids of a sidecar's states, oldest first, the current state
+/// The ids of a line's states, oldest first, the current state
 /// last: as stored, and computed from the first state forward where
 /// a state has none.
-pub(crate) fn state_ids(sidecar: &Sidecar) -> Vec<String> {
+pub(crate) fn state_ids(sidecar: &Line) -> Vec<String> {
     let mut ids = Vec::with_capacity(sidecar.history.len() + 1);
     let mut parent = ZERO_ID.to_string();
     for (edit, label, id) in sidecar
@@ -418,18 +441,153 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
     older.fill_ids();
     newer.pin_times();
     older.pin_times();
-    newer.redo.clear();
-    older.redo.clear();
+    for line in newer.lines_mut().chain(older.lines_mut()) {
+        line.redo.clear();
+    }
     let host = older
         .revisions
         .last()
         .map(|r| r.host.trim())
         .filter(|h| !h.is_empty())
         .map(str::to_string);
+    // When the older copy's latest revision is in the newer copy's
+    // lineage, the newer copy has seen the whole of it: every state it
+    // lacks it dropped on purpose, by its cap or as a repeat, and a
+    // joined history's order cannot always confirm that by the ids.
+    // Nothing of the older copy's is its own then; its records, meta
+    // and snapshots still join. (The editor copies such a pair over
+    // whole; a join met again with its input is this case.)
+    let seen = older.revisions.last().is_some_and(|r| newer.knows(&r.hash));
 
+    let mut joined = Sidecar {
+        line: join_line(&newer.line, &older.line, host.as_deref(), seen),
+        xmp: newer.xmp.clone().or(older.xmp.clone()),
+        saved: newer.saved.max(older.saved),
+        versions: join_versions(&newer.versions, &older.versions, host.as_deref(), seen),
+        ..Sidecar::default()
+    };
+
+    // The meta and the turn, by field.
+    fn lineage(s: &Sidecar) -> Vec<&str> {
+        s.revisions
+            .iter()
+            .map(|r| r.hash.as_str())
+            .chain(s.absorbed.iter().map(String::as_str))
+            .collect()
+    }
+    let (newer_knows, older_knows) = (lineage(&newer), lineage(&older));
+    let (newer_facts, older_facts) = (newer.facts(), older.facts());
+    // A copy with no revisions was last written by a build from
+    // before §233, and its file's time is all it has to say when its
+    // fields were set, the cleared ones among them: every field that
+    // differs from the other copy's takes it, for this join only.
+    let times = |s: &Sidecar, facts: &Facts, other: &Sidecar, other_facts: &Facts| match s.modified
+    {
+        Some(at) if s.revisions.is_empty() => {
+            s.meta_at.as_of(facts, other_facts, &other.meta_at, at)
+        }
+        _ => s.meta_at.clone(),
+    };
+    let (newer_times, older_times) = (
+        times(&newer, &newer_facts, &older, &older_facts),
+        times(&older, &older_facts, &newer, &newer_facts),
+    );
+    let (facts, meta_at) = crate::meta::join(
+        crate::meta::Side {
+            facts: &newer_facts,
+            times: &newer_times,
+            knows: &newer_knows,
+        },
+        crate::meta::Side {
+            facts: &older_facts,
+            times: &older_times,
+            knows: &older_knows,
+        },
+    );
+    joined.meta = facts.meta;
+    joined.turn = facts.turn;
+    joined.meta_at = meta_at;
+    joined.baseline = Some(joined.facts());
+
+    // The revisions of both, each once, by time; and both copies'
+    // latest absorbed, the lines a copy left stale will be looked for
+    // by after the cap has had them.
+    let mut revisions = newer.revisions.clone();
+    for r in &older.revisions {
+        if !revisions.iter().any(|n| n.hash == r.hash) {
+            revisions.push(r.clone());
+        }
+    }
+    revisions.sort_by_key(|r| r.at);
+    if revisions.len() > REVISIONS {
+        revisions.drain(..revisions.len() - REVISIONS);
+    }
+    joined.revisions = revisions;
+    let mut absorbed = newer.absorbed.clone();
+    for hash in older
+        .absorbed
+        .iter()
+        .chain(older.revisions.last().map(|r| &r.hash))
+        .chain(newer.revisions.last().map(|r| &r.hash))
+    {
+        if !absorbed.contains(hash) {
+            absorbed.push(hash.clone());
+        }
+    }
+    if absorbed.len() > ABSORBED {
+        absorbed.drain(..absorbed.len() - ABSORBED);
+    }
+    joined.absorbed = absorbed;
+    joined
+}
+
+/// The versions of two copies joined, by id: a version on both has its
+/// two lines joined as version 0's are ([`join_line`]) and takes the
+/// newer copy's name; a version on one copy alone is kept, whether it
+/// was made there or deleted on the other, since a join keeps rather
+/// than loses. The one exception is a version the older copy alone has
+/// when the newer copy has `seen` the whole of the older (its latest
+/// revision is in the newer's lineage): the newer copy had it and
+/// deleted it. The list is ordered by when each was made, the id
+/// breaking a tie, so both sides of a join make the same list.
+fn join_versions(
+    newer: &[Version],
+    older: &[Version],
+    host: Option<&str>,
+    seen: bool,
+) -> Vec<Version> {
+    let mut versions: Vec<Version> = newer
+        .iter()
+        .map(|n| match older.iter().find(|o| o.id == n.id) {
+            Some(o) => Version {
+                id: n.id.clone(),
+                name: n.name.clone(),
+                made: n.made,
+                line: join_line(&n.line, &o.line, host, seen),
+            },
+            None => n.clone(),
+        })
+        .collect();
+    if !seen {
+        for o in older {
+            if !newer.iter().any(|n| n.id == o.id) {
+                versions.push(o.clone());
+            }
+        }
+    }
+    versions.sort_by(|a, b| (a.made, &a.id).cmp(&(b.made, &b.id)));
+    versions
+}
+
+/// One line of two copies' lines of one version, the newer copy's
+/// first: the states as [`join`] describes, the snapshots by name, the
+/// later of the two last exports. `host` is the older copy's, for the
+/// labels; `seen` is whether the newer copy has seen the whole of the
+/// older ([`join`]).
+fn join_line(newer: &Line, older: &Line, host: Option<&str>, seen: bool) -> Line {
     // The states of each, oldest first, the current last.
-    let newer_states = states_of(&newer);
-    let older_states = states_of(&older);
+    let newer_states = states_of(newer);
+    let older_states = states_of(older);
 
     // The export records of every state on either side, by id.
     let mut exports: HashMap<&str, Vec<Exported>> = HashMap::new();
@@ -689,14 +847,6 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
     };
     let last_edit = |list: &[(Kind, Step)]| list.last().map(|(_, s)| s.edit.clone());
     let older_current = older_states.last().expect("a current state");
-    // When the older copy's latest revision is in the newer copy's
-    // lineage, the newer copy has seen the whole of it: every state it
-    // lacks it dropped on purpose, by its cap or as a repeat, and a
-    // joined history's order cannot always confirm that by the ids.
-    // Nothing of the older copy's is its own then; its records, meta
-    // and snapshots still join. (The editor copies such a pair over
-    // whole; a join met again with its input is this case.)
-    let seen = older.revisions.last().is_some_and(|r| newer.knows(&r.hash));
     if seen {
         for s in own.drain(..).chain(capped.drain(..).map(|(_, s)| s)) {
             orphans.push((s.edit.clone(), with_exports(s.clone()).exports));
@@ -877,16 +1027,14 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
             }
         }
     }
-    let mut joined = Sidecar {
-        xmp: newer.xmp.clone().or(older.xmp.clone()),
-        saved: newer.saved.max(older.saved),
+    let mut joined = Line {
         // The later of the two exports: the frame was exported on
         // either side, whichever state it was.
         last_export: match (&newer.last_export, &older.last_export) {
             (Some(a), Some(b)) => Some(if a.at >= b.at { a } else { b }.clone()),
             (a, b) => a.clone().or_else(|| b.clone()),
         },
-        ..Sidecar::default()
+        ..Line::default()
     };
     // The first state of the list is the current; the rest follow it
     // as records, ids and all.
@@ -901,48 +1049,6 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
         joined.push_state(state);
     }
 
-    // The meta and the turn, by field.
-    fn lineage(s: &Sidecar) -> Vec<&str> {
-        s.revisions
-            .iter()
-            .map(|r| r.hash.as_str())
-            .chain(s.absorbed.iter().map(String::as_str))
-            .collect()
-    }
-    let (newer_knows, older_knows) = (lineage(&newer), lineage(&older));
-    let (newer_facts, older_facts) = (newer.facts(), older.facts());
-    // A copy with no revisions was last written by a build from
-    // before §233, and its file's time is all it has to say when its
-    // fields were set, the cleared ones among them: every field that
-    // differs from the other copy's takes it, for this join only.
-    let times = |s: &Sidecar, facts: &Facts, other: &Sidecar, other_facts: &Facts| match s.modified
-    {
-        Some(at) if s.revisions.is_empty() => {
-            s.meta_at.as_of(facts, other_facts, &other.meta_at, at)
-        }
-        _ => s.meta_at.clone(),
-    };
-    let (newer_times, older_times) = (
-        times(&newer, &newer_facts, &older, &older_facts),
-        times(&older, &older_facts, &newer, &newer_facts),
-    );
-    let (facts, meta_at) = crate::meta::join(
-        crate::meta::Side {
-            facts: &newer_facts,
-            times: &newer_times,
-            knows: &newer_knows,
-        },
-        crate::meta::Side {
-            facts: &older_facts,
-            times: &older_times,
-            knows: &older_knows,
-        },
-    );
-    joined.meta = facts.meta;
-    joined.turn = facts.turn;
-    joined.meta_at = meta_at;
-    joined.baseline = Some(joined.facts());
-
     // The snapshots, by name.
     joined.snapshots = newer.snapshots.clone();
     for s in &older.snapshots {
@@ -952,7 +1058,7 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
         let snapshot = match joined.snapshots.iter().find(|n| n.name == s.name) {
             Some(n) if n.edit == s.edit => continue,
             Some(_) => Snapshot {
-                name: match &host {
+                name: match host {
                     Some(host) => format!("{} (on {host})", s.name),
                     None => format!("{} (on the other copy)", s.name),
                 },
@@ -965,36 +1071,6 @@ pub fn join(local: &Sidecar, other: &Sidecar) -> Sidecar {
             joined.snapshots.push(snapshot);
         }
     }
-
-    // The revisions of both, each once, by time; and both copies'
-    // latest absorbed, the lines a copy left stale will be looked for
-    // by after the cap has had them.
-    let mut revisions = newer.revisions.clone();
-    for r in &older.revisions {
-        if !revisions.iter().any(|n| n.hash == r.hash) {
-            revisions.push(r.clone());
-        }
-    }
-    revisions.sort_by_key(|r| r.at);
-    if revisions.len() > REVISIONS {
-        revisions.drain(..revisions.len() - REVISIONS);
-    }
-    joined.revisions = revisions;
-    let mut absorbed = newer.absorbed.clone();
-    for hash in older
-        .absorbed
-        .iter()
-        .chain(older.revisions.last().map(|r| &r.hash))
-        .chain(newer.revisions.last().map(|r| &r.hash))
-    {
-        if !absorbed.contains(hash) {
-            absorbed.push(hash.clone());
-        }
-    }
-    if absorbed.len() > ABSORBED {
-        absorbed.drain(..absorbed.len() - ABSORBED);
-    }
-    joined.absorbed = absorbed;
     joined
 }
 
@@ -1020,7 +1096,7 @@ fn newer_of(local: &Sidecar, other: &Sidecar) -> Side {
 }
 
 /// A sidecar's states oldest first, the current one last, as steps.
-fn states_of(sidecar: &Sidecar) -> Vec<Step> {
+fn states_of(sidecar: &Line) -> Vec<Step> {
     let mut states = sidecar.history.clone();
     states.push(Step {
         edit: sidecar.current.clone(),
@@ -1078,6 +1154,18 @@ impl Sidecar {
         self.meta_at.pin(&facts, at)
     }
 
+    /// [`Line::fill_ids`] on every version's line; true when any state
+    /// was given an id.
+    pub fn fill_ids(&mut self) -> bool {
+        let mut filled = false;
+        for line in self.lines_mut() {
+            filled |= line.fill_ids();
+        }
+        filled
+    }
+}
+
+impl Line {
     /// Give every state here that has none its id, from the first
     /// state forward: the one time an id is computed from a loaded
     /// file, for a sidecar written before ids existed. True when any
@@ -1181,7 +1269,9 @@ impl Sidecar {
             }
         }
     }
+}
 
+impl Sidecar {
     /// Make this save's revision: hash the file as it is about to be
     /// written against the last revision, keep the last
     /// [`REVISIONS`], and stamp every field of the meta and the turn
@@ -1250,6 +1340,9 @@ mod simulation {
         old_builds: bool,
         /// Each place's clock off by up to a few minutes.
         skew: bool,
+        /// Versions made, renamed, edited, swapped and deleted among
+        /// the moves.
+        versions: bool,
     }
 
     fn exposed(stops: f32) -> Edit {
@@ -1291,6 +1384,86 @@ mod simulation {
             .map(|h| &h.edit)
             .chain(std::iter::once(&s.current))
             .collect()
+    }
+
+    /// Every state's edit of every version's line, version 0 first.
+    fn all_edits(s: &Sidecar) -> Vec<&Edit> {
+        s.lines()
+            .flat_map(|l| l.history.iter().map(|h| &h.edit).chain([&l.current]))
+            .collect()
+    }
+
+    /// Whether any line of `s` is at the history's cap.
+    fn any_capped(s: &Sidecar) -> bool {
+        s.lines().any(|l| l.history.len() >= HISTORY)
+    }
+
+    /// What must hold of the versions of a join of `a` and `b` that came
+    /// out as `j`: no version of either input is lost, but one the newer
+    /// copy had seen whole and deleted; a version on both keeps the
+    /// edits and snapshots of both lines, below the cap; a version on
+    /// one alone is that line.
+    fn check_versions(why: &str, a: &Sidecar, b: &Sidecar, j: &Sidecar) {
+        let (newer, older) = match newer_of(a, b) {
+            Side::Local => (a, b),
+            Side::Other => (b, a),
+        };
+        let seen = older.revisions.last().is_some_and(|r| newer.knows(&r.hash));
+        for v in a.versions.iter().chain(&b.versions) {
+            let on_newer = newer.version(&v.id).is_some();
+            let Some(joined) = j.version(&v.id) else {
+                assert!(
+                    seen && !on_newer,
+                    "{why}: version {} ({}) lost from the join",
+                    v.id,
+                    v.name
+                );
+                continue;
+            };
+            let line = &joined.line;
+            let kept: Vec<&Edit> = line
+                .history
+                .iter()
+                .map(|h| &h.edit)
+                .chain([&line.current])
+                .collect();
+            let gone: Vec<f32> = v
+                .line
+                .history
+                .iter()
+                .map(|h| &h.edit)
+                .chain([&v.line.current])
+                .filter(|e| !kept.contains(e))
+                .map(|e| e.light.exposure)
+                .collect();
+            assert!(
+                gone.is_empty() || line.history.len() == HISTORY,
+                "{why}: version {} lost {gone:?} below the cap",
+                v.name
+            );
+            for s in &v.line.snapshots {
+                assert!(
+                    line.snapshots.iter().any(|n| n.edit == s.edit),
+                    "{why}: version {} lost snapshot {}",
+                    v.name,
+                    s.name
+                );
+            }
+        }
+        // Nothing comes from nowhere, and the list is in the order made.
+        for v in &j.versions {
+            assert!(
+                a.version(&v.id).is_some() || b.version(&v.id).is_some(),
+                "{why}: version {} from nowhere",
+                v.name
+            );
+        }
+        assert!(
+            j.versions
+                .windows(2)
+                .all(|w| (w[0].made, &w[0].id) <= (w[1].made, &w[1].id)),
+            "{why}: versions out of order"
+        );
     }
 
     fn summary(s: &Sidecar) -> Vec<(f32, Option<String>)> {
@@ -1373,6 +1546,8 @@ mod simulation {
         let why = format!("seed {seed}");
         // (c) The same from either side: `j` is `join(a, b)`.
         assert_eq!(*j, join(b, a), "{why}: order");
+        check_versions(&why, a, b, j);
+        let version_ids = |s: &Sidecar| s.versions.iter().map(|v| v.id.clone()).collect::<Vec<_>>();
         // (d) Joined again with either input, once saved, the same,
         // through the lineage: the input's latest revision is in the
         // join's.
@@ -1391,6 +1566,11 @@ mod simulation {
                 summary(&saved),
                 "{why}: rejoin with input {:?}",
                 summary(input)
+            );
+            assert_eq!(
+                version_ids(&again),
+                version_ids(&saved),
+                "{why}: rejoin versions"
             );
             // The states, with their ids; the records as a set, since
             // a record on a re-chained double may sit on its own entry
@@ -1456,6 +1636,13 @@ mod simulation {
             bare.absorbed.clear();
             let union = join(&saved, &bare);
             assert_eq!(union, join(&bare, &saved), "{why}: union rejoin order");
+            for v in &saved.versions {
+                assert!(
+                    union.version(&v.id).is_some(),
+                    "{why}: union rejoin lost version {}",
+                    v.name
+                );
+            }
             let kept = edits(&union);
             let gone: Vec<f32> = edits(&saved)
                 .into_iter()
@@ -1724,6 +1911,14 @@ mod simulation {
     /// now and then; then this build reading the file back, with the
     /// time `at` on it.
     fn old_build_roundtrip(s: &Sidecar, at: u64, records: usize, rng: &mut Rng) -> Sidecar {
+        // Every file this build writes is at schema 5, which such a
+        // build refuses whole; the mode stands in for copies it wrote
+        // before this build met them, and the ids, revisions and
+        // times a join must make do without. A copy carrying versions
+        // it would never have written, so it is left as it is.
+        if !s.versions.is_empty() {
+            return s.clone();
+        }
         let mut v = serde_json::to_value(s).unwrap();
         let o = v.as_object_mut().unwrap();
         for k in ["id", "revisions", "meta_at", "absorbed"] {
@@ -1761,6 +1956,84 @@ mod simulation {
         old
     }
 
+    /// One move among a frame's versions: one made (a copy of the
+    /// original or of a version, its id from the run's generator so a
+    /// seed runs the same again), renamed, swapped with the original,
+    /// deleted, or its line edited, undone, exported or kept in a
+    /// snapshot. What a delete or an undo puts aside goes on `undone`.
+    fn version_move(
+        s: &mut Sidecar,
+        rng: &mut Rng,
+        at: u64,
+        host: &str,
+        n: &mut u64,
+        undone: &mut Vec<Edit>,
+    ) {
+        let ids: Vec<String> = s.versions.iter().map(|v| v.id.clone()).collect();
+        let picked = if ids.is_empty() {
+            None
+        } else {
+            Some(ids[rng.below(ids.len() as u64) as usize].clone())
+        };
+        *n += 1;
+        match (rng.below(10), picked) {
+            (0 | 1, _) | (_, None) if ids.len() < 4 => {
+                let from = ids
+                    .get(rng.below(ids.len() as u64 + 1) as usize)
+                    .map(String::as_str);
+                let made = s.new_version(from, None).unwrap();
+                let v = s.version_mut(&made).unwrap();
+                v.id = format!("{:016x}", rng.next());
+                v.made = at;
+            }
+            (2, Some(id)) => {
+                s.rename_version(&id, &format!("{host} name {n}"));
+            }
+            (3, Some(id)) if rng.chance(3) => {
+                s.swap_with_original(&id);
+            }
+            (4, Some(id)) if rng.chance(3) => {
+                let gone = s.delete_version(&id).unwrap();
+                undone.extend(
+                    gone.line
+                        .history
+                        .iter()
+                        .map(|h| h.edit.clone())
+                        .chain([gone.line.current.clone()]),
+                );
+            }
+            (5, Some(id)) => {
+                let line = s.line_mut(Some(&id)).unwrap();
+                if line.history.len() > 1 && line.undo() {
+                    undone.push(line.redo.last().unwrap().edit.clone());
+                }
+            }
+            (6, Some(id)) => {
+                let line = s.line_mut(Some(&id)).unwrap();
+                let current = line.current.clone();
+                line.record_export(
+                    &current,
+                    Exported {
+                        file: format!("/out/{host}-v{n}.jpg"),
+                        preset: None,
+                        at,
+                    },
+                );
+            }
+            (7, Some(id)) => {
+                s.line_mut(Some(&id))
+                    .unwrap()
+                    .take_snapshot(format!("{host} version snapshot {n}"), at);
+            }
+            (_, Some(id)) => {
+                s.line_mut(Some(&id))
+                    .unwrap()
+                    .record(exposed(rng.below(10_000) as f32 / 100.0 + 500.0));
+            }
+            _ => {}
+        }
+    }
+
     /// One run: `places` machines and an archive, `rounds` of random
     /// work, each round each machine doing a few things and then
     /// syncing with the archive as part 2 will: a copy that is behind
@@ -1789,14 +2062,15 @@ mod simulation {
         let mut machines: Vec<Sidecar> = (0..places).map(|_| base.clone()).collect();
         let mut files = 0u64;
         let mut snaps = 0u64;
-        let mut ever: Vec<Edit> = edits(&archive).into_iter().cloned().collect();
+        let mut ever: Vec<Edit> = all_edits(&archive).into_iter().cloned().collect();
+        let mut moves = 0u64;
         let mut undone: Vec<Edit> = Vec::new();
         let mut capped = false;
         let hold = |archive: &Sidecar, ever: &mut Vec<Edit>, capped: &mut bool| {
-            if archive.history.len() >= HISTORY {
+            if any_capped(archive) {
                 *capped = true;
             }
-            for e in edits(archive) {
+            for e in all_edits(archive) {
                 if !ever.contains(e) {
                     ever.push(e.clone());
                 }
@@ -1816,6 +2090,13 @@ mod simulation {
                         1 + rng.below(3)
                     };
                     for _ in 0..edits {
+                        if mode.versions && rng.chance(4) {
+                            version_move(s, &mut rng, at, &host, &mut moves, &mut undone);
+                            if any_capped(s) {
+                                capped = true;
+                            }
+                            continue;
+                        }
                         match rng.below(12) {
                             0 | 1 if s.history.len() > 1 => {
                                 s.undo();
@@ -1885,9 +2166,10 @@ mod simulation {
                 "seed {seed}: machine {m} not converged"
             );
         }
+        assert!(!mode.versions || moves > 0, "seed {seed}: no version moves");
         // Ground truth, where the cap never came into it.
         if !capped {
-            let now = edits(&archive);
+            let now = all_edits(&archive);
             let lost: Vec<f32> = ever
                 .iter()
                 .filter(|e| !now.contains(e) && !undone.contains(e))
@@ -1918,14 +2200,14 @@ mod simulation {
                 Side::Local => (&*local, &*archive),
                 Side::Other => (&*archive, &*local),
             };
-            let kept = edits(keep);
-            let lost: Vec<f32> = edits(gone)
+            let kept = all_edits(keep);
+            let lost: Vec<f32> = all_edits(gone)
                 .into_iter()
                 .filter(|e| !kept.contains(e) && !undone.contains(e))
                 .map(|e| e.light.exposure)
                 .collect();
             assert!(
-                lost.is_empty() || capped || keep.history.len() == HISTORY,
+                lost.is_empty() || capped || any_capped(keep),
                 "seed {seed}: behind ({side:?}) would lose {lost:?}; local {:?} revs {} absorbed {}; archive {:?} revs {} absorbed {}; undone {:?}",
                 summary(local),
                 local.revisions.len(),
@@ -1988,9 +2270,37 @@ mod simulation {
         }
     }
 
+    #[test]
+    fn places_making_and_editing_versions_lose_no_version_and_converge() {
+        for seed in 3_000..3_012 {
+            simulate(
+                seed,
+                Mode {
+                    versions: true,
+                    ..Mode::default()
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn versions_beside_older_builds_and_the_cap_lose_nothing_and_converge() {
+        for seed in 4_000..4_006 {
+            simulate(
+                seed,
+                Mode {
+                    versions: true,
+                    heavy: seed % 2 == 0,
+                    old_builds: true,
+                    skew: true,
+                },
+            );
+        }
+    }
+
     /// `SIM_SEEDS=from..to` runs more by hand, `SIM_MODE` naming any of
-    /// `heavy`, `old` and `skew`; with no mode, light and heavy
-    /// alternate by seed.
+    /// `heavy`, `old`, `skew` and `versions`; with no mode, light and
+    /// heavy alternate by seed.
     #[test]
     #[ignore]
     fn many_seeds_by_hand() {
@@ -2010,6 +2320,7 @@ mod simulation {
                     heavy: named.contains("heavy"),
                     old_builds: named.contains("old"),
                     skew: named.contains("skew"),
+                    versions: named.contains("versions"),
                 }
             };
             simulate(seed, mode);
@@ -2530,8 +2841,10 @@ mod tests {
         assert_eq!(compare(&a, &b), Compared::Behind(Side::Local));
         assert_eq!(compare(&b, &a), Compared::Behind(Side::Other));
         // A rating on either copy that the other does not have is not
-        // behind: the join settles it, and adds no state for it.
+        // behind: the join settles it, and adds no state for it. The
+        // copy written later is the newer, so the join is its history.
         b.meta.rating = 1;
+        b.modified = Some(1);
         assert_eq!(compare(&a, &b), Compared::Diverged);
         let j = join(&a, &b);
         assert_eq!(exposures(&j), [0.0, 0.5, 1.0, 2.0]);
@@ -4177,5 +4490,189 @@ mod tests {
             .count();
         assert_eq!(mono_2, 2, "{joined:?}");
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The exposures of a line's states, the current last.
+    fn line_exposures(l: &Line) -> Vec<f32> {
+        l.history
+            .iter()
+            .map(|s| s.edit.light.exposure)
+            .chain(std::iter::once(l.current.light.exposure))
+            .collect()
+    }
+
+    /// Two copies as [`backed_up`] makes them, with a version "Warm"
+    /// made and edited on the desk before the copy: both copies read
+    /// back, and the version's id.
+    fn backed_up_with_a_version(dir: &Path) -> (Sidecar, Sidecar, PathBuf, PathBuf, String) {
+        let (mut a, _, local, archive) = backed_up(dir);
+        let warm = a.new_version(None, Some("Warm")).unwrap();
+        a.line_mut(Some(&warm)).unwrap().record(exposed(1.5));
+        save(&mut a, &local, 150, "desk");
+        std::fs::copy(Sidecar::path_for(&local), Sidecar::path_for(&archive)).unwrap();
+        let a = Sidecar::read(&Sidecar::path_for(&local)).unwrap();
+        let b = Sidecar::read(&Sidecar::path_for(&archive)).unwrap();
+        assert_eq!(compare(&a, &b), Compared::Same);
+        (a, b, local, archive, warm)
+    }
+
+    #[test]
+    fn versions_made_on_each_copy_are_both_kept_in_the_order_made() {
+        let dir = scratch("versions-both");
+        let (mut a, mut b, local, archive) = backed_up(&dir);
+        // Each machine makes its "Version 2": two ids, both kept.
+        let desk = a.new_version(None, None).unwrap();
+        a.version_mut(&desk).unwrap().made = 500;
+        a.line_mut(Some(&desk)).unwrap().record(exposed(3.0));
+        save(&mut a, &local, 200, "desk");
+        let laptop = b.new_version(None, None).unwrap();
+        b.version_mut(&laptop).unwrap().made = 400;
+        save(&mut b, &archive, 300, "laptop");
+        assert_eq!(compare(&a, &b), Compared::Diverged);
+        assert_eq!(compare(&b, &a), Compared::Diverged);
+
+        let joined = join(&a, &b);
+        assert_eq!(joined, join(&b, &a));
+        let ids: Vec<&str> = joined.versions.iter().map(|v| v.id.as_str()).collect();
+        assert_eq!(ids, [laptop.as_str(), desk.as_str()]);
+        assert!(joined.versions.iter().all(|v| v.name == "Version 2"));
+        assert_eq!(
+            joined.version(&desk).unwrap().line,
+            a.version(&desk).unwrap().line
+        );
+        assert_eq!(
+            joined.version(&laptop).unwrap().line,
+            b.version(&laptop).unwrap().line
+        );
+        // The original was the same on both and gains nothing.
+        assert_eq!(exposures(&joined), [0.0, 0.5, 1.0]);
+        assert_eq!(joined.current_label, None);
+
+        // Saved, it is ahead of both, and written at schema 5.
+        let mut joined = joined;
+        save(&mut joined, &local, 400, "desk");
+        assert_eq!(compare(&a, &joined), Compared::Behind(Side::Local));
+        assert_eq!(compare(&b, &joined), Compared::Behind(Side::Local));
+        let text = std::fs::read_to_string(Sidecar::path_for(&local)).unwrap();
+        assert!(text.contains("\"version\": 5") && !text.contains("\"version\": 4"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_version_edited_on_both_copies_joins_its_line_as_the_original_joins() {
+        let dir = scratch("versions-edited");
+        let (mut a, mut b, local, archive, warm) = backed_up_with_a_version(&dir);
+        a.line_mut(Some(&warm)).unwrap().record(exposed(2.0));
+        assert!(a.rename_version(&warm, "Warmer"));
+        save(&mut a, &local, 200, "desk");
+        b.line_mut(Some(&warm))
+            .unwrap()
+            .record_as(exposed(-1.0), Some("Preset: Night".into()));
+        save(&mut b, &archive, 300, "laptop");
+        assert_eq!(compare(&a, &b), Compared::Diverged);
+
+        let joined = join(&a, &b);
+        assert_eq!(joined, join(&b, &a));
+        assert_eq!(joined.versions.len(), 1);
+        let v = joined.version(&warm).unwrap();
+        // The laptop saved later: its branch on top, the desk's under
+        // it, the laptop's current again, reconciled; as version 0's
+        // would be.
+        assert_eq!(line_exposures(&v.line), [1.0, 1.5, -1.0, 2.0, -1.0]);
+        assert_eq!(
+            v.line.current_label.as_deref(),
+            Some("Reconciled with the copy on desk")
+        );
+        assert_eq!(
+            v.line.history[0].label.as_deref(),
+            Some("From the original")
+        );
+        // The newer copy's name.
+        assert_eq!(v.name, "Warm");
+        // Version 0 moved on neither and gains nothing.
+        assert_eq!(exposures(&joined), [0.0, 0.5, 1.0]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_version_deleted_on_one_copy_and_edited_on_the_other_is_kept() {
+        for (deleted_at, edited_at) in [(200, 300), (300, 200)] {
+            let dir = scratch("versions-deleted-edited");
+            let (mut a, mut b, local, archive, warm) = backed_up_with_a_version(&dir);
+            assert!(a.delete_version(&warm).is_some());
+            save(&mut a, &local, deleted_at, "desk");
+            b.line_mut(Some(&warm)).unwrap().record(exposed(4.0));
+            save(&mut b, &archive, edited_at, "laptop");
+            assert_eq!(compare(&a, &b), Compared::Diverged);
+            let joined = join(&a, &b);
+            assert_eq!(joined, join(&b, &a));
+            assert_eq!(joined.versions.len(), 1);
+            assert_eq!(
+                line_exposures(&joined.version(&warm).unwrap().line),
+                [1.0, 1.5, 4.0]
+            );
+            std::fs::remove_dir_all(&dir).unwrap();
+        }
+    }
+
+    #[test]
+    fn a_version_deleted_on_one_copy_the_other_never_touched_stays_deleted() {
+        let dir = scratch("versions-deleted");
+        let (mut a, b, local, _archive, warm) = backed_up_with_a_version(&dir);
+        a.delete_version(&warm).unwrap();
+        save(&mut a, &local, 200, "desk");
+        // The archive's copy is behind and is copied over, deletion and
+        // all; met in a join instead, the desk had seen the whole of it,
+        // and what it lacks it let go on purpose.
+        assert_eq!(compare(&a, &b), Compared::Behind(Side::Other));
+        assert_eq!(compare(&b, &a), Compared::Behind(Side::Local));
+        assert!(join(&a, &b).versions.is_empty());
+        assert!(join(&b, &a).versions.is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn copies_from_before_revisions_compare_every_versions_line_by_its_ids() {
+        let mut a = Sidecar::default();
+        a.record(exposed(1.0));
+        let v = a.new_version(None, None).unwrap();
+        assert!(a.revisions.is_empty());
+        // A copy that went on along the version is ahead.
+        let mut b = a.clone();
+        b.line_mut(Some(&v)).unwrap().record(exposed(2.0));
+        assert_eq!(compare(&a, &b), Compared::Behind(Side::Local));
+        assert_eq!(compare(&b, &a), Compared::Behind(Side::Other));
+        // A copy with a version the other lacks is ahead of it, and one
+        // lacking a version is behind: without revisions a delete and
+        // an add read alike, and the lines are kept.
+        let mut c = a.clone();
+        c.new_version(None, Some("Cool")).unwrap();
+        assert_eq!(compare(&a, &c), Compared::Behind(Side::Local));
+        let mut d = a.clone();
+        d.delete_version(&v).unwrap();
+        assert_eq!(compare(&d, &a), Compared::Behind(Side::Local));
+        // A snapshot taken on a version is the same states and
+        // something to join, as on the original; behind a copy that
+        // went on, it is something of its own.
+        let mut e = a.clone();
+        e.line_mut(Some(&v))
+            .unwrap()
+            .take_snapshot("Kept", 1_700_000_000);
+        assert_eq!(compare(&e, &a), Compared::SameEdit);
+        assert_eq!(compare(&e, &b), Compared::Diverged);
+        assert_eq!(join(&e, &b).version(&v).unwrap().line.snapshots.len(), 1);
+        // The same version gone two ways is diverged, and the join
+        // keeps both branches of its line.
+        let mut f = a.clone();
+        f.line_mut(Some(&v)).unwrap().record(exposed(-2.0));
+        assert_eq!(compare(&b, &f), Compared::Diverged);
+        let joined = join(&b, &f);
+        let line = &joined.version(&v).unwrap().line;
+        let edits: Vec<f32> = line_exposures(line);
+        assert!(edits.contains(&2.0) && edits.contains(&-2.0), "{edits:?}");
+        // The same lines on both, a rating apart, are the same edit.
+        let mut g = a.clone();
+        g.meta.rating = 2;
+        assert_eq!(compare(&a, &g), Compared::SameEdit);
     }
 }

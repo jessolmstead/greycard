@@ -819,7 +819,7 @@ mod tests {
         // The window's edit: the sidecar's, the overrides over it; its
         // sheet: the remembered one with the flags over it, in the
         // path's format.
-        let mut edit = Sidecar::load(&source).unwrap().unwrap().current;
+        let mut edit = Sidecar::load(&source).unwrap().unwrap().line.current;
         Overrides::of(&cli).apply(&mut edit);
         assert_eq!(plan.frames.len(), 1);
         assert_eq!(plan.frames[0].edit, edit);

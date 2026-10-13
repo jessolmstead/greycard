@@ -1791,7 +1791,7 @@ mod tests {
         dark.detail.texture = 0.0;
         dark.light.exposure = -1.0;
         let mut sidecar = greycard_edit::Sidecar {
-            current: dark.clone(),
+            line: greycard_edit::Line::of(dark.clone()),
             turn: 1,
             ..Default::default()
         };
@@ -1832,7 +1832,7 @@ mod tests {
         let mut edit = Edit::for_picture();
         edit.light.exposure = 1.5;
         let mut sidecar = greycard_edit::Sidecar {
-            current: edit.clone(),
+            line: greycard_edit::Line::of(edit.clone()),
             ..greycard_edit::Sidecar::default()
         };
         sidecar.save(&other).unwrap();

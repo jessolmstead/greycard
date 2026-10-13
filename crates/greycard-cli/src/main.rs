@@ -102,7 +102,8 @@ enum Command {
     /// The presets: list them; import Lightroom (.xmp) or greycard
     /// (.gcp) preset files; lay one over files' edits
     Presets {
-        /// Files whose sidecars take the preset named by --apply
+        /// Files whose sidecars take the preset named by --apply; with
+        /// no --apply, the versions each sidecar holds are listed
         files: Vec<PathBuf>,
         /// Preset files to bring into the store, Lightroom's .xmp or
         /// this engine's .gcp
@@ -1362,7 +1363,7 @@ fn presets(
             {
                 Some(s) => s,
                 None if greycard_core::picture::is_picture_path(file) => Sidecar {
-                    current: greycard_edit::Edit::for_picture(),
+                    line: greycard_edit::Line::of(greycard_edit::Edit::for_picture()),
                     ..Sidecar::default()
                 },
                 // A raw's learned-denoiser blend starts from its ISO,
@@ -1382,7 +1383,7 @@ fn presets(
                     let mut edit = greycard_edit::Edit::default();
                     edit.noise.learned_strength = greycard_edit::Noise::blend_for_iso(iso);
                     Sidecar {
-                        current: edit,
+                        line: greycard_edit::Line::of(edit),
                         ..Sidecar::default()
                     }
                 }
@@ -1412,6 +1413,12 @@ fn presets(
                     .save_in(file, greycard_edit::Placement::of(file))
                     .with_context(|| format!("writing the sidecar of {}", file.display()))?;
                 println!("applied       {} to {}", entry.preset.name, file.display());
+                if !sidecar.versions.is_empty() {
+                    println!(
+                        "              on the original; its {} other versions are as they were",
+                        sidecar.versions.len()
+                    );
+                }
             } else {
                 println!(
                     "unchanged     {} has {} already",
@@ -1420,10 +1427,12 @@ fn presets(
                 );
             }
         }
-    } else if !files.is_empty() {
-        anyhow::bail!("files are for --apply; say which preset");
+    } else {
+        for file in files {
+            list_versions(file)?;
+        }
     }
-    if import.is_empty() && apply.is_none() {
+    if import.is_empty() && apply.is_none() && files.is_empty() {
         let entries = store.list();
         println!("store         {}", store.dir().display());
         if entries.is_empty() {
@@ -1437,6 +1446,33 @@ fn presets(
                 e.path.display()
             );
         }
+    }
+    Ok(())
+}
+
+/// What a frame's sidecar holds, a line a version: the original's
+/// states and step, then each version's name, id and states, in the
+/// order they were made.
+fn list_versions(file: &std::path::Path) -> Result<()> {
+    use greycard_edit::{Line, Sidecar};
+    let Some(sidecar) = Sidecar::load(file)
+        .with_context(|| format!("reading the sidecar of {}", file.display()))?
+    else {
+        println!("no sidecar    {}", file.display());
+        return Ok(());
+    };
+    let said = |line: &Line| {
+        let states = line.states();
+        let plural = if states == 1 { "" } else { "s" };
+        match line.current_label.as_deref() {
+            Some(step) => format!("{states} state{plural}, at \"{step}\""),
+            None => format!("{states} state{plural}"),
+        }
+    };
+    println!("sidecar       {}", file.display());
+    println!("original      {}", said(&sidecar.line));
+    for v in &sidecar.versions {
+        println!("version       {} ({}): {}", v.name, v.id, said(&v.line));
     }
     Ok(())
 }

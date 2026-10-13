@@ -774,7 +774,7 @@ impl Reducer {
         if edited.all_kept(&hash, key) {
             return if moved { Ok(true) } else { Err(Why::NotWanted) };
         }
-        let edit = sidecar.current;
+        let edit = sidecar.line.current;
         let turn = sidecar.turn;
         // What would keep the picture from being kept, asked before the
         // decode: the look, and the learned masks' rasters or models.
@@ -927,7 +927,7 @@ mod tests {
         .save(&path)
         .unwrap();
         greycard_edit::Sidecar {
-            current: edit.clone(),
+            line: greycard_edit::Line::of(edit.clone()),
             ..Default::default()
         }
         .save(&path)
@@ -1072,7 +1072,7 @@ mod tests {
         let mut refit = edit.clone();
         refit.light.exposure = 1.5;
         greycard_edit::Sidecar {
-            current: refit.clone(),
+            line: greycard_edit::Line::of(refit.clone()),
             ..Default::default()
         }
         .save(&path)

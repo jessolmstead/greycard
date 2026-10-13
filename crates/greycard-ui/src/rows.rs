@@ -190,11 +190,11 @@ pub(crate) fn from_row(path: &Path, row: &RowMeta, write_sidecars: bool) -> Held
     let raw = !greycard_core::picture::is_picture_path(path);
     Held {
         sidecar: Sidecar {
-            current: if raw {
+            line: greycard_edit::Line::of(if raw {
                 Edit::default()
             } else {
                 Edit::for_picture()
-            },
+            }),
             meta: row.meta.clone(),
             ..Sidecar::default()
         },

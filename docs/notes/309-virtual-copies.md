@@ -29,7 +29,12 @@ file, §72).
 
 Reviewed 2026-10-12 and taken as designed: the meta stays shared across
 versions for now, and per-version marks stay out of scope until a
-tester asks.
+tester asks. Two departures were decided at the build (§312): every
+write is at schema 5, with or without versions, since the editor has
+no users on 0.6.x for §166's reason to hold (0.6.x reads no sidecar
+this build has touched); and in the join, a version deleted on a copy
+that had seen all of the other copy's saves stays deleted, where §8
+below says it is kept. §312 has the cases.
 
 ## 1. The data model
 

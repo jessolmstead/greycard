@@ -56,6 +56,10 @@ note a first tester reads.
 
 ### Editing
 
+- Sidecars written by this build are at schema 5 and are refused whole
+  by 0.6.x; nothing in them changes. The ground for versions of one
+  frame, which the next parts put in the strip
+  ([§312](https://github.com/jessolmstead/greycard/blob/master/docs/notes/312-virtual-copies-part-1-the-edit-crate.md))
 - A word at the pointer over a button that shows only an icon (Undo,
   Remove, Turn left, Hide panel...), after a short rest; it goes with a
   press, a key or a scroll

@@ -1615,7 +1615,7 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
         greycard_edit::Edit::default()
     };
     let mut sidecar = Sidecar {
-        current: p.current.clone().unwrap_or_else(|| default.clone()),
+        line: greycard_edit::Line::of(p.current.clone().unwrap_or_else(|| default.clone())),
         meta: p.meta,
         turn: p.turn,
         xmp: p.mark,
@@ -1648,7 +1648,7 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
         edited,
         exported: p.exported,
         blend: p.current.as_ref().map(|c| c.noise.learned_strength),
-        turns: crate::pack_turns(sidecar.current.geometry.shown_turns(sidecar.turn)),
+        turns: crate::pack_turns(sidecar.line.current.geometry.shown_turns(sidecar.turn)),
         develop_key,
     }
 }
@@ -4042,7 +4042,7 @@ pub(crate) mod tests {
             write_frame(p, &R5, i as u16 + 1);
         }
         let fresh = || Sidecar {
-            current: Edit::for_picture(),
+            line: greycard_edit::Line::of(Edit::for_picture()),
             ..Sidecar::default()
         };
         // Rated only: the picture's own default edit, three stars.
@@ -4141,7 +4141,7 @@ pub(crate) mod tests {
             write_frame(&path(n), &R5, i as u16 + 1);
         }
         let fresh = || Sidecar {
-            current: Edit::for_picture(),
+            line: greycard_edit::Line::of(Edit::for_picture()),
             ..Sidecar::default()
         };
         let moved = |x: f32| {
@@ -4252,7 +4252,7 @@ pub(crate) mod tests {
         let mut brightened = Edit::for_picture();
         brightened.light.exposure = 0.7;
         let mut s = Sidecar {
-            current: brightened.clone(),
+            line: greycard_edit::Line::of(brightened.clone()),
             ..Sidecar::default()
         };
         s.save(&edited).unwrap();
@@ -4327,7 +4327,7 @@ pub(crate) mod tests {
         let mut brightened = Edit::for_picture();
         brightened.light.exposure = 0.7;
         Sidecar {
-            current: brightened,
+            line: greycard_edit::Line::of(brightened),
             ..Sidecar::default()
         }
         .save(&edited)
@@ -4399,14 +4399,14 @@ pub(crate) mod tests {
         let mut moved = base(&exported);
         moved.light.exposure = 0.5;
         let mut s = Sidecar {
-            current: base(&exported),
+            line: greycard_edit::Line::of(base(&exported)),
             ..Sidecar::default()
         };
         s.record(moved.clone());
         assert!(s.record_export(&moved, Exported::default()));
         s.save(&exported).unwrap();
         let mut s = Sidecar {
-            current: base(&reset),
+            line: greycard_edit::Line::of(base(&reset)),
             ..Sidecar::default()
         };
         s.record(moved);

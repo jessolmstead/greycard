@@ -37,6 +37,7 @@ pub mod preset;
 pub mod retouch;
 pub mod sync;
 pub mod tint;
+pub mod versions;
 pub mod vignette;
 pub mod white;
 // XMP interop for the meta section (§72): read and write the
@@ -57,6 +58,7 @@ pub use meta::Meta;
 pub use mixer::Mixer;
 pub use preset::{Preset, Section};
 pub use tint::Tint;
+pub use versions::Version;
 pub use vignette::Vignette;
 pub use white::{LocalWhite, WhiteShift};
 
@@ -69,7 +71,7 @@ use greycard_core::develop::sharpen::{self, Radius, SharpenOptions, Threshold};
 use greycard_core::develop::{DemosaicMethod, DevelopSettings};
 
 /// The schema version this build writes.
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -912,7 +914,7 @@ impl Edit {
     /// anything reads its crop's aspect — and it is safe to save
     /// meanwhile, since it writes back as the version 3 it still is.
     pub fn needs_frame(&self) -> bool {
-        self.version < VERSION
+        self.version < 4
     }
 
     /// Finish version 4's step now the frame's shape is known.
@@ -1186,6 +1188,12 @@ pub fn overlay_changes(before: &Edit, touched: &Edit, onto: &Edit) -> Result<Edi
 /// [`Edit::migrate_with_frame`], and until then the edit reads,
 /// renders and writes back as the version 3 it is, so nothing is
 /// lost by a build that only listed a folder.
+///
+/// Version 5 is the sidecar's versions ([`Sidecar::versions`]).
+/// Nothing in an edit moved or changed meaning, so the step is the
+/// identity; the bump is there so that a build from before versions,
+/// which would read version 0 and drop the rest at its next save,
+/// refuses the sidecar whole instead.
 pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
     let version = value.get("version").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
     if version > VERSION {
@@ -1220,7 +1228,8 @@ pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
         // here: an edit that wants it stays at 3 until someone who
         // knows the frame calls `Edit::migrate_with_frame`. Only an
         // `Original` aspect is affected; every other edit is brought
-        // up by its version number alone.
+        // up by its version number alone. Version 5's step (the
+        // sidecar's versions) moves nothing in an edit.
         let waiting = version < 4
             && obj
                 .get("geometry")
@@ -1243,56 +1252,19 @@ pub fn migrate(mut value: serde_json::Value) -> Result<serde_json::Value> {
 /// developing a picture. Nothing in [`Sidecar::record`],
 /// [`Sidecar::undo`], [`Sidecar::redo`] or a snapshot touches it,
 /// and setting it is not a state to undo.
+///
+/// The edit and its history are a [`Line`]: the file's own, version 0,
+/// is the `line` field, and each further version in [`Self::versions`]
+/// holds one of its own. The meta, the turn, the XMP mark, the save
+/// count and the revisions are the file's and shared by every version.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Sidecar {
-    pub current: Edit,
-    /// The words the step that made [`Self::current`] was recorded
-    /// with, when it was one with a name of its own (a preset, a
-    /// sync, a snapshot restored): see [`Step::label`]. Written as
-    /// `step` just after `current`, left out when there is none, and
-    /// read loosely.
-    #[serde(
-        rename = "step",
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "meta::loose"
-    )]
-    pub current_label: Option<String>,
-    /// The exports made from [`Self::current`]: see [`Step::exports`].
-    /// Written as `exported` after `step`, left out when there are
-    /// none, and read loosely, a record at a time.
-    #[serde(
-        rename = "exported",
-        default,
-        skip_serializing_if = "Vec::is_empty",
-        deserialize_with = "loose_exports"
-    )]
-    pub current_exports: Vec<Exported>,
-    /// The last export made of the frame, whatever state it was made
-    /// from: a fact about the file, not the state, so it outlives an
-    /// undo past that state, a history that replaces it and the
-    /// history's cap, none of which a record on a state does. Written
-    /// as `last_export` after `exported`, left out when the frame has
-    /// never been exported (or its sidecar is from before the field,
-    /// which gets it on its next export) and read loosely.
-    #[serde(
-        rename = "last_export",
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "meta::loose"
-    )]
-    pub last_export: Option<Exported>,
-    /// The id of the current state: see [`Step::id`]. Written as `id`
-    /// after `exported`, left out when the state has none yet, and
-    /// read loosely.
-    #[serde(
-        rename = "id",
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "meta::loose"
-    )]
-    pub current_id: Option<String>,
+    /// Version 0's line, the file's own: its keys at the top level of
+    /// the file, first. The sidecar derefs to it, so `sidecar.current`
+    /// and the line's methods read and act on version 0.
+    #[serde(flatten)]
+    pub line: Line,
     /// The rating, the flag, the label, the keywords and the words:
     /// see [`meta`]. Absent from every sidecar written before it
     /// existed, and the default there; left out again when it says
@@ -1405,6 +1377,77 @@ pub struct Sidecar {
         deserialize_with = "sync::loose_hashes"
     )]
     pub absorbed: Vec<String>,
+    /// The frame's further versions, each a line of its own under a
+    /// name, in the order they were made. Left out while empty; a list
+    /// that is not a list is none, and a version with no id is left out
+    /// ([`versions::loose`]).
+    #[serde(
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "versions::loose"
+    )]
+    pub versions: Vec<Version>,
+}
+
+/// One line of development: the current edit and the steps that led
+/// to it, the states kept by name, and the exports made along it.
+///
+/// The sidecar's own line is version 0, the file's own version
+/// (the sidecar's `line`); each further version holds a line of its own
+/// ([`Version::line`]). Undo, redo, the snapshots, the export records
+/// and the history's cap are all a line's, so a version walks its own
+/// history and nothing it does touches another's.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Line {
+    pub current: Edit,
+    /// The words the step that made [`Self::current`] was recorded
+    /// with, when it was one with a name of its own (a preset, a
+    /// sync, a snapshot restored): see [`Step::label`]. Written as
+    /// `step` just after `current`, left out when there is none, and
+    /// read loosely.
+    #[serde(
+        rename = "step",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "meta::loose"
+    )]
+    pub current_label: Option<String>,
+    /// The exports made from [`Self::current`]: see [`Step::exports`].
+    /// Written as `exported` after `step`, left out when there are
+    /// none, and read loosely, a record at a time.
+    #[serde(
+        rename = "exported",
+        default,
+        skip_serializing_if = "Vec::is_empty",
+        deserialize_with = "loose_exports"
+    )]
+    pub current_exports: Vec<Exported>,
+    /// The last export made of the frame, whatever state it was made
+    /// from: a fact about what went out, not the state, so it outlives
+    /// an undo past that state, a history that replaces it and the
+    /// history's cap, none of which a record on a state does. What went
+    /// out is a version's picture, so each line has its own. Written
+    /// as `last_export` after `exported`, left out when the frame has
+    /// never been exported (or its sidecar is from before the field,
+    /// which gets it on its next export) and read loosely.
+    #[serde(
+        rename = "last_export",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "meta::loose"
+    )]
+    pub last_export: Option<Exported>,
+    /// The id of the current state: see [`Step::id`]. Written as `id`
+    /// after `exported`, left out when the state has none yet, and
+    /// read loosely.
+    #[serde(
+        rename = "id",
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "meta::loose"
+    )]
+    pub current_id: Option<String>,
     /// Earlier states, oldest first, each one a whole edit and the
     /// words it was recorded with, if any.
     pub history: Vec<Step>,
@@ -1428,11 +1471,7 @@ fn is_no_turn(turn: &u8) -> bool {
 impl PartialEq for Sidecar {
     fn eq(&self, other: &Self) -> bool {
         let Sidecar {
-            current,
-            current_label,
-            current_exports,
-            last_export,
-            current_id,
+            line,
             meta,
             meta_at,
             baseline: _,
@@ -1442,15 +1481,9 @@ impl PartialEq for Sidecar {
             saved,
             revisions,
             absorbed,
-            history,
-            redo,
-            snapshots,
+            versions,
         } = self;
-        *current == other.current
-            && *current_label == other.current_label
-            && *current_exports == other.current_exports
-            && *last_export == other.last_export
-            && *current_id == other.current_id
+        *line == other.line
             && *meta == other.meta
             && *meta_at == other.meta_at
             && *turn == other.turn
@@ -1458,9 +1491,24 @@ impl PartialEq for Sidecar {
             && *saved == other.saved
             && *revisions == other.revisions
             && *absorbed == other.absorbed
-            && *history == other.history
-            && *redo == other.redo
-            && *snapshots == other.snapshots
+            && *versions == other.versions
+    }
+}
+
+/// Version 0's line is the sidecar's: `sidecar.current`, `.history`,
+/// `.record_as(..)` and the rest read and act on it, as they did
+/// before there were versions.
+impl std::ops::Deref for Sidecar {
+    type Target = Line;
+
+    fn deref(&self) -> &Line {
+        &self.line
+    }
+}
+
+impl std::ops::DerefMut for Sidecar {
+    fn deref_mut(&mut self) -> &mut Line {
+        &mut self.line
     }
 }
 
@@ -1858,12 +1906,13 @@ impl Sidecar {
     }
 
     /// The sidecar at `path`, the file itself and not the frame's:
-    /// for a copy found elsewhere, on an archive. Every state is
-    /// brought up to the current schema; a state with no id gets one,
-    /// the first read of a sidecar from before ids being the one time
-    /// an id is computed from a file; a meta field with no time gets
-    /// the file's ([`Self::pin_times`]); and the meta and the turn as
-    /// read are kept to stamp their times against at the next save.
+    /// for a copy found elsewhere, on an archive. Every state of every
+    /// version is brought up to the current schema; a state with no id
+    /// gets one, the first read of a sidecar from before ids being the
+    /// one time an id is computed from a file; a meta field with no
+    /// time gets the file's ([`Self::pin_times`]); and the meta and the
+    /// turn as read are kept to stamp their times against at the next
+    /// save.
     pub fn read(path: &Path) -> Result<Self> {
         let modified = path
             .metadata()
@@ -1872,30 +1921,64 @@ impl Sidecar {
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
             .map(|d| d.as_secs());
         let json = std::fs::read_to_string(path)?;
-        let mut value: serde_json::Value = serde_json::from_str(&json)?;
-        if let Some(obj) = value.as_object_mut() {
-            if let Some(current) = obj.remove("current") {
-                obj.insert("current".into(), migrate(current)?);
-            }
-            if let Some(serde_json::Value::Array(history)) = obj.remove("history") {
-                let history: Result<Vec<_>> = history.into_iter().map(migrate).collect();
-                obj.insert("history".into(), serde_json::Value::Array(history?));
-            }
-            if let Some(serde_json::Value::Array(mut snapshots)) = obj.remove("snapshots") {
-                for snapshot in snapshots.iter_mut() {
-                    if let Some(edit) = snapshot.get_mut("edit") {
-                        *edit = migrate(edit.take())?;
-                    }
-                }
-                obj.insert("snapshots".into(), serde_json::Value::Array(snapshots));
-            }
-        }
-        let mut sidecar: Self = serde_json::from_value(value)?;
+        let mut sidecar = Self::from_json(&json)?;
         sidecar.modified = modified;
         sidecar.fill_ids();
         sidecar.pin_times();
         sidecar.baseline = Some(sidecar.facts());
         Ok(sidecar)
+    }
+
+    /// The sidecar `json` spells, every edit of every line brought up
+    /// to the current schema first, and the whole refused
+    /// ([`Error::Newer`]) when any edit is from a schema past it.
+    pub fn from_json(json: &str) -> Result<Self> {
+        let mut value: serde_json::Value = serde_json::from_str(json)?;
+        if let Some(obj) = value.as_object_mut() {
+            migrate_line(obj)?;
+            if let Some(serde_json::Value::Array(versions)) = obj.get_mut("versions") {
+                for version in versions.iter_mut() {
+                    if let Some(line) = version.get_mut("line").and_then(|l| l.as_object_mut()) {
+                        migrate_line(line)?;
+                    }
+                }
+            }
+        }
+        Ok(serde_json::from_value(value)?)
+    }
+}
+
+/// Bring every edit of a line's object up to the current schema, in
+/// place: the current one, the history and the snapshots. A history or
+/// a snapshot list that is not a list is left out, as it always was.
+fn migrate_line(obj: &mut serde_json::Map<String, serde_json::Value>) -> Result<()> {
+    if let Some(current) = obj.remove("current") {
+        obj.insert("current".into(), migrate(current)?);
+    }
+    if let Some(serde_json::Value::Array(history)) = obj.remove("history") {
+        let history: Result<Vec<_>> = history.into_iter().map(migrate).collect();
+        obj.insert("history".into(), serde_json::Value::Array(history?));
+    }
+    if let Some(serde_json::Value::Array(mut snapshots)) = obj.remove("snapshots") {
+        for snapshot in snapshots.iter_mut() {
+            if let Some(edit) = snapshot.get_mut("edit") {
+                *edit = migrate(edit.take())?;
+            }
+        }
+        obj.insert("snapshots".into(), serde_json::Value::Array(snapshots));
+    }
+    Ok(())
+}
+
+impl Line {
+    /// A line whose one state is `edit`, with nothing before it: what
+    /// a frame nobody has developed starts from. Its id is made when
+    /// first asked for ([`Self::fill_ids`]).
+    pub fn of(edit: Edit) -> Self {
+        Self {
+            current: edit,
+            ..Self::default()
+        }
     }
 
     /// Record `edit` as the current state, keeping the one it replaces;
@@ -1933,29 +2016,6 @@ impl Sidecar {
         self.cap_history();
         self.redo.clear();
         true
-    }
-
-    /// Whether any state here is still waiting on the frame's shape:
-    /// see [`Edit::needs_frame`]. A sidecar that answers yes reads
-    /// and renders, and saves back as the version 3 it is, but its
-    /// crop must not be refitted until the frame is known.
-    pub fn needs_frame(&self) -> bool {
-        std::iter::once(&self.current)
-            .chain(self.history.iter().map(|s| &s.edit))
-            .chain(self.redo.iter().map(|s| &s.edit))
-            .chain(self.snapshots.iter().map(|s| &s.edit))
-            .any(Edit::needs_frame)
-    }
-
-    /// Finish version 4's step on every state here, now the frame's
-    /// shape is known. `source_portrait` is as
-    /// [`Edit::migrate_with_frame`] has it, and includes this
-    /// sidecar's own [`Self::turn`], since that is already in the
-    /// developed picture. A no-op when nothing was waiting.
-    pub fn migrate_with_frame(&mut self, source_portrait: bool) {
-        for edit in self.edits_mut() {
-            edit.migrate_with_frame(source_portrait);
-        }
     }
 
     /// How many states there are to walk: the history, the current
@@ -2241,78 +2301,27 @@ impl Sidecar {
         true
     }
 
-    /// Turn the frame `quarters` more quarter turns clockwise, and
-    /// carry every state here round with it: the crop, the keystone
-    /// and a held aspect, and the masks and the repair patches when
-    /// `aspect` says what shape the picture is (see [`Edit::turn`]).
-    ///
-    /// *Every* state, not only the current one. A turn is not a step
-    /// in developing the picture — no state is recorded for it, and
-    /// an undo that took the crop back but left the frame on its
-    /// side would be worse than one that does neither — and that
-    /// promise only holds if what undo, redo and a snapshot hand
-    /// back means the same pixels the current state does. So the
-    /// history, the redo stack and the snapshots take the same map.
-    ///
-    /// `aspect` is the picture's width over its height *before* the
-    /// turn, and is `None` when the caller cannot say. The geometry
-    /// turns either way; anything placed on the picture is left
-    /// where it is, which [`Sidecar::placed`] warns the caller
-    /// about.
-    pub fn turn_by(&mut self, quarters: i32, aspect: Option<f32>) {
-        if quarters.rem_euclid(4) == 0 {
-            return;
-        }
-        self.turn = (i32::from(self.turn) + quarters).rem_euclid(4) as u8;
-        let positions = aspect.map(|a| mask::Turned::new(quarters, a));
-        for edit in self.edits_mut() {
-            edit.turn(quarters, positions);
-        }
+    /// Every edit of this line: the current one, the history, what was
+    /// undone, and the snapshots.
+    pub fn edits(&self) -> impl Iterator<Item = &Edit> {
+        std::iter::once(&self.current)
+            .chain(self.history.iter().map(|s| &s.edit))
+            .chain(self.redo.iter().map(|s| &s.edit))
+            .chain(self.snapshots.iter().map(|s| &s.edit))
     }
 
-    /// Every edit here: the current one, the history, what was
-    /// undone, and the snapshots.
-    fn edits_mut(&mut self) -> impl Iterator<Item = &mut Edit> {
+    /// [`Self::edits`], to change in place.
+    pub(crate) fn edits_mut(&mut self) -> impl Iterator<Item = &mut Edit> {
         std::iter::once(&mut self.current)
             .chain(self.history.iter_mut().map(|s| &mut s.edit))
             .chain(self.redo.iter_mut().map(|s| &mut s.edit))
             .chain(self.snapshots.iter_mut().map(|s| &mut s.edit))
     }
 
-    /// Whether any state here has work placed on the picture itself;
-    /// see [`Edit::placed`].
-    pub fn placed(&self) -> bool {
-        std::iter::once(&self.current)
-            .chain(self.history.iter().map(|s| &s.edit))
-            .chain(self.redo.iter().map(|s| &s.edit))
-            .chain(self.snapshots.iter().map(|s| &s.edit))
-            .any(Edit::placed)
-    }
-
-    /// Whether any state here names the look `name`: the current one,
-    /// the history, what was undone, or a snapshot.
-    pub fn names_look(&self, name: &str) -> bool {
-        std::iter::once(&self.current)
-            .chain(self.history.iter().map(|s| &s.edit))
-            .chain(self.redo.iter().map(|s| &s.edit))
-            .chain(self.snapshots.iter().map(|s| &s.edit))
-            .any(|e| e.look_lut.names(name))
-    }
-
-    /// Every look any state here names, `none` aside.
-    pub fn looks_named(&self) -> std::collections::BTreeSet<String> {
-        std::iter::once(&self.current)
-            .chain(self.history.iter().map(|s| &s.edit))
-            .chain(self.redo.iter().map(|s| &s.edit))
-            .chain(self.snapshots.iter().map(|s| &s.edit))
-            .filter(|e| !e.look_lut.lut.is_none())
-            .map(|e| e.look_lut.lut.name().to_string())
-            .collect()
-    }
-
-    /// Every state here that names the look `from` names `to` instead,
-    /// in place: nothing is recorded, nothing undone is dropped, and
-    /// undo never goes back to a name that is no longer there.
+    /// Every state of this line that names the look `from` names `to`
+    /// instead, in place: nothing is recorded, nothing undone is
+    /// dropped, and undo never goes back to a name that is no longer
+    /// there.
     ///
     /// A renamed state is a new state to the ids, though: from the
     /// first renamed state on, each state's id is made again from its
@@ -2357,6 +2366,166 @@ impl Sidecar {
             step(&mut s.edit, s.label.as_deref(), &mut s.id);
         }
         renamed | chained
+    }
+}
+
+/// What holds for the whole file, every version's line at once: a turn,
+/// a look renamed, the frame's shape, the repair sources. A method here
+/// that a [`Line`] also has (`take_sources`, `rename_look`, `fill_ids`)
+/// is the line's applied to every line, and is what a call on a
+/// sidecar reaches.
+impl Sidecar {
+    // Version 0's steps, said again here so that a call on a sidecar
+    // borrows the sidecar and not its line: `s.record_export(&s.current
+    // .clone(), ..)` reads the sidecar while the call's borrow waits,
+    // which a borrow taken through the deref does not allow.
+
+    /// [`Line::record`] on version 0.
+    pub fn record(&mut self, edit: Edit) -> bool {
+        self.line.record(edit)
+    }
+
+    /// [`Line::record_as`] on version 0.
+    pub fn record_as(&mut self, edit: Edit, label: Option<String>) -> bool {
+        self.line.record_as(edit, label)
+    }
+
+    /// [`Line::record_export`] on version 0.
+    pub fn record_export(&mut self, edit: &Edit, exported: Exported) -> bool {
+        self.line.record_export(edit, exported)
+    }
+
+    /// [`Line::go_to`] on version 0.
+    pub fn go_to(&mut self, index: usize) -> bool {
+        self.line.go_to(index)
+    }
+
+    /// [`Line::take_snapshot`] on version 0.
+    pub fn take_snapshot(&mut self, name: impl Into<String>, taken: u64) -> usize {
+        self.line.take_snapshot(name, taken)
+    }
+
+    /// [`Line::restore_snapshot`] on version 0.
+    pub fn restore_snapshot(&mut self, index: usize) -> bool {
+        self.line.restore_snapshot(index)
+    }
+
+    /// [`Line::undo`] on version 0.
+    pub fn undo(&mut self) -> bool {
+        self.line.undo()
+    }
+
+    /// [`Line::redo`] on version 0.
+    pub fn redo(&mut self) -> bool {
+        self.line.redo()
+    }
+
+    /// Version 0's line and every version's, version 0 first.
+    pub fn lines(&self) -> impl Iterator<Item = &Line> {
+        std::iter::once(&self.line).chain(self.versions.iter().map(|v| &v.line))
+    }
+
+    /// [`Self::lines`], to change in place.
+    pub fn lines_mut(&mut self) -> impl Iterator<Item = &mut Line> {
+        std::iter::once(&mut self.line).chain(self.versions.iter_mut().map(|v| &mut v.line))
+    }
+
+    /// Every edit of every line: see [`Line::edits`].
+    pub fn edits(&self) -> impl Iterator<Item = &Edit> {
+        self.lines().flat_map(Line::edits)
+    }
+
+    fn edits_mut(&mut self) -> impl Iterator<Item = &mut Edit> {
+        self.lines_mut().flat_map(Line::edits_mut)
+    }
+
+    /// Whether any state of any version is still waiting on the
+    /// frame's shape: see [`Edit::needs_frame`]. A sidecar that answers
+    /// yes reads and renders, and saves back as the version 3 it is,
+    /// but its crop must not be refitted until the frame is known.
+    pub fn needs_frame(&self) -> bool {
+        self.edits().any(Edit::needs_frame)
+    }
+
+    /// Finish version 4's step on every state of every version, now the
+    /// frame's shape is known. `source_portrait` is as
+    /// [`Edit::migrate_with_frame`] has it, and includes this
+    /// sidecar's own [`Self::turn`], since that is already in the
+    /// developed picture. A no-op when nothing was waiting.
+    pub fn migrate_with_frame(&mut self, source_portrait: bool) {
+        for edit in self.edits_mut() {
+            edit.migrate_with_frame(source_portrait);
+        }
+    }
+
+    /// [`Line::take_sources`] on every version's line; true when any
+    /// changed.
+    pub fn take_sources(&mut self, done: &[retouch::Patch]) -> bool {
+        let mut took = false;
+        for line in self.lines_mut() {
+            took |= line.take_sources(done);
+        }
+        took
+    }
+
+    /// Turn the frame `quarters` more quarter turns clockwise, and
+    /// carry every state here round with it: the crop, the keystone
+    /// and a held aspect, and the masks and the repair patches when
+    /// `aspect` says what shape the picture is (see [`Edit::turn`]).
+    ///
+    /// *Every* state, not only the current one, and of every version,
+    /// the turn being the file's. A turn is not a step in developing
+    /// the picture — no state is recorded for it, and an undo that
+    /// took the crop back but left the frame on its side would be
+    /// worse than one that does neither — and that promise only holds
+    /// if what undo, redo and a snapshot hand back means the same
+    /// pixels the current state does. So the history, the redo stack
+    /// and the snapshots take the same map.
+    ///
+    /// `aspect` is the picture's width over its height *before* the
+    /// turn, and is `None` when the caller cannot say. The geometry
+    /// turns either way; anything placed on the picture is left
+    /// where it is, which [`Sidecar::placed`] warns the caller
+    /// about.
+    pub fn turn_by(&mut self, quarters: i32, aspect: Option<f32>) {
+        if quarters.rem_euclid(4) == 0 {
+            return;
+        }
+        self.turn = (i32::from(self.turn) + quarters).rem_euclid(4) as u8;
+        let positions = aspect.map(|a| mask::Turned::new(quarters, a));
+        for edit in self.edits_mut() {
+            edit.turn(quarters, positions);
+        }
+    }
+
+    /// Whether any state of any version has work placed on the picture
+    /// itself; see [`Edit::placed`].
+    pub fn placed(&self) -> bool {
+        self.edits().any(Edit::placed)
+    }
+
+    /// Whether any state of any version names the look `name`: the
+    /// current one, the history, what was undone, or a snapshot.
+    pub fn names_look(&self, name: &str) -> bool {
+        self.edits().any(|e| e.look_lut.names(name))
+    }
+
+    /// Every look any state of any version names, `none` aside.
+    pub fn looks_named(&self) -> std::collections::BTreeSet<String> {
+        self.edits()
+            .filter(|e| !e.look_lut.lut.is_none())
+            .map(|e| e.look_lut.lut.name().to_string())
+            .collect()
+    }
+
+    /// [`Line::rename_look`] on every version's line; true when any
+    /// state changed.
+    pub fn rename_look(&mut self, from: &str, to: &str) -> bool {
+        let mut renamed = false;
+        for line in self.lines_mut() {
+            renamed |= line.rename_look(from, to);
+        }
+        renamed
     }
 
     /// The hidden folder under `shoot`, made and hidden: every time
@@ -4089,7 +4258,7 @@ mod tests {
         for (w, h) in [(6000.0f32, 4000.0f32), (4000.0f32, 6000.0f32)] {
             for q in 1..4i32 {
                 let mut sidecar = Sidecar {
-                    current: make(),
+                    line: Line::of(make()),
                     ..Sidecar::default()
                 };
                 // One state behind it, one undone in front of it and
@@ -4168,7 +4337,7 @@ mod tests {
 
         // And all the way round is where it started.
         let mut sidecar = Sidecar {
-            current: make(),
+            line: Line::of(make()),
             ..Sidecar::default()
         };
         let (w, h) = (6000.0f32, 4000.0f32);
@@ -4461,9 +4630,9 @@ mod tests {
         struct Before<'a> {
             current: &'a Edit,
             id: &'a Option<String>,
-            saved: u64,
             history: Vec<State<'a>>,
             snapshots: &'a [Snapshot],
+            saved: u64,
         }
         let before = Before {
             current: &plain.current,
@@ -4975,5 +5144,120 @@ mod tests {
         let before = sidecar.clone();
         assert!(!sidecar.rename_look("Neon", "Other"));
         assert_eq!(sidecar, before);
+    }
+}
+
+#[cfg(test)]
+mod before_versions {
+    use super::*;
+
+    pub(crate) fn pinned() -> Sidecar {
+        let mut s = Sidecar::default();
+        let exposed = |stops: f32| {
+            let mut e = Edit::default();
+            e.light.exposure = stops;
+            e
+        };
+        s.record(exposed(0.5));
+        s.record_as(exposed(1.0), Some("Preset: Faded film".into()));
+        s.take_snapshot("Snapshot 1", 1_700_000_100);
+        s.record_export(
+            &exposed(1.0),
+            Exported {
+                file: "/shoot/IMG_0001.jpg".into(),
+                preset: Some("Web".into()),
+                at: 1_700_000_200,
+            },
+        );
+        s.record_as(exposed(1.5), Some("Sync from IMG_0002.CR3".into()));
+        s.record_export(
+            &exposed(1.5),
+            Exported {
+                file: "/shoot/IMG_0001-1.jpg".into(),
+                preset: None,
+                at: 1_700_000_300,
+            },
+        );
+        s.meta.rating = 3;
+        s.meta.keywords = vec!["harbor".into(), "dusk".into()];
+        s.turn_by(1, None);
+        s.xmp = Some(xmp::Adopted {
+            file: "IMG_0001.xmp".into(),
+            len: 1234,
+            hash: "0123456789abcdef".into(),
+        });
+        s.absorbed = vec!["00112233445566778899aabbccddeeff".into()];
+        s.advance(&sync::Stamp {
+            at: 1_700_000_400,
+            host: "desk".into(),
+        });
+        s.meta.title = "Harbor".into();
+        s.advance(&sync::Stamp {
+            at: 1_700_000_500,
+            host: "laptop".into(),
+        });
+        s
+    }
+
+    const BEFORE_VERSIONS: &str = include_str!("../fixtures/sidecar-before-versions.gcd");
+
+    /// The states of a line as (edit, label, exports), the current last.
+    fn states(l: &Line) -> Vec<(Edit, Option<String>, Vec<Exported>)> {
+        l.history
+            .iter()
+            .map(|h| (h.edit.clone(), h.label.clone(), h.exports.clone()))
+            .chain([(
+                l.current.clone(),
+                l.current_label.clone(),
+                l.current_exports.clone(),
+            )])
+            .collect()
+    }
+
+    #[test]
+    fn a_schema_four_sidecar_reads_whole_and_writes_at_five() {
+        let dir = std::env::temp_dir().join(format!("gc-before-versions-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("IMG_0001.CR3.gcd");
+        std::fs::write(&path, BEFORE_VERSIONS).unwrap();
+        let read = Sidecar::read(&path).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+
+        // What a build at schema 4 wrote, the same today: the states and
+        // their words and records, the snapshots, the file's own facts.
+        let made = pinned();
+        assert!(read.edits().all(|e| e.version == VERSION));
+        assert_eq!(states(&read.line), states(&made.line));
+        assert_eq!(read.snapshots, made.snapshots);
+        assert_eq!(read.last_export, made.last_export);
+        assert_eq!(read.meta, made.meta);
+        let raw: Sidecar = serde_json::from_str(BEFORE_VERSIONS).unwrap();
+        assert_eq!(read.meta_at, raw.meta_at);
+        assert_eq!(read.turn, made.turn);
+        assert_eq!(read.xmp, made.xmp);
+        assert_eq!(read.saved, made.saved);
+        assert_eq!(read.revisions, raw.revisions);
+        assert_eq!(read.revisions.len(), 2);
+        assert_eq!(read.absorbed, made.absorbed);
+        assert!(read.versions.is_empty());
+        // The stored ids are kept as they were, never made again.
+        let value: serde_json::Value = serde_json::from_str(BEFORE_VERSIONS).unwrap();
+        assert_eq!(read.current_id.as_deref(), value["id"].as_str());
+        for (h, v) in read
+            .history
+            .iter()
+            .zip(value["history"].as_array().unwrap())
+        {
+            assert_eq!(h.id.as_deref(), v["id"].as_str());
+        }
+
+        // Written, every edit says 5; read again and written again, the
+        // same bytes.
+        let written = read.to_json();
+        assert!(written.contains("\"version\": 5"));
+        assert!(!written.contains("\"version\": 4"));
+        let again = Sidecar::from_json(&written).unwrap();
+        assert_eq!(again, read);
+        assert_eq!(again.to_json(), written);
     }
 }

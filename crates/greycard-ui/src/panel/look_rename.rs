@@ -735,7 +735,7 @@ fn one(frame: JobFrame, old: &str, new: &str, placement: Placement, stop: &Atomi
                 // What the window undid goes with it, when the file is
                 // where the window left it.
                 if let Some(m) = memory.filter(|m| m.current == read.current) {
-                    read.redo = m.redo;
+                    read.redo = m.line.redo;
                 }
                 (read, Placement::at(&file))
             }

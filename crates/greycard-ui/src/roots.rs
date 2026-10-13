@@ -5875,7 +5875,7 @@ pub(crate) mod tests {
         std::fs::create_dir_all(&a).unwrap();
         let files = frames(&a, &["x.tif", "y.tif", "z.tif"]);
         let fresh = || Sidecar {
-            current: greycard_edit::Edit::for_picture(),
+            line: greycard_edit::Line::of(greycard_edit::Edit::for_picture()),
             ..Sidecar::default()
         };
         let mut s = fresh();
@@ -7394,7 +7394,7 @@ pub(crate) mod tests {
         let (dir, files, writer, app, state, worker) = rated_under_a_root("rows-export");
         open_view(&state, &app, &worker, View::Roots(None));
         land_all(&state, &app, &worker);
-        let edit = Sidecar::load(&files[1]).unwrap().unwrap().current;
+        let edit = Sidecar::load(&files[1]).unwrap().unwrap().line.current;
         {
             let mut st = state.borrow_mut();
             assert!(!st.from_row[1].read, "a stand-in");

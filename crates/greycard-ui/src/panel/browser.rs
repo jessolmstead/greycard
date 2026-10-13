@@ -1108,7 +1108,7 @@ pub(crate) fn load_sidecar_said(
         if greycard_core::picture::is_picture_path(f) {
             (
                 Sidecar {
-                    current: Edit::for_picture(),
+                    line: greycard_edit::Line::of(Edit::for_picture()),
                     ..Sidecar::default()
                 },
                 false,
@@ -3478,7 +3478,7 @@ mod tests {
         // And one rated in a picture that is not a raw, which has no
         // learned denoiser to seed.
         let mut sidecar = Sidecar {
-            current: Edit::for_picture(),
+            line: greycard_edit::Line::of(Edit::for_picture()),
             ..Sidecar::default()
         };
         sidecar.meta.set_rating(1);

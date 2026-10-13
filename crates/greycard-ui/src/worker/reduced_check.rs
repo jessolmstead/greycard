@@ -478,7 +478,7 @@ fn write_edited_folder() {
         let mut edit = Edit::default();
         edit.light.exposure = 1.5;
         let mut sidecar = greycard_edit::Sidecar {
-            current: edit,
+            line: greycard_edit::Line::of(edit),
             ..greycard_edit::Sidecar::default()
         };
         sidecar.save(&path).unwrap();
