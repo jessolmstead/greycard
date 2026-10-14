@@ -150,7 +150,16 @@ We would build the macOS one first, and only if the Mac check below
 shows the margin wrong (a large or side Dock, a hidden Dock, a scaled
 display).
 
-## To check on a Mac
+## Checked on a Mac, 2026-10-13
+
+A 14-inch MacBook with the Dock at the foot: the log read `window:
+monitor 1512x982 at 2.00x, opening at 1432x800`, the window opened
+with no jump and its foot clear of the Dock, and the export sheet's
+buttons were in view with a text watermark on. The true work area
+(above) goes to the roadmap's pool for the large or side Dock the
+guess does not cover.
+
+## To check on a Mac (as written before the check)
 
 Open the editor on a 14-inch MacBook with the Dock at the foot and
 read the log's `window:` line: the monitor should read 1512x982 at 2.00x

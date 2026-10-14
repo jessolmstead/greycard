@@ -112,3 +112,9 @@ zooms by a sixth of a step, six of them make a whole step, and with
 Ctrl let go the same delta pans again. The edge rule is checked on its
 own: a pan stops at either edge, does nothing where the frame fits, and
 never pulls a dragged-out center back in a jump.
+
+## Checked on a Mac, 2026-10-13
+
+On a MacBook trackpad: two-finger scroll pans, a pinch zooms about the
+pointer, and Command with the scroll zooms, which is the modifier Slint
+reports as control on macOS; Ctrl does not. All as designed.

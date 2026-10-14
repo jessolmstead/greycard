@@ -36,8 +36,6 @@ collections and smart collections that survive a move, a mask has its
 own Detail, and the first tester's rough edges on masks, the touchpad
 and export are smoothed.
 
-- [ ] Check the window fit on the Mac before the cut: no jump, the foot
-      clear of the Dock, the export sheet's buttons in view (§306)
 - [ ] Virtual copies, part 2: a version is a cell beside its file with its
       own thumbnail and marks; New version, Rename, Swap with the original,
       Delete (§309)
@@ -390,6 +388,11 @@ clears or a tester asks for it.
 
 
 #### Editor
+- [ ] The window fit by the platform's true work area instead of a
+      guessed margin: macOS `NSScreen.visibleFrame`, Windows
+      `SPI_GETWORKAREA` or `rcWork`, X11 `_NET_WORKAREA` (§306). The
+      guess held on a 14-inch MacBook with the default Dock (checked
+      2026-10-13); a large or side Dock is the case this is for
 - [ ] `worker.rs`, `roots.rs` and `render.rs` split into module directories,
       pure moves with the same public surface; the long `run` and
       `develop_job` left whole for a later round. Waits on virtual copies
