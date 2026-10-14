@@ -488,18 +488,24 @@ pub struct Tone {
     /// Slope at mid grey relative to the base curve's: 1 leaves it,
     /// above steepens, below flattens.
     pub contrast: f32,
-    /// Stops of shift over mid grey, full two and a half stops above
-    /// it, a fifth at it, none a stop under it. Read from the region
-    /// the pixel sits in and not from the pixel: the tone equalizer,
-    /// `finish.rs`. The slider runs ±2.
+    /// Stops of shift on the bright side of the frame, placed by the
+    /// frame's own range: a ramp over the span from the frame's median
+    /// to its top, held to 1.6 to 3.5 stops and hung from the top
+    /// (`highlights_span` in `finish.rs`). Read from the region the
+    /// pixel sits in and not from the pixel: the tone equalizer. The
+    /// slider runs ±2.
     pub highlights: f32,
     /// Stops of shift under mid grey, full three and a half stops
     /// below it, none at it. By region too, and ±2.
     pub shadows: f32,
-    /// The white point, in stops, pivoted at mid grey: a luminance this
-    /// many stops under scene white (2.47 over mid grey) is brought to
-    /// scene white, and everything over mid grey with it, by a power on
-    /// the luminance; nothing at or under mid grey moves. Positive clips
+    /// The white point, in stops, pivoted at the foot of the
+    /// highlights span (the frame's median where the span is the
+    /// frame's own; under it on a frame narrower than 1.6 stops, over
+    /// it on one wider than 3.5), held between 2.5 stops under mid grey
+    /// and mid grey: a luminance this many stops under display white
+    /// is brought to display white, and everything over the pivot with
+    /// it, by a power on the luminance; nothing at or under the pivot
+    /// moves. Positive clips
     /// earlier and stretches the top, negative puts the clip further
     /// out and compresses the top towards mid grey. Global, not by
     /// region: `white_point` in `finish.rs`. The slider runs ±2.

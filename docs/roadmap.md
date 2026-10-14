@@ -23,11 +23,6 @@ None at present.
   Having to bump the exposure on every single frame can be a bit annoying,
   and it seems to *roughly* match Lightroom's default exposure. Decides
   the feel track's baseline exposure item (§231)
-- The highlights slider: should it be adaptive and reach more down into the
-  midtones like Lightroom or stay more surgical as it is? Decides the
-  feel track's highlights-and-whites item; §250's trial is built on the
-  highlights branch
-
 
 ## Next: 0.7.0
 
@@ -106,17 +101,13 @@ Look section's job.
       per body: the Canons land within a tenth of a stop of Lightroom,
       the GFX half a stop over (§141, §143). Waits on one DNG exported
       from Lightroom per body (R6 II, R5 II, R8, GFX 100S II)
-- [ ] Highlights and whites by the frame's own range or in fixed stops:
-      fixed stops for now (§146); ask testers which feels right and
-      decide before the track closes. The frame's range is what would
-      reach under the median, give the watch its full pull and bring a
-      clipped sky under white as Lightroom does
 - [ ] Whites and shadows reshaped against the set: whites moves only
       the top where Lightroom's moves the mid-tones, and wants two more
       frames of whites exports; shadows over-lifts the mid-tones of a
       low-key frame; the tops still sit 0.1 to 0.2 stops under
       Lightroom's where they are not the sensor's clip (§143, §145,
-      §149, §150). Waits on the fixed-or-range decision
+      §149, §150). The range decision is made (§315); wants the Lightroom
+      whites exports
 - [ ] The guided plane's halo at a hard edge, measured; darktable's
       exposure-independent guided filter if it shows (§85)
 - [ ] The contrast filters weighted by chroma through the whole range,

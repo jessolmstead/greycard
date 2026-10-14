@@ -41,7 +41,11 @@ use crate::{Edit, Sidecar};
 /// change to an op, a default the edit does not store, the shrink that
 /// makes the kept pictures), and every picture kept under the old
 /// number is never asked for again.
-pub const DEVELOP_RECIPE: u32 = 2;
+///
+/// 2: a tint blends toward its hue rather than turning it, 2026-10-10.
+/// 3: highlights by the frame's own range and whites pivoting at the
+/// span's foot, 2026-10-13.
+pub const DEVELOP_RECIPE: u32 = 3;
 
 /// What the develop of `edit` reads outside the sidecar, with the
 /// directories it reads them from: the look directory and the profile

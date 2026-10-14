@@ -321,6 +321,11 @@ pub struct Guide {
     /// Source pixels to a guide texel each way.
     pub scale: usize,
     pub data: Vec<f32>,
+    /// The frame's own range as the plane reads it, in the same stops:
+    /// its median region and its top, the 99th percentile of the
+    /// plane ([`FRAME_TOP`]). Where the highlights ramp sits is placed
+    /// by these ([`FrameRange`]).
+    pub range: [f32; 2],
 }
 
 impl Guide {
@@ -336,6 +341,7 @@ impl Guide {
         height: 0,
         scale: 1,
         data: Vec::new(),
+        range: [0.0, 0.0],
     };
 
     /// The guide at a continuous source position, bilinear, the edges
@@ -396,12 +402,32 @@ pub fn guide_plane(image: &WorkingImage) -> Guide {
         }
     });
     let data = greycard_core::guided::filter(&small, None, gw, gh, GUIDE_RADIUS, GUIDE_EPS);
+    let range = plane_range(&data);
     Guide {
         width: gw,
         height: gh,
         scale,
         data,
+        range,
     }
+}
+
+/// Where the frame's top is read, as a quantile of the guide plane: a
+/// region, not a speck, since the plane is smoothed, and short of its
+/// very brightest so that a lamp in the frame does not stand for it.
+const FRAME_TOP: f32 = 0.99;
+
+/// The median and the [`FRAME_TOP`] quantile of a plane.
+pub fn plane_range(data: &[f32]) -> [f32; 2] {
+    if data.is_empty() {
+        return [0.0, 0.0];
+    }
+    let mut v = data.to_vec();
+    let mut at = |q: f32| {
+        let i = ((v.len() - 1) as f32 * q).round() as usize;
+        *v.select_nth_unstable_by(i, f32::total_cmp).1
+    };
+    [at(0.5), at(FRAME_TOP)]
 }
 
 /// One working-space pixel through `to_out` (the working space to the
@@ -461,7 +487,7 @@ pub fn finish_pixel_with(
     stops: f32,
     grain: Option<[f32; 3]>,
     reference: Option<[f32; 2]>,
-    guide: Option<f32>,
+    guide: Option<(f32, [f32; 2])>,
     detail: Option<([f32; 3], &DetailMeta)>,
     look: Option<&lut::Look>,
     to_out: &[[f32; 3]; 3],
@@ -532,9 +558,19 @@ pub fn finish_pixel_with(
     }
     // The guide is the scene's, before any exposure: the exposure at
     // this pixel is a shift of it in stops and the contrast a scale,
-    // which is what the power about mid grey is in stops.
-    let g = guide.map(|g| t.contrast * (g + exposure));
-    c = global.source.curve(shape(c, &t, g), global.display_curve);
+    // which is what the power about mid grey is in stops. The frame's
+    // range is placed by the picture's own exposure and contrast, not
+    // this pixel's, so a mask that brightens a region moves it up the
+    // highlights ramp.
+    let g = guide.map(|(g, _)| t.contrast * (g + exposure));
+    let span = highlights_span(
+        guide.map_or(FRAME_TYPICAL, |(_, range)| range),
+        global.source.baseline() + global.light.exposure,
+        global.light.tone.contrast,
+    );
+    c = global
+        .source
+        .curve(shape(c, &t, g, span), global.display_curve);
     c = [0, 1, 2].map(|k| {
         let x = encode(c[k].clamp(0.0, 1.0));
         let mut x2 = x;
@@ -690,7 +726,12 @@ pub fn pick(
     if oklab_pass_acts(&mixer, &color, &bw, &tint) {
         c = mix_with(c, &mixer, &color, &bw, &tint, None);
     }
-    c = source.curve(shape(c, &light.tone, None), display_curve);
+    let span = highlights_span(
+        FRAME_TYPICAL,
+        source.baseline() + light.exposure,
+        light.tone.contrast,
+    );
+    c = source.curve(shape(c, &light.tone, None, span), display_curve);
     let encoded = c.map(|v| encode(v.clamp(0.0, 1.0)));
     let luma = encode((LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2]).clamp(0.0, 1.0));
     let shaded = [0, 1, 2].map(|k| decode(lookup(curves, k, encoded[k])));
@@ -968,48 +1009,69 @@ fn shade_full(c: [f32; 3], shift: impl Fn(f32) -> [f32; 2]) -> [f32; 3] {
     })
 }
 
-/// Where the two exposure shifts act, in stops over mid grey as the
-/// guide reads them: shadows below it, highlights over it.
-///
-/// Scene white on these cameras is 2.47 stops over mid grey
-/// ([`SCENE_WHITE_STOPS`]). Highlights runs from a stop under mid grey
-/// to scene white, where it is full: §85's ramp began at mid grey and
-/// gave a region a stop over it a third of the slider, which read as
-/// a slider that stopped short of the mid-tones (§98). Now that region
-/// takes six tenths and mid grey itself a fifth, so at the slider's
-/// limit mid grey moves four tenths of a stop. Shadows is full three
-/// and a half stops under mid grey and nothing at it; §85 had three,
-/// and the extra half stop is what the wider range costs.
-///
-/// The sliders are ±2 stops. A smoothstep of `a` stops over a width
-/// `w` has a peak slope of `1.5 a / w`: 0.86 for each alone, and
-/// where the two overlap, between a stop under mid grey and mid grey,
-/// their slopes add to 0.86 at worst with both at their limit. So no
-/// setting of either turns the curve back: the guard §19 wrote holds,
-/// and a test sweeps it. Both ramps a half stop narrower, or the
-/// range at ±2 over §85's ramps, and it does not.
+/// Where shadows acts, in stops over mid grey as the guide reads
+/// them: full three and a half stops under mid grey and nothing at
+/// it (§98). A smoothstep of `a` stops over a width `w` has a peak
+/// slope of `1.5 a / w`, 0.86 at the slider's ±2, so on its own it
+/// never turns the curve back.
 const SHADOWS_RAMP: (f32, f32) = (-3.5, 0.0);
-const HIGHLIGHTS_RAMP: (f32, f32) = (-1.0, 2.5);
 
-/// How much of the highlights slider a region takes, by its stops over
-/// mid grey: rising over [`HIGHLIGHTS_RAMP`] to [`HIGHLIGHTS_PEAK`], and
-/// easing back by [`HIGHLIGHTS_EASE_DEPTH`] of that over
-/// [`HIGHLIGHTS_EASE`], so the brightest tones, whose place is display
-/// white, take less than the bright mid-tones do. Measured against
-/// Lightroom's -100 on the reference set (§146): the slider's -2 is
-/// about that, -1.1 stops at the peak and -0.66 at scene white, where
-/// §85's ramp gave the top two full stops, twice Lightroom's. In
-/// fixed stops of light, not the frame's own range, for now (§146).
-/// A peak slope of 0.47 at the slider's limit, rising, and 0.52
-/// easing, so the sweep of every corner still holds.
-const HIGHLIGHTS_PEAK: f32 = 0.55;
-const HIGHLIGHTS_EASE: (f32, f32) = (2.0, DISPLAY_WHITE_STOPS);
-const HIGHLIGHTS_EASE_DEPTH: f32 = 0.4;
+/// The range a frame without a guide plane is taken to have, as
+/// [`Guide::range`] has it: the median and the top of a typical frame
+/// of the reference set (§250), in scene stops over mid grey.
+pub const FRAME_TYPICAL: [f32; 2] = [-1.7, 1.1];
 
-fn highlights_weight(g: f32) -> f32 {
+/// The least and the most of a frame the highlights ramp spans, in
+/// stops (§250). Its span is the frame's own from the median to the
+/// top, held to these: the least keeps the ramp's slope under one on
+/// a frame whose whole range sits within a stop of grey (the watch's
+/// is 0.8), the most keeps it off the shadows of a low-key frame,
+/// whose median sits five stops under its lamps.
+const HIGHLIGHTS_SPAN: (f32, f32) = (1.6, 3.5);
+/// Where on the span the highlights rise, from nothing to the peak,
+/// as a share of it: 0 is its foot, the median where the span is the
+/// frame's own, and 1 its top. From under the median, so a region
+/// there takes a fifth of the peak, where Lightroom's takes a tenth
+/// or two of a stop (§143); full in the bright mid-tones.
+const HIGHLIGHTS_RISE: (f32, f32) = (-0.3, 0.75);
+/// Where it eases back, from the peak to a little past the frame's
+/// top, and by how much of the peak, and the peak itself: Lightroom's
+/// -100 pulls hardest in the bright mid-tones and gives the brightest
+/// regions a half to two thirds of that (§146).
+const HIGHLIGHTS_EASE: (f32, f32) = (0.75, 1.2);
+const HIGHLIGHTS_EASE_DEPTH: f32 = 0.5;
+const HIGHLIGHTS_PEAK: f32 = 0.42;
+
+/// Where the highlights ramp sits in a frame, in stops over mid grey
+/// as [`shape`] reads a region: the foot of its span and the span.
+/// `range` is the frame's median and top in scene stops
+/// ([`Guide::range`]), brought to the picture's exposure and contrast
+/// as a region's reading is. The span hangs from the top, so a frame
+/// whose range is held to [`HIGHLIGHTS_SPAN`] keeps the ramp on its
+/// brightest regions.
+pub fn highlights_span(range: [f32; 2], exposure: f32, contrast: f32) -> [f32; 2] {
+    let contrast = contrast.max(MIN_CONTRAST);
+    let top = contrast * (range[1] + exposure);
+    let median = contrast * (range[0] + exposure);
+    let width = (top - median).clamp(HIGHLIGHTS_SPAN.0, HIGHLIGHTS_SPAN.1);
+    [top - width, width]
+}
+
+/// How much of the highlights slider a region takes, by where it sits
+/// in the frame's span ([`highlights_span`]): rising over
+/// [`HIGHLIGHTS_RISE`] to [`HIGHLIGHTS_PEAK`], then easing back by
+/// [`HIGHLIGHTS_EASE_DEPTH`] of that over [`HIGHLIGHTS_EASE`] and
+/// holding there. Placed by the frame's own range rather than in fixed stops
+/// (§250, the question §146 left open): the same slider reaches the
+/// mid-tones of a flat frame and the sky of a contrasty one, as
+/// Lightroom's does. Its peak slope at the slider's limit is
+/// `2 * 1.5 * 0.42 / 1.05 / span`, 0.75 at the least span, and
+/// easing `2 * 1.5 * 0.42 * 0.5 / 0.45 / span`, 0.875.
+fn highlights_weight(g: f32, span: [f32; 2]) -> f32 {
+    let u = (g - span[0]) / span[1];
     HIGHLIGHTS_PEAK
-        * smoothstep(HIGHLIGHTS_RAMP.0, HIGHLIGHTS_RAMP.1, g)
-        * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE.0, HIGHLIGHTS_EASE.1, g))
+        * smoothstep(HIGHLIGHTS_RISE.0, HIGHLIGHTS_RISE.1, u)
+        * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE.0, HIGHLIGHTS_EASE.1, u))
 }
 
 /// Scene white, in stops over mid grey: where a channel at the
@@ -1039,8 +1101,32 @@ const SCENE_WHITE_STOPS: f32 = 2.47;
 /// gives. Held at -3.5, where it is 0.48.
 const WHITES_RANGE: (f32, f32) = (-3.5, 2.0);
 
-/// The whites control: a white point pivoted at mid grey, before the
-/// shoulder. A luminance `whites` stops under display white, where the
+/// Where the white point pivots, in stops over mid grey as [`shape`]
+/// reads a region, held: the foot of the frame's span
+/// ([`highlights_span`]): the frame's median where the span is its own,
+/// brought to the picture's exposure and contrast, and hung from its
+/// top as the highlights ramp is.
+/// Never over mid grey, where the slider's range was chosen
+/// against the pole (a pivot over grey brings the pole nearer), and
+/// never more than two and a half stops under it, so a low-key frame's
+/// whites stays off its shadows.
+const WHITES_PIVOT: (f32, f32) = (-2.5, 0.0);
+
+/// The white point's pivot for a frame's span: [`WHITES_PIVOT`] holds
+/// its foot.
+fn whites_pivot(span: [f32; 2]) -> f32 {
+    span[0].clamp(WHITES_PIVOT.0, WHITES_PIVOT.1)
+}
+
+/// The whites control: a white point pivoted at the foot of the
+/// frame's span (by [`whites_pivot`]: the median where the span is the
+/// frame's own, under it on a frame narrower than the least span, over
+/// it on one wider than the most; it was mid grey before, §250's next
+/// step), before the shoulder. What follows says mid grey where the
+/// pivot is grey; with the pivot `f` stops over it the stops are
+/// counted from `f`, and the exponent is `(3.27 - f) / (3.27 - f -
+/// whites)`, which over the pivot's hold is never steeper than at grey,
+/// so [`WHITES_RANGE`] still holds the pole off. A luminance `whites` stops under display white, where the
 /// raw clips and the shoulder reaches white (§145), is brought to
 /// display white, and everything over mid grey with it, by a power
 /// about mid grey on the luminance: nothing below mid grey, and above
@@ -1065,17 +1151,18 @@ const WHITES_RANGE: (f32, f32) = (-3.5, 2.0);
 /// The whites it is given is held to [`WHITES_RANGE`] first, because
 /// the value that reaches it is not the slider's.
 #[inline]
-fn white_point(c: [f32; 3], whites: f32) -> [f32; 3] {
+fn white_point(c: [f32; 3], whites: f32, pivot: f32) -> [f32; 3] {
     if whites == 0.0 {
         return c;
     }
     let y = LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2];
-    if y <= MID_GREY {
+    let u = (y.max(1e-12) / MID_GREY).log2() - pivot;
+    if u <= 0.0 {
         return c;
     }
     let w = whites.clamp(WHITES_RANGE.0, WHITES_RANGE.1);
-    let u = (y / MID_GREY).log2();
-    let p = DISPLAY_WHITE_STOPS / (DISPLAY_WHITE_STOPS - w);
+    let reach = DISPLAY_WHITE_STOPS - pivot;
+    let p = reach / (reach - w);
     let p = 1.0 + (p - 1.0) * smoothstep(0.0, 1.0, u);
     let gain = 2f32.powf(u * (p - 1.0));
     c.map(|v| v * gain)
@@ -1094,17 +1181,30 @@ fn white_point(c: [f32; 3], whites: f32) -> [f32; 3] {
 /// shift is one constant, so a gain is all it is and the texture keeps
 /// every bit of its contrast, where a shift by the pixel's own
 /// luminance flattens what it touches.
+///
+/// The white point pivots at the foot of the frame's span, as the
+/// highlights ramp is placed by the frame's range (§250), and comes
+/// after it, on the pixel's own luminance.
+///
+/// Shadows first, then highlights on the region where shadows put
+/// it: each on its own never turns the curve back, and one after the
+/// other neither can the two, wherever the frame's range has put the
+/// highlights ramp (§250). Added side by side, as §98 had them, that
+/// held only while the two ramps were fixed.
 #[inline]
-fn shape(c: [f32; 3], t: &greycard_edit::Tone, guide: Option<f32>) -> [f32; 3] {
+fn shape(c: [f32; 3], t: &greycard_edit::Tone, guide: Option<f32>, span: [f32; 2]) -> [f32; 3] {
     let c = c.map(|v| MID_GREY * (v.max(0.0) / MID_GREY).powf(t.contrast));
     let g = guide.unwrap_or_else(|| {
         let y = LUMA[0] * c[0] + LUMA[1] * c[1] + LUMA[2] * c[2];
         (y.max(1e-6) / MID_GREY).log2()
     });
-    let shift = t.shadows * (1.0 - smoothstep(SHADOWS_RAMP.0, SHADOWS_RAMP.1, g))
-        + t.highlights * highlights_weight(g);
-    let gain = 2f32.powf(shift);
-    black_point(white_point(c.map(|v| v * gain), t.whites), t.blacks)
+    let lifted = g + t.shadows * (1.0 - smoothstep(SHADOWS_RAMP.0, SHADOWS_RAMP.1, g));
+    let shifted = lifted + t.highlights * highlights_weight(lifted, span);
+    let gain = 2f32.powf(shifted - g);
+    black_point(
+        white_point(c.map(|v| v * gain), t.whites, whites_pivot(span)),
+        t.blacks,
+    )
 }
 
 /// The least the contrast summed over a pixel's looks may come to.
@@ -1306,7 +1406,7 @@ pub fn finish_with<T: Copy + Default + Send>(
                             on.push((&local.baked, w));
                         }
                     }
-                    g = guide.map(|(plane, sw)| plane.at(u * sw, v * sw));
+                    g = guide.map(|(plane, sw)| (plane.at(u * sw, v * sw), plane.range));
                 }
                 let (stops, grain) = frame(x, y);
                 let bands = detail.map(|(d, meta)| (d.pixel(x, y), meta));
@@ -1831,6 +1931,11 @@ mod tests {
         assert!(finish_pixel([MID_GREY; 3], &raw, &[], &m)[1] > encode(MID_GREY) + 0.05);
     }
 
+    /// The highlights span of a typical frame at the default develop.
+    fn typical() -> [f32; 2] {
+        highlights_span(FRAME_TYPICAL, BASELINE_EXPOSURE, 1.0)
+    }
+
     fn grey_at(stops: f32) -> [f32; 3] {
         [MID_GREY * 2f32.powf(stops); 3]
     }
@@ -1839,13 +1944,15 @@ mod tests {
     fn the_shifts_act_where_they_say() {
         let base = Tone::default();
         // What each gives where it is strongest, where it is nothing,
-        // and the share of it mid grey takes: highlights peaks in the
-        // bright mid-tones and eases back towards white (§146), and
-        // reaches a stop under grey so the mid-tones are in its reach
-        // (§98); shadows is full three and a half stops under grey and
+        // and the share of it mid grey takes: in a typical frame, whose
+        // median sits 0.9 stops under grey and its top 1.9 over,
+        // highlights peaks three quarters of the way up, eases back
+        // towards the top (§146) and reaches under the median (§250), so
+        // mid grey, the frame's upper mid-tones, takes two thirds of the
+        // peak; shadows is full three and a half stops under grey and
         // nothing at it.
         for (field, at, peak, elsewhere, at_grey) in [
-            ("highlights", 2.3, 0.514, -1.0, 0.109),
+            ("highlights", 1.2, 0.42, -2.0, 0.2672),
             ("shadows", -3.5, 1.0, 0.0, 0.0),
         ] {
             let mut t = base;
@@ -1854,18 +1961,19 @@ mod tests {
                 _ => t.shadows = 1.0,
             }
             // Its strongest, in stops, at a slider of one.
-            let full = shape(grey_at(at), &t, None)[1];
+            let full = shape(grey_at(at), &t, None, typical())[1];
             assert!(
-                ((full / shape(grey_at(at), &base, None)[1]).log2() - peak).abs() < 0.01,
+                ((full / shape(grey_at(at), &base, None, typical())[1]).log2() - peak).abs() < 0.01,
                 "{field}: {full}"
             );
             // Nothing beyond its reach.
             assert_eq!(
-                shape(grey_at(elsewhere), &t, None),
-                shape(grey_at(elsewhere), &base, None),
+                shape(grey_at(elsewhere), &t, None, typical()),
+                shape(grey_at(elsewhere), &base, None, typical()),
                 "{field}"
             );
-            let grey = shape(grey_at(0.0), &t, None)[1] / shape(grey_at(0.0), &base, None)[1];
+            let grey = shape(grey_at(0.0), &t, None, typical())[1]
+                / shape(grey_at(0.0), &base, None, typical())[1];
             assert!(
                 (grey.log2() - at_grey).abs() < 2e-3,
                 "{field} at grey: {grey}"
@@ -1876,7 +1984,7 @@ mod tests {
             highlights: -1.0,
             ..base
         };
-        let c = shape([0.6, 0.4, 0.2], &t, None);
+        let c = shape([0.6, 0.4, 0.2], &t, None, typical());
         assert!(
             (c[0] / c[1] - 1.5).abs() < 1e-4 && (c[1] / c[2] - 2.0).abs() < 1e-4,
             "{c:?}"
@@ -1887,8 +1995,8 @@ mod tests {
             blacks: -0.2,
             ..base
         };
-        assert_eq!(shape([MID_GREY * 0.2; 3], &crush, None)[1], 0.0);
-        assert!((shape([1.0; 3], &crush, None)[1] - 1.0).abs() < 1e-6);
+        assert_eq!(shape([MID_GREY * 0.2; 3], &crush, None, typical())[1], 0.0);
+        assert!((shape([1.0; 3], &crush, None, typical())[1] - 1.0).abs() < 1e-6);
     }
 
     /// The shoulder reaches white where the raw clips, with the baseline
@@ -1928,9 +2036,9 @@ mod tests {
         };
         let stops = |at: f32| {
             let v = MID_GREY * 2f32.powf(at);
-            (shape([v; 3], &lift, None)[1] / v).log2()
+            (shape([v; 3], &lift, None, typical())[1] / v).log2()
         };
-        assert_eq!(shape([0.0; 3], &lift, None), [0.0; 3]);
+        assert_eq!(shape([0.0; 3], &lift, None, typical()), [0.0; 3]);
         for deep in [-12.0, -8.0, -5.0] {
             assert!(
                 (stops(deep) - BLACKS_LIFT).abs() < 1e-4,
@@ -1951,9 +2059,9 @@ mod tests {
             ..Tone::default()
         };
         let v = MID_GREY / 64.0;
-        let at_half = (shape([v; 3], &half, None)[1] / v).log2();
+        let at_half = (shape([v; 3], &half, None, typical())[1] / v).log2();
         assert!((at_half - BLACKS_LIFT / 2.0).abs() < 1e-4, "{at_half}");
-        let c = shape([0.012, 0.006, 0.003], &lift, None);
+        let c = shape([0.012, 0.006, 0.003], &lift, None, typical());
         assert!(
             (c[0] / c[1] - 2.0).abs() < 1e-4 && (c[1] / c[2] - 2.0).abs() < 1e-4,
             "{c:?}"
@@ -2000,55 +2108,160 @@ mod tests {
     }
 
     #[test]
-    fn whites_puts_the_stop_it_names_at_display_white_and_leaves_grey() {
-        // Whites at plus one: a luminance a stop under display white
-        // lands at display white, where the raw clips (§149). At minus
-        // one: display white lands where a stop over it would land, at
-        // 3.27 stops of a 4.27-stop scale.
-        // Mid grey and below do not move, in either direction.
-        let white = MID_GREY * 2f32.powf(DISPLAY_WHITE_STOPS);
-        for whites in [1.0f32, -1.0] {
-            let t = Tone {
-                whites,
+    fn no_frame_range_turns_the_shifts_back() {
+        // The corners above at a typical frame's span; this at every
+        // span a frame can give, the least to the most and its foot
+        // from deep in the shadows to over white, where the highlights
+        // ramp can sit on the steepest part of the shadows' (§250).
+        // Shadows then highlights on where shadows put the region, each
+        // with a slope under one, so the sum of the two never turns the
+        // curve back. Whites after them, its pivot the span's foot
+        // held, a power with an exponent over 0.41 wherever that is,
+        // so the four corners of highlights and whites, with shadows
+        // either way, hold too. Read from the pixel's own luminance,
+        // the path that can fold.
+        for corner in 0..8u32 {
+            let sign = |bit: u32| if corner & (1 << bit) != 0 { 1.0 } else { -1.0 };
+            let tone = Tone {
+                highlights: 2.0 * sign(0),
+                shadows: 2.0 * sign(1),
+                whites: 2.0 * sign(2),
                 ..Tone::default()
             };
-            let from = shape(grey_at(DISPLAY_WHITE_STOPS - whites), &t, None)[1];
-            assert!((from / white - 1.0).abs() < 1e-4, "{whites}: {from}");
-            for stops in [0.0f32, -0.5, -2.0, -6.0] {
-                assert_eq!(
-                    shape(grey_at(stops), &t, None),
-                    shape(grey_at(stops), &Tone::default(), None)
-                );
+            for width in [HIGHLIGHTS_SPAN.0, 2.0, 2.8, HIGHLIGHTS_SPAN.1] {
+                for k in 0..=24 {
+                    let span = [-6.0 + k as f32 * 0.5, width];
+                    let mut last = -1.0;
+                    for i in 0..=1400 {
+                        let stops = -8.0 + i as f32 * 0.01;
+                        let v = shape(grey_at(stops), &tone, None, span)[1];
+                        assert!(
+                            v >= last,
+                            "{tone:?} at {span:?} turns back at {stops} stops"
+                        );
+                        last = v;
+                    }
+                }
             }
         }
-        // Smooth through mid grey: the slope just over it, against the
-        // zeroed curve's at the same place, is the slope just under it
-        // against its, to a tenth of a percent, at the slider's limit.
-        // (Against the zeroed curve because a stop is a ratio, so the
-        // slope per stop grows across the gap on its own.)
-        let t = Tone {
-            whites: -1.0,
-            ..Tone::default()
-        };
-        let base = Tone::default();
-        let at = |t: &Tone, stops: f32| shape(grey_at(stops), t, None)[1];
-        let slope = |t: &Tone, a: f32, b: f32| (at(t, b) - at(t, a)) / (b - a);
-        let below = slope(&t, -0.02, -0.005) / slope(&base, -0.02, -0.005);
-        let above = slope(&t, 0.005, 0.02) / slope(&base, 0.005, 0.02);
+    }
+
+    #[test]
+    fn the_highlights_span_is_the_frames_own_held_to_its_least_and_most() {
+        // A typical frame: from its median to its top, at the
+        // default develop.
+        let [foot, width] = highlights_span(FRAME_TYPICAL, BASELINE_EXPOSURE, 1.0);
         assert!(
-            (above / below - 1.0).abs() < 1e-3,
-            "{below} under, {above} over"
+            (foot + 0.9).abs() < 1e-5 && (width - 2.8).abs() < 1e-5,
+            "{foot} {width}"
         );
-        // And a stop over grey the exponent is in full: the value is
-        // the power's, 0.766 stops for one.
-        let want = MID_GREY * 2f32.powf(DISPLAY_WHITE_STOPS / (DISPLAY_WHITE_STOPS + 1.0));
-        assert!((at(&t, 1.0) / want - 1.0).abs() < 1e-3, "{}", at(&t, 1.0));
-        // Hue held: a color's channel ratios survive.
-        let c = shape([0.9, 0.5, 0.2], &t, None);
+        // The picture's exposure moves the span with the frame, so the
+        // same regions take the same share; its contrast scales it.
+        let up = highlights_span(FRAME_TYPICAL, BASELINE_EXPOSURE + 1.0, 1.0);
+        assert!((up[0] - foot - 1.0).abs() < 1e-5 && (up[1] - width).abs() < 1e-5);
+        let steep = highlights_span(FRAME_TYPICAL, BASELINE_EXPOSURE, 1.2);
+        assert!((steep[1] - 1.2 * width).abs() < 1e-5, "{steep:?}");
+        // A flat frame, the watch's 0.8 stops, takes the least span,
+        // hung from its top, so its median is half way up the rise.
+        let flat = highlights_span([-0.42, 0.38], 0.0, 1.0);
         assert!(
-            (c[0] / c[1] - 1.8).abs() < 1e-4 && (c[1] / c[2] - 2.5).abs() < 1e-4,
-            "{c:?}"
+            (flat[0] - (0.38 - HIGHLIGHTS_SPAN.0)).abs() < 1e-5,
+            "{flat:?}"
         );
+        assert!(highlights_weight(-0.42, flat) > 0.6 * HIGHLIGHTS_PEAK);
+        // A low-key frame, five and a half stops from its median to
+        // its lamps, the most: its median is under the ramp's foot.
+        let deep = highlights_span([-4.67, 0.97], 0.0, 1.0);
+        assert!((deep[1] - HIGHLIGHTS_SPAN.1).abs() < 1e-5, "{deep:?}");
+        assert_eq!(highlights_weight(-4.67, deep), 0.0);
+        // A typical frame's median takes a fifth of the peak, and a
+        // region a stop under it nothing.
+        let t = [foot, width];
+        let at_median = highlights_weight(foot, t) / HIGHLIGHTS_PEAK;
+        assert!((at_median - 0.1983).abs() < 1e-3, "{at_median}");
+        assert_eq!(highlights_weight(foot - 1.0, t), 0.0);
+        // Over the top it holds what the ease leaves.
+        let past = highlights_weight(foot + 2.0 * width, t);
+        assert!((past - HIGHLIGHTS_PEAK * (1.0 - HIGHLIGHTS_EASE_DEPTH)).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_planes_range_is_its_median_and_its_top() {
+        let data: Vec<f32> = (0..1001).map(|i| i as f32 / 100.0 - 5.0).collect();
+        let [median, top] = plane_range(&data);
+        assert!((median - 0.0).abs() < 1e-4, "{median}");
+        assert!((top - 4.9).abs() < 1e-4, "{top}");
+        assert_eq!(plane_range(&[]), [0.0, 0.0]);
+        assert_eq!(
+            guide_plane(&flat(1.5, 300, 200))
+                .range
+                .map(|v| (v * 1e3).round()),
+            [1500.0; 2]
+        );
+    }
+
+    #[test]
+    fn whites_puts_the_stop_it_names_at_display_white_and_leaves_its_pivot() {
+        // Whites at plus one: a luminance a stop under display white
+        // lands at display white, where the raw clips (§149). At minus
+        // one: display white lands where a stop over it would land.
+        // The pivot is the foot of the frame's span, held
+        // to `WHITES_PIVOT`: over grey it is held at grey, which is
+        // where the white point pivoted before; a typical frame's is
+        // 0.9 stops under; a low-key frame's is held 2.5 under. At and
+        // under the pivot nothing moves, in either direction.
+        let white = MID_GREY * 2f32.powf(DISPLAY_WHITE_STOPS);
+        for (span, pivot) in [
+            ([0.5, 2.0], 0.0f32),
+            (typical(), -0.9),
+            ([-4.0, 3.5], WHITES_PIVOT.0),
+        ] {
+            assert!((whites_pivot(span) - pivot).abs() < 1e-5, "{span:?}");
+            for whites in [1.0f32, -1.0] {
+                let t = Tone {
+                    whites,
+                    ..Tone::default()
+                };
+                let from = shape(grey_at(DISPLAY_WHITE_STOPS - whites), &t, None, span)[1];
+                assert!((from / white - 1.0).abs() < 1e-4, "{whites}: {from}");
+                for under in [0.0f32, -0.5, -2.0, -6.0] {
+                    assert_eq!(
+                        shape(grey_at(pivot + under), &t, None, span),
+                        shape(grey_at(pivot + under), &Tone::default(), None, span)
+                    );
+                }
+            }
+            // Smooth through the pivot: the slope just over it, against
+            // the zeroed curve's at the same place, is the slope just
+            // under it against its, to a tenth of a percent, at the
+            // slider's limit. (Against the zeroed curve because a stop
+            // is a ratio, so the slope per stop grows across the gap on
+            // its own.)
+            let t = Tone {
+                whites: -1.0,
+                ..Tone::default()
+            };
+            let base = Tone::default();
+            let at = |t: &Tone, stops: f32| shape(grey_at(pivot + stops), t, None, span)[1];
+            let slope = |t: &Tone, a: f32, b: f32| (at(t, b) - at(t, a)) / (b - a);
+            let below = slope(&t, -0.02, -0.005) / slope(&base, -0.02, -0.005);
+            let above = slope(&t, 0.005, 0.02) / slope(&base, 0.005, 0.02);
+            assert!(
+                (above / below - 1.0).abs() < 1e-3,
+                "{pivot}: {below} under, {above} over"
+            );
+            // And a stop over the pivot the exponent is in full: the
+            // stops over it are the power's, 0.766 for one at grey.
+            let reach = DISPLAY_WHITE_STOPS - pivot;
+            let want = MID_GREY * 2f32.powf(pivot + reach / (reach + 1.0));
+            assert!((at(&t, 1.0) / want - 1.0).abs() < 1e-3, "{}", at(&t, 1.0));
+            // Hue held: a color's channel ratios survive.
+            let c = shape([0.9, 0.5, 0.2], &t, None, span);
+            assert!(
+                (c[0] / c[1] - 1.8).abs() < 1e-4 && (c[1] / c[2] - 2.5).abs() < 1e-4,
+                "{c:?}"
+            );
+        }
     }
 
     #[test]
@@ -2120,6 +2333,10 @@ mod tests {
         let p = DISPLAY_WHITE_STOPS / (DISPLAY_WHITE_STOPS - WHITES_RANGE.0);
         assert!(p > 1.0 - 1.0 / 1.6875, "the floor's exponent is {p}");
         assert!(WHITES_RANGE.1 < DISPLAY_WHITE_STOPS, "the pole is not held");
+        // Both are at their steepest with the pivot at grey: a pivot
+        // under grey moves the pole further out and lifts the floor's
+        // exponent, so the pivot's hold keeps them so.
+        assert!(WHITES_PIVOT.1 <= 0.0);
     }
 
     /// A picture of one luminance everywhere, `stops` over mid grey.
@@ -2147,7 +2364,7 @@ mod tests {
             white: None,
             detail: [0.0; 3],
         };
-        let g = guide.map(|g| g.at(x as f32 + 0.5, y as f32 + 0.5));
+        let g = guide.map(|g| (g.at(x as f32 + 0.5, y as f32 + 0.5), g.range));
         let px = image.pixel(x, y);
         finish_pixel_with(
             px,
@@ -2187,6 +2404,10 @@ mod tests {
         // The whole point of a gain by region: over a field with no
         // region boundary the tone equalizer is the plain shift, the
         // same one §19 gave: the slider times its weight there, in stops.
+        // A flat field is its own median and its own top, so the
+        // highlights span hangs from it at its least and the field sits
+        // at the top, the peak part eased: 0.42 * 0.7085 (§250),
+        // wherever the field is.
         for (stops, tone, want) in [
             (
                 2.5f32,
@@ -2194,7 +2415,7 @@ mod tests {
                     highlights: -1.0,
                     ..Tone::default()
                 },
-                -0.4746f32,
+                -0.2976f32,
             ),
             (
                 -2.0,
@@ -2211,7 +2432,14 @@ mod tests {
                     whites: 1.0,
                     ..Tone::default()
                 },
-                0.0,
+                // Highlights' 0.5951, then the white point on top: the
+                // field's span hangs from it at its least, 1.6 stops, so
+                // the pivot is held 2.5 under grey, and the field, at
+                // -0.405 once highlights has lifted it, sits 2.095 over
+                // it, scaled by 5.77 / 4.77.
+                0.5951
+                    + (0.5951 - 1.0 - WHITES_PIVOT.0)
+                        / (DISPLAY_WHITE_STOPS - WHITES_PIVOT.0 - 1.0),
             ),
         ] {
             let image = flat(stops - BASELINE_EXPOSURE, 64, 48);
@@ -2310,7 +2538,7 @@ mod tests {
         };
         // Linear, before the shoulder and the encoding, so a ratio is
         // a ratio: the finish's shape with and without the plane.
-        let shaped = |g: Option<f32>, v: f32| shape([v; 3], &tone, g)[1];
+        let shaped = |g: Option<f32>, v: f32| shape([v; 3], &tone, g, typical())[1];
         let gin = guide.at(602.5, 402.5);
         let gout = guide.at(602.5, 500.5);
         let with = shaped(Some(gin), bright) / shaped(Some(gout), dark);
@@ -2320,12 +2548,14 @@ mod tests {
             (with / plain - 1.0).abs() < 0.05,
             "the detail's ratio {with} against {plain}"
         );
-        // The surround, a stop over grey, takes 0.33 of the slider and
-        // the detail 0.47 (§146), so the flattening is the difference:
-        // 0.82 of the ratio at minus two.
+        // Read by its own luminance the detail is somewhere else on the
+        // ramp from its surround: in a typical frame the surround, a
+        // stop over grey, is near the peak and takes 0.41 of the slider,
+        // and the detail, past the frame's top, 0.21 (§250), so at
+        // minus two the ratio stretches by two fifths of a stop.
         assert!(
-            without < plain * 0.85,
-            "the pixel's own luminance should flatten it: {without} against {plain}"
+            without > plain * 1.2,
+            "the pixel's own luminance should change it: {without} against {plain}"
         );
         // And the guide really did read one region: the detail moved it
         // by a twentieth of a stop where the picture is one and a half
@@ -2361,12 +2591,13 @@ mod tests {
             highlights: -1.0,
             ..Tone::default()
         };
-        let lit = shape([bright; 3], &tone, Some(lit_g))[1] / bright;
-        let shade = shape([dark; 3], &tone, Some(shade_g))[1] / dark;
+        let lit = shape([bright; 3], &tone, Some(lit_g), typical())[1] / bright;
+        let shade = shape([dark; 3], &tone, Some(shade_g), typical())[1] / dark;
         // The lit side takes the slider times the weight 2.5 stops over
-        // grey gives it, 0.47 (§146).
+        // grey gives it in a typical frame, past the frame's top, the
+        // peak eased by its depth: 0.42 * 0.5 (§250).
         assert!(
-            (lit.log2() + 0.4746).abs() < 0.05,
+            (lit.log2() + 0.21).abs() < 0.05,
             "the lit side {}",
             lit.log2()
         );
@@ -2704,6 +2935,7 @@ mod tests {
                 [MID_GREY * 2f32.powf(BASELINE_EXPOSURE); 3],
                 &light.tone,
                 None,
+                highlights_span(FRAME_TYPICAL, BASELINE_EXPOSURE, light.tone.contrast),
             )[0],
         ));
         for k in 0..3 {

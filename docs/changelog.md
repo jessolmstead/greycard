@@ -56,6 +56,12 @@ note a first tester reads.
 
 ### Editing
 
+- Highlights and Whites reach by the frame's own range: Highlights now
+  pulls into the upper midtones the way Lightroom's does, and Whites
+  pivots from the frame's median rather than mid grey, so a face under
+  bright light answers both. A stored highlights or whites opens a
+  little differently
+  ([§315](https://github.com/jessolmstead/greycard/blob/master/docs/notes/315-highlights-and-whites-by-the-frames-own-range.md))
 - Sidecars written by this build are at schema 5 and are refused whole
   by 0.6.x; nothing in them changes. The ground for versions of one
   frame, which the next parts put in the strip

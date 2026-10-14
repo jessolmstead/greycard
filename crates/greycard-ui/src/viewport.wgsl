@@ -123,6 +123,11 @@ struct Params {
     // interpolates by texel as `Guide::at` in `finish.rs` does; in z
     // whether there is one to read.
     guide: vec4<f32>,
+    // The frame's own range, its median and top in scene stops over
+    // mid grey, in xy (`Guide::range`): where the highlights ramp sits,
+    // as `highlights_span` in `finish.rs` places it. A typical frame's
+    // when there is no plane.
+    frame_range: vec4<f32>,
     // The target pixel this view's top left corner sits at: nonzero
     // for a view drawn into a part of the target, the compare view's
     // tiles.
@@ -527,7 +532,10 @@ fn fs_main(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
     if (has_guide) {
         g = look.contrast * (guide_at(tex_at) + look.exposure);
     }
-    let shaped = shape(c, look, g, has_guide);
+    // The frame's range at the picture's own exposure and contrast,
+    // not this pixel's, as `finish_pixel_with` has it.
+    let span = highlights_span(p.frame_range.xy, p.exposure, p.contrast);
+    let shaped = shape(c, look, g, has_guide, span);
     // 1: a picture already rendered for a display, which takes the
     // shape and a clip at white, not a second curve.
     // 2: AgX.
@@ -911,40 +919,61 @@ fn mask_at(l: Local, uv: vec2<f32>, sample: vec3<f32>) -> f32 {
     return acc;
 }
 
-// Where each shift acts, in stops over mid grey, as `finish.rs` has them.
+// Where shadows acts, in stops over mid grey, as `finish.rs` has it.
 const SHADOWS_RAMP: vec2<f32> = vec2<f32>(-3.5, 0.0);
-const HIGHLIGHTS_RAMP: vec2<f32> = vec2<f32>(-1.0, 2.5);
-// The highlights' share by stops over grey, as `highlights_weight` in
-// `finish.rs`: rising to a peak over the ramp, easing back towards
-// display white. `DISPLAY_WHITE_STOPS` is the shoulder's, below.
-const HIGHLIGHTS_PEAK: f32 = 0.55;
-const HIGHLIGHTS_EASE_FROM: f32 = 2.0;
-const HIGHLIGHTS_EASE_DEPTH: f32 = 0.4;
+// Where highlights acts, by the frame's own range, as `finish.rs` has
+// it: the least and most span, the rise and the ease as shares of the
+// span, how much of the peak eases off, and the peak.
+const HIGHLIGHTS_SPAN: vec2<f32> = vec2<f32>(1.6, 3.5);
+const HIGHLIGHTS_RISE: vec2<f32> = vec2<f32>(-0.3, 0.75);
+const HIGHLIGHTS_EASE: vec2<f32> = vec2<f32>(0.75, 1.2);
+const HIGHLIGHTS_EASE_DEPTH: f32 = 0.5;
+const HIGHLIGHTS_PEAK: f32 = 0.42;
 
-fn highlights_weight(g: f32) -> f32 {
-    return HIGHLIGHTS_PEAK * smoothstep(HIGHLIGHTS_RAMP.x, HIGHLIGHTS_RAMP.y, g)
-        * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE_FROM, DISPLAY_WHITE_STOPS, g));
+// The foot of the highlights ramp's span and the span, in stops over
+// mid grey as `shape` reads a region, as `highlights_span` in
+// `finish.rs`: hung from the frame's top, its width the frame's
+// median to top held to `HIGHLIGHTS_SPAN`.
+fn highlights_span(range: vec2<f32>, exposure: f32, contrast: f32) -> vec2<f32> {
+    let k = max(contrast, MIN_CONTRAST);
+    let top = k * (range.y + exposure);
+    let median = k * (range.x + exposure);
+    let width = clamp(top - median, HIGHLIGHTS_SPAN.x, HIGHLIGHTS_SPAN.y);
+    return vec2<f32>(top - width, width);
+}
+
+// The highlights' share by where a region sits in the span, as
+// `highlights_weight` in `finish.rs`.
+fn highlights_weight(g: f32, span: vec2<f32>) -> f32 {
+    let u = (g - span.x) / span.y;
+    return HIGHLIGHTS_PEAK * smoothstep(HIGHLIGHTS_RISE.x, HIGHLIGHTS_RISE.y, u)
+        * (1.0 - HIGHLIGHTS_EASE_DEPTH * smoothstep(HIGHLIGHTS_EASE.x, HIGHLIGHTS_EASE.y, u));
 }
 // How far the blended whites may go either way, as `WHITES_RANGE` in
 // `finish.rs`: the exponent has a pole at display white and the sliders
 // of a picture and its masks add, so the value arriving here is not
 // the slider's ±2.
 const WHITES_RANGE: vec2<f32> = vec2<f32>(-3.5, 2.0);
+// Where the white point pivots: the foot of the frame's span held to
+// this, as `WHITES_PIVOT` in `finish.rs`.
+const WHITES_PIVOT: vec2<f32> = vec2<f32>(-2.5, 0.0);
 
 // The whites control, as `white_point` in `finish.rs`: a power about
-// mid grey on the luminance over it, its exponent eased in over the
+// the pivot (the foot of the frame's span, held; `whites_pivot`) on the luminance
+// over it, its exponent eased in over the
 // first stop, that brings a luminance `whites` stops under display white
 // (the shoulder's `DISPLAY_WHITE_STOPS`, where the raw clips) to display
-// white; nothing at or under mid grey. A gain on all three
+// white; nothing at or under the pivot. A gain on all three
 // channels, so hue holds.
-fn white_point(c: vec3<f32>, whites: f32) -> vec3<f32> {
+fn white_point(c: vec3<f32>, whites: f32, pivot: f32) -> vec3<f32> {
     let y = dot(LUMA, c);
-    if (whites == 0.0 || y <= MID_GREY) {
+    let u = log2(max(y, 1e-12) / MID_GREY) - pivot;
+    if (whites == 0.0 || u <= 0.0) {
         return c;
     }
     let w = clamp(whites, WHITES_RANGE.x, WHITES_RANGE.y);
-    let u = log2(y / MID_GREY);
-    var p = DISPLAY_WHITE_STOPS / (DISPLAY_WHITE_STOPS - w);
+    let reach = DISPLAY_WHITE_STOPS - pivot;
+    var p = reach / (reach - w);
     p = 1.0 + (p - 1.0) * smoothstep(0.0, 1.0, u);
     return c * exp2(u * (p - 1.0));
 }
@@ -954,14 +983,18 @@ fn white_point(c: vec3<f32>, whites: f32) -> vec3<f32> {
 // the shoulder, so the mid-tone slope changes and the top still rolls
 // off; then the shifts, a gain from the region's luminance (`g`, the
 // guide plane's, already at this pixel's exposure and contrast) so the
-// texture inside a region keeps its contrast and its hue holds; then
-// the white point; then the black point with scene white held.
-fn shape(x: vec3<f32>, look: Look, g: f32, has_guide: bool) -> vec3<f32> {
+// texture inside a region keeps its contrast and its hue holds;
+// shadows first and highlights on where shadows put the region, so
+// the two never turn the curve back; then the white point, pivoted at
+// the foot of the frame's span; then the
+// black point with scene white held.
+fn shape(x: vec3<f32>, look: Look, g: f32, has_guide: bool, span: vec2<f32>) -> vec3<f32> {
     let c = MID_GREY * pow(max(x, vec3<f32>(0.0)) / MID_GREY, vec3<f32>(look.contrast));
     let l = select(log2(max(dot(LUMA, c), 1e-6) / MID_GREY), g, has_guide);
-    let shift = look.shadows * (1.0 - smoothstep(SHADOWS_RAMP.x, SHADOWS_RAMP.y, l))
-        + look.highlights * highlights_weight(l);
-    return black_point(white_point(c * exp2(shift), look.whites), look.blacks);
+    let lifted = l + look.shadows * (1.0 - smoothstep(SHADOWS_RAMP.x, SHADOWS_RAMP.y, l));
+    let shifted = lifted + look.highlights * highlights_weight(lifted, span);
+    let pivot = clamp(span.x, WHITES_PIVOT.x, WHITES_PIVOT.y);
+    return black_point(white_point(c * exp2(shifted - l), look.whites, pivot), look.blacks);
 }
 
 // The blacks, as `black_point` in `finish.rs`: a crush is an offset

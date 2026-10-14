@@ -127,6 +127,11 @@ struct Params {
     /// which the shader's `guide_at` reads the source pixels to a texel
     /// from, as `Guide::at` does; in z whether there is one.
     guide: [f32; 4],
+    /// The frame's own range, its median and top in scene stops over
+    /// mid grey (`Guide::range`), in x and y: where the highlights ramp
+    /// sits (`finish::highlights_span`). A typical frame's when there
+    /// is no plane, as the CPU has it.
+    frame_range: [f32; 4],
     /// The target pixel this view's top left corner sits at, for a
     /// view drawn into part of the target (the compare view's tiles);
     /// zero for the whole of it.
@@ -701,6 +706,8 @@ pub struct Renderer {
     /// Its `Params::detail` and `Params::detail_clip`.
     detail_meta: [f32; 4],
     detail_clip: [f32; 4],
+    /// Its `Params::frame_range`.
+    frame_range: [f32; 4],
     /// The look table the picture finishes through.
     look: LookTable,
     /// Working space to the output's, rows: the export's space, so
@@ -1117,6 +1124,7 @@ impl Renderer {
             detail_of: None,
             detail_meta: [1.0, 1.0, 1.0, 0.0],
             detail_clip: [-1.0, 0.0, 0.0, 0.0],
+            frame_range: Self::TYPICAL_RANGE,
             look,
             output,
             oklab: crate::finish::Oklab::for_working_space(),
@@ -1461,6 +1469,7 @@ impl Renderer {
                 [t[0], t[1], 0.0, 0.0]
             },
             guide: self.guide_cover,
+            frame_range: self.frame_range,
             tile: [ox as f32, oy as f32, 0.0, 0.0],
             look: self.look.params,
             look_min: self.look.min,
@@ -2049,6 +2058,13 @@ impl Renderer {
         })
     }
 
+    const TYPICAL_RANGE: [f32; 4] = [
+        crate::finish::FRAME_TYPICAL[0],
+        crate::finish::FRAME_TYPICAL[1],
+        0.0,
+        0.0,
+    ];
+
     /// Put the tone equalizer's guide plane on the GPU. Its texels
     /// stand for `scale` source pixels each way, so the shader divides
     /// a source position by what the texture covers to sample it.
@@ -2057,8 +2073,10 @@ impl Renderer {
         let (w, h) = (guide.width as u32, guide.height as u32);
         if guide.data.is_empty() || w == 0 || h == 0 {
             self.guide_cover = [1.0, 1.0, 0.0, 0.0];
+            self.frame_range = Self::TYPICAL_RANGE;
             return;
         }
+        self.frame_range = [guide.range[0], guide.range[1], 0.0, 0.0];
         self.guide = Self::guide_texture(&self.device, w, h);
         let halves: Vec<half::f16> = guide.data.iter().map(|v| half::f16::from_f32(*v)).collect();
         self.queue.write_texture(
@@ -3103,16 +3121,19 @@ mod tests {
         // it by the same map, so the texture's guide read through the
         // turn can be told from the turned one's.
         let scale = 8;
-        let guide_of =
-            |w: usize, h: usize, at: &dyn Fn(usize, usize) -> f32| crate::finish::Guide {
+        let guide_of = |w: usize, h: usize, at: &dyn Fn(usize, usize) -> f32| {
+            let data: Vec<f32> = (0..h / scale)
+                .flat_map(|y| (0..w / scale).map(move |x| (x, y)))
+                .map(|(x, y)| at(x, y))
+                .collect();
+            crate::finish::Guide {
                 width: w / scale,
                 height: h / scale,
                 scale,
-                data: (0..h / scale)
-                    .flat_map(|y| (0..w / scale).map(move |x| (x, y)))
-                    .map(|(x, y)| at(x, y))
-                    .collect(),
-            };
+                range: crate::finish::plane_range(&data),
+                data,
+            }
+        };
         let plain = |x: usize, y: usize| ((x * 7 + y * 3) % 11) as f32 * 0.3 - 1.5;
         let (iw, ih) = (image.width, image.height);
         let guide = guide_of(iw, ih, &plain);
@@ -5238,7 +5259,7 @@ mod tests {
         let coarse = {
             let s = 4;
             let (gw, gh) = (w / s, h / s);
-            let data = (0..gh)
+            let data: Vec<f32> = (0..gh)
                 .flat_map(|y| (0..gw).map(move |x| (x, y)))
                 .map(|(x, y)| {
                     let block =
@@ -5250,6 +5271,7 @@ mod tests {
                 width: gw,
                 height: gh,
                 scale: s,
+                range: crate::finish::plane_range(&data),
                 data,
             }
         };

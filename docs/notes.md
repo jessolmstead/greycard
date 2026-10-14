@@ -325,3 +325,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§312. Virtual copies, part 1: the edit crate](notes/312-virtual-copies-part-1-the-edit-crate.md) (2026-10-12)
 - [§313. Virtual copies, part 4: the version's name in the export](notes/313-virtual-copies-part-4-the-version-s-name-in-the-export.md) (2026-10-12)
 - [§314. A border at export](notes/314-a-border-at-export.md) (2026-10-13)
+- [§315. Highlights and whites by the frame's own range](notes/315-highlights-and-whites-by-the-frames-own-range.md) (2026-10-13)

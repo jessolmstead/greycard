@@ -82,7 +82,13 @@ one reads right. The Lightroom importer's scale is unchanged, -100 is
 still -2. No schema change: a stored highlights opens a little
 different on most frames, as §98's retune did.
 
-**Standing.** The trial is built on a branch off 0.4.0
+**Standing (2026-10-13).** Decided and landed: the frame's range ships as
+Highlights, and Whites follows it (§315), after a trial beside a
+Brightness slider and the fixed ramp on one build; the user leaned to
+the adaptive ramp and found Brightness and it alike on portraits. What
+follows is the standing as written on 2026-10-05.
+
+**Standing (2026-10-05).** The trial is built on a branch off 0.4.0
 (`highlights-frame-range`) and was tried on 2026-10-05; we were torn
 between the two readings and the decision is open. This section is
 the record of the design and its measurements; the roadmap's open

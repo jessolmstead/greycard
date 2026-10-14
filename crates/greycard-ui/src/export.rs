@@ -585,11 +585,13 @@ pub fn mark(rendered: &mut Rendered, settings: &Settings) -> Result<()> {
     Ok(())
 }
 
-/// Whether either exposure shift is set, in the picture's own look or
-/// in a local adjustment that acts: the only thing that reads the
-/// guide plane. Not whites, which is a white point and global.
+/// Whether either exposure shift or the whites is set, in the
+/// picture's own look or in a local adjustment that acts: the only
+/// things that read the guide plane. The shifts read its regions;
+/// whites, a white point on the pixel's own luminance, reads only the
+/// frame's range from it, where its pivot sits.
 pub(crate) fn reads_guide(edit: &greycard_edit::Edit) -> bool {
-    let set = |t: &greycard_edit::Tone| t.highlights != 0.0 || t.shadows != 0.0;
+    let set = |t: &greycard_edit::Tone| t.highlights != 0.0 || t.shadows != 0.0 || t.whites != 0.0;
     set(&edit.look().light.effective().tone)
         || edit
             .adjustments
