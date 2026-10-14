@@ -64,6 +64,9 @@ pub(crate) fn read_sheet(app: &App) -> Sheet {
         mark_size: app.get_export_mark_size(),
         mark_margin: app.get_export_mark_margin(),
         mark_opacity: app.get_export_mark_opacity(),
+        border: app.get_export_border(),
+        border_width: app.get_export_border_width(),
+        border_color: app.get_export_border_color().into(),
     }
 }
 
@@ -88,6 +91,9 @@ pub(crate) fn show_sheet(app: &App, s: &Sheet) {
     app.set_export_mark_size(s.mark_size);
     app.set_export_mark_margin(s.mark_margin);
     app.set_export_mark_opacity(s.mark_opacity);
+    app.set_export_border(s.border);
+    app.set_export_border_width(s.border_width);
+    app.set_export_border_color(s.border_color.as_str().into());
 }
 
 /// The picker's word for no preset. A preset cannot take it as a

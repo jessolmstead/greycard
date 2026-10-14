@@ -2,6 +2,7 @@
 //! space, with the profile that says which, and the desktop's file
 //! chooser for where it goes.
 
+use crate::border::Border;
 use crate::finish;
 use crate::watermark::Mark;
 use anyhow::{Context, Result, bail};
@@ -264,7 +265,11 @@ pub struct Settings {
     pub sharpen: Sharpen,
     /// What the file says about where it came from.
     pub metadata: Metadata,
-    /// A mark laid over the picture after its resize.
+    /// A band added round the picture after its resize and sharpening,
+    /// before the mark; the long edge is the picture's, without it.
+    pub border: Option<Border>,
+    /// A mark laid over the picture after its resize, and over the
+    /// border when there is one.
     pub watermark: Option<Mark>,
 }
 
@@ -278,6 +283,7 @@ impl Default for Settings {
             embed_profile: true,
             sharpen: Sharpen::Standard,
             metadata: Metadata::All,
+            border: None,
             watermark: None,
         }
     }
@@ -534,6 +540,31 @@ pub(crate) fn render_framed(
     }
 }
 
+/// Add the settings' border, if any, round a rendered picture: on the
+/// finished, encoded pixels, after the resize and the sharpening,
+/// before the watermark and the file's encode. The picture grows by
+/// the band on every side.
+pub fn border(rendered: &mut Rendered, settings: &Settings) {
+    let Some(border) = &settings.border else {
+        return;
+    };
+    let (w, h) = (rendered.width, rendered.height);
+    let (width, height) = match &mut rendered.pixels {
+        Pixels::Eight(p) => {
+            let (out, ow, oh) = border.apply(p, w, h);
+            *p = out;
+            (ow, oh)
+        }
+        Pixels::Sixteen(p) => {
+            let (out, ow, oh) = border.apply(p, w, h);
+            *p = out;
+            (ow, oh)
+        }
+    };
+    rendered.width = width;
+    rendered.height = height;
+}
+
 /// Lay the settings' watermark, if any, over a rendered picture: on
 /// the finished, encoded pixels, after the resize and the sharpening,
 /// before the file's encode.
@@ -623,6 +654,15 @@ impl Settings {
         }
         if self.sharpen != Sharpen::Off && self.long_edge.is_some() {
             s.push_str(&format!(", output sharpening {}", self.sharpen.name()));
+        }
+        if let Some(b) = &self.border {
+            let percent = (b.width * 1000.0).round() / 10.0;
+            s.push_str(&match b.color {
+                crate::border::Color::Match => {
+                    format!(", a border {percent} % in the picture's mean color")
+                }
+                c => format!(", a {} border {percent} %", c.name().to_lowercase()),
+            });
         }
         match self.watermark.as_ref().map(|m| &m.kind) {
             Some(crate::watermark::Kind::Text { .. }) => s.push_str(", a text watermark"),
@@ -1623,6 +1663,99 @@ mod tests {
             }
             assert!(moved > 500, "{moved}");
         }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    #[test]
+    fn a_border_goes_round_the_resized_picture_and_the_mark_over_both() {
+        use crate::border::{Border, Color};
+        let (w, h) = (900usize, 600usize);
+        let mut data = Vec::with_capacity(w * h * 3);
+        for y in 0..h {
+            for x in 0..w {
+                data.extend_from_slice(&[x as f32 / w as f32, y as f32 / h as f32, 0.2]);
+            }
+        }
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data,
+        };
+        let edit = greycard_edit::Edit::default();
+        let finished = |settings: &Settings| {
+            let mut r = render(
+                &image,
+                &edit,
+                (w as u32, h as u32),
+                settings,
+                &Default::default(),
+                1.0,
+                None,
+                finish::Source::Scene,
+                None,
+                None,
+            );
+            border(&mut r, settings);
+            mark(&mut r, settings).unwrap();
+            r
+        };
+        let plain = Settings {
+            format: Format::Tiff,
+            long_edge: Some(600),
+            ..Settings::default()
+        };
+        let framed = Settings {
+            border: Some(Border {
+                width: 0.05,
+                color: Color::LightGrey,
+            }),
+            ..plain.clone()
+        };
+        let a = finished(&plain);
+        let b = finished(&framed);
+        // 5 % of the resized long edge, 600: 30 px a side.
+        assert_eq!((a.width, a.height), (600, 400));
+        assert_eq!((b.width, b.height), (660, 460));
+        let (Pixels::Sixteen(pa), Pixels::Sixteen(pb)) = (&a.pixels, &b.pixels) else {
+            panic!("a TIFF is sixteen bits")
+        };
+        for y in 0..460u32 {
+            for x in 0..660u32 {
+                let i = ((y * 660 + x) * 3) as usize;
+                if (30..630).contains(&x) && (30..430).contains(&y) {
+                    let j = (((y - 30) * 600 + x - 30) * 3) as usize;
+                    assert_eq!(pb[i..i + 3], pa[j..j + 3], "({x}, {y})");
+                } else {
+                    assert_eq!(pb[i..i + 3], [52428; 3], "({x}, {y})");
+                }
+            }
+        }
+        assert!(framed.describe().contains("a light grey border 5 %"));
+
+        // A mark at the bottom right sits its margin in from the file's
+        // edges, border and all: a share of the file's long edge.
+        let dir = scratch("border-mark");
+        let marked = Settings {
+            watermark: Some(crate::watermark::Mark {
+                kind: crate::watermark::Kind::Image {
+                    path: crate::watermark::tests::bar_png(&dir, 30),
+                },
+                position: crate::watermark::Position::BottomRight,
+                size: 0.1,
+                margin: 0.01,
+                opacity: 1.0,
+            }),
+            ..framed.clone()
+        };
+        let m = finished(&marked);
+        assert_eq!((m.width, m.height), (660, 460));
+        let Pixels::Sixteen(pm) = &m.pixels else {
+            panic!("a TIFF is sixteen bits")
+        };
+        // The mark is 66 by 33 with its right and bottom 7 px in, so
+        // the middle of its bar lies in the band: white over grey.
+        let i = (((460 - 7 - 16) * 660 + 660 - 7 - 33) * 3) as usize;
+        assert_eq!(pm[i..i + 3], [65535; 3]);
         crate::testing::remove_dir_retry(&dir);
     }
 

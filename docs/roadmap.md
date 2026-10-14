@@ -418,7 +418,6 @@ clears or a tester asks for it.
       and the guides' overlays cover the picture so a hover never hands
       the keys back; the button should give the keys up on click, or the
       overlay should take the hover
-- [ ] A border, or a framed preview, at export (#19)
 - [ ] Resizable side panes: drag the left pane's and the develop
       panel's inner edge, today's widths the minimum, about 500 px the
       most, each kept in the settings; first see what a viewport

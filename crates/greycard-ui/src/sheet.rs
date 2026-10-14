@@ -6,6 +6,7 @@
 //! the settings file beside the sheet's last choices rather than in a
 //! sidecar or the preset directory.
 
+use crate::border::{Border, Color as BorderColor};
 use crate::export::{self, Metadata, OnExists, Sharpen, Space};
 use crate::watermark::{Kind, Mark, Position};
 use serde::{Deserialize, Serialize};
@@ -72,6 +73,15 @@ pub struct Sheet {
     /// Percent.
     #[serde(rename = "export_mark_opacity")]
     pub mark_opacity: f32,
+    /// A border round the picture, added outside it.
+    #[serde(rename = "export_border")]
+    pub border: bool,
+    /// The border's width, percent of the picture's long edge.
+    #[serde(rename = "export_border_width")]
+    pub border_width: f32,
+    /// One of `border::Color::name`.
+    #[serde(rename = "export_border_color")]
+    pub border_color: String,
 }
 
 impl Default for Sheet {
@@ -95,6 +105,9 @@ impl Default for Sheet {
             mark_size: 15.0,
             mark_margin: 2.0,
             mark_opacity: 60.0,
+            border: false,
+            border_width: 5.0,
+            border_color: BorderColor::default().name().into(),
         }
     }
 }
@@ -127,6 +140,7 @@ impl Sheet {
             embed_profile: self.embed,
             sharpen: Sharpen::from_name(&self.sharpen).unwrap_or(defaults.sharpen),
             metadata: Metadata::from_name(&self.metadata).unwrap_or_default(),
+            border: self.border(),
             watermark: self.watermark(),
         }
     }
@@ -198,6 +212,13 @@ impl Sheet {
         format!("\u{2026}{tail}")
     }
 
+    fn border(&self) -> Option<Border> {
+        self.border.then(|| Border {
+            width: self.border_width.clamp(0.5, 25.0) / 100.0,
+            color: BorderColor::from_name(&self.border_color).unwrap_or_default(),
+        })
+    }
+
     fn watermark(&self) -> Option<Mark> {
         let kind = match self.mark.as_str() {
             MARK_TEXT => Kind::Text {
@@ -237,6 +258,12 @@ impl Sheet {
         s.mark_size = step(s.mark_size);
         s.mark_margin = step(s.mark_margin);
         s.mark_opacity = step(s.mark_opacity);
+        s.border_width = step(s.border_width);
+        if !s.border {
+            let off = Sheet::default();
+            s.border_width = off.border_width;
+            s.border_color = off.border_color;
+        }
         match s.mark.as_str() {
             MARK_TEXT => s.mark_image.clear(),
             MARK_IMAGE => {
@@ -444,6 +471,79 @@ mod tests {
             ..Sheet::default()
         };
         assert_eq!(odd.settings(), export::Settings::default());
+    }
+
+    #[test]
+    fn a_border_is_asked_for_only_when_on_and_its_width_is_kept_in_range() {
+        assert_eq!(Sheet::default().settings().border, None);
+        let on = Sheet {
+            border: true,
+            border_width: 3.0,
+            border_color: "Dark grey".into(),
+            ..web()
+        };
+        let b = on.settings().border.expect("a border");
+        assert!((b.width - 0.03).abs() < 1e-6);
+        assert_eq!(b.color, BorderColor::DarkGrey);
+        let wide = Sheet {
+            border_width: 80.0,
+            border_color: "Purple".into(),
+            ..on.clone()
+        };
+        let b = wide.settings().border.unwrap();
+        assert!((b.width - 0.25).abs() < 1e-6);
+        assert_eq!(b.color, BorderColor::White);
+        let thin = Sheet {
+            border_width: 0.0,
+            ..on.clone()
+        };
+        assert!((thin.settings().border.unwrap().width - 0.005).abs() < 1e-6);
+        // Its fields with it off change nothing; with it on, they do.
+        let off = Sheet {
+            border: false,
+            ..on.clone()
+        };
+        assert!(off.same(&Sheet {
+            border_width: 12.0,
+            border_color: "Black".into(),
+            ..off.clone()
+        }));
+        assert!(!on.same(&off));
+        assert!(!on.same(&Sheet {
+            border_width: 4.0,
+            ..on.clone()
+        }));
+        assert!(!on.same(&Sheet {
+            border_color: "Match".into(),
+            ..on.clone()
+        }));
+    }
+
+    #[test]
+    fn a_preset_keeps_its_border_and_an_older_one_has_none() {
+        let preset = ExportPreset {
+            name: "Framed".into(),
+            sheet: Sheet {
+                border: true,
+                border_width: 7.5,
+                border_color: "Light grey".into(),
+                ..web()
+            },
+        };
+        let json = serde_json::to_string(&preset).unwrap();
+        assert!(json.contains("\"export_border\":true"), "{json}");
+        let back: ExportPreset = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, preset);
+        let b = back.sheet.settings().border.unwrap();
+        assert!((b.width - 0.075).abs() < 1e-6);
+        assert_eq!(b.color, BorderColor::LightGrey);
+        // A preset written before the border reads as one without.
+        let old: ExportPreset =
+            serde_json::from_str(r#"{"name":"Old","export_format":"PNG","export_mark":"Off"}"#)
+                .unwrap();
+        assert!(!old.sheet.border);
+        assert_eq!(old.sheet.settings().border, None);
+        assert_eq!(old.sheet.border_width, 5.0);
     }
 
     #[test]

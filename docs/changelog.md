@@ -71,6 +71,10 @@ note a first tester reads.
 
 ### Export
 
+- A border at export (#19): a Border row on the export sheet, its width
+  a share of the long edge, in white, light grey, dark grey, black or
+  the picture's own mean; added outside the picture, kept in presets
+  ([§314](https://github.com/jessolmstead/greycard/blob/master/docs/notes/314-a-border-at-export.md))
 - A version of a frame exports as `<name>-<version>.<ext>`, and the
   headless `--export` takes `--version-name` to pick one; the export is
   recorded on the version's own history. Nothing in the window makes a

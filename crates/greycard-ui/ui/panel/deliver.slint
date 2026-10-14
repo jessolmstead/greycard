@@ -116,6 +116,14 @@ export component ExportSheet inherits Rectangle {
     in-out property <float> export-mark-size;
     in-out property <float> export-mark-margin;
     in-out property <float> export-mark-opacity;
+    in-out property <bool> export-border;
+    in-out property <float> export-border-width;
+    in-out property <string> export-border-color;
+    /// The border's band in pixels on the export, as the export works
+    /// it out: a share of the long edge, at least one.
+    pure function border-band() -> int {
+        return max(1, round(max(root.export-width(), root.export-height()) * clamp(root.export-border-width, 0.5, 25) / 100));
+    }
     callback export-mark-choose();
     /// The picker's entries, "None" first, and the one on show.
     in-out property <[string]> export-presets;
@@ -402,6 +410,74 @@ export component ExportSheet inherits Rectangle {
                                 text: round(root.export-mark-opacity) + " %";
                             }
                         }
+                    }
+                    // A band round the picture: off, or one of five
+                    // colors, Match being the picture's own mean. A
+                    // color both picks it and turns the border on.
+                    HorizontalLayout {
+                        spacing: 4px;
+                        Text { text: "Border"; width: 68px + Theme.space-2 - 4px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
+                        for choice in [
+                            { name: "Off", fill: Theme.base, word: "Off", wide: true },
+                            { name: "White", fill: #ffffff, word: "", wide: false },
+                            { name: "Light grey", fill: #cccccc, word: "", wide: false },
+                            { name: "Dark grey", fill: #333333, word: "", wide: false },
+                            { name: "Black", fill: #000000, word: "", wide: false },
+                            { name: "Match", fill: Theme.base, word: "Match", wide: true },
+                        ]: Rectangle {
+                            property <bool> on: choice.name == "Off" ? !root.export-border
+                                : root.export-border && choice.name == root.export-border-color;
+                            width: choice.wide ? 48px : 24px;
+                            height: 24px;
+                            border-radius: Theme.radius-sm;
+                            border-width: on ? 2px : 1px;
+                            border-color: on ? Theme.accent : Theme.border-strong;
+                            background: choice.wide && t.has-hover ? Theme.hover : choice.fill;
+                            Text {
+                                text: choice.word;
+                                color: on ? Theme.text : Theme.text-secondary;
+                                font-size: Theme.font-xs;
+                                horizontal-alignment: center;
+                                vertical-alignment: center;
+                            }
+                            t := TouchArea {
+                                mouse-cursor: MouseCursor.pointer;
+                                clicked => {
+                                    if (choice.name == "Off") {
+                                        root.export-border = false;
+                                    } else {
+                                        root.export-border = true;
+                                        root.export-border-color = choice.name;
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            text: root.export-border && root.export-border-color != "Match" ? root.export-border-color : "";
+                            color: Theme.text-secondary;
+                            font-size: Theme.font-xs;
+                            vertical-alignment: center;
+                            horizontal-stretch: 1;
+                            overflow: elide;
+                        }
+                    }
+                    if root.export-border: EditSlider {
+                        label: "Width";
+                        minimum: 0.5;
+                        maximum: 25;
+                        default: 5;
+                        step: 0.5;
+                        value <=> root.export-border-width;
+                        text: round(root.export-border-width * 10) / 10 + " %";
+                    }
+                    if root.export-border: Text {
+                        text: "Added outside the picture"
+                            + (root.frame-width > 0
+                                ? "; the file is " + (root.export-width() + 2 * root.border-band()) + " × " + (root.export-height() + 2 * root.border-band()) + "."
+                                : ".");
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-sm;
+                        wrap: word-wrap;
                     }
                 }
             }

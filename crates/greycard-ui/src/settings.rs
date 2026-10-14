@@ -367,6 +367,9 @@ mod tests {
             mark_size: 12.5,
             mark_margin: 3.0,
             mark_opacity: 40.0,
+            border: true,
+            border_width: 2.5,
+            border_color: "Match".into(),
         };
         let mine = Settings {
             export: sheet.clone(),

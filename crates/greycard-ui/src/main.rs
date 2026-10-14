@@ -15,6 +15,7 @@
 mod agx;
 mod ai;
 mod archive;
+mod border;
 mod camera_match;
 mod carry;
 mod cells;

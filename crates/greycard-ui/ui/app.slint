@@ -1522,6 +1522,11 @@ export component App inherits Window {
     in-out property <float> export-mark-size: 15;
     in-out property <float> export-mark-margin: 2;
     in-out property <float> export-mark-opacity: 60;
+    /// A border round the picture, added outside it: on or off, its
+    /// width in percent of the picture's long edge, and its color.
+    in-out property <bool> export-border: false;
+    in-out property <float> export-border-width: 5;
+    in-out property <string> export-border-color: "White";
     /// Ask the desktop for the watermark's PNG.
     callback export-mark-choose();
     /// The export presets by name, the one chosen (empty for none)
@@ -1553,6 +1558,9 @@ export component App inherits Window {
     changed export-mark-size => { root.export-sheet-changed(); }
     changed export-mark-margin => { root.export-sheet-changed(); }
     changed export-mark-opacity => { root.export-sheet-changed(); }
+    changed export-border => { root.export-sheet-changed(); }
+    changed export-border-width => { root.export-sheet-changed(); }
+    changed export-border-color => { root.export-sheet-changed(); }
     // The import sheet: frames from a card into a folder, renamed,
     // verified, backed up and given a preset. Ctrl+Shift+I or the
     // grid's Import button opens it, through Rust, which looks for a
@@ -3478,6 +3486,9 @@ export component App inherits Window {
         export-mark-size <=> root.export-mark-size;
         export-mark-margin <=> root.export-mark-margin;
         export-mark-opacity <=> root.export-mark-opacity;
+        export-border <=> root.export-border;
+        export-border-width <=> root.export-border-width;
+        export-border-color <=> root.export-border-color;
         export-mark-choose => { root.export-mark-choose(); }
         export-presets <=> root.export-presets;
         export-preset <=> root.export-preset;

@@ -1957,8 +1957,10 @@ fn write_export(
             .map(|n| n.to_string_lossy().into_owned()),
         edit: Some(edit.to_json()),
     };
-    // The mark, on the export alone; one that cannot be drawn fails
-    // the export rather than let an unmarked picture out.
+    // The border and then the mark, on the export alone; a mark that
+    // cannot be drawn fails the export rather than let an unmarked
+    // picture out.
+    crate::export::border(&mut rendered, settings);
     crate::export::mark(&mut rendered, settings)
         .and_then(|()| crate::export::write(&rendered, settings, path, metadata, &origin))
         .map_err(|e| format!("{e:#}"))?;

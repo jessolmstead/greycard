@@ -195,3 +195,67 @@ fn an_export_runs_with_no_display_and_its_exit_code_says_how_it_went() {
     assert!(said.contains("--screenshot"), "{said}");
     assert!(!home.0.join("again.jpg").exists());
 }
+
+#[test]
+fn an_export_preset_with_a_border_writes_a_file_larger_by_the_band() {
+    let home = Scratch(
+        Path::new(env!("CARGO_TARGET_TMPDIR"))
+            .join(format!("greycard-headless-border-{}", std::process::id())),
+    );
+    let _ = std::fs::remove_dir_all(&home.0);
+    std::fs::create_dir_all(home.0.join("config").join("greycard")).unwrap();
+    let source = home.0.join("frame.dng");
+    dng(&source, 240, 160);
+    // A preset at 120 px on the long edge with a black border a tenth
+    // of it: 12 px each side, the file 144 by 104.
+    let settings = r#"{
+        "export_presets": [{
+            "name": "Framed",
+            "export_format": "JPEG",
+            "export_quality": 95,
+            "export_size": "Custom",
+            "export_custom": "120",
+            "export_border": true,
+            "export_border_width": 10,
+            "export_border_color": "Black"
+        }]
+    }"#;
+    std::fs::write(
+        home.0.join("config").join("greycard").join("settings.json"),
+        settings,
+    )
+    .unwrap();
+    let out = home.0.join("framed.jpg");
+    let ran = editor(
+        &home.0,
+        &[
+            source.as_os_str(),
+            "--no-sidecars".as_ref(),
+            "--export-preset".as_ref(),
+            "Framed".as_ref(),
+            "--export".as_ref(),
+            out.as_os_str(),
+        ],
+    );
+    let said = String::from_utf8_lossy(&ran.stderr);
+    assert!(ran.status.success(), "{said}");
+    let picture = image::open(&out).unwrap().into_rgb8();
+    assert_eq!(picture.dimensions(), (144, 104));
+    // The band is black at the corners and the middle of each edge,
+    // and the picture's lit right side is inside it.
+    for (x, y) in [
+        (0, 0),
+        (143, 0),
+        (0, 103),
+        (143, 103),
+        (72, 2),
+        (72, 101),
+        (2, 52),
+        (141, 52),
+    ] {
+        let p = picture.get_pixel(x, y).0;
+        assert!(p.iter().all(|c| *c < 12), "({x}, {y}) is {p:?}");
+    }
+    let lit = picture.get_pixel(12 + 110, 52).0;
+    assert!(lit.iter().any(|c| *c > 60), "{lit:?}");
+}
