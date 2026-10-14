@@ -220,6 +220,12 @@ A camera's own profile and look are a picker away, and a chart shot
 makes a new one. This and the library can swap order on what testers
 ask for first.
 
+- [ ] Color accuracy against a chart: a 48-patch chart shot per camera in
+      daylight and under tungsten, kept with the samples, and an ignored
+      test that develops each at the default edit and prints the mean and
+      worst ΔE per patch, the greys' neutrality and the skin row; the
+      first absolute color number, before any matrix work. Waits on the
+      chart arriving (ordered 2026-10-13)
 - [ ] AgX made the default display curve, after the camera match below
       is refitted under it and §141's baseline and §143's medians are
       re-measured under it: sidecars written before the flip read as
