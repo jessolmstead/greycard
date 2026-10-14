@@ -390,9 +390,10 @@ it departs from that design, and what we measured.
 - A GPU maker for the planes, or delivering the picture before them.
 - Storing the transmission rather than the haze in the f16 lane, for
   the precision at the transmission's floor (above).
-- A planes job that panics lands the develop without planes and is
+- ~~A planes job that panics lands the develop without planes and is
   asked again on every slider move; a warning on the failed receive
-  would make it visible.
+  would make it visible.~~ Said since 2026-10-13: the receive tells a
+  dead sender from the maker's own None and warns on the first.
 - The near-black Oklab chain behind seed 8, edit 98 on lavapipe.
 - A mask's Dehaze with its own Texture or Clarity reads the haze from
   before them (the design's limit, measured above). Over the global's

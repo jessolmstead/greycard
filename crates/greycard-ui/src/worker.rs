@@ -2809,7 +2809,17 @@ impl PlanesJob {
                 ..
             } => {
                 let waited = Instant::now();
-                let planes = made.recv().ok().flatten().map(Arc::new);
+
+                let planes = match made.recv() {
+                    Ok(Some(planes)) => Some(Arc::new(planes)),
+                    Ok(None) => None,
+                    Err(_) => {
+                        tracing::warn!(
+                            "the masks' detail bands: the thread making them died; developing without them"
+                        );
+                        None
+                    }
+                };
                 tracing::info!(
                     "the masks' detail bands in {:.3} s, {:.3} s of it waited for",
                     started.elapsed().as_secs_f64(),
@@ -5047,6 +5057,68 @@ mod tests {
         let (exported, again, reference) = (exported.unwrap(), again.unwrap(), reference.unwrap());
         assert_eq!(exported.data, reference.data);
         assert_eq!(again.data, reference.data);
+    }
+
+    /// The planes' thread can end three ways, and the develop lands
+    /// without the bands in two of them: the maker declined (it sent
+    /// `None`), or the thread died without sending (a panic, which
+    /// drops the sender). Both leave nothing kept for the next develop,
+    /// so neither can serve a stale base; the second is said in the log
+    /// as a warning, where the first says its reason itself.
+    #[test]
+    fn a_planes_thread_that_declines_or_dies_lands_the_develop_without_them() {
+        let image = Arc::new(WorkingImage::new(4, 4));
+        let mut base = Base {
+            edit: Edit::default(),
+            turn: 0,
+            image: image.clone(),
+            guide: Arc::new(crate::finish::Guide::NONE),
+            white: WhiteBase::IDENTITY,
+            radius: None,
+            clip_level: 1.0,
+            source: crate::finish::Source::Scene,
+            stamp: 0,
+            patched: None,
+            pre: None,
+            uploaded: None,
+            haze: None,
+            planes: None,
+            ca_on_gpu: false,
+            stand_in: None,
+            profile: None,
+        };
+        let wants = greycard_edit::DetailWants {
+            texture: true,
+            clarity: false,
+            haze: false,
+        };
+        let making = |made| PlanesJob::Making {
+            made,
+            _cancel: CancelOnDrop(Arc::new(std::sync::atomic::AtomicBool::new(false))),
+            patched: image.clone(),
+            wants,
+            haze_after: None,
+            started: Instant::now(),
+        };
+
+        // Declined: the maker sent None.
+        let (send, made) = std::sync::mpsc::channel();
+        send.send(None).unwrap();
+        let mut job = making(made);
+        assert!(job.land(&mut base).is_none());
+        assert!(
+            base.planes.is_none(),
+            "nothing kept to serve the next develop"
+        );
+        assert!(matches!(job, PlanesJob::Nothing));
+
+        // Died: the sender dropped without a word, as a panic drops it.
+        let (send, made) = std::sync::mpsc::channel::<Option<crate::detail::DetailPlanes>>();
+        drop(send);
+        let mut job = making(made);
+        assert!(job.land(&mut base).is_none());
+        assert!(base.planes.is_none());
+        assert!(matches!(job, PlanesJob::Nothing));
     }
 
     /// A learned pair whose CA ran on the GPU serves a develop with a
