@@ -384,6 +384,10 @@ clears or a tester asks for it.
 
 
 #### Editor
+- [ ] `worker.rs`, `roots.rs` and `render.rs` split into module directories,
+      pure moves with the same public surface; the long `run` and
+      `develop_job` left whole for a later round. Waits on virtual copies
+      part 2 landing
 
 - [ ] The learned mask and fill caches keyed by the develop they were
       made from: the window's Export reuses the mask its viewport made
