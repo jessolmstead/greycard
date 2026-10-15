@@ -807,7 +807,7 @@ impl Scopes {
     fn new(device: &gpu::Device) -> Self {
         let shader = device.create_shader_module(gpu::ShaderModuleDescriptor {
             label: Some("scope"),
-            source: gpu::ShaderSource::Wgsl(include_str!("scope.wgsl").into()),
+            source: gpu::ShaderSource::Wgsl(include_str!("../scope.wgsl").into()),
         });
         let layout = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
             label: Some("scope"),
@@ -901,7 +901,7 @@ impl Renderer {
     pub fn new(device: &gpu::Device, queue: &gpu::Queue) -> Self {
         let shader = device.create_shader_module(gpu::ShaderModuleDescriptor {
             label: Some("viewport"),
-            source: gpu::ShaderSource::Wgsl(include_str!("viewport.wgsl").into()),
+            source: gpu::ShaderSource::Wgsl(include_str!("../viewport.wgsl").into()),
         });
         let layout = device.create_bind_group_layout(&gpu::BindGroupLayoutDescriptor {
             label: Some("viewport"),
@@ -2487,8 +2487,8 @@ mod tests {
     #[test]
     fn the_shaders_parse_and_validate() {
         for (name, source) in [
-            ("viewport.wgsl", include_str!("viewport.wgsl")),
-            ("scope.wgsl", include_str!("scope.wgsl")),
+            ("viewport.wgsl", include_str!("../viewport.wgsl")),
+            ("scope.wgsl", include_str!("../scope.wgsl")),
         ] {
             let module = naga::front::wgsl::parse_str(source)
                 .unwrap_or_else(|e| panic!("{name}:\n{}", e.emit_to_string(source)));
