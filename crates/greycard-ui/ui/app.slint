@@ -147,6 +147,16 @@ export component App inherits Window {
     /// Whether the selection has a frame for a rating, a flag or a
     /// label to reach.
     in property <bool> menu-can-meta: true;
+    /// The version the frame right-clicked is, by name; empty for the
+    /// file's own.
+    in property <string> menu-version: "";
+    /// New version (Ctrl+', the menu): the frame's edit copied, or
+    /// with true the default edit; then Rename, Swap with the original
+    /// and Delete of the version right-clicked.
+    callback version-new-asked(bool, bool);
+    callback version-rename-asked();
+    callback version-swap-asked();
+    callback version-delete-asked();
     /// The menu's Copy settings: the frame right-clicked, where Ctrl+C
     /// copies the frame on screen.
     callback menu-copy();
@@ -588,6 +598,8 @@ export component App inherits Window {
     in property <bool> collection-sheet-asks-name: true;
     in property <string> collection-sheet-verb: "Save";
     in-out property <string> collection-sheet-name;
+    /// The field's hint: a collection's name, or a version's.
+    in property <string> collection-sheet-placeholder: "Name, or Set/Name";
     callback collection-sheet-done();
     // The archive roots (`panel::archive`, notes §197, §216).
     /// The grid header's Back up or Bring back: its words, empty for
@@ -735,6 +747,10 @@ export component App inherits Window {
     in property <bool> delete-permanent: false;
     /// Whether the frames to delete are on an archive: a line.
     in property <string> delete-archive: "";
+    /// The default button's word when the sheet asks about something
+    /// other than files to the trash (a version, which is a line of a
+    /// sidecar and goes with a save): empty for the trash's.
+    in property <string> delete-confirm: "";
     callback delete-asked(string);
     callback delete-answered(int);
 
@@ -895,6 +911,9 @@ export component App inherits Window {
     callback snapshot-renamed(int, string);
     callback snapshot-deleted(int);
     in-out property <[HistoryRow]> history-rows: [];
+    /// The version the frame on screen is, by name, said after the
+    /// history's title; empty for the file's own.
+    in property <string> history-version: "";
     in-out property <int> history-current: -1;
     callback history-clicked(int);
     callback history-hovered(int);
@@ -2013,6 +2032,12 @@ export component App inherits Window {
             if (e.modifiers.control && !e.modifiers.shift && !e.modifiers.alt
                 && (e.text == "c" || e.text == "C")) {
                 if (!root.sheet-open()) { root.copy-asked(); }
+                return accept;
+            }
+            // Ctrl+', Lightroom's key: a new version of the frame on
+            // screen, its edit copied.
+            if (e.modifiers.control && !e.modifiers.alt && e.text == "'") {
+                if (!root.sheet-open()) { root.version-new-asked(false, false); }
                 return accept;
             }
             if (e.modifiers.control && !e.modifiers.shift && !e.modifiers.alt
@@ -3178,6 +3203,7 @@ export component App inherits Window {
                 // stays until the next change.
                 if !root.culling && !root.grid-open: HistorySection {
                     history-rows <=> root.history-rows;
+                    hint: root.history-version;
                     history-current <=> root.history-current;
                     history-clicked(a) => { root.history-clicked(a); }
                     history-hovered(a) => { root.history-hovered(a); }
@@ -3277,6 +3303,7 @@ export component App inherits Window {
         delete-trash: root.delete-trash;
         delete-permanent: root.delete-permanent;
         delete-archive: root.delete-archive;
+        delete-confirm: root.delete-confirm;
         delete-answered(a) => {
             root.delete-answered(a);
             keys.focus();
@@ -3420,6 +3447,7 @@ export component App inherits Window {
         asks-name: root.collection-sheet-asks-name;
         verb: root.collection-sheet-verb;
         name <=> root.collection-sheet-name;
+        placeholder: root.collection-sheet-placeholder;
         done => { root.collection-sheet-done(); }
     }
     // The root sheet: a root's name, from its row's menu.
@@ -3597,6 +3625,15 @@ export component App inherits Window {
             if (root.lightbox) { root.lightbox-leave(); } else { root.lightbox-enter(); }
             root.menu-done();
         }
+        version: root.menu-version;
+        can-version: root.selected >= 0 && !root.culling;
+        // A new version's name sheet takes the focus itself: no
+        // `menu-done`, whose timer would take it back.
+        new-version => { root.version-new-asked(false, true); }
+        new-version-from-original => { root.version-new-asked(true, true); }
+        rename-version => { root.version-rename-asked(); }
+        swap-version => { root.version-swap-asked(); root.menu-done(); }
+        delete-version => { root.version-delete-asked(); }
     }
 
     // Recently opened: one list for the window, opened below the

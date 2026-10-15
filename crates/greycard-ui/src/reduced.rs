@@ -66,6 +66,7 @@ use greycard_edit::brush::Raster;
 
 use crate::ai::Ai;
 use crate::edited::{Edited, Shows};
+use crate::versions::Key;
 
 /// How many reduced develops the pool runs at once: one while a frame
 /// is open in the editor, whose develop is what the user is waiting on
@@ -481,23 +482,24 @@ pub(crate) struct Reducer {
     pool: OnceLock<rayon::ThreadPool>,
     /// The frames whose learned masks the worker was asked for and has
     /// not made yet, with the key they were asked under, so the ask is
-    /// made once.
-    asked: Mutex<std::collections::HashMap<PathBuf, u64>>,
-    /// The frames, by path and key, whose masks the worker said it made
+    /// made once. A frame is a file and a version of it, whose line's
+    /// edit is what is made.
+    asked: Mutex<std::collections::HashMap<Key, u64>>,
+    /// The frames, by frame and key, whose masks the worker said it made
     /// every one of: still missing after that (a raster that will not
     /// read back), the frame is not asked for again.
-    masks_made: Mutex<std::collections::HashSet<(PathBuf, u64)>>,
-    /// Frames, by path and key, whose making ended without a picture
+    masks_made: Mutex<std::collections::HashSet<(Key, u64)>>,
+    /// Frames, by frame and key, whose making ended without a picture
     /// kept (a fill, a look not there, masks still to make or whose
     /// model is not there, a failed develop): not tried again under
     /// that key, or every scroll past the cell would develop the frame
     /// again for nothing. A new key is a new try; the worker making
     /// every mask, or a model fetched, lets the frame go.
-    tried: Mutex<std::collections::HashSet<(PathBuf, u64)>>,
+    tried: Mutex<std::collections::HashSet<(Key, u64)>>,
     /// The frames waiting on a model: their masks' models are not in
     /// the store, or the worker could not make every raster. Tried again
     /// when a model is fetched.
-    waiting: Mutex<std::collections::HashSet<PathBuf>>,
+    waiting: Mutex<std::collections::HashSet<Key>>,
     /// The roots on a network mount: a frame under one is developed
     /// alone, since its read is the slow part and two at once only
     /// share the link.
@@ -551,16 +553,16 @@ impl Reducer {
         })
     }
 
-    /// Whether the frame at `path` wants the reduced develop of its
-    /// pictures (`Edited::wants_develop`) under a key not tried and
-    /// found wanting already: the pool's ask after each thumbnail.
-    pub(crate) fn wants(&self, edited: &Edited, path: &Path) -> bool {
-        edited.wants_develop(path).is_some_and(|key| {
+    /// Whether `frame` wants the reduced develop of its pictures
+    /// (`Edited::wants_develop`) under a key not tried and found wanting
+    /// already: the pool's ask after each thumbnail.
+    pub(crate) fn wants(&self, edited: &Edited, frame: &Key) -> bool {
+        edited.wants_develop(frame).is_some_and(|key| {
             !self
                 .tried
                 .lock()
                 .expect("tried keys")
-                .contains(&(path.to_path_buf(), key))
+                .contains(&(frame.clone(), key))
         })
     }
 
@@ -588,14 +590,14 @@ impl Reducer {
         *self.network.lock().expect("network roots") = roots;
     }
 
-    /// Whether the frame at `path` is developed alone: it is under a
-    /// root on a network mount.
-    pub(crate) fn alone(&self, path: &Path) -> bool {
+    /// Whether `frame` is developed alone: its file is under a root on
+    /// a network mount.
+    pub(crate) fn alone(&self, frame: &Key) -> bool {
         self.network
             .lock()
             .expect("network roots")
             .iter()
-            .any(|root| path.starts_with(root))
+            .any(|root| frame.path.starts_with(root))
     }
 
     /// How many reduced develops were begun.
@@ -611,47 +613,44 @@ impl Reducer {
         self.ai.lock().expect("reduced ai")
     }
 
-    /// `path`'s masks under `key` are to be asked of the worker; whether
+    /// `frame`'s masks under `key` are to be asked of the worker; whether
     /// this is the first ask since they were last made.
-    fn ask_masks(&self, path: &Path, key: u64) -> bool {
+    fn ask_masks(&self, frame: &Key, key: u64) -> bool {
         let mut asked = self.asked.lock().expect("asked masks");
-        if asked.contains_key(path) {
+        if asked.contains_key(frame) {
             return false;
         }
-        asked.insert(path.to_path_buf(), key);
+        asked.insert(frame.clone(), key);
         true
     }
 
-    /// The worker made `path`'s masks: every one (`all`), when the next
+    /// The worker made `frame`'s masks: every one (`all`), when the next
     /// try of the frame is a making, or not every one, when the frame
     /// stays tried under its key and waits for a model to be fetched.
-    pub(crate) fn masks_done(&self, path: &Path, all: bool) {
-        let key = self.asked.lock().expect("asked masks").remove(path);
+    pub(crate) fn masks_done(&self, frame: &Key, all: bool) {
+        let key = self.asked.lock().expect("asked masks").remove(frame);
         if all {
             if let Some(key) = key {
                 self.masks_made
                     .lock()
                     .expect("masks made")
-                    .insert((path.to_path_buf(), key));
+                    .insert((frame.clone(), key));
             }
             self.tried
                 .lock()
                 .expect("tried keys")
-                .retain(|(p, _)| p != path);
-            self.waiting.lock().expect("waiting").remove(path);
+                .retain(|(p, _)| p != frame);
+            self.waiting.lock().expect("waiting").remove(frame);
         } else {
-            self.waiting
-                .lock()
-                .expect("waiting")
-                .insert(path.to_path_buf());
+            self.waiting.lock().expect("waiting").insert(frame.clone());
         }
     }
 
     /// A model was fetched: every frame waiting on one is let go, to be
     /// tried again when it is next asked for. Answers them, for their
     /// cells to ask.
-    pub(crate) fn models_arrived(&self) -> Vec<PathBuf> {
-        let waiting: Vec<PathBuf> = self.waiting.lock().expect("waiting").drain().collect();
+    pub(crate) fn models_arrived(&self) -> Vec<Key> {
+        let waiting: Vec<Key> = self.waiting.lock().expect("waiting").drain().collect();
         if !waiting.is_empty() {
             self.tried
                 .lock()
@@ -665,17 +664,18 @@ impl Reducer {
         waiting
     }
 
-    /// The pictures of the frame at `path`, made by the reduced develop
-    /// on the pool's threads and kept under its key: `Ok(true)` when
-    /// they were, or when what the frame shows changed for another
-    /// reason (its sidecar's key was not the one it was held under, and
-    /// those pictures are kept, or its edit was reset), so its cells ask
+    /// The pictures of `frame`, made by the reduced develop on the
+    /// pool's threads and kept under its key: `Ok(true)` when they were,
+    /// or when what the frame shows changed for another reason (its
+    /// sidecar's key was not the one it was held under, and those
+    /// pictures are kept, or its edit was reset), so its cell asks
     /// again. The frame's edit is read from its sidecar as the window
-    /// reads it; the open frame, a frame with no edit and one whose
-    /// pictures are kept already are left alone.
-    pub(crate) fn make(&self, edited: &Edited, path: &Path) -> Result<bool, Why> {
+    /// reads it, the line of the frame's version; the open frame, a
+    /// frame with no edit and one whose pictures are kept already are
+    /// left alone.
+    pub(crate) fn make(&self, edited: &Edited, frame: &Key) -> Result<bool, Why> {
         let mut key = None;
-        let mut made = self.make_under(edited, path, &mut key);
+        let mut made = self.make_under(edited, frame, &mut key);
         // Masks to make: asked of the worker once a key; still missing
         // once it has made every one, they never will be.
         if let (Err(Why::Masks(which)), Some(key)) = (&made, key) {
@@ -684,17 +684,14 @@ impl Reducer {
                 .masks_made
                 .lock()
                 .expect("masks made")
-                .contains(&(path.to_path_buf(), key))
+                .contains(&(frame.clone(), key))
             {
-                self.waiting
-                    .lock()
-                    .expect("waiting")
-                    .insert(path.to_path_buf());
+                self.waiting.lock().expect("waiting").insert(frame.clone());
                 Err(Why::Without(vec![format!(
                     "the masks made for it do not read back: {}",
                     which.join(", ")
                 )]))
-            } else if self.ask_masks(path, key) {
+            } else if self.ask_masks(frame, key) {
                 Err(Why::AskMasks(which))
             } else {
                 Err(Why::Masks(which))
@@ -714,13 +711,10 @@ impl Reducer {
             self.tried
                 .lock()
                 .expect("tried keys")
-                .insert((path.to_path_buf(), key));
+                .insert((frame.clone(), key));
         }
         if let Err(Why::NoModel(_)) = &made {
-            self.waiting
-                .lock()
-                .expect("waiting")
-                .insert(path.to_path_buf());
+            self.waiting.lock().expect("waiting").insert(frame.clone());
         }
         made
     }
@@ -730,51 +724,60 @@ impl Reducer {
     fn make_under(
         &self,
         edited: &Edited,
-        path: &Path,
+        frame: &Key,
         tried: &mut Option<u64>,
     ) -> Result<bool, Why> {
-        if edited.is_open(path) {
+        if edited.is_open(frame) {
             return Err(Why::Open);
         }
         if !edited.cache_on() {
             return Err(Why::NoCache);
         }
-        let Shows::Edit(held) = edited.shows(path) else {
+        let Shows::Edit(held) = edited.shows(frame) else {
             return Err(Why::NotWanted);
         };
         *tried = Some(held);
-        let name = crate::panel::browser::file_name(path);
+        let path = frame.path.as_path();
+        let name = frame.said();
         let hash = greycard_library::hash_file(path).map_err(|e| Why::Failed(e.to_string()))?;
-        let (sidecar, _, trouble) = crate::panel::browser::load_sidecar_said(path, true);
+        let (mut sidecar, trouble) = crate::panel::browser::load_sidecar_said(path, true);
         if let Some(t) = trouble {
             return Err(Why::Failed(format!("its sidecar: {t:?}")));
         }
+        // The frame's own line: a version gone from the sidecar since
+        // the frame was listed (deleted, or taken out by a join) has no
+        // edit to make pictures of.
+        let Some(line) = sidecar.line_mut(frame.version()) else {
+            edited.reset(frame, Some(&hash));
+            return Err(Why::Failed("no such version in its sidecar".into()));
+        };
+        let line = std::mem::take(line);
         // The sidecar read now has the last word on the key: the one the
         // frame was held under may be its row's, made by the index under
         // a look, a lens database or a recipe since moved, or a save may
         // have come between. The frame is settled on the sidecar's, and
         // that is what is made.
-        let iso = edited.iso_of(path);
-        let key = edited.key_of(&sidecar.current);
+        let iso = edited.iso_of(frame);
+        let key = edited.key_of(&line.current);
         let mut moved = false;
         if key != held {
-            if !crate::edited::is_edited(path, &sidecar.current, iso) {
+            if !crate::edited::is_edited(path, &line.current, iso) {
                 tracing::info!("the edit's pictures of {name}: its edit was reset; the camera's");
-                edited.reset(path, Some(&hash));
+                edited.reset(frame, Some(&hash));
                 return Ok(true);
             }
             tracing::info!(
                 "the edit's pictures of {name}: held under {held:016x}, its sidecar makes \
                  {key:016x}; made under the sidecar's"
             );
-            edited.settle_key(path, &hash, key, iso);
+            edited.settle_key(frame, &hash, key, iso);
             *tried = Some(key);
             moved = true;
         }
         if edited.all_kept(&hash, key) {
             return if moved { Ok(true) } else { Err(Why::NotWanted) };
         }
-        let edit = sidecar.line.current;
+        let edit = line.current;
         let turn = sidecar.turn;
         // What would keep the picture from being kept, asked before the
         // decode: the look, and the learned masks' rasters or models.
@@ -802,7 +805,7 @@ impl Reducer {
         // meanwhile keeps this picture all the same, its key read from
         // its sidecar: the open frame's develop makes its own in its
         // place when it lands.
-        if edited.shows(path) != Shows::Edit(key) {
+        if edited.shows(frame) != Shows::Edit(key) {
             return Err(Why::Stale);
         }
         let finish = crate::edited::Finish {
@@ -916,10 +919,59 @@ mod tests {
         dir
     }
 
+    /// A version of a frame is a frame of its own to the reduced develop:
+    /// held by its own frame, its line's edit read from the sidecar and
+    /// its pictures made and kept under that edit's key, while the
+    /// file's own frame, at the default, shows the camera's.
+    #[test]
+    fn a_version_s_line_is_developed_by_its_own_frame() {
+        let dir = scratch("version");
+        let (file, edited) = frame(&dir, "pair.png", &Edit::for_picture(), None);
+        let mut sidecar = greycard_edit::Sidecar::load(&file.path).unwrap().unwrap();
+        let mut warm = Edit::for_picture();
+        warm.light.exposure = 1.0;
+        let id = sidecar.new_version(None, Some("Warm")).unwrap();
+        sidecar.line_mut(Some(&id)).unwrap().record(warm.clone());
+        sidecar.save(&file.path).unwrap();
+        let version = Key::of(&file.path, Some(&id));
+        edited.note_all([
+            (file.clone(), false, None, None),
+            (version.clone(), true, None, None),
+        ]);
+        let reducer = Reducer::new();
+        assert!(!reducer.wants(&edited, &file), "the file's own has no edit");
+        assert!(reducer.wants(&edited, &version));
+        assert!(matches!(reducer.make(&edited, &version), Ok(true)));
+        let hash = greycard_library::hash_file(&file.path).unwrap();
+        let key = edited.key_of(&warm);
+        assert!(
+            edited.all_kept(&hash, key),
+            "the version's pictures, under its key"
+        );
+        assert_eq!(edited.shows(&version), Shows::Edit(key));
+        assert_eq!(edited.shows(&file), Shows::Camera, "the file's own, apart");
+        assert!(
+            edited.lookup(&hash, 128, Shows::Edit(key)).is_some(),
+            "found by the version's key"
+        );
+        assert!(!reducer.wants(&edited, &version), "kept");
+        // The version gone from the sidecar: nothing to make, and the
+        // frame is let go.
+        sidecar.delete_version(&id);
+        sidecar.save(&file.path).unwrap();
+        edited.note(&version, true, None, None);
+        assert!(matches!(
+            reducer.make(&edited, &version),
+            Err(Why::NotWanted) | Err(Why::Failed(_))
+        ));
+        assert_eq!(edited.shows(&version), Shows::Camera);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
     /// A 600 by 400 PNG at `dir/name` with `edit` in its sidecar, and an
     /// `Edited` over a cache of its own holding it as edited, under the
     /// key `row` its row gave.
-    fn frame(dir: &Path, name: &str, edit: &Edit, row: Option<u64>) -> (PathBuf, Arc<Edited>) {
+    fn frame(dir: &Path, name: &str, edit: &Edit, row: Option<u64>) -> (Key, Arc<Edited>) {
         let path = dir.join(name);
         image::RgbImage::from_fn(600, 400, |x, y| {
             image::Rgb([(30 + x / 12) as u8, (40 + y / 10) as u8, 50])
@@ -943,8 +995,9 @@ mod tests {
             ),
         )));
         let edited = Arc::new(Edited::new(cache));
-        edited.note_all([(path.clone(), true, None, row)]);
-        (path, edited)
+        let frame = Key::file(&path);
+        edited.note_all([(frame.clone(), true, None, row)]);
+        (frame, edited)
     }
 
     /// A brightening with a Sky mask over it.
@@ -976,26 +1029,26 @@ mod tests {
     fn a_mask_whose_model_is_absent_is_tried_once_and_made_when_it_arrives() {
         let dir = scratch("no-model");
         let edit = with_sky();
-        let (path, edited) = frame(&dir, "sky.png", &edit, None);
+        let (frame, edited) = frame(&dir, "sky.png", &edit, None);
         let store = greycard_ai::Store::at(dir.join("models"));
         let reducer = Reducer::with_ai(Ai::for_test_on_disk(store.clone()));
-        let hash = greycard_library::hash_file(&path).unwrap();
+        let hash = greycard_library::hash_file(&frame.path).unwrap();
         let key = edited.key_of(&edit);
-        assert!(reducer.wants(&edited, &path));
-        match reducer.make(&edited, &path) {
+        assert!(reducer.wants(&edited, &frame));
+        match reducer.make(&edited, &frame) {
             Err(Why::NoModel(which)) => assert!(which[0].contains("Sky"), "{which:?}"),
             other => panic!("not kept for want of the model: {other:?}"),
         }
         assert_eq!(reducer.develops(), 0, "nothing decoded for it");
-        assert!(!reducer.wants(&edited, &path), "tried, and not again");
+        assert!(!reducer.wants(&edited, &frame), "tried, and not again");
         assert!(
-            edited.lookup(&hash, 128, edited.shows(&path)).is_none(),
+            edited.lookup(&hash, 128, edited.shows(&frame)).is_none(),
             "the camera's stands"
         );
         // The model is fetched: the frame is let go and asked for again.
-        assert_eq!(reducer.models_arrived(), std::slice::from_ref(&path));
+        assert_eq!(reducer.models_arrived(), std::slice::from_ref(&frame));
         assert!(reducer.models_arrived().is_empty(), "once");
-        assert!(reducer.wants(&edited, &path));
+        assert!(reducer.wants(&edited, &frame));
         // With the model in the store and no raster yet, the worker is
         // asked, once a key, and the frame is not wanted meanwhile.
         for file in greycard_ai::SKY.files {
@@ -1007,20 +1060,24 @@ mod tests {
                 .unwrap();
         }
         assert!(matches!(
-            reducer.make(&edited, &path),
+            reducer.make(&edited, &frame),
             Err(Why::AskMasks(_))
         ));
-        assert!(!reducer.wants(&edited, &path));
+        assert!(!reducer.wants(&edited, &frame));
         assert_eq!(reducer.develops(), 0);
         // The worker could not make it (a model that fails): still tried.
-        reducer.masks_done(&path, false);
-        assert!(!reducer.wants(&edited, &path), "waits for a fetch");
-        assert_eq!(reducer.models_arrived(), std::slice::from_ref(&path));
+        reducer.masks_done(&frame, false);
+        assert!(!reducer.wants(&edited, &frame), "waits for a fetch");
+        assert_eq!(reducer.models_arrived(), std::slice::from_ref(&frame));
         // The raster in its slot, as the worker makes it, at the frame's
         // aspect: the pictures are made, and kept under the key.
         let slot = reducer
             .ai()
-            .cached_path_of(&path, &edit.adjustments[0].mask.components[0].shape, 0)
+            .cached_path_of(
+                &frame.path,
+                &edit.adjustments[0].mask.components[0].shape,
+                0,
+            )
             .expect("a slot in the mask cache");
         std::fs::create_dir_all(slot.parent().unwrap()).unwrap();
         let height = (greycard_edit::brush::RASTER_WIDTH as f32 * 400.0 / 600.0).round() as u32;
@@ -1031,13 +1088,13 @@ mod tests {
         )
         .save_with_format(&slot, image::ImageFormat::Png)
         .unwrap();
-        reducer.masks_done(&path, true);
-        assert!(reducer.wants(&edited, &path));
-        assert!(matches!(reducer.make(&edited, &path), Ok(true)));
+        reducer.masks_done(&frame, true);
+        assert!(reducer.wants(&edited, &frame));
+        assert!(matches!(reducer.make(&edited, &frame), Ok(true)));
         assert_eq!(reducer.develops(), 1);
         assert!(edited.all_kept(&hash, key));
         assert!(!edited.all_kept_by(&hash, key, crate::edited::EDITED_RECIPE));
-        assert!(!reducer.wants(&edited, &path), "kept");
+        assert!(!reducer.wants(&edited, &frame), "kept");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1054,17 +1111,17 @@ mod tests {
         let mut edit = Edit::default();
         edit.light.exposure = 1.0;
         let wiped = edit.develop_key(Some("a lens database since wiped"));
-        let (path, edited) = frame(&dir, "stale.png", &edit, Some(wiped));
+        let (frame, edited) = frame(&dir, "stale.png", &edit, Some(wiped));
         let key = edited.key_of(&edit);
         assert_ne!(key, wiped);
-        assert_eq!(edited.shows_offline(&path), Shows::Edit(wiped), "offline");
-        assert_eq!(edited.shows(&path), Shows::Edit(key), "online, read");
-        assert_eq!(edited.shows_offline(&path), Shows::Edit(key));
+        assert_eq!(edited.shows_offline(&frame), Shows::Edit(wiped), "offline");
+        assert_eq!(edited.shows(&frame), Shows::Edit(key), "online, read");
+        assert_eq!(edited.shows_offline(&frame), Shows::Edit(key));
         let reducer = Reducer::with_ai(Ai::for_test_on_disk(greycard_ai::Store::at(
             dir.join("models"),
         )));
-        let hash = greycard_library::hash_file(&path).unwrap();
-        assert!(matches!(reducer.make(&edited, &path), Ok(true)));
+        let hash = greycard_library::hash_file(&frame.path).unwrap();
+        assert!(matches!(reducer.make(&edited, &frame), Ok(true)));
         assert!(edited.all_kept(&hash, key));
         // The sidecar moves under a frame held under its old key (a
         // refit: what it makes is another picture): made under the
@@ -1075,12 +1132,12 @@ mod tests {
             line: greycard_edit::Line::of(refit.clone()),
             ..Default::default()
         }
-        .save(&path)
+        .save(&frame.path)
         .unwrap();
         let now = edited.key_of(&refit);
-        edited.settle_key(&path, &hash, 77, None);
-        assert!(matches!(reducer.make(&edited, &path), Ok(true)));
-        assert_eq!(edited.shows(&path), Shows::Edit(now));
+        edited.settle_key(&frame, &hash, 77, None);
+        assert!(matches!(reducer.make(&edited, &frame), Ok(true)));
+        assert_eq!(edited.shows(&frame), Shows::Edit(now));
         assert!(edited.all_kept(&hash, now));
         assert_eq!(reducer.develops(), 2);
         std::fs::remove_dir_all(&dir).unwrap();
@@ -1106,30 +1163,30 @@ mod tests {
         edit.light.exposure = 1.0;
         edit.look_lut.lut = greycard_edit::look::LutChoice::Named("Fitted".into());
         edit.look_lut.strength = 0.0;
-        let (path, edited) = frame(&dir, "refit.png", &edit, None);
+        let (frame, edited) = frame(&dir, "refit.png", &edit, None);
         edited.set_dirs(looks.clone(), profiles.clone());
         let reducer = Reducer::with_ai(Ai::for_test_on_disk(greycard_ai::Store::at(
             dir.join("models"),
         )));
-        let hash = greycard_library::hash_file(&path).unwrap();
+        let hash = greycard_library::hash_file(&frame.path).unwrap();
         let fitted = edited.key_of(&edit);
-        assert!(matches!(reducer.make(&edited, &path), Ok(true)));
+        assert!(matches!(reducer.make(&edited, &frame), Ok(true)));
         assert!(edited.all_kept(&hash, fitted));
         assert!(!edited.files_moved(), "nothing moved");
-        assert!(!reducer.wants(&edited, &path));
+        assert!(!reducer.wants(&edited, &frame));
         // The refit: other contents, another length.
         std::fs::write(&table, "LUT_3D_SIZE 2\n0 0 0.5\n").unwrap();
         let refit = edited.key_of(&edit);
         assert_ne!(refit, fitted, "a refit is another picture");
         assert!(
-            !reducer.wants(&edited, &path),
+            !reducer.wants(&edited, &frame),
             "held under the key found, until told"
         );
         assert!(edited.files_moved(), "the directory moved");
         assert!(!edited.files_moved(), "once");
-        assert!(reducer.wants(&edited, &path), "read again");
-        assert!(matches!(reducer.make(&edited, &path), Ok(true)));
-        assert_eq!(edited.shows(&path), Shows::Edit(refit));
+        assert!(reducer.wants(&edited, &frame), "read again");
+        assert!(matches!(reducer.make(&edited, &frame), Ok(true)));
+        assert_eq!(edited.shows(&frame), Shows::Edit(refit));
         assert!(edited.all_kept(&hash, refit));
         // The old key's pictures are an orphan now, left to the
         // eviction: read again, the frame no longer names the key it

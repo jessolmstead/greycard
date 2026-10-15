@@ -95,10 +95,15 @@ use greycard_edit::retouch::Retouch;
 use greycard_edit::{Edit, Noise};
 
 use crate::ai::{Ai, Key, NoDenoiser, NoFill};
+use crate::versions::Key as Frame;
 
 pub enum Job {
     Open {
         path: PathBuf,
+        /// The version of the file whose line `edit` is, none for the
+        /// file's own: the frame the editor has open, which the pool
+        /// leaves to the worker's own develop.
+        version: Option<std::sync::Arc<str>>,
         edit: Edit,
         generation: u64,
         /// A raw with no sidecar yet: its learned-denoiser blend is
@@ -116,17 +121,17 @@ pub enum Job {
         generation: u64,
         turn: u8,
     },
-    Thumbnail {
-        index: usize,
-        path: PathBuf,
-    },
-    /// A file's thumbnail from the cache alone, under the key its row
+    /// The picture of a frame (a file, and the version of it) for the
+    /// list's cell `index`: the picture kept of its edit when one is,
+    /// else the camera's, made and kept if need be.
+    Thumbnail { index: usize, frame: Frame },
+    /// A frame's thumbnail from the cache alone, under the key its row
     /// in the index gives (the content hash and the mtime stamp): for
     /// a frame whose file cannot be read, its root being offline. A
     /// miss is a `NoThumbnail`, and nothing is made.
     CachedThumbnail {
         index: usize,
-        path: PathBuf,
+        frame: Frame,
         hash: String,
         stamp: u64,
     },
@@ -157,31 +162,28 @@ pub enum Job {
     /// The people on the open picture, as the People model finds them,
     /// for a Part chosen to be picked among: answered with `People`.
     People,
-    /// The frame at `path` was saved under `edit` at `turn`: when it is
-    /// the open frame and its develop is in hand, the edit's pictures
-    /// are made from it and kept (`edited`); when the develop is still
-    /// to land, they are made when it does, or when the frame is left
-    /// with it in hand. Answered with `EditedKept` once the frame's
-    /// pictures may have changed.
+    /// `frame` was saved under `edit` at `turn`: when it is the open
+    /// frame and its develop is in hand, the edit's pictures are made
+    /// from it and kept (`edited`); when the develop is still to land,
+    /// they are made when it does, or when the frame is left with it in
+    /// hand. Answered with `EditedKept` once the frame's pictures may
+    /// have changed.
     Keep {
-        path: PathBuf,
+        frame: Frame,
         edit: Edit,
         turn: u8,
         /// The frame's ISO from its row, which the learned blend is
         /// judged against in saying whether this is an edit at all.
         iso: crate::edited::Iso,
     },
-    /// Make the learned masks' rasters of the frame at `path` under
-    /// its sidecar's edit and put them in the mask cache, so the
-    /// reduced develop of its pictures (`reduced`) can read them: the
-    /// lowest thing the worker does, taken only when nothing else is
-    /// queued. Answered with `EditedKept` so the frame is asked for
-    /// again.
-    MasksFor(PathBuf),
+    /// Make the learned masks' rasters of a frame under its line's edit
+    /// and put them in the mask cache, so the reduced develop of its
+    /// pictures (`reduced`) can read them: the lowest thing the worker
+    /// does, taken only when nothing else is queued. Answered with
+    /// `EditedKept` so the frame is asked for again.
+    MasksFor(Frame),
     /// Fetch a model into the store; on its own thread.
-    Fetch {
-        model: &'static greycard_ai::Model,
-    },
+    Fetch { model: &'static greycard_ai::Model },
     /// Fetch the lens database into its store; on its own thread.
     FetchLenses,
     /// The worker's own: a device arrived and nothing else is queued.
@@ -339,7 +341,7 @@ pub enum Outcome {
         generation: u64,
         name: String,
     },
-    /// A file's thumbnail, with the path it was made from: the list
+    /// A frame's thumbnail, with the frame it was made for: the list
     /// may have changed under it, so the index alone is not enough.
     /// `size` is the long edge it was asked for, which the grid uses
     /// to tell a picture it has outgrown from one it has not.
@@ -348,7 +350,7 @@ pub enum Outcome {
     /// log.
     Thumbnail {
         index: usize,
-        path: PathBuf,
+        frame: Frame,
         size: u32,
         width: u32,
         height: u32,
@@ -356,11 +358,11 @@ pub enum Outcome {
         cached: bool,
         seconds: f64,
     },
-    /// A file no thumbnail could be made of, so the folder's count
+    /// A frame no thumbnail could be made of, so the folder's count
     /// still closes.
     NoThumbnail {
         index: usize,
-        path: PathBuf,
+        frame: Frame,
     },
     /// Thumbnails and `NoThumbnail`s waiting in the pool's outbox, for
     /// a worker made with [`Worker::batched`]: one of these for as
@@ -445,11 +447,11 @@ pub enum Outcome {
     LensesFetchFailed {
         message: String,
     },
-    /// The pictures `path` shows in the strip, the grid and the loupe
+    /// The pictures `frame` shows in the strip, the grid and the loupe
     /// may have changed: its edit's were kept, or its edit was reset or
-    /// left without them. Its cells ask for their pictures again.
+    /// left without them. Its cell asks for its picture again.
     EditedKept {
-        path: PathBuf,
+        frame: Frame,
     },
 }
 
@@ -479,7 +481,7 @@ struct Queue {
     /// Frames whose learned masks the reduced develop found missing
     /// from the mask cache (`Job::MasksFor`): made here, behind
     /// everything else, since each is a decode and a model run.
-    masks_for: std::collections::VecDeque<PathBuf>,
+    masks_for: std::collections::VecDeque<Frame>,
     /// A Subject model arrived since the one loaded, if any: drop it,
     /// so the next Subject mask picks up the new file rather than the
     /// one already running.
@@ -556,12 +558,12 @@ impl Worker {
             Arc::new(crate::previews::Previews::new(thumbs.clone()).with_edited(edited.clone()));
         let make: crate::thumbpool::Make = {
             let (thumbs, previews, edited) = (thumbs.clone(), previews.clone(), edited.clone());
-            Arc::new(move |path, size| {
+            Arc::new(move |frame, size| {
                 cached_thumbnail_noting(
                     &thumbs,
                     Some(&previews),
                     Some(&edited),
-                    path,
+                    frame,
                     size,
                     thumbnail,
                 )
@@ -569,8 +571,8 @@ impl Worker {
         };
         let lookup: crate::thumbpool::Lookup = {
             let (thumbs, previews, edited) = (thumbs.clone(), previews.clone(), edited.clone());
-            Arc::new(move |path, size| {
-                thumb_lookup(&thumbs, path, size, Some(&previews), Some(&edited)).2
+            Arc::new(move |frame, size| {
+                thumb_lookup(&thumbs, frame, size, Some(&previews), Some(&edited)).2
             })
         };
         let hooks = crate::thumbpool::PreviewHooks {
@@ -587,24 +589,24 @@ impl Worker {
         let edits = crate::thumbpool::EditHooks {
             wants: {
                 let (reducer, edited) = (reducer.clone(), edited.clone());
-                Arc::new(move |path| reducer.wants(&edited, path))
+                Arc::new(move |frame| reducer.wants(&edited, frame))
             },
             make: {
                 let (reducer, edited, queue) = (reducer.clone(), edited.clone(), queue.clone());
-                Arc::new(move |path| match reducer.make(&edited, path) {
+                Arc::new(move |frame| match reducer.make(&edited, frame) {
                     Ok(kept) => Ok(kept),
                     // The worker makes the masks, behind everything
                     // else, and the frame is asked for again after.
                     Err(crate::reduced::Why::AskMasks(which)) => {
                         tracing::info!(
                             "the edit's pictures of {}: {} not in the mask cache; the worker is asked",
-                            crate::panel::browser::file_name(path),
+                            frame.said(),
                             which.join(", ")
                         );
                         let (lock, cv) = &*queue;
                         let mut q = lock.lock().expect("worker queue");
-                        if !q.masks_for.iter().any(|p| p == path) {
-                            q.masks_for.push_back(path.to_path_buf());
+                        if !q.masks_for.iter().any(|p| p == frame) {
+                            q.masks_for.push_back(frame.clone());
                         }
                         cv.notify_one();
                         Ok(false)
@@ -629,7 +631,7 @@ impl Worker {
             },
             alone: {
                 let reducer = reducer.clone();
-                Arc::new(move |path| reducer.alone(path))
+                Arc::new(move |frame| reducer.alone(frame))
             },
         };
         let pool = crate::thumbpool::Pool::with_lookup(
@@ -675,8 +677,8 @@ impl Worker {
     /// frame. While there is one, the reduced develops run one at a
     /// time and the learned masks for them wait (`Job::MasksFor`); the
     /// pool and the worker look again when it changes.
-    pub(crate) fn set_open_frame(&self, path: Option<PathBuf>) {
-        if self.edited.set_open(path) {
+    pub(crate) fn set_open_frame(&self, frame: Option<Frame>) {
+        if self.edited.set_open(frame) {
             self.pool.wake();
             let (_, cv) = &*self.queue;
             cv.notify_one();
@@ -830,8 +832,8 @@ impl Worker {
                         if fetch(model, &*deliver) {
                             // The frames whose pictures waited on a model
                             // are tried again: their cells ask.
-                            for path in reducer.models_arrived() {
-                                deliver(Outcome::EditedKept { path });
+                            for frame in reducer.models_arrived() {
+                                deliver(Outcome::EditedKept { frame });
                             }
                         }
                     }));
@@ -869,13 +871,13 @@ impl Worker {
                 .expect("spawning the lens fetch");
             return;
         }
-        if let Job::Thumbnail { index, path } = job {
-            self.pool.push(index, path);
+        if let Job::Thumbnail { index, frame } = job {
+            self.pool.push(index, frame);
             return;
         }
         if let Job::CachedThumbnail {
             index,
-            path,
+            frame,
             hash,
             stamp,
         } = job
@@ -899,7 +901,7 @@ impl Worker {
                 // being out of reach with its file.
                 let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     edited
-                        .lookup(&hash, size, edited.shows_offline(&path))
+                        .lookup(&hash, size, edited.shows_offline(&frame))
                         .or_else(|| {
                             thumbs
                                 .lock()
@@ -920,7 +922,7 @@ impl Worker {
                 .unwrap_or_else(|payload| {
                     tracing::warn!(
                         "thumbnail {}: the cache's lookup panicked: {}",
-                        path.display(),
+                        frame.said(),
                         panic_message(payload.as_ref())
                     );
                     None
@@ -928,7 +930,7 @@ impl Worker {
                 deliver(match hit {
                     Some(thumb) => Outcome::Thumbnail {
                         index,
-                        path,
+                        frame,
                         size,
                         width: thumb.width,
                         height: thumb.height,
@@ -936,7 +938,7 @@ impl Worker {
                         cached: true,
                         seconds: started.elapsed().as_secs_f64(),
                     },
-                    None => Outcome::NoThumbnail { index, path },
+                    None => Outcome::NoThumbnail { index, frame },
                 });
             });
             return;
@@ -963,15 +965,15 @@ impl Worker {
             }
             Job::People => q.people = true,
             Job::Keep {
-                path,
+                frame,
                 edit,
                 turn,
                 iso,
             } => {
                 q.keeps
-                    .retain(|k| !matches!(k, Job::Keep { path: p, .. } if *p == path));
+                    .retain(|k| !matches!(k, Job::Keep { frame: f, .. } if *f == frame));
                 q.keeps.push_back(Job::Keep {
-                    path,
+                    frame,
                     edit,
                     turn,
                     iso,
@@ -981,8 +983,12 @@ impl Worker {
                 // The frame being opened is the open frame from here:
                 // the pool must not develop it for its pictures while
                 // the open is on its way.
-                if let Job::Open { path, .. } = &job
-                    && self.edited.set_open(Some(path.clone()))
+                if let Job::Open { path, version, .. } = &job
+                    && self.edited.set_open(Some(Frame {
+                        path: path.clone(),
+                        version: version.clone(),
+                        name: None,
+                    }))
                 {
                     self.pool.wake();
                 }
@@ -1050,7 +1056,7 @@ impl Worker {
     /// picture, which is how a merge blanked the grid.
     /// `wanted`, the files on screen, are made first, as the grid's
     /// range would have them.
-    pub fn replace_thumbnails(&self, list: Vec<(usize, PathBuf)>, wanted: Option<(usize, usize)>) {
+    pub fn replace_thumbnails(&self, list: Vec<(usize, Frame)>, wanted: Option<(usize, usize)>) {
         self.pool.forget();
         self.pool.push_all(list);
         if let Some((first, last)) = wanted {
@@ -1072,7 +1078,7 @@ impl Worker {
 /// The frames on the strip first, in file order, then the rest
 /// outward from the middle of that range: what a scroll asks for
 /// next is whichever end it is heading towards.
-pub(crate) fn order_thumbnails(pending: &mut [(usize, PathBuf)], first: usize, last: usize) {
+pub(crate) fn order_thumbnails<T>(pending: &mut [(usize, T)], first: usize, last: usize) {
     // Ties broken by the frame's number, so two the same distance
     // from the center come in the list's order whichever thread
     // queued them first.
@@ -1336,9 +1342,9 @@ fn run(
                 // Not while a frame is open in the editor: a decode and
                 // a model run beside the develop the user waits on.
                 if !edited.any_open()
-                    && let Some(path) = q.masks_for.pop_front()
+                    && let Some(frame) = q.masks_for.pop_front()
                 {
-                    break Job::MasksFor(path);
+                    break Job::MasksFor(frame);
                 }
                 if device.is_some() {
                     // Nothing else to do: build the context now, off
@@ -1371,7 +1377,7 @@ fn run(
         // A save of the open frame: its edit's pictures from the develop
         // in hand, or held for the develop still to land.
         if let Job::Keep {
-            path,
+            frame,
             edit,
             turn,
             iso,
@@ -1385,7 +1391,7 @@ fn run(
                 gpu: gpu.as_ref(),
             };
             let keep = Keep {
-                path,
+                frame,
                 edit,
                 turn,
                 iso,
@@ -1439,106 +1445,107 @@ fn run(
             // learned blend seeded from the ISO when it was still to
             // be, as a first open would have seeded it.
             let mut rendered = frame.edit.clone();
-            let (done, finished) = crate::queue::step(&set, index, &frame.source, || {
-                // The name the policy chose, which the status line says:
-                // the one written, not the one asked for.
-                let resolved = crate::queue::resolve(&set, &frame);
-                deliver(Outcome::SetFrameStarted {
-                    set: set.clone(),
-                    index,
-                    name: file_label(resolved.path().unwrap_or(&frame.out)),
-                });
-                let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let note = resolved.note();
-                    let Some(path) = resolved.path().map(std::path::Path::to_path_buf) else {
-                        return crate::queue::Done::Skipped {
-                            path: frame.out.clone(),
+            let (done, finished) =
+                crate::queue::step(&set, index, &crate::queue::label(&frame), || {
+                    // The name the policy chose, which the status line says:
+                    // the one written, not the one asked for.
+                    let resolved = crate::queue::resolve(&set, &frame);
+                    deliver(Outcome::SetFrameStarted {
+                        set: set.clone(),
+                        index,
+                        name: file_label(resolved.path().unwrap_or(&frame.out)),
+                    });
+                    let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        let note = resolved.note();
+                        let Some(path) = resolved.path().map(std::path::Path::to_path_buf) else {
+                            return crate::queue::Done::Skipped {
+                                path: frame.out.clone(),
+                            };
                         };
-                    };
-                    // A subfolder is made as its first frame goes in; a
-                    // chosen folder is there, and one that is not (a
-                    // drive gone) is never made on the disk under it.
-                    if set.sub.is_some()
-                        && let Some(dir) = path.parent()
-                        && let Err(e) = std::fs::create_dir_all(dir)
-                    {
-                        return crate::queue::Done::Failed {
-                            message: format!("making {}: {e}", dir.display()),
-                        };
-                    }
-                    let start = Instant::now();
-                    // The frame on screen is the open file: its picture
-                    // is the last develop's when that was of this edit.
-                    // Any other is opened and developed on the side,
-                    // and the open file's state is left as it was.
-                    let written = if opened_path.as_deref() == Some(frame.source.as_path()) {
-                        let edit = seeded(&frame.edit, frame.seed_blend, input.as_ref());
-                        rendered = edit.clone();
-                        open_picture(
-                            &edit,
-                            frame.turn % 4,
-                            input.as_ref(),
-                            &mut last,
-                            &mut base,
-                            &mut learned,
-                            &mut ai,
-                            cache.as_ref(),
-                            lenses.as_deref(),
-                            &deliver,
-                        )
-                        .and_then(|(image, mut left_out)| {
-                            left_out.extend(write_export(
-                                image,
+                        // A subfolder is made as its first frame goes in; a
+                        // chosen folder is there, and one that is not (a
+                        // drive gone) is never made on the disk under it.
+                        if set.sub.is_some()
+                            && let Some(dir) = path.parent()
+                            && let Err(e) = std::fs::create_dir_all(dir)
+                        {
+                            return crate::queue::Done::Failed {
+                                message: format!("making {}: {e}", dir.display()),
+                            };
+                        }
+                        let start = Instant::now();
+                        // The frame on screen is the open file: its picture
+                        // is the last develop's when that was of this edit.
+                        // Any other is opened and developed on the side,
+                        // and the open file's state is left as it was.
+                        let written = if opened_path.as_deref() == Some(frame.source.as_path()) {
+                            let edit = seeded(&frame.edit, frame.seed_blend, input.as_ref());
+                            rendered = edit.clone();
+                            open_picture(
                                 &edit,
-                                base.as_ref(),
+                                frame.turn % 4,
+                                input.as_ref(),
+                                &mut last,
+                                &mut base,
+                                &mut learned,
                                 &mut ai,
-                                opened_path.as_deref(),
-                                metadata.as_deref(),
+                                cache.as_ref(),
+                                lenses.as_deref(),
+                                &deliver,
+                            )
+                            .and_then(|(image, mut left_out)| {
+                                left_out.extend(write_export(
+                                    image,
+                                    &edit,
+                                    base.as_ref(),
+                                    &mut ai,
+                                    opened_path.as_deref(),
+                                    metadata.as_deref(),
+                                    &set.settings,
+                                    &path,
+                                )?);
+                                Ok(left_out)
+                            })
+                        } else {
+                            // The editor's People model, lent for the
+                            // frame rather than a second one loaded.
+                            let other = set_ai.get_or_insert_with(Ai::new);
+                            ai.lend_parts(other);
+                            let written = export_other(
+                                &frame,
+                                other,
+                                cache.as_ref(),
+                                lenses.as_deref(),
+                                &deliver,
                                 &set.settings,
                                 &path,
-                            )?);
-                            Ok(left_out)
-                        })
-                    } else {
-                        // The editor's People model, lent for the
-                        // frame rather than a second one loaded.
-                        let other = set_ai.get_or_insert_with(Ai::new);
-                        ai.lend_parts(other);
-                        let written = export_other(
-                            &frame,
-                            other,
-                            cache.as_ref(),
-                            lenses.as_deref(),
-                            &deliver,
-                            &set.settings,
-                            &path,
-                        );
-                        other.lend_parts(&mut ai);
-                        written.map(|(edit, left_out)| {
-                            rendered = edit;
-                            left_out
-                        })
-                    };
-                    match written {
-                        Ok(left_out) => crate::queue::Done::Exported {
-                            path,
-                            seconds: start.elapsed().as_secs_f64(),
-                            note,
-                            left_out,
-                        },
-                        Err(message) => crate::queue::Done::Failed { message },
-                    }
-                }));
-                held.unwrap_or_else(|payload| {
-                    panicked = true;
-                    crate::queue::Done::Failed {
-                        message: format!(
-                            "the worker panicked: {}",
-                            panic_message(payload.as_ref())
-                        ),
-                    }
-                })
-            });
+                            );
+                            other.lend_parts(&mut ai);
+                            written.map(|(edit, left_out)| {
+                                rendered = edit;
+                                left_out
+                            })
+                        };
+                        match written {
+                            Ok(left_out) => crate::queue::Done::Exported {
+                                path,
+                                seconds: start.elapsed().as_secs_f64(),
+                                note,
+                                left_out,
+                            },
+                            Err(message) => crate::queue::Done::Failed { message },
+                        }
+                    }));
+                    held.unwrap_or_else(|payload| {
+                        panicked = true;
+                        crate::queue::Done::Failed {
+                            message: format!(
+                                "the worker panicked: {}",
+                                panic_message(payload.as_ref())
+                            ),
+                        }
+                    })
+                });
             if panicked {
                 discard_base(&mut base, gpu.as_ref());
                 learned = None;
@@ -1586,6 +1593,7 @@ fn run(
         let held = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match job {
             Job::Open {
                 path,
+                version: _,
                 edit,
                 generation,
                 seed_blend,
@@ -1725,7 +1733,7 @@ fn run(
                 };
                 deliver(outcome);
             }
-            Job::MasksFor(path) => {
+            Job::MasksFor(frame) => {
                 let ai = masks_ai.get_or_insert_with(Ai::new);
                 // Given way between two shapes to a develop, a save or a
                 // frame opened: the rest is made after, from the front.
@@ -1733,20 +1741,20 @@ fn run(
                     let q = lock.lock().expect("worker queue");
                     q.develop.is_some() || !q.keeps.is_empty() || edited.any_open()
                 };
-                match masks_for(&path, ai, lenses.as_deref(), &waiting) {
+                match masks_for(&frame, ai, lenses.as_deref(), &waiting) {
                     MasksMade::All => {
-                        reducer.masks_done(&path, true);
-                        deliver(Outcome::EditedKept { path });
+                        reducer.masks_done(&frame, true);
+                        deliver(Outcome::EditedKept { frame });
                     }
                     // A frame tried and found wanting stays so until a
                     // model is fetched: asked again now, it would be
                     // decoded and developed again for the same answer.
-                    MasksMade::Short => reducer.masks_done(&path, false),
+                    MasksMade::Short => reducer.masks_done(&frame, false),
                     MasksMade::GaveWay => {
                         lock.lock()
                             .expect("worker queue")
                             .masks_for
-                            .push_front(path);
+                            .push_front(frame);
                     }
                 }
                 if lock.lock().expect("worker queue").masks_for.is_empty() {
@@ -2102,7 +2110,7 @@ fn learned_masks(edit: &Edit, base: Option<&Base>, ai: &mut Ai) -> (Rasters, Vec
 /// A save of the open frame's edit, waiting on the worker for the
 /// develop it is the picture of (`Job::Keep`).
 struct Keep {
-    path: PathBuf,
+    frame: Frame,
     edit: Edit,
     turn: u8,
     iso: crate::edited::Iso,
@@ -2165,21 +2173,25 @@ fn keep_open(
     edited: &Arc<crate::edited::Edited>,
     deliver: &Deliver,
 ) -> Option<Keep> {
-    let path = keep.path.clone();
-    let name = crate::panel::browser::file_name(&path);
-    let said = |path: PathBuf| deliver(Outcome::EditedKept { path });
+    let frame = keep.frame.clone();
+    let path = frame.path.clone();
+    let name = frame.said();
+    let said = |frame: Frame| deliver(Outcome::EditedKept { frame });
     let is_edited = crate::edited::is_edited(&path, &keep.edit, keep.iso);
     if !is_edited {
         let hash = greycard_library::hash_file(&path).ok();
-        if edited.reset(&path, hash.as_deref()) {
-            said(path);
+        if edited.reset(&frame, hash.as_deref()) {
+            said(frame);
         }
         return None;
     }
     let left = |edited: &crate::edited::Edited| {
-        edited.note(&path, true, keep.iso);
-        said(path.clone());
+        edited.note(&frame, true, keep.iso, Some(edited.key_of(&keep.edit)));
+        said(frame.clone());
     };
+    // The develop in hand is the open file's under the edit saved: a
+    // version of the open file saved from its own cell is the cell on
+    // screen, whose edit the develop is of.
     if hand.opened != Some(path.as_path()) || !edited.cache_on() {
         left(edited);
         return None;
@@ -2195,8 +2207,8 @@ fn keep_open(
     // The reduced develop's pictures of the key do not count: this
     // develop's take their place.
     if edited.all_kept_by(&hash, key, crate::edited::EDITED_RECIPE) {
-        if edited.settle_key(&path, &hash, key, keep.iso) {
-            said(path);
+        if edited.settle_key(&frame, &hash, key, keep.iso) {
+            said(frame);
         }
         return None;
     }
@@ -2274,7 +2286,7 @@ fn keep_open(
         (None, None) => unreachable!("one picture or the other, matched above"),
     };
     let job = crate::edited::Keeping {
-        path,
+        frame,
         hash,
         key,
         developed,
@@ -2301,7 +2313,7 @@ fn keep_open(
     };
     let (on, deliver) = (edited.clone(), deliver.clone());
     edited.keep_later(Box::new(move || {
-        crate::edited::keep(&on, job, |path| deliver(Outcome::EditedKept { path }))
+        crate::edited::keep(&on, job, |frame| deliver(Outcome::EditedKept { frame }))
     }));
     None
 }
@@ -2320,29 +2332,34 @@ enum MasksMade {
     GaveWay,
 }
 
-/// The learned masks of the frame at `path` under its sidecar's edit,
-/// made and put in the mask cache (`Job::MasksFor`): the frame is
-/// decoded and developed reduced for the picture the models see, and
-/// each learned shape the edit draws is made as an export of the frame
-/// would make it, `waiting` asked between two whether to give way. The
-/// rasters go in the cache the open frame's masks are read from, made
-/// from the reduced develop's picture, which the models see at their
-/// own 2048 anyway.
+/// The learned masks of `frame` under its line's edit, made and put in
+/// the mask cache (`Job::MasksFor`): the frame is decoded and developed
+/// reduced for the picture the models see, and each learned shape the
+/// edit draws is made as an export of the frame would make it,
+/// `waiting` asked between two whether to give way. The rasters go in
+/// the cache the open frame's masks are read from, made from the
+/// reduced develop's picture, which the models see at their own 2048
+/// anyway.
 fn masks_for(
-    path: &std::path::Path,
+    frame: &Frame,
     ai: &mut Ai,
     lenses: Option<&greycard_lens::Database>,
     waiting: &dyn Fn() -> bool,
 ) -> MasksMade {
-    let name = crate::panel::browser::file_name(path);
+    let path = frame.path.as_path();
+    let name = frame.said();
     let started = Instant::now();
-    let (sidecar, _, trouble) = crate::panel::browser::load_sidecar_said(path, true);
-    let edit = sidecar.line.current;
-    let turn = sidecar.turn;
+    let (mut sidecar, trouble) = crate::panel::browser::load_sidecar_said(path, true);
     if trouble.is_some() {
         tracing::info!("the masks of {name}: its sidecar could not be read");
         return MasksMade::Short;
     }
+    let Some(line) = sidecar.line_mut(frame.version()) else {
+        tracing::info!("the masks of {name}: no such version in its sidecar");
+        return MasksMade::Short;
+    };
+    let edit = std::mem::take(&mut line.current);
+    let turn = sidecar.turn;
     if !crate::reduced::draws_learned(&edit) {
         return MasksMade::All;
     }
@@ -4220,11 +4237,12 @@ pub(crate) fn thumb_key(path: &std::path::Path) -> Option<(String, u64)> {
 #[allow(clippy::type_complexity)]
 fn thumb_lookup(
     cache: &ThumbCache,
-    path: &std::path::Path,
+    frame: &Frame,
     size: u32,
     previews: Option<&crate::previews::Previews>,
     edited: Option<&crate::edited::Edited>,
 ) -> (Option<(u64, u64)>, Option<(String, Tag)>, Option<Thumb>) {
+    let path = frame.path.as_path();
     let on = cache
         .lock()
         .expect("thumbnail cache")
@@ -4240,7 +4258,7 @@ fn thumb_lookup(
     });
     let from_edit = key.as_ref().and_then(|(hash, _)| {
         let edited = edited?;
-        edited.lookup(hash, size, edited.shows(path))
+        edited.lookup(hash, size, edited.shows(frame))
     });
     let hit = from_edit.or_else(|| {
         key.as_ref().and_then(|(hash, tag)| {
@@ -4272,11 +4290,12 @@ fn cached_thumbnail_noting(
     cache: &ThumbCache,
     previews: Option<&crate::previews::Previews>,
     edited: Option<&crate::edited::Edited>,
-    path: &std::path::Path,
+    frame: &Frame,
     size: u32,
     make: impl FnOnce(&std::path::Path, u32) -> anyhow::Result<(u32, u32, Vec<u8>)>,
 ) -> anyhow::Result<(Thumb, bool)> {
-    let (before, key, hit) = thumb_lookup(cache, path, size, previews, edited);
+    let path = frame.path.as_path();
+    let (before, key, hit) = thumb_lookup(cache, frame, size, previews, edited);
     if let Some(thumb) = hit {
         return Ok((thumb, true));
     }
@@ -4489,6 +4508,7 @@ mod tests {
                         let (lock, cv) = &**seen.get().expect("the queue is handed over");
                         lock.lock().unwrap().develop = Some(Job::Open {
                             path: junk.clone(),
+                            version: None,
                             edit: Edit::default(),
                             generation: 7,
                             seed_blend: false,
@@ -4606,6 +4626,7 @@ mod tests {
         assert!(!worker.finished(), "a worker not asked to stop is there");
         worker.send(Job::Open {
             path: junk,
+            version: None,
             edit: Edit::default(),
             generation: 1,
             seed_blend: false,
@@ -4719,7 +4740,7 @@ mod tests {
         ));
         let thumbnail = Job::Thumbnail {
             index: 0,
-            path: PathBuf::from("a"),
+            frame: Frame::file("a"),
         };
         assert_eq!(Blame::of(&thumbnail), Blame::Nobody);
         assert!(Blame::Nobody.outcome("x".into()).is_none());
@@ -5926,7 +5947,15 @@ mod tests {
         std::fs::write(&raw, vec![0x17u8; 90_000]).unwrap();
         let cache = cache_at(&dir);
         assert!(
-            cached_thumbnail_noting(&cache, None, None, &raw, THUMB_WIDTH, thumbnail).is_err(),
+            cached_thumbnail_noting(
+                &cache,
+                None,
+                None,
+                &Frame::file(&raw),
+                THUMB_WIDTH,
+                thumbnail
+            )
+            .is_err(),
             "not a raw, and nothing cached"
         );
         let kept = Thumb {
@@ -5952,12 +5981,22 @@ mod tests {
         std::fs::create_dir_all(&moved_dir).unwrap();
         let moved = moved_dir.join("wedding-0001.CR3");
         std::fs::rename(&raw, &moved).unwrap();
-        let (thumb, cached) =
-            cached_thumbnail_noting(&cache, None, None, &moved, THUMB_WIDTH, thumbnail).unwrap();
+        let (thumb, cached) = cached_thumbnail_noting(
+            &cache,
+            None,
+            None,
+            &Frame::file(&moved),
+            THUMB_WIDTH,
+            thumbnail,
+        )
+        .unwrap();
         assert!(cached);
         assert_eq!((thumb.width, thumb.height), (3, 2));
         // Another size is not the same entry.
-        assert!(cached_thumbnail_noting(&cache, None, None, &moved, 256, thumbnail).is_err());
+        assert!(
+            cached_thumbnail_noting(&cache, None, None, &Frame::file(&moved), 256, thumbnail)
+                .is_err()
+        );
         crate::testing::remove_dir_retry(&dir);
     }
 
@@ -6034,7 +6073,7 @@ mod tests {
             crate::edited::keep(
                 &edited,
                 crate::edited::Keeping {
-                    path: path.clone(),
+                    frame: Frame::file(path.clone()),
                     hash: hash.clone(),
                     key: 1,
                     developed: crate::edited::Developed::Full(image.clone()),
@@ -6077,7 +6116,7 @@ mod tests {
                 crate::edited::keep(
                     &edited,
                     crate::edited::Keeping {
-                        path: path.clone(),
+                        frame: Frame::file(path.clone()),
                         hash: hash.clone(),
                         key: 2,
                         developed: crate::edited::Developed::Reduced(reduced),
@@ -6150,7 +6189,7 @@ mod tests {
         std::fs::remove_file(&raw).unwrap();
         worker.send(Job::CachedThumbnail {
             index: 3,
-            path: raw.clone(),
+            frame: Frame::file(raw.clone()),
             hash: hash.clone(),
             stamp,
         });
@@ -6162,7 +6201,7 @@ mod tests {
         // Another stamp is another entry: a miss, and nothing made.
         worker.send(Job::CachedThumbnail {
             index: 4,
-            path: raw,
+            frame: Frame::file(raw),
             hash,
             stamp: stamp + 1,
         });
@@ -6185,10 +6224,10 @@ mod tests {
         write(200);
         let cache = cache_at(&dir);
         let (first, cached) =
-            cached_thumbnail_noting(&cache, None, None, &png, 16, thumbnail).unwrap();
+            cached_thumbnail_noting(&cache, None, None, &Frame::file(&png), 16, thumbnail).unwrap();
         assert!(!cached);
         let (again, cached) =
-            cached_thumbnail_noting(&cache, None, None, &png, 16, thumbnail).unwrap();
+            cached_thumbnail_noting(&cache, None, None, &Frame::file(&png), 16, thumbnail).unwrap();
         assert!(cached);
         assert_eq!((again.width, again.height), (first.width, first.height));
         // Written again with another mtime.
@@ -6201,7 +6240,7 @@ mod tests {
             .set_modified(later)
             .unwrap();
         let (fresh, cached) =
-            cached_thumbnail_noting(&cache, None, None, &png, 16, thumbnail).unwrap();
+            cached_thumbnail_noting(&cache, None, None, &Frame::file(&png), 16, thumbnail).unwrap();
         assert!(!cached);
         assert!(
             fresh.rgb.iter().all(|v| *v < 60),
@@ -6245,7 +6284,8 @@ mod tests {
         std::fs::write(&raw, &half).unwrap();
         let cache = cache_at(&dir);
         let (grey, cached) =
-            cached_thumbnail_noting(&cache, None, None, &raw, 176, tail_picture).unwrap();
+            cached_thumbnail_noting(&cache, None, None, &Frame::file(&raw), 176, tail_picture)
+                .unwrap();
         assert!(!cached);
         assert!(grey.rgb.iter().all(|v| *v == 0));
         // The same head and the same length: the same hash.
@@ -6254,7 +6294,8 @@ mod tests {
         set_time(&raw, 7);
         assert_eq!(greycard_library::hash_file(&raw).unwrap(), before);
         let (done, cached) =
-            cached_thumbnail_noting(&cache, None, None, &raw, 176, tail_picture).unwrap();
+            cached_thumbnail_noting(&cache, None, None, &Frame::file(&raw), 176, tail_picture)
+                .unwrap();
         assert!(
             !cached,
             "the half-copied picture is not the finished file's"
@@ -6264,8 +6305,15 @@ mod tests {
         // its time and finds it.
         let renamed = dir.join("wedding-1981.NEF");
         std::fs::rename(&raw, &renamed).unwrap();
-        let (again, cached) =
-            cached_thumbnail_noting(&cache, None, None, &renamed, 176, tail_picture).unwrap();
+        let (again, cached) = cached_thumbnail_noting(
+            &cache,
+            None,
+            None,
+            &Frame::file(&renamed),
+            176,
+            tail_picture,
+        )
+        .unwrap();
         assert!(cached);
         assert_eq!(again.rgb, done.rgb);
         crate::testing::remove_dir_retry(&dir);
@@ -6294,7 +6342,8 @@ mod tests {
             .enumerate()
         {
             let (_, cached) =
-                cached_thumbnail_noting(&cache, None, None, path, 176, tail_picture).unwrap();
+                cached_thumbnail_noting(&cache, None, None, &Frame::file(path), 176, tail_picture)
+                    .unwrap();
             assert_eq!(cached, round >= 2, "round {round}");
         }
         crate::testing::remove_dir_retry(&dir);
@@ -6314,14 +6363,16 @@ mod tests {
             std::io::Write::write_all(&mut f, &[9u8; 1000]).unwrap();
             made
         };
-        let (_, cached) = cached_thumbnail_noting(&cache, None, None, &raw, 176, grows).unwrap();
+        let (_, cached) =
+            cached_thumbnail_noting(&cache, None, None, &Frame::file(&raw), 176, grows).unwrap();
         assert!(!cached);
         let touched = |path: &std::path::Path, size: u32| {
             let made = tail_picture(path, size);
             set_time(path, 30);
             made
         };
-        let (_, cached) = cached_thumbnail_noting(&cache, None, None, &raw, 176, touched).unwrap();
+        let (_, cached) =
+            cached_thumbnail_noting(&cache, None, None, &Frame::file(&raw), 176, touched).unwrap();
         assert!(!cached);
         assert_eq!(
             cache.lock().unwrap().as_ref().unwrap().usage().entries,
@@ -6330,10 +6381,12 @@ mod tests {
         );
         // Left alone, it is made once and kept.
         let (_, cached) =
-            cached_thumbnail_noting(&cache, None, None, &raw, 176, tail_picture).unwrap();
+            cached_thumbnail_noting(&cache, None, None, &Frame::file(&raw), 176, tail_picture)
+                .unwrap();
         assert!(!cached);
         let (_, cached) =
-            cached_thumbnail_noting(&cache, None, None, &raw, 176, tail_picture).unwrap();
+            cached_thumbnail_noting(&cache, None, None, &Frame::file(&raw), 176, tail_picture)
+                .unwrap();
         assert!(cached);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -6350,7 +6403,8 @@ mod tests {
         let cache: ThumbCache = Arc::new(Mutex::new(Some(Thumbs::at(dir.join("thumbs"), 0))));
         for _ in 0..2 {
             let (_, cached) =
-                cached_thumbnail_noting(&cache, None, None, &png, 8, thumbnail).unwrap();
+                cached_thumbnail_noting(&cache, None, None, &Frame::file(&png), 8, thumbnail)
+                    .unwrap();
             assert!(!cached);
         }
         assert!(!dir.join("thumbs").exists());
@@ -6399,7 +6453,8 @@ mod tests {
         let off: ThumbCache = Arc::new(Mutex::new(None));
         for _ in 0..2 {
             let (_, cached) =
-                cached_thumbnail_noting(&off, None, None, &png, 8, thumbnail).unwrap();
+                cached_thumbnail_noting(&off, None, None, &Frame::file(&png), 8, thumbnail)
+                    .unwrap();
             assert!(!cached);
         }
         assert!(!dir.join("thumbs").exists());

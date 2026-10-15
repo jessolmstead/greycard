@@ -59,7 +59,6 @@ use greycard_library::roots::Added;
 use greycard_library::{Roots, RowMeta};
 
 use crate::panel::browser::{open_loaded, rebuild_browser};
-use crate::panel::cull::drop_placeholder;
 use crate::rows::{self, Held};
 use crate::*;
 
@@ -2508,13 +2507,10 @@ fn send_view(
     let last = if count == 0 {
         None
     } else {
-        st.current
-            .and_then(|c| st.files.get(c))
-            .cloned()
-            .or_else(|| {
-                let last = settings::Settings::load().last_file;
-                (!last.is_empty()).then(|| PathBuf::from(last))
-            })
+        st.current.and_then(|c| st.path_at(c)).cloned().or_else(|| {
+            let last = settings::Settings::load().last_file;
+            (!last.is_empty()).then(|| PathBuf::from(last))
+        })
     };
     st.library.readable.clear();
     st.library.readable_epoch += 1;
@@ -2862,8 +2858,8 @@ fn ask(st: &State) -> Option<Look> {
         write: st.write_sidecars,
         on_screen: st.current.and_then(|c| {
             Some((
-                st.files.get(c)?.clone(),
-                st.index_ids.get(c).copied().flatten(),
+                st.path_at(c)?.clone(),
+                st.index_ids.get(st.file_at(c)?).copied().flatten(),
             ))
         }),
         index: st.index_path.clone(),
@@ -2948,9 +2944,10 @@ pub(crate) fn follow_current(st: &mut State, seen: &OnScreen) -> bool {
     let Some(c) = st.current else {
         return false;
     };
-    let Some(path) = st.files.get(c) else {
+    let Some(file) = st.file_at(c) else {
         return false;
     };
+    let path = &st.files[file];
     if !seen.gone(path) {
         return false;
     }
@@ -2962,22 +2959,21 @@ pub(crate) fn follow_current(st: &mut State, seen: &OnScreen) -> bool {
     if st.panel_stand_in.as_ref() == Some(path) {
         st.panel_stand_in = Some(to.clone());
     }
-    st.files[c] = to.clone();
+    // The file's path, which every cell of it reaches through its file.
+    st.files[file] = to.clone();
     true
 }
 
 /// The frames still without a picture, to be asked for: after a list
 /// is renumbered, every job queued names a file by a number that now
 /// means another, and is thrown away when it arrives.
-pub(crate) fn owed_thumbnails(st: &State) -> Vec<(usize, PathBuf)> {
-    st.files
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| {
-            st.thumb_base.get(*i).is_some_and(Option::is_none)
-                && !st.thumb_failed.get(*i).copied().unwrap_or(false)
+pub(crate) fn owed_thumbnails(st: &State) -> Vec<(usize, crate::versions::Key)> {
+    (0..st.cells.len())
+        .filter(|&c| {
+            st.thumb_base.get(c).is_some_and(Option::is_none)
+                && !st.thumb_failed.get(c).copied().unwrap_or(false)
         })
-        .map(|(i, f)| (i, f.clone()))
+        .filter_map(|c| Some((c, st.key_of(c)?)))
         .collect()
 }
 
@@ -3055,7 +3051,7 @@ pub(crate) fn merge(
     // folder deleted leaves its row standing (§160's empty folder).
     let gone = st
         .current
-        .and_then(|c| st.files.get(c))
+        .and_then(|c| st.path_at(c))
         .filter(|p| !followed && seen.gone(p))
         .cloned();
     let mut listed = HashSet::new();
@@ -3069,7 +3065,7 @@ pub(crate) fn merge(
     // the list, where its name sorts: it is still what is being
     // edited, and it is where the index says it is.
     if let Some(c) = st.current
-        && let Some(path) = st.files.get(c)
+        && let Some(path) = st.path_at(c)
         && gone.as_ref() != Some(path)
         && !listed.contains(path)
     {
@@ -3088,26 +3084,16 @@ pub(crate) fn merge(
     drop(old);
     let fresh = from.iter().filter(|f| f.is_none()).count();
     let count = next.len();
+    // The files' own vectors, each file that stays carrying what it
+    // holds; the cells and their pictures follow (`versions::relist`).
     let mut sidecars = Vec::with_capacity(count);
-    let mut seed_blend = Vec::with_capacity(count);
     let mut from_row = Vec::with_capacity(count);
-    let mut thumb_base = Vec::with_capacity(count);
-    let mut thumb_shown = Vec::with_capacity(count);
-    let mut thumb_made = Vec::with_capacity(count);
-    let mut thumb_asked = Vec::with_capacity(count);
-    let mut thumb_failed = Vec::with_capacity(count);
     let mut index_ids = Vec::with_capacity(count);
     for (path, f) in next.iter().zip(&from) {
         match *f {
             Some(i) => {
                 sidecars.push(std::mem::take(&mut st.sidecars[i]));
-                seed_blend.push(st.seed_blend.get(i).copied().unwrap_or(false));
                 from_row.push(std::mem::take(&mut st.from_row[i]));
-                thumb_base.push(st.thumb_base[i].take());
-                thumb_shown.push(st.thumb_shown[i]);
-                thumb_made.push(st.thumb_made[i]);
-                thumb_asked.push(st.thumb_asked[i]);
-                thumb_failed.push(st.thumb_failed.get(i).copied().unwrap_or(false));
                 let old = st.index_ids.get(i).copied().flatten();
                 index_ids.push(match &rows {
                     Some(m) => m.get(path).map(|r| r.id),
@@ -3117,19 +3103,12 @@ pub(crate) fn merge(
             None => {
                 let held = read.remove(path).unwrap_or_else(|| Held {
                     sidecar: Sidecar::default(),
-                    seed: false,
                     from_row: rows::FromRow::read(),
                     id: None,
                     trouble: None,
                 });
                 sidecars.push(held.sidecar);
-                seed_blend.push(held.seed);
                 from_row.push(held.from_row);
-                thumb_base.push(None);
-                thumb_shown.push(None);
-                thumb_made.push(0);
-                thumb_asked.push(worker::THUMB_WIDTH);
-                thumb_failed.push(false);
                 index_ids.push(rows.as_ref().and_then(|m| m.get(path).map(|r| r.id)));
             }
         }
@@ -3140,44 +3119,23 @@ pub(crate) fn merge(
             new_of[i] = Some(at);
         }
     }
-    let to_new = |i: usize| new_of.get(i).copied().flatten();
     let old_current = st.current;
-    let current = old_current.and_then(to_new);
-    let renumbered = st.files.len() != count || from.iter().enumerate().any(|(i, f)| *f != Some(i));
-    // What is keyed by the old numbering and cannot be carried over
-    // by path cheaply: the culling pictures and the camera picture
-    // standing in. Put down, and asked for again below.
-    if renumbered {
-        if let Some(cull) = st.cull.as_mut() {
-            cull.cache.clear();
-            cull.textures.clear();
-            cull.clear_failures();
-            cull.full_asked = None;
-        }
-        drop_placeholder(st, app);
-        st.hold = None;
-        st.prefetch.want(Vec::new());
-        if let Some(run) = st.thumb_run.as_mut() {
-            run.renumber(&from);
-        }
-    }
-    st.picked = st.picked.iter().filter_map(|&i| to_new(i)).collect();
-    let gone_row = old_current
-        .filter(|_| current.is_none())
-        .and_then(|c| st.shown.iter().position(|&f| f == c));
+    // Where the frame on screen's row was, for when its cell is gone.
+    let old_row = old_current.and_then(|c| st.shown.iter().position(|&f| f == c));
     st.files = next;
     st.sidecars = sidecars;
-    st.seed_blend = seed_blend;
     st.from_row = from_row;
-    st.thumb_base = thumb_base;
-    st.thumb_shown = thumb_shown;
-    st.thumb_made = thumb_made;
-    st.thumb_asked = thumb_asked;
-    st.thumb_failed = thumb_failed;
     st.index_ids = index_ids;
     st.index_passed = vec![true; count];
     st.index_pass_ready = false;
-    st.current = current;
+    // The cells by the new files, each that stays with its picture and
+    // its place in the selection; a cell gone (its file, or a version
+    // the read found taken out) takes nothing with it. The numbering
+    // moved puts down what is keyed by it, asked for again below.
+    let renumbered =
+        crate::versions::relist(st, app, worker, &|i| new_of.get(i).copied().flatten());
+    let current = st.current;
+    let gone_row = old_row.filter(|_| current.is_none());
     if rows.is_none() {
         crate::library::refresh_ids(st);
     }
@@ -3258,8 +3216,10 @@ pub(crate) fn background_done(
         if !again.is_empty()
             && let Some(worker) = crate::WORKER.with(|w| w.borrow().clone())
         {
-            for i in again {
-                worker.send(rows::thumb_job(&st, i));
+            for file in again {
+                for c in st.cells_of_file(file) {
+                    worker.send(rows::thumb_job(&st, c));
+                }
             }
         }
         done
@@ -3276,7 +3236,7 @@ pub(crate) fn background_done(
         let st = state.borrow();
         let under_current = st
             .current
-            .and_then(|c| st.files.get(c))
+            .and_then(|c| st.path_at(c))
             .is_some_and(|p| p.starts_with(path));
         // A pass that failed outright (a watcher's pass over the folder
         // that was just locked fails at that folder, and says nothing
@@ -3469,7 +3429,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let start = {
                 let st = state.borrow();
                 st.current
-                    .and_then(|i| st.files.get(i))
+                    .and_then(|i| st.path_at(i))
                     .and_then(|f| f.parent())
                     .and_then(Path::parent)
                     .map(Path::to_path_buf)
@@ -3637,8 +3597,8 @@ pub(crate) mod tests {
     fn seen_now(st: &State, db: Option<&Path>) -> OnScreen {
         st.current
             .and_then(|c| {
-                let path = st.files.get(c)?.clone();
-                let id = st.index_ids.get(c).copied().flatten();
+                let path = st.path_at(c)?.clone();
+                let id = st.index_ids.get(st.file_at(c)?).copied().flatten();
                 let lib = db.and_then(|db| greycard_library::Library::open_read_only(db).ok());
                 Some(OnScreen::look(path, id, lib.as_ref()))
             })
@@ -4601,14 +4561,14 @@ pub(crate) mod tests {
             let Ok(outcome) = rx.recv_timeout(Duration::from_millis(200)) else {
                 continue;
             };
-            let (index, path) = match outcome {
-                crate::worker::Outcome::Thumbnail { index, path, .. }
-                | crate::worker::Outcome::NoThumbnail { index, path } => (index, path),
+            let (index, frame) = match outcome {
+                crate::worker::Outcome::Thumbnail { index, frame, .. }
+                | crate::worker::Outcome::NoThumbnail { index, frame } => (index, frame),
                 _ => continue,
             };
             // What the window would take: a picture for the file
             // that is at that number now.
-            if next.get(index) == Some(&path) && !came.contains(&index) {
+            if next.get(index) == Some(&frame.path) && !came.contains(&index) {
                 came.push(index);
             }
         }
@@ -4906,7 +4866,7 @@ pub(crate) mod tests {
             &app,
             crate::cull::Loaded::Failed {
                 file: xi,
-                path: x.clone(),
+                frame: crate::versions::Key::file(x.clone()),
                 size: asked[file_at].size,
                 message: "the share did not answer".into(),
             },
@@ -5804,7 +5764,6 @@ pub(crate) mod tests {
                     p.clone(),
                     Held {
                         sidecar: Sidecar::default(),
-                        seed: false,
                         from_row: rows::FromRow::read(),
                         id: None,
                         trouble: None,
@@ -6988,17 +6947,38 @@ pub(crate) mod tests {
         let st = state.borrow();
         assert!(!st.from_row[1].read);
         assert_eq!(
-            crate::panel::cull::thumb_turns_of(&st.sidecars, &st.from_row, 1, &app, false),
+            crate::panel::cull::thumb_turns_of(
+                &st.sidecars,
+                &st.from_row,
+                &st.cells,
+                1,
+                &app,
+                false
+            ),
             (1, false),
             "y's edit turns it once, says the row"
         );
         assert_eq!(
-            crate::panel::cull::thumb_turns_of(&st.sidecars, &st.from_row, 1, &app, true),
+            crate::panel::cull::thumb_turns_of(
+                &st.sidecars,
+                &st.from_row,
+                &st.cells,
+                1,
+                &app,
+                true
+            ),
             (1, false),
             "and not the panel, which is not y's"
         );
         assert_eq!(
-            crate::panel::cull::thumb_turns_of(&st.sidecars, &st.from_row, 0, &app, false),
+            crate::panel::cull::thumb_turns_of(
+                &st.sidecars,
+                &st.from_row,
+                &st.cells,
+                0,
+                &app,
+                false
+            ),
             (0, false)
         );
         drop(st);

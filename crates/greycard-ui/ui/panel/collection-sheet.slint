@@ -17,6 +17,8 @@ export component CollectionSheet inherits Rectangle {
     /// The button that answers it: Save, Create, Delete.
     in property <string> verb: "Save";
     in-out property <string> name;
+    /// The field's hint.
+    in property <string> placeholder: "Name, or Set/Name";
     callback done();
 
     background: #000000a0;
@@ -64,7 +66,7 @@ export component CollectionSheet inherits Rectangle {
                 }
                 if root.asks-name: LineEdit {
                     text <=> root.name;
-                    placeholder-text: "Name, or Set/Name";
+                    placeholder-text: root.placeholder;
                     accepted(t) => { root.done(); }
                     init => { self.focus(); self.select-all(); }
                 }

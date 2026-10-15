@@ -1088,14 +1088,31 @@ pub fn apply_preset_into(
         .copied()
         .filter(|&i| {
             sidecars.get_mut(i).is_some_and(|sidecar| {
-                let mut applied = preset.applied(&sidecar.current);
-                if let Some(from) = learned_from {
-                    sync_learned(from, &mut applied);
-                }
-                sidecar.record_as(applied, label.map(str::to_string))
+                apply_preset_to_line(&mut sidecar.line, preset, learned_from, label)
             })
         })
         .collect()
+}
+
+/// [`apply_preset_into`] over one line: `preset`'s carried sections
+/// over the line's current edit as one step of its history, with
+/// `learned_from`'s learned denoiser when a sync brings one; whether
+/// the line moved. What a version of a frame takes as its own, as the
+/// frame's own line does.
+pub fn apply_preset_to_line(
+    line: &mut Line,
+    preset: &Preset,
+    learned_from: Option<&Edit>,
+    label: Option<&str>,
+) -> bool {
+    if preset.is_empty() {
+        return false;
+    }
+    let mut applied = preset.applied(&line.current);
+    if let Some(from) = learned_from {
+        sync_learned(from, &mut applied);
+    }
+    line.record_as(applied, label.map(str::to_string))
 }
 
 /// Lay `sections` of `from` over the current edit of every frame in

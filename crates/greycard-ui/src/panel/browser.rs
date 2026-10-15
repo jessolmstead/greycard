@@ -385,17 +385,28 @@ pub(crate) fn thumb_for(path: &Path, meta: &Meta, marks: (bool, bool)) -> Thumb 
         edited: marks.0,
         exported: marks.1,
         collected: false,
+        version: Default::default(),
     }
 }
 
-/// Whether frame `i` shows as edited and as exported: what its
-/// sidecar says once the window holds it, and what its row said while
-/// the row stands in for it (`greycard_library::develop_marks`, the
-/// rule the index applies to the file).
-pub(crate) fn frame_marks(st: &State, i: usize) -> (bool, bool) {
-    match (st.from_row.get(i), st.sidecars.get(i), st.files.get(i)) {
-        (Some(r), _, _) if !r.read => (r.edited, r.exported),
-        (r, Some(s), Some(f)) => greycard_library::develop_marks(s, f, r.and_then(|r| r.iso)),
+/// Whether cell `c` shows as edited and as exported: what its own line
+/// of the sidecar says once the window holds it, and what its row said
+/// of it while the row stands in (`greycard_library::line_marks`, the
+/// rule the index applies to each line).
+pub(crate) fn frame_marks(st: &State, c: usize) -> (bool, bool) {
+    let Some(cell) = st.cell(c) else {
+        return (false, false);
+    };
+    let version = cell.version.as_deref();
+    match (
+        st.from_row.get(cell.file),
+        st.sidecars.get(cell.file),
+        st.files.get(cell.file),
+    ) {
+        (Some(r), _, _) if !r.read => r.marks(version),
+        (r, Some(s), Some(f)) => s.line(version).map_or((false, false), |line| {
+            greycard_library::line_marks(line, f, r.and_then(|r| r.iso))
+        }),
         _ => (false, false),
     }
 }
@@ -432,20 +443,22 @@ pub(crate) fn show_set(st: &mut State, app: &App) {
     crate::panel::cull::show_back(st, app);
 }
 
-/// Put file `i`'s meta on its row in the strip and the grid, leaving
-/// whatever picture the row already holds.
+/// Put cell `c`'s meta and marks on its row in the strip and the grid,
+/// leaving whatever picture the row already holds. The meta is the
+/// file's: a change to it is shown on every cell of the file
+/// ([`show_badges_of_file`]).
 ///
-/// The row and the file are two different numbers whenever a filter
+/// The row and the cell are two different numbers whenever a filter
 /// is on — `row_of` is what maps one to the other — and both the
 /// read and the write are the row's, as `show_thumb` has it.
-pub(crate) fn show_badges(st: &State, app: &App, i: usize) {
-    let Some(meta) = st.sidecars.get(i).map(|s| &s.meta) else {
+pub(crate) fn show_badges(st: &State, app: &App, c: usize) {
+    let Some(meta) = st.sidecar_at(c).map(|s| &s.meta) else {
         return;
     };
-    let Some(row) = row_of(st, i) else {
+    let Some(row) = row_of(st, c) else {
         return;
     };
-    let marks = frame_marks(st, i);
+    let marks = frame_marks(st, c);
     let model = app.get_thumbs();
     if let Some(mut t) = model.row_data(row) {
         let was = (t.rating, t.flag, t.label, t.edited, t.exported);
@@ -460,8 +473,17 @@ pub(crate) fn show_badges(st: &State, app: &App, i: usize) {
             model.set_row_data(row, t);
         }
     }
-    if Some(i) == st.current {
+    if Some(c) == st.current {
         show_frame_tags(st, app);
+    }
+}
+
+/// [`show_badges`] on every cell of file `file`: for a change to the
+/// file's meta, or a save of its sidecar, which every line may have
+/// moved in.
+pub(crate) fn show_badges_of_file(st: &State, app: &App, file: usize) {
+    for c in st.cells_of_file(file) {
+        show_badges(st, app, c);
     }
 }
 
@@ -471,7 +493,7 @@ pub(crate) fn show_badges(st: &State, app: &App, i: usize) {
 /// and whenever that frame's badges are put out, so the two cannot
 /// say different things.
 pub(crate) fn show_frame_tags(st: &State, app: &App) {
-    let Some(meta) = st.current.and_then(|c| st.sidecars.get(c)).map(|s| &s.meta) else {
+    let Some(meta) = st.current.and_then(|c| st.sidecar_at(c)).map(|s| &s.meta) else {
         return;
     };
     app.set_frame_rating(meta.rating.min(meta::STARS) as i32);
@@ -523,52 +545,56 @@ pub(crate) fn set_meta(
 ) -> (meta::Change, Option<usize>) {
     // A change is written to the whole sidecar, so each frame's is
     // read first where it stands in from its row; one under a root
-    // that is offline is left out, and the status line says so.
-    let frames = &crate::rows::load_frames(st, app, frames);
-    let was_shown: Vec<bool> = frames.iter().map(|&i| row_of(st, i).is_some()).collect();
-    let before: Vec<Tags> = frames
+    // that is offline is left out, and the status line says so. The
+    // meta is the file's: a key over a file and a version of it sets
+    // it once, and every cell of the file follows.
+    let cells = &crate::rows::load_frames(st, app, frames);
+    let files = st.files_of(cells);
+    let was_shown: Vec<bool> = cells.iter().map(|&c| row_of(st, c).is_some()).collect();
+    let before: Vec<Tags> = files
         .iter()
-        .map(|&i| Tags::of(&st.sidecars[i].meta))
+        .map(|&f| Tags::of(&st.sidecars[f].meta))
         .collect();
-    let (settled, moved) = greycard_edit::meta_into(&mut st.sidecars, frames, change);
-    let step = frames
+    let (settled, moved) = greycard_edit::meta_into(&mut st.sidecars, &files, change);
+    let step = files
         .iter()
         .zip(before)
-        .filter(|(i, _)| moved.contains(i))
-        .map(|(&i, before)| tags::Moved {
-            path: st.files[i].clone(),
+        .filter(|(f, _)| moved.contains(f))
+        .map(|(&f, before)| tags::Moved {
+            path: st.files[f].clone(),
             before,
-            after: Tags::of(&st.sidecars[i].meta),
+            after: Tags::of(&st.sidecars[f].meta),
         })
         .collect();
     st.tags.record(step);
-    (settled, tags_shown(st, app, frames, &was_shown, &moved))
+    (settled, tags_shown(st, app, cells, &was_shown, &moved))
 }
 
-/// What follows a change to frames' tags, from a key or an undo:
-/// each moved frame written and its badges put out, the rejects
-/// counted, and the browser's rows rebuilt if the filter now shows
-/// a different set; the row to move the selection to when the
-/// current frame left them.
+/// What follows a change to files' tags, from a key or an undo: each
+/// moved file written once and the badges of its cells put out, the
+/// rejects counted, and the browser's rows rebuilt if the filter now
+/// shows a different set; the row to move the selection to when the
+/// current frame left them. `cells` are the cells the change was
+/// over, `moved` the files that moved.
 fn tags_shown(
     st: &mut State,
     app: &App,
-    frames: &[usize],
+    cells: &[usize],
     was_shown: &[bool],
     moved: &[usize],
 ) -> Option<usize> {
-    for &i in moved {
-        write_sidecar(st, i);
-        show_badges(st, app, i);
+    for &f in moved {
+        crate::panel::edit::write_file(st, f);
+        show_badges_of_file(st, app, f);
     }
     app.set_reject_count(reject_count(st) as i32);
     if moved.is_empty() {
         return None;
     }
-    let hides = frames
+    let hides = cells
         .iter()
         .zip(was_shown)
-        .any(|(&i, &was)| was != filter_shows(st, i));
+        .any(|(&c, &was)| was != filter_shows(st, c));
     if !hides {
         show_filter(st, app);
         return None;
@@ -619,31 +645,37 @@ pub(crate) fn turn_frames(
     // while culling, where the panel still holds the last-opened
     // frame's edit and the sidecars are the truth.
     let panel_frame = st.current.filter(|_| st.cull.is_none());
+    // The turn is the file's and turns every line of it: a file once,
+    // from the panel's own cell when that is one of its.
+    let frames = &st.once_a_file(frames, panel_frame);
     if let Some(cull) = st.cull.as_mut() {
         cull.turned = Some(std::time::Instant::now());
     }
     let mut developing = false;
     for &f in frames {
-        if st.sidecars.get(f).is_none() {
+        if st.sidecar_at(f).is_none() {
             continue;
         }
         migrate_frame(st, f);
         let aspect = frame_aspect(st, f);
-        if aspect.is_none() && st.sidecars[f].placed() {
+        if aspect.is_none() && st.sidecar(f).placed() {
             tracing::warn!(
                 "{}: no picture of it yet to measure by, so its masks and \
                  repair patches stay where they are on the screen",
-                file_name(&st.files[f])
+                file_name(st.path_of(f))
             );
         }
-        if Some(f) == panel_frame {
+        // The panel's own cell, while its line is there: a version a
+        // read found gone has no line to record on or to show, and its
+        // file turns as any other's does until the cells follow.
+        if Some(f) == panel_frame && st.line(f).is_some() {
             // The panel owns the open frame's edit, so what it is
             // holding is recorded first and the sidecar's states are
             // then turned together; the turn itself records nothing.
             let pending = read_edit(app, &st.edit, st.target);
             save_edit(st, pending);
-            st.sidecars[f].turn_by(quarters, aspect);
-            let edit = st.sidecars[f].current.clone();
+            st.sidecar_mut(f).turn_by(quarters, aspect);
+            let edit = st.line(f).map(|l| l.current.clone()).unwrap_or_default();
             // The whole panel, since a turn moves masks and patches
             // as well as the crop. `show_edit` puts a chosen
             // adjustment's tab up, which a turn pressed on the Crop
@@ -661,12 +693,15 @@ pub(crate) fn turn_frames(
             }
             developing = true;
         } else {
-            greycard_edit::turn_into(&mut st.sidecars, &[f], quarters, aspect);
+            let file = st.file_of(f);
+            greycard_edit::turn_into(&mut st.sidecars, &[file], quarters, aspect);
         }
         write_sidecar(st, f);
-        let (turns, flip) = thumb_turns(st, app, f);
-        show_thumb(st, app, f, turns, flip);
-        crate::lightbox::show(st, app, f);
+        for g in st.cells_of_file(st.file_of(f)) {
+            let (turns, flip) = thumb_turns(st, app, g);
+            show_thumb(st, app, g, turns, flip);
+            crate::lightbox::show(st, app, g);
+        }
     }
     // The rasters are keyed by adjustment and component and know
     // nothing of a turn: a brush's is only brought up to its strokes
@@ -796,8 +831,8 @@ pub(crate) fn show_no_thumb(st: &mut State, app: &App, i: usize) {
 /// orientation tag, and the size a develop of it comes out at. One
 /// metadata read a frame a session, and only for a frame that is
 /// turned or whose meta is written to an XMP.
-pub(crate) fn stance(st: &mut State, file: usize) -> Option<greycard_core::decode::Stance> {
-    let path = st.files.get(file)?.clone();
+pub(crate) fn stance(st: &mut State, c: usize) -> Option<greycard_core::decode::Stance> {
+    let path = st.path_at(c)?.clone();
     if let Some(s) = st.stances.get(&path) {
         return Some(*s);
     }
@@ -816,8 +851,8 @@ pub(crate) fn stance(st: &mut State, file: usize) -> Option<greycard_core::decod
 /// A frame's own orientation tag. `None` when the file will not say,
 /// which is when nothing here writes or believes an XMP's
 /// orientation for it.
-pub(crate) fn camera_tag(st: &mut State, file: usize) -> Option<Orientation> {
-    stance(st, file).map(|s| s.orientation)
+pub(crate) fn camera_tag(st: &mut State, c: usize) -> Option<Orientation> {
+    stance(st, c).map(|s| s.orientation)
 }
 
 /// A turn in words, for the log: which way and how far.
@@ -845,19 +880,19 @@ pub(crate) fn turn_words(quarters: i32) -> &'static str {
 ///
 /// `None` when nothing can say, which is the one case where a turn
 /// cannot carry placed work with it.
-pub(crate) fn frame_aspect(st: &mut State, file: usize) -> Option<f32> {
-    let turn = st.sidecars.get(file).map_or(0, |s| s.turn);
+pub(crate) fn frame_aspect(st: &mut State, cell: usize) -> Option<f32> {
+    let turn = st.sidecar_at(cell).map_or(0, |s| s.turn);
     let aspect = |(w, h): (u32, u32)| (w > 0 && h > 0).then(|| w as f32 / h as f32);
     // The open frame's own develop: exactly the picture the masks
     // are in, and already the way up the frame's turn puts it.
-    if st.current == Some(file)
+    if st.current == Some(cell)
         && st.cull.is_none()
         && let Some(a) = aspect(st.source_size)
     {
         return Some(a);
     }
-    // The file itself, which is the same frame however it is shown.
-    if let Some(a) = stance(st, file)
+    // The cell itself, which is the same frame however it is shown.
+    if let Some(a) = stance(st, cell)
         .and_then(|s| s.shown_size(turn))
         .and_then(aspect)
     {
@@ -871,13 +906,13 @@ pub(crate) fn frame_aspect(st: &mut State, file: usize) -> Option<f32> {
         aspect((w, h))
     };
     if let Some(cull) = st.cull.as_ref().or(st.hold.as_ref())
-        && let Some(preview) = cull.cache.best(file)
+        && let Some(preview) = cull.cache.best(cell)
         && let Some(a) = shown(preview.source)
     {
         return Some(a);
     }
     st.thumb_base
-        .get(file)
+        .get(cell)
         .and_then(|t| t.as_ref())
         .and_then(|(w, h, _)| shown((*w, *h)))
 }
@@ -897,23 +932,23 @@ pub(crate) fn frame_aspect(st: &mut State, file: usize) -> Option<f32> {
 /// A frame nothing can measure is left as it is and tried again next
 /// time; the alternative is guessing which way up it is, and a guess
 /// here re-crops the picture.
-pub(crate) fn migrate_frame(st: &mut State, file: usize) {
-    if !st.sidecars.get(file).is_some_and(Sidecar::needs_frame) {
+pub(crate) fn migrate_frame(st: &mut State, c: usize) {
+    if !st.sidecar_at(c).is_some_and(Sidecar::needs_frame) {
         return;
     }
-    match frame_aspect(st, file) {
-        Some(aspect) => st.sidecars[file].migrate_with_frame(aspect < 1.0),
+    match frame_aspect(st, c) {
+        Some(aspect) => st.sidecar_mut(c).migrate_with_frame(aspect < 1.0),
         None => tracing::warn!(
             "{}: nothing can say which way up it is yet, so its Original crop \
              waits before it is brought up to date",
-            file_name(&st.files[file])
+            file_name(st.path_of(c))
         ),
     }
 }
 
-/// The browser's row of a file, when the filter shows it.
-pub(crate) fn row_of(st: &State, file: usize) -> Option<usize> {
-    st.shown.binary_search(&file).ok()
+/// The browser's row of a cell, when the filter shows it.
+pub(crate) fn row_of(st: &State, cell: usize) -> Option<usize> {
+    st.shown.binary_search(&cell).ok()
 }
 
 /// The folder as the filter reads it: each file beside the meta its
@@ -934,8 +969,12 @@ pub(crate) fn filter_frames(st: &State) -> Vec<filter::Frame<'_>> {
         .collect()
 }
 
-/// Whether the filter shows one file, as it stands now.
-pub(crate) fn filter_shows(st: &State, file: usize) -> bool {
+/// Whether the filter shows one cell, as it stands now: the filter is
+/// over files, and a file that passes brings its versions with it.
+pub(crate) fn filter_shows(st: &State, c: usize) -> bool {
+    let Some(file) = st.file_at(c) else {
+        return false;
+    };
     match (st.files.get(file), st.sidecars.get(file)) {
         (Some(path), Some(s)) => st.filter.shows(filter::Frame {
             path,
@@ -955,25 +994,34 @@ pub(crate) fn filter_shows(st: &State, file: usize) -> bool {
 /// the quarter turns rather than the picture being turned again: see
 /// [`Geometry::shown_turns`]. That is what makes a turn cost a
 /// redraw here and not a decode.
-pub(crate) fn thumb_turns(st: &State, app: &App, file: usize) -> (u8, bool) {
-    // A frame whose sidecar stands in from its row: the row says.
+pub(crate) fn thumb_turns(st: &State, app: &App, c: usize) -> (u8, bool) {
+    // A frame whose sidecar stands in from its row: the row says (the
+    // file's, for a version too, whose own geometry the row does not
+    // have).
+    let file = st.file_of(c);
     if let Some(from) = st.from_row.get(file)
         && !from.read
     {
         return from.turns;
     }
     let turn = st.sidecars[file].turn;
-    if st.current == Some(file) && st.cull.is_none() {
+    if st.current == Some(c) && st.cull.is_none() {
         read_geometry(app).shown_turns(turn)
     } else {
-        st.sidecars[file].current.geometry.shown_turns(turn)
+        // A version's cell whose line is gone (taken out by a read, the
+        // cells to follow): the turn alone, never the file's own
+        // geometry.
+        st.line(c).map_or_else(
+            || greycard_edit::Geometry::default().shown_turns(turn),
+            |l| l.current.geometry.shown_turns(turn),
+        )
     }
 }
 
-/// How many frames of the folder are flagged reject.
+/// How many files of the folder are flagged reject.
 pub(crate) fn reject_count(st: &State) -> usize {
     (0..st.files.len())
-        .filter(|&i| crate::panel::cull::to_move_out(st, i))
+        .filter(|&f| crate::panel::cull::to_move_out(st, f))
         .count()
 }
 
@@ -986,7 +1034,16 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     if !std::mem::take(&mut st.index_pass_ready) {
         st.index_passed = crate::library::index_pass(st);
     }
-    st.shown = st.filter.apply(&filter_frames(st));
+    // The filter is over files; a file that passes brings every cell
+    // of it, its own and its versions, in the list's order.
+    let passing = st.filter.apply(&filter_frames(st));
+    let mut passes = vec![false; st.files.len()];
+    for f in passing {
+        passes[f] = true;
+    }
+    st.shown = (0..st.cells.len())
+        .filter(|&c| passes[st.cells[c].file])
+        .collect();
     show_filter(st, app);
     // Under a root that is offline the tile is dimmed, and a picture
     // the cache did not have is no failure of the file's.
@@ -994,13 +1051,18 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     let thumbs = st
         .shown
         .iter()
-        .map(|&f| {
-            let offline = dimmed && crate::rows::is_offline(st, f);
+        .map(|&c| {
+            let file = st.cells[c].file;
+            let offline = dimmed && crate::rows::is_offline(st, c);
             Thumb {
                 offline,
-                failed: st.thumb_failed[f] && st.thumb_base[f].is_none() && !offline,
-                collected: crate::panel::collections::collected(st, f),
-                ..thumb_for(&st.files[f], &st.sidecars[f].meta, frame_marks(st, f))
+                failed: st.thumb_failed[c] && st.thumb_base[c].is_none() && !offline,
+                // A collection names a file's own frame until a version
+                // can be put in one.
+                collected: st.cells[c].version.is_none()
+                    && crate::panel::collections::collected(st, file),
+                version: st.version_name(c).unwrap_or_default().into(),
+                ..thumb_for(&st.files[file], &st.sidecars[file].meta, frame_marks(st, c))
             }
         })
         .collect();
@@ -1084,40 +1146,40 @@ pub(crate) fn load_sidecars(files: &[PathBuf], write_sidecars: bool) -> (Vec<Sid
 /// tests.
 #[cfg(test)]
 pub(crate) fn load_sidecar(f: &Path, write_sidecars: bool) -> (Sidecar, bool) {
-    let (sidecar, seed, _) = load_sidecar_said(f, write_sidecars);
+    let (sidecar, _) = load_sidecar_said(f, write_sidecars);
+    let seed = write_sidecars
+        && !greycard_core::picture::is_picture_path(f)
+        && files::never_developed(&sidecar);
     (sidecar, seed)
 }
 
-/// One file's sidecar, read from disk, and whether the frame is a raw
-/// whose edit is still the default (see [`load_sidecars`]): what
-/// [`crate::rows::from_disk`] reads for a frame the index has no row
-/// for, and for a frame whose row stood in until now. Beside them,
-/// what went wrong when the `.gcd` was not there or could not be read
-/// and the default stands in for it, so a frame whose row says it has
-/// a develop is not given the default in its place.
+/// One file's sidecar, read from disk: what [`crate::rows::from_disk`]
+/// reads for a frame the index has no row for, and for a frame whose
+/// row stood in until now. Beside it, what went wrong when the `.gcd`
+/// was not there or could not be read and the default stands in for it,
+/// so a frame whose row says it has a develop is not given the default
+/// in its place. Whether a line of it still waits for its ISO's blend
+/// is the line's to say (`rows::wants_seed`).
 pub(crate) fn load_sidecar_said(
     f: &Path,
     write_sidecars: bool,
-) -> (Sidecar, bool, Option<crate::rows::Trouble>) {
+) -> (Sidecar, Option<crate::rows::Trouble>) {
     if !write_sidecars {
-        return (Sidecar::default(), false, None);
+        return (Sidecar::default(), None);
     }
     let mut trouble = None;
     // A picture that is not a raw starts from its own default.
     let fresh = || {
         if greycard_core::picture::is_picture_path(f) {
-            (
-                Sidecar {
-                    line: greycard_edit::Line::of(Edit::for_picture()),
-                    ..Sidecar::default()
-                },
-                false,
-            )
+            Sidecar {
+                line: greycard_edit::Line::of(Edit::for_picture()),
+                ..Sidecar::default()
+            }
         } else {
-            (Sidecar::default(), true)
+            Sidecar::default()
         }
     };
-    let (mut sidecar, seed) = match Sidecar::load(f) {
+    let mut sidecar = match Sidecar::load(f) {
         Ok(Some(s)) => {
             // A shape from a later build: loaded as nothing,
             // the rest of the edit kept, and gone on the next
@@ -1130,9 +1192,7 @@ pub(crate) fn load_sidecar_said(
                     file_name(f)
                 );
             }
-            let raw = !greycard_core::picture::is_picture_path(f);
-            let seed = raw && files::never_developed(&s);
-            (s, seed)
+            s
         }
         Ok(None) => {
             trouble = Some(crate::rows::Trouble::Missing);
@@ -1187,7 +1247,7 @@ pub(crate) fn load_sidecar_said(
             );
         }
     }
-    (sidecar, seed, trouble)
+    (sidecar, trouble)
 }
 
 /// Replace the file list with `dir`'s files, and select the last file
@@ -1290,30 +1350,25 @@ pub(crate) fn open_loaded(
     crate::rows::list_replaced(&mut st, app);
     let count = files.len();
     let mut sidecars = Vec::with_capacity(count);
-    let mut seed_blend = Vec::with_capacity(count);
     let mut from_row = Vec::with_capacity(count);
     let mut ids = Vec::with_capacity(count);
     for h in held {
         sidecars.push(h.sidecar);
-        seed_blend.push(h.seed);
         from_row.push(h.from_row);
         ids.push(h.id);
     }
     st.sidecars = sidecars;
-    st.seed_blend = seed_blend;
     st.from_row = from_row;
     let ids = ids_known.then_some(ids);
-    st.thumb_base = vec![None; files.len()];
-    st.thumb_shown = vec![None; files.len()];
-    // A folder of its own: the grid's zoom does not carry its
-    // appetite for large pictures over to it.
-    st.thumb_made = vec![0; files.len()];
-    st.thumb_failed = vec![false; files.len()];
-    st.thumb_asked = vec![worker::THUMB_WIDTH; files.len()];
+    // The cells, each file's own and its versions', and their
+    // pictures' vectors, every one to be asked for. A folder of its
+    // own: the grid's zoom does not carry its appetite for large
+    // pictures over to it.
+    crate::versions::list(&mut st);
     st.thumb_want = worker::THUMB_WIDTH;
     st.grid_shown = None;
     st.strip_shown = None;
-    st.thumb_run = Some(ThumbRun::new(files.len()));
+    st.thumb_run = Some(ThumbRun::new(st.cells.len()));
     st.fill_clock = Some(std::time::Instant::now());
     // The old folder's thumbnails still waiting are dropped: their
     // numbering is its list's.
@@ -1354,7 +1409,7 @@ pub(crate) fn open_loaded(
     // land, and the frame's own sidecar is read for it.
     if let Some(tweak) = st.tweak_at_start.take()
         && select < st.files.len()
-        && crate::rows::load_frame(&mut st, app, select)
+        && crate::rows::load_file(&mut st, app, select)
     {
         tweak(&mut st, select);
     }
@@ -1363,8 +1418,9 @@ pub(crate) fn open_loaded(
     // up to, taken again for the new list.
     crate::panel::archive::want_count(&mut st, app);
     let listed = started.elapsed();
-    // The file to open, as a row of the list; hidden by the filter,
-    // the nearest one shown.
+    // The file to open, its own cell, as a row of the list; hidden by
+    // the filter, the nearest one shown.
+    let select = st.own_cell(select).unwrap_or(select);
     let mut row = row_of(&st, select).or_else(|| cull::nearest_row(&st.shown, select));
     // A list that arrives before the window has its device (the
     // all-roots view asked for on the command line, read in less time
@@ -1385,8 +1441,8 @@ pub(crate) fn open_loaded(
     }
     {
         let st = state.borrow();
-        for i in 0..files.len() {
-            worker.send(crate::rows::thumb_job(&st, i));
+        for c in 0..st.cells.len() {
+            worker.send(crate::rows::thumb_job(&st, c));
         }
     }
     tracing::debug!(
@@ -1483,9 +1539,9 @@ pub(crate) fn give_up_on_grid(st: &mut State, app: &App) -> bool {
                 continue;
             }
             if st.thumb_made[*f] == 0 {
-                missing.push(file_name(&st.files[*f]));
+                missing.push(file_name(st.path_of(*f)));
             } else if grid::wants_bigger(st.thumb_made[*f], st.thumb_want) {
-                small.push(file_name(&st.files[*f]));
+                small.push(file_name(st.path_of(*f)));
             }
         }
     }
@@ -1626,7 +1682,7 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
     // unless it was itself a pick whose panel was never its own.
     if st.cull.is_none()
         && let Some(c) = st.current
-        && st.pick_pending.as_deref() != st.files.get(c).map(PathBuf::as_path)
+        && st.pick_pending.as_deref() != st.path_at(c).map(PathBuf::as_path)
     {
         let outgoing = read_edit(app, &st.edit, st.target);
         if st.base_white.is_some() {
@@ -1636,12 +1692,12 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
         }
         save_edit(st, outgoing);
     }
-    let path = st.files[i].clone();
+    let path = st.path_of(i).clone();
     st.pick_pending = Some(path.clone());
     st.current = Some(i);
     st.generation += 1;
     if st.cull.is_none() {
-        let edit = st.sidecars[i].current.clone();
+        let edit = st.line(i).map(|l| l.current.clone()).unwrap_or_default();
         st.target = None;
         st.placing = None;
         app.set_placing("".into());
@@ -1657,10 +1713,12 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
     app.set_busy(true);
     app.set_status(format!("reading {}'s sidecar...", file_name(&path)).into());
     show_set(st, app);
+    let frame = st.key_of(i).expect("a cell of the list");
     crate::rows::request_in(
         st,
         app,
-        vec![path.clone()],
+        vec![frame],
+        crate::rows::Scope::Line,
         &format!("open of {}", file_name(&path)),
         true,
         Box::new(move |state, app, worker, at| {
@@ -1685,7 +1743,10 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
             // line saying why (`rows::take`).
             if !crate::rows::is_loaded(&st, i)
                 && !crate::rows::is_offline(&st, i)
-                && st.from_row.get(i).is_some_and(|r| r.unread.is_none())
+                && st
+                    .from_row
+                    .get(st.file_of(i))
+                    .is_some_and(|r| r.unread.is_none())
             {
                 let row = row_of(&st, i).map_or(-1, |r| r as i32);
                 pick_pending(&mut st, app, i, row);
@@ -1727,7 +1788,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // the strip opens fitted either way. A pick whose sidecar was on
     // its way had no panel of its own to keep.
     if let Some(c) = st.current
-        && st.pick_pending.as_deref() != st.files.get(c).map(PathBuf::as_path)
+        && st.pick_pending.as_deref() != st.path_at(c).map(PathBuf::as_path)
     {
         let outgoing = read_edit(app, &st.edit, st.target);
         if st.base_white.is_some() {
@@ -1742,25 +1803,25 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // below.
     st.panel_stand_in = None;
     // Its masks' rasters are its own, not the last frame's.
-    let file = st.files[i].clone();
+    let file = st.path_of(i).clone();
     crate::panel::mask::learned_for(st, &file);
     if offline {
         // The panel shows the frame's default edit, the one standing
         // in, and not the last frame's: a sync, a copy or a preset
         // from here would otherwise take another frame's edit for this
         // one's, and every one of them refuses an unloaded source.
-        let edit = st.sidecars[i].current.clone();
+        let edit = st.line(i).map(|l| l.current.clone()).unwrap_or_default();
         st.target = None;
         st.placing = None;
         app.set_placing("".into());
         st.guiding.clear();
         show_edit(st, &edit, app, None);
         st.edit = edit;
-        st.panel_stand_in = Some(st.files[i].clone());
+        st.panel_stand_in = Some(file.clone());
         st.current = Some(i);
         st.generation += 1;
         app.set_selected(row);
-        app.set_file_name(file_name(&st.files[i]).into());
+        app.set_file_name(file_name(&file).into());
         app.set_busy(false);
         show_history(st, app);
         crate::rows::say_offline_for(st, app, i, ": nothing to develop, and no change is kept");
@@ -1772,15 +1833,22 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // does not know which way up its Original crop goes
     // until the frame does.
     migrate_frame(st, i);
-    let mut edit = st.sidecars[i].current.clone();
+    // The cell's own line: a version gone from the sidecar since the
+    // cells were made has nothing to open, and the list follows.
+    let Some(line) = st.line(i) else {
+        tracing::warn!("{}: no such version to open", file_name(&file));
+        return;
+    };
+    let mut edit = line.current.clone();
     // The frame the command line's overrides were on is left, or
     // opened again: they are done with (`panel_state`).
     st.overridden = None;
     // The command line's temperature and exposure, over the first
     // file's edit on the panel and not on its sidecar.
-    if let Some((_, overrides)) = st.overrides_at_start.take_if(|(f, _)| *f == i) {
+    let this_file = st.file_of(i);
+    if let Some((_, overrides)) = st.overrides_at_start.take_if(|(f, _)| *f == this_file) {
         overrides.apply(&mut edit);
-        st.overridden = Some((st.files[i].clone(), edit.clone()));
+        st.overridden = Some((file.clone(), edit.clone()));
     }
     // A mask asked for on the command line is the first file's
     // target, so a screenshot can show the panel's block for it.
@@ -1820,7 +1888,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     // frame: the log's line, and `--time-select`.
     st.selected_at = Some(std::time::Instant::now());
     app.set_selected(row);
-    app.set_file_name(file_name(&st.files[i]).into());
+    app.set_file_name(file_name(&file).into());
     // The last file's shot is not this one's; the open says
     // what this one was.
     app.set_shot_camera("".into());
@@ -1846,14 +1914,16 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
 /// file is never drawn on this one, and none made on this one is
 /// dropped as another's.
 pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
-    let path = st.files[i].clone();
+    let path = st.path_of(i).clone();
+    let file = st.file_of(i);
     crate::panel::mask::learned_for(st, &path);
     Job::Open {
         path,
+        version: st.cells[i].version.clone(),
         edit,
         generation: st.generation,
-        seed_blend: st.seed_blend.get(i).copied().unwrap_or(false),
-        turn: st.sidecars[i].turn,
+        seed_blend: crate::rows::wants_seed(st, i),
+        turn: st.sidecars[file].turn,
     }
 }
 
@@ -1893,21 +1963,23 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
     let step = if back { st.tags.undo() } else { st.tags.redo() }?;
     let landing = tags::landing(
         &step,
-        |p| st.files.iter().position(|f| f == p),
-        |i| Tags::of(&st.sidecars[i].meta),
+        |p| st.file_by_path(p),
+        |f| Tags::of(&st.sidecars[f].meta),
     );
-    let frames: Vec<usize> = landing.iter().map(|&(i, _)| i).collect();
-    let was_shown: Vec<bool> = frames.iter().map(|&i| row_of(st, i).is_some()).collect();
+    let files: Vec<usize> = landing.iter().map(|&(f, _)| f).collect();
+    // The files' cells, every one, since the meta is shared.
+    let cells: Vec<usize> = files.iter().flat_map(|&f| st.cells_of_file(f)).collect();
+    let was_shown: Vec<bool> = cells.iter().map(|&c| row_of(st, c).is_some()).collect();
     // What the step does to each frame, in the key's terms, for
     // the word; read before the frames are put back.
     let landed: Vec<Option<meta::Change>> = landing
         .iter()
-        .map(|&(i, tags)| tags::between(Tags::of(&st.sidecars[i].meta), tags))
+        .map(|&(f, tags)| tags::between(Tags::of(&st.sidecars[f].meta), tags))
         .collect();
-    for &(i, tags) in &landing {
-        tags.put(&mut st.sidecars[i].meta);
+    for &(f, tags) in &landing {
+        tags.put(&mut st.sidecars[f].meta);
     }
-    let next = tags_shown(st, app, &frames, &was_shown, &frames);
+    let next = tags_shown(st, app, &cells, &was_shown, &files);
     // The step's word, as a key's: silent only when it found no
     // frame to put back.
     if !landed.is_empty() {
@@ -1915,8 +1987,11 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
     }
     // Over to the frame that changed, if it is not the one on
     // screen and the filter still shows it.
-    if !frames.iter().any(|&i| Some(i) == st.current)
-        && let Some(row) = frames.first().and_then(|&i| row_of(st, i))
+    if !cells.iter().any(|&c| Some(c) == st.current)
+        && let Some(row) = files
+            .first()
+            .and_then(|&f| st.own_cell(f))
+            .and_then(|c| row_of(st, c))
     {
         return Some(row);
     }
@@ -1947,11 +2022,11 @@ pub(crate) fn meta_on_selection(
     // now. A request for their sidecars, and the change over exactly
     // those frames once they are in (`rows::request`): at once when
     // they are, in its turn otherwise.
-    let paths: Vec<PathBuf> = {
+    let paths: Vec<crate::versions::Key> = {
         let st = state.borrow();
         chosen_frames(&st)
             .into_iter()
-            .map(|i| st.files[i].clone())
+            .filter_map(|c| st.key_of(c))
             .collect()
     };
     if paths.is_empty() {
@@ -1985,11 +2060,14 @@ pub(crate) fn meta_on_selection(
         meta::Change::Flag(_) => "flag key",
         meta::Change::Label(_) => "label key",
     };
+    // The meta is the file's: a key on a version's cell whose line a
+    // read just found gone still rates the file.
     let ran = crate::rows::request(
         state,
         app,
         worker,
         paths,
+        crate::rows::Scope::File,
         what,
         Box::new(move |state, app, _, at| {
             let frames: Vec<usize> = at.into_iter().flatten().collect();
@@ -2054,9 +2132,9 @@ fn meta_on(
     }
     let said = match hidden.as_slice() {
         [] => None,
-        [i] => Some(tags::hidden_by_filter(
+        [c] => Some(tags::hidden_by_filter(
             settled,
-            &file_name(&st.files[*i]),
+            &file_name(st.path_of(*c)),
             false,
             &st.filter.describe(),
         )),
@@ -2136,11 +2214,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // The whole selection, as the meta keys have it: a request
             // for its sidecars, and the turn over exactly those frames
             // once they are in.
-            let paths: Vec<PathBuf> = {
+            let paths: Vec<crate::versions::Key> = {
                 let st = state.borrow();
                 chosen_frames(&st)
                     .into_iter()
-                    .map(|i| st.files[i].clone())
+                    .filter_map(|c| st.key_of(c))
                     .collect()
             };
             crate::rows::request(
@@ -2148,6 +2226,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 &app,
                 &worker,
                 paths,
+                crate::rows::Scope::File,
                 "turn",
                 Box::new(move |state, app, worker, at| {
                     let frames: Vec<usize> = at.into_iter().flatten().collect();
@@ -2422,7 +2501,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let start = {
                 let st = state.borrow();
                 st.current
-                    .and_then(|i| st.files.get(i))
+                    .and_then(|i| st.path_at(i))
                     .and_then(|f| f.parent())
                     .map(Path::to_path_buf)
                     .or_else(dirs::home_dir)
@@ -2616,7 +2695,7 @@ mod tests {
     fn picture_for(files: &[PathBuf], index: usize) -> crate::worker::Outcome {
         crate::worker::Outcome::Thumbnail {
             index,
-            path: files[index].clone(),
+            frame: crate::versions::Key::file(files[index].clone()),
             size: 176,
             width: 2,
             height: 1,
@@ -2646,7 +2725,7 @@ mod tests {
             &app,
             crate::worker::Outcome::NoThumbnail {
                 index: 1,
-                path: files[1].clone(),
+                frame: crate::versions::Key::file(files[1].clone()),
             },
         );
         assert!(failed(1));
@@ -2660,7 +2739,7 @@ mod tests {
             &app,
             crate::worker::Outcome::NoThumbnail {
                 index: 0,
-                path: PathBuf::from("/elsewhere/IMG_0000.CR3"),
+                frame: crate::versions::Key::file("/elsewhere/IMG_0000.CR3"),
             },
         );
         assert!(!failed(0));
@@ -2675,7 +2754,7 @@ mod tests {
             &app,
             crate::worker::Outcome::NoThumbnail {
                 index: 0,
-                path: files[0].clone(),
+                frame: crate::versions::Key::file(files[0].clone()),
             },
         );
         assert!(!failed(0));
@@ -2735,7 +2814,7 @@ mod tests {
             &app,
             Outcome::Thumbnail {
                 index: 900,
-                path: files[900].clone(),
+                frame: crate::versions::Key::file(files[900].clone()),
                 size: 360,
                 width: 4,
                 height: 2,
@@ -2934,7 +3013,7 @@ mod tests {
                 &app,
                 Outcome::Thumbnail {
                     index: 0,
-                    path: files[0].clone(),
+                    frame: crate::versions::Key::file(files[0].clone()),
                     size: 360,
                     width: w,
                     height: h,

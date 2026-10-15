@@ -62,6 +62,10 @@ export component DeleteSheet inherits Rectangle {
     in property <bool> delete-trash;
     /// Offer the permanent delete: a click's only.
     in property <bool> delete-permanent;
+    /// The default button's word in place of the trash's, for what
+    /// goes by a save and not to the trash (a version): empty for
+    /// the trash.
+    in property <string> delete-confirm;
     /// 0 no, 1 the trash, 2 permanently.
     callback delete-answered(int);
 
@@ -132,9 +136,14 @@ export component DeleteSheet inherits Rectangle {
                         text: "Delete permanently";
                         clicked => { root.delete-answered(2); }
                     }
-                    if root.delete-trash: PanelButton {
+                    if root.delete-trash && root.delete-confirm == "": PanelButton {
                         text: "Move to the trash";
                         icon: @image-url("../icons/trash-2.svg");
+                        primary: true;
+                        clicked => { root.delete-answered(1); }
+                    }
+                    if root.delete-trash && root.delete-confirm != "": PanelButton {
+                        text: root.delete-confirm;
                         primary: true;
                         clicked => { root.delete-answered(1); }
                     }

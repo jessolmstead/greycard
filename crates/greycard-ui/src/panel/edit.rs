@@ -37,52 +37,73 @@ pub(crate) fn edit_to_develop(app: &App, edit: &Edit) -> Edit {
     shown
 }
 
-/// Write the current file's sidecar, if sidecars are written, and
-/// its meta to an XMP beside it when that is asked for.
+/// Write cell `c`'s file's sidecar, if sidecars are written, and its
+/// meta to an XMP beside it when that is asked for: [`write_file`] of
+/// the cell's file. The sidecar is the file's whole, every line of it,
+/// written once whichever of its cells moved.
+pub(crate) fn write_sidecar(st: &mut State, c: usize) {
+    if let Some(file) = st.file_at(c) {
+        write_file(st, file);
+    }
+}
+
+/// Write file `file`'s sidecar, if sidecars are written, and its meta
+/// to an XMP beside it when that is asked for.
 ///
 /// The XMP goes first so that the mark for what it now holds is in
 /// the sidecar before the sidecar is written; otherwise the next
 /// load would read back what this build just wrote. An XMP that
 /// will not parse costs the interop and nothing else: the `.gcd` is
 /// written either way.
-pub(crate) fn write_sidecar(st: &mut State, c: usize) {
-    if !writable(st, c) {
+pub(crate) fn write_file(st: &mut State, file: usize) {
+    if !file_writable(st, file) {
         return;
     }
     // A frame followed to an archive's copy has its XMP written there
     // by the archive write, from the sidecar, off the window's thread.
-    if st.xmp_sidecars && !crate::sync::followed(st, c) {
+    if st.xmp_sidecars && !crate::sync::followed(st, file) {
         // `tiff:Orientation` is the camera's tag and the frame's
         // quarter turns composed; with no tag to compose onto,
         // whatever the file says about the orientation is left
         // alone and the rest of the meta still goes.
-        let turn = camera_tag(st, c).map(|o| xmp::Turn::new(o, st.sidecars[c].turn));
-        match xmp::save(&st.files[c], &st.sidecars[c].meta, turn) {
-            Ok(Some(mark)) => st.sidecars[c].xmp = Some(mark),
+        let turn = st
+            .own_cell(file)
+            .and_then(|c| camera_tag(st, c))
+            .map(|o| xmp::Turn::new(o, st.sidecars[file].turn));
+        match xmp::save(&st.files[file], &st.sidecars[file].meta, turn) {
+            Ok(Some(mark)) => st.sidecars[file].xmp = Some(mark),
             Ok(None) => {}
-            Err(e) => tracing::warn!("{}: xmp not written: {e}", file_name(&st.files[c])),
+            Err(e) => tracing::warn!("{}: xmp not written: {e}", file_name(&st.files[file])),
         }
     }
-    save_sidecar(st, c);
+    save_file(st, file);
 }
 
-/// Write frame `c`'s sidecar where it lives: for a frame the window
+/// [`save_file`] of cell `c`'s file.
+pub(crate) fn save_sidecar(st: &mut State, c: usize) -> bool {
+    st.file_at(c).is_some_and(|file| save_file(st, file))
+}
+
+/// Write file `file`'s sidecar where it lives: for a frame the window
 /// follows on an archive's copy (§233), the save is made in memory and
 /// the file written off the window's thread by the archive write, with
 /// its check against the copy; for every other frame, written here
-/// beside it, the index told and the archive's copy queued. True when
-/// the save was made.
-pub(crate) fn save_sidecar(st: &mut State, c: usize) -> bool {
-    if crate::sync::followed(st, c) {
-        st.sidecars[c].advance(&greycard_edit::sync::Stamp::now());
-        crate::sync::after_save(st, c);
-        crate::edited::saved(st, c);
+/// beside it, the index told and the archive's copy queued. One save,
+/// one revision, however many of its lines moved. True when the save
+/// was made.
+pub(crate) fn save_file(st: &mut State, file: usize) -> bool {
+    if crate::sync::followed(st, file) {
+        st.sidecars[file].advance(&greycard_edit::sync::Stamp::now());
+        crate::sync::after_save(st, file);
+        for c in st.cells_of_file(file) {
+            crate::edited::saved(st, c);
+        }
         return true;
     }
-    let (path, placement) = (st.files[c].clone(), st.placement);
-    match st.sidecars[c].save_in(&path, placement) {
+    let (path, placement) = (st.files[file].clone(), st.placement);
+    match st.sidecars[file].save_in(&path, placement) {
         Ok(_) => {
-            crate::library::sidecar_written(st, c);
+            crate::library::sidecar_written(st, file);
             true
         }
         Err(e) => {
@@ -92,14 +113,19 @@ pub(crate) fn save_sidecar(st: &mut State, c: usize) -> bool {
     }
 }
 
-/// Whether frame `c`'s sidecar may be written now: sidecars are on,
+/// Whether cell `c`'s sidecar may be written now: sidecars are on,
 /// the frame is not being deleted, and the sidecar in memory is the
 /// frame's own and not its row standing in (`rows`), which would put
 /// the default edit over whatever the file holds.
 pub(crate) fn writable(st: &State, c: usize) -> bool {
+    st.file_at(c).is_some_and(|file| file_writable(st, file))
+}
+
+/// [`writable`] by the file.
+pub(crate) fn file_writable(st: &State, file: usize) -> bool {
     st.write_sidecars
-        && !crate::panel::delete::held(st, c)
-        && st.from_row.get(c).is_none_or(|r| r.read)
+        && !crate::panel::delete::held_file(st, file)
+        && st.from_row.get(file).is_none_or(|r| r.read)
 }
 
 /// The open frame's quarter turns, for a job the worker develops:
@@ -107,7 +133,7 @@ pub(crate) fn writable(st: &State, c: usize) -> bool {
 /// develop has to carry it.
 pub(crate) fn current_turn(st: &State) -> u8 {
     st.current
-        .and_then(|c| st.sidecars.get(c))
+        .and_then(|c| st.sidecar_at(c))
         .map_or(0, |s| s.turn)
 }
 
@@ -264,7 +290,7 @@ pub(crate) fn panel_state(st: &mut State, edit: Edit) -> Option<Edit> {
         return Some(edit);
     };
     match &st.overridden {
-        Some((file, shown)) if *file == st.files[c] && *shown == edit => None,
+        Some((file, shown)) if file == st.path_of(c) && *shown == edit => None,
         Some(_) => {
             st.overridden = None;
             Some(edit)
@@ -290,7 +316,7 @@ pub(crate) fn record_panel(st: &mut State, app: &App) -> bool {
         return false;
     }
     let edit = read_edit(app, &st.edit, st.target);
-    panel_state(st, edit).is_some_and(|edit| st.sidecars[c].record(edit))
+    panel_state(st, edit).is_some_and(|edit| st.line_mut(c).is_some_and(|l| l.record(edit)))
 }
 
 /// Record `edit` as the current file's, and write its sidecar if that
@@ -321,9 +347,9 @@ pub(crate) fn save_edit(st: &mut State, edit: Edit) -> bool {
         return false;
     };
     if !crate::rows::panel_is_frames(st, c) {
-        return st.sidecars[c].current != edit;
+        return st.line(c).is_some_and(|l| l.current != edit);
     }
-    if !st.sidecars[c].record(edit) {
+    if !st.line_mut(c).is_some_and(|l| l.record(edit)) {
         return false;
     }
     if writable(st, c) {
@@ -350,7 +376,7 @@ pub(crate) fn take_sources(st: &mut State, sources: &[greycard_edit::retouch::Pa
     let Some(c) = st.current else {
         return false;
     };
-    if !st.sidecars[c].take_sources(sources) {
+    if !st.line_mut(c).is_some_and(|l| l.take_sources(sources)) {
         return false;
     }
     if writable(st, c) {

@@ -1000,6 +1000,32 @@ export component ThumbMarks inherits Rectangle {
     }
 }
 
+// A version's name on the top left of its picture ("Warm"), so two
+// cells of one file can be told apart; the file's own wears none. In
+// the marks' quiet colors, on their scrim.
+export component ThumbTag inherits Rectangle {
+    in property <string> name;
+    in property <length> glyph: 9px;
+    /// The most it takes of the picture's width, the name elided past it.
+    in property <length> most: 100px;
+    visible: root.name != "";
+    width: min(root.most, words.preferred-width + root.glyph * 2 / 3);
+    height: root.glyph + 6px;
+    border-radius: Theme.radius-sm;
+    background: #00000080;
+    accessible-role: text;
+    accessible-label: "Version " + root.name;
+    words := Text {
+        x: root.glyph / 3;
+        width: parent.width - root.glyph * 2 / 3;
+        text: root.name;
+        color: Theme.text-secondary;
+        font-size: root.glyph + 1px;
+        vertical-alignment: center;
+        overflow: elide;
+    }
+}
+
 // The arrow on a panel's edge that puts the panel away and brings it
 // back: a small plate over the viewport's edge, its chevron pointing
 // the way the edge will move. Quiet, it shows only under the pointer,

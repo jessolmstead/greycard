@@ -39,6 +39,9 @@ pub(crate) enum Asked {
     Rename(String),
     /// Whether to delete one, by its id.
     Delete(String),
+    /// A name for version `id` of the file at `path`: the sheet lent to
+    /// the versions (`panel::versions`), which have no sets.
+    Version { path: PathBuf, id: String },
 }
 
 /// "Cover picks", or "Clients/2026/Cover picks" for one in sets.
@@ -161,8 +164,10 @@ pub(crate) fn collected(st: &State, f: usize) -> bool {
 /// The mark put on every row whose membership changed.
 pub(crate) fn show_collected(st: &State, app: &App) {
     let model = app.get_thumbs();
-    for (row, &f) in st.shown.iter().enumerate() {
-        let want = collected(st, f);
+    for (row, &c) in st.shown.iter().enumerate() {
+        // A collection names a file's own frame until a version can be
+        // put in one: the mark is the file's own cell's.
+        let want = st.version_of(c).is_none() && collected(st, st.file_of(c));
         if let Some(mut t) = model.row_data(row)
             && t.collected != want
         {
@@ -244,10 +249,11 @@ pub(crate) fn healed(state: &Rc<RefCell<State>>, app: &App, rehashed: &[Rehash])
     }
 }
 
-/// Each frame's hash and path, from its row in the index, or for a
-/// frame the index has not reached, from the file itself.
-fn frames_of(st: &State, files: &[usize]) -> Vec<(String, PathBuf)> {
-    files
+/// Each file's hash and path, from its row in the index, or for a
+/// frame the index has not reached, from the file itself: the cells
+/// given as their files, once each (a version's cell is its file's).
+fn frames_of(st: &State, cells: &[usize]) -> Vec<(String, PathBuf)> {
+    st.files_of(cells)
         .iter()
         .filter_map(|&f| {
             let path = st.files.get(f)?;
@@ -482,6 +488,8 @@ fn ask(st: &mut State, app: &App, asked: Asked) {
             "Delete",
             String::new(),
         ),
+        // Asked by `panel::versions`, which fills the sheet itself.
+        Asked::Version { .. } => return,
     };
     app.set_collection_sheet_title(title.into());
     app.set_collection_sheet_note(note.into());
@@ -504,6 +512,17 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
         app.set_collection_sheet_open(false);
         return;
     };
+    // A version's name: no sets, and a blank one keeps the sheet up.
+    if let Asked::Version { path, id } = asked {
+        if typed.is_empty() {
+            st.collections.asked = Some(Asked::Version { path, id });
+            return;
+        }
+        app.set_collection_sheet_open(false);
+        app.set_collection_sheet_placeholder("Name, or Set/Name".into());
+        crate::panel::versions::renamed(&mut st, app, &path, &id, &typed);
+        return;
+    }
     if !named && !matches!(asked, Asked::Delete(_)) {
         // Nothing typed: the sheet stays, as it was.
         st.collections.asked = Some(asked);
@@ -558,6 +577,8 @@ fn sheet_done(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
             st.collections.save(&id);
             app.set_status(format!("renamed {}", name_of(&st, &id)).into());
         }
+        // Taken before the match.
+        Asked::Version { .. } => {}
         Asked::Delete(id) => {
             let name = name_of(&st, &id);
             if st.collections.delete(&id) {

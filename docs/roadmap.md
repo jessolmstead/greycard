@@ -31,13 +31,10 @@ collections and smart collections that survive a move, a mask has its
 own Detail, and the first tester's rough edges on masks, the touchpad
 and export are smoothed.
 
-- [ ] Virtual copies, part 2: a version is a cell beside its file with its
-      own thumbnail and marks; New version, Rename, Swap with the original,
-      Delete (§309)
 - [ ] Virtual copies, part 3: Compare versions side by side in cull mode
-      (§309). Waits on part 2
+      (§309)
 - [ ] Virtual copies, part 5: a collection reference is hash plus version
-      id; the mark on the version's cell alone (§309). Waits on part 2
+      id; the mark on the version's cell alone (§309)
 
 ## Tracks
 
@@ -386,8 +383,7 @@ clears or a tester asks for it.
       2026-10-13); a large or side Dock is the case this is for
 - [ ] `worker.rs` and `roots.rs` split into module directories as
       `render.rs` was (§316), pure moves with the same public surface;
-      the long `run` and `develop_job` left whole for a later round.
-      Waits on virtual copies part 2 landing
+      the long `run` and `develop_job` left whole for a later round
 
 - [ ] The learned mask and fill caches keyed by the develop they were
       made from: the window's Export reuses the mask its viewport made

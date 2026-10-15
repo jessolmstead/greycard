@@ -327,33 +327,29 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     // which names the frame once the list has landed and said which it
     // is).
     let overrides = Overrides::of(&cli);
-    let tweak_at_start: Option<crate::Tweak> =
-        (preset_at_start_wanted.is_some() || !overrides.is_empty()).then(|| {
-            let preset = preset_at_start_wanted;
-            let placement = (!cli.no_sidecars).then_some(placement);
-            Box::new(move |st: &mut State, i: usize| {
-                if let Some(preset) = preset {
-                    // Written only where a save would be (`writable`).
-                    let placement = placement.filter(|_| crate::panel::edit::writable(st, i));
-                    let st = &mut *st;
-                    let saved = preset_at_start(
-                        &mut st.sidecars[i],
-                        &mut st.seed_blend[i],
-                        &st.files[i],
-                        &preset,
-                        placement,
-                    );
-                    // Written: the archive's copy is queued as any
-                    // save's is (§233).
-                    if saved {
-                        crate::sync::after_save(st, i);
-                    }
+    let tweak_at_start: Option<crate::Tweak> = (preset_at_start_wanted.is_some()
+        || !overrides.is_empty())
+    .then(|| {
+        let preset = preset_at_start_wanted;
+        let placement = (!cli.no_sidecars).then_some(placement);
+        Box::new(move |st: &mut State, i: usize| {
+            if let Some(preset) = preset {
+                // Written only where a save would be (`writable`).
+                let placement = placement.filter(|_| crate::panel::edit::file_writable(st, i));
+                let st = &mut *st;
+                let saved =
+                    preset_at_start(&mut st.sidecars[i], None, &st.files[i], &preset, placement);
+                // Written: the archive's copy is queued as any
+                // save's is (§233).
+                if saved {
+                    crate::sync::after_save(st, i);
                 }
-                if !overrides.is_empty() {
-                    st.overrides_at_start = Some((i, overrides));
-                }
-            }) as crate::Tweak
-        });
+            }
+            if !overrides.is_empty() {
+                st.overrides_at_start = Some((i, overrides));
+            }
+        }) as crate::Tweak
+    });
 
     if let Some(keys) = cli.keys.clone() {
         let _ = crate::panel::viewport::SNAPSHOT_KEYS.set(keys);
@@ -874,7 +870,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         && st.thumb_base.get(i).is_some_and(|b| b.is_some())
                         && crate::rows::is_loaded(st, i)
                     {
-                        let (turns, flip) = panel.geometry.shown_turns(st.sidecars[i].turn);
+                        let (turns, flip) = panel.geometry.shown_turns(st.sidecar(i).turn);
                         if st.thumb_shown[i] != Some((turns, flip)) {
                             show_thumb(st, &app, i, turns, flip);
                         }
@@ -1537,34 +1533,39 @@ pub(crate) fn save_at_quit(
 /// `save_edit`, which finds the panel equal to the step already
 /// recorded and so writes nothing: the step would be lost on close.
 ///
-/// A raw still waiting on its ISO's learned-denoiser blend (`seed`)
-/// is given it first, as `panel::sync::lay_over_targets` gives a
-/// target: the step makes the edit no longer the default, and once
-/// written the next launch would take that to mean the blend was
-/// seeded already. A preset that changes nothing records and writes
-/// nothing. True when the sidecar was written.
+/// The preset goes on the line of `version` (the file's own for none);
+/// a line that is not there takes nothing. A raw's line still waiting on
+/// its ISO's learned-denoiser blend (never developed,
+/// `files::line_never_developed`) is given it first, as
+/// `panel::sync::lay_over_targets` gives a target: the step makes the
+/// edit no longer the default, and once written the next launch would
+/// take that to mean the blend was seeded already. A preset that
+/// changes nothing records and writes nothing. True when the sidecar
+/// was written.
 pub(crate) fn preset_at_start(
     sidecar: &mut Sidecar,
-    seed: &mut bool,
+    version: Option<&str>,
     file: &Path,
     preset: &Preset,
     placement: Option<greycard_edit::Placement>,
 ) -> bool {
-    let applied = preset.applied(&sidecar.current);
-    if applied == sidecar.current {
+    let Some(line) = sidecar.line_mut(version) else {
+        return false;
+    };
+    let applied = preset.applied(&line.current);
+    if applied == line.current {
         return false;
     }
-    let mut over = sidecar.current.clone();
-    if *seed
+    let mut over = line.current.clone();
+    if crate::files::line_never_developed(line)
         && !greycard_core::picture::is_picture_path(file)
         && let Ok(p) = greycard_core::decode::probe_path(file)
     {
         over.noise.learned_strength = greycard_edit::Noise::blend_for_iso(p.iso);
-        sidecar.current.noise.learned_strength = over.noise.learned_strength;
-        *seed = false;
+        line.current.noise.learned_strength = over.noise.learned_strength;
     }
     let label = greycard_edit::history::preset_label(&preset.name);
-    if !sidecar.record_as(preset.applied(&over), Some(label)) {
+    if !line.record_as(preset.applied(&over), Some(label)) {
         return false;
     }
     match placement.map(|p| sidecar.save_in(file, p)) {
@@ -1905,7 +1906,7 @@ pub(crate) fn remember_last_file(st: &State) {
     if st.batch || st.screenshot.is_some() || st.snapshot.is_some() {
         return;
     }
-    let Some(path) = st.current.and_then(|i| st.files.get(i)) else {
+    let Some(path) = st.current.and_then(|i| st.path_at(i)) else {
         return;
     };
     let Ok(path) = std::fs::canonicalize(path) else {
@@ -2129,14 +2130,13 @@ mod tests {
         let preset = Preset::from_edit("Faded film", &edit, &[greycard_edit::Section::Light]);
 
         let mut sidecar = Sidecar::default();
-        let mut seed = false;
-        preset_at_start(&mut sidecar, &mut seed, &file, &preset, None);
+        preset_at_start(&mut sidecar, None, &file, &preset, None);
         assert_eq!(sidecar.current.light.exposure, 0.5);
         assert!(Sidecar::find(&file).is_none(), "no sidecars: none written");
 
         let mut sidecar = Sidecar::default();
         let placement = Some(greycard_edit::Placement::Folder);
-        preset_at_start(&mut sidecar, &mut seed, &file, &preset, placement);
+        preset_at_start(&mut sidecar, None, &file, &preset, placement);
         let back = Sidecar::load(&file).unwrap().expect("the step was written");
         assert_eq!(
             Sidecar::find(&file),
@@ -2149,25 +2149,34 @@ mod tests {
         // Again: on already, so no step and no write.
         let saved = back.saved;
         let mut again = back;
-        preset_at_start(&mut again, &mut seed, &file, &preset, placement);
+        preset_at_start(&mut again, None, &file, &preset, placement);
         assert_eq!(again.history.len(), 1);
         assert_eq!(Sidecar::load(&file).unwrap().unwrap().saved, saved);
 
         // A file that will not say its ISO keeps waiting for its
         // blend rather than being given one made up.
         let mut fresh = Sidecar::default();
-        let mut waiting = true;
-        preset_at_start(
-            &mut fresh,
-            &mut waiting,
-            &dir.join("IMG_0002.CR3"),
-            &preset,
-            None,
-        );
-        assert!(waiting);
+        preset_at_start(&mut fresh, None, &dir.join("IMG_0002.CR3"), &preset, None);
         assert_eq!(
             fresh.current.noise.learned_strength,
             Edit::default().noise.learned_strength
+        );
+        // On a version: its line takes the step, the file's own stays.
+        let mut with = Sidecar::default();
+        let id = with.new_version(None, Some("Warm")).unwrap();
+        assert!(!preset_at_start(
+            &mut with,
+            Some("none"),
+            &file,
+            &preset,
+            None
+        ));
+        preset_at_start(&mut with, Some(&id), &file, &preset, None);
+        assert_eq!(with.current.light.exposure, 0.0);
+        assert_eq!(with.line(Some(&id)).unwrap().current.light.exposure, 0.5);
+        assert_eq!(
+            with.line(Some(&id)).unwrap().current_label.as_deref(),
+            Some("Preset: Faded film")
         );
         std::fs::remove_dir_all(&dir).expect("the temp dir goes");
     }

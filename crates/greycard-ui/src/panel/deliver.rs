@@ -200,7 +200,7 @@ pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
     match outcome {
         Outcome::Thumbnail {
             index,
-            path,
+            frame,
             size,
             width,
             height,
@@ -208,14 +208,15 @@ pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
             cached,
             seconds,
         } => {
-            // A thumbnail of a list since replaced by another folder's
-            // would land on a stranger's slot: only its own file's.
-            if st.files.get(index) != Some(&path) {
+            // A thumbnail of a list since replaced by another folder's,
+            // or renumbered under it, would land on a stranger's cell:
+            // only its own frame's.
+            if st.key_of(index) != Some(frame.clone()) {
                 return;
             }
             tracing::debug!(
                 "thumbnail {}: {} in {:.1} ms",
-                file_name(&path),
+                frame.said(),
                 if cached { "from the cache" } else { "made" },
                 seconds * 1000.0
             );
@@ -245,7 +246,7 @@ pub(crate) fn take_thumbnail(st: &mut State, app: &App, outcome: Outcome) {
             let (turns, flip) = thumb_turns(st, app, index);
             show_thumb(st, app, index, turns, flip);
         }
-        Outcome::NoThumbnail { index, path } if st.files.get(index) == Some(&path) => {
+        Outcome::NoThumbnail { index, frame } if st.key_of(index).as_ref() == Some(&frame) => {
             count_thumb(st, index, None, 0.0);
             show_no_thumb(st, app, index);
         }
@@ -345,22 +346,20 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 return;
             }
             // A fresh raw's learned-denoiser blend from its ISO: into
-            // its sidecar, the edit under develop and the panel, once.
-            if let Some(b) = blend {
-                if let Some(i) = st.current {
-                    if let Some(seed) = st.seed_blend.get_mut(i) {
-                        *seed = false;
-                    }
-                    if let Some(s) = st.sidecars.get_mut(i) {
-                        s.current.noise.learned_strength = b;
-                    }
-                    // The overrides' edit is the panel's, seed and all.
-                    let file = st.files.get(i).cloned();
-                    if let Some((f, e)) = st.overridden.as_mut()
-                        && file.as_ref() == Some(f)
-                    {
-                        e.noise.learned_strength = b;
-                    }
+            // the open cell's line (and that line alone: a version at
+            // its own strength keeps it, one still at the default waits
+            // for its own open), the edit under develop and the panel,
+            // once.
+            if let Some(b) = blend
+                && let Some(i) = st.current
+                && crate::rows::seed_landed(&mut st, i, b)
+            {
+                // The overrides' edit is the panel's, seed and all.
+                let file = st.path_at(i).cloned();
+                if let Some((f, e)) = st.overridden.as_mut()
+                    && file.as_ref() == Some(f)
+                {
+                    e.noise.learned_strength = b;
                 }
                 st.edit.noise.learned_strength = b;
                 app.set_denoise_learned_strength(b);
@@ -401,7 +400,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                             "{}-bit {} read as {space}; already rendered",
                             bits,
                             st.current
-                                .and_then(|i| st.files.get(i))
+                                .and_then(|i| st.path_at(i))
                                 .and_then(|f| f.extension())
                                 .map(|e| e.to_string_lossy().to_ascii_uppercase())
                                 .unwrap_or_else(|| "picture".into())
@@ -699,7 +698,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             // A Part asking which person it is of here: the picking,
             // with the people outlined; settled, it asks no more. An
             // ask made on a picture no longer open is that picture's.
-            let open = st.current.and_then(|c| st.files.get(c)).cloned();
+            let open = st.current.and_then(|c| st.path_at(c)).cloned();
             // A part made, though with a word on the status line (a
             // Whole person that kept SAM's edge): shown as any other.
             let settled = matches!(shape, Shape::Part { .. }) && part.is_none();
@@ -852,10 +851,10 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 .into(),
             );
         }
-        Outcome::EditedKept { path } => {
+        Outcome::EditedKept { frame } => {
             let mut st = state.borrow_mut();
             if let Some(worker) = WORKER.with(|w| w.borrow().clone()) {
-                crate::edited::kept(&mut st, &worker, &path);
+                crate::edited::kept(&mut st, &worker, &frame);
             }
         }
         Outcome::LensesFetched => {
@@ -1004,18 +1003,35 @@ pub(crate) fn set_frames_of(st: &mut State, app: &App, frames: &[usize]) -> SetF
     let frames = crate::rows::load_frames(st, app, frames);
     frames
         .into_iter()
-        .map(|f| {
+        .filter_map(|c| {
             // The panel is the current frame's outside culling only:
             // in it, the panel is no frame's (`save_edit`).
-            let edit = if Some(f) == st.current && st.cull.is_none() {
+            let edit = if Some(c) == st.current && st.cull.is_none() {
                 read_edit(app, &st.edit, st.target)
             } else {
-                st.sidecars[f].current.clone()
+                st.line(c)?.current.clone()
             };
-            let seed = st.seed_blend.get(f).copied().unwrap_or(false);
-            (st.files[f].clone(), edit, st.sidecars[f].turn, seed)
+            let file = st.file_of(c);
+            let seed = crate::rows::wants_seed(st, c);
+            Some((
+                st.files[file].clone(),
+                edit,
+                st.sidecars[file].turn,
+                seed,
+                frame_version(st, c),
+            ))
         })
         .collect()
+}
+
+/// The version cell `c` is, as an export names it: none for the file's
+/// own.
+pub(crate) fn frame_version(st: &State, c: usize) -> Option<queue::Version> {
+    let id = st.version_of(c)?;
+    Some(queue::Version {
+        id: id.to_string(),
+        name: st.version_name(c).unwrap_or_default(),
+    })
 }
 
 /// The status line for one file written: its name, how long, a rename
@@ -1081,8 +1097,11 @@ pub(crate) fn start_set(
         }
         return None;
     }
-    let sources: Vec<PathBuf> = frames.iter().map(|f| f.0.clone()).collect();
-    let outs = queue::named(
+    let sources: Vec<(PathBuf, Option<String>)> = frames
+        .iter()
+        .map(|f| (f.0.clone(), f.4.as_ref().map(|v| v.name.clone())))
+        .collect();
+    let outs = queue::named_of(
         &sources,
         folder.as_deref(),
         sub.as_deref(),
@@ -1093,10 +1112,10 @@ pub(crate) fn start_set(
         .into_iter()
         .zip(outs)
         .map(
-            |((source, edit, turn, seed_blend), (out, moved_from))| queue::Frame {
+            |((source, edit, turn, seed_blend, version), (out, moved_from))| queue::Frame {
                 source,
                 edit,
-                version: None,
+                version,
                 turn,
                 seed_blend,
                 out,
@@ -1242,7 +1261,7 @@ pub(crate) fn folder_line(st: &State, typed: &str, room: usize) -> String {
         let left = room.saturating_sub(BESIDE.len()).max(4);
         return format!("{}{BESIDE}", Sheet::elide_front(&sub, left));
     }
-    let Some(raw) = st.current.and_then(|c| st.files.get(c)) else {
+    let Some(raw) = st.current.and_then(|c| st.path_at(c)) else {
         return String::new();
     };
     Sheet::elide_front(&sheet_folder(st, raw).display().to_string(), room.max(4))
@@ -1383,7 +1402,7 @@ fn choose_export_folder(state: &Rc<RefCell<State>>, app: &App) {
         if st.exporting.is_some() || st.export_choosing {
             return;
         }
-        let Some(raw) = st.current.and_then(|c| st.files.get(c)) else {
+        let Some(raw) = st.current.and_then(|c| st.path_at(c)) else {
             return;
         };
         sheet_folder(&st, raw)
@@ -1600,17 +1619,21 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 let Some(c) = st.current else {
                     return;
                 };
-                let paths: Vec<PathBuf> = chosen_frames(&st)
+                let paths: Vec<crate::versions::Key> = chosen_frames(&st)
                     .into_iter()
-                    .map(|i| st.files[i].clone())
+                    .filter_map(|c| st.key_of(c))
                     .collect();
-                (st.files[c].clone(), paths)
+                let Some(pressed) = st.key_of(c) else {
+                    return;
+                };
+                (pressed, paths)
             };
             crate::rows::request(
                 &state,
                 &app,
                 &worker,
                 paths,
+                crate::rows::Scope::Line,
                 "export",
                 Box::new(move |state, app, _, at| {
                     let frames: Vec<usize> = at.into_iter().flatten().collect();
@@ -1626,7 +1649,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 /// sheet's folder. A pressed frame no longer on screen when the
 /// sidecars came in (the user moved on while they were read) is
 /// exported under its own sidecar's edit, never the panel's.
-fn export_frames(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: &[usize]) {
+fn export_frames(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    pressed: &crate::versions::Key,
+    frames: &[usize],
+) {
     {
         let st = state.borrow();
         // One set at a time, and one folder asked about for it: a
@@ -1641,8 +1669,10 @@ fn export_frames(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: 
     export_gathered(state, app, raw, frames);
 }
 
-/// The frames of a set, each as `set_frames` gives it.
-pub(crate) type SetFrames = Vec<(PathBuf, Edit, u8, bool)>;
+/// The frames of a set, each as `set_frames` gives it: the file, the
+/// edit, the turn, the seed, and the version it is of (none for the
+/// file's own).
+pub(crate) type SetFrames = Vec<(PathBuf, Edit, u8, bool, Option<queue::Version>)>;
 
 /// What an export pressed on `pressed` takes, the set's sidecars in
 /// hand: the pressed frame's file and edit, the frames of the set with
@@ -1652,13 +1682,13 @@ pub(crate) type SetFrames = Vec<(PathBuf, Edit, u8, bool)>;
 pub(crate) fn pressed_frames(
     state: &Rc<RefCell<State>>,
     app: &App,
-    pressed: &Path,
+    pressed: &crate::versions::Key,
     frames: &[usize],
 ) -> Option<(PathBuf, Edit, SetFrames, bool)> {
     {
         let mut st = state.borrow_mut();
         // Gone from the list: the request says so.
-        let p = st.files.iter().position(|f| f == pressed)?;
+        let p = st.find_cell(pressed)?;
         // On screen is the panel's frame: never in culling, where an
         // export asked for before the mode can land (its request
         // queued behind a read) with the panel no frame's, and the
@@ -1685,19 +1715,21 @@ pub(crate) fn pressed_frames(
             if !crate::rows::load_frame(&mut st, app, p) {
                 return None;
             }
-            st.sidecars[p].current.clone()
+            st.line(p)?.current.clone()
         };
         let mut frames = set_frames_of(&mut st, app, frames);
         // One frame is the pressed one, as on screen it would be.
         if !on_screen && frames.len() <= 1 {
+            let file = st.file_of(p);
             frames = vec![(
-                st.files[p].clone(),
+                st.files[file].clone(),
                 edit.clone(),
-                st.sidecars[p].turn,
-                st.seed_blend.get(p).copied().unwrap_or(false),
+                st.sidecars[file].turn,
+                crate::rows::wants_seed(&st, p),
+                frame_version(&st, p),
             )];
         }
-        Some((st.files[p].clone(), edit, frames, on_screen))
+        Some((st.path_of(p).clone(), edit, frames, on_screen))
     }
 }
 
@@ -2233,7 +2265,7 @@ mod tests {
         let frames = set_frames(&mut state.borrow_mut(), &app);
         let got: Vec<(String, f32, u8)> = frames
             .iter()
-            .map(|(f, e, t, _)| (file_name(f), e.light.exposure, *t))
+            .map(|(f, e, t, _, _)| (file_name(f), e.light.exposure, *t))
             .collect();
         assert_eq!(
             got,

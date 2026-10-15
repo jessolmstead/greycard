@@ -14,8 +14,17 @@ use crate::*;
 /// snapshot behind it. A file rated but never developed has a
 /// sidecar, and that is not the same as having been developed —
 /// its learned blend is still waiting for its ISO.
+#[cfg(test)]
 pub fn never_developed(sidecar: &Sidecar) -> bool {
-    sidecar.current == Edit::default() && sidecar.history.is_empty() && sidecar.snapshots.is_empty()
+    line_never_developed(&sidecar.line)
+}
+
+/// [`never_developed`] of one line of a sidecar: a version made from the
+/// original before the raw was opened is at the default too, and waits
+/// for its ISO on its own; one made from an edited version, or edited
+/// since, is not.
+pub fn line_never_developed(line: &greycard_edit::Line) -> bool {
+    line.current == Edit::default() && line.history.is_empty() && line.snapshots.is_empty()
 }
 
 /// A sidecar from an older build brought up to date from the shape of

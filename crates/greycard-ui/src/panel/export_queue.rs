@@ -9,7 +9,7 @@
 //! leaves its entry, and an entry with no frames left leaves the queue.
 
 use crate::export_queue::{self, Entry, QueuedFrame};
-use crate::panel::browser::{chosen_frames, file_name};
+use crate::panel::browser::chosen_frames;
 use crate::panel::deliver::{SetFrames, preset_in_use, pressed_frames, read_sheet};
 use crate::queue;
 use crate::*;
@@ -50,8 +50,9 @@ impl Run {
 /// What the look for an entry's files found, off the window's thread:
 /// a stale network mount can hang a stat for as long as it likes.
 pub(crate) struct Found {
-    /// Each frame's file, by its place in the entry: there or not.
-    present: Vec<bool>,
+    /// Each frame, by its place in the entry: there to export, or not,
+    /// and why.
+    present: Vec<Presence>,
     /// The folder the entry goes to is there (or it goes beside each
     /// file).
     folder: bool,
@@ -59,12 +60,66 @@ pub(crate) struct Found {
     mark: bool,
 }
 
-/// Look for `sources`, `folder` and the mark's `png`.
-fn look(sources: &[PathBuf], folder: Option<&Path>, png: Option<&Path>) -> Found {
+/// What the look found of one queued frame.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Presence {
+    /// The file is not there: left queued for a run when it is back.
+    Absent,
+    /// The file, and the version when the frame is one, are there.
+    There,
+    /// The file is there and its sidecar reads, and the version the
+    /// frame is of is not in it: deleted since the frame was queued,
+    /// with no line to export or to record on.
+    Deleted,
+    /// The file is there but whether the version is cannot be told (a
+    /// sidecar that will not read, or none where the version was):
+    /// left queued, as a file not there is, never taken for deleted.
+    Unsure,
+}
+
+/// One queued frame as the look checks it: its file, the version it is
+/// of, and the window's own answer on the version when it holds the
+/// file read (the copy in memory is the truth then, and the disk is not
+/// asked).
+pub(crate) struct Check {
+    source: PathBuf,
+    version: Option<String>,
+    held: Option<bool>,
+}
+
+/// Look for the frames `checks`, `folder` and the mark's `png`: off the
+/// window's thread, since a stale mount can hang a stat, or a sidecar's
+/// read, for as long as it likes.
+fn look(checks: &[Check], folder: Option<&Path>, png: Option<&Path>) -> Found {
     Found {
-        present: sources.iter().map(|s| s.is_file()).collect(),
+        present: checks
+            .iter()
+            .map(|c| {
+                if !c.source.is_file() {
+                    return Presence::Absent;
+                }
+                match (&c.version, c.held) {
+                    (None, _) => Presence::There,
+                    (Some(_), Some(true)) => Presence::There,
+                    (Some(_), Some(false)) => Presence::Deleted,
+                    (Some(id), None) => version_presence(&c.source, id),
+                }
+            })
+            .collect(),
         folder: folder.is_none_or(Path::is_dir),
         mark: png.is_none_or(Path::is_file),
+    }
+}
+
+/// Whether version `id` is in the sidecar on disk beside `source`: only
+/// a sidecar that reads and lacks the id says deleted; one that will not
+/// read, or none at all, cannot tell. A read of the disk, so off the
+/// window's thread.
+pub(crate) fn version_presence(source: &Path, id: &str) -> Presence {
+    match greycard_edit::Sidecar::load(source) {
+        Ok(Some(s)) if s.version(id).is_some() => Presence::There,
+        Ok(Some(_)) => Presence::Deleted,
+        Ok(None) | Err(_) => Presence::Unsure,
     }
 }
 
@@ -140,7 +195,12 @@ pub(crate) fn open_at_launch(st: &mut State, app: &App, settings: Option<&Path>,
 /// from `pressed` and `frames` now, into the folder the sheet's Folder
 /// row shows or, with a subfolder on the sheet, into that beside each
 /// frame, appended to the queue. Nothing is exported.
-fn queue_pressed(state: &Rc<RefCell<State>>, app: &App, pressed: &Path, frames: &[usize]) {
+fn queue_pressed(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    pressed: &crate::versions::Key,
+    frames: &[usize],
+) {
     if state.borrow().export_choosing {
         return;
     }
@@ -189,7 +249,7 @@ fn entry_of(frames: SetFrames, sheet: crate::sheet::Sheet, preset: Option<String
         sheet,
         frames: frames
             .into_iter()
-            .map(|(source, edit, turn, seed_blend)| QueuedFrame {
+            .map(|(source, edit, turn, seed_blend, version)| QueuedFrame {
                 // Whole, since the queue outlives this run's working
                 // directory: a folder opened by a relative path would
                 // name nothing from the next launch's.
@@ -197,6 +257,7 @@ fn entry_of(frames: SetFrames, sheet: crate::sheet::Sheet, preset: Option<String
                 edit,
                 turn,
                 seed_blend,
+                version,
             })
             .collect(),
     }
@@ -251,7 +312,22 @@ fn begin_at(st: &mut State, app: &App, index: usize, left_behind: usize) {
         show_queue(st, app);
         return;
     };
-    let sources: Vec<PathBuf> = entry.frames.iter().map(|f| f.source.clone()).collect();
+    let checks: Vec<Check> = entry
+        .frames
+        .iter()
+        .map(|f| Check {
+            source: f.source.clone(),
+            version: f.version.as_ref().map(|v| v.id.clone()),
+            // The window's copy of the sidecar, where it holds the file
+            // read, says whether the version is there; the thread reads
+            // the disk for the rest.
+            held: f.version.as_ref().and_then(|v| {
+                let file = st.file_by_path(&f.source)?;
+                crate::rows::file_is_loaded(st, file)
+                    .then(|| st.sidecars[file].version(&v.id).is_some())
+            }),
+        })
+        .collect();
     let folder = entry.folder.clone();
     let png = mark_png(entry);
     st.queue_probes += 1;
@@ -260,7 +336,7 @@ fn begin_at(st: &mut State, app: &App, index: usize, left_behind: usize) {
         entry: index,
         set: None,
         at: Vec::new(),
-        done: vec![false; sources.len()],
+        done: vec![false; checks.len()],
         left_behind,
         probe,
         #[cfg(test)]
@@ -270,14 +346,14 @@ fn begin_at(st: &mut State, app: &App, index: usize, left_behind: usize) {
     // A test answers at once; the window asks a thread, whose answer
     // comes back through the event loop.
     if cfg!(test) {
-        let found = look(&sources, folder.as_deref(), png.as_deref());
+        let found = look(&checks, folder.as_deref(), png.as_deref());
         found_files(st, app, probe, found);
         return;
     }
     app.set_status("looking for the queued files...".into());
     let weak = app.as_weak();
     std::thread::spawn(move || {
-        let found = look(&sources, folder.as_deref(), png.as_deref());
+        let found = look(&checks, folder.as_deref(), png.as_deref());
         let _ = weak.upgrade_in_event_loop(move |app| {
             if let Some(state) = STATE.with(|s| s.borrow().clone()) {
                 found_files(&mut state.borrow_mut(), &app, probe, found);
@@ -343,35 +419,45 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
         .filter_map(|p| std::path::absolute(p).ok().map(|a| (a, p)))
         .collect();
     let (mut frames, mut at, mut missing) = (Vec::new(), Vec::new(), Vec::new());
-    for (i, (f, there)) in entry.frames.iter().zip(&found.present).enumerate() {
-        if *there {
-            let source = listed
-                .get(&f.source)
-                .map(|p| (*p).clone())
-                .unwrap_or_else(|| f.source.clone());
-            frames.push((source, f.edit.clone(), f.turn, f.seed_blend));
-            at.push(i);
-        } else {
-            // Offline or gone: kept, for a run when it is back.
-            tracing::warn!(
-                "export queue: {} is not there; left queued",
-                f.source.to_string_lossy()
-            );
-            missing.push(file_name(&f.source));
+    let mut deleted: Vec<usize> = Vec::new();
+    let mut deleted_names: Vec<String> = Vec::new();
+    for (i, (f, presence)) in entry.frames.iter().zip(&found.present).enumerate() {
+        match presence {
+            Presence::There => {
+                let source = listed
+                    .get(&f.source)
+                    .map(|p| (*p).clone())
+                    .unwrap_or_else(|| f.source.clone());
+                frames.push((
+                    source,
+                    f.edit.clone(),
+                    f.turn,
+                    f.seed_blend,
+                    f.version.clone(),
+                ));
+                at.push(i);
+            }
+            // A version deleted since the entry was queued has no line to
+            // export or to record on: left out, and said, rather than
+            // written from the edit the entry stored.
+            Presence::Deleted => {
+                let name = queue::label_of(&f.source, f.version.as_ref());
+                tracing::warn!("export queue: {name} was deleted; not exported");
+                deleted.push(i);
+                deleted_names.push(name);
+            }
+            // Offline or gone, or a version whose sidecar cannot say:
+            // kept, for a run when it is back.
+            Presence::Absent | Presence::Unsure => {
+                tracing::warn!(
+                    "export queue: {} is not there; left queued",
+                    queue::label_of(&f.source, f.version.as_ref())
+                );
+                missing.push(queue::label_of(&f.source, f.version.as_ref()));
+            }
         }
     }
     left += missing.len();
-    if frames.is_empty() {
-        app.set_status(
-            format!(
-                "{} not there; left queued",
-                crate::panel::deliver::listed(&missing)
-            )
-            .into(),
-        );
-        begin_at(st, app, index + 1, left);
-        return;
-    }
     // A subfolder the sheet was queued with that no longer reads as
     // one (a file edited by hand) goes beside each file, as an entry
     // with no folder always has.
@@ -382,6 +468,52 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
         entry.sheet.on_exists(),
         entry.preset.clone(),
     );
+    // The deleted versions out of the entry, and the places of the rest
+    // moved up with them; the entry's own fields were read above. An
+    // entry with nothing left in it goes with them, so it does not
+    // stand in the queue with no frame to run.
+    let mut emptied = false;
+    if !deleted.is_empty() {
+        if let Some(entry) = st.export_queue.get_mut(index) {
+            for &i in deleted.iter().rev() {
+                entry.frames.remove(i);
+            }
+            emptied = entry.frames.is_empty();
+        }
+        if emptied {
+            st.export_queue.remove(index);
+        }
+        for a in &mut at {
+            *a -= deleted.iter().filter(|&&d| d < *a).count();
+        }
+        if let Some(run) = st.queue_run.as_mut() {
+            run.done = vec![false; run.done.len() - deleted.len()];
+        }
+        keep(st);
+    }
+    let deleted_said = match deleted_names.as_slice() {
+        [] => String::new(),
+        names => format!(
+            "; {} {} deleted; not exported",
+            crate::panel::deliver::listed(names),
+            if names.len() == 1 { "was" } else { "were" }
+        ),
+    };
+    if frames.is_empty() {
+        let said = if missing.is_empty() {
+            deleted_said.trim_start_matches("; ").to_string()
+        } else {
+            format!(
+                "{} not there; left queued{deleted_said}",
+                crate::panel::deliver::listed(&missing)
+            )
+        };
+        app.set_status(said.into());
+        // The next entry: at this place when this one went with its
+        // deleted versions, after it otherwise.
+        begin_at(st, app, if emptied { index } else { index + 1 }, left);
+        return;
+    }
     let count = frames.len();
     let after = st.export_queue.len() - index - 1;
     #[cfg(test)]
@@ -405,7 +537,7 @@ fn found_files(st: &mut State, app: &App, probe: u64, found: Found) {
     show_queue(st, app);
     app.set_status(
         format!(
-            "exporting {} from the queue, {} after it...",
+            "exporting {} from the queue, {} after it...{deleted_said}",
             queue::frames(count),
             export_queue::sets(after)
         )
@@ -504,17 +636,21 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 let Some(c) = st.current else {
                     return;
                 };
-                let paths: Vec<PathBuf> = chosen_frames(&st)
+                let paths: Vec<crate::versions::Key> = chosen_frames(&st)
                     .into_iter()
-                    .map(|i| st.files[i].clone())
+                    .filter_map(|c| st.key_of(c))
                     .collect();
-                (st.files[c].clone(), paths)
+                let Some(pressed) = st.key_of(c) else {
+                    return;
+                };
+                (pressed, paths)
             };
             crate::rows::request(
                 &state,
                 &app,
                 &worker,
                 paths,
+                crate::rows::Scope::Line,
                 "queue",
                 Box::new(move |state, app, _, at| {
                     let frames: Vec<usize> = at.into_iter().flatten().collect();
@@ -578,6 +714,7 @@ mod tests {
                     st.sidecars[i].current.clone(),
                     0,
                     false,
+                    None,
                 )
             })
             .collect();
@@ -1197,7 +1334,7 @@ mod tests {
         let (state, _worker) = crate::testing::state_for(&app, files);
         let queued = {
             let mut st = state.borrow_mut();
-            st.seed_blend[0] = true;
+            assert!(crate::rows::wants_seed(&st, 0), "a raw never developed");
             let mut e = entry(&st, &[0], Some("Web"), "2048");
             e.frames[0].seed_blend = true;
             let queued = e.frames[0].edit.clone();
@@ -1232,7 +1369,7 @@ mod tests {
             Some("Web")
         );
         assert_eq!(st.sidecars[0].current.noise.learned_strength, 0.35);
-        assert!(!st.seed_blend[0]);
+        assert!(!crate::rows::wants_seed(&st, 0));
         drop(st);
         crate::testing::remove_dir_retry(&dir);
     }
@@ -1265,6 +1402,153 @@ mod tests {
         assert!(!queue_file(&dir).exists());
         assert_eq!(app.get_export_queue_sets(), 0);
         assert_eq!(app.get_status(), "export queue cleared (2 sets)");
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A sidecar written by a later build (its edits at a schema this
+    /// build does not read) is Unsure, not Deleted: the frame stays
+    /// queued for a build that reads it.
+    #[test]
+    fn a_later_build_s_sidecar_is_unsure() {
+        let (dir, files) = shoot("later-build-sidecar", 1);
+        let mut s = greycard_edit::Sidecar::default();
+        let id = s.new_version(None, Some("Warm")).unwrap();
+        s.save(&files[0]).unwrap();
+        let gcd = greycard_edit::Sidecar::find(&files[0]).unwrap();
+        let text = std::fs::read_to_string(&gcd).unwrap();
+        let mut v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        v["current"]["version"] = serde_json::json!(99);
+        v["versions"][0]["line"]["current"]["version"] = serde_json::json!(99);
+        std::fs::write(&gcd, serde_json::to_vec(&v).unwrap()).unwrap();
+        let p = version_presence(&files[0], &id);
+        crate::testing::remove_dir_retry(&dir);
+        assert_eq!(p, Presence::Unsure);
+    }
+
+    /// A sidecar there but unreadable (a later build's, a corrupt file,
+    /// a share that cuts the read short) is not a version deleted: the
+    /// look cannot tell, and the frame is left queued; nor is a frame
+    /// whose sidecar is gone altogether. Only a sidecar that reads and
+    /// lacks the version says deleted.
+    #[test]
+    fn an_unreadable_sidecar_is_not_a_deleted_version() {
+        let (dir, files) = shoot("unreadable-version", 1);
+        let mut s = greycard_edit::Sidecar::default();
+        let id = s.new_version(None, Some("Warm")).unwrap();
+        s.save(&files[0]).unwrap();
+        assert_eq!(version_presence(&files[0], &id), Presence::There);
+        assert_eq!(version_presence(&files[0], "none"), Presence::Deleted);
+        let gcd = greycard_edit::Sidecar::find(&files[0]).unwrap();
+        std::fs::write(&gcd, b"{ not json").unwrap();
+        assert_eq!(version_presence(&files[0], &id), Presence::Unsure);
+        std::fs::remove_file(&gcd).unwrap();
+        assert_eq!(version_presence(&files[0], &id), Presence::Unsure);
+        // Through the run: the frame is left queued and said not there,
+        // not dropped from the entry.
+        std::fs::write(&gcd, b"{ not json").unwrap();
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, Vec::new());
+        {
+            let mut st = state.borrow_mut();
+            let mut e = entry(&st, &[], Some("Web"), "2048");
+            e.frames.push(crate::export_queue::QueuedFrame {
+                source: files[0].clone(),
+                edit: Edit::default(),
+                turn: 0,
+                seed_blend: false,
+                version: Some(queue::Version {
+                    id: id.clone(),
+                    name: "Warm".into(),
+                }),
+            });
+            add(&mut st, &app, e);
+        }
+        app.invoke_export_queue_run();
+        let st = state.borrow();
+        assert_eq!(st.export_queue.len(), 1, "left queued");
+        assert_eq!(st.export_queue[0].frames.len(), 1);
+        assert!(st.queue_run.is_none());
+        assert!(
+            app.get_status().contains("not there; left queued"),
+            "{}",
+            app.get_status()
+        );
+        drop(st);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// An entry whose every frame was a version deleted before the run
+    /// goes from the queue with them, and the run goes on to the next
+    /// entry in its place.
+    #[test]
+    fn an_entry_of_deleted_versions_alone_leaves_the_queue() {
+        let (dir, files) = shoot("deleted-versions-entry", 1);
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            let mut e = entry(&st, &[0], Some("Web"), "2048");
+            e.frames[0].version = Some(queue::Version {
+                id: "0123456789abcdef".into(),
+                name: "Warm".into(),
+            });
+            add(&mut st, &app, e);
+            let e = entry(&st, &[0], Some("Web"), "2048");
+            add(&mut st, &app, e);
+        }
+        app.invoke_export_queue_run();
+        let st = state.borrow();
+        assert_eq!(st.export_queue.len(), 1, "the emptied entry went");
+        assert_eq!(st.export_queue[0].frames[0].version, None);
+        let run = st
+            .queue_run
+            .as_ref()
+            .expect("the run went on to the next entry");
+        assert_eq!(run.entry, 0, "which is at the first place now");
+        assert_eq!(run.sent.len(), 1);
+        drop(st);
+        finish(&app, &state);
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// An entry queued for a version that was deleted before the run is
+    /// left out of the run and said, rather than exported from the edit
+    /// the entry stored and recorded nowhere; the file's own frame beside
+    /// it goes out.
+    #[test]
+    fn a_queued_version_deleted_before_the_run_is_left_out_and_said() {
+        let (dir, files) = shoot("deleted-version", 1);
+        let app = crate::testing::window(1);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        {
+            let mut st = state.borrow_mut();
+            let mut e = entry(&st, &[0, 0], Some("Web"), "2048");
+            e.frames[1].version = Some(queue::Version {
+                id: "0123456789abcdef".into(),
+                name: "Warm".into(),
+            });
+            add(&mut st, &app, e);
+        }
+        app.invoke_export_queue_run();
+        let st = state.borrow();
+        let run = st
+            .queue_run
+            .as_ref()
+            .expect("the run began on the file's own");
+        assert_eq!(run.sent.len(), 1, "the file's own frame alone");
+        assert_eq!(
+            st.export_queue[0].frames.len(),
+            1,
+            "the version's out of the entry"
+        );
+        assert!(
+            app.get_status()
+                .contains("IMG_0000 (Warm) was deleted; not exported"),
+            "{}",
+            app.get_status()
+        );
+        drop(st);
+        finish(&app, &state);
         crate::testing::remove_dir_retry(&dir);
     }
 }

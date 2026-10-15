@@ -25,7 +25,6 @@
 //! Nothing here develops.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use slint::{ComponentHandle, Model};
@@ -33,6 +32,7 @@ use slint::{ComponentHandle, Model};
 use crate::cull::{self, Loaded, Preview, Source, Want};
 use crate::edited::{BIG, Edited, Shows};
 use crate::panel::browser::{row_of, thumb_turns};
+use crate::versions::Key;
 use crate::worker::Worker;
 use crate::{App, STATE, State, cells, grid};
 use greycard_library::thumbs::Thumb;
@@ -140,10 +140,10 @@ pub(crate) fn fetch(
     let (hash, shows) = match &want.from {
         Source::Preview { hash, .. } => (
             Some(hash.clone()),
-            edited.map_or(Shows::Camera, |e| e.shows_offline(&want.path)),
+            edited.map_or(Shows::Camera, |e| e.shows_offline(&want.frame())),
         ),
         Source::File => {
-            let shows = edited.map_or(Shows::Camera, |e| e.shows(&want.path));
+            let shows = edited.map_or(Shows::Camera, |e| e.shows(&want.frame()));
             let hash = (shows != Shows::Camera)
                 .then(|| greycard_library::hash_file(&want.path).ok())
                 .flatten();
@@ -153,13 +153,13 @@ pub(crate) fn fetch(
     match pick(edited, hash.as_deref(), shows, want.size) {
         Pick::Edit(thumb) => deliver(Loaded::Ok {
             file: want.file,
-            path: want.path.clone(),
+            frame: want.frame(),
             size: want.size,
             preview: Arc::new(Preview::edited(thumb)),
         }),
         Pick::Wait => deliver(Loaded::NoPreview {
             file: want.file,
-            path: want.path.clone(),
+            frame: want.frame(),
         }),
         Pick::Camera => cull::fetch(
             &Want {
@@ -245,13 +245,13 @@ pub(crate) struct Lightbox {
     size: u32,
     /// The grid's cells, first row and how many, when last looked.
     window: (usize, usize),
-    pictures: HashMap<PathBuf, Picture>,
+    pictures: HashMap<Key, Picture>,
     /// Frames whose edit has no picture kept yet: asked for again when
     /// one is. A picture of one in hand (its edit before a sync) stays
     /// up, dimmed.
-    waiting: HashSet<PathBuf>,
+    waiting: HashSet<Key>,
     /// Frames no picture could be had of.
-    failed: HashSet<PathBuf>,
+    failed: HashSet<Key>,
 }
 
 impl Lightbox {
@@ -265,16 +265,18 @@ impl Lightbox {
         }
     }
 
-    /// Whether a tile's picture of `path` is in hand, for the tests.
+    /// Whether a tile's picture of the file's own frame at `path` is in
+    /// hand, for the tests.
     #[cfg(test)]
     pub(crate) fn has(&self, path: &std::path::Path) -> bool {
-        self.pictures.contains_key(path)
+        self.pictures.contains_key(&Key::file(path))
     }
 
-    /// Whether `path` waits for its edit's picture, for the tests.
+    /// Whether the file's own frame at `path` waits for its edit's
+    /// picture, for the tests.
     #[cfg(test)]
     pub(crate) fn waits(&self, path: &std::path::Path) -> bool {
-        self.waiting.contains(path)
+        self.waiting.contains(&Key::file(path))
     }
 }
 
@@ -285,20 +287,20 @@ fn rows(st: &State, window: (usize, usize)) -> std::ops::Range<usize> {
     window.0.min(end)..end
 }
 
-/// Put `file`'s picture on its row, turned as its thumbnail is, and
-/// whether it waits for its edit's; or take the row's off when there is
-/// none in hand. A row that already says so is not written.
-pub(crate) fn show(st: &mut State, app: &App, file: usize) {
+/// Put cell `file`'s picture on its row, turned as its thumbnail is,
+/// and whether it waits for its edit's; or take the row's off when
+/// there is none in hand. A row that already says so is not written.
+pub(crate) fn show(st: &mut State, app: &App, cell: usize) {
     if st.lightbox.is_none() {
         return;
     }
-    let Some(row) = row_of(st, file) else {
+    let Some(row) = row_of(st, cell) else {
         return;
     };
-    let Some(path) = st.files.get(file).cloned() else {
+    let Some(path) = st.key_of(cell) else {
         return;
     };
-    let turns = thumb_turns(st, app, file);
+    let turns = thumb_turns(st, app, cell);
     let model = app.get_thumbs();
     let Some(mut t) = model.row_data(row) else {
         return;
@@ -353,7 +355,7 @@ pub(crate) fn refresh(st: &mut State, app: &App) {
     for r in before.clone().filter(|r| !now.contains(r)) {
         clear_rows(app, r..r + 1);
     }
-    let paths: HashSet<PathBuf> = now.clone().map(|r| st.files[st.shown[r]].clone()).collect();
+    let paths: HashSet<Key> = now.clone().filter_map(|r| st.key_of(st.shown[r])).collect();
     if let Some(lb) = st.lightbox.as_mut() {
         lb.pictures.retain(|p, _| paths.contains(p));
         lb.waiting.retain(|p| paths.contains(p));
@@ -366,10 +368,12 @@ pub(crate) fn refresh(st: &mut State, app: &App) {
         // Developing word): put right, whether or not it was in the
         // window before.
         let stale = st.lightbox.as_ref().is_some_and(|lb| {
-            let path = &st.files[f];
+            let Some(path) = st.key_of(f) else {
+                return false;
+            };
             model.row_data(r).is_some_and(|t| {
-                (t.big.size().width == 0 && lb.pictures.contains_key(path))
-                    || t.pending != lb.waiting.contains(path)
+                (t.big.size().width == 0 && lb.pictures.contains_key(&path))
+                    || t.pending != lb.waiting.contains(&path)
             })
         });
         if !before.contains(&r) || stale {
@@ -401,25 +405,27 @@ fn want(st: &mut State) {
     let mut out_of_reach = Vec::new();
     for r in order {
         let f = st.shown[r];
-        let path = &st.files[f];
-        let had = lb.pictures.get(path).is_some_and(|p| p.size == lb.size);
-        if had || lb.failed.contains(path) || lb.waiting.contains(path) {
+        let Some(frame) = st.key_of(f) else {
+            continue;
+        };
+        let had = lb.pictures.get(&frame).is_some_and(|p| p.size == lb.size);
+        if had || lb.failed.contains(&frame) || lb.waiting.contains(&frame) {
             continue;
         }
-        let plan = crate::panel::cull::loupe_plan(&st.files, &st.from_row, &st.library, f);
+        let plan = crate::panel::cull::loupe_plan(st, f);
         let want = match plan {
             cull::Plan {
                 preview: Some(key), ..
-            } if !plan.file => Want::local(f, path.clone(), lb.size, key),
+            } if !plan.file => Want::local(f, frame.path.clone(), lb.size, key),
             cull::Plan { file: false, .. } => {
-                out_of_reach.push(path.clone());
+                out_of_reach.push(frame);
                 continue;
             }
-            _ => Want::of_file(f, path.clone(), lb.size),
+            _ => Want::of_file(f, frame.path.clone(), lb.size),
         };
         wants.push(Want {
             lightbox: true,
-            ..want
+            ..want.of_version(frame.version.clone())
         });
     }
     if let Some(lb) = st.lightbox.as_mut() {
@@ -433,8 +439,8 @@ fn want(st: &mut State) {
 /// A frame's pictures may have changed (its edit's were kept, or it was
 /// saved or synced): the tile's is asked for again, and the one it has
 /// stays up meanwhile.
-pub(crate) fn forget(st: &mut State, file: usize) {
-    let Some(path) = st.files.get(file).cloned() else {
+pub(crate) fn forget(st: &mut State, cell: usize) {
+    let Some(path) = st.key_of(cell) else {
         return;
     };
     let Some(lb) = st.lightbox.as_mut() else {
@@ -460,11 +466,13 @@ pub(crate) fn deliver(app: &App, loaded: Loaded) {
 /// on its row.
 pub(crate) fn take(st: &mut State, app: &App, loaded: Loaded) {
     let (file, path) = match &loaded {
-        Loaded::Ok { file, path, .. }
-        | Loaded::Failed { file, path, .. }
-        | Loaded::NoPreview { file, path } => (*file, path.clone()),
+        Loaded::Ok { file, frame, .. }
+        | Loaded::Failed { file, frame, .. }
+        | Loaded::NoPreview { file, frame } => (*file, frame.clone()),
     };
-    if st.files.get(file) != Some(&path) {
+    // A picture of a list since replaced, or renumbered under it, would
+    // land on a stranger's cell: only its own frame's.
+    if st.key_of(file).as_ref() != Some(&path) {
         return;
     }
     let in_window = row_of(st, file).is_some_and(|r| {
@@ -490,7 +498,7 @@ pub(crate) fn take(st: &mut State, app: &App, loaded: Loaded) {
             lb.waiting.insert(path);
         }
         Loaded::Failed { message, .. } => {
-            tracing::debug!("lightbox {}: {message}", path.display());
+            tracing::debug!("lightbox {}: {message}", path.said());
             lb.failed.insert(path);
         }
     }
@@ -875,9 +883,14 @@ mod tests {
         )));
         let edited = Arc::new(Edited::new(cache.clone()));
         edited.note_all([
-            (kept.clone(), true, None, None),
-            (waiting.clone(), true, None, None),
-            (plain.clone(), false, None, None),
+            (crate::versions::Key::file(kept.clone()), true, None, None),
+            (
+                crate::versions::Key::file(waiting.clone()),
+                true,
+                None,
+                None,
+            ),
+            (crate::versions::Key::file(plain.clone()), false, None, None),
         ]);
         // The edit's pictures of the first, bright, kept as the reduced
         // develop keeps them.
@@ -956,7 +969,7 @@ mod tests {
                 &app,
                 Loaded::Ok {
                     file,
-                    path,
+                    frame: crate::versions::Key::file(path),
                     size,
                     preview: Arc::new(picture),
                 },
@@ -967,7 +980,10 @@ mod tests {
             take(
                 &mut state.borrow_mut(),
                 &app,
-                Loaded::NoPreview { file, path },
+                Loaded::NoPreview {
+                    file,
+                    frame: crate::versions::Key::file(path),
+                },
             );
         };
         let row = |r: usize| {
@@ -1073,7 +1089,10 @@ mod tests {
         take(
             &mut state.borrow_mut(),
             &app,
-            Loaded::NoPreview { file: 3, path },
+            Loaded::NoPreview {
+                file: 3,
+                frame: crate::versions::Key::file(path),
+            },
         );
         let pending = |app: &App| app.get_thumbs().row_data(3).unwrap().pending;
         assert!(pending(&app));

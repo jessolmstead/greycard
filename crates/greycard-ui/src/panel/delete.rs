@@ -133,9 +133,14 @@ impl Job {
 /// just trashed, or under one being trashed. The change stays in
 /// memory; the frame is going.
 pub(crate) fn held(st: &State, c: usize) -> bool {
+    st.file_at(c).is_some_and(|file| held_file(st, file))
+}
+
+/// [`held`] by the file.
+pub(crate) fn held_file(st: &State, file: usize) -> bool {
     st.deleting
         .as_ref()
-        .is_some_and(|planned| st.files.get(c).is_some_and(|f| planned.contains(f)))
+        .is_some_and(|planned| st.files.get(file).is_some_and(|f| planned.contains(f)))
 }
 
 /// A path as the sheet shows it: without the `\\?\` Windows puts on a
@@ -178,15 +183,40 @@ pub(crate) fn ask_delete(st: &mut State, app: &App, which: Which) {
     let over = match which {
         Which::Selection => {
             let chosen = chosen_frames(st);
+            // Versions alone: their own sheet, in their words; among
+            // files, the files go and the versions are left out (a
+            // file's delete takes its versions with it).
+            if !chosen.is_empty() && chosen.iter().all(|&c| st.version_of(c).is_some()) {
+                crate::panel::versions::ask_delete(st, app, &chosen);
+                return;
+            }
+            let versions = chosen
+                .iter()
+                .filter(|&&c| st.version_of(c).is_some())
+                .count();
+            let chosen: Vec<usize> = chosen
+                .into_iter()
+                .filter(|&c| st.version_of(c).is_none())
+                .collect();
+            if versions > 0 {
+                let said = format!(
+                    "{versions} version{} left out: a file's delete takes its versions with it; \
+                     a version is deleted from its own cell",
+                    if versions == 1 { "" } else { "s" }
+                );
+                tracing::info!("{said}");
+                app.set_status(said.into());
+            }
             // A frame under a root that is offline is not there to
             // delete, and nothing is written where its root was.
             let (offline, here): (Vec<usize>, Vec<usize>) = chosen
                 .into_iter()
                 .partition(|&i| crate::rows::is_offline(st, i));
-            let frames: Vec<PathBuf> = here
+            let mut frames: Vec<PathBuf> = here
                 .into_iter()
-                .filter_map(|i| st.files.get(i).cloned())
+                .filter_map(|c| st.path_at(c).cloned())
                 .collect();
+            frames.dedup();
             if let Some(&i) = offline.first() {
                 let what = if frames.is_empty() {
                     ": nothing to delete"
@@ -327,7 +357,7 @@ fn rejects_listed(st: &State, app: &App) -> Option<Over> {
         .partition(|&i| elsewhere(&st.files[i]));
     let (offline, here): (Vec<usize>, Vec<usize>) = in_rejects
         .into_iter()
-        .partition(|&i| crate::rows::is_offline(st, i));
+        .partition(|&i| crate::rows::file_is_offline(st, i));
     let mut dirs: Vec<PathBuf> = Vec::new();
     let mut links: Vec<PathBuf> = Vec::new();
     let mut frames: Vec<PathBuf> = Vec::new();
@@ -350,7 +380,7 @@ fn rejects_listed(st: &State, app: &App) -> Option<Over> {
     }
     if frames.is_empty() {
         if let Some(&i) = offline.first() {
-            crate::rows::say_offline_for(st, app, i, ": nothing to delete");
+            crate::rows::say_offline_for_file(st, app, i, ": nothing to delete");
         } else if let Some(link) = links.first() {
             app.set_status(
                 format!("{} is a link; nothing is deleted through one", shown(link)).into(),
@@ -450,6 +480,8 @@ fn ask_sheet(st: &mut State, app: &App, which: Which, over: Over) {
     }
     app.set_delete_title(title.into());
     app.set_delete_text(text.into());
+    app.set_delete_confirm("".into());
+    st.version_delete = None;
     app.set_delete_note(offer_note(offer).into());
     app.set_delete_trash(offer.trash);
     app.set_delete_permanent(offer.permanent);
@@ -494,7 +526,7 @@ pub(crate) fn answered(st: &mut State, app: &App, answer: i32) {
     if st.save_timer.running()
         && st
             .current
-            .and_then(|c| st.files.get(c))
+            .and_then(|c| st.path_at(c))
             .is_some_and(|f| asked.frames.contains(f))
     {
         st.save_timer.stop();
@@ -613,7 +645,7 @@ pub(crate) fn land(st: &mut State, app: &App, worker: &Worker, done: Done) {
     drop_files(st, app, worker, &gone, status);
 }
 
-pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker>) {
+pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
     {
         let (state, app_weak) = (state.clone(), app.as_weak());
         app.on_delete_asked(move |which| {
@@ -627,12 +659,17 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, _worker: &Rc<Worker
         });
     }
     {
-        let (state, app_weak) = (state.clone(), app.as_weak());
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_delete_answered(move |answer| {
             let Some(app) = app_weak.upgrade() else {
                 return;
             };
-            answered(&mut state.borrow_mut(), &app, answer);
+            let mut st = state.borrow_mut();
+            if st.version_delete.is_some() {
+                crate::panel::versions::answered(&mut st, &app, &worker, answer);
+            } else {
+                answered(&mut st, &app, answer);
+            }
         });
     }
 }

@@ -87,7 +87,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 9;
+pub const SCHEMA_VERSION: i32 = 10;
 
 /// The steps a library is brought up by in place rather than rebuilt:
 /// from the version on the left to the next, the statements on the
@@ -122,7 +122,11 @@ pub const SCHEMA_VERSION: i32 = 9;
 /// the edit are kept under), read by the same pass; no hash is cleared
 /// this time: an edited row with no key yet has its sidecar read again
 /// on the next pass over its folder ([`index`]'s `same_sidecar`), and
-/// nothing else is read.
+/// nothing else is read. Schema 10 adds the `versions` table
+/// (a row for each version a sidecar keeps beside the file's
+/// own, keyed by the file's row and the version's id, going with the
+/// file's row), read by the same pass; every sidecar hash is cleared
+/// as schema 8 did, so the next pass over each folder fills it.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -154,6 +158,21 @@ const MIGRATIONS: &[(i32, &str)] = &[
         8,
         "ALTER TABLE files ADD COLUMN develop_key INTEGER;
          CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);",
+    ),
+    (
+        9,
+        "CREATE TABLE IF NOT EXISTS versions (
+             file        INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+             version     TEXT NOT NULL,
+             name        TEXT NOT NULL,
+             made        INTEGER NOT NULL,
+             position    INTEGER NOT NULL,
+             edited      INTEGER NOT NULL DEFAULT 0,
+             exported    INTEGER NOT NULL DEFAULT 0,
+             develop_key INTEGER,
+             PRIMARY KEY (file, version)
+         );
+         UPDATE files SET sidecar_hash = NULL WHERE sidecar IS NOT NULL;",
     ),
 ];
 
@@ -279,6 +298,17 @@ CREATE TABLE IF NOT EXISTS keywords (
 );
 CREATE INDEX IF NOT EXISTS keywords_word ON keywords(word);
 CREATE TABLE IF NOT EXISTS meta (name TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS versions (
+    file        INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    version     TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    made        INTEGER NOT NULL,
+    position    INTEGER NOT NULL,
+    edited      INTEGER NOT NULL DEFAULT 0,
+    exported    INTEGER NOT NULL DEFAULT 0,
+    develop_key INTEGER,
+    PRIMARY KEY (file, version)
+);
 ";
 
 /// What we last wrote to a frame's sidecar on an archive copy
@@ -353,7 +383,9 @@ const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash
 /// reads them, after the path.
 const META_COLUMNS: &str = "files.id, files.hash, files.mtime, files.rating, files.flag, files.label, \
     files.keywords, files.edited, files.turns, files.exported, files.iso, files.sidecar_hash, \
-    files.develop_key";
+    files.develop_key, \
+    (SELECT json_group_array(json_array(v.version, v.name, v.made, v.edited, v.exported, \
+     v.develop_key) ORDER BY v.position) FROM versions v WHERE v.file = files.id)";
 
 /// Whether the learned denoiser's `blend` is what nobody has touched:
 /// the default, or what the first open or export of a raw seeds from
@@ -396,10 +428,20 @@ pub fn develop_marks(
     raw: &Path,
     iso: Option<Option<u32>>,
 ) -> (bool, bool) {
-    let edited = !is_default_edit(&sidecar.current, raw, iso) || !sidecar.snapshots.is_empty();
-    let exported = sidecar.last_export.is_some()
-        || !sidecar.current_exports.is_empty()
-        || sidecar.history.iter().any(|s| !s.exports.is_empty());
+    line_marks(&sidecar.line, raw, iso)
+}
+
+/// [`develop_marks`] of one line of a sidecar: the file's own, or a
+/// version's, each marked by its own edit and its own exports.
+pub fn line_marks(
+    line: &greycard_edit::Line,
+    raw: &Path,
+    iso: Option<Option<u32>>,
+) -> (bool, bool) {
+    let edited = !is_default_edit(&line.current, raw, iso) || !line.snapshots.is_empty();
+    let exported = line.last_export.is_some()
+        || !line.current_exports.is_empty()
+        || line.history.iter().any(|s| !s.exports.is_empty());
     (edited, exported)
 }
 
@@ -620,6 +662,53 @@ pub struct RowMeta {
     /// from before schema 9, until the next pass over its folder), and
     /// `Some(0)` for an edited frame whose edit could not be read.
     pub develop_key: Option<u64>,
+    /// The versions the sidecar keeps beside the file's own, in the
+    /// sidecar's order, as the `versions` table mirrors them.
+    pub versions: Vec<VersionRow>,
+}
+
+/// One version of a file as the index mirrors it from the sidecar: what
+/// a browser lists, names and marks a version's cell by without reading
+/// the sidecar.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionRow {
+    /// The version's id in the sidecar.
+    pub id: String,
+    pub name: String,
+    /// Seconds since the epoch.
+    pub made: i64,
+    /// As [`RowMeta::edited`], of the version's line.
+    pub edited: bool,
+    /// As [`RowMeta::exported`], of the version's line.
+    pub exported: bool,
+    /// As [`RowMeta::develop_key`], of the version's edit.
+    pub develop_key: Option<u64>,
+}
+
+/// The `versions` column of [`META_COLUMNS`]: a JSON array of arrays,
+/// one a version, in the order the subquery gives.
+fn version_rows(json: Option<String>) -> Vec<VersionRow> {
+    let Some(json) = json else {
+        return Vec::new();
+    };
+    let Ok(serde_json::Value::Array(items)) = serde_json::from_str::<serde_json::Value>(&json)
+    else {
+        return Vec::new();
+    };
+    items
+        .iter()
+        .filter_map(|item| {
+            let a = item.as_array()?;
+            Some(VersionRow {
+                id: a.first()?.as_str()?.to_string(),
+                name: a.get(1)?.as_str().unwrap_or_default().to_string(),
+                made: a.get(2)?.as_i64().unwrap_or(0),
+                edited: a.get(3)?.as_i64().unwrap_or(0) != 0,
+                exported: a.get(4)?.as_i64().unwrap_or(0) != 0,
+                develop_key: a.get(5)?.as_i64().map(|k| k as u64),
+            })
+        })
+        .collect()
 }
 
 impl RowMeta {
@@ -2343,6 +2432,7 @@ fn row_meta(row: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<RowMeta> {
         iso: row.get::<_, Option<i64>>(from + 10)?.map(|v| v as u32),
         sidecar_hash: row.get(from + 11)?,
         develop_key: row.get::<_, Option<i64>>(from + 12)?.map(|v| v as u64),
+        versions: version_rows(row.get(from + 13)?),
     })
 }
 

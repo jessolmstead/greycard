@@ -66,6 +66,14 @@ note a first tester reads.
   by 0.6.x; nothing in them changes. The ground for versions of one
   frame, which the next parts put in the strip
   ([§312](https://github.com/jessolmstead/greycard/blob/master/docs/notes/312-virtual-copies-part-1-the-edit-crate.md))
+- Versions of one frame: New version (Ctrl+', or the frame menu) puts a
+  copy of the frame's edit beside it in the strip and the grid as a
+  cell of its own, with its own thumbnail, pencil and export mark, a
+  name tag, and its own history; rating, flag, label and the turn stay
+  the file's. A version's menu has Rename, Swap with the original and
+  Delete version. Pasting, syncing, a preset and an export act on the
+  version chosen; the library's search takes `has:versions`
+  ([§317](https://github.com/jessolmstead/greycard/blob/master/docs/notes/317-virtual-copies-part-2-the-index-and-the-window.md))
 - A word at the pointer over a button that shows only an icon (Undo,
   Remove, Turn left, Hide panel...), after a short rest; it goes with a
   press, a key or a scroll

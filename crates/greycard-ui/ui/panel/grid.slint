@@ -4,7 +4,7 @@
 
 import { Theme } from "../theme.slint";
 import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile } from "../structs.slint";
-import { PanelButton, ScrollBand, ThumbBadges, ThumbMarks } from "../controls.slint";
+import { PanelButton, ScrollBand, ThumbBadges, ThumbMarks, ThumbTag } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 import { LoadingCard } from "loading.slint";
 
@@ -587,11 +587,13 @@ export component GridSheet inherits Rectangle {
                         accessible-role: image;
                         accessible-label: t.name;
                     }
+                    // A version is named by its own name, the file's
+                    // own by the file's.
                     if !root.lightbox: Text {
                         y: root.grid-cell;
                         width: 100%;
                         height: root.grid-label;
-                        text: t.name;
+                        text: t.version != "" ? t.version : t.name;
                         color: in-set ? Theme.text : Theme.text-secondary;
                         font-size: Theme.font-xs;
                         horizontal-alignment: center;
@@ -654,6 +656,21 @@ export component GridSheet inherits Rectangle {
                         exported: t.exported;
                         collected: t.collected;
                         glyph: clamp(root.grid-cell / 16, 9px, 18px);
+                    }
+                    // A version's name on the picture's top left, held
+                    // inside the cell as the marks are.
+                    if !root.lightbox: ThumbTag {
+                        x: clamp(
+                            Theme.space-1 + (parent.box - parent.shown-w) / 2 + Theme.space-1,
+                            Theme.space-1,
+                            max(Theme.space-1, Theme.space-1 + parent.box - self.width));
+                        y: clamp(
+                            Theme.space-1 + (parent.box - parent.shown-h) / 2 + Theme.space-1,
+                            Theme.space-1,
+                            max(Theme.space-1, Theme.space-1 + parent.box - self.height));
+                        name: t.version;
+                        glyph: clamp(root.grid-cell / 16, 9px, 18px);
+                        most: parent.shown-w / 2;
                     }
                     // `clicked` carries no modifiers, so the press
                     // says which were held and the click reads them.

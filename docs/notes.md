@@ -327,3 +327,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§314. A border at export](notes/314-a-border-at-export.md) (2026-10-13)
 - [§315. Highlights and whites by the frame's own range](notes/315-highlights-and-whites-by-the-frames-own-range.md) (2026-10-13)
 - [§316. Splitting render.rs](notes/316-splitting-render-rs.md) (2026-10-14)
+- [§317. Virtual copies, part 2: the index and the window](notes/317-virtual-copies-part-2-the-index-and-the-window.md) (2026-10-14)

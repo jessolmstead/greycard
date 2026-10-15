@@ -545,7 +545,15 @@ fn the_reduced_develop_of_the_samples_timed() {
             )));
             let edited = crate::edited::Edited::new(cache);
             let hash = greycard_library::hash_file(path).unwrap();
-            let bytes = edited.store(path, &hash, run + 1, None, &made).unwrap();
+            let bytes = edited
+                .store(
+                    &crate::versions::Key::file(path),
+                    &hash,
+                    run + 1,
+                    None,
+                    &made,
+                )
+                .unwrap();
             let total = started.elapsed().as_secs_f64();
             println!(
                 "{name} run {run}: {}x{} by {} to {}x{}: decode {:.0} ms, develop {:.0} ms, \

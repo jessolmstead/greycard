@@ -197,7 +197,7 @@ fn library_of(st: &State) -> Option<(PathBuf, Vec<PathBuf>)> {
 fn folder_of(st: &State) -> Option<PathBuf> {
     let file = st
         .current
-        .and_then(|i| st.files.get(i))
+        .and_then(|i| st.path_at(i))
         .or(st.files.first())?;
     file.parent().map(Path::to_path_buf)
 }

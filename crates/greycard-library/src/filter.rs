@@ -87,6 +87,9 @@ pub enum Term {
     },
     /// Whether the file is one the index last found gone from disk.
     Missing(bool),
+    /// Whether the file's sidecar keeps versions beside its own
+    /// (`has:versions`).
+    HasVersions(bool),
     /// Any of a facet's values: the filter bar's chips, one group of
     /// them. No text spells it; the bar builds it, from values the
     /// index's own counts named ([`Facet`]), so a chip matches
@@ -281,9 +284,9 @@ impl std::error::Error for ParseError {}
 
 /// The field names the language knows, for the error that lists
 /// them.
-const FIELDS: [&str; 16] = [
+const FIELDS: [&str; 17] = [
     "camera", "make", "model", "lens", "iso", "focal", "aperture", "shutter", "date", "rating",
-    "flag", "label", "keyword", "name", "folder", "missing",
+    "flag", "label", "keyword", "name", "folder", "missing", "has",
 ];
 
 impl Filter {
@@ -519,6 +522,13 @@ fn parse_term(token: &str) -> Result<Term, ParseError> {
                 _ => return Err(err(format!("missing is yes or no, not {value:?}"))),
             };
             Ok(Term::Missing(is == yes))
+        }
+        "has" => {
+            let is = yes_or_not(op, name, &err)?;
+            match value.to_ascii_lowercase().as_str() {
+                "versions" | "version" => Ok(Term::HasVersions(is)),
+                _ => Err(err(format!("has is has:versions, not {value:?}"))),
+            }
         }
         _ => Err(err(format!(
             "no field called {name}; the fields are {}",
@@ -824,6 +834,10 @@ impl Term {
                 "files.missing_since IS NULL"
             }
             .to_string(),
+            Term::HasVersions(yes) => format!(
+                "{}EXISTS (SELECT 1 FROM versions WHERE versions.file = files.id)",
+                if *yes { "" } else { "NOT " }
+            ),
             Term::Facet { facet, values } => {
                 if values.is_empty() {
                     return "1".to_string();
@@ -1157,6 +1171,8 @@ mod tests {
         );
         assert_eq!(one("missing:yes"), Term::Missing(true));
         assert_eq!(one("missing!=yes"), Term::Missing(false));
+        assert_eq!(one("has:versions"), Term::HasVersions(true));
+        assert_eq!(one("has!=versions"), Term::HasVersions(false));
         assert!(Filter::parse("missing:no").unwrap().mentions_missing());
         assert!(!Filter::parse("flag:pick").unwrap().mentions_missing());
         assert!(refused("flag:maybe").contains("pick, reject or none"));

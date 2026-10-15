@@ -37,6 +37,11 @@ pub struct QueuedFrame {
     /// ISO at export, as its first open would.
     #[serde(default)]
     pub seed_blend: bool,
+    /// The version of the file the frame is, none for the file's own:
+    /// its name joins the export's stem and its id is the line the
+    /// export is recorded on. Left out of the file for the file's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<crate::queue::Version>,
 }
 
 /// One set waiting: what Export would have written, held until the
@@ -219,6 +224,7 @@ mod tests {
                         edit,
                         turn: (i % 4) as u8,
                         seed_blend: i == 0,
+                        version: None,
                     }
                 })
                 .collect(),

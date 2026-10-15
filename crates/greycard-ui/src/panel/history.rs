@@ -1,7 +1,7 @@
 use crate::panel::browser::file_name;
 use crate::panel::cull::leave_cull;
 use crate::panel::edit::{
-    current_turn, edit_to_develop, read_edit, record_panel, show_edit, write_sidecar,
+    current_turn, edit_to_develop, read_edit, record_panel, show_edit, write_file, write_sidecar,
 };
 use crate::*;
 use greycard_edit::{Exported, Row};
@@ -19,13 +19,18 @@ pub(crate) fn show_history(st: &State, app: &App) {
                 .collect::<Vec<_>>(),
         ))
     };
-    let Some(c) = st.current else {
+    let Some((c, sidecar)) = st.current.and_then(|c| Some((c, st.line(c)?))) else {
         app.set_history_rows(ModelRc::default());
         app.set_history_current(-1);
+        app.set_history_version("".into());
         app.set_snapshot_names(names(Vec::new()));
+        app.set_can_undo(false);
+        app.set_can_redo(false);
         return;
     };
-    let sidecar = &st.sidecars[c];
+    // Which version the history is of, after its title: none for the
+    // file's own.
+    app.set_history_version(st.version_name(c).unwrap_or_default().into());
     app.set_can_undo(!sidecar.history.is_empty());
     app.set_can_redo(!sidecar.redo.is_empty());
     // Whatever moved the history (a save, a reset, an undo, an export
@@ -69,7 +74,7 @@ pub(crate) fn show_history(st: &State, app: &App) {
 
 /// What the history's row for the state at `i` says: the words the
 /// step was recorded with, or what moved.
-fn state_name(sidecar: &Sidecar, i: usize) -> String {
+fn state_name(sidecar: &greycard_edit::Line, i: usize) -> String {
     let state = sidecar.state(i).expect("a state within the count");
     match sidecar.describe(i) {
         Some(name) => name,
@@ -120,21 +125,14 @@ pub(crate) fn record_export(
     // list replaced while the export ran) is recorded on disk below,
     // as a frame the window has let go of is: a stand-in is never
     // written.
-    if let Some(i) = st
-        .files
-        .iter()
-        .position(|f| f == source)
-        .filter(|&i| crate::rows::is_loaded(st, i))
+    if let Some(file) = st
+        .file_by_path(source)
+        .filter(|&f| crate::rows::file_is_loaded(st, f))
     {
-        // A frame never opened: its blend was seeded for the export
-        // as its first open would have, and takes that seed now.
-        if st.seed_blend.get(i).copied().unwrap_or(false)
-            && take_seed(&mut st.sidecars[i], edit)
-            && let Some(seed) = st.seed_blend.get_mut(i)
-        {
-            *seed = false;
-        }
-        let Some(line) = st.sidecars[i].line_mut(version) else {
+        // A line never opened: its blend was seeded for the export as
+        // its first open would have, and that line takes the seed now.
+        take_seed(&mut st.sidecars[file], source, version, edit);
+        let Some(line) = st.sidecars[file].line_mut(version) else {
             no_version(source, version);
             return;
         };
@@ -142,11 +140,13 @@ pub(crate) fn record_export(
             not_kept(source);
             return;
         }
-        write_sidecar(st, i);
-        if st.current == Some(i) {
+        write_file(st, file);
+        if st.current.is_some_and(|c| st.file_at(c) == Some(file)) {
             show_history(st, app);
         }
-        crate::panel::browser::show_badges(st, app, i);
+        // The mark on the version's cell, the file's other cells as
+        // they were.
+        crate::panel::browser::show_badges_of_file(st, app, file);
         return;
     }
     if st.write_sidecars
@@ -167,11 +167,18 @@ pub(crate) fn record_export(
         // The frame's cell while its sidecar stands in from the row:
         // the export is on the file now, and the row says so after the
         // indexer's next look, which the cell need not wait for.
-        if let Some(i) = st.files.iter().position(|f| f == source)
-            && let Some(from) = st.from_row.get_mut(i)
+        if let Some(file) = st.file_by_path(source)
+            && let Some(from) = st.from_row.get_mut(file)
         {
-            from.exported = true;
-            crate::panel::browser::show_badges(st, app, i);
+            match version {
+                None => from.exported = true,
+                Some(id) => {
+                    if let Some(v) = from.versions.iter_mut().find(|v| v.id == id) {
+                        v.exported = true;
+                    }
+                }
+            }
+            crate::panel::browser::show_badges_of_file(st, app, file);
         }
     }
 }
@@ -215,7 +222,7 @@ pub(crate) fn record_export_on_disk(
     // beside the frame says that the sidecar has not taken yet. Read
     // without the `.xmp`, the write below would put the `.gcd`'s old
     // rating and turn over whatever another tool wrote there since.
-    let (mut sidecar, seed, trouble) = crate::panel::browser::load_sidecar_said(source, true);
+    let (mut sidecar, trouble) = crate::panel::browser::load_sidecar_said(source, true);
     if let Some(crate::rows::Trouble::Unreadable(e)) = trouble {
         tracing::warn!("{}: sidecar: {e}; export not recorded", file_name(source));
         return false;
@@ -227,9 +234,7 @@ pub(crate) fn record_export_on_disk(
     crate::files::migrate_from_file(&mut sidecar, source);
     // The same seed for a frame the window has let go of, by the rule
     // a load decides it by.
-    if seed {
-        take_seed(&mut sidecar, edit);
-    }
+    take_seed(&mut sidecar, source, version, edit);
     let Some(line) = sidecar.line_mut(version) else {
         no_version(source, version);
         return false;
@@ -266,13 +271,22 @@ pub(crate) fn record_export_on_disk(
 /// seed is taken (`Outcome::Opened`); true when it took it. Nothing
 /// when the two differ in anything else: then the export was not of
 /// this state, and the seed waits for the open.
-fn take_seed(sidecar: &mut Sidecar, rendered: &Edit) -> bool {
-    let mut seeded = sidecar.current.clone();
+fn take_seed(sidecar: &mut Sidecar, source: &Path, version: Option<&str>, rendered: &Edit) -> bool {
+    if greycard_core::picture::is_picture_path(source) {
+        return false;
+    }
+    let Some(line) = sidecar.line_mut(version) else {
+        return false;
+    };
+    if !crate::files::line_never_developed(line) {
+        return false;
+    }
+    let mut seeded = line.current.clone();
     seeded.noise.learned_strength = rendered.noise.learned_strength;
     if seeded != *rendered {
         return false;
     }
-    sidecar.current = seeded;
+    line.current = seeded;
     true
 }
 
@@ -390,6 +404,13 @@ pub(crate) fn now() -> u64 {
 /// engine's part changed: what an undo, a redo or a preset does once
 /// the sidecar says what is current.
 pub(crate) fn take_current(st: &mut State, app: &App, worker: &Worker) {
+    take_current_with(st, app, worker, true);
+}
+
+/// [`take_current`], the sidecar written only with `save`: a paste or a
+/// preset over a set whose write of the frame's file already carried
+/// the state made current has nothing more to write.
+pub(crate) fn take_current_with(st: &mut State, app: &App, worker: &Worker, save: bool) {
     if st.current.is_none() {
         return;
     }
@@ -402,7 +423,7 @@ pub(crate) fn take_current(st: &mut State, app: &App, worker: &Worker) {
         leave_cull(st, app, worker, None);
         return;
     }
-    take_current_settled(st, app, worker);
+    take_current_settled_with(st, app, worker, save);
 }
 
 /// [`take_current`] for a sidecar that changed under the window (an
@@ -411,16 +432,23 @@ pub(crate) fn take_current(st: &mut State, app: &App, worker: &Worker) {
 /// again as an undo's would be, but culling, when it is on, goes on;
 /// the leaving develops the current state as it always does.
 pub(crate) fn take_current_settled(st: &mut State, app: &App, worker: &Worker) {
+    take_current_settled_with(st, app, worker, true);
+}
+
+/// [`take_current_settled`], the sidecar written only with `save`.
+fn take_current_settled_with(st: &mut State, app: &App, worker: &Worker, save: bool) {
     let Some(c) = st.current else {
         return;
     };
-    if crate::panel::edit::writable(st, c) {
+    if save && crate::panel::edit::writable(st, c) {
         crate::panel::edit::save_sidecar(st, c);
     }
     if st.cull.is_some() {
         return;
     }
-    let edit = st.sidecars[c].current.clone();
+    let Some(edit) = st.line(c).map(|l| l.current.clone()) else {
+        return;
+    };
     if st.target.is_some_and(|i| i >= edit.adjustments.len()) {
         st.target = None;
     }
@@ -478,6 +506,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     &app,
                     &worker,
                     Vec::new(),
+                    crate::rows::Scope::File,
                     if back { "undo" } else { "redo" },
                     Box::new(move |state, app, _, _| {
                         let next =
@@ -491,11 +520,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             // Whatever the panel holds is a state first.
             record_panel(&mut st, &app);
-            let moved = if back {
-                st.sidecars[c].undo()
-            } else {
-                st.sidecars[c].redo()
+            let Some(line) = st.line_mut(c) else {
+                return;
             };
+            let moved = if back { line.undo() } else { line.redo() };
             if !moved {
                 return;
             }
@@ -519,31 +547,37 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(c) = st.current else {
                 return;
             };
-            let Some(index) = st.sidecars[c].state_at_row(row) else {
+            let Some(index) = st.line(c).and_then(|l| l.state_at_row(row)) else {
                 return;
             };
             // In culling the panel is not the frame's: the sidecar
             // goes to the row on its own, and the leaving develops it.
             if st.cull.is_some() {
                 st.status_kept = None;
-                if st.sidecars[c].go_to(index) {
+                if st.line_mut(c).is_some_and(|l| l.go_to(index)) {
                     leave_cull(&mut st, &app, &worker, None);
                 }
                 return;
             }
-            let target = st.sidecars[c].state(index).cloned();
+            let Some(line) = st.line(c) else {
+                return;
+            };
+            let target = line.state(index).cloned();
             // Whatever the panel holds is a state first. If that was
             // news to the history, what was undone is gone, and an
             // undone row's state follows the panel's as a step.
-            let position = st.sidecars[c].position();
+            let position = line.position();
             let dirty = record_panel(&mut st, &app);
+            let Some(line) = st.line_mut(c) else {
+                return;
+            };
             let moved = if dirty && index > position {
                 // Named by what moved, not by the words it had: it
                 // follows the panel's state now, not the one the
                 // preset or sync was laid over.
-                target.is_some_and(|t| st.sidecars[c].record(t))
+                target.is_some_and(|t| line.record(t))
             } else {
-                st.sidecars[c].go_to(index)
+                line.go_to(index)
             };
             st.status_kept = None;
             if !moved {
@@ -559,10 +593,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
-            let Some(c) = st.current else {
+            let Some(sidecar) = st.current.and_then(|c| st.line(c)) else {
                 return;
             };
-            let sidecar = &st.sidecars[c];
             let hovered = sidecar.row(row).and_then(|r| {
                 let name = app.get_history_rows().row_data(row as usize)?.name;
                 Some((sidecar.state(r.state())?.clone(), r, name))
@@ -617,8 +650,11 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if st.cull.is_none() {
                 record_panel(&mut st, &app);
             }
-            let name = format!("Snapshot {}", st.sidecars[c].snapshots.len() + 1);
-            let i = st.sidecars[c].take_snapshot(name.clone(), now());
+            let Some(line) = st.line_mut(c) else {
+                return;
+            };
+            let name = format!("Snapshot {}", line.snapshots.len() + 1);
+            let i = line.take_snapshot(name.clone(), now());
             write_sidecar(&mut st, c);
             show_history(&st, &app);
             app.set_snapshot_editing(i as i32);
@@ -635,9 +671,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(c) = st.current else {
                 return;
             };
-            let Some(name) = st.sidecars[c]
-                .snapshots
-                .get(i as usize)
+            let Some(name) = st
+                .line(c)
+                .and_then(|l| l.snapshots.get(i as usize))
                 .map(|s| s.name.clone())
             else {
                 return;
@@ -646,7 +682,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             // recorded from it, and the leaving develops the restore.
             if st.cull.is_some() {
                 st.status_kept = None;
-                if st.sidecars[c].restore_snapshot(i as usize) {
+                if st
+                    .line_mut(c)
+                    .is_some_and(|l| l.restore_snapshot(i as usize))
+                {
                     leave_cull(&mut st, &app, &worker, None);
                     app.set_status(format!("{name} restored").into());
                 }
@@ -654,7 +693,10 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             }
             record_panel(&mut st, &app);
             st.status_kept = None;
-            if !st.sidecars[c].restore_snapshot(i as usize) {
+            if !st
+                .line_mut(c)
+                .is_some_and(|l| l.restore_snapshot(i as usize))
+            {
                 // The sidecar is there already, but a panel still
                 // showing the command line's overrides is not: it
                 // takes the snapshot's state all the same.
@@ -682,7 +724,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             let snapshot = usize::try_from(i)
                 .ok()
-                .and_then(|i| st.sidecars[c].snapshots.get(i))
+                .and_then(|i| st.line(c)?.snapshots.get(i))
                 .cloned();
             match snapshot {
                 Some(s) => {
@@ -707,7 +749,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             if name.is_empty() {
                 return;
             }
-            let Some(s) = st.sidecars[c].snapshots.get_mut(i as usize) else {
+            let Some(s) = st.line_mut(c).and_then(|l| l.snapshots.get_mut(i as usize)) else {
                 return;
             };
             s.name = name.to_string();
@@ -725,10 +767,13 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(c) = st.current else {
                 return;
             };
-            if (i as usize) >= st.sidecars[c].snapshots.len() {
+            let Some(line) = st.line_mut(c) else {
+                return;
+            };
+            if (i as usize) >= line.snapshots.len() {
                 return;
             }
-            let removed = st.sidecars[c].snapshots.remove(i as usize);
+            let removed = line.snapshots.remove(i as usize);
             peek(&mut st, &app, None, "");
             write_sidecar(&mut st, c);
             show_history(&st, &app);
@@ -1298,7 +1343,7 @@ mod tests {
         {
             let mut st = state.borrow_mut();
             st.write_sidecars = true;
-            st.seed_blend[0] = true;
+            assert!(crate::rows::wants_seed(&st, 0), "a raw never developed");
         }
         let set = Arc::new(crate::queue::Set::new(
             2,
@@ -1324,7 +1369,7 @@ mod tests {
                 },
             );
         }
-        assert!(!state.borrow().seed_blend[0], "taken");
+        assert!(!crate::rows::wants_seed(&state.borrow(), 0), "taken");
         // Both on disk, the one the window had and the one it had not:
         // the seed as current, no step, the record on it.
         for raw in [&listed, &gone] {
@@ -1936,5 +1981,59 @@ mod tests {
             .map(|s| s.name.clone())
             .collect();
         assert_eq!(names, ["Base", "Two"], "the typed name kept");
+    }
+
+    /// The ISO's seed an export took for a raw's line never opened goes
+    /// to that line alone: not to a version at the same default (which
+    /// waits for its own open or export), not to one edited apart, and
+    /// never to a picture file's.
+    #[test]
+    fn an_export_s_seed_goes_to_the_line_exported_alone() {
+        let raw = Path::new("/shoot/IMG_0001.CR3");
+        let mut sidecar = Sidecar::default();
+        let copy = sidecar.new_version(None, Some("Copy")).unwrap();
+        let apart = sidecar.new_version(None, Some("Apart")).unwrap();
+        let mut moved = Edit::default();
+        moved.light.exposure = 0.3;
+        sidecar.line_mut(Some(&apart)).unwrap().record(moved);
+        let mut rendered = Edit::default();
+        rendered.noise.learned_strength = 0.42;
+        assert!(take_seed(&mut sidecar, raw, None, &rendered));
+        assert_eq!(sidecar.current.noise.learned_strength, 0.42);
+        let strength =
+            |s: &Sidecar, v: &str| s.line(Some(v)).unwrap().current.noise.learned_strength;
+        assert_eq!(
+            strength(&sidecar, &copy),
+            Edit::default().noise.learned_strength,
+            "the copy waits for its own"
+        );
+        assert_ne!(
+            strength(&sidecar, &apart),
+            0.42,
+            "a line edited apart keeps its own"
+        );
+        // The copy's own export seeds its line, and the file's own stays.
+        assert!(take_seed(&mut sidecar, raw, Some(&copy), &rendered));
+        assert_eq!(strength(&sidecar, &copy), 0.42);
+        // A line edited apart is never seeded, whatever was rendered.
+        let mut seeded = sidecar.line(Some(&apart)).unwrap().current.clone();
+        seeded.noise.learned_strength = 0.9;
+        assert!(
+            !take_seed(&mut sidecar, raw, Some(&apart), &seeded),
+            "developed already"
+        );
+        assert_eq!(
+            sidecar.current.noise.learned_strength, 0.42,
+            "the file's own as it was"
+        );
+        assert!(
+            !take_seed(&mut sidecar, raw, Some("none"), &rendered),
+            "no such version"
+        );
+        let mut picture = Sidecar::default();
+        assert!(
+            !take_seed(&mut picture, Path::new("/shoot/scan.tif"), None, &rendered),
+            "a picture has no ISO to seed from"
+        );
     }
 }

@@ -64,6 +64,7 @@ pub(crate) mod testing;
 mod thumbpool;
 mod tree;
 mod update;
+mod versions;
 mod watermark;
 mod wheel;
 mod window_fit;
@@ -508,9 +509,18 @@ enum Fetch {
 pub(crate) type Tweak = Box<dyn FnOnce(&mut State, usize)>;
 
 pub(crate) struct State {
+    /// Every file listed, once each, in the list's order. What is a
+    /// fact about a file (its sidecar, its row, its seed) is kept by
+    /// this number; what the browser shows is a cell (`cells`).
     pub(crate) files: Vec<PathBuf>,
+    /// The browser's list: a cell for each file's own frame and one
+    /// for each version its sidecar keeps, in display order
+    /// (`versions`). `current`, `picked`, `shown`, `menu_file` and the
+    /// thumbnail vectors are by cell.
+    pub(crate) cells: Vec<versions::Cell>,
+    /// The cell on screen.
     pub(crate) current: Option<usize>,
-    /// The browser's selection, as files: the current frame and
+    /// The browser's selection, as cells: the current frame and
     /// whatever else Ctrl, Shift or Shift and an arrow put beside it.
     /// Read through `selection::frames`, which puts the current frame
     /// back in whatever this holds.
@@ -528,9 +538,6 @@ pub(crate) struct State {
     /// (`--preset`, `--develop-temperature`, `--exposure`), applied to
     /// its sidecar when the launch's list lands, before it is opened.
     pub(crate) tweak_at_start: Option<Tweak>,
-    /// Which files are raws with no sidecar yet, whose learned-denoiser
-    /// blend the worker seeds from the ISO on their first open.
-    pub(crate) seed_blend: Vec<bool>,
     pub(crate) write_sidecars: bool,
     /// Whether a meta written to the `.gcd` is also written to an
     /// `.xmp` beside the frame: `settings.xmp_sidecars`, or
@@ -589,6 +596,10 @@ pub(crate) struct State {
     /// The delete sheet's question while it is up: what it would
     /// delete and from where. Read again at the confirm.
     pub(crate) delete_asked: Option<panel::delete::Asked>,
+    /// The delete sheet's question over versions while it is up, in
+    /// place of `delete_asked`: a version goes by a save, not to the
+    /// trash.
+    pub(crate) version_delete: Option<panel::versions::Asked>,
     /// The folders whose files the system trash has refused this
     /// session: the sheet offers the permanent delete beside the
     /// trash for these, as a choice.
@@ -643,9 +654,9 @@ pub(crate) struct State {
     /// Open in culling mode, with the compare view at this many
     /// frames, once the first file is chosen (`--cull`).
     pub(crate) cull_at_start: Option<usize>,
-    /// The browser's rows: the files it lists, in order, the filter
+    /// The browser's rows: the cells it lists, in order, the filter
     /// applied. `selected` on the window is a row; `current` here is
-    /// a file.
+    /// a cell.
     pub(crate) shown: Vec<usize>,
     /// The rows the strip's cells and the grid's were for when their
     /// pictures were last put on and taken off (`settle_pictures`),
@@ -1123,6 +1134,12 @@ impl State {
         Self {
             sync: sync::Sync::default(),
             app: app.as_weak(),
+            cells: (0..count)
+                .map(|file| versions::Cell {
+                    file,
+                    version: None,
+                })
+                .collect(),
             files,
             current: None,
             picked: Vec::new(),
@@ -1130,7 +1147,6 @@ impl State {
             sidecars: vec![Sidecar::default(); count],
             from_row: vec![rows::FromRow::read(); count],
             tweak_at_start: None,
-            seed_blend: vec![false; count],
             write_sidecars: false,
             xmp_sidecars: false,
             placement: greycard_edit::Placement::Beside,
@@ -1151,6 +1167,7 @@ impl State {
             ask_rejects: false,
             move_rejects: false,
             delete_asked: None,
+            version_delete: None,
             trash_refused: std::collections::HashSet::new(),
             look_remove: None,
             look_remove_generation: 0,
@@ -1375,6 +1392,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::prefs::install(app, &state, &worker);
     panel::sync::install(app, &state, &worker);
     panel::menu::install(app, &state, &worker);
+    panel::versions::install(app, &state, &worker);
     panel::import::install(app, &state, &worker);
     panel::recent::install(app, &state, &worker);
     panel::camera_match::install(app, &state);

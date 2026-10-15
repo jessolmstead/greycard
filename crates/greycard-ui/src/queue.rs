@@ -43,7 +43,7 @@ pub struct Frame {
 
 /// A version of a file, as the export needs it: the id the sidecar
 /// names it by and the name the user gave it.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct Version {
     pub id: String,
     pub name: String,
@@ -152,8 +152,9 @@ impl Set {
         self.canceled.load(Ordering::SeqCst)
     }
 
-    /// Count what came of frame `source`, and say where the set stands.
-    pub fn record(&self, source: &Path, done: &Done) -> Tally {
+    /// Count what came of the frame named `name` ([`label`]), and say
+    /// where the set stands.
+    pub fn record(&self, name: &str, done: &Done) -> Tally {
         let mut t = self.tally.lock().expect("the set's tally");
         match done {
             Done::Exported { left_out, .. } => {
@@ -164,7 +165,7 @@ impl Set {
             }
             Done::Skipped { .. } => t.skipped += 1,
             Done::Canceled => t.canceled += 1,
-            Done::Failed { message } => t.failed.push((file_name(source), message.clone())),
+            Done::Failed { message } => t.failed.push((name.to_string(), message.clone())),
         }
         t.clone()
     }
@@ -184,14 +185,36 @@ impl Set {
 /// canceled, record what came of it, and say whether the set is done:
 /// the worker's step for a frame taken off the queue, with the engine
 /// behind `work`.
-pub fn step(set: &Set, index: usize, source: &Path, work: impl FnOnce() -> Done) -> (Done, bool) {
+pub fn step(set: &Set, index: usize, name: &str, work: impl FnOnce() -> Done) -> (Done, bool) {
     let done = if set.is_canceled() {
         Done::Canceled
     } else {
         work()
     };
-    set.record(source, &done);
+    set.record(name, &done);
     (done, set.is_last(index))
+}
+
+/// A frame of a set as the set's lines name it: the file's name, or for
+/// a version of it the file's stem and the version's name, "IMG_0001
+/// (Warm)".
+pub fn label(frame: &Frame) -> String {
+    label_of(&frame.source, frame.version.as_ref())
+}
+
+/// [`label`] of a file and the version it is exported as, none for
+/// the file's own.
+pub fn label_of(source: &Path, version: Option<&Version>) -> String {
+    match version {
+        None => file_name(source),
+        Some(v) => {
+            let stem = source
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            format!("{stem} ({})", v.name)
+        }
+    }
 }
 
 /// What the set's policy makes of frame's name at the moment of
@@ -447,7 +470,7 @@ mod tests {
         let mut finished = Vec::new();
         let mut results = Vec::new();
         for (i, f) in files.iter().enumerate() {
-            let (done, last) = step(&s, i, f, || {
+            let (done, last) = step(&s, i, &file_name(f), || {
                 ran.push(i);
                 if i == 2 {
                     // Pressed while this one is being written.
@@ -486,7 +509,7 @@ mod tests {
         let s = set(4);
         let files = sources(4);
         for (i, f) in files.iter().enumerate() {
-            step(&s, i, f, || {
+            step(&s, i, &file_name(f), || {
                 if i == 1 || i == 3 {
                     Done::Failed {
                         message: "not a raw".into(),
@@ -907,5 +930,18 @@ mod tests {
                 folder.join("IMG_0001-2.jpg"),
             ]
         );
+    }
+
+    /// A set's lines name a version's frame by the file's stem and the
+    /// version's name, the file's own by its name.
+    #[test]
+    fn a_set_s_line_names_a_version_s_frame() {
+        let source = PathBuf::from("/shoot/IMG_0001.CR3");
+        assert_eq!(label_of(&source, None), "IMG_0001.CR3");
+        let warm = Version {
+            id: "ab".repeat(8),
+            name: "Warm".into(),
+        };
+        assert_eq!(label_of(&source, Some(&warm)), "IMG_0001 (Warm)");
     }
 }

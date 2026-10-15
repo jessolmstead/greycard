@@ -1607,16 +1607,20 @@ pub(crate) fn index_open_folder(st: &mut State, ids: Option<Vec<Option<i64>>>) {
     indexer.folders(folders_of(&st.files), st.index_generation);
 }
 
-/// A frame's sidecar was written: its row is brought up to date on
+/// A file's sidecar was written: its row is brought up to date on
 /// the indexer's thread, and the window hears when it is; and its
 /// write to the archive's copy is queued (§233, [`crate::sync`]).
 pub(crate) fn sidecar_written(st: &mut State, file: usize) {
     if let (Some(indexer), Some(path)) = (&st.index, st.files.get(file)) {
         indexer.file(path.clone());
     }
-    // The pictures made from the edit: the open frame's kept from its
-    // develop, another frame's shown as it now is.
-    crate::edited::saved(st, file);
+    // The pictures made from the edits, a cell at a time: the open
+    // frame's kept from its develop, any other cell's (a version pasted
+    // onto, a frame rated) shown as its line now is, made by the reduced
+    // develop when none is kept.
+    for c in st.cells_of_file(file) {
+        crate::edited::saved(st, c);
+    }
     crate::sync::after_save(st, file);
 }
 
@@ -1680,7 +1684,7 @@ pub(crate) fn refresh_ids(st: &mut State) -> bool {
         Vec::new()
     } else {
         (0..st.files.len())
-            .filter(|&i| !crate::rows::is_loaded(st, i))
+            .filter(|&i| !crate::rows::file_is_loaded(st, i))
             .collect()
     };
     let paths: Vec<PathBuf> = standing.iter().map(|&i| st.files[i].clone()).collect();

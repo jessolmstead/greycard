@@ -554,7 +554,7 @@ fn write_followed_with(
             Some((c, f.clone(), followed.archive.clone()))
         })
         .filter(|(c, ..)| {
-            crate::panel::edit::writable(st, *c) && !st.sidecars[*c].revisions.is_empty()
+            crate::panel::edit::file_writable(st, *c) && !st.sidecars[*c].revisions.is_empty()
         })
         .collect();
     if held.is_empty() {
@@ -1356,7 +1356,7 @@ fn bring_home_followed(st: &mut State, offline: &HashSet<PathBuf>) {
         let Some(c) = st.files.iter().position(|f| *f == copy) else {
             continue;
         };
-        if !crate::panel::edit::writable(st, c) || st.sidecars[c].revisions.is_empty() {
+        if !crate::panel::edit::file_writable(st, c) || st.sidecars[c].revisions.is_empty() {
             continue;
         }
         let Some(hash) = st
@@ -1636,7 +1636,7 @@ fn settle_held(
         .files
         .iter()
         .position(|f| f == frame)
-        .filter(|c| crate::panel::edit::writable(&st, *c));
+        .filter(|c| crate::panel::edit::file_writable(&st, *c));
     let Some(c) = held else {
         // A frame the window does not hold, or holds as its row
         // standing in, or may not write (held for a delete): the
@@ -1671,10 +1671,18 @@ fn settle_held(
                 }
             }
             st.sidecars[c] = theirs;
+            // The copy's versions may not be the cells': one made or
+            // deleted on the other machine moves the list once this is
+            // done with its numbers.
+            if crate::rows::versions_differ(&st, c) {
+                crate::versions::settle_later(app);
+            }
             // A frame off screen has its marks from what it holds now,
-            // and its pictures from its edit as it is now.
-            crate::panel::browser::show_badges(&st, app, c);
-            crate::edited::saved(&st, c);
+            // and its pictures from its lines as they are now.
+            crate::panel::browser::show_badges_of_file(&st, app, c);
+            for cell in st.cells_of_file(c) {
+                crate::edited::saved(&st, cell);
+            }
             if let Some(indexer) = &st.index {
                 indexer.file(st.files[c].clone());
             }
@@ -1683,7 +1691,7 @@ fn settle_held(
             // same, records it and clears the frame's row. Without it
             // the "to join" row would stand for good.
             after_save(&mut st, c);
-            if st.current == Some(c) {
+            if st.current.is_some_and(|x| st.file_at(x) == Some(c)) {
                 drop(st);
                 show_settled(state, app, worker);
                 return true;
@@ -1692,13 +1700,20 @@ fn settle_held(
         Compared::SameEdit | Compared::Diverged => {
             let joined = join(&st.sidecars[c], &theirs);
             st.sidecars[c] = joined;
-            crate::panel::browser::show_badges(&st, app, c);
-            if st.current == Some(c) {
+            // A version the join took out (deleted on the other copy
+            // after it had seen every save of this one) or brought in
+            // moves the list; nothing of that is written back here but
+            // by the save below, which the join itself asks for.
+            if crate::rows::versions_differ(&st, c) {
+                crate::versions::settle_later(app);
+            }
+            crate::panel::browser::show_badges_of_file(&st, app, c);
+            if st.current.is_some_and(|x| st.file_at(x) == Some(c)) {
                 drop(st);
                 crate::panel::history::take_current_settled(&mut state.borrow_mut(), app, worker);
                 st = state.borrow_mut();
             } else {
-                crate::panel::edit::save_sidecar(&mut st, c);
+                crate::panel::edit::save_file(&mut st, c);
             }
             // The save failed (the disk gone under the frame, about to
             // follow its copy): the join still goes to the copy from
@@ -1798,7 +1813,7 @@ pub(crate) fn follow_offline(st: &mut State, app: &App) {
     let Some(c) = st.current else {
         return;
     };
-    let Some(frame) = st.files.get(c).cloned() else {
+    let Some(frame) = st.path_at(c).cloned() else {
         return;
     };
     if !crate::rows::is_offline(st, c)
@@ -1835,7 +1850,7 @@ pub(crate) fn follow_offline(st: &mut State, app: &App) {
     };
     st.sync.checking.insert(frame.clone());
     let hash = paired.hash;
-    let sidecar = st.sidecars[c].clone();
+    let sidecar = st.sidecar(c).clone();
     let placement = st.placement;
     let job_frame = frame.clone();
     let job_target = target.clone();
@@ -1984,7 +1999,10 @@ fn follow(st: &mut State, app: &App, frame: &Path, target: &Copy) {
     let Some(c) = st.current else {
         return;
     };
-    if st.files.get(c).map(Path::new) != Some(frame)
+    let Some(file) = st.file_at(c) else {
+        return;
+    };
+    if st.files.get(file).map(Path::new) != Some(frame)
         || !crate::rows::is_offline(st, c)
         || st.files.contains(&target.copy)
         || st.sync.queued.contains_key(frame)
@@ -2001,7 +2019,7 @@ fn follow(st: &mut State, app: &App, frame: &Path, target: &Copy) {
         .as_ref()
         .and_then(|l| l.by_path(&target.copy).ok().flatten())
         .map(|e| e.id)
-        && let Some(slot) = st.index_ids.get_mut(c)
+        && let Some(slot) = st.index_ids.get_mut(file)
     {
         *slot = Some(id);
     }
@@ -2010,7 +2028,8 @@ fn follow(st: &mut State, app: &App, frame: &Path, target: &Copy) {
         frame.display(),
         target.copy.display()
     );
-    st.files[c] = target.copy.clone();
+    // The file's path: every cell of it follows.
+    st.files[file] = target.copy.clone();
     st.sync.followed.insert(
         target.copy.clone(),
         Followed {
@@ -2650,6 +2669,80 @@ pub(crate) mod tests {
                 .is_some_and(|l| l.starts_with("Reconciled"))
         );
         assert_eq!(state.borrow().sidecars[0], here);
+        assert!(pending_for(&db, &nas).is_empty());
+        crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// A version made here and deleted on the laptop after it had seen
+    /// every save of ours, nothing saved here since: the copy lands as
+    /// ours behind it and is taken whole, the version's cell goes once
+    /// the landing is done with its numbers, the file's own cell takes
+    /// the screen, and nothing is written back to the copy. A save here
+    /// meanwhile would have kept it instead, which is the join's rule
+    /// (a version edited on one copy and deleted on the other stays).
+    #[test]
+    fn a_copy_without_the_version_takes_its_cell_and_writes_nothing_back() {
+        let dir = scratch("join-version");
+        let (local, nas, files, db) = two_places(&dir);
+        let app = window(2);
+        let (state, worker) = opened(&app, &dir, files.clone(), &local, &nas, &db);
+        let id = {
+            let mut st = state.borrow_mut();
+            let id = st.sidecars[0].new_version(None, Some("Warm")).unwrap();
+            crate::versions::settle(&mut st, &app, &worker);
+            id
+        };
+        save(&state, 0.5);
+        land_sent(&state, &app, &worker);
+        let copy = nas.join("shoot").join("a.tif");
+        assert!(
+            Sidecar::load(&copy)
+                .unwrap()
+                .unwrap()
+                .version(&id)
+                .is_some(),
+            "the copy has Warm"
+        );
+        // The laptop, with every save of ours in hand, deletes Warm and
+        // saves on.
+        let mut theirs = Sidecar::load(&copy).unwrap().unwrap();
+        theirs.delete_version(&id).unwrap();
+        theirs.record(exposed(-1.0));
+        theirs
+            .save_in_stamped(
+                &copy,
+                Placement::Beside,
+                &greycard_edit::sync::Stamp {
+                    at: 1 << 40,
+                    host: "laptop".into(),
+                },
+            )
+            .unwrap();
+        let theirs = Sidecar::load(&copy).unwrap().unwrap();
+        // The version's cell on screen when the copy lands.
+        {
+            let mut st = state.borrow_mut();
+            assert_eq!(st.cells.len(), 3);
+            st.current = Some(1);
+        }
+        settle(&state, &app, &worker, &files[0], &nas, &copy, theirs);
+        land_sent(&state, &app, &worker);
+        {
+            let mut st = state.borrow_mut();
+            assert!(
+                st.sidecars[0].version(&id).is_none(),
+                "the copy taken whole"
+            );
+            assert!(crate::versions::settle_pending(&mut st, &app, &worker) >= 1);
+            let cells: Vec<usize> = st.cells.iter().map(|c| c.file).collect();
+            assert_eq!(cells, [0, 1], "its cell went");
+            assert_eq!(st.current, Some(0), "the file's own cell in its place");
+        }
+        let here = Sidecar::load(&files[0]).unwrap().unwrap();
+        let there = Sidecar::load(&copy).unwrap().unwrap();
+        assert!(here.version(&id).is_none());
+        assert!(there.version(&id).is_none(), "nothing written back");
+        assert_eq!(compare(&here, &there), Compared::Same);
         assert!(pending_for(&db, &nas).is_empty());
         crate::testing::remove_scratch(state, &dir);
     }

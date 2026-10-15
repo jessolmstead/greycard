@@ -213,22 +213,22 @@ pub struct Cache {
 }
 
 impl Cache {
-    pub fn get(&self, file: usize) -> Option<&Arc<Preview>> {
-        self.previews.get(&file)
+    pub fn get(&self, cell: usize) -> Option<&Arc<Preview>> {
+        self.previews.get(&cell)
     }
 
     /// The full-size preview of `file`, if it is the one held.
-    pub fn full(&self, file: usize) -> Option<&Arc<Preview>> {
+    pub fn full(&self, cell: usize) -> Option<&Arc<Preview>> {
         self.full
             .as_ref()
-            .filter(|(f, _)| *f == file)
+            .filter(|(f, _)| *f == cell)
             .map(|(_, p)| p)
     }
 
     /// The best copy there is of `file`: the full one when it is the
     /// one held, else the screen-size one.
-    pub fn best(&self, file: usize) -> Option<&Arc<Preview>> {
-        self.full(file).or_else(|| self.get(file))
+    pub fn best(&self, cell: usize) -> Option<&Arc<Preview>> {
+        self.full(cell).or_else(|| self.get(cell))
     }
 
     /// Whether a copy of `file` at the JPEG's every pixel is held:
@@ -236,16 +236,16 @@ impl Cache {
     /// the view. A local preview is its own every pixel and not the
     /// JPEG's, so it is not: at 1:1 the file's is still asked for
     /// where the file can be read.
-    pub fn has_own_size(&self, file: usize) -> bool {
-        self.best(file)
+    pub fn has_own_size(&self, cell: usize) -> bool {
+        self.best(cell)
             .is_some_and(|p| p.own_size() && !p.local && !p.edited)
     }
 
-    pub fn insert(&mut self, file: usize, preview: Arc<Preview>) {
+    pub fn insert(&mut self, cell: usize, preview: Arc<Preview>) {
         if preview.full {
-            self.full = Some((file, preview));
+            self.full = Some((cell, preview));
         } else {
-            self.previews.insert(file, preview);
+            self.previews.insert(cell, preview);
         }
     }
 
@@ -260,8 +260,8 @@ impl Cache {
 
     /// Drop the full-size copy unless it is `file`'s: the selection
     /// moved.
-    pub fn drop_full_unless(&mut self, file: usize) {
-        if self.full.as_ref().is_some_and(|(f, _)| *f != file) {
+    pub fn drop_full_unless(&mut self, cell: usize) {
+        if self.full.as_ref().is_some_and(|(f, _)| *f != cell) {
             self.full = None;
         }
     }
@@ -278,8 +278,8 @@ impl Cache {
 
     /// Drop `file`'s view-size copy: its picture changed (its edit's
     /// was kept), and the next refresh asks for it again.
-    pub fn forget(&mut self, file: usize) {
-        self.previews.remove(&file);
+    pub fn forget(&mut self, cell: usize) {
+        self.previews.remove(&cell);
     }
 
     /// What is held, in bytes.
@@ -375,19 +375,22 @@ pub fn compare_rows(anchor: usize, n: usize, count: usize) -> Vec<usize> {
 pub enum Loaded {
     Ok {
         file: usize,
-        path: PathBuf,
+        frame: crate::versions::Key,
         /// The long edge it was asked at, zero for the JPEG's own.
         size: u32,
         preview: Arc<Preview>,
     },
     Failed {
         file: usize,
-        path: PathBuf,
+        frame: crate::versions::Key,
         size: u32,
         message: String,
     },
     /// A local preview asked for is not kept.
-    NoPreview { file: usize, path: PathBuf },
+    NoPreview {
+        file: usize,
+        frame: crate::versions::Key,
+    },
 }
 
 /// One decode wanted: the file, its path, the long edge to make it
@@ -397,6 +400,9 @@ pub enum Loaded {
 pub struct Want {
     pub file: usize,
     pub path: PathBuf,
+    /// The version of the file the cell is, none for the file's own:
+    /// which line's edit the picture is of.
+    pub version: Option<std::sync::Arc<str>>,
     pub size: u32,
     pub from: Source,
     /// A decode for the culling loupe, which makes the frame's local
@@ -414,10 +420,25 @@ impl Want {
         Self {
             file,
             path,
+            version: None,
             size,
             from: Source::File,
             make_preview: false,
             lightbox: false,
+        }
+    }
+
+    /// The same want, of version `version` of the file.
+    pub fn of_version(self, version: Option<std::sync::Arc<str>>) -> Self {
+        Self { version, ..self }
+    }
+
+    /// The frame the picture is of: the file and its version.
+    pub fn frame(&self) -> crate::versions::Key {
+        crate::versions::Key {
+            path: self.path.clone(),
+            version: self.version.clone(),
+            name: None,
         }
     }
 
@@ -443,6 +464,7 @@ impl Want {
         self.file == other.file
             && self.size == other.size
             && self.path == other.path
+            && self.version == other.version
             && self.from == other.from
             && self.lightbox == other.lightbox
     }
@@ -608,7 +630,7 @@ fn run(queue: Arc<(Mutex<Queue>, Condvar)>, deliver: Deliver, previews: Previewe
         if fetched.is_err() && !delivered.get() {
             deliver(Loaded::Failed {
                 file: want.file,
-                path: want.path,
+                frame: want.frame(),
                 size: want.size,
                 message: "the decode panicked".into(),
             });
@@ -635,11 +657,11 @@ pub(crate) fn fetch(
         // edit kept for its content, ahead of the camera's.
         let from_edit = edited
             .filter(|_| want.size > 0)
-            .and_then(|e| e.lookup(hash, crate::edited::BIG, e.shows_offline(&want.path)));
+            .and_then(|e| e.lookup(hash, crate::edited::BIG, e.shows_offline(&want.frame())));
         if let Some(thumb) = from_edit {
             deliver(Loaded::Ok {
                 file: want.file,
-                path: want.path.clone(),
+                frame: want.frame(),
                 size: want.size,
                 preview: Arc::new(Preview::edited(thumb)),
             });
@@ -648,13 +670,13 @@ pub(crate) fn fetch(
         deliver(match previews.and_then(|p| p.get(hash, *stamp)) {
             Some(thumb) => Loaded::Ok {
                 file: want.file,
-                path: want.path.clone(),
+                frame: want.frame(),
                 size: want.size,
                 preview: Arc::new(Preview::local(thumb, want.size == 0)),
             },
             None => Loaded::NoPreview {
                 file: want.file,
-                path: want.path.clone(),
+                frame: want.frame(),
             },
         });
         return;
@@ -663,13 +685,13 @@ pub(crate) fn fetch(
     // view's size; 1:1 is the camera's JPEG all the same, for focus.
     if want.size > 0
         && let Some(edited) = edited
-        && let shows @ crate::edited::Shows::Edit(_) = edited.shows(&want.path)
+        && let shows @ crate::edited::Shows::Edit(_) = edited.shows(&want.frame())
         && let Ok(hash) = greycard_library::hash_file(&want.path)
         && let Some(thumb) = edited.lookup(&hash, crate::edited::BIG, shows)
     {
         deliver(Loaded::Ok {
             file: want.file,
-            path: want.path.clone(),
+            frame: want.frame(),
             size: want.size,
             preview: Arc::new(Preview::edited(thumb)),
         });
@@ -679,7 +701,7 @@ pub(crate) fn fetch(
         Ok((preview, picture, orientation)) => {
             deliver(Loaded::Ok {
                 file: want.file,
-                path: want.path.clone(),
+                frame: want.frame(),
                 size: want.size,
                 preview: Arc::new(preview),
             });
@@ -709,7 +731,7 @@ pub(crate) fn fetch(
         }
         Err(e) => deliver(Loaded::Failed {
             file: want.file,
-            path: want.path.clone(),
+            frame: want.frame(),
             size: want.size,
             message: format!("{e:#}"),
         }),

@@ -101,17 +101,30 @@ pub(crate) struct Uses {
 /// asked of the panel's edit, which may be ahead of its sidecar.
 pub(crate) fn uses(st: &State, name: &str) -> Uses {
     let mut out = Uses::default();
+    let open = st
+        .current
+        .map(|c| (st.file_of(c), st.version_of(c).map(str::to_string)));
     for (i, file) in st.files.iter().enumerate() {
-        if !crate::rows::is_loaded(st, i) {
+        if !crate::rows::file_is_loaded(st, i) {
             out.unread.push(file.clone());
             continue;
         }
-        let edit = match (Some(i) == st.current, st.sidecars.get(i)) {
-            (true, _) => &st.edit,
-            (false, Some(s)) => &s.current,
-            (false, None) => continue,
+        let Some(s) = st.sidecars.get(i) else {
+            continue;
         };
-        if edit.look_lut.lut.name() == name {
+        // Any line of the file, the panel's edit standing for the open
+        // cell's: a file counts once however many of its versions name
+        // the look.
+        let names = std::iter::once((None, &s.line))
+            .chain(s.versions.iter().map(|v| (Some(v.id.as_str()), &v.line)))
+            .any(|(version, line)| {
+                let edit = match &open {
+                    Some((f, v)) if *f == i && v.as_deref() == version => &st.edit,
+                    _ => &line.current,
+                };
+                edit.look_lut.lut.name() == name
+            });
+        if names {
             out.named += 1;
         }
     }

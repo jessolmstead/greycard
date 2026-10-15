@@ -43,17 +43,19 @@ use std::time::{Duration, Instant};
 
 use greycard_library::thumbs::Thumb;
 
+use crate::versions::Key;
 use crate::worker::{Deliver, Outcome, THUMB_WIDTH, order_thumbnails, panic_message};
 
-/// How a picture is made: a file and the long edge asked for, to the
+/// How a picture is made: a frame (a file, and the version of it whose
+/// edit's picture is wanted) and the long edge asked for, to the
 /// picture and whether it came from the cache.
 pub(crate) type Make = Arc<MakeFn>;
-pub(crate) type MakeFn = dyn Fn(&Path, u32) -> anyhow::Result<(Thumb, bool)> + Send + Sync;
+pub(crate) type MakeFn = dyn Fn(&Key, u32) -> anyhow::Result<(Thumb, bool)> + Send + Sync;
 
 /// How a picture is looked up in the cache alone, without making it:
 /// the picture, or `None` for a miss.
 pub(crate) type Lookup = Arc<LookupFn>;
-pub(crate) type LookupFn = dyn Fn(&Path, u32) -> Option<Thumb> + Send + Sync;
+pub(crate) type LookupFn = dyn Fn(&Key, u32) -> Option<Thumb> + Send + Sync;
 
 /// The local previews behind the thumbnails: whether a file whose
 /// thumbnail was just delivered is owed one (a question of memory,
@@ -67,13 +69,14 @@ pub(crate) struct PreviewHooks {
 pub(crate) type OwesFn = dyn Fn(&Path) -> bool + Send + Sync;
 pub(crate) type MakePreviewFn = dyn Fn(&Path) -> anyhow::Result<()> + Send + Sync;
 
-/// The edit's pictures behind the previews: whether a file whose
+/// The edit's pictures behind the previews: whether a frame whose
 /// thumbnail was just delivered wants them made (held as edited, its
 /// pictures not kept under its key), and the making of them, which
 /// says whether any were kept. A making that kept them has the window
 /// told (`Outcome::EditedKept`). `at_once` says how many may be in hand
-/// now, asked as each is begun; `alone` whether a file's making runs
-/// with no other beside it.
+/// now, asked as each is begun; `alone` whether a frame's making runs
+/// with no other beside it. A frame is a file and a version of it: each
+/// version's edit has pictures of its own.
 #[derive(Clone)]
 pub(crate) struct EditHooks {
     pub(crate) wants: Arc<WantsFn>,
@@ -82,11 +85,11 @@ pub(crate) struct EditHooks {
     pub(crate) alone: Arc<WantsFn>,
 }
 
-pub(crate) type WantsFn = dyn Fn(&Path) -> bool + Send + Sync;
+pub(crate) type WantsFn = dyn Fn(&Key) -> bool + Send + Sync;
 /// How many edits may be in hand now, and, when that holds one back
 /// only for a while (`reduced::begin`), when to look again.
 pub(crate) type AtOnceFn = dyn Fn() -> (usize, Option<Duration>) + Send + Sync;
-pub(crate) type MakeEditFn = dyn Fn(&Path) -> Result<bool, crate::reduced::Why> + Send + Sync;
+pub(crate) type MakeEditFn = dyn Fn(&Key) -> Result<bool, crate::reduced::Why> + Send + Sync;
 
 /// How many threads make thumbnails on a machine of `cores`: half of
 /// them, at least two and at most eight. The develop runs on rayon's
@@ -238,8 +241,9 @@ impl Batch {
 
 #[derive(Default)]
 struct Pending {
-    /// What is waiting, in the order it is wanted.
-    jobs: VecDeque<(usize, PathBuf)>,
+    /// What is waiting, in the order it is wanted: each the row it is
+    /// for and the frame.
+    jobs: VecDeque<(usize, Key)>,
     /// The range the waiting ones are ordered for, so the strip can
     /// report where it stands as often as it likes. Cleared when one
     /// is pushed, since that is a new folder's list or a step up.
@@ -253,9 +257,9 @@ struct Pending {
     /// The frames whose edit's pictures are waiting to be made, in the
     /// order wanted: begun only when no thumbnail and no preview can
     /// be.
-    edits: VecDeque<(usize, PathBuf)>,
+    edits: VecDeque<(usize, Key)>,
     /// The same frames, to be asked of without a walk of the queue.
-    edits_queued: HashSet<PathBuf>,
+    edits_queued: HashSet<Key>,
     /// The range the waiting edits are ordered for; cleared when one
     /// is added.
     edits_wanted: Option<(usize, usize)>,
@@ -274,14 +278,14 @@ struct Pending {
     /// Raised by a folder change: a picture begun under an older one
     /// is not delivered.
     epoch: u64,
-    /// The files in hand, one entry a thread at work, looking up or
-    /// making.
-    making: Vec<PathBuf>,
+    /// The frames in hand, one entry a thread at work, looking up or
+    /// making (a preview under its file's own frame).
+    making: Vec<Key>,
     /// How many of those are being made rather than looked up.
     busy: usize,
-    /// Files looked up while the pool was held and not found: they
+    /// Frames looked up while the pool was held and not found: they
     /// wait to be made, and are not looked up again meanwhile.
-    missed: std::collections::HashSet<PathBuf>,
+    missed: std::collections::HashSet<Key>,
     /// How many may be made at once now.
     limit: usize,
     /// Held for the first develop of a folder opened in the loupe:
@@ -379,14 +383,14 @@ impl Pool {
         self.shared.pending.lock().expect("thumbnail pool")
     }
 
-    /// Make `path`'s picture, as file `index` of the folder. An ask
-    /// for one already waiting is dropped; the waiting one is made at
+    /// Make `frame`'s picture, as cell `index` of the list. An ask for
+    /// one already waiting is dropped; the waiting one is made at
     /// whatever size is wanted when it is begun anyway.
-    pub(crate) fn push(&self, index: usize, path: PathBuf) {
+    pub(crate) fn push(&self, index: usize, frame: Key) {
         let mut q = self.lock();
         q.wanted = None;
-        if !q.jobs.iter().any(|(i, p)| *i == index && *p == path) {
-            q.jobs.push_back((index, path));
+        if !q.jobs.iter().any(|(i, p)| *i == index && *p == frame) {
+            q.jobs.push_back((index, frame));
         }
         if !q.started {
             q.started = true;
@@ -435,13 +439,13 @@ impl Pool {
     /// `push` makes for one waiting already (the whole queue, each
     /// time, which is quadratic over a list of twenty thousand) is
     /// skipped.
-    pub(crate) fn push_all(&self, list: Vec<(usize, PathBuf)>) {
+    pub(crate) fn push_all(&self, list: Vec<(usize, Key)>) {
         let mut list = list.into_iter();
-        let Some((index, path)) = list.next() else {
+        let Some((index, frame)) = list.next() else {
             return;
         };
         // The first through `push`, which starts the threads.
-        self.push(index, path);
+        self.push(index, frame);
         let mut q = self.lock();
         q.jobs.extend(list);
         drop(q);
@@ -579,7 +583,7 @@ fn serve(
     deliver: &dyn Fn(Outcome),
 ) {
     loop {
-        let (index, path, size, epoch, full, what) = {
+        let (index, frame, size, epoch, full, what) = {
             let mut q = shared.pending.lock().expect("thumbnail pool");
             loop {
                 if q.stopping {
@@ -597,15 +601,15 @@ fn serve(
                     // One being made leaves the queue; one being looked
                     // up keeps its place in it, in hand, and leaves only
                     // when it is found.
-                    let (index, path) = if full {
+                    let (index, frame) = if full {
                         q.busy += 1;
                         q.jobs.remove(at).expect("a job at a found place")
                     } else {
                         q.jobs[at].clone()
                     };
-                    q.making.push(path.clone());
+                    q.making.push(frame.clone());
                     let size = crate::grid::made_size(q.size.unwrap_or(THUMB_WIDTH));
-                    break (index, path, size, q.epoch, full, What::Thumb);
+                    break (index, frame, size, q.epoch, full, What::Thumb);
                 }
                 // The lowest of all: a preview, only when no thumbnail
                 // can be begun and two more may be made, so one thread
@@ -618,14 +622,17 @@ fn serve(
                 let at = preview
                     .then(|| {
                         let p = &*q;
-                        p.previews.iter().position(|(_, f)| !p.making.contains(f))
+                        p.previews
+                            .iter()
+                            .position(|(_, f)| !p.making.iter().any(|m| m.path == *f))
                     })
                     .flatten();
                 if let Some(at) = at {
                     q.busy += 1;
                     let (index, path) = q.previews.remove(at).expect("a preview at a found place");
-                    q.making.push(path.clone());
-                    break (index, path, 0, q.epoch, true, What::Preview);
+                    let frame = Key::file(path);
+                    q.making.push(frame.clone());
+                    break (index, frame, 0, q.epoch, true, What::Preview);
                 }
                 // Lower still: the edit's pictures, a decode and a
                 // develop each, so one or two at a time (as `at_once`
@@ -653,10 +660,10 @@ fn serve(
                     q.busy += 1;
                     q.edits_busy += 1;
                     q.edits_alone = alone;
-                    let (index, path) = q.edits.remove(at).expect("an edit at a found place");
-                    q.edits_queued.remove(&path);
-                    q.making.push(path.clone());
-                    break (index, path, 0, q.epoch, true, What::Edit);
+                    let (index, frame) = q.edits.remove(at).expect("an edit at a found place");
+                    q.edits_queued.remove(&frame);
+                    q.making.push(frame.clone());
+                    break (index, frame, 0, q.epoch, true, What::Edit);
                 }
                 #[cfg(test)]
                 {
@@ -674,10 +681,10 @@ fn serve(
         if what == What::Edit {
             let hooks = edits.expect("an edit only with hooks");
             let made =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hooks.make)(&path)));
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hooks.make)(&frame)));
             {
                 let mut q = shared.pending.lock().expect("thumbnail pool");
-                if let Some(at) = q.making.iter().position(|f| *f == path) {
+                if let Some(at) = q.making.iter().position(|f| *f == frame) {
                     q.making.swap_remove(at);
                 }
                 q.busy -= 1;
@@ -686,12 +693,12 @@ fn serve(
                 shared.cv.notify_all();
             }
             match made {
-                Ok(Ok(true)) => deliver(Outcome::EditedKept { path }),
+                Ok(Ok(true)) => deliver(Outcome::EditedKept { frame }),
                 Ok(Ok(false)) => {}
-                Ok(Err(why)) => tracing::info!("the edit's pictures of {}: {why}", path.display()),
+                Ok(Err(why)) => tracing::info!("the edit's pictures of {}: {why}", frame.said()),
                 Err(payload) => tracing::warn!(
                     "the edit's pictures of {}: the making panicked: {}",
-                    path.display(),
+                    frame.said(),
                     panic_message(payload.as_ref())
                 ),
             }
@@ -699,11 +706,12 @@ fn serve(
         }
         if what == What::Preview {
             let hooks = previews.expect("a preview only with hooks");
-            let made =
-                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (hooks.make)(&path)));
+            let made = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                (hooks.make)(&frame.path)
+            }));
             {
                 let mut q = shared.pending.lock().expect("thumbnail pool");
-                if let Some(at) = q.making.iter().position(|f| *f == path) {
+                if let Some(at) = q.making.iter().position(|f| *f == frame) {
                     q.making.swap_remove(at);
                 }
                 q.busy -= 1;
@@ -711,22 +719,22 @@ fn serve(
             }
             match made {
                 Ok(Ok(())) => {}
-                Ok(Err(e)) => tracing::debug!("preview {}: {e:#}", path.display()),
+                Ok(Err(e)) => tracing::debug!("preview {}: {e:#}", frame.path.display()),
                 Err(payload) => tracing::warn!(
                     "preview {}: the making panicked: {}",
-                    path.display(),
+                    frame.path.display(),
                     panic_message(payload.as_ref())
                 ),
             }
             continue;
         }
         let made = if full {
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| make(&path, size)))
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| make(&frame, size)))
         } else {
             // A panic in a lookup is the making's to meet again, and
             // to report.
             let hit = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                lookup.and_then(|l| l(&path, size))
+                lookup.and_then(|l| l(&frame, size))
             }))
             .ok()
             .flatten();
@@ -734,16 +742,16 @@ fn serve(
                 let mut q = shared.pending.lock().expect("thumbnail pool");
                 if q.epoch == epoch {
                     if hit.is_some() {
-                        let found = q.jobs.iter().position(|(i, f)| *i == index && *f == path);
+                        let found = q.jobs.iter().position(|(i, f)| *i == index && *f == frame);
                         if let Some(at) = found {
                             q.jobs.remove(at);
                         }
                     } else {
-                        q.missed.insert(path.clone());
+                        q.missed.insert(frame.clone());
                     }
                 }
                 if hit.is_none() {
-                    if let Some(at) = q.making.iter().position(|f| *f == path) {
+                    if let Some(at) = q.making.iter().position(|f| *f == frame) {
                         q.making.swap_remove(at);
                     }
                     shared.cv.notify_all();
@@ -757,12 +765,12 @@ fn serve(
         let seconds = started.elapsed().as_secs_f64();
         let current = {
             let mut q = shared.pending.lock().expect("thumbnail pool");
-            if let Some(at) = q.making.iter().position(|f| *f == path) {
+            if let Some(at) = q.making.iter().position(|f| *f == frame) {
                 q.making.swap_remove(at);
             }
             if full {
                 q.busy -= 1;
-                q.missed.remove(&path);
+                q.missed.remove(&frame);
             }
             // A thread may be waiting for this file, or for room.
             shared.cv.notify_all();
@@ -772,14 +780,15 @@ fn serve(
             continue;
         }
         // Delivered with a picture: a preview behind it, if the file is
-        // owed one, in this folder's numbering.
+        // owed one, in this folder's numbering. A preview is the file's,
+        // whichever of its frames brought it.
         if let Some(hooks) = previews
             && matches!(made, Ok(Ok(_)))
-            && (hooks.owes)(&path)
+            && (hooks.owes)(&frame.path)
         {
             let mut q = shared.pending.lock().expect("thumbnail pool");
-            if q.epoch == epoch && !q.previews.iter().any(|(_, f)| *f == path) {
-                q.previews.push_back((index, path.clone()));
+            if q.epoch == epoch && !q.previews.iter().any(|(_, f)| *f == frame.path) {
+                q.previews.push_back((index, frame.path.clone()));
                 q.previews_wanted = None;
                 shared.cv.notify_one();
             }
@@ -790,11 +799,11 @@ fn serve(
         // and does nothing when it has not.
         if let Some(hooks) = edits
             && matches!(made, Ok(Ok(_)))
-            && (hooks.wants)(&path)
+            && (hooks.wants)(&frame)
         {
             let mut q = shared.pending.lock().expect("thumbnail pool");
-            if q.epoch == epoch && q.edits_queued.insert(path.clone()) {
-                q.edits.push_back((index, path.clone()));
+            if q.epoch == epoch && q.edits_queued.insert(frame.clone()) {
+                q.edits.push_back((index, frame.clone()));
                 q.edits_wanted = None;
                 shared.cv.notify_one();
             }
@@ -802,7 +811,7 @@ fn serve(
         deliver(match made {
             Ok(Ok((thumb, cached))) => Outcome::Thumbnail {
                 index,
-                path,
+                frame,
                 size,
                 width: thumb.width,
                 height: thumb.height,
@@ -811,16 +820,16 @@ fn serve(
                 seconds,
             },
             Ok(Err(e)) => {
-                tracing::debug!("thumbnail {}: {e}", path.display());
-                Outcome::NoThumbnail { index, path }
+                tracing::debug!("thumbnail {}: {e}", frame.said());
+                Outcome::NoThumbnail { index, frame }
             }
             Err(payload) => {
                 tracing::warn!(
                     "thumbnail {}: the decode panicked: {}",
-                    path.display(),
+                    frame.said(),
                     panic_message(payload.as_ref())
                 );
-                Outcome::NoThumbnail { index, path }
+                Outcome::NoThumbnail { index, frame }
             }
         });
     }
@@ -849,11 +858,15 @@ mod tests {
         (deliver, rx)
     }
 
-    fn file(i: usize) -> PathBuf {
-        PathBuf::from(format!("IMG_{i:04}.CR3"))
+    fn file(i: usize) -> Key {
+        Key::file(format!("IMG_{i:04}.CR3"))
     }
 
-    fn index_of(path: &Path) -> usize {
+    fn index_of(frame: &Key) -> usize {
+        index_of_path(&frame.path)
+    }
+
+    fn index_of_path(path: &Path) -> usize {
         path.to_string_lossy()[4..8].parse().unwrap()
     }
 
@@ -969,9 +982,11 @@ mod tests {
     /// else is recorded there.
     fn preview_hooks(log: Arc<Mutex<Vec<String>>>, kept: &'static [usize]) -> PreviewHooks {
         PreviewHooks {
-            owes: Arc::new(move |path| !kept.contains(&index_of(path))),
+            owes: Arc::new(move |path| !kept.contains(&index_of_path(path))),
             make: Arc::new(move |path| {
-                log.lock().unwrap().push(format!("p{}", index_of(path)));
+                log.lock()
+                    .unwrap()
+                    .push(format!("p{}", index_of_path(path)));
                 Ok(())
             }),
         }
@@ -1071,7 +1086,9 @@ mod tests {
         let hooks = PreviewHooks {
             owes: Arc::new(|_| true),
             make: Arc::new(move |path| {
-                seen.lock().unwrap().push(format!("p{}", index_of(path)));
+                seen.lock()
+                    .unwrap()
+                    .push(format!("p{}", index_of_path(path)));
                 gate.lock().unwrap().recv_timeout(WAIT).expect("let go");
                 Ok(())
             }),
@@ -1168,8 +1185,8 @@ mod tests {
         let tx = Mutex::new(tx);
         let deliver: Deliver = Arc::new(move |outcome| match outcome {
             Outcome::Thumbnail { index, .. } => tx.lock().unwrap().send(("t", index)).unwrap(),
-            Outcome::EditedKept { path } => {
-                tx.lock().unwrap().send(("e", index_of(&path))).unwrap()
+            Outcome::EditedKept { frame } => {
+                tx.lock().unwrap().send(("e", index_of(&frame))).unwrap()
             }
             _ => {}
         });

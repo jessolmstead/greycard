@@ -347,7 +347,8 @@ pub(crate) fn header_words(missing: usize, unknown: usize, label: &str) -> Strin
 /// The frame menu over a selection: its Back up or Bring back, by
 /// where the selection is.
 pub(crate) fn menu_asked(st: &State, app: &App) {
-    let frames: Vec<PathBuf> = chosen_frames(st)
+    let frames: Vec<PathBuf> = st
+        .files_of(&chosen_frames(st))
         .into_iter()
         .filter_map(|i| st.files.get(i))
         .map(|f| keyed(st, f))
@@ -387,7 +388,8 @@ pub(crate) fn ask(state: &Rc<RefCell<State>>, app: &App, from: Pressed, choice: 
     let (offline, here): (Vec<usize>, Vec<usize>) = chosen
         .into_iter()
         .partition(|&i| crate::rows::is_offline(&st, i));
-    let selection: Vec<PathBuf> = here
+    let selection: Vec<PathBuf> = st
+        .files_of(&here)
         .iter()
         .filter_map(|&i| st.files.get(i))
         .map(|f| keyed(&st, f))

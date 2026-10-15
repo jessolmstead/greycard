@@ -29,7 +29,7 @@ use crate::panel::browser::{
 };
 use crate::panel::cull::leave_cull;
 use crate::panel::edit::{panel_state, read_edit, save_edit, write_sidecar};
-use crate::panel::history::{show_history, take_current};
+use crate::panel::history::{show_history, take_current, take_current_with};
 use crate::*;
 use greycard_edit::camera::{self, ProfileChoice};
 use greycard_edit::history::{preset_label, preset_over_set_label, sync_label};
@@ -44,10 +44,7 @@ pub(crate) fn sync_targets(st: &State) -> Vec<usize> {
 /// What the sheet says it will do.
 fn sync_words(st: &State) -> String {
     let n = sync_targets(st).len();
-    let from = st
-        .current
-        .map(|c| file_name(&st.files[c]))
-        .unwrap_or_default();
+    let from = st.current.map(|c| frame_name(st, c)).unwrap_or_default();
     format!(
         "From {from} onto {n} other frame{}.",
         if n == 1 { "" } else { "s" }
@@ -66,19 +63,27 @@ pub(crate) fn show_sync_checks(st: &mut State, app: &App) {
 /// Frame `file`'s edit as the sheet lists its masks from: the panel's
 /// when the panel is the frame's (outside culling), its sidecar's
 /// otherwise.
-fn edit_shown(st: &State, app: &App, file: usize) -> Edit {
-    if st.current == Some(file) && st.cull.is_none() && crate::rows::panel_is_frames(st, file) {
+fn edit_shown(st: &State, app: &App, c: usize) -> Edit {
+    if st.current == Some(c) && st.cull.is_none() && crate::rows::panel_is_frames(st, c) {
         read_edit(app, &st.edit, st.target)
     } else {
-        st.sidecars[file].current.clone()
+        st.line(c).map(|l| l.current.clone()).unwrap_or_default()
     }
+}
+
+/// Cell `c` as a sheet or a status line names it: the file's name, or
+/// for a version the file's stem and the version's name, "IMG_0001
+/// (Warm)", the one form a frame is named by (`versions::Key::said`,
+/// `queue::label_of`).
+pub(crate) fn frame_name(st: &State, c: usize) -> String {
+    st.key_of(c).map(|k| k.said()).unwrap_or_default()
 }
 
 /// A raw frame's make, model and ISO, read from its metadata without
 /// a pixel decoded; `None` for a picture that is not a raw, or a file
 /// that will not say.
-pub(crate) fn probe(st: &State, file: usize) -> Option<greycard_core::decode::Probe> {
-    let path = st.files.get(file)?;
+pub(crate) fn probe(st: &State, c: usize) -> Option<greycard_core::decode::Probe> {
+    let path = st.path_at(c)?;
     if greycard_core::picture::is_picture_path(path) {
         return None;
     }
@@ -161,6 +166,9 @@ pub(crate) fn preset_fitted(
 pub(crate) struct Synced {
     pub(crate) moved: Vec<usize>,
     pub(crate) profile_left_off: Vec<usize>,
+    /// The cells whose file was written: the moved and the seeded, each
+    /// file once however many of its cells are among them.
+    pub(crate) written: Vec<usize>,
 }
 
 /// Lay `preset`'s carried sections over `targets`: one step on each
@@ -224,14 +232,17 @@ pub(crate) fn lay_over_targets(
     let mut left_off = Vec::new();
     let mut seeded = Vec::new();
     for &f in targets {
-        let wants_seed = seeds && st.seed_blend.get(f).copied().unwrap_or(false);
+        // The line's own wait for its ISO: a version made from the
+        // original before the raw was opened is seeded here as the
+        // file's own is, one edited apart is not.
+        let wants_seed = seeds && crate::rows::wants_seed(st, f);
         let probed = (named.is_some() || wants_seed)
             .then(|| probe(st, f))
             .flatten();
-        if wants_seed && let Some(p) = &probed {
-            st.sidecars[f].current.noise.learned_strength =
-                greycard_edit::Noise::blend_for_iso(p.iso);
-            st.seed_blend[f] = false;
+        if wants_seed
+            && let Some(p) = &probed
+            && crate::rows::seed_landed(st, f, greycard_edit::Noise::blend_for_iso(p.iso))
+        {
             seeded.push(f);
         }
         match named {
@@ -246,32 +257,32 @@ pub(crate) fn lay_over_targets(
             _ => fits.push(f),
         }
     }
-    let mut moved =
-        greycard_edit::apply_preset_into(&mut st.sidecars, preset, &fits, learned_from, label);
+    // Each cell's own line takes the preset as a step of its history: a
+    // file and a version of it are two lines of one sidecar.
+    let lay = |st: &mut State, cells: &[usize], preset: &Preset| -> Vec<usize> {
+        cells
+            .iter()
+            .copied()
+            .filter(|&c| {
+                st.line_mut(c).is_some_and(|line| {
+                    greycard_edit::apply_preset_to_line(line, preset, learned_from, label)
+                })
+            })
+            .collect()
+    };
+    let mut moved = lay(st, &fits, preset);
     if !left_off.is_empty() {
         let mut without = preset.clone();
         without.sections.retain(|s| *s != Section::Camera);
-        moved.extend(greycard_edit::apply_preset_into(
-            &mut st.sidecars,
-            &without,
-            &left_off,
-            learned_from,
-            label,
-        ));
+        moved.extend(lay(st, &left_off, &without));
     }
     moved.sort_unstable();
-    if !seeds {
-        // The sync brought the learned blend, which is a choice now
-        // and not the ISO's to seed over on the frame's first open.
-        for &f in &moved {
-            if let Some(seed) = st.seed_blend.get_mut(f) {
-                *seed = false;
-            }
-        }
-    }
     let written = selection::union(&moved, &seeded);
+    // Each file written once, however many of its lines moved.
+    for file in st.files_of(&written) {
+        crate::panel::edit::write_file(st, file);
+    }
     for &f in &written {
-        write_sidecar(st, f);
         let (turns, flip) = thumb_turns(st, app, f);
         show_thumb(st, app, f, turns, flip);
         show_badges(st, app, f);
@@ -280,7 +291,16 @@ pub(crate) fn lay_over_targets(
     Synced {
         moved,
         profile_left_off: left_off,
+        written,
     }
+}
+
+/// Whether `synced`'s writes covered cell `c`'s file: the step recorded
+/// on `c` before the lay went to disk with them, and a write of its own
+/// would be a second revision of the one file.
+fn wrote_file_of(st: &State, synced: &Synced, c: usize) -> bool {
+    let file = st.file_at(c);
+    file.is_some() && synced.written.iter().any(|&w| st.file_at(w) == file)
 }
 
 /// Lay `sections` of the current frame over the rest of the set,
@@ -327,7 +347,7 @@ pub(crate) fn sync_onto(
         .sections
         .contains(&Section::Noise)
         .then_some(&from_edit);
-    let label = Some(sync_label(&file_name(&st.files[from])));
+    let label = Some(sync_label(&frame_name(st, from)));
     lay_over_targets(
         st,
         app,
@@ -354,7 +374,7 @@ fn source_edit(st: &mut State, app: &App, from: usize) -> Option<Edit> {
         save_edit(st, edit.clone());
         return Some(edit);
     }
-    Some(st.sidecars[from].current.clone())
+    st.line(from).map(|l| l.current.clone())
 }
 
 /// What a preset click does, for the current frame alone or for a
@@ -396,11 +416,11 @@ pub(crate) fn preset_pressed(
     worker: &Rc<Worker>,
     preset: Preset,
 ) {
-    let paths: Vec<PathBuf> = {
+    let paths: Vec<crate::versions::Key> = {
         let st = state.borrow();
         chosen_frames(&st)
             .into_iter()
-            .map(|i| st.files[i].clone())
+            .filter_map(|c| st.key_of(c))
             .collect()
     };
     crate::rows::request(
@@ -408,6 +428,7 @@ pub(crate) fn preset_pressed(
         app,
         worker,
         paths,
+        crate::rows::Scope::Line,
         "preset",
         Box::new(move |state, app, worker, at| {
             let frames: Vec<usize> = at.into_iter().flatten().collect();
@@ -492,6 +513,7 @@ pub(crate) fn apply_preset_to(
             &Synced {
                 moved: Vec::new(),
                 profile_left_off: vec![c],
+                written: Vec::new(),
             },
         )
     } else {
@@ -505,13 +527,17 @@ pub(crate) fn apply_preset_to(
         // over the sidecar's current state, and the leaving develops
         // it.
         if st.cull.is_some() {
-            let edit = st.sidecars[c].current.clone();
+            let Some(edit) = st.line(c).map(|l| l.current.clone()) else {
+                return;
+            };
             let applied = current_preset.applied(&edit);
             if applied == edit {
                 app.set_status(format!("{} is on already{left_off_tail}", preset.name).into());
                 return;
             }
-            st.sidecars[c].record_as(applied, Some(preset_label(&preset.name)));
+            if let Some(line) = st.line_mut(c) {
+                line.record_as(applied, Some(preset_label(&preset.name)));
+            }
             // `leave_cull(.., None)` reads the edit to leave with off
             // the sidecar it is itself about to read, so its own "a
             // control's change is written once the panel rests" never
@@ -533,10 +559,14 @@ pub(crate) fn apply_preset_to(
             app.set_status(format!("{} is on already{left_off_tail}", preset.name).into());
             return;
         }
-        if let Some(edit) = panel_state(st, edit) {
-            st.sidecars[c].record(edit);
+        if let Some(edit) = panel_state(st, edit)
+            && let Some(line) = st.line_mut(c)
+        {
+            line.record(edit);
         }
-        st.sidecars[c].record_as(applied, Some(preset_label(&preset.name)));
+        if let Some(line) = st.line_mut(c) {
+            line.record_as(applied, Some(preset_label(&preset.name)));
+        }
         let said = format!("{} applied{left_off_tail}", preset.name);
         // As the set's own non-culling branch below: left for the
         // develop this generation is when one is actually asked for,
@@ -556,11 +586,11 @@ pub(crate) fn apply_preset_to(
     // words.
     let label = preset_over_set_label(targets.len() + 1, &preset.name);
     let current_changed = if st.cull.is_some() {
-        let edit = st.sidecars[c].current.clone();
+        let edit = st.line(c).map(|l| l.current.clone()).unwrap_or_default();
         let applied = current_preset.applied(&edit);
         let changed = applied != edit;
-        if changed {
-            st.sidecars[c].record_as(applied, Some(label.clone()));
+        if changed && let Some(line) = st.line_mut(c) {
+            line.record_as(applied, Some(label.clone()));
         }
         changed
     } else {
@@ -568,10 +598,14 @@ pub(crate) fn apply_preset_to(
         let applied = current_preset.applied(&edit);
         let changed = applied != edit;
         if changed {
-            if let Some(edit) = panel_state(st, edit) {
-                st.sidecars[c].record(edit);
+            if let Some(edit) = panel_state(st, edit)
+                && let Some(line) = st.line_mut(c)
+            {
+                line.record(edit);
             }
-            st.sidecars[c].record_as(applied, Some(label.clone()));
+            if let Some(line) = st.line_mut(c) {
+                line.record_as(applied, Some(label.clone()));
+            }
         }
         changed
     };
@@ -589,6 +623,10 @@ pub(crate) fn apply_preset_to(
         synced.profile_left_off.push(c);
         synced.profile_left_off.sort_unstable();
     }
+    // The current frame's step went to disk with the set's write when
+    // a target shares its file (a version of it): one write, one
+    // revision; else its own.
+    let current_written = current_changed && wrote_file_of(st, &synced, c);
     let moved = synced.moved.len() + usize::from(current_changed);
     let asked = targets.len() + 1;
     let said = preset_onto_words(st, &preset.name, moved, asked, &synced);
@@ -601,7 +639,9 @@ pub(crate) fn apply_preset_to(
         // `leave_cull(.., None)` would otherwise never see its own
         // edit differ from the sidecar's and never schedule the
         // write.
-        write_sidecar(st, c);
+        if !current_written {
+            write_sidecar(st, c);
+        }
         // The leaving develops the frame and sets its own status;
         // culling's placeholder text can replace that again before
         // the develop is on screen (`cull.rs`), so this line is not
@@ -616,7 +656,7 @@ pub(crate) fn apply_preset_to(
         // appended to (`Outcome::Developed` in `deliver.rs`), so it is
         // not lost the moment the develop finishes.
         let before = st.generation;
-        take_current(st, app, worker);
+        take_current_with(st, app, worker, !current_written);
         if st.generation == before {
             // No develop was asked for after all: the panel's change
             // did not reach the engine.
@@ -638,7 +678,7 @@ fn profile_left_off_words(st: &State, synced: &Synced) -> String {
         .profile_left_off
         .iter()
         .take(3)
-        .map(|&f| file_name(&st.files[f]))
+        .map(|&f| frame_name(st, f))
         .collect();
     let more = synced.profile_left_off.len().saturating_sub(3);
     format!(
@@ -711,24 +751,30 @@ pub(crate) fn copy_settings(st: &mut State, app: &App) {
 /// right-clicked, for the menu's Copy. The panel's edit when `file`
 /// is the frame the panel holds; its sidecar's current state
 /// otherwise, brought up to date first.
-pub(crate) fn copy_settings_of(st: &mut State, app: &App, file: usize) {
-    if file >= st.files.len() {
+pub(crate) fn copy_settings_of(st: &mut State, app: &App, cell: usize) {
+    if cell >= st.cells.len() {
         return;
     }
     // The panel's edit is the frame's only when the frame's own was
     // read: under an offline root the panel shows the default that
     // stands in, and there is nothing to copy.
-    if !crate::rows::load_frame(st, app, file) {
-        crate::rows::say_offline_for(st, app, file, ": nothing to copy");
+    if !crate::rows::load_frame(st, app, cell) {
+        crate::rows::say_offline_for(st, app, cell, ": nothing to copy");
         return;
     }
-    let edit = if st.cull.is_none() && st.current == Some(file) {
+    let edit = if st.cull.is_none() && st.current == Some(cell) {
         read_edit(app, &st.edit, st.target)
     } else {
-        migrate_frame(st, file);
-        st.sidecars[file].current.clone()
+        migrate_frame(st, cell);
+        let Some(line) = st.line(cell) else {
+            return;
+        };
+        line.current.clone()
     };
-    let clip = Clipboard::copy(edit, &st.files[file]);
+    let Some(from) = st.key_of(cell) else {
+        return;
+    };
+    let clip = Clipboard::copy(edit, from, frame_name(st, cell));
     let name = clip.name();
     st.clipboard = Some(clip);
     app.set_clip_from(name.clone().into());
@@ -750,7 +796,7 @@ fn paste_checks(st: &State, clip: &Clipboard) -> carry::Checks {
 /// frame copied from left out when it is among them.
 fn paste_words(st: &State, clip: &Clipboard, targets: &[usize]) -> String {
     let onto = match targets {
-        [one] => file_name(&st.files[*one]),
+        [one] => frame_name(st, *one),
         _ => format!("{} frames", targets.len()),
     };
     let set = chosen_frames(st);
@@ -781,7 +827,7 @@ pub(crate) fn paste_open(st: &mut State, app: &App) {
     let Some(c) = st.current else {
         return;
     };
-    let targets = clip.targets(&chosen_frames(st), &st.files);
+    let targets = clip.targets(st, &chosen_frames(st));
     if targets.is_empty() {
         app.set_status(
             format!(
@@ -824,7 +870,7 @@ pub(crate) fn paste_onto(
     let Some(clip) = st.clipboard.clone() else {
         return Synced::default();
     };
-    let targets = clip.targets(chosen, &st.files);
+    let targets = clip.targets(st, chosen);
     let preset = clip.preset(choice);
     let label = clip.label();
     // Outside culling the frame on screen is the panel's, and what
@@ -840,10 +886,14 @@ pub(crate) fn paste_onto(
         let edit = read_edit(app, &st.edit, st.target);
         let applied = clip.applied(&fits, &edit);
         if applied != edit {
-            if let Some(edit) = panel_state(st, edit) {
-                st.sidecars[c].record(edit);
+            if let Some(edit) = panel_state(st, edit)
+                && let Some(line) = st.line_mut(c)
+            {
+                line.record(edit);
             }
-            st.sidecars[c].record_as(applied, Some(label.clone()));
+            if let Some(line) = st.line_mut(c) {
+                line.record_as(applied, Some(label.clone()));
+            }
             current_changed = true;
         }
     }
@@ -862,6 +912,11 @@ pub(crate) fn paste_onto(
         profiles,
         probe,
     );
+    // The current frame's step went to disk with the set's write when
+    // a target shares its file (a version of it): one write, one
+    // revision; else its own, below.
+    let current_written =
+        current_changed && panel_frame.is_some_and(|c| wrote_file_of(st, &synced, c));
     if let Some(c) = panel_frame {
         if current_changed {
             synced.moved.push(c);
@@ -893,7 +948,7 @@ pub(crate) fn paste_onto(
         // As a preset click's: the develop sets its own words, and
         // these go first once it lands.
         let before = st.generation;
-        take_current(st, app, worker);
+        take_current_with(st, app, worker, !current_written);
         if st.generation == before {
             app.set_status(said.into());
         } else {
@@ -1017,9 +1072,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 // As a sync's: what the sheet named, or nothing.
                 let asked = st.paste_asked.take();
                 let now = match (&st.clipboard, st.current) {
-                    (Some(clip), Some(c)) => {
-                        Some((c, clip.targets(&chosen_frames(&st), &st.files)))
-                    }
+                    (Some(clip), Some(c)) => Some((c, clip.targets(&st, &chosen_frames(&st)))),
                     _ => None,
                 };
                 if asked.is_none() || asked != now {
@@ -1032,9 +1085,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 st.sync_last = Some(st.sync_checks.clone());
                 // A request for the chosen frames' sidecars, and the
                 // paste over exactly those frames once they are in.
-                let paths: Vec<PathBuf> = chosen_frames(&st)
+                let paths: Vec<crate::versions::Key> = chosen_frames(&st)
                     .into_iter()
-                    .map(|i| st.files[i].clone())
+                    .filter_map(|c| st.key_of(c))
                     .collect();
                 drop(st);
                 crate::rows::request(
@@ -1042,6 +1095,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                     &app,
                     &worker,
                     paths,
+                    crate::rows::Scope::Line,
                     "paste",
                     Box::new(move |state, app, worker, at| {
                         let chosen: Vec<usize> = at.into_iter().flatten().collect();
@@ -1091,9 +1145,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             let Some(c) = st.current else {
                 return;
             };
-            let paths: Vec<PathBuf> = std::iter::once(c)
+            let paths: Vec<crate::versions::Key> = std::iter::once(c)
                 .chain(targets.iter().copied())
-                .map(|i| st.files[i].clone())
+                .filter_map(|c| st.key_of(c))
                 .collect();
             drop(st);
             crate::rows::request(
@@ -1101,6 +1155,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 &app,
                 &worker,
                 paths,
+                crate::rows::Scope::Line,
                 "sync",
                 Box::new(move |state, app, _, at| {
                     let Some(from) = at.first().copied().flatten() else {
@@ -1392,7 +1447,11 @@ mod tests {
             let mut st = state.borrow_mut();
             st.sidecars[0].current.camera.profile = ProfileChoice::Named("r5".into());
             st.sidecars[0].current.light.exposure = 0.5;
-            st.seed_blend = vec![false, true, true];
+            // Frames 1 and 2 are raws never developed: each waits for
+            // its ISO's blend, as its own line says.
+            assert!(!crate::rows::wants_seed(&st, 0));
+            assert!(crate::rows::wants_seed(&st, 1));
+            assert!(crate::rows::wants_seed(&st, 2));
         }
         open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
         state.borrow_mut().picked = vec![0, 1, 2];
@@ -1419,7 +1478,7 @@ mod tests {
             blend(3200)
         );
         assert_eq!(st.sidecars[2].current.noise.learned_strength, blend(100));
-        assert_eq!(st.seed_blend, [false, false, false]);
+        assert!((0..3).all(|c| !crate::rows::wants_seed(&st, c)));
         assert!(
             synced_words(
                 &st,
@@ -1432,8 +1491,15 @@ mod tests {
         drop(st);
 
         // With Noise synced the blend is the source's, and nothing
-        // is seeded over it on a first open.
-        state.borrow_mut().seed_blend = vec![false, true, true];
+        // is seeded over it on a first open: the lines are at their
+        // defaults again, waiting.
+        {
+            let mut st = state.borrow_mut();
+            for f in [1, 2] {
+                st.sidecars[f] = Sidecar::default();
+            }
+            assert!(crate::rows::wants_seed(&st, 1) && crate::rows::wants_seed(&st, 2));
+        }
         app.set_denoise_learned_strength(0.6);
         let synced = sync_selection(
             &mut state.borrow_mut(),
@@ -1444,7 +1510,7 @@ mod tests {
         );
         assert_eq!(synced.moved, [1, 2]);
         let st = state.borrow();
-        assert_eq!(st.seed_blend, [false, false, false]);
+        assert!((0..3).all(|c| !crate::rows::wants_seed(&st, c)));
         assert_eq!(
             st.sidecars[2].current.noise.learned_strength,
             st.sidecars[0].current.noise.learned_strength
@@ -1688,7 +1754,15 @@ mod tests {
             "a preset leaves it"
         );
 
-        state.borrow_mut().seed_blend = vec![true, true, true];
+        // Frame 1 at its default again waits for its ISO; frame 0,
+        // edited, has a blend of its own that no seed touches.
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars[1] = Sidecar::default();
+            st.sidecars[0].current.noise.learned_strength = 0.123;
+            assert!(!crate::rows::wants_seed(&st, 0));
+            assert!(crate::rows::wants_seed(&st, 1));
+        }
         let bodies = |_: &State, f: usize| match f {
             0 => Some(body("Canon", "EOS R5", 100)),
             1 => Some(body("Canon", "EOS R5", 3200)),
@@ -1716,9 +1790,13 @@ mod tests {
                 "the preset's Noise never carries a tier, frame {f}"
             );
         }
-        assert_eq!(st.sidecars[0].current.noise.learned_strength, blend(100));
+        assert_eq!(
+            st.sidecars[0].current.noise.learned_strength, 0.123,
+            "its own blend, not the ISO's"
+        );
         assert_eq!(st.sidecars[1].current.noise.learned_strength, blend(3200));
-        assert_eq!(st.seed_blend, [false, false, true], "the two seeded");
+        assert!(!crate::rows::wants_seed(&st, 1), "seeded");
+        assert!(crate::rows::wants_seed(&st, 2), "not a target: still waits");
     }
 
     /// A preset naming a camera profile checks every frame's body the
@@ -2218,7 +2296,7 @@ mod tests {
         {
             let st = state.borrow();
             let clip = st.clipboard.as_ref().expect("a copy");
-            assert_eq!(clip.from, files[1]);
+            assert_eq!(clip.from.path, files[1]);
             assert_eq!(clip.edit.light.exposure, 0.8);
         }
         // Onto the frame it came from alone: nothing to do.

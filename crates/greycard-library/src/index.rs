@@ -1484,6 +1484,24 @@ pub(crate) struct Summary {
     /// ([`crate::lens_database`]); 0 for a develop whose edit could
     /// not be read, so the row is not read again for it every pass.
     pub(crate) develop_key: Option<u64>,
+    /// The sidecar's versions beside the file's own, in its order: what
+    /// the `versions` table mirrors of each.
+    pub(crate) versions: Vec<VersionSummary>,
+}
+
+/// What a row of the `versions` table mirrors of one version in a
+/// sidecar: its id, name and time made, and its own marks and key,
+/// read under the rules version 0's are.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(crate) struct VersionSummary {
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) made: u64,
+    pub(crate) edited: bool,
+    pub(crate) exported: bool,
+    /// The version's learned blend, judged at the write as version 0's.
+    pub(crate) blend: Option<f32>,
+    pub(crate) develop_key: Option<u64>,
 }
 
 /// The `.gcd`'s JSON read for what the row mirrors of it, before the
@@ -1507,6 +1525,80 @@ struct Parsed {
     /// The file, or its edit, could not be read: there is something
     /// in it, whatever it is.
     unreadable: bool,
+    /// Each version's line, read as version 0's is.
+    versions: Vec<ParsedVersion>,
+}
+
+/// One version of a sidecar as [`parsed`] reads it.
+struct ParsedVersion {
+    id: String,
+    name: String,
+    made: u64,
+    current: Option<greycard_edit::Edit>,
+    stepped: bool,
+    exported: bool,
+    unreadable: bool,
+}
+
+/// A line's `current` brought up to this build's shape: none when the
+/// line has none, and an edit that will not read said in the log.
+fn line_edit(
+    line: &serde_json::Value,
+    sidecar: &Path,
+    which: &str,
+) -> (Option<greycard_edit::Edit>, bool) {
+    match line.get("current").cloned().map(|c| {
+        greycard_edit::migrate(c)
+            .and_then(|c| Ok(serde_json::from_value::<greycard_edit::Edit>(c)?))
+    }) {
+        None => (None, false),
+        Some(Ok(edit)) => (Some(edit), false),
+        Some(Err(e)) => {
+            log::warn!("{}: {which} was not read: {e}", sidecar.display());
+            (None, true)
+        }
+    }
+}
+
+/// The sidecar's versions, loosely as the edit crate reads them: a
+/// `versions` that is not a list is none, and an entry with no id, or
+/// an id already read, is left out.
+fn parsed_versions(value: &serde_json::Value, sidecar: &Path) -> Vec<ParsedVersion> {
+    let Some(items) = value.get("versions").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+    let mut out: Vec<ParsedVersion> = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(id) = item
+            .get("id")
+            .and_then(|i| i.as_str())
+            .filter(|i| !i.trim().is_empty())
+        else {
+            continue;
+        };
+        if out.iter().any(|v| v.id == id) {
+            continue;
+        }
+        let line = item.get("line").unwrap_or(&serde_json::Value::Null);
+        let (current, unreadable) = line_edit(line, sidecar, &format!("version {id}'s edit"));
+        out.push(ParsedVersion {
+            id: id.to_string(),
+            name: item
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            made: item.get("made").and_then(|m| m.as_u64()).unwrap_or(0),
+            current,
+            stepped: line
+                .get("snapshots")
+                .and_then(|v| v.as_array())
+                .is_some_and(|a| !a.is_empty()),
+            exported: records_export(line),
+            unreadable,
+        });
+    }
+    out
 }
 
 /// The meta is read as `meta` alone, loosely, so a sidecar whose edit
@@ -1544,17 +1636,7 @@ fn parsed(json: Option<&[u8]>, sidecar: &Path) -> Parsed {
             .and_then(|v| v.as_array())
             .map_or(0, Vec::len)
     };
-    let (current, unreadable) = match value.get("current").cloned().map(|c| {
-        greycard_edit::migrate(c)
-            .and_then(|c| Ok(serde_json::from_value::<greycard_edit::Edit>(c)?))
-    }) {
-        None => (None, false),
-        Some(Ok(edit)) => (Some(edit), false),
-        Some(Err(e)) => {
-            log::warn!("{}: the edit was not read: {e}", sidecar.display());
-            (None, true)
-        }
-    };
+    let (current, unreadable) = line_edit(&value, sidecar, "the edit");
     Parsed {
         meta,
         turn: value
@@ -1566,6 +1648,7 @@ fn parsed(json: Option<&[u8]>, sidecar: &Path) -> Parsed {
         stepped: count("snapshots") > 0,
         exported: records_export(&value),
         unreadable,
+        versions: parsed_versions(&value, sidecar),
     }
 }
 
@@ -1643,6 +1726,31 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
     } else {
         None
     };
+    // Each version by the rules version 0 is read by.
+    let lenses = crate::lens_database();
+    let versions = p
+        .versions
+        .into_iter()
+        .map(|v| {
+            let edited = v.stepped
+                || v.unreadable
+                || v.current
+                    .as_ref()
+                    .is_some_and(|c| !crate::is_default_edit(c, raw, None));
+            VersionSummary {
+                develop_key: match &v.current {
+                    Some(c) => Some(c.develop_key(lenses.as_deref())),
+                    None => edited.then_some(0),
+                },
+                blend: v.current.as_ref().map(|c| c.noise.learned_strength),
+                id: v.id,
+                name: v.name,
+                made: v.made,
+                edited,
+                exported: v.exported,
+            }
+        })
+        .collect();
     Summary {
         meta: sidecar.meta,
         edited,
@@ -1650,6 +1758,7 @@ fn summary_of(now: Option<&SidecarNow>, raw: &Path) -> Summary {
         blend: p.current.as_ref().map(|c| c.noise.learned_strength),
         turns: crate::pack_turns(sidecar.line.current.geometry.shown_turns(sidecar.turn)),
         develop_key,
+        versions,
     }
 }
 
@@ -1714,6 +1823,37 @@ fn write_meta(tx: &Transaction<'_>, id: i64, seen: Seen<'_>) -> Result<()> {
         tx.prepare_cached("INSERT OR IGNORE INTO keywords (file, word) VALUES (?, ?)")?;
     for word in &meta.keywords {
         insert.execute(params![id, word])?;
+    }
+    write_versions(tx, id, &summary.versions, iso)
+}
+
+/// The row's versions as the sidecar holds them, in its order: the
+/// table's rows of the file replaced whole, so a version deleted from
+/// the sidecar drops its row.
+fn write_versions(
+    tx: &Transaction<'_>,
+    id: i64,
+    versions: &[VersionSummary],
+    iso: Option<u32>,
+) -> Result<()> {
+    tx.prepare_cached("DELETE FROM versions WHERE file = ?")?
+        .execute(params![id])?;
+    let mut insert = tx.prepare_cached(
+        "INSERT OR IGNORE INTO versions (file, version, name, made, position, edited, \
+         exported, develop_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    )?;
+    for (position, v) in versions.iter().enumerate() {
+        let edited = v.edited || v.blend.is_some_and(|b| !crate::blend_is_default(b, iso));
+        insert.execute(params![
+            id,
+            v.id,
+            v.name,
+            v.made.min(i64::MAX as u64) as i64,
+            position as i64,
+            i64::from(edited),
+            i64::from(v.exported),
+            v.develop_key.map(|k| k as i64),
+        ])?;
     }
     Ok(())
 }
@@ -4310,6 +4450,152 @@ pub(crate) mod tests {
             Some(brightened.develop_key(Some("elsewhere 2026")) as i64)
         );
         crate::set_lens_database(None);
+        drop(lib);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The rows of the `versions` table the file's row lists, by id,
+    /// name and place.
+    fn version_rows(lib: &Library, dir: &Path, file: &Path) -> Vec<crate::VersionRow> {
+        lib.rows_in_canonical(dir)
+            .unwrap()
+            .into_iter()
+            .find(|(p, _)| p == file)
+            .map(|(_, row)| row.versions)
+            .unwrap_or_default()
+    }
+
+    fn versions_in_table(lib: &mut Library) -> i64 {
+        lib.conn_mut()
+            .query_row("SELECT count(*) FROM versions", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    /// A frame's sidecar with two versions beside its own: one a copy
+    /// of its brightened edit, renamed, and one from the defaults.
+    fn with_versions(path: &Path) -> (Sidecar, String, String, greycard_edit::Edit) {
+        let mut brightened = greycard_edit::Edit::for_picture();
+        brightened.light.exposure = 0.7;
+        let mut s = Sidecar {
+            line: greycard_edit::Line::of(brightened.clone()),
+            ..Sidecar::default()
+        };
+        s.meta.rating = 3;
+        let warm = s.new_version(None, Some("Warm")).unwrap();
+        let fresh = s.new_version_from_original(greycard_edit::Edit::for_picture(), None);
+        s.save(path).unwrap();
+        (s, warm, fresh, brightened)
+    }
+
+    /// A sidecar with two versions makes two rows of the `versions`
+    /// table, in the sidecar's order, each with its own name, marks and
+    /// key; the file's row keeps version 0's, and `has:versions` finds
+    /// the file.
+    #[test]
+    fn a_sidecar_with_two_versions_gives_two_version_rows() {
+        let dir = scratch("versions");
+        let (r5, _r6, _a7) = shoot(&dir);
+        let (_s, warm, fresh, brightened) = with_versions(&r5);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let rows = version_rows(&lib, &dir, &r5);
+        assert_eq!(rows.len(), 2, "{rows:?}");
+        assert_eq!(
+            (rows[0].id.as_str(), rows[0].name.as_str()),
+            (warm.as_str(), "Warm")
+        );
+        assert_eq!(
+            (rows[1].id.as_str(), rows[1].name.as_str()),
+            (fresh.as_str(), "Version 3")
+        );
+        assert!(rows[0].edited, "a copy of an edit is edited");
+        assert!(!rows[1].edited, "the defaults are not");
+        assert!(!rows[0].exported && !rows[1].exported);
+        assert_eq!(rows[0].develop_key, Some(brightened.develop_key(None)));
+        assert!(rows[1].develop_key.is_some(), "an edit to key");
+        assert!(rows[0].made > 0);
+        let entry = lib.by_path(&r5).unwrap().unwrap();
+        assert!(
+            entry.edited && entry.meta.rating == 3,
+            "the row is version 0's"
+        );
+        assert_eq!(names(&lib, "has:versions"), ["r5.tif"]);
+        let mut others = names(&lib, "has!=versions");
+        others.sort();
+        assert_eq!(others, ["a7.tif", "r6.tif"]);
+        // The other files have none.
+        assert!(version_rows(&lib, &dir, &dir.join("a7.tif")).is_empty());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A version deleted from the sidecar drops its row at the next
+    /// pass, the last one deleted leaves none, and a file forgotten
+    /// takes its versions' rows with it.
+    #[test]
+    fn a_version_deleted_drops_its_row() {
+        let dir = scratch("version-deleted");
+        let (r5, _r6, _a7) = shoot(&dir);
+        let (mut s, warm, fresh, _) = with_versions(&r5);
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(versions_in_table(&mut lib), 2);
+        s.delete_version(&warm).unwrap();
+        s.save(&r5).unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        let rows = version_rows(&lib, &dir, &r5);
+        assert_eq!(
+            rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+            [fresh.as_str()]
+        );
+        // The save's own word to the index does the same.
+        s.delete_version(&fresh).unwrap();
+        s.save(&r5).unwrap();
+        lib.index_file(&r5).unwrap();
+        assert!(version_rows(&lib, &dir, &r5).is_empty());
+        assert_eq!(versions_in_table(&mut lib), 0);
+        // Forgetting the file takes its versions.
+        let (_s, _, _, _) = with_versions(&r5);
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(versions_in_table(&mut lib), 2);
+        lib.forget(std::slice::from_ref(&r5)).unwrap();
+        assert_eq!(versions_in_table(&mut lib), 0, "cascaded with the file");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A schema 9 library gains the `versions` table empty, and the
+    /// next pass reads every sidecar again (as schema 8's did) and
+    /// fills it, and nothing else of the folder.
+    #[test]
+    fn a_schema_9_library_gains_the_versions_table_on_the_next_pass() {
+        let dir = scratch("schema9");
+        let (r5, _r6, _a7) = shoot(&dir);
+        let (_s, warm, _fresh, _) = with_versions(&r5);
+        let db = dir.join("library.sqlite");
+        {
+            let mut lib = Library::open(&db).unwrap();
+            lib.index_folder(&dir, &mut quiet()).unwrap();
+            lib.conn_mut()
+                .execute_batch("DROP TABLE versions; PRAGMA user_version = 9;")
+                .unwrap();
+        }
+        let mut lib = Library::open(&db).unwrap();
+        let version: i32 = lib
+            .conn_mut()
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, crate::SCHEMA_VERSION);
+        assert_eq!(versions_in_table(&mut lib), 0, "the table comes empty");
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(
+            (report.meta_refreshed, report.added),
+            (2, 0),
+            "the two sidecars alone: {report:?}"
+        );
+        let rows = version_rows(&lib, &dir, &r5);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].id, warm);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.meta_refreshed, 0, "{report:?}");
         drop(lib);
         std::fs::remove_dir_all(&dir).unwrap();
     }

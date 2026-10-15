@@ -237,44 +237,50 @@ pub(crate) fn plan(
         let held = crate::rows::from_disk(&source, write_sidecars);
         let unreadable = matches!(held.trouble, Some(crate::rows::Trouble::Unreadable(_)));
         let mut sidecar = held.sidecar;
-        let mut seed = held.seed;
+        // The version `--version-name` named, first by position when two
+        // share the name; the file's own line without it. Found before
+        // the preset goes on, so the preset lands on the line exported.
+        let frame_version = match &cli.version_name {
+            None => None,
+            Some(name) => {
+                let matching: Vec<_> = sidecar
+                    .versions
+                    .iter()
+                    .filter(|v| v.name == *name)
+                    .collect();
+                if matching.is_empty() {
+                    anyhow::bail!("{} has no version named {name}", source.display());
+                }
+                if matching.len() > 1 {
+                    tracing::warn!(
+                        "{} has {} versions named {name}; the first is exported",
+                        source.display(),
+                        matching.len()
+                    );
+                }
+                Some(queue::Version {
+                    id: matching[0].id.clone(),
+                    name: matching[0].name.clone(),
+                })
+            }
+        };
+        let version = frame_version.as_ref().map(|v| v.id.as_str());
         if i == first
             && let Some(preset) = &preset
         {
-            // Onto the sidecar and written, as the window lays it; not
-            // over a sidecar that would not read.
+            // Onto the line exported and written, as the window lays it;
+            // not over a sidecar that would not read.
             let placement = (write_sidecars && !unreadable).then_some(placement);
-            preset_at_start(&mut sidecar, &mut seed, &source, preset, placement);
+            preset_at_start(&mut sidecar, version, &source, preset, placement);
         }
         crate::files::migrate_from_file(&mut sidecar, &source);
-        let mut edit = sidecar.current.clone();
-        let mut frame_version = None;
-
-        if let Some(name) = &cli.version_name {
-            let matching: Vec<_> = sidecar
-                .versions
-                .iter()
-                .filter(|v| v.name == *name)
-                .collect();
-
-            if matching.is_empty() {
-                anyhow::bail!("{} has no version named {name}", source.display());
-            }
-
-            if matching.len() > 1 {
-                tracing::warn!(
-                    "{} has {} versions named {name}; the first is exported",
-                    source.display(),
-                    matching.len()
-                );
-            }
-
-            edit = matching[0].line.current.clone();
-            frame_version = Some(queue::Version {
-                id: matching[0].id.clone(),
-                name: matching[0].name.clone(),
-            });
-        }
+        let line = sidecar
+            .line(version)
+            .expect("the version was found in this sidecar above");
+        let mut edit = line.current.clone();
+        // The line's own wait for its ISO.
+        let raw = !greycard_core::picture::is_picture_path(&source);
+        let seed = raw && crate::files::line_never_developed(line);
 
         // The command line's temperature, exposure and curve, over the
         // first frame's edit and never onto its sidecar.
@@ -720,6 +726,7 @@ mod tests {
         }
         worker.send(Job::Open {
             path: frame.source.clone(),
+            version: frame.version.as_ref().map(|v| v.id.as_str().into()),
             edit: frame.edit.clone(),
             generation: 1,
             seed_blend: frame.seed_blend,
@@ -1346,5 +1353,59 @@ mod tests {
         assert_eq!(finished.code(), LEFT_OUT, "{}", finished.line);
         assert!(finished.line.contains(MISSING), "{}", finished.line);
         assert_eq!(export(0.0, "b.png").code(), WRITTEN);
+    }
+
+    /// `--preset` with `--version-name`: the preset goes on the version
+    /// named, is exported under it, and version 0 gains no step.
+    #[test]
+    fn a_preset_at_start_lays_on_the_version_named() {
+        let scratch = Scratch::new("version-preset");
+        let source = scratch.0.join("frame.dng");
+        dng(&source, 96, 64);
+        let mut sidecar = Sidecar::default();
+        sidecar.current.light.exposure = -0.3;
+        let id = sidecar.new_version(None, Some("Warm")).unwrap();
+        sidecar
+            .save_in(&source, greycard_edit::Placement::Beside)
+            .unwrap();
+        let mut bright = Edit::default();
+        bright.light.exposure = 1.1;
+        let store = greycard_edit::preset::Store::at(scratch.0.join("presets"));
+        store
+            .save(&Preset::from_edit(
+                "Bright",
+                &bright,
+                &[greycard_edit::Section::Light],
+            ))
+            .unwrap();
+        let out = scratch.0.join("out");
+        std::fs::create_dir_all(&out).unwrap();
+        let remembered = settings::Settings::default();
+        let planned = plan(
+            &cli(&[
+                source.as_os_str(),
+                "--export".as_ref(),
+                out.as_os_str(),
+                "--version-name".as_ref(),
+                "Warm".as_ref(),
+                "--preset".as_ref(),
+                "Bright".as_ref(),
+            ]),
+            &out,
+            &remembered,
+            Some(&store),
+            None,
+        )
+        .unwrap();
+        assert_eq!(
+            planned.frames[0].edit.light.exposure, 1.1,
+            "the preset, on the version"
+        );
+        let back = Sidecar::load(&source).unwrap().unwrap();
+        assert_eq!(back.current.light.exposure, -0.3, "version 0 as it was");
+        assert!(back.history.is_empty(), "no step on version 0");
+        let line = back.line(Some(&id)).unwrap();
+        assert_eq!(line.current.light.exposure, 1.1);
+        assert_eq!(line.current_label.as_deref(), Some("Preset: Bright"));
     }
 }

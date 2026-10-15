@@ -61,6 +61,18 @@ export component FrameMenu inherits Rectangle {
     /// Whether the lightbox is on, for its item's words, and the item.
     in property <bool> lightbox;
     callback lightbox-toggled();
+    /// The version the frame right-clicked is, by name; empty for the
+    /// file's own, which Rename, Swap and Delete are not offered on.
+    in property <string> version;
+    /// Whether a version can be made here: a frame, not culling.
+    in property <bool> can-version: true;
+    /// New version (Ctrl+'), the frame's edit copied; from the
+    /// original, the default edit.
+    callback new-version();
+    callback new-version-from-original();
+    callback rename-version();
+    callback swap-version();
+    callback delete-version();
 
     // Nothing of its own to draw or to take a click: the menu is a
     // popup, placed from this corner, and a zero-sized area at the
@@ -92,6 +104,29 @@ export component FrameMenu inherits Rectangle {
                     + "onto " + (root.count - 1)
                     + (root.count == 2 ? " other frame..." : " other frames...");
                 activated => { root.sync(); }
+            }
+            MenuSeparator { }
+            MenuItem {
+                title: "New version";
+                enabled: root.can-version;
+                activated => { root.new-version(); }
+            }
+            MenuItem {
+                title: "New version from the original";
+                enabled: root.can-version;
+                activated => { root.new-version-from-original(); }
+            }
+            if root.version != "": MenuItem {
+                title: "Rename version...";
+                activated => { root.rename-version(); }
+            }
+            if root.version != "": MenuItem {
+                title: "Swap with the original";
+                activated => { root.swap-version(); }
+            }
+            if root.version != "": MenuItem {
+                title: "Delete version...";
+                activated => { root.delete-version(); }
             }
             MenuSeparator { }
             MenuItem {

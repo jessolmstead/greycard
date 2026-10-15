@@ -70,8 +70,8 @@ impl Cull {
     }
 
     /// Whether `file`'s own picture is still worth asking its file for.
-    fn wants_file(&self, file: usize) -> bool {
-        !self.failed.contains_key(&file) && !self.file_failed.contains(&file)
+    fn wants_file(&self, cell: usize) -> bool {
+        !self.failed.contains_key(&cell) && !self.file_failed.contains(&cell)
     }
 
     pub(crate) fn new(tab_kept: slint::SharedString, size: u32) -> Self {
@@ -214,15 +214,15 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     // any more, and the load is not an open of its own.
     st.panel_stand_in = None;
     if !crate::rows::load_frame(st, app, c) {
-        st.panel_stand_in = Some(st.files[c].clone());
+        st.panel_stand_in = Some(st.path_of(c).clone());
     }
-    let edit = with.unwrap_or_else(|| st.sidecars[c].current.clone());
+    let edit = with.unwrap_or_else(|| st.line(c).map(|l| l.current.clone()).unwrap_or_default());
     st.target = None;
     // The tool is put down. Left onto another frame than the one open
     // before the mode, its people are not that frame's either; left on
     // the same one, a part's question who it is of still stands, as
     // its raster does.
-    if st.learned_of.as_deref() == Some(st.files[c].as_path()) {
+    if st.learned_of.as_deref() == Some(st.path_of(c).as_path()) {
         crate::panel::parts::stopped(st);
     } else {
         crate::panel::parts::another_picture(st);
@@ -230,7 +230,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     show_edit(st, &edit, app, None);
     // A control's change is a step of the frame's history, as it
     // would be out of the mode: written once the panel rests.
-    if edit != st.sidecars[c].current {
+    if st.line(c).is_some_and(|l| edit != l.current) {
         schedule_save(st, app.as_weak());
     }
     show_history(st, app);
@@ -247,7 +247,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     // saying it had would gate the panel off the developed picture
     // that is still on screen.
     if let Some(preview) = st.hold.as_ref().and_then(|h| h.cache.best(c)) {
-        let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, c, app, true);
+        let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, c, app, true);
         let plane = Geometry {
             turns,
             flip,
@@ -282,7 +282,7 @@ pub(crate) fn control_over_frame(st: &mut State, app: &App) -> Option<Edit> {
     if !crate::rows::load_frame(st, app, c) {
         return None;
     }
-    let frame = &st.sidecars[c].current;
+    let frame = &st.line(c)?.current;
     match greycard_edit::overlay_changes(&before, &touched, frame) {
         Ok(edit) => Some(edit),
         Err(e) => {
@@ -337,8 +337,8 @@ pub(crate) fn show_shot(st: &State, app: &App) {
 /// The selection moves to `file` in culling mode: no develop, the
 /// panel left as it is, the frame's JPEG shown from the cache or
 /// asked for, and the window of decodes about it renewed.
-pub(crate) fn cull_select(st: &mut State, app: &App, file: usize) {
-    let Some(row) = row_of(st, file) else {
+pub(crate) fn cull_select(st: &mut State, app: &App, cell: usize) {
+    let Some(row) = row_of(st, cell) else {
         return;
     };
     let was = st.current;
@@ -347,15 +347,15 @@ pub(crate) fn cull_select(st: &mut State, app: &App, file: usize) {
     // it, and leaving the mode develops it. One under a root that is
     // offline is stepped onto all the same, and the status says why
     // there is no picture.
-    crate::rows::load_frame(st, app, file);
+    crate::rows::load_frame(st, app, cell);
     // As the loupe takes it: leaving culling develops this frame,
     // and a part-migrated Original crop would be measured first.
-    migrate_frame(st, file);
-    st.current = Some(file);
+    migrate_frame(st, cell);
+    st.current = Some(cell);
     crate::panel::viewport::settle_source_size(st);
     app.set_selected(row as i32);
-    app.set_file_name(file_name(&st.files[file]).into());
-    let shot = shot_text(st, file).unwrap_or_default();
+    app.set_file_name(file_name(st.path_of(cell)).into());
+    let shot = shot_text(st, st.file_of(cell)).unwrap_or_default();
     app.set_shot_camera(shot.camera.as_str().into());
     app.set_shot_exposure(shot.exposure.as_str().into());
     app.set_shot_size("".into());
@@ -363,16 +363,16 @@ pub(crate) fn cull_select(st: &mut State, app: &App, file: usize) {
     show_frame_tags(st, app);
     let count = st.shown.len();
     if let Some(cull) = st.cull.as_mut() {
-        cull.forward = was.is_none_or(|w| file >= w);
+        cull.forward = was.is_none_or(|w| cell >= w);
         cull.anchor = cull::anchor_for(cull.anchor, row, cull.compare, count);
         cull.switched = Some(std::time::Instant::now());
         // A full-size copy is the frame's own; the next one asks for
         // its own if 1:1 is still on.
-        cull.cache.drop_full_unless(file);
+        cull.cache.drop_full_unless(cell);
         cull.full_asked = None;
         // A decode that failed is tried again when the frame comes
-        // round: a file being written, a moment's shortage.
-        cull.failed.remove(&file);
+        // round: a cell being written, a moment's shortage.
+        cull.failed.remove(&cell);
     }
     cull_refresh(st);
     app.window().request_redraw();
@@ -413,14 +413,16 @@ pub(crate) fn cull_refresh(st: &mut State) {
         cull.cache.bytes() / 1_000_000
     );
     let size = cull.size;
-    let (files, from_row, library) = (&st.files, &st.from_row, &st.library);
-    let plan = |f: usize| loupe_plan(files, from_row, library, f);
+    let (files, from_row, cells, library) = (&st.files, &st.from_row, &st.cells, &st.library);
+    let plan = |c: usize| loupe_plan_of(files, from_row, cells, library, c);
+    let path_of = |c: usize| files[cells[c].file].clone();
+    let version_of = |c: usize| cells[c].version.clone();
     let frames: Vec<usize> = order.iter().map(|&r| st.shown[r]).collect();
     let mut wants = Vec::new();
     // At 1:1, the frame's full JPEG before anything, where its file can
     // be read.
     if st.zoom > 0.0 && !cull.cache.has_own_size(c) && cull.wants_file(c) && plan(c).file {
-        wants.push(cull::Want::for_loupe(c, files[c].clone(), 0));
+        wants.push(cull::Want::for_loupe(c, path_of(c), 0).of_version(version_of(c)));
     }
     // The local previews of the frames with no picture yet, all of
     // them ahead of any file: under an offline root they are all there
@@ -435,7 +437,7 @@ pub(crate) fn cull_refresh(st: &mut State) {
         match plan(f) {
             cull::Plan {
                 preview: Some(key), ..
-            } => wants.push(cull::Want::local(f, files[f].clone(), size, key)),
+            } => wants.push(cull::Want::local(f, path_of(f), size, key).of_version(version_of(f))),
             cull::Plan {
                 preview: None,
                 file: false,
@@ -452,20 +454,29 @@ pub(crate) fn cull_refresh(st: &mut State) {
         if had || !cull.wants_file(f) || !plan(f).file {
             continue;
         }
-        wants.push(cull::Want::for_loupe(f, files[f].clone(), size));
+        wants.push(cull::Want::for_loupe(f, path_of(f), size).of_version(version_of(f)));
     }
     st.prefetch.want(wants);
 }
 
-/// Where the loupe takes frame `file`'s picture from, by its root:
-/// see [`cull::source_for`]. The key is the row's while the frame
-/// stands in from it; a frame read from disk has none.
-pub(crate) fn loupe_plan(
+/// Where the loupe takes cell `c`'s picture from, by its root: see
+/// [`cull::source_for`]. The key is the row's while the frame stands
+/// in from it; a frame read from disk has none.
+pub(crate) fn loupe_plan(st: &State, c: usize) -> cull::Plan {
+    loupe_plan_of(&st.files, &st.from_row, &st.cells, &st.library, c)
+}
+
+/// [`loupe_plan`] with the state's fields borrowed apart.
+pub(crate) fn loupe_plan_of(
     files: &[PathBuf],
     from_row: &[crate::rows::FromRow],
+    cells: &[crate::versions::Cell],
     library: &crate::roots::Library,
-    file: usize,
+    c: usize,
 ) -> cull::Plan {
+    let Some(file) = cells.get(c).map(|cell| cell.file) else {
+        return cull::source_for(true, false, None);
+    };
     let Some(path) = files.get(file) else {
         return cull::source_for(true, false, None);
     };
@@ -483,9 +494,9 @@ pub(crate) fn loupe_plan(
 /// away from, is on screen in the next frame rather than decoded
 /// again. Only the selection's own is asked for: nothing is decoded
 /// ahead here, where the develop wants the cores.
-pub(crate) fn start_placeholder(st: &mut State, app: &App, file: usize) {
+pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
     let count = st.shown.len();
-    let row = row_of(st, file);
+    let row = row_of(st, cell);
     // At the view's long edge, as the mode's are, and no smaller than
     // a strip would be laughable at.
     let size = (app.get_view_width().max(app.get_view_height()).max(1) as u32).max(1024);
@@ -508,12 +519,12 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, file: usize) {
                 .collect(),
             // Hidden by the filter, which is not a row to keep a
             // window about; its own picture is all that is wanted.
-            None => vec![file],
+            None => vec![cell],
         };
-        hold.cache.keep(&window, file);
+        hold.cache.keep(&window, cell);
         hold.textures.retain(|f, _| window.contains(f));
     }
-    if row.is_none() || !placeholder::worth_it(&st.files[file]) {
+    if row.is_none() || !placeholder::worth_it(st.path_of(cell)) {
         // Nothing to stand in with, and nothing worth standing in
         // for: what is on screen stays until the develop lands.
         drop_placeholder(st, app);
@@ -524,20 +535,20 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, file: usize) {
     let hold = st
         .hold
         .get_or_insert_with(|| Cull::new(slint::SharedString::new(), size));
-    let held = hold.cache.get(file).is_some();
+    let held = hold.cache.get(cell).is_some();
     // A frame whose decode came back with nothing is not asked for
-    // again: there is no camera JPEG in that file, and every select
+    // again: there is no camera JPEG in that cell, and every select
     // would pay a decode to be told so. The record goes when the
     // folder does.
-    let none_in_it = hold.failed.contains_key(&file);
-    let path = st.files[file].clone();
+    let none_in_it = hold.failed.contains_key(&cell);
+    let path = st.path_of(cell).clone();
     // Whatever camera picture is on screen stays there until this
     // frame's own is in hand.
     let showing = st.placeholder.as_ref().and_then(|w| w.showing);
-    st.placeholder = Some(placeholder::Wait::asked(file, st.generation, showing));
+    st.placeholder = Some(placeholder::Wait::asked(cell, st.generation, showing));
     if held {
         // Already decoded: up on the next frame, no thread needed.
-        placeholder_arrived(st, app, file);
+        placeholder_arrived(st, app, cell);
         return;
     }
     if none_in_it {
@@ -545,7 +556,7 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, file: usize) {
         return;
     }
     st.prefetch
-        .want(vec![cull::Want::of_file(file, path, size)]);
+        .want(vec![cull::Want::of_file(cell, path, size)]);
     // The frame before this one may have gone with the window — a
     // jump across the folder — and then there is nothing standing in
     // and the developed picture is what shows.
@@ -587,11 +598,11 @@ pub(crate) fn standing_in(st: &State) -> Option<usize> {
 /// twice. The one exception is the session's first open
 /// (`zoom_stands`), where the zoom is the command line's and stands
 /// into the develop, so `--zoom 1` opens at 1:1.
-fn placeholder_arrived(st: &mut State, app: &App, file: usize) {
-    let Some(preview) = st.hold.as_ref().and_then(|h| h.cache.best(file)) else {
+fn placeholder_arrived(st: &mut State, app: &App, cell: usize) {
+    let Some(preview) = st.hold.as_ref().and_then(|h| h.cache.best(cell)) else {
         return;
     };
-    let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, file, app, true);
+    let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, cell, app, true);
     let plane = Geometry {
         turns,
         flip,
@@ -694,24 +705,25 @@ pub(crate) fn deliver_preview(app: &App, loaded: cull::Loaded) {
     // The fields are taken apart: the mode's cache and the develop
     // view's hold are borrowed one or the other.
     let st = &mut *st;
-    let (file, path, size) = match &loaded {
+    let (file, frame, size) = match &loaded {
         cull::Loaded::Ok {
-            file, path, size, ..
+            file, frame, size, ..
         }
         | cull::Loaded::Failed {
-            file, path, size, ..
-        } => (*file, path.clone(), *size),
+            file, frame, size, ..
+        } => (*file, frame.clone(), *size),
         // Never a full-size copy's size, so never taken for one below.
-        cull::Loaded::NoPreview { file, path } => (*file, path.clone(), u32::MAX),
+        cull::Loaded::NoPreview { file, frame } => (*file, frame.clone(), u32::MAX),
     };
-    // A preview of a list since replaced would land on a stranger's
-    // slot: only its own file's.
-    if st.files.get(file) != Some(&path) {
+    // A preview of a list since replaced, or renumbered under it, would
+    // land on a stranger's cell: only its own frame's.
+    if st.key_of(file).as_ref() != Some(&frame) {
         return;
     }
+    let path = frame.path.clone();
     let current = st.current;
     let culling = st.cull.is_some();
-    let plan = loupe_plan(&st.files, &st.from_row, &st.library, file);
+    let plan = loupe_plan(st, file);
     let Some(cull) = st.cull.as_mut().or(st.hold.as_mut()) else {
         return;
     };
@@ -855,7 +867,8 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     let rects = cull::tile_rects(vw, vh, rows.len().max(1));
     // The current frame's picture, which the others' centers follow.
     let current_full = cull.cache.best(c).map(|p| {
-        let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, c, app, from_panel(c));
+        let (turns, flip) =
+            thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, c, app, from_panel(c));
         Geometry {
             turns,
             flip,
@@ -888,11 +901,12 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
         && !cull.cache.has_own_size(c)
         && cull.wants_file(c)
         && cull.full_asked != Some(c)
-        && loupe_plan(&st.files, &st.from_row, &st.library, c).file
+        && loupe_plan_of(&st.files, &st.from_row, &st.cells, &st.library, c).file
     {
         cull.full_asked = Some(c);
-        st.prefetch
-            .push_front(cull::Want::for_loupe(c, st.files[c].clone(), 0));
+        let want = cull::Want::for_loupe(c, st.files[st.cells[c].file].clone(), 0)
+            .of_version(st.cells[c].version.clone());
+        st.prefetch.push_front(want);
     }
     let mut tiles = Vec::new();
     let mut overlay = Vec::new();
@@ -901,13 +915,13 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     for (k, &row) in rows.iter().enumerate() {
         let file = st.shown[row];
         let rect = rects[k];
-        let meta = &st.sidecars[file].meta;
+        let meta = &st.sidecars[st.cells[file].file].meta;
         overlay.push(CompareTile {
             x: rect.0 as f32 / scale_factor,
             y: rect.1 as f32 / scale_factor,
             w: rect.2 as f32 / scale_factor,
             h: rect.3 as f32 / scale_factor,
-            name: file_name(&st.files[file]).into(),
+            name: file_name(&st.files[st.cells[file].file]).into(),
             on: file == c,
             rating: meta.rating.min(meta::STARS) as i32,
             flag: meta.flag.code(),
@@ -928,7 +942,14 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
             let texture = renderer.encoded_texture(preview.width, preview.height, &preview.rgba);
             cull.textures.insert(file, (preview.id, texture));
         }
-        let (turns, flip) = thumb_turns_of(&st.sidecars, &st.from_row, file, app, from_panel(file));
+        let (turns, flip) = thumb_turns_of(
+            &st.sidecars,
+            &st.from_row,
+            &st.cells,
+            file,
+            app,
+            from_panel(file),
+        );
         let geometry = Geometry {
             turns,
             flip,
@@ -1167,21 +1188,29 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
 pub(crate) fn thumb_turns_of(
     sidecars: &[Sidecar],
     from_row: &[crate::rows::FromRow],
-    file: usize,
+    cells: &[crate::versions::Cell],
+    c: usize,
     app: &App,
     from_panel: bool,
 ) -> (u8, bool) {
+    let cell = &cells[c];
     // A frame whose sidecar stands in from its row: the row says.
-    if let Some(from) = from_row.get(file)
+    if let Some(from) = from_row.get(cell.file)
         && !from.read
     {
         return from.turns;
     }
-    let turn = sidecars[file].turn;
+    let sidecar = &sidecars[cell.file];
+    let turn = sidecar.turn;
     if from_panel {
         read_geometry(app).shown_turns(turn)
     } else {
-        sidecars[file].current.geometry.shown_turns(turn)
+        sidecar
+            .line(cell.version.as_deref())
+            .unwrap_or(&sidecar.line)
+            .current
+            .geometry
+            .shown_turns(turn)
     }
 }
 
@@ -1363,7 +1392,7 @@ pub(crate) fn to_move_out(st: &State, i: usize) -> bool {
         // Under a root that is offline nothing is moved and nothing is
         // made: a rejects folder made where the drive was would be a
         // folder on the mount point, and its frames marked missing.
-        && !crate::rows::is_offline(st, i)
+        && !crate::rows::file_is_offline(st, i)
         && st
             .files
             .get(i)
@@ -1512,13 +1541,13 @@ pub(crate) fn to_move_back(st: &State, i: usize) -> bool {
     st.files
         .get(i)
         .is_some_and(|f| cull::above_rejects(f).is_some())
-        && !crate::rows::is_offline(st, i)
+        && !crate::rows::file_is_offline(st, i)
 }
 
-/// The frames Move back is over: those of the selection in a rejects
-/// folder.
+/// The files Move back is over: those of the selection in a rejects
+/// folder, once each whichever of their cells is chosen.
 fn back_frames(st: &State) -> Vec<usize> {
-    crate::panel::browser::chosen_frames(st)
+    st.files_of(&crate::panel::browser::chosen_frames(st))
         .into_iter()
         .filter(|&i| to_move_back(st, i))
         .collect()
@@ -1644,8 +1673,8 @@ fn unreject(st: &mut State, i: usize) {
         return;
     }
     st.sidecars[i].meta.flag = meta::Flag::None;
-    if crate::panel::edit::writable(st, i) {
-        crate::panel::edit::write_sidecar(st, i);
+    if crate::panel::edit::file_writable(st, i) {
+        crate::panel::edit::write_file(st, i);
         return;
     }
     if !st.write_sidecars {
@@ -1695,16 +1724,20 @@ pub(crate) fn drop_files(
         app.set_status(status.into());
         return;
     }
-    let current_path = st.current.map(|c| st.files[c].clone());
+    // The files that go take every cell of theirs, versions included.
     let keep = |i: &usize| !gone.contains(i);
     // Where the frame on screen would stand in the new list if it is
-    // among those going: the frame after it that stays, else the last.
+    // among those going: the cell after it that stays, else the last.
     // `rebuild_browser` cannot say, since it looks for the current
     // frame and there is none then.
-    let stand_in = st.current.filter(|c| gone.contains(c)).and_then(|c| {
-        let kept = (0..st.files.len()).filter(keep).count();
-        (kept > 0).then(|| (0..c).filter(keep).count().min(kept - 1))
-    });
+    let stand_in = st
+        .current
+        .filter(|&c| gone.contains(&st.file_of(c)))
+        .and_then(|c| {
+            let stays = |x: &usize| keep(&st.cells[*x].file);
+            let kept = (0..st.cells.len()).filter(stays).count();
+            (kept > 0).then(|| (0..c).filter(stays).count().min(kept - 1))
+        });
     let files: Vec<PathBuf> = st
         .files
         .iter()
@@ -1713,15 +1746,13 @@ pub(crate) fn drop_files(
         .map(|(_, f)| f.clone())
         .collect();
     let kept: Vec<usize> = (0..st.files.len()).filter(keep).collect();
+    let mut new_of: Vec<Option<usize>> = vec![None; st.files.len()];
+    for (at, &i) in kept.iter().enumerate() {
+        new_of[i] = Some(at);
+    }
     st.files = files;
     st.sidecars = kept.iter().map(|&i| st.sidecars[i].clone()).collect();
-    st.seed_blend = kept.iter().map(|&i| st.seed_blend[i]).collect();
     st.from_row = kept.iter().map(|&i| st.from_row[i].clone()).collect();
-    st.thumb_base = kept.iter().map(|&i| st.thumb_base[i].take()).collect();
-    st.thumb_shown = kept.iter().map(|&i| st.thumb_shown[i]).collect();
-    st.thumb_made = kept.iter().map(|&i| st.thumb_made[i]).collect();
-    st.thumb_failed = kept.iter().map(|&i| st.thumb_failed[i]).collect();
-    st.thumb_asked = kept.iter().map(|&i| st.thumb_asked[i]).collect();
     // The index's answers by the new numbering, and a pass over the
     // folder, which marks the rows of frames moved out missing (a
     // delete has had its rows forgotten already).
@@ -1729,32 +1760,18 @@ pub(crate) fn drop_files(
         .iter()
         .map(|&i| st.index_passed.get(i).copied().unwrap_or(true))
         .collect();
+    // The cells follow the files: each that stays keeps its picture and
+    // its place in the selection; the pictures keyed by the old
+    // numbering (the previews, the camera picture standing in) are put
+    // down and asked for again.
+    crate::versions::relist(st, app, worker, &|i| new_of.get(i).copied().flatten());
     crate::library::index_open_folder(st, None);
     // A rejects folder made or emptied under a folder of no root: its
     // tiles read again, as the index tells the tree for a root's.
     crate::tree::loose_changed(st, app);
-    // The indices the previews and the worker's thumbnails were
-    // keyed by have moved: the previews are decoded again (cheap),
-    // and a thumbnail still owed is asked for again.
-    if let Some(cull) = st.cull.as_mut() {
-        cull.cache.clear();
-        cull.textures.clear();
-        cull.clear_failures();
-    }
-    drop_placeholder(st, app);
-    st.hold = None;
-    st.prefetch.want(Vec::new());
-    if let Some(run) = st.thumb_run.as_mut() {
-        let from: Vec<Option<usize>> = kept.iter().map(|&i| Some(i)).collect();
-        run.renumber(&from);
-    }
     // The rows are the old list's until the rebuild below, so none are
     // put first.
     crate::roots::ask_owed(st, worker);
-    let went = current_path
-        .as_ref()
-        .map(|p| st.files.iter().position(|f| f == p));
-    st.current = went.flatten();
     // The set was numbered by the old list; the frame on screen is
     // what is left of it.
     st.picked.clear();
@@ -2188,7 +2205,7 @@ mod tests {
         let (w, h) = (8u32, 6u32);
         cull::Loaded::Ok {
             file,
-            path: st.files[file].clone(),
+            frame: st.key_of(file).unwrap(),
             size: 1024,
             preview: Arc::new(cull::Preview::new(
                 w,
@@ -2215,7 +2232,7 @@ mod tests {
         }
         let local = |st: &State, file: usize| cull::Loaded::Ok {
             file,
-            path: st.files[file].clone(),
+            frame: st.key_of(file).unwrap(),
             size: 1024,
             preview: Arc::new(cull::Preview::local(
                 greycard_library::thumbs::Thumb {
@@ -2239,7 +2256,7 @@ mod tests {
         // The file's failure first, then the local preview.
         let failed = cull::Loaded::Failed {
             file: 2,
-            path: state.borrow().files[2].clone(),
+            frame: state.borrow().key_of(2).unwrap(),
             size: 1024,
             message: "the share did not answer".into(),
         };
@@ -2535,12 +2552,12 @@ mod tests {
         // On to a frame whose file has no camera JPEG in it: the
         // decode comes back with nothing and the wait is given up.
         app.invoke_select(2);
-        let path = state.borrow().files[2].clone();
+        let frame = state.borrow().key_of(2).unwrap();
         deliver_preview(
             &app,
             cull::Loaded::Failed {
                 file: 2,
-                path,
+                frame,
                 size: 1024,
                 message: "no camera preview in the file".into(),
             },
@@ -2728,7 +2745,7 @@ mod tests {
         let before = state.borrow().generation;
         let turns_before = {
             let st = state.borrow();
-            thumb_turns_of(&st.sidecars, &st.from_row, 1, &app, true)
+            thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, 1, &app, true)
         };
         app.invoke_frame_turned(1);
         let st = state.borrow();
@@ -2736,7 +2753,7 @@ mod tests {
         assert_eq!(standing_in(&st), Some(1), "the turn took it down");
         assert_ne!(
             turns_before,
-            thumb_turns_of(&st.sidecars, &st.from_row, 1, &app, true),
+            thumb_turns_of(&st.sidecars, &st.from_row, &st.cells, 1, &app, true),
             "the camera picture would be drawn the same way up"
         );
         assert!(app.get_placeholder());
@@ -2929,7 +2946,7 @@ mod tests {
             let st = state.borrow();
             cull::Loaded::Failed {
                 file: 1,
-                path: st.files[1].clone(),
+                frame: st.key_of(1).unwrap(),
                 size: 1024,
                 message: "no camera preview in the file".into(),
             }
@@ -3019,7 +3036,7 @@ mod tests {
             let st = state.borrow();
             cull::Loaded::Failed {
                 file: 1,
-                path: st.files[1].clone(),
+                frame: st.key_of(1).unwrap(),
                 size: 1024,
                 message: "no camera preview in the file".into(),
             }

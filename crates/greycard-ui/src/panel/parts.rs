@@ -148,7 +148,7 @@ pub(crate) fn people_found(
     let Some(pending) = st.part_pending.take() else {
         return false;
     };
-    let open = st.current.and_then(|c| st.files.get(c)).cloned();
+    let open = st.current.and_then(|c| st.path_at(c)).cloned();
     if file.is_some() && file != open {
         // Another picture since: its people are not this one's.
         return false;

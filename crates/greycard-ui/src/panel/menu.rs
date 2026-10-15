@@ -164,16 +164,16 @@ pub(crate) fn menu_asked(state: &Rc<RefCell<State>>, app: &App, row: i32) {
     let frames = chosen_frames(&st);
     let metas: Vec<&Meta> = frames
         .iter()
-        .filter_map(|&f| st.sidecars.get(f))
+        .filter_map(|&f| st.sidecar_at(f))
         .map(|s| &s.meta)
         .collect();
     app.set_menu_file(
-        st.files
-            .get(file)
+        st.path_at(file)
             .map(|p| file_name(p))
             .unwrap_or_default()
             .into(),
     );
+    app.set_menu_version(st.version_name(file).unwrap_or_default().into());
     app.set_menu_can_meta(!frames.is_empty());
     app.set_menu_count(frames.len().max(1) as i32);
     app.set_menu_rating(shared(metas.iter().map(|m| i32::from(m.rating))));
@@ -228,7 +228,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let st = state.borrow();
-            let Some(path) = st.menu_file.or(st.current).and_then(|f| st.files.get(f)) else {
+            let Some(path) = st.menu_file.or(st.current).and_then(|f| st.path_at(f)) else {
                 return;
             };
             if let Err(e) = reveal(path) {
@@ -466,7 +466,7 @@ mod tests {
         {
             let st = state.borrow();
             let clip = st.clipboard.as_ref().expect("a copy");
-            assert_eq!(clip.from, files[3]);
+            assert_eq!(clip.from.path, files[3]);
             assert_eq!(clip.edit.light.exposure, 0.9);
         }
         // On the frame on screen, the panel's edit, recorded or not.
@@ -487,7 +487,11 @@ mod tests {
         right_click(&app, strip_cell(3).0, strip_cell(3).1);
         app.invoke_copy_asked();
         assert_eq!(
-            state.borrow().clipboard.as_ref().map(|c| c.from.clone()),
+            state
+                .borrow()
+                .clipboard
+                .as_ref()
+                .map(|c| c.from.path.clone()),
             Some(files[1].clone())
         );
     }

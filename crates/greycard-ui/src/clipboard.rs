@@ -17,8 +17,6 @@
 //! Pure, so what a copy holds and what a paste lays over a frame are
 //! tested here without a window.
 
-use std::path::{Path, PathBuf};
-
 use greycard_edit::history::paste_label;
 use greycard_edit::preset::{Choice, Section};
 use greycard_edit::{Edit, Preset};
@@ -29,29 +27,35 @@ pub(crate) struct Clipboard {
     /// The edit as it was at the copy: the panel's, recorded or not,
     /// outside culling; the sidecar's current state in it.
     pub(crate) edit: Edit,
-    /// The frame it came from. A path, not a file's index: moving the
-    /// rejects or opening another folder renumbers the files, and the
-    /// clipboard outlives both.
-    pub(crate) from: PathBuf,
+    /// The frame it came from: its path and its version, not a cell's
+    /// number: moving the rejects or opening another folder renumbers
+    /// the cells, and the clipboard outlives both.
+    pub(crate) from: crate::versions::Key,
+    /// The frame's name as the status line and the history row say it:
+    /// the file's, or a version's stem and name, "IMG_0001 (Warm)". Kept
+    /// from the copy, since a version's name may change after.
+    name: String,
 }
 
 impl Clipboard {
-    /// `edit` copied from the frame at `from`, whole.
-    pub(crate) fn copy(edit: Edit, from: &Path) -> Self {
-        Self {
-            edit,
-            from: from.to_path_buf(),
-        }
+    /// `edit` copied from the frame `from`, whole, named `name`.
+    pub(crate) fn copy(edit: Edit, from: crate::versions::Key, name: String) -> Self {
+        Self { edit, from, name }
+    }
+
+    /// [`Clipboard::copy`] from a file's own frame, named for the file.
+    #[cfg(test)]
+    pub(crate) fn copy_file(edit: Edit, path: impl Into<std::path::PathBuf>) -> Self {
+        let from = crate::versions::Key::file(path);
+        let name = crate::panel::browser::file_name(&from.path);
+        Self::copy(edit, from, name)
     }
 
     /// The name of the frame copied from, as a status line and a
     /// history row say it: the file name, with the extension, since a
     /// RAW and its JPEG can share a stem in one folder.
     pub(crate) fn name(&self) -> String {
-        self.from
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default()
+        self.name.clone()
     }
 
     /// The words each pasted frame's history step is recorded with.
@@ -59,13 +63,23 @@ impl Clipboard {
         paste_label(&self.name())
     }
 
-    /// The frames of `set` a paste goes onto: all of them but the
-    /// frame the clipboard came from, which has its own settings
-    /// already. `files` is the browser's list, `set` indices into it.
-    pub(crate) fn targets(&self, set: &[usize], files: &[PathBuf]) -> Vec<usize> {
+    /// The cells of `set` a paste goes onto: all of them but the frame
+    /// the clipboard came from, which has its own settings already (a
+    /// version of that file is another frame, and takes the paste).
+    pub(crate) fn targets(&self, st: &crate::State, set: &[usize]) -> Vec<usize> {
+        self.targets_by(set, |c| st.key_of(c))
+    }
+
+    /// [`Clipboard::targets`] with the cells named by `key_of`: the
+    /// cells of `set` that are a frame and not the one copied from.
+    pub(crate) fn targets_by(
+        &self,
+        set: &[usize],
+        key_of: impl Fn(usize) -> Option<crate::versions::Key>,
+    ) -> Vec<usize> {
         set.iter()
             .copied()
-            .filter(|&f| files.get(f).is_some_and(|p| *p != self.from))
+            .filter(|&c| key_of(c).is_some_and(|k| k != self.from))
             .collect()
     }
 
@@ -103,7 +117,9 @@ impl Clipboard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::versions::Key;
     use greycard_edit::{Learned, Sidecar};
+    use std::path::PathBuf;
 
     fn files() -> Vec<PathBuf> {
         (0..5)
@@ -124,31 +140,51 @@ mod tests {
     #[test]
     fn a_copy_holds_the_whole_edit_and_the_frame_it_came_from() {
         let files = files();
-        let clip = Clipboard::copy(source(), &files[1]);
+        let clip = Clipboard::copy_file(source(), &files[1]);
         assert_eq!(clip.edit, source());
-        assert_eq!(clip.from, files[1]);
+        assert_eq!(clip.from.path, files[1]);
         assert_eq!(clip.name(), "IMG_0001.CR3");
         assert_eq!(clip.label(), "Paste from IMG_0001.CR3");
+        // From a version: named for it, as its cell is.
+        let warm = Clipboard::copy(
+            source(),
+            Key::of(&files[1], Some("abcd")),
+            "IMG_0001 (Warm)".into(),
+        );
+        assert_eq!(warm.name(), "IMG_0001 (Warm)");
+        assert_eq!(warm.label(), "Paste from IMG_0001 (Warm)");
     }
 
     #[test]
     fn a_paste_leaves_out_the_frame_it_was_copied_from() {
         let files = files();
-        let clip = Clipboard::copy(source(), &files[1]);
-        assert_eq!(clip.targets(&[0, 1, 3], &files), vec![0, 3]);
+        let clip = Clipboard::copy_file(source(), &files[1]);
+        let by = |files: &[PathBuf]| {
+            let files = files.to_vec();
+            move |i: usize| files.get(i).map(Key::file)
+        };
+        assert_eq!(clip.targets_by(&[0, 1, 3], by(&files)), vec![0, 3]);
         // Onto the source alone: nothing to do.
-        assert!(clip.targets(&[1], &files).is_empty());
+        assert!(clip.targets_by(&[1], by(&files)).is_empty());
         // An index past the list is nobody's.
-        assert_eq!(clip.targets(&[3, 9], &files), vec![3]);
-        // The folder renumbered under the clipboard: the path, not
+        assert_eq!(clip.targets_by(&[3, 9], by(&files)), vec![3]);
+        // The folder renumbered under the clipboard: the frame, not
         // the index, is what is left out.
         let moved: Vec<PathBuf> = files.iter().rev().cloned().collect();
-        assert_eq!(clip.targets(&[0, 1, 2, 3, 4], &moved), vec![0, 1, 2, 4]);
+        assert_eq!(
+            clip.targets_by(&[0, 1, 2, 3, 4], by(&moved)),
+            vec![0, 1, 2, 4]
+        );
+        // A version of the file copied from is another frame, and
+        // takes the paste.
+        let version = Key::of(&files[1], Some("abcd"));
+        let one = move |i: usize| (i == 1).then(|| version.clone());
+        assert_eq!(clip.targets_by(&[1], one), vec![1]);
     }
 
     #[test]
     fn a_paste_lays_the_chosen_sections_and_no_geometry() {
-        let clip = Clipboard::copy(source(), Path::new("/shoot/IMG_0001.CR3"));
+        let clip = Clipboard::copy_file(source(), "/shoot/IMG_0001.CR3");
         let mut onto = Edit::default();
         onto.light.exposure = -1.0;
         onto.geometry.angle = -4.0;

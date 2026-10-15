@@ -45,8 +45,7 @@ use greycard_edit::look::{self, Entry};
 use greycard_edit::{Placement, Sidecar};
 
 use crate::panel::assets::{refresh_presets, show_looks};
-use crate::panel::browser::show_badges;
-use crate::panel::edit::{save_sidecar, writable};
+use crate::panel::browser::show_badges_of_file;
 use crate::panel::history::show_history;
 use crate::panel::look_remove::{files_of, list_in, store};
 use crate::*;
@@ -253,7 +252,7 @@ pub(crate) fn uses(st: &State) -> (Vec<BTreeSet<String>>, Vec<PathBuf>) {
     let mut named = Vec::new();
     let mut unread = Vec::new();
     for (i, file) in st.files.iter().enumerate() {
-        if !crate::rows::is_loaded(st, i) {
+        if !crate::rows::file_is_loaded(st, i) {
             unread.push(file.clone());
             continue;
         }
@@ -866,15 +865,19 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
     }
     // The open picture: the panel's edit and the sidecar in memory,
     // saved as any save of it is.
-    let open = st.current.filter(|&c| crate::rows::panel_is_frames(st, c));
+    let open = st
+        .current
+        .filter(|&c| crate::rows::panel_is_frames(st, c))
+        .map(|c| st.file_of(c));
     let open_edit = st.edit.look_lut.rename(old, new);
-    if let Some(c) = open {
-        let renamed = st.sidecars[c].rename_look(old, new);
+    if let Some(f) = open {
+        // The file's whole sidecar: a rename reaches every line of it.
+        let renamed = st.sidecars[f].rename_look(old, new);
         if renamed || open_edit {
             done.pictures += 1;
         }
         if renamed && st.write_sidecars {
-            save_window_copy(st, c, &mut done);
+            save_window_copy(st, f, &mut done);
         }
     }
     // The rest: those that go to an archive's copy, and with sidecars
@@ -882,10 +885,10 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
     // counted; every other sidecar from disk, on the thread.
     let mut frames = Vec::new();
     for i in 0..st.files.len() {
-        if Some(i) == open || crate::panel::delete::held(st, i) {
+        if Some(i) == open || crate::panel::delete::held_file(st, i) {
             continue;
         }
-        let loaded = crate::rows::is_loaded(st, i);
+        let loaded = crate::rows::file_is_loaded(st, i);
         if !st.write_sidecars {
             if loaded && st.sidecars[i].rename_look(old, new) {
                 done.pictures += 1;
@@ -901,7 +904,7 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
             }
             continue;
         }
-        if crate::rows::is_offline(st, i) {
+        if crate::rows::file_is_offline(st, i) {
             done.unreachable += 1;
             continue;
         }
@@ -952,9 +955,9 @@ pub(crate) fn start(st: &mut State, app: &App, asked: &Asked, new: &str) -> Resu
 /// later, or here; one that could not be written is counted stale.
 fn save_window_copy(st: &mut State, i: usize, done: &mut Rewritten) {
     if crate::sync::followed(st, i) {
-        save_sidecar(st, i);
+        crate::panel::edit::save_file(st, i);
         done.archived += 1;
-    } else if !(writable(st, i) && save_sidecar(st, i)) {
+    } else if !(crate::panel::edit::file_writable(st, i) && crate::panel::edit::save_file(st, i)) {
         done.pictures -= 1;
         done.stale += 1;
     }
@@ -1191,7 +1194,7 @@ fn take_outcomes(
         let loaded = at
             .get(&path)
             .copied()
-            .filter(|&i| crate::rows::is_loaded(st, i));
+            .filter(|&i| crate::rows::file_is_loaded(st, i));
         let Some(i) = loaded else {
             // Its read is still out: the copy waits for it.
             if wrote && r.catch_paths.contains(&path) {
@@ -1202,7 +1205,10 @@ fn take_outcomes(
         let now = st.sidecars[i].revisions.last().map(|r| r.hash.clone());
         if sent.is_none() || sent == Some(now) {
             st.sidecars[i] = sidecar;
-            show_badges(st, app, i);
+            if crate::rows::versions_differ(st, i) {
+                crate::versions::settle_later(app);
+            }
+            show_badges_of_file(st, app, i);
             continue;
         }
         // The window's copy moved while the thread had the file (a sync
@@ -1213,7 +1219,7 @@ fn take_outcomes(
             written.retain(|p| *p != path);
         }
         if st.sidecars[i].rename_look(&r.old, &r.new)
-            && !(writable(st, i) && save_sidecar(st, i))
+            && !(crate::panel::edit::file_writable(st, i) && crate::panel::edit::save_file(st, i))
             && !late
         {
             if wrote {
@@ -1221,7 +1227,7 @@ fn take_outcomes(
             }
             r.done.stale += 1;
         }
-        show_badges(st, app, i);
+        show_badges_of_file(st, app, i);
     }
     written
 }
@@ -1805,7 +1811,7 @@ mod tests {
                 .unwrap();
             st.preset_store = Some(store_p);
             crate::panel::assets::refresh_presets(&mut st, &app);
-            st.clipboard = Some(crate::clipboard::Clipboard::copy(
+            st.clipboard = Some(crate::clipboard::Clipboard::copy_file(
                 st.edit.clone(),
                 &files[0],
             ));
@@ -1820,6 +1826,7 @@ mod tests {
                     edit: st.edit.clone(),
                     turn: 0,
                     seed_blend: false,
+                    version: None,
                 }],
             }];
             show_looks(&st, &st.edit.look_lut, &app);

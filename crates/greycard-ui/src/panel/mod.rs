@@ -23,4 +23,5 @@ pub(crate) mod recent;
 pub(crate) mod retouch;
 pub(crate) mod startup;
 pub(crate) mod sync;
+pub(crate) mod versions;
 pub(crate) mod viewport;

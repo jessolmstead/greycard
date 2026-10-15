@@ -1574,10 +1574,9 @@ fn import_one(run: &mut Run<'_>, item: &Item, seq: usize, report: &mut Report) -
             .ok()
             .flatten()
             .unwrap_or_default();
-        let mut seed = crate::files::never_developed(&sidecar);
         crate::panel::startup::preset_at_start(
             &mut sidecar,
-            &mut seed,
+            None,
             &frame,
             &preset,
             Some(placement),

@@ -21,14 +21,21 @@
 //!   stands in (`FromRow::turns`): `thumb_turns`, `thumb_turns_of`.
 //! - Anything else (`.current`, `.history`, `.turn`, `.xmp`, the
 //!   snapshots, a `record`) wants the frame loaded first. Every action
-//!   that wants it is a [`request`]: the paths it is pressed on and
-//!   what to do with them, run when their sidecars are in, on exactly
-//!   those paths, in the order the requests were made. Opening a frame
-//!   is one (the frame is current from the pick, its panel read-only
-//!   until its sidecar lands); so are a key, a turn, a sync, a paste,
-//!   a preset and an export over a selection. A request never cancels
-//!   another. The frame on screen is loaded, unless its root is
-//!   offline or its sidecar is still on its way (`State::picking`).
+//!   that wants it is a [`request`]: the frames it is pressed on (each
+//!   a file and a version of it, `versions::Key`) and what to do with
+//!   them, run when their sidecars are in, on exactly those frames, in
+//!   the order the requests were made. Opening a frame is one (the
+//!   frame is current from the pick, its panel read-only until its
+//!   sidecar lands); so are a key, a turn, a sync, a paste, a preset
+//!   and an export over a selection. A request never cancels another.
+//!   The frame on screen is loaded, unless its root is offline or its
+//!   sidecar is still on its way (`State::picking`). A file and a
+//!   version of it are one sidecar, read once.
+//! - The row lists the versions the sidecar keeps, each with its own
+//!   marks and key (`FromRow::versions`), so a version's cell stands
+//!   in as its file's does; the stand-in sidecar lists them too, with
+//!   the default edit, so the cells are the same whether or not the
+//!   sidecar was read.
 //! - A sidecar that is standing in is never written
 //!   (`panel::edit::writable`): a save of a stand-in would put the
 //!   default edit over the frame's own.
@@ -58,6 +65,7 @@ use crate::panel::browser::{file_name, load_sidecar_said};
 use slint::ComponentHandle;
 
 use crate::roots::Progress;
+use crate::versions::Key;
 use crate::worker::{Job, Worker};
 use crate::{App, State};
 
@@ -101,6 +109,9 @@ pub(crate) struct FromRow {
     /// root offline included; `None` for a row not yet read for one, or
     /// one whose edit could not be read.
     pub(crate) develop_key: Option<u64>,
+    /// The versions the row says the sidecar keeps, each with its own
+    /// marks and key: what a version's cell stands in with.
+    pub(crate) versions: Vec<greycard_library::VersionRow>,
 }
 
 impl FromRow {
@@ -116,6 +127,7 @@ impl FromRow {
             sidecar: None,
             unread: None,
             develop_key: None,
+            versions: Vec::new(),
         }
     }
 
@@ -131,8 +143,41 @@ impl FromRow {
             sidecar: row.sidecar_hash.clone(),
             unread: None,
             develop_key: row.develop_key.filter(|&k| k != 0),
+            versions: row.versions.clone(),
         }
     }
+
+    /// The marks of version `version` of the frame as the row has
+    /// them, the file's own for none: whether it shows as edited and
+    /// as exported.
+    pub(crate) fn marks(&self, version: Option<&str>) -> (bool, bool) {
+        match version {
+            None => (self.edited, self.exported),
+            Some(id) => self
+                .versions
+                .iter()
+                .find(|v| v.id == id)
+                .map_or((false, false), |v| (v.edited, v.exported)),
+        }
+    }
+}
+
+/// The versions a row lists, as a stand-in sidecar keeps them: each
+/// with the default edit `default` makes, so a version's cell stands
+/// where it will once the sidecar is read.
+pub(crate) fn versions_of_row(
+    row: &RowMeta,
+    default: impl Fn() -> greycard_edit::Line,
+) -> Vec<greycard_edit::Version> {
+    row.versions
+        .iter()
+        .map(|v| greycard_edit::Version {
+            id: v.id.clone(),
+            name: v.name.clone(),
+            made: v.made.max(0) as u64,
+            line: default(),
+        })
+        .collect()
 }
 
 /// What went wrong reading a sidecar from disk, the default edit
@@ -156,13 +201,6 @@ impl Default for FromRow {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct Held {
     pub(crate) sidecar: Sidecar,
-    /// The frame is a raw to seed the learned-denoiser blend of from
-    /// its ISO on its first open. A disk read decides it by the
-    /// sidecar itself (`files::never_developed`: the default edit, no
-    /// history, no snapshot); from a row it is only a first guess
-    /// (`!row.edited`, which leaves a seeded blend and a history out of
-    /// it), and the read that lands replaces it.
-    pub(crate) seed: bool,
     pub(crate) from_row: FromRow,
     /// The frame's row in the index, when the read that brought this
     /// asked the index and it had one.
@@ -188,17 +226,22 @@ pub(crate) fn from_row(path: &Path, row: &RowMeta, write_sidecars: bool) -> Held
         return from_nothing();
     }
     let raw = !greycard_core::picture::is_picture_path(path);
+    let default = || {
+        greycard_edit::Line::of(if raw {
+            Edit::default()
+        } else {
+            Edit::for_picture()
+        })
+    };
     Held {
         sidecar: Sidecar {
-            line: greycard_edit::Line::of(if raw {
-                Edit::default()
-            } else {
-                Edit::for_picture()
-            }),
+            line: default(),
             meta: row.meta.clone(),
+            // The versions the row lists, standing in as the file's
+            // own line does, so each has its cell.
+            versions: versions_of_row(row, default),
             ..Sidecar::default()
         },
-        seed: raw && !row.edited,
         from_row: FromRow::of(row),
         id: Some(row.id),
         trouble: None,
@@ -215,10 +258,9 @@ pub(crate) fn from_disk(path: &Path, write_sidecars: bool) -> Held {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .push(path.to_path_buf());
-    let (sidecar, seed, trouble) = load_sidecar_said(path, true);
+    let (sidecar, trouble) = load_sidecar_said(path, true);
     Held {
         sidecar,
-        seed,
         from_row: FromRow::read(),
         id: None,
         trouble,
@@ -229,10 +271,48 @@ pub(crate) fn from_disk(path: &Path, write_sidecars: bool) -> Held {
 fn from_nothing() -> Held {
     Held {
         sidecar: Sidecar::default(),
-        seed: false,
         from_row: FromRow::read(),
         id: None,
         trouble: None,
+    }
+}
+
+/// Whether cell `c`'s line still waits for its ISO's learned-denoiser
+/// blend: its file is a raw and the line was never developed (the
+/// default edit, no history, no snapshot: `files::line_never_developed`),
+/// which while the row stands in for the sidecar is the row's word on
+/// the line (`FromRow::marks`). Decided a line at a time: a version made
+/// from the original before the raw was opened waits on its own, one
+/// edited apart does not, and the seed goes to the line that asked.
+pub(crate) fn wants_seed(st: &State, c: usize) -> bool {
+    let Some(cell) = st.cell(c) else {
+        return false;
+    };
+    let Some(path) = st.files.get(cell.file) else {
+        return false;
+    };
+    if greycard_core::picture::is_picture_path(path) {
+        return false;
+    }
+    match st.from_row.get(cell.file) {
+        Some(row) if !row.read => !row.marks(cell.version.as_deref()).0,
+        _ => st.line(c).is_some_and(crate::files::line_never_developed),
+    }
+}
+
+/// The ISO's seed landed for cell `c`'s line, as the open's develop or
+/// an export brought it: onto that line alone, in place and not as a
+/// step, when the line still waits for one. True when it took it.
+pub(crate) fn seed_landed(st: &mut State, c: usize, blend: f32) -> bool {
+    if !wants_seed(st, c) {
+        return false;
+    }
+    match st.line_mut(c) {
+        Some(line) => {
+            line.current.noise.learned_strength = blend;
+            true
+        }
+        None => false,
     }
 }
 
@@ -270,9 +350,13 @@ pub(crate) fn to_read(rows: &[Option<RowMeta>]) -> usize {
     rows.iter().filter(|r| r.is_none()).count()
 }
 
-/// The root file `i` is under that is offline, if any.
-pub(crate) fn offline_root(st: &State, i: usize) -> Option<PathBuf> {
-    let path = st.files.get(i)?;
+/// The root cell `c`'s file is under that is offline, if any.
+pub(crate) fn offline_root(st: &State, c: usize) -> Option<PathBuf> {
+    offline_root_of(st, st.path_at(c)?)
+}
+
+/// The root `path` is under that is offline, if any.
+pub(crate) fn offline_root_of(st: &State, path: &Path) -> Option<PathBuf> {
     st.library
         .offline
         .iter()
@@ -280,9 +364,18 @@ pub(crate) fn offline_root(st: &State, i: usize) -> Option<PathBuf> {
         .cloned()
 }
 
-/// Whether file `i` is under a root that is offline.
-pub(crate) fn is_offline(st: &State, i: usize) -> bool {
-    !st.library.offline.is_empty() && offline_root(st, i).is_some()
+/// Whether cell `c`'s file is under a root that is offline.
+pub(crate) fn is_offline(st: &State, c: usize) -> bool {
+    !st.library.offline.is_empty() && offline_root(st, c).is_some()
+}
+
+/// Whether file `file` is under a root that is offline.
+pub(crate) fn file_is_offline(st: &State, file: usize) -> bool {
+    !st.library.offline.is_empty()
+        && st
+            .files
+            .get(file)
+            .is_some_and(|p| offline_root_of(st, p).is_some())
 }
 
 /// The status line's word for a frame that cannot be reached, and what
@@ -292,27 +385,39 @@ fn say_offline(st: &State, app: &App, root: &Path, what: &str) {
     app.set_status(format!("{name} is offline{what}").into());
 }
 
-/// Say that frame `i`'s root is offline, and what that costs. For a
+/// Say that cell `c`'s root is offline, and what that costs. For a
 /// frame under no offline root nothing is said.
-pub(crate) fn say_offline_for(st: &State, app: &App, i: usize, what: &str) {
-    if let Some(root) = offline_root(st, i) {
+pub(crate) fn say_offline_for(st: &State, app: &App, c: usize, what: &str) {
+    if let Some(root) = offline_root(st, c) {
         say_offline(st, app, &root, what);
     }
 }
 
-/// Whether frame `i`'s whole sidecar is in memory: read from disk, or
-/// nothing to read. False while its row stands in.
-pub(crate) fn is_loaded(st: &State, i: usize) -> bool {
-    st.from_row.get(i).is_none_or(|r| r.read)
+/// [`say_offline_for`] by the file.
+pub(crate) fn say_offline_for_file(st: &State, app: &App, file: usize, what: &str) {
+    if let Some(root) = st.files.get(file).and_then(|p| offline_root_of(st, p)) {
+        say_offline(st, app, &root, what);
+    }
 }
 
-/// Whether the panel holds frame `i`'s own edit, so what it does may be
+/// Whether cell `c`'s whole sidecar is in memory: read from disk, or
+/// nothing to read. False while its file's row stands in.
+pub(crate) fn is_loaded(st: &State, c: usize) -> bool {
+    st.file_at(c).is_none_or(|f| file_is_loaded(st, f))
+}
+
+/// Whether file `file`'s whole sidecar is in memory.
+pub(crate) fn file_is_loaded(st: &State, file: usize) -> bool {
+    st.from_row.get(file).is_none_or(|r| r.read)
+}
+
+/// Whether the panel holds cell `c`'s own edit, so what it does may be
 /// recorded on the frame: the frame is loaded, and the panel is not
 /// still the stand-in's it showed while the sidecar was on its way.
-pub(crate) fn panel_is_frames(st: &State, i: usize) -> bool {
-    is_loaded(st, i)
+pub(crate) fn panel_is_frames(st: &State, c: usize) -> bool {
+    is_loaded(st, c)
         && (st.panel_stand_in.is_none()
-            || st.panel_stand_in.as_deref() != st.files.get(i).map(PathBuf::as_path))
+            || st.panel_stand_in.as_deref() != st.path_at(c).map(PathBuf::as_path))
 }
 
 /// Why nothing the panel does over frame `i` may be recorded, when its
@@ -328,41 +433,57 @@ pub(crate) fn not_kept(st: &State, i: usize) -> Option<String> {
 
 /// [`not_kept`]'s reason, ending in `what` was refused ("nothing is
 /// exported") rather than a change.
-pub(crate) fn refused(st: &State, i: usize, what: &str) -> Option<String> {
-    if panel_is_frames(st, i) {
+pub(crate) fn refused(st: &State, c: usize, what: &str) -> Option<String> {
+    if panel_is_frames(st, c) {
         return None;
     }
-    if is_loaded(st, i) {
-        let name = file_name(st.files.get(i)?);
+    if is_loaded(st, c) {
+        let name = file_name(st.path_at(c)?);
         return Some(format!("the panel is not {name}'s own yet: {what}"));
     }
-    if let Some(root) = offline_root(st, i) {
+    if let Some(root) = offline_root(st, c) {
         let name = crate::roots::root_name(&st.library.roots, &root);
         return Some(format!("{name} is offline: {what}"));
     }
-    let name = file_name(st.files.get(i)?);
-    Some(if st.from_row.get(i).is_some_and(|r| r.unread.is_some()) {
-        format!("{name}'s sidecar could not be read: {what}")
-    } else if st.pick_pending.as_deref() == st.files.get(i).map(PathBuf::as_path) {
-        format!("{name}'s sidecar is still being read: {what}")
-    } else {
-        format!("{name}'s sidecar did not come in: {what}")
-    })
+    let name = file_name(st.path_at(c)?);
+    let file = st.file_at(c)?;
+    Some(
+        if st.from_row.get(file).is_some_and(|r| r.unread.is_some()) {
+            format!("{name}'s sidecar could not be read: {what}")
+        } else if st.pick_pending.as_deref() == st.path_at(c).map(PathBuf::as_path) {
+            format!("{name}'s sidecar is still being read: {what}")
+        } else {
+            format!("{name}'s sidecar did not come in: {what}")
+        },
+    )
 }
 
 /// What runs on the window's thread once a request's sidecars are in:
-/// handed, for each path the request named, the frame it is at now,
-/// or `None` for one no longer listed. Never the selection as it is by
+/// handed, for each frame the request named, the cell it is at now, or
+/// `None` for one no longer listed. Never the selection as it is by
 /// then: what was pressed on is what is acted on.
 pub(crate) type Action =
     Box<dyn FnOnce(&Rc<RefCell<State>>, &App, &Rc<Worker>, Vec<Option<usize>>)>;
 
+/// What a request acts on: a frame's own line (a paste, a sync, a
+/// preset, an export, the open of a frame), or its file (a culling key,
+/// a turn, the tags' undo and redo), whose meta and turn every version
+/// shares. The scope says what a frame whose version is gone resolves
+/// to: nothing for a line, since there is no line to lay on, and the
+/// file's own cell for a file, since the file is still there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Scope {
+    Line,
+    File,
+}
+
 /// A request for some frames' sidecars, with what to do once they are
 /// in. Requests run in the order they were made, each on exactly the
-/// paths it named; a later one never cancels an earlier one.
+/// frames it named; a later one never cancels an earlier one.
 pub(crate) struct Pending {
     id: u64,
-    paths: Vec<PathBuf>,
+    frames: Vec<Key>,
+    scope: Scope,
     action: Option<Action>,
     /// What the action is, for the status line when it is dropped or a
     /// frame it named is gone: "rating key", "turn", "open of x.cr3".
@@ -442,56 +563,84 @@ impl Loads {
 const FRAMES_GIVE_UP: Duration = Duration::from_secs(60);
 const FRAMES_STALLED: Duration = Duration::from_secs(10);
 
-/// Where each of `paths` is in the list now.
-fn resolve(st: &State, paths: &[PathBuf]) -> Vec<Option<usize>> {
-    let at: HashMap<&Path, usize> = st
+/// Where each of `frames` is in the list now, as a cell, for an action
+/// of `scope`. A version whose line a read has found gone (the sidecar
+/// rewritten outside, the version deleted from another cell) is, for a
+/// line action, nobody's: `None`, said as a frame gone, and nothing is
+/// laid on it or claimed of it. For a file action it is its file, which
+/// is there still: its cell while the cells have not followed, else the
+/// file's own cell.
+fn resolve(st: &State, frames: &[Key], scope: Scope) -> Vec<Option<usize>> {
+    let file_at: HashMap<&Path, usize> = st
         .files
         .iter()
         .enumerate()
         .map(|(i, p)| (p.as_path(), i))
         .collect();
-    paths.iter().map(|p| at.get(p.as_path()).copied()).collect()
+    frames
+        .iter()
+        .map(|k| {
+            let file = *file_at.get(k.path.as_path())?;
+            match (scope, st.cell_of(file, k.version())) {
+                (Scope::Line, Some(c)) => st.line(c).is_some().then_some(c),
+                (Scope::Line, None) => None,
+                (Scope::File, Some(c)) => Some(c),
+                (Scope::File, None) => st.own_cell(file),
+            }
+        })
+        .collect()
 }
 
 /// What a request left to do after it was queued.
 enum Queued {
     /// Nothing to read and nothing ahead: the action runs now.
-    Inline(Action, Vec<PathBuf>),
+    Inline(Action, Vec<Key>),
     /// Queued; these paths are to be read for it (none when an earlier
     /// request is reading them, or there is nothing to read).
     Later { id: u64, to_read: Vec<PathBuf> },
 }
 
-/// Queue a request for `paths`' sidecars with `action`, from the
+/// Queue a request for `frames`' sidecars with `action`, from the
 /// window's state: which of them are to be read (standing in, under no
-/// offline root, and not already being read for an earlier request).
-fn queue(st: &mut State, paths: Vec<PathBuf>, what: &str, pick: bool, action: Action) -> Queued {
-    let listed = resolve(st, &paths);
+/// offline root, and not already being read for an earlier request). A
+/// file and a version of it are one sidecar, read once.
+fn queue(
+    st: &mut State,
+    frames: Vec<Key>,
+    scope: Scope,
+    what: &str,
+    pick: bool,
+    action: Action,
+) -> Queued {
+    let listed = resolve(st, &frames, scope);
     let reading: HashSet<&Path> = st
         .loads
         .queue
         .iter()
         .filter(|p| !p.landed)
-        .flat_map(|p| p.paths.iter().map(PathBuf::as_path))
+        .flat_map(|p| p.frames.iter().map(|k| k.path.as_path()))
         .collect();
-    let to_read: Vec<PathBuf> = paths
+    let mut once = HashSet::new();
+    let to_read: Vec<PathBuf> = frames
         .iter()
         .zip(&listed)
-        .filter(|(p, i)| {
+        .filter(|(k, i)| {
             i.is_some_and(|i| !is_loaded(st, i) && !is_offline(st, i))
-                && !reading.contains(p.as_path())
+                && !reading.contains(k.path.as_path())
+                && once.insert(k.path.as_path())
         })
-        .map(|(p, _)| p.clone())
+        .map(|(k, _)| k.path.clone())
         .collect();
     if to_read.is_empty() && st.loads.queue.is_empty() {
-        return Queued::Inline(action, paths);
+        return Queued::Inline(action, frames);
     }
     st.loads.next += 1;
     let id = st.loads.next;
     let landed = to_read.is_empty();
     st.loads.queue.push_back(Pending {
         id,
-        paths,
+        frames,
+        scope,
         action: Some(action),
         what: what.to_string(),
         pick,
@@ -500,7 +649,7 @@ fn queue(st: &mut State, paths: Vec<PathBuf>, what: &str, pick: bool, action: Ac
     Queued::Later { id, to_read }
 }
 
-/// A request for `paths`' sidecars, and `action` once they are in: run
+/// A request for `frames`' sidecars, and `action` once they are in: run
 /// at once when every one is in memory already and nothing is queued
 /// ahead; else queued, the sidecars not yet read read on the pool with
 /// the bar up, and the action run on the window's thread in its turn.
@@ -510,16 +659,17 @@ pub(crate) fn request(
     state: &Rc<RefCell<State>>,
     app: &App,
     worker: &Rc<Worker>,
-    paths: Vec<PathBuf>,
+    frames: Vec<Key>,
+    scope: Scope,
     what: &str,
     action: Action,
 ) -> bool {
-    let queued = queue(&mut state.borrow_mut(), paths, what, false, action);
+    let queued = queue(&mut state.borrow_mut(), frames, scope, what, false, action);
     match queued {
-        Queued::Inline(action, paths) => {
-            let at = resolve(&state.borrow(), &paths);
+        Queued::Inline(action, frames) => {
+            let at = resolve(&state.borrow(), &frames, scope);
             action(state, app, worker, at.clone());
-            say_gone(app, &paths, &at, what, false);
+            say_gone(app, &frames, &at, what, false);
             true
         }
         Queued::Later { id, to_read } => {
@@ -540,18 +690,20 @@ pub(crate) fn request(
 pub(crate) fn request_in(
     st: &mut State,
     app: &App,
-    paths: Vec<PathBuf>,
+    frames: Vec<Key>,
+    scope: Scope,
     what: &str,
     pick: bool,
     action: Action,
 ) {
-    match queue(st, paths, what, pick, action) {
-        Queued::Inline(action, paths) => {
+    match queue(st, frames, scope, what, pick, action) {
+        Queued::Inline(action, frames) => {
             st.loads.next += 1;
             let id = st.loads.next;
             st.loads.queue.push_back(Pending {
                 id,
-                paths,
+                frames,
+                scope,
                 action: Some(action),
                 what: what.to_string(),
                 pick,
@@ -641,10 +793,10 @@ fn read(st: &mut State, app: &App, id: u64, to_read: Vec<PathBuf>) {
             let held = bring(&paths, &none, write, None);
             let results: Vec<(PathBuf, Held)> = paths.into_iter().zip(held).collect();
             for (path, h) in results {
-                if let Some(i) = st.files.iter().position(|f| *f == path)
-                    && !is_loaded(st, i)
+                if let Some(file) = st.file_by_path(&path)
+                    && !file_is_loaded(st, file)
                 {
-                    take(st, app, i, h);
+                    take(st, app, file, h);
                 }
             }
             if let Some(p) = st.loads.queue.iter_mut().find(|p| p.id == id) {
@@ -718,10 +870,10 @@ fn landed(
         let mut st = state.borrow_mut();
         if st.view_generation == generation {
             for (path, h) in results {
-                if let Some(i) = st.files.iter().position(|f| *f == path)
-                    && !is_loaded(&st, i)
+                if let Some(file) = st.file_by_path(&path)
+                    && !file_is_loaded(&st, file)
                 {
-                    take(&mut st, app, i, h);
+                    take(&mut st, app, file, h);
                 }
             }
         } else {
@@ -757,19 +909,19 @@ pub(crate) fn run_ready(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worke
         let Some(mut p) = next else {
             return;
         };
-        let at = resolve(&state.borrow(), &p.paths);
+        let at = resolve(&state.borrow(), &p.frames, p.scope);
         if let Some(action) = p.action.take() {
             action(state, app, worker, at.clone());
         }
-        say_gone(app, &p.paths, &at, &p.what, p.pick);
+        say_gone(app, &p.frames, &at, &p.what, p.pick);
     }
 }
 
 /// A frame a request named that is no longer in the list when the
-/// request runs (moved, or gone) took nothing of it: said, after the
-/// action has had its say.
-fn say_gone(app: &App, paths: &[PathBuf], at: &[Option<usize>], what: &str, pick: bool) {
-    let gone: Vec<&PathBuf> = paths
+/// request runs (moved, or gone, or a version since deleted) took
+/// nothing of it: said, after the action has had its say.
+fn say_gone(app: &App, frames: &[Key], at: &[Option<usize>], what: &str, pick: bool) {
+    let gone: Vec<&Key> = frames
         .iter()
         .zip(at)
         .filter(|(_, i)| i.is_none())
@@ -777,10 +929,10 @@ fn say_gone(app: &App, paths: &[PathBuf], at: &[Option<usize>], what: &str, pick
         .collect();
     let said = match gone.as_slice() {
         [] => return,
-        [one] if pick => format!("{} moved or is gone; not opened", file_name(one)),
+        [one] if pick => format!("{} moved or is gone; not opened", one.said()),
         [one] => format!(
             "{} moved or is gone; the {what} was not applied to it",
-            file_name(one)
+            one.said()
         ),
         many => format!(
             "{} frames moved or are gone; the {what} was not applied to them",
@@ -912,8 +1064,11 @@ pub(crate) fn bar_tick(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker
                 let waiting = (settled >= crate::roots::LOADING_WAITING_AFTER && read < total)
                     .then(|| {
                         let out = st.loads.queue.iter().filter(|p| !p.landed);
-                        let paths = out.flat_map(|p| &p.paths);
-                        crate::roots::one_root_named(&st.library.roots, paths.map(PathBuf::as_path))
+                        let paths = out.flat_map(|p| &p.frames);
+                        crate::roots::one_root_named(
+                            &st.library.roots,
+                            paths.map(|k| k.path.as_path()),
+                        )
                     })
                     .flatten();
                 app.set_loading_line(
@@ -943,58 +1098,72 @@ pub(crate) fn bar_done(st: &mut State, app: &App) {
     }
 }
 
-/// Frame `i`'s whole sidecar in hand: read now if it was standing in
+/// Cell `c`'s whole sidecar in hand: read now if it was standing in
 /// from its row, one read on this thread. False when it cannot be
 /// read, its root being offline, which the status line then says.
 /// The meta the read brings replaces the row's (a stale row, an XMP
 /// beside the frame taken), and the frame's badges follow.
-pub(crate) fn load_frame(st: &mut State, app: &App, i: usize) -> bool {
-    if st.from_row.get(i).is_none_or(|r| r.read) {
+pub(crate) fn load_frame(st: &mut State, app: &App, c: usize) -> bool {
+    let Some(file) = st.file_at(c) else {
+        return false;
+    };
+    load_file(st, app, file)
+}
+
+/// [`load_frame`] by the file.
+pub(crate) fn load_file(st: &mut State, app: &App, file: usize) -> bool {
+    if file_is_loaded(st, file) {
         return true;
     }
-    if let Some(root) = offline_root(st, i) {
+    if let Some(root) = offline_root_of(st, &st.files[file]) {
         tracing::info!(
             "{}: its sidecar is not read, {} being offline",
-            file_name(&st.files[i]),
+            file_name(&st.files[file]),
             root.display()
         );
         say_offline(st, app, &root, "");
         return false;
     }
-    if let Some(why) = st.from_row[i].unread.clone() {
+    if let Some(why) = st.from_row[file].unread.clone() {
         // A request's read just failed on it: not tried again here, on
         // the window's thread; said again.
         app.set_status(why.into());
         return false;
     }
-    let held = from_disk(&st.files[i], st.write_sidecars);
-    take(st, app, i, held)
+    let held = from_disk(&st.files[file], st.write_sidecars);
+    take(st, app, file, held)
 }
 
-/// Every frame of `frames` loaded, those under an offline root left
-/// out and said; the ones in hand, in the order given. More than one
-/// to read is read on the rayon pool.
-pub(crate) fn load_frames(st: &mut State, app: &App, frames: &[usize]) -> Vec<usize> {
-    let mut kept = Vec::with_capacity(frames.len());
-    let mut to_read = Vec::new();
+/// Every cell of `cells` loaded, those under an offline root left out
+/// and said; the ones in hand, in the order given. A file is read once
+/// however many of its cells are named; more than one to read is read
+/// on the rayon pool.
+pub(crate) fn load_frames(st: &mut State, app: &App, cells: &[usize]) -> Vec<usize> {
+    let mut kept = Vec::with_capacity(cells.len());
+    let mut to_read: Vec<usize> = Vec::new();
     let mut offline: Option<PathBuf> = None;
     let mut unread: Option<String> = None;
-    for &i in frames {
-        if st.from_row.get(i).is_none_or(|r| r.read) {
-            kept.push(i);
-        } else if let Some(root) = offline_root(st, i) {
+    for &c in cells {
+        let Some(file) = st.file_at(c) else {
+            continue;
+        };
+        if file_is_loaded(st, file) {
+            kept.push(c);
+        } else if let Some(root) = offline_root(st, c) {
             offline.get_or_insert(root);
-        } else if let Some(why) = &st.from_row[i].unread {
+        } else if let Some(why) = &st.from_row[file].unread {
             // A request's read just failed on it: left out, not read
             // again on the window's thread.
             unread.get_or_insert_with(|| why.clone());
         } else {
-            kept.push(i);
-            to_read.push(i);
+            kept.push(c);
+            if !to_read.contains(&file) {
+                to_read.push(file);
+            }
         }
     }
     if let Some(root) = offline {
-        let left_out = frames.len() - kept.len();
+        let left_out = cells.len() - kept.len();
         tracing::info!(
             "{left_out} frame(s) under {} left out: it is offline",
             root.display()
@@ -1004,24 +1173,24 @@ pub(crate) fn load_frames(st: &mut State, app: &App, frames: &[usize]) -> Vec<us
     if let Some(why) = unread {
         app.set_status(why.into());
     }
-    let mut failed = Vec::new();
+    let mut failed: Vec<usize> = Vec::new();
     match to_read.len() {
         0 => {}
         1 => {
-            let i = to_read[0];
-            let held = from_disk(&st.files[i], st.write_sidecars);
-            if !take(st, app, i, held) {
-                failed.push(i);
+            let file = to_read[0];
+            let held = from_disk(&st.files[file], st.write_sidecars);
+            if !take(st, app, file, held) {
+                failed.push(file);
             }
         }
         n => {
             let started = std::time::Instant::now();
-            let paths: Vec<PathBuf> = to_read.iter().map(|&i| st.files[i].clone()).collect();
+            let paths: Vec<PathBuf> = to_read.iter().map(|&f| st.files[f].clone()).collect();
             let rows = vec![None; n];
             let held = bring(&paths, &rows, st.write_sidecars, None);
-            for (i, h) in to_read.into_iter().zip(held) {
-                if !take(st, app, i, h) {
-                    failed.push(i);
+            for (file, h) in to_read.into_iter().zip(held) {
+                if !take(st, app, file, h) {
+                    failed.push(file);
                 }
             }
             tracing::debug!(
@@ -1031,50 +1200,61 @@ pub(crate) fn load_frames(st: &mut State, app: &App, frames: &[usize]) -> Vec<us
         }
     }
     // A sidecar that could not be read is left out: whatever the
-    // caller would write, it would write over the frame's own.
-    kept.retain(|i| !failed.contains(i));
+    // caller would write, it would write over the frame's own. A
+    // version's cell whose line the read found gone stays: a file action
+    // (a key, a turn) is the file's still, and a line action asks the
+    // line and lays nothing on none (`State::line_mut`).
+    kept.retain(|&c| st.file_at(c).is_some_and(|f| !failed.contains(&f)));
     kept
 }
 
-/// A read of frame `i`'s sidecar landing with `sidecar`, as a request's
-/// does: for a test of what comes in late.
+/// A read of file `file`'s sidecar landing with `sidecar`, as a
+/// request's does: for a test of what comes in late.
 #[cfg(test)]
-pub(crate) fn land_read(st: &mut State, app: &App, i: usize, sidecar: Sidecar) -> bool {
+pub(crate) fn land_read(st: &mut State, app: &App, file: usize, sidecar: Sidecar) -> bool {
     let held = Held {
         sidecar,
         ..from_nothing()
     };
-    take(st, app, i, held)
+    take(st, app, file, held)
 }
 
-/// `held` becomes frame `i`'s: the sidecar, the seed, and the row no
-/// longer standing in. Badges follow the meta the read brought. A read
-/// that did not take is not taken over a frame standing in from its
-/// row — a `.gcd` that could not be read, or none found where the row
-/// says there is a develop — since the next save would write the
-/// default edit over the frame's own: the frame stands in still, the
-/// status line says why, and false.
-fn take(st: &mut State, app: &App, i: usize, held: Held) -> bool {
+/// `held` becomes file `file`'s: the sidecar, the seed, and the row no
+/// longer standing in. Badges follow the meta the read brought, on
+/// every cell of the file. A read that did not take is not taken over a
+/// frame standing in from its row — a `.gcd` that could not be read, or
+/// none found where the row says there is a develop — since the next
+/// save would write the default edit over the frame's own: the frame
+/// stands in still, the status line says why, and false. A read that
+/// found other versions than the row listed moves the list at the next
+/// turn ([`crate::versions::settle_later`]): the caller may hold cell
+/// numbers.
+fn take(st: &mut State, app: &App, file: usize, held: Held) -> bool {
     let Held {
         sidecar,
-        seed,
         from_row,
         trouble,
         ..
     } = held;
-    let standing_in = st.from_row.get(i).is_some_and(|r| !r.read);
+    let standing_in = st.from_row.get(file).is_some_and(|r| !r.read);
     let why = match &trouble {
         Some(Trouble::Unreadable(e)) if standing_in => Some(format!(
             "{}'s sidecar could not be read ({e}); nothing is written over it",
-            file_name(&st.files[i])
+            file_name(&st.files[file])
         )),
         Some(Trouble::Missing)
-            if standing_in && (st.from_row[i].edited || st.from_row[i].exported) =>
+            if standing_in
+                && (st.from_row[file].edited
+                    || st.from_row[file].exported
+                    || !st.from_row[file].versions.is_empty()) =>
         {
+            // A version, edited or not, is data the default must not go
+            // over: its cell would go at the next turn, and the next save
+            // would write a sidecar without it over the real one.
             Some(format!(
-                "{}'s sidecar was not found, though the library has an edit or an \
-                 export of it on record; nothing is written over it",
-                file_name(&st.files[i])
+                "{}'s sidecar was not found, though the library has an edit, an \
+                 export or a version of it on record; nothing is written over it",
+                file_name(&st.files[file])
             ))
         }
         _ => None,
@@ -1082,91 +1262,136 @@ fn take(st: &mut State, app: &App, i: usize, held: Held) -> bool {
     if let Some(why) = why {
         tracing::warn!("{why}");
         app.set_status(why.clone().into());
-        st.from_row[i].unread = Some(why);
+        st.from_row[file].unread = Some(why);
         return false;
     }
-    st.sidecars[i] = sidecar;
+    st.sidecars[file] = sidecar;
     // A read that was out when a look it names was renamed: it takes the
     // new name, the open frame's too, before the panel is opened on it.
-    crate::panel::look_rename::caught_up(st, i);
-    if let Some(s) = st.seed_blend.get_mut(i) {
-        *s = seed;
+    crate::panel::look_rename::caught_up(st, file);
+    let iso = st.from_row[file].iso;
+    st.from_row[file] = FromRow { iso, ..from_row };
+    // The versions the read found against the cells the row made: a
+    // version the row did not list, or one it listed that is gone,
+    // moves the list once the caller is done with its numbers.
+    if versions_differ(st, file) {
+        crate::versions::settle_later(app);
     }
-    let iso = st.from_row[i].iso;
-    st.from_row[i] = FromRow { iso, ..from_row };
-    // The cell follows what the read found: the meta, and the marks
+    // The cells follow what the read found: the meta, and the marks
     // for an edit and an export, which the row only stood in for.
-    crate::panel::browser::show_badges(st, app, i);
-    // Its edit is known now: shown in its cells, or the camera's.
-    crate::edited::refresh(st, i);
+    for c in st.cells_of_file(file) {
+        crate::panel::browser::show_badges(st, app, c);
+    }
+    // Its edits are known now: shown in its cells, or the camera's.
+    crate::edited::refresh_file(st, file);
     // The frame on screen, its panel the stand-in's: opened on its own
     // sidecar now, whatever brought it in (a stalled read after the
     // give-up, a key's read, a preset's load), so the next slider
     // moves from the frame's edit and not over it. A pick still
     // pending is opened by its own request; culling's panel is not
     // the frame's.
-    if st.current == Some(i)
+    if let Some(c) = st.current
+        && st.file_at(c) == Some(file)
         && st.cull.is_none()
         && st.pick_pending.is_none()
-        && st.panel_stand_in.as_deref() == st.files.get(i).map(PathBuf::as_path)
+        && st.panel_stand_in.as_deref() == st.files.get(file).map(PathBuf::as_path)
         && let Some(worker) = crate::WORKER.with(|w| w.borrow().clone())
     {
-        crate::panel::browser::open_frame(st, app, &worker, i);
+        crate::panel::browser::open_frame(st, app, &worker, c);
     }
     true
 }
 
-/// Frame `i`'s row as the index has it now, taken into the frame while
-/// its sidecar stands in: the meta, the seed and the turns. A frame
-/// already loaded keeps what memory holds. True when what the browser
-/// shows of the frame changed (its badges, its turns, what the filter
-/// would say).
-pub(crate) fn apply_row(st: &mut State, i: usize, row: &RowMeta) -> bool {
-    let Some(from) = st.from_row.get_mut(i) else {
+/// Whether file `file`'s cells are not its sidecar's versions, in
+/// order: the list is to follow the sidecar.
+pub(crate) fn versions_differ(st: &State, file: usize) -> bool {
+    let listed: Vec<Option<&str>> = st.cells_of_file(file).map(|c| st.version_of(c)).collect();
+    let wants: Vec<Option<&str>> = std::iter::once(None)
+        .chain(
+            st.sidecars[file]
+                .versions
+                .iter()
+                .map(|v| Some(v.id.as_str())),
+        )
+        .collect();
+    listed != wants
+}
+
+/// File `file`'s row as the index has it now, taken into the frame
+/// while its sidecar stands in: the meta, the seed, the turns and the
+/// versions. A frame already loaded keeps what memory holds. True when
+/// what the browser shows of the frame changed (its badges, its turns,
+/// a version's name, what the filter would say). A version the row now
+/// lists that the cells lack, or one gone, moves the list at the next
+/// turn: the caller may hold cell numbers.
+pub(crate) fn apply_row(st: &mut State, file: usize, row: &RowMeta) -> bool {
+    let Some(from) = st.from_row.get_mut(file) else {
         return false;
     };
     if from.read {
         return false;
     }
-    let raw = !greycard_core::picture::is_picture_path(&st.files[i]);
     let next = FromRow::of(row);
-    let edited = from.edited != next.edited;
+    let edited = from.edited != next.edited || from.versions != next.versions;
     let rewritten = from.sidecar != next.sidecar || from.develop_key != next.develop_key;
     let turned = from.turns != next.turns || edited || from.exported != next.exported;
     *from = next;
-    // Whether it shows an edit, and under what key, as the row now says.
+    // Whether each cell shows an edit, and under what key, as the row
+    // now says.
     if rewritten {
-        crate::edited::changed(st, i);
+        for c in st.cells_of_file(file) {
+            crate::edited::changed(st, c);
+        }
     } else if edited {
-        crate::edited::refresh(st, i);
+        crate::edited::refresh_file(st, file);
     }
-    // A first guess from the row; the read that lands decides the seed.
-    if let Some(s) = st.seed_blend.get_mut(i) {
-        *s = raw && !row.edited;
-    }
-    let moved = st.sidecars[i].meta != row.meta;
+    let mut moved = st.sidecars[file].meta != row.meta;
     if moved {
-        st.sidecars[i].meta = row.meta.clone();
+        st.sidecars[file].meta = row.meta.clone();
+    }
+    // The versions as the row lists them now, on the stand-in: a name
+    // changed shows on its cell, and one made or deleted elsewhere
+    // moves the list.
+    let named = |versions: &[greycard_edit::Version]| -> Vec<(String, String)> {
+        versions
+            .iter()
+            .map(|v| (v.id.clone(), v.name.clone()))
+            .collect()
+    };
+    let listed: Vec<(String, String)> = row
+        .versions
+        .iter()
+        .map(|v| (v.id.clone(), v.name.clone()))
+        .collect();
+    if named(&st.sidecars[file].versions) != listed {
+        let line = st.sidecars[file].line.clone();
+        st.sidecars[file].versions = versions_of_row(row, || line.clone());
+        moved = true;
+        if versions_differ(st, file)
+            && let Some(app) = st.app.upgrade()
+        {
+            crate::versions::settle_later(&app);
+        }
     }
     moved || turned
 }
 
-/// The thumbnail job for file `i`: made from the file, or, under a
-/// root that is offline, looked up in the cache by the row's key and
-/// nothing else, since the file cannot be read.
-pub(crate) fn thumb_job(st: &State, i: usize) -> Job {
-    let path = st.files[i].clone();
-    if is_offline(st, i)
-        && let Some((hash, stamp)) = st.from_row.get(i).and_then(|r| r.key.clone())
+/// The thumbnail job for cell `c`: its frame's picture made from the
+/// file, or, under a root that is offline, looked up in the cache by
+/// the row's key and nothing else, since the file cannot be read.
+pub(crate) fn thumb_job(st: &State, c: usize) -> Job {
+    let frame = st.key_of(c).expect("a cell of the list");
+    if is_offline(st, c)
+        && let Some((hash, stamp)) = st.from_row.get(st.file_of(c)).and_then(|r| r.key.clone())
     {
         return Job::CachedThumbnail {
-            index: i,
-            path,
+            index: c,
+            frame,
             hash,
             stamp,
         };
     }
-    Job::Thumbnail { index: i, path }
+    Job::Thumbnail { index: c, frame }
 }
 
 /// The roots found offline changed under the list: a frame whose root
@@ -1184,16 +1409,13 @@ pub(crate) fn roots_changed(
         return;
     }
     let mut again = 0;
-    for i in 0..st.files.len() {
-        if back.iter().any(|r| st.files[i].starts_with(r))
-            && st.thumb_failed.get(i) == Some(&true)
-            && st.thumb_base.get(i).is_some_and(Option::is_none)
+    for c in 0..st.cells.len() {
+        if back.iter().any(|r| st.path_of(c).starts_with(r))
+            && st.thumb_failed.get(c) == Some(&true)
+            && st.thumb_base.get(c).is_some_and(Option::is_none)
         {
-            st.thumb_failed[i] = false;
-            worker.send(Job::Thumbnail {
-                index: i,
-                path: st.files[i].clone(),
-            });
+            st.thumb_failed[c] = false;
+            worker.send(thumb_job(st, c));
             again += 1;
         }
     }

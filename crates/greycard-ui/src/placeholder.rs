@@ -61,9 +61,9 @@ pub struct Wait {
 impl Wait {
     /// A frame selected: its JPEG asked for, and `showing` whatever
     /// camera picture is on screen meanwhile.
-    pub fn asked(file: usize, generation: u64, showing: Option<usize>) -> Self {
+    pub fn asked(cell: usize, generation: u64, showing: Option<usize>) -> Self {
         Self {
-            file,
+            file: cell,
             generation,
             stage: Stage::Asked,
             showing,
@@ -73,23 +73,23 @@ impl Wait {
     /// A frame whose picture is already on screen — the culling mode
     /// just left, where the loupe's picture stays up until the
     /// develop it asked for lands.
-    pub fn held(file: usize, generation: u64) -> Self {
+    pub fn held(cell: usize, generation: u64) -> Self {
         Self {
-            file,
+            file: cell,
             generation,
             stage: Stage::Shown,
-            showing: Some(file),
+            showing: Some(cell),
         }
     }
 
     /// The camera's picture of `file` is decoded. True when it is
     /// this frame's, which puts the placeholder up in its place.
-    pub fn arrived(&mut self, file: usize) -> bool {
-        if file != self.file || self.up() {
+    pub fn arrived(&mut self, cell: usize) -> bool {
+        if cell != self.file || self.up() {
             return false;
         }
         self.stage = Stage::Ready;
-        self.showing = Some(file);
+        self.showing = Some(cell);
         true
     }
 
