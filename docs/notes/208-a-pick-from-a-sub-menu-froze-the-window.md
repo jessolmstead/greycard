@@ -85,3 +85,13 @@ and a click after the synthetic pick did nothing, and do now.
 `GREYCARD_UI_TIMING` says per frame whether the viewport was drawn.
 No unit test covers the fix: the testing backend has no popups and no
 popup focus.
+
+**Upstream, 2026-10-14.** femtovg merged its own form of the pipeline
+cache on 2026-10-10 (femtovg/femtovg#366: a small least-recently-used
+cache with a flush grace, where ours is the grace alone), which
+supersedes our pull request. It sits on master past the blur and
+blend-mode API changes that Slint 1.18's renderer does not build
+against, and no release carries it yet, so the pin on our branch
+stays; it goes when Slint moves to a femtovg release with it. The
+§208 run against the pinned build today compiles 44 pipelines, in
+line with the 38 measured then.

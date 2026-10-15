@@ -44,7 +44,10 @@ tracing-log = "0.2"
 rawler = { git = "https://github.com/jessolmstead/dnglab", rev = "ec749df15c87f770ebdd29b0d3896bb354816f8c" }
 # femtovg 0.27.0 plus one change: a render pipeline is kept through
 # flushes that do not bind it, where 0.27.0 drops it at every flush and
-# compiles it again next frame (§208; femtovg/femtovg#371).
+# compiles it again next frame (§208; femtovg/femtovg#371). Upstream
+# merged its own form of the fix on 2026-10-10 (femtovg/femtovg#366),
+# past API changes Slint 1.18 does not build against, so this pin stays
+# until Slint takes a femtovg release that carries it.
 femtovg = { git = "https://github.com/jessolmstead/femtovg", rev = "befdd4dc512d05673db87e70a1586fa4f45acc36" }
 
 # The symbol tables go: nothing in a package reads them. There is no
