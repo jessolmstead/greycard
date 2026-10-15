@@ -536,7 +536,9 @@ impl Store {
     /// read first and joined against what it held then: a reference
     /// the other side added is put at our end, and one it took out is
     /// taken out of ours; what we added or took out ourselves stands.
-    /// A smart collection is ours, and the other is said in the log.
+    /// A file that will not read is kept beside itself as `.json.bad`
+    /// before ours goes over it. A smart collection is ours, and the
+    /// other is said in the log.
     pub(crate) fn save(&mut self, id: &str) {
         let smart = self.smart(id).is_some();
         if let Some(file) = self.file_of(id, smart)
@@ -584,10 +586,20 @@ impl Store {
                         );
                         return;
                     }
-                    Err(e) => tracing::warn!(
-                        "collection {}: changed on disk and unreadable ({e}); ours written over it",
-                        file.display()
-                    ),
+                    Err(e) => {
+                        // A second broken file goes over the earlier
+                        // copy, on purpose: one is enough to recover a
+                        // hand edit from, and names need no stamps.
+                        let aside = file.with_extension("json.bad");
+                        let kept = match std::fs::copy(&file, &aside) {
+                            Ok(_) => format!("kept as {}", aside.display()),
+                            Err(c) => format!("could not keep a copy ({c})"),
+                        };
+                        tracing::warn!(
+                            "collection {}: changed on disk and unreadable ({e}); {kept}; ours written over it",
+                            file.display()
+                        );
+                    }
                 }
             }
         }
@@ -1350,6 +1362,32 @@ mod tests {
         first.save(&id);
         let back = Store::load(dir.clone());
         assert_eq!(hashes(back.collection(&id).unwrap()), ["dd"]);
+        crate::testing::remove_dir_retry(dir.parent().unwrap());
+    }
+    /// A collection's file that will not read any more (a hand edit
+    /// gone wrong since it was read) is kept beside itself as
+    /// `.json.bad`, with what it held, before ours is written over it.
+    #[test]
+    fn a_file_broken_on_disk_is_kept_aside_before_it_is_written() {
+        let dir = scratch("broken").join(DIR);
+        let mut store = Store::load(dir.clone());
+        let mut c = Collection::new("Shared");
+        c.add(&[("aa".into(), PathBuf::from("/s/a.CR3"))]);
+        let id = c.id.clone();
+        store.list.push(c);
+        store.save(&id);
+        let file = dir.join(format!("{id}.json"));
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&file, "{ not json").unwrap();
+        store
+            .collection_mut(&id)
+            .unwrap()
+            .add(&[("bb".into(), PathBuf::from("/s/b.CR3"))]);
+        store.save(&id);
+        let aside = dir.join(format!("{id}.json.bad"));
+        assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{ not json");
+        let back = Store::load(dir.clone());
+        assert_eq!(hashes(back.collection(&id).unwrap()), ["aa", "bb"]);
         crate::testing::remove_dir_retry(dir.parent().unwrap());
     }
     /// Two copies of a frame and three references, one of them to a

@@ -218,8 +218,9 @@ hands.
   and the session's changes to that collection are lost at exit while
   the status line still says "added to"; the status should say so, or
   the collection go read-only.
-- A file broken by a hand edit after load is written over; a copy to
-  `<id>.json.bad` first would keep the edit.
+- A file broken by a hand edit after load is written over; since
+  2026-10-14 it is copied to `<id>.json.bad` first, so the edit is
+  kept.
 - The change stamp is mtime and length, so an outside edit inside one
   mtime tick that keeps the length (a hint moved to a path of the same
   length, on FAT or SMB) is missed and written over.
