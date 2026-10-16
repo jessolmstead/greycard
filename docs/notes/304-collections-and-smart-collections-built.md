@@ -134,9 +134,9 @@ A read of a collection carries the collection's id, and what it finds
 is put into that collection, whichever view is open when it lands: a
 merge read of one collection can land after another has been opened.
 
-**Two editors on one folder.** Each file's mtime and length are kept
-from the read and from our last write, and with them the set of hashes
-the file held then. A save that finds the file changed since (a second
+**Two editors on one folder.** Each file's content hash (its mtime and
+length until 2026-10-15) is kept from the read and from our last
+write, and with it the set of hashes the file held then. A save that finds the file changed since (a second
 editor, a hand edit, or only its time moved by a sync or backup tool)
 reads it and joins against that set: a reference on disk that was not
 in it is the other side's addition and goes at our end; one in it that
@@ -221,9 +221,10 @@ hands.
 - A file broken by a hand edit after load is written over; since
   2026-10-14 it is copied to `<id>.json.bad` first, so the edit is
   kept.
-- The change stamp is mtime and length, so an outside edit inside one
-  mtime tick that keeps the length (a hint moved to a path of the same
-  length, on FAT or SMB) is missed and written over.
+- The change stamp was mtime and length, so an outside edit inside
+  one mtime tick that keeps the length (a hint moved to a path of the
+  same length, on FAT or SMB) was missed and written over; since
+  2026-10-15 the stamp is the content's hash, and nothing is missed.
 - Under `--no-sidecars` a view of the index holds no row ids for its
   frames (an existing gap: the stand-in from a row is skipped with
   sidecars off), so the marks do not show there; adding and opening

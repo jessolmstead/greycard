@@ -356,10 +356,10 @@ pub(crate) struct Store {
     /// session, replaced only when they change: a model made afresh
     /// rebuilds the menu's items under a menu that is up.
     pub(crate) names: Rc<slint::VecModel<slint::SharedString>>,
-    /// Each file as it was when read or last written, its mtime and its
-    /// length: a file that is not so any more was written since by
-    /// another editor or by hand, and is read and joined before ours
-    /// goes over it.
+    /// Each file's content hash as it was when read or last written
+    /// here: a file whose bytes differ was written since by another
+    /// editor or by hand, and is read and joined before ours goes over
+    /// it.
     stamps: std::collections::HashMap<String, Stamp>,
     /// Each collection's hashes as its file held them when read or last
     /// written here: what a file changed since is joined against, so
@@ -367,12 +367,12 @@ pub(crate) struct Store {
     bases: std::collections::HashMap<String, HashSet<String>>,
 }
 
-/// A file's mtime and length.
-type Stamp = (Option<std::time::SystemTime>, u64);
+/// A hash of a file's contents.
+type Stamp = blake3::Hash;
 
 fn stamp_of(path: &Path) -> Option<Stamp> {
-    let m = std::fs::metadata(path).ok()?;
-    Some((m.modified().ok(), m.len()))
+    let bytes = std::fs::read(path).ok()?;
+    Some(blake3::hash(&bytes))
 }
 
 fn read_collection(path: &Path) -> Result<CollectionFile, String> {
@@ -1367,6 +1367,33 @@ mod tests {
     /// A collection's file that will not read any more (a hand edit
     /// gone wrong since it was read) is kept beside itself as
     /// `.json.bad`, with what it held, before ours is written over it.
+    /// An outside edit that keeps the file's length inside one mtime
+    /// tick (a hint moved to a path of the same length) is still a
+    /// change, since the stamp is the content's hash.
+    #[test]
+    fn a_same_length_edit_in_the_same_tick_is_still_joined() {
+        let dir = scratch("same-length").join(DIR);
+        let mut store = Store::load(dir.clone());
+        let mut c = Collection::new("Shared");
+        c.add(&[("aa".into(), PathBuf::from("/s/a.CR3"))]);
+        let id = c.id.clone();
+        store.list.push(c);
+        store.save(&id);
+        // The other side swaps a for b, same length, no time passing.
+        let file = dir.join(format!("{id}.json"));
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(text.contains("\"aa\""));
+        std::fs::write(&file, text.replace("\"aa\"", "\"bb\"")).unwrap();
+        store
+            .collection_mut(&id)
+            .unwrap()
+            .add(&[("cc".into(), PathBuf::from("/s/c.CR3"))]);
+        store.save(&id);
+        // Their removal of a and addition of b are both taken.
+        let back = Store::load(dir.clone());
+        assert_eq!(hashes(back.collection(&id).unwrap()), ["cc", "bb"]);
+        crate::testing::remove_dir_retry(dir.parent().unwrap());
+    }
     #[test]
     fn a_file_broken_on_disk_is_kept_aside_before_it_is_written() {
         let dir = scratch("broken").join(DIR);
