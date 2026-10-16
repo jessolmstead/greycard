@@ -10,14 +10,58 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
-## 0.7.0
+## 0.7.0, 2026-10-15
+
+Versions of one frame: a second edit of the same raw sits beside the
+first in the strip and the grid as a cell of its own, with its own
+thumbnail, history and export, compared side by side in culling and
+put in a collection on its own. Around it, the library grows
+collections and smart collections that survive a move, a lightbox for
+judging a set whole, a mask with its own Detail, Fujifilm X-Trans
+raws, a border at export, Highlights and Whites that reach by the
+frame's own range, and the first testers' rough edges on masks, the
+touchpad, the window and the export sheet smoothed. Sidecars written
+by this build are refused by 0.6.x.
+
+### Versions
+
+- Versions of one frame: New version (Ctrl+', or the frame menu) puts a
+  copy of the frame's edit beside it in the strip and the grid as a
+  cell of its own, with its own thumbnail, pencil and export mark, a
+  name tag, and its own history; rating, flag, label and the turn stay
+  the file's. A version's menu has Rename, Swap with the original and
+  Delete version. Pasting, syncing, a preset and an export act on the
+  version chosen; the library's search takes `has:versions`
+  ([§317](https://github.com/jessolmstead/greycard/blob/master/docs/notes/317-virtual-copies-part-2-the-index-and-the-window.md))
+- Compare versions, in the frame menu of a frame with versions: culling
+  opens on the original and its versions alone, side by side, each tile
+  its own edit, with the version's name on its tag and in the plate;
+  Delete on a tile removes that version and the view closes up. A
+  version's camera picture now shows while its edit is being made
+  ([§320](https://github.com/jessolmstead/greycard/blob/master/docs/notes/320-virtual-copies-part-3-compare.md))
+- A version can be put in a collection: B or Add to collection on a
+  version's cell adds that version, its tile shows in the collection
+  in its order beside the original's if that is in too, and the mark
+  sits on the version's cell alone. A collection file holding a
+  version is written at file version 2, which an older build leaves
+  alone; one without stays as it was
+  ([§319](https://github.com/jessolmstead/greycard/blob/master/docs/notes/319-virtual-copies-part-5-collections.md))
+- A version of a frame exports as `<name>-<version>.<ext>`, and the
+  headless `--export` takes `--version-name` to pick one; the export is
+  recorded on the version's own history
+  ([§313](https://github.com/jessolmstead/greycard/blob/master/docs/notes/313-virtual-copies-part-4-the-version-s-name-in-the-export.md))
+- The sidecar carries a frame's versions, each with its own history
+  and snapshots; a sidecar written by this build is at schema 5 and is
+  refused whole by 0.6.x, and one from 0.6.x reads as before
+  ([§312](https://github.com/jessolmstead/greycard/blob/master/docs/notes/312-virtual-copies-part-1-the-edit-crate.md))
 
 ### Culling and the grid
 
 - A lightbox: L over the grid, a collection or the picks shows the
   frames as edited on a dark surround with nothing else drawn, two to
-  six across with + and - (the count kept for the next session), Return into the loupe and back, the sync
-  sheet from the frame menu, and Escape or L back to the grid. A tile
+  six across with + and - (the count kept for the next session),
+  Return into the loupe and back, the sync sheet from the frame menu,
+  and Escape or L back to the grid. A tile
   keeps its last picture dimmed while a new one is made and says
   "Developing" when it has none yet
   ([§307](https://github.com/jessolmstead/greycard/blob/master/docs/notes/307-the-lightbox.md))
@@ -76,31 +120,6 @@ note a first tester reads.
   bright light answers both. A stored highlights or whites opens a
   little differently
   ([§315](https://github.com/jessolmstead/greycard/blob/master/docs/notes/315-highlights-and-whites-by-the-frames-own-range.md))
-- Sidecars written by this build are at schema 5 and are refused whole
-  by 0.6.x; nothing in them changes. The ground for versions of one
-  frame, which the next parts put in the strip
-  ([§312](https://github.com/jessolmstead/greycard/blob/master/docs/notes/312-virtual-copies-part-1-the-edit-crate.md))
-- Versions of one frame: New version (Ctrl+', or the frame menu) puts a
-  copy of the frame's edit beside it in the strip and the grid as a
-  cell of its own, with its own thumbnail, pencil and export mark, a
-  name tag, and its own history; rating, flag, label and the turn stay
-  the file's. A version's menu has Rename, Swap with the original and
-  Delete version. Pasting, syncing, a preset and an export act on the
-  version chosen; the library's search takes `has:versions`
-  ([§317](https://github.com/jessolmstead/greycard/blob/master/docs/notes/317-virtual-copies-part-2-the-index-and-the-window.md))
-- A version can be put in a collection: B or Add to collection on a
-  version's cell adds that version, its tile shows in the collection
-  in its order beside the original's if that is in too, and the mark
-  sits on the version's cell alone. A collection file holding a
-  version is written at file version 2, which an older build leaves
-  alone; one without stays as it was
-  ([§319](https://github.com/jessolmstead/greycard/blob/master/docs/notes/319-virtual-copies-part-5-collections.md))
-- Compare versions, in the frame menu of a frame with versions: culling
-  opens on the original and its versions alone, side by side, each tile
-  its own edit, with the version's name on its tag and in the plate;
-  Delete on a tile removes that version and the view closes up. A
-  version's camera picture now shows while its edit is being made
-  ([§320](https://github.com/jessolmstead/greycard/blob/master/docs/notes/320-virtual-copies-part-3-compare.md))
 - A word at the pointer over a button that shows only an icon (Undo,
   Remove, Turn left, Hide panel...), after a short rest; it goes with a
   press, a key or a scroll
@@ -116,11 +135,6 @@ note a first tester reads.
   a share of the long edge, in white, light grey, dark grey, black or
   the picture's own mean; added outside the picture, kept in presets
   ([§314](https://github.com/jessolmstead/greycard/blob/master/docs/notes/314-a-border-at-export.md))
-- A version of a frame exports as `<name>-<version>.<ext>`, and the
-  headless `--export` takes `--version-name` to pick one; the export is
-  recorded on the version's own history. Nothing in the window makes a
-  version yet
-  ([§313](https://github.com/jessolmstead/greycard/blob/master/docs/notes/313-virtual-copies-part-4-the-version-s-name-in-the-export.md))
 - The export sheet names the folder it will write to, the last one
   chosen or the frame's own, with a Choose button beside it, and
   Export writes there with no dialog; "Choose file..." is gone. A

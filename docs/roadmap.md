@@ -26,10 +26,29 @@ None at present.
 
 ## Next: 0.7.0
 
-A set opens in a lightbox for judging it whole, frames gather into
-collections and smart collections that survive a move, a mask has its
-own Detail, and the first tester's rough edges on masks, the touchpad
-and export are smoothed.
+A frame has versions, each an edit of its own beside the first in the
+strip, compared side by side and put in a collection on its own; a set
+opens in a lightbox for judging it whole; frames gather into
+collections and smart collections that survive a move; a mask has its
+own Detail; Fujifilm X-Trans raws open; and the first testers' rough
+edges on masks, the touchpad, the window and export are smoothed.
+Everything for it is on master; what is left is the cut: the version
+bump and the tag.
+
+## Then: 0.8.0
+
+A Lightroom catalog comes across whole: its folders as roots, its
+edits as sidecars, its ratings, labels, flags and collections as
+ours, so a tester brings a library over in one go.
+
+- [ ] The Lightroom catalog import: `.lrcat` read for its folders,
+      the develop settings of each frame mapped onto ours as the XMP
+      import maps them, the collections and collection sets, the
+      flags that XMP has no field for; a dry run that says what would
+      come across and what has no match
+- [ ] A look previewed under the pointer (Color track)
+- [ ] X-Trans step 2: denoising, hot pixel repair and chromatic
+      aberration correction on the X-Trans path (§322)
 
 
 ## Tracks
