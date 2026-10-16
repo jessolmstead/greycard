@@ -2029,7 +2029,7 @@ fn follow(st: &mut State, app: &App, frame: &Path, target: &Copy) {
         target.copy.display()
     );
     // The file's path: every cell of it follows.
-    st.files[file] = target.copy.clone();
+    st.move_file(file, target.copy.clone());
     st.sync.followed.insert(
         target.copy.clone(),
         Followed {

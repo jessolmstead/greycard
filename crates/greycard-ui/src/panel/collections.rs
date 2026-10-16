@@ -9,16 +9,24 @@
 //! or of every root, with its filter on the bar, and is lit in the list
 //! while the bar still says that filter there.
 //!
+//! A frame is a version of a picture: the file's own, or one of the
+//! versions its sidecar keeps. Add, B, Remove and a drag act on the
+//! chosen cells' (hash, version) pairs; a collection open lists its
+//! frames as cells in its order (two versions of one file are two
+//! tiles); the mark is on a cell whose own pair is in a collection.
+//! A version made while a collection is the list goes into it beside
+//! the frame it was made from.
+//!
 //! B goes to the collection open in the browser, else to the last one
 //! added to or made this session; with neither it asks for a new one.
 //! Like Lightroom's quick collection key it takes the selection out
 //! when every frame of it is in already.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use greycard_library::Rehash;
 
-use crate::collections::{Collection, Smart, full_name};
+use crate::collections::{Collection, Frame, Pair, Smart, full_name};
 use crate::filter::Saved;
 use crate::panel::browser::chosen_frames;
 use crate::roots::View;
@@ -28,7 +36,7 @@ use crate::*;
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum Asked {
     /// A name for a new collection, these frames to go into it.
-    New { add: Vec<(String, PathBuf)> },
+    New { add: Vec<Frame> },
     /// A name for the filter, kept as a smart collection under `root`,
     /// or every root.
     Smart {
@@ -72,7 +80,7 @@ pub(crate) fn show(st: &State, app: &App) {
                 id: c.id.as_str().into(),
                 name: c.name.as_str().into(),
                 set: c.set.as_str().into(),
-                count: c.refs.len() as i32,
+                count: c.count() as i32,
                 on,
                 smart: false,
                 capture: on && capture,
@@ -133,17 +141,43 @@ fn scope_words(st: &State, root: Option<&Path>) -> String {
     }
 }
 
-/// The index's rows of every member's hash, asked again: after a
-/// collection changed, or the index did. True when they changed.
+/// The index's rows of every member's hash, each with the versions of
+/// that picture that are members, asked again: after a collection
+/// changed, or the index did. True when they changed.
 pub(crate) fn refresh_members(st: &mut State) -> bool {
     let ids = match &st.index_reader {
-        Some(lib) => lib
-            .ids_by_hashes(st.collections.hashes())
-            .unwrap_or_else(|e| {
-                tracing::debug!("collections: {e}; the marks kept");
-                st.collections.member_ids.clone()
-            }),
-        None => HashSet::new(),
+        Some(lib) => {
+            let mut by_hash: HashMap<&str, HashSet<Option<String>>> = HashMap::new();
+            for (hash, version) in st.collections.pairs() {
+                by_hash
+                    .entry(hash)
+                    .or_default()
+                    .insert(version.map(str::to_string));
+            }
+            let mut ids: HashMap<i64, HashSet<Option<String>>> = HashMap::new();
+            let mut failed = None;
+            for (hash, versions) in by_hash {
+                match lib.ids_by_hashes([hash]) {
+                    Ok(rows) => {
+                        for id in rows {
+                            ids.entry(id).or_default().extend(versions.iter().cloned());
+                        }
+                    }
+                    Err(e) => {
+                        failed = Some(e);
+                        break;
+                    }
+                }
+            }
+            match failed {
+                None => ids,
+                Some(e) => {
+                    tracing::debug!("collections: {e}; the marks kept");
+                    st.collections.member_ids.clone()
+                }
+            }
+        }
+        None => HashMap::new(),
     };
     if ids == st.collections.member_ids {
         return false;
@@ -152,22 +186,27 @@ pub(crate) fn refresh_members(st: &mut State) -> bool {
     true
 }
 
-/// Whether frame `f` is a member of a collection, by its row.
-pub(crate) fn collected(st: &State, f: usize) -> bool {
+/// Whether cell `c` is a member of a collection: its file's row is of a
+/// member's hash, and its own version is among that picture's in a
+/// collection. So a version in one marks that version's cell and not
+/// its file's own, and the file's own marks no version.
+pub(crate) fn collected(st: &State, c: usize) -> bool {
+    let Some(cell) = st.cell(c) else {
+        return false;
+    };
     st.index_ids
-        .get(f)
+        .get(cell.file)
         .copied()
         .flatten()
-        .is_some_and(|id| st.collections.member_ids.contains(&id))
+        .and_then(|id| st.collections.member_ids.get(&id))
+        .is_some_and(|versions| versions.contains(&cell.version.as_deref().map(str::to_string)))
 }
 
 /// The mark put on every row whose membership changed.
 pub(crate) fn show_collected(st: &State, app: &App) {
     let model = app.get_thumbs();
     for (row, &c) in st.shown.iter().enumerate() {
-        // A collection names a file's own frame until a version can be
-        // put in one: the mark is the file's own cell's.
-        let want = st.version_of(c).is_none() && collected(st, st.file_of(c));
+        let want = collected(st, c);
         if let Some(mut t) = model.row_data(row)
             && t.collected != want
         {
@@ -209,10 +248,10 @@ pub(crate) fn opened_words(st: &State, missing: usize) -> Option<String> {
     } else if missing > 0 {
         format!(
             "{name}: {} shown, {missing} missing (moved or deleted, and kept until found)",
-            crate::queue::frames(st.files.len())
+            crate::queue::frames(st.cells.len())
         )
     } else {
-        format!("{name}: {}", crate::queue::frames(st.files.len()))
+        format!("{name}: {}", crate::queue::frames(st.cells.len()))
     })
 }
 
@@ -249,43 +288,57 @@ pub(crate) fn healed(state: &Rc<RefCell<State>>, app: &App, rehashed: &[Rehash])
     }
 }
 
-/// Each file's hash and path, from its row in the index, or for a
-/// frame the index has not reached, from the file itself: the cells
-/// given as their files, once each (a version's cell is its file's).
-fn frames_of(st: &State, cells: &[usize]) -> Vec<(String, PathBuf)> {
-    st.files_of(cells)
+/// Each cell as a collection names it: its file's hash and path, from
+/// the file's row in the index, or for a frame the index has not
+/// reached, from the file itself (asked once a file), and the cell's
+/// version.
+pub(crate) fn frames_of(st: &State, cells: &[usize]) -> Vec<Frame> {
+    let mut of_file: HashMap<usize, Option<(String, PathBuf)>> = HashMap::new();
+    cells
         .iter()
-        .filter_map(|&f| {
-            let path = st.files.get(f)?;
-            let row = st
-                .index_ids
-                .get(f)
-                .copied()
-                .flatten()
-                .and_then(|id| st.index_reader.as_ref()?.by_id(id).ok().flatten());
-            match row {
-                Some(e) => Some((e.hash, e.path)),
-                None => match greycard_library::hash_file(path) {
-                    Ok(h) => Some((h, greycard_library::key_path(path))),
-                    Err(e) => {
-                        tracing::warn!("collections: {}: {e}", path.display());
-                        None
-                    }
-                },
-            }
+        .filter_map(|&c| {
+            let cell = st.cell(c)?;
+            let (hash, path) = of_file
+                .entry(cell.file)
+                .or_insert_with(|| hash_and_path(st, cell.file))
+                .clone()?;
+            Some((hash, path, cell.version.as_deref().map(str::to_string)))
         })
+        .collect()
+}
+
+/// File `f`'s hash and path as the index keys them.
+fn hash_and_path(st: &State, f: usize) -> Option<(String, PathBuf)> {
+    let path = st.files.get(f)?;
+    let row = st
+        .index_ids
+        .get(f)
+        .copied()
+        .flatten()
+        .and_then(|id| st.index_reader.as_ref()?.by_id(id).ok().flatten());
+    match row {
+        Some(e) => Some((e.hash, e.path)),
+        None => match greycard_library::hash_file(path) {
+            Ok(h) => Some((h, greycard_library::key_path(path))),
+            Err(e) => {
+                tracing::warn!("collections: {}: {e}", path.display());
+                None
+            }
+        },
+    }
+}
+
+/// The frames as a collection's pairs, for a removal or a move.
+fn pairs_of(frames: &[Frame]) -> HashSet<Pair<'_>> {
+    frames
+        .iter()
+        .map(|(h, _, v)| (h.as_str(), v.as_deref()))
         .collect()
 }
 
 /// The selection's frames into collection `id`: new pictures at its end,
 /// and another copy of a member moving its hint.
-fn add_to(
-    state: &Rc<RefCell<State>>,
-    app: &App,
-    worker: &Rc<Worker>,
-    id: &str,
-    frames: &[(String, PathBuf)],
-) {
+fn add_to(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, id: &str, frames: &[Frame]) {
     let viewing = {
         let mut st = state.borrow_mut();
         let name = name_of(&st, id);
@@ -316,14 +369,44 @@ fn add_to(
     }
 }
 
-/// The pictures of `hashes` out of collection `id`; the frames
-/// themselves are not touched.
+/// A version just made, `id`, of cell `c`'s frame while a collection is
+/// the list: into the collection right after the frame it was made from,
+/// so its cell comes in beside it to be opened and named, as it would in
+/// a folder. True when it went in.
+pub(crate) fn version_made(st: &mut State, app: &App, c: usize, id: &str) -> bool {
+    let View::Collection { id: open, .. } = st.view.clone() else {
+        return false;
+    };
+    let (Some((hash, path, from)), Some(source)) = (frames_of(st, &[c]).pop(), st.key_of(c)) else {
+        return false;
+    };
+    let frame = (hash.clone(), path, Some(id.to_string()));
+    let Some(coll) = st.collections.collection_mut(&open) else {
+        return false;
+    };
+    if !coll.insert_after((&hash, from.as_deref()), &frame) {
+        return false;
+    }
+    st.collections.save(&open);
+    if let Some(frames) = st.collection_frames.as_mut() {
+        let at = frames
+            .iter()
+            .position(|k| *k == source)
+            .map_or(frames.len(), |i| i + 1);
+        frames.insert(at, crate::versions::Key::of(source.path, Some(id)));
+    }
+    members_changed(st, app);
+    true
+}
+
+/// The frames `pairs` (each a version of a picture) out of collection
+/// `id`; the frames themselves are not touched.
 fn remove_from(
     state: &Rc<RefCell<State>>,
     app: &App,
     worker: &Rc<Worker>,
     id: &str,
-    hashes: &HashSet<&str>,
+    pairs: &HashSet<Pair<'_>>,
 ) {
     let view = {
         let mut st = state.borrow_mut();
@@ -331,7 +414,7 @@ fn remove_from(
         let Some(c) = st.collections.collection_mut(id) else {
             return;
         };
-        let n = c.remove(hashes);
+        let n = c.remove(pairs);
         if n == 0 {
             app.set_status(format!("not in {name}").into());
             return;
@@ -439,6 +522,10 @@ fn forget_missing(state: &Rc<RefCell<State>>, app: &App, id: &str) {
     members_changed(st, app);
     let words = opened_words(st, forgot.missing).unwrap_or_default();
     let said = match (forgot.forgotten, forgot.away, forgot.on_disk) {
+        (0, 0, 0) if forgot.unsure > 0 => format!(
+            "{words}; nothing forgotten: the sidecar of {} could not be read",
+            crate::queue::frames(forgot.unsure)
+        ),
         (0, 0, 0) => format!("{words}; nothing to forget"),
         (0, away, 0) => format!(
             "{words}; nothing forgotten: {} on a drive that is offline or not answering",
@@ -617,15 +704,17 @@ fn key(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>) {
             .filter(|id| st.collections.collection(id).is_some());
         let all_in = target.as_deref().is_some_and(|id| {
             let c = st.collections.collection(id).expect("looked at above");
-            !frames.is_empty() && frames.iter().all(|(h, _)| c.has(h))
+            !frames.is_empty()
+                && frames
+                    .iter()
+                    .all(|(h, _, v)| c.has((h.as_str(), v.as_deref())))
         });
         (target, frames, all_in)
     };
     match target {
         None => ask(&mut state.borrow_mut(), app, Asked::New { add: frames }),
         Some(id) if all_in => {
-            let hashes: HashSet<&str> = frames.iter().map(|(h, _)| h.as_str()).collect();
-            remove_from(state, app, worker, &id, &hashes);
+            remove_from(state, app, worker, &id, &pairs_of(&frames));
         }
         Some(id) => add_to(state, app, worker, &id, &frames),
     }
@@ -640,22 +729,18 @@ fn moved(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, from: usize
         let View::Collection { id, capture: false } = st.view.clone() else {
             return;
         };
-        let Some(&file) = st.shown.get(from) else {
+        let Some(&cell) = st.shown.get(from) else {
             return;
         };
         let set = chosen_frames(&st);
-        let files = if set.contains(&file) { set } else { vec![file] };
-        let moving: Vec<String> = frames_of(&st, &files).into_iter().map(|(h, _)| h).collect();
-        let before = st
-            .shown
-            .get(to)
-            .and_then(|&f| frames_of(&st, &[f]).pop())
-            .map(|(h, _)| h);
-        let moving_set: HashSet<&str> = moving.iter().map(String::as_str).collect();
+        let cells = if set.contains(&cell) { set } else { vec![cell] };
+        let moving = frames_of(&st, &cells);
+        let before = st.shown.get(to).and_then(|&c| frames_of(&st, &[c]).pop());
         let Some(c) = st.collections.collection_mut(&id) else {
             return;
         };
-        if !c.reorder(&moving_set, before.as_deref()) {
+        let before = before.as_ref().map(|(h, _, v)| (h.as_str(), v.as_deref()));
+        if !c.reorder(&pairs_of(&moving), before) {
             return;
         }
         st.collections.save(&id);
@@ -827,8 +912,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 };
                 (id, frames_of(&st, &chosen_frames(&st)))
             };
-            let hashes: HashSet<&str> = frames.iter().map(|(h, _)| h.as_str()).collect();
-            remove_from(&state, &app, &worker, &id, &hashes);
+            remove_from(&state, &app, &worker, &id, &pairs_of(&frames));
         });
     }
     {
@@ -1280,7 +1364,11 @@ mod tests {
             let mut st = s.state.borrow_mut();
             let x = st.files.iter().position(|p| *p == s.files[0]).unwrap();
             let mut frames = frames_of(&st, &[x]);
-            frames.push(("0123456789abcdef".into(), PathBuf::from("/gone/away.tif")));
+            frames.push((
+                "0123456789abcdef".into(),
+                PathBuf::from("/gone/away.tif"),
+                None,
+            ));
             let mut c = Collection::new("Kept");
             c.add(&frames);
             let id = c.id.clone();
@@ -1339,8 +1427,12 @@ mod tests {
             st.library.offline.insert(drive.clone());
             let x = st.files.iter().position(|p| *p == s.files[0]).unwrap();
             let mut frames = frames_of(&st, &[x]);
-            frames.push(("0123456789abcdef".into(), s.dir.join("gone").join("a.tif")));
-            frames.push(("fedcba9876543210".into(), drive.join("b.tif")));
+            frames.push((
+                "0123456789abcdef".into(),
+                s.dir.join("gone").join("a.tif"),
+                None,
+            ));
+            frames.push(("fedcba9876543210".into(), drive.join("b.tif"), None));
             let mut c = Collection::new("Kept");
             c.add(&frames);
             let id = c.id.clone();
@@ -1652,6 +1744,363 @@ mod tests {
             app.get_status(),
             "a smart collection is saved from a root's view, not a collection's"
         );
+        teardown(s);
+    }
+
+    /// A version named `name` made in the sidecar of the shoot's x on
+    /// disk, the index brought up to date with it and every root's view
+    /// opened again: its id.
+    fn version_of_x(s: &mut Setup, name: &str) -> String {
+        let x = &s.files[0];
+        let mut sidecar = greycard_edit::Sidecar::load(x).unwrap().unwrap_or_default();
+        let id = sidecar.new_version(None, Some(name)).unwrap();
+        sidecar.save(x).unwrap();
+        s.writer
+            .index_tree(&s.dir.join("photos"), &mut |_| {})
+            .unwrap();
+        open_view(&s.state, &s.app, &s.worker, View::Roots(None));
+        land_sent(&s.state, &s.app, &s.worker);
+        id
+    }
+
+    /// Each cell as its file's folder and name, and its version's id.
+    fn frames(st: &State) -> Vec<(String, Option<String>)> {
+        let names = names(st);
+        st.cells
+            .iter()
+            .map(|c| {
+                (
+                    names[c.file].clone(),
+                    c.version.as_deref().map(str::to_string),
+                )
+            })
+            .collect()
+    }
+
+    /// The row the cell of `path`'s version `version` is on.
+    fn row_of_frame(st: &State, path: &Path, version: Option<&str>) -> i32 {
+        let f = st.files.iter().position(|p| p == path).unwrap();
+        let c = st.cell_of(f, version).unwrap();
+        crate::panel::browser::row_of(st, c).unwrap() as i32
+    }
+
+    /// A version put in a collection from the menu marks its own cell
+    /// and no other, and opened, the collection shows that version's
+    /// tile; B adds the file's own as a frame of its own and takes the
+    /// version out again by its pair; two versions of one picture are two
+    /// tiles in the collection's order, each once however many times the
+    /// file names it; Remove takes the pair out and leaves the other.
+    #[test]
+    fn a_version_in_a_collection_is_its_own_tile_and_mark() {
+        let mut s = setup("version-tile");
+        let warm = version_of_x(&mut s, "Warm");
+        let (app, state, worker) = (&s.app, &s.state, &s.worker);
+        assert_eq!(
+            frames(&state.borrow()),
+            [
+                ("selects/x.tif".to_string(), None),
+                ("shoot/x.tif".to_string(), None),
+                ("shoot/x.tif".to_string(), Some(warm.clone())),
+                ("shoot/y.tif".to_string(), None),
+                ("shoot/z.tif".to_string(), None),
+            ]
+        );
+        // Warm alone into a new collection, from the menu.
+        let row = row_of_frame(&state.borrow(), &s.files[0], Some(&warm));
+        app.invoke_select(row);
+        app.invoke_collection_menu_add(-1);
+        app.set_collection_sheet_name("Warm ones".into());
+        app.invoke_collection_sheet_done();
+        let id = state.borrow().collections.list[0].id.clone();
+        let refs = file_of(&s, &id)["refs"].clone();
+        assert_eq!(refs.as_array().unwrap().len(), 1);
+        assert_eq!(refs[0]["version"], warm.as_str());
+        assert_eq!(file_of(&s, &id)["version"], 2);
+        assert_eq!(
+            marks(app),
+            [false, false, true, false, false],
+            "the version's cell alone, not its file's own"
+        );
+        // B on x's own: a frame of its own, beside the version.
+        let own = row_of_frame(&state.borrow(), &s.files[0], None);
+        app.invoke_select(own);
+        crate::testing::press(app, "b");
+        assert_eq!(app.get_status(), "1 frame added to Warm ones");
+        // Every copy of the picture wears the original's mark; Warm's
+        // cell its own.
+        assert_eq!(marks(app), [true, true, true, false, false]);
+        // B on Warm, all of it in: Warm out, the original kept.
+        app.invoke_select(row);
+        crate::testing::press(app, "b");
+        assert_eq!(app.get_status(), "1 frame taken out of Warm ones");
+        assert_eq!(marks(app), [true, true, false, false, false]);
+        assert_eq!(file_of(&s, &id)["version"], 1, "no version left in it");
+        crate::testing::press(app, "b");
+        assert_eq!(app.get_status(), "1 frame added to Warm ones");
+
+        // Opened: the original, then Warm, in the collection's order, a
+        // tile each of the one file.
+        app.invoke_collection_picked(id.as_str().into());
+        land_sent(state, app, worker);
+        assert_eq!(
+            frames(&state.borrow()),
+            [
+                ("shoot/x.tif".to_string(), None),
+                ("shoot/x.tif".to_string(), Some(warm.clone())),
+            ]
+        );
+        assert_eq!(names(&state.borrow()), ["shoot/x.tif"]);
+        assert_eq!(app.get_status(), "Warm ones: 2 frames");
+        assert_eq!(marks(app), [true, true]);
+        // A second reference to Warm (two editors' joined files): shown
+        // once.
+        {
+            let mut st = state.borrow_mut();
+            let c = st.collections.collection_mut(&id).unwrap();
+            let again = c.refs[1].clone();
+            c.refs.push(again);
+        }
+        app.invoke_collection_picked(id.as_str().into());
+        land_sent(state, app, worker);
+        assert_eq!(state.borrow().cells.len(), 2);
+        // The menu's Remove on Warm's tile: the pair out, the original
+        // kept.
+        app.invoke_select(1);
+        app.invoke_frame_menu_asked(1);
+        app.invoke_collection_menu_remove();
+        land_sent(state, app, worker);
+        assert_eq!(frames(&state.borrow()), [("shoot/x.tif".to_string(), None)]);
+        let refs = state
+            .borrow()
+            .collections
+            .collection(&id)
+            .unwrap()
+            .refs
+            .clone();
+        assert!(refs.iter().all(|r| r.version.is_none()), "{refs:?}");
+        teardown(s);
+    }
+
+    /// A version deleted from its sidecar is missing from the collection,
+    /// said in the status line and kept in the file; Forget missing drops
+    /// it once the sidecar on disk reads without it.
+    #[test]
+    fn a_version_gone_from_its_sidecar_is_missing_and_forgettable() {
+        let mut s = setup("version-gone");
+        let warm = version_of_x(&mut s, "Warm");
+        let id = {
+            let st = s.state.borrow();
+            let f = st.files.iter().position(|p| *p == s.files[0]).unwrap();
+            let cells = [
+                st.cell_of(f, None).unwrap(),
+                st.cell_of(f, Some(&warm)).unwrap(),
+            ];
+            let frames = frames_of(&st, &cells);
+            drop(st);
+            let mut c = Collection::new("Both");
+            c.add(&frames);
+            let id = c.id.clone();
+            let mut st = s.state.borrow_mut();
+            st.collections.list.push(c);
+            st.collections.save(&id);
+            id
+        };
+        // Deleted on another machine, the sidecar synced over.
+        let mut sidecar = greycard_edit::Sidecar::load(&s.files[0]).unwrap().unwrap();
+        assert!(sidecar.delete_version(&warm).is_some());
+        sidecar.save(&s.files[0]).unwrap();
+        s.writer
+            .index_tree(&s.dir.join("photos"), &mut |_| {})
+            .unwrap();
+        let (app, state, worker) = (&s.app, &s.state, &s.worker);
+        app.invoke_collection_picked(id.as_str().into());
+        land_sent(state, app, worker);
+        assert_eq!(frames(&state.borrow()), [("shoot/x.tif".to_string(), None)]);
+        assert_eq!(
+            app.get_status(),
+            "Both: 1 frame shown, 1 missing (moved or deleted, and kept until found)"
+        );
+        assert_eq!(file_of(&s, &id)["refs"].as_array().unwrap().len(), 2);
+        assert_eq!(app.invoke_collection_forgettable(id.as_str().into()), 1);
+        app.invoke_collection_forget_missing(id.as_str().into());
+        assert_eq!(app.get_status(), "Both: 1 frame; forgot 1 missing");
+        let refs = file_of(&s, &id)["refs"].clone();
+        assert_eq!(refs.as_array().unwrap().len(), 1);
+        assert!(refs[0].get("version").is_none());
+        teardown(s);
+    }
+
+    /// A version made while a collection is the list goes into it beside
+    /// the frame it came from, its cell opened and marked.
+    #[test]
+    fn a_version_made_in_a_collection_goes_into_it() {
+        let s = setup("version-made");
+        let (app, state, worker) = (&s.app, &s.state, &s.worker);
+        let id = made(&s, "Made here", &[&s.files[0], &s.files[1]]);
+        app.invoke_collection_picked(id.as_str().into());
+        land_sent(state, app, worker);
+        app.invoke_select(0);
+        crate::rows::land_pending(state, app, worker);
+        crate::panel::versions::new_version(state, app, worker, false, false);
+        app.invoke_collection_sheet_done();
+        let refs = state
+            .borrow()
+            .collections
+            .collection(&id)
+            .unwrap()
+            .refs
+            .clone();
+        assert_eq!(refs.len(), 3);
+        let made = refs[1].version.clone().expect("beside x's own");
+        assert_eq!(refs[1].hash, refs[0].hash);
+        assert_eq!(
+            frames(&state.borrow()),
+            [
+                ("shoot/x.tif".to_string(), None),
+                ("shoot/x.tif".to_string(), Some(made.clone())),
+                ("shoot/y.tif".to_string(), None),
+            ]
+        );
+        {
+            let st = state.borrow();
+            assert_eq!(st.current, Some(1), "the new version's cell open");
+        }
+        assert_eq!(marks(app), [true, true, true]);
+        assert_eq!(file_of(&s, &id)["refs"][1]["version"], made.as_str());
+        teardown(s);
+    }
+
+    /// A smart collection is a question over rows: a row that passes
+    /// brings its versions with it.
+    #[test]
+    fn a_smart_collection_lists_a_passing_row_s_versions() {
+        let mut s = setup("version-smart");
+        let warm = version_of_x(&mut s, "Warm");
+        let (app, state, worker) = (&s.app, &s.state, &s.worker);
+        state.borrow_mut().filter.text = "x".into();
+        app.set_filter_text("x".into());
+        crate::panel::cull::apply_filter(state, app);
+        app.invoke_filter_save_smart();
+        app.set_collection_sheet_name("Just x".into());
+        app.invoke_collection_sheet_done();
+        let id = state.borrow().collections.smart[0].id.clone();
+        app.invoke_filter_cleared();
+        assert_eq!(state.borrow().shown.len(), 5);
+        app.invoke_collection_picked(id.as_str().into());
+        land_sent(state, app, worker);
+        let st = state.borrow();
+        let shown: Vec<(String, Option<String>)> =
+            st.shown.iter().map(|&c| frames(&st)[c].clone()).collect();
+        assert_eq!(
+            shown,
+            [
+                ("selects/x.tif".to_string(), None),
+                ("shoot/x.tif".to_string(), None),
+                ("shoot/x.tif".to_string(), Some(warm)),
+            ]
+        );
+        drop(st);
+        teardown(s);
+    }
+
+    /// A version made in a collection, a merge read of the list landing
+    /// before the index has read the save (B on another frame while
+    /// viewing it sends one): the new cell stays, still the frame on
+    /// screen, and Forget missing keeps it, its sidecar on disk having it.
+    #[test]
+    fn a_version_made_survives_a_merge_before_the_index_reads_it() {
+        let s = setup("made-merge");
+        let (app, state, worker) = (&s.app, &s.state, &s.worker);
+        let id = made(&s, "Made here", &[&s.files[0], &s.files[1]]);
+        app.invoke_collection_picked(id.as_str().into());
+        land_sent(state, app, worker);
+        app.invoke_select(0);
+        crate::rows::land_pending(state, app, worker);
+        crate::panel::versions::new_version(state, app, worker, false, false);
+        app.invoke_collection_sheet_done();
+        assert_eq!(state.borrow().cells.len(), 3);
+        let made_id = state.borrow().collections.collection(&id).unwrap().refs[1]
+            .version
+            .clone()
+            .unwrap();
+        // The index behind: the save is not read into it.
+        crate::roots::refresh_view(state, app, worker);
+        land_sent(state, app, worker);
+        {
+            let st = state.borrow();
+            assert_eq!(st.cells.len(), 3, "the new version's cell stays");
+            let current = st.current.and_then(|c| st.version_of(c));
+            assert_eq!(current, Some(made_id.as_str()));
+        }
+        app.invoke_collection_forget_missing(id.as_str().into());
+        assert!(
+            app.get_status()
+                .ends_with("nothing forgotten: the index has yet to read some of them"),
+            "{}",
+            app.get_status()
+        );
+        let refs = state
+            .borrow()
+            .collections
+            .collection(&id)
+            .unwrap()
+            .refs
+            .clone();
+        assert!(
+            refs.iter()
+                .any(|r| r.version.as_deref() == Some(made_id.as_str())),
+            "the version made was forgotten: {refs:?}"
+        );
+        teardown(s);
+    }
+
+    /// x rewritten in place, its sidecar with Warm beside it, a copy of
+    /// the old content left in the selects with a sidecar of its own, and
+    /// no pass report healing the reference: the open finds Warm in the
+    /// rewritten file's sidecar, by the hint, and Forget missing never
+    /// takes the copy's sidecar for Warm's.
+    #[test]
+    fn a_rewritten_file_s_version_is_not_forgotten_by_a_copy() {
+        let mut s = setup("rewrite-version");
+        let warm = version_of_x(&mut s, "Warm");
+        greycard_edit::Sidecar::default().save(&s.copy).unwrap();
+        let id = {
+            let st = s.state.borrow();
+            let f = st.files.iter().position(|p| *p == s.files[0]).unwrap();
+            let frames = frames_of(&st, &[st.cell_of(f, Some(&warm)).unwrap()]);
+            drop(st);
+            let mut c = Collection::new("Warm");
+            c.add(&frames);
+            let id = c.id.clone();
+            let mut st = s.state.borrow_mut();
+            st.collections.list.push(c);
+            st.collections.save(&id);
+            id
+        };
+        let old = file_of(&s, &id)["refs"][0]["hash"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        write_frame(&s.files[0], &R6, 7);
+        let report = s
+            .writer
+            .index_tree(&s.dir.join("photos"), &mut |_| {})
+            .unwrap();
+        assert_eq!(report.rehashed.len(), 1);
+        let (app, state, worker) = (&s.app, &s.state, &s.worker);
+        app.invoke_collection_picked(id.as_str().into());
+        land_sent(state, app, worker);
+        assert_eq!(
+            frames(&state.borrow()),
+            [("shoot/x.tif".to_string(), Some(warm.clone()))]
+        );
+        assert_eq!(app.get_status(), "Warm: 1 frame");
+        let refs = file_of(&s, &id)["refs"].clone();
+        assert_ne!(refs[0]["hash"].as_str().unwrap(), old, "the hash healed");
+        app.invoke_collection_forget_missing(id.as_str().into());
+        assert_eq!(app.get_status(), "Warm: 1 frame; nothing to forget");
+        assert_eq!(file_of(&s, &id)["refs"].as_array().unwrap().len(), 1);
         teardown(s);
     }
 }

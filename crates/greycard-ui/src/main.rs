@@ -518,6 +518,11 @@ pub(crate) struct State {
     /// (`versions`). `current`, `picked`, `shown`, `menu_file` and the
     /// thumbnail vectors are by cell.
     pub(crate) cells: Vec<versions::Cell>,
+    /// While a collection is the list: the frames it shows, each file
+    /// and version, in its order. The cells are these, the ones whose
+    /// file is listed and whose version its sidecar has, rather than
+    /// every file's own and all its versions. None for any other list.
+    pub(crate) collection_frames: Option<Vec<versions::Key>>,
     /// The cell on screen.
     pub(crate) current: Option<usize>,
     /// The browser's selection, as cells: the current frame and
@@ -1140,6 +1145,7 @@ impl State {
                     version: None,
                 })
                 .collect(),
+            collection_frames: None,
             files,
             current: None,
             picked: Vec::new(),

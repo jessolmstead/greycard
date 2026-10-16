@@ -97,6 +97,9 @@ pub(crate) fn new_version(
         .map(|v| v.name.clone())
         .unwrap_or_default();
     write_file(&mut st, file);
+    // Made in a collection's view: it goes into the collection beside
+    // the frame it came from, or its cell would have no place there.
+    crate::panel::collections::version_made(&mut st, app, c, &id);
     crate::versions::settle(&mut st, app, worker);
     let Some(at) = st.cell_of(file, Some(&id)) else {
         return;
@@ -232,9 +235,8 @@ pub(crate) fn swap(st: &mut State, app: &App, worker: &Worker, from_menu: bool) 
         settle_panel(st, app);
     }
     let path = st.files[file].clone();
-    let Some(own) = st.own_cell(file) else {
-        return;
-    };
+    // A collection may list the version and not the original.
+    let own = st.own_cell(file);
     if !st.sidecars[file].swap_with_original(&id) {
         // The read the load brought had no such version: deleted
         // elsewhere, and the cells follow at the next turn.
@@ -251,10 +253,21 @@ pub(crate) fn swap(st: &mut State, app: &App, worker: &Worker, from_menu: bool) 
     write_file(st, file);
     // The pictures trade places now; each is asked for again after,
     // from its line as it now is.
-    st.thumb_base.swap(own, c);
-    st.thumb_made.swap(own, c);
-    st.thumb_failed.swap(own, c);
-    for g in [own, c] {
+    match own {
+        Some(own) => {
+            st.thumb_base.swap(own, c);
+            st.thumb_made.swap(own, c);
+            st.thumb_failed.swap(own, c);
+        }
+        // The original's picture is not in the list to trade: the
+        // version's is made again.
+        None => {
+            st.thumb_base[c] = None;
+            st.thumb_made[c] = 0;
+            st.thumb_failed[c] = false;
+        }
+    }
+    for g in own.into_iter().chain([c]) {
         let (turns, flip) = thumb_turns(st, app, g);
         show_thumb(st, app, g, turns, flip);
         show_badges(st, app, g);

@@ -585,7 +585,7 @@ fn resolve(st: &State, frames: &[Key], scope: Scope) -> Vec<Option<usize>> {
                 (Scope::Line, Some(c)) => st.line(c).is_some().then_some(c),
                 (Scope::Line, None) => None,
                 (Scope::File, Some(c)) => Some(c),
-                (Scope::File, None) => st.own_cell(file),
+                (Scope::File, None) => st.file_cell(file),
             }
         })
         .collect()
@@ -1305,15 +1305,13 @@ fn take(st: &mut State, app: &App, file: usize, held: Held) -> bool {
 /// Whether file `file`'s cells are not its sidecar's versions, in
 /// order: the list is to follow the sidecar.
 pub(crate) fn versions_differ(st: &State, file: usize) -> bool {
-    let listed: Vec<Option<&str>> = st.cells_of_file(file).map(|c| st.version_of(c)).collect();
-    let wants: Vec<Option<&str>> = std::iter::once(None)
-        .chain(
-            st.sidecars[file]
-                .versions
-                .iter()
-                .map(|v| Some(v.id.as_str())),
-        )
+    let listed: Vec<Option<&str>> = st
+        .cells_of_file(file)
+        .into_iter()
+        .map(|c| st.version_of(c))
         .collect();
+    let wants = st.wanted_of_file(file);
+    let wants: Vec<Option<&str>> = wants.iter().map(|v| v.as_deref()).collect();
     listed != wants
 }
 

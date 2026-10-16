@@ -74,6 +74,13 @@ note a first tester reads.
   Delete version. Pasting, syncing, a preset and an export act on the
   version chosen; the library's search takes `has:versions`
   ([§317](https://github.com/jessolmstead/greycard/blob/master/docs/notes/317-virtual-copies-part-2-the-index-and-the-window.md))
+- A version can be put in a collection: B or Add to collection on a
+  version's cell adds that version, its tile shows in the collection
+  in its order beside the original's if that is in too, and the mark
+  sits on the version's cell alone. A collection file holding a
+  version is written at file version 2, which an older build leaves
+  alone; one without stays as it was
+  ([§319](https://github.com/jessolmstead/greycard/blob/master/docs/notes/319-virtual-copies-part-5-collections.md))
 - A word at the pointer over a button that shows only an icon (Undo,
   Remove, Turn left, Hide panel...), after a short rest; it goes with a
   press, a key or a scroll

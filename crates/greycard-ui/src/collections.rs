@@ -25,6 +25,14 @@
 //! the old hash is nowhere ([`resolve`]). A reference with nothing at
 //! its hash or its hint is kept, and counted as missing, never dropped.
 //!
+//! A reference may name a version of the picture by its id in the
+//! sidecar; none is the file's own. Two versions of one picture are two
+//! frames of the collection, each shown once, and a version the sidecar
+//! no longer has is missing, kept as a moved file is: a join with
+//! another machine's copy may bring it back. A file with a version in
+//! it is written at shape 2, which an older build leaves alone; one
+//! without stays at 1.
+//!
 //! A collection's list is its order: a frame added goes at the end,
 //! and a drag in the grid moves it. Capture order is a view of the same
 //! list, sorted by the time taken, and rewrites nothing. A smart
@@ -43,25 +51,55 @@ use serde::{Deserialize, Serialize};
 
 use crate::CollectionChip;
 use crate::filter::Saved;
+use crate::panel::export_queue::Presence;
 
 /// The folder the collections are kept in, beside the library.
 pub(crate) const DIR: &str = "collections";
 
 /// What the files say their shape is: a later build that changes it
-/// bumps this, and this build leaves a file of a later one alone.
-const VERSION: u32 = 1;
+/// bumps this, and this build leaves a file of a later one alone. 2 is
+/// a collection holding a version of a picture; a file without one is
+/// written at 1 as before, so a build that knows no versions goes on
+/// reading every collection that has none.
+const VERSION: u32 = 2;
+
+/// The shape a file without a version in it is written at.
+const PLAIN_VERSION: u32 = 1;
 
 const SMART_END: &str = ".smart.json";
 const PLAIN_END: &str = ".json";
 
-/// One frame of a collection: the picture by its content hash, and the
-/// path it was last seen at.
+/// One frame of a collection: the picture by its content hash, the
+/// version of it, and the path it was last seen at.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Reference {
     pub(crate) hash: String,
     /// The path as the index keys it, as text: a hint, and what a file
     /// rewritten in place is found by.
     pub(crate) hint: String,
+    /// The version's id in the sidecar, none for the file's own: left
+    /// out of the file then, so a collection with no version in it is
+    /// the file it always was.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) version: Option<String>,
+}
+
+/// A frame as a collection names it: its picture's hash and its
+/// version, none for the file's own.
+pub(crate) type Pair<'a> = (&'a str, Option<&'a str>);
+
+/// A frame to add: its picture's hash, the path it is at, and its
+/// version, none for the file's own.
+pub(crate) type Frame = (String, PathBuf, Option<String>);
+
+impl Reference {
+    pub(crate) fn pair(&self) -> Pair<'_> {
+        (self.hash.as_str(), self.version.as_deref())
+    }
+
+    fn owned_pair(&self) -> (String, Option<String>) {
+        (self.hash.clone(), self.version.clone())
+    }
 }
 
 /// A collection filled by hand.
@@ -193,18 +231,21 @@ impl Collection {
         }
     }
 
-    pub(crate) fn has(&self, hash: &str) -> bool {
-        self.refs.iter().any(|r| r.hash == hash)
+    /// Whether the frame `pair` is in it: that version of that picture.
+    pub(crate) fn has(&self, pair: Pair<'_>) -> bool {
+        self.refs.iter().any(|r| r.pair() == pair)
     }
 
-    /// Frames added, each by its hash and the path it is at: a hash not
-    /// in the collection goes at the end, in the order given; one that
-    /// is moves its hint to this path, and keeps its place.
-    pub(crate) fn add(&mut self, frames: &[(String, PathBuf)]) -> Added {
+    /// Frames added, each by its hash, the path it is at and its
+    /// version: a frame not in the collection goes at the end, in the
+    /// order given; one that is moves its hint to this path, and keeps
+    /// its place. Two versions of one picture are two frames.
+    pub(crate) fn add(&mut self, frames: &[Frame]) -> Added {
         let mut out = Added::default();
-        for (hash, path) in frames {
+        for (hash, path, version) in frames {
             let hint = hint_of(path);
-            match self.refs.iter_mut().find(|r| &r.hash == hash) {
+            let pair = (hash.as_str(), version.as_deref());
+            match self.refs.iter_mut().find(|r| r.pair() == pair) {
                 Some(r) => {
                     if r.hint != hint {
                         r.hint = hint;
@@ -215,6 +256,7 @@ impl Collection {
                     self.refs.push(Reference {
                         hash: hash.clone(),
                         hint,
+                        version: version.clone(),
                     });
                     out.added += 1;
                 }
@@ -223,57 +265,97 @@ impl Collection {
         out
     }
 
-    /// The references of these hashes taken out; how many were.
-    pub(crate) fn remove(&mut self, hashes: &HashSet<&str>) -> usize {
-        let before = self.refs.len();
-        self.refs.retain(|r| !hashes.contains(r.hash.as_str()));
-        before - self.refs.len()
+    /// Frame `frame` put just after the frame `after`, or at the end when
+    /// that is not in it; a frame in it already stays where it is. True
+    /// when it went in.
+    pub(crate) fn insert_after(&mut self, after: Pair<'_>, frame: &Frame) -> bool {
+        let (hash, path, version) = frame;
+        if self.has((hash.as_str(), version.as_deref())) {
+            return false;
+        }
+        let at = self
+            .refs
+            .iter()
+            .position(|r| r.pair() == after)
+            .map_or(self.refs.len(), |i| i + 1);
+        self.refs.insert(
+            at,
+            Reference {
+                hash: hash.clone(),
+                hint: hint_of(path),
+                version: version.clone(),
+            },
+        );
+        true
+    }
+
+    /// The references of these frames taken out; how many frames were,
+    /// a frame named twice in the file counted once.
+    pub(crate) fn remove(&mut self, pairs: &HashSet<Pair<'_>>) -> usize {
+        let n = pairs.iter().filter(|&&p| self.has(p)).count();
+        self.refs.retain(|r| !pairs.contains(&r.pair()));
+        n
+    }
+
+    /// How many frames it holds, each (hash, version) once however many
+    /// times the file names it.
+    pub(crate) fn count(&self) -> usize {
+        self.refs
+            .iter()
+            .map(Reference::pair)
+            .collect::<HashSet<_>>()
+            .len()
     }
 
     /// The references of `moving` put, in the order they have now, just
     /// before the reference of `before`, or at the end for none. A
     /// `before` that is itself moving is the first reference after it
     /// that is not. True when the order changed.
-    pub(crate) fn reorder(&mut self, moving: &HashSet<&str>, before: Option<&str>) -> bool {
+    pub(crate) fn reorder(&mut self, moving: &HashSet<Pair<'_>>, before: Option<Pair<'_>>) -> bool {
         let was = self.refs.clone();
         let anchor = before.and_then(|b| {
-            let at = self.refs.iter().position(|r| r.hash == b)?;
+            let at = self.refs.iter().position(|r| r.pair() == b)?;
             self.refs[at..]
                 .iter()
-                .find(|r| !moving.contains(r.hash.as_str()))
-                .map(|r| r.hash.clone())
+                .find(|r| !moving.contains(&r.pair()))
+                .map(Reference::owned_pair)
         });
         let (taken, mut kept): (Vec<Reference>, Vec<Reference>) = self
             .refs
             .drain(..)
-            .partition(|r| moving.contains(r.hash.as_str()));
+            .partition(|r| moving.contains(&r.pair()));
         let at = anchor
-            .and_then(|a| kept.iter().position(|r| r.hash == a))
+            .and_then(|(h, v)| kept.iter().position(|r| r.pair() == (&h, v.as_deref())))
             .unwrap_or(kept.len());
         kept.splice(at..at, taken);
         self.refs = kept;
         self.refs != was
     }
 
-    /// The reference of `old` takes `new` and the hint `path`. When
-    /// another reference holds `new` already, taking it would put that
-    /// picture in the collection twice, and this reference is never
-    /// dropped for it: while a copy of its own picture survives
-    /// (`survivor`, that copy's path) its hint moves to the copy; with
-    /// none known it stays as it is, on its old hash, missing until
-    /// found. True when anything changed.
-    fn take_hash(&mut self, old: &str, new: &str, path: &str, survivor: Option<&str>) -> bool {
-        let Some(at) = self.refs.iter().position(|r| r.hash == old) else {
+    /// The reference of `old` (that version of the old picture) takes
+    /// `new` and the hint `path`. When another reference holds that
+    /// version of `new` already, taking it would put that frame in the
+    /// collection twice, and this reference is never dropped for it:
+    /// while a copy of its own picture survives (`survivor`, that copy's
+    /// path) its hint moves to the copy; with none known it stays as it
+    /// is, on its old hash, missing until found. True when anything
+    /// changed.
+    fn take_hash(&mut self, old: Pair<'_>, new: &str, path: &str, survivor: Option<&str>) -> bool {
+        let Some(at) = self.refs.iter().position(|r| r.pair() == old) else {
             return false;
         };
-        if old == new {
+        let (old_hash, version) = (old.0.to_string(), old.1.map(str::to_string));
+        if old_hash == new {
             if self.refs[at].hint == path {
                 return false;
             }
             self.refs[at].hint = path.to_string();
             return true;
         }
-        match (self.has(new), survivor.filter(|c| !c.is_empty())) {
+        match (
+            self.has((new, version.as_deref())),
+            survivor.filter(|c| !c.is_empty()),
+        ) {
             (true, None) => return false,
             (true, Some(copy)) => {
                 if self.refs[at].hint == copy {
@@ -285,15 +367,26 @@ impl Collection {
                 self.refs[at] = Reference {
                     hash: new.to_string(),
                     hint: path.to_string(),
+                    version,
                 };
             }
         }
         true
     }
 
+    /// The shape its file is written at: 2 when a reference names a
+    /// version, else 1, so a build that knows no versions reads it.
+    fn file_version(&self) -> u32 {
+        if self.refs.iter().any(|r| r.version.is_some()) {
+            VERSION
+        } else {
+            PLAIN_VERSION
+        }
+    }
+
     fn to_file(&self) -> CollectionFile {
         CollectionFile {
-            version: VERSION,
+            version: self.file_version(),
             name: self.name.clone(),
             set: self.set.clone(),
             made: self.made,
@@ -318,7 +411,7 @@ impl Smart {
 
     fn to_file(&self) -> SmartFile {
         SmartFile {
-            version: VERSION,
+            version: PLAIN_VERSION,
             name: self.name.clone(),
             set: self.set.clone(),
             made: self.made,
@@ -340,9 +433,11 @@ pub(crate) struct Store {
     /// The collection B adds to outside a collection's own view: the
     /// last one added to from the menu or made.
     pub(crate) target: Option<String>,
-    /// The index's rows whose hash is a member of any collection: the
-    /// frames the browser marks.
-    pub(crate) member_ids: HashSet<i64>,
+    /// The index's rows whose hash is a member of any collection, each
+    /// with the versions of it that are: a cell is marked when its own
+    /// version is among its row's, so a version in a collection marks
+    /// that version's cell and not the original's.
+    pub(crate) member_ids: std::collections::HashMap<i64, HashSet<Option<String>>>,
     /// The sidebar's rows, one model for the session, its rows replaced
     /// only when they change.
     pub(crate) rows: Rc<slint::VecModel<CollectionChip>>,
@@ -361,10 +456,11 @@ pub(crate) struct Store {
     /// editor or by hand, and is read and joined before ours goes over
     /// it.
     stamps: std::collections::HashMap<String, Stamp>,
-    /// Each collection's hashes as its file held them when read or last
-    /// written here: what a file changed since is joined against, so
-    /// only the other side's own additions and removals are taken.
-    bases: std::collections::HashMap<String, HashSet<String>>,
+    /// Each collection's frames, (hash, version), as its file held them
+    /// when read or last written here: what a file changed since is
+    /// joined against, so only the other side's own additions and
+    /// removals are taken.
+    bases: std::collections::HashMap<String, HashSet<(String, Option<String>)>>,
 }
 
 /// A hash of a file's contents.
@@ -408,6 +504,12 @@ impl Store {
     /// later build wrote, is said and left where it is: nothing here
     /// writes to a file it did not read.
     pub(crate) fn load(dir: PathBuf) -> Store {
+        Store::load_reading(dir, VERSION)
+    }
+
+    /// [`Store::load`] by a build that reads files up to shape `up_to`:
+    /// what an older build does with a newer file, for the tests.
+    fn load_reading(dir: PathBuf, up_to: u32) -> Store {
         let mut store = Store {
             dir: Some(dir.clone()),
             ..Store::default()
@@ -430,7 +532,7 @@ impl Store {
                 match read().map_err(|e| e.to_string()).and_then(|b| {
                     serde_json::from_slice::<SmartFile>(&b).map_err(|e| e.to_string())
                 }) {
-                    Ok(f) if f.version <= VERSION => {
+                    Ok(f) if f.version <= up_to => {
                         if let Some(stamp) = stamp_of(&path) {
                             store.stamps.insert(id.to_string(), stamp);
                         }
@@ -452,13 +554,13 @@ impl Store {
                 }
             } else if let Some(id) = file.strip_suffix(PLAIN_END) {
                 match read_collection(&path) {
-                    Ok(f) if f.version <= VERSION => {
+                    Ok(f) if f.version <= up_to => {
                         if let Some(stamp) = stamp_of(&path) {
                             store.stamps.insert(id.to_string(), stamp);
                         }
                         store.bases.insert(
                             id.to_string(),
-                            f.refs.iter().map(|r| r.hash.clone()).collect(),
+                            f.refs.iter().map(Reference::owned_pair).collect(),
                         );
                         store.list.push(Collection {
                             id: id.to_string(),
@@ -524,6 +626,14 @@ impl Store {
             .collect()
     }
 
+    /// Every member frame, (hash, version), each once.
+    pub(crate) fn pairs(&self) -> HashSet<Pair<'_>> {
+        self.list
+            .iter()
+            .flat_map(|c| c.refs.iter().map(Reference::pair))
+            .collect()
+    }
+
     fn file_of(&self, id: &str, smart: bool) -> Option<PathBuf> {
         let end = if smart { SMART_END } else { PLAIN_END };
         Some(self.dir.as_ref()?.join(format!("{id}{end}")))
@@ -555,16 +665,16 @@ impl Store {
                     Ok(theirs) if theirs.version <= VERSION => {
                         let base = self.bases.get(id).cloned().unwrap_or_default();
                         if let Some(c) = self.collection_mut(id) {
-                            let on_disk: HashSet<&str> =
-                                theirs.refs.iter().map(|r| r.hash.as_str()).collect();
+                            let on_disk: HashSet<Pair<'_>> =
+                                theirs.refs.iter().map(Reference::pair).collect();
                             let before = c.refs.len();
                             c.refs.retain(|r| {
-                                !base.contains(&r.hash) || on_disk.contains(r.hash.as_str())
+                                !base.contains(&r.owned_pair()) || on_disk.contains(&r.pair())
                             });
                             let dropped = before - c.refs.len();
                             let mut joined = 0;
                             for r in theirs.refs {
-                                if !base.contains(&r.hash) && !c.has(&r.hash) {
+                                if !base.contains(&r.owned_pair()) && !c.has(r.pair()) {
                                     c.refs.push(r);
                                     joined += 1;
                                 }
@@ -628,7 +738,7 @@ impl Store {
                     self.stamps.insert(id.to_string(), stamp);
                 }
                 if let Some(c) = self.collection(id) {
-                    let base = c.refs.iter().map(|r| r.hash.clone()).collect();
+                    let base = c.refs.iter().map(Reference::owned_pair).collect();
                     self.bases.insert(id.to_string(), base);
                 }
             }
@@ -698,27 +808,34 @@ impl Store {
         let mut changed = Vec::new();
         for c in &mut self.list {
             // What each reference heals by, decided before any changes:
-            // its own path first, then the fallback.
-            let mut plan: Vec<(String, &Rehash)> = Vec::new();
+            // its own path first, then the fallback. A version of a
+            // picture heals as the picture does: its id lives in the
+            // sidecar, which a rewrite of the file leaves alone.
+            let mut plan: Vec<((String, Option<String>), &Rehash)> = Vec::new();
             for x in &c.refs {
                 if let Some(r) = by_path.get(&(x.hash.as_str(), x.hint.clone())) {
-                    plan.push((x.hash.clone(), r));
+                    plan.push((x.owned_pair(), r));
                 }
             }
             for x in &c.refs {
-                if plan.iter().any(|(h, _)| *h == x.hash) {
+                if plan.iter().any(|(p, _)| *p == x.owned_pair()) {
                     continue;
                 }
                 if matches!(left.get(x.hash.as_str()), Some(Some(None)))
                     && let Some(r) = ours.iter().find(|r| r.old == x.hash)
                 {
-                    plan.push((x.hash.clone(), r));
+                    plan.push((x.owned_pair(), r));
                 }
             }
             let mut any = false;
-            for (old, r) in plan {
+            for ((old, version), r) in plan {
                 let survivor = left.get(old.as_str()).cloned().flatten().flatten();
-                any |= c.take_hash(&old, &r.new, &hint_of(&r.path), survivor.as_deref());
+                any |= c.take_hash(
+                    (&old, version.as_deref()),
+                    &r.new,
+                    &hint_of(&r.path),
+                    survivor.as_deref(),
+                );
             }
             if any {
                 changed.push(c.id.clone());
@@ -749,7 +866,10 @@ impl Store {
     /// no index to ask, or one that will not answer, nothing is known
     /// gone and nothing changes (`None`). The caller makes sure no pass
     /// is under way: the index says a file moved is missing until the
-    /// pass reaches where it went.
+    /// pass reaches where it went. A version whose file is there and
+    /// whose id the index's row does not list is dropped only when the
+    /// sidecar on disk reads and lacks the id; one that will not read
+    /// cannot tell, and keeps it.
     pub(crate) fn forget_missing(
         &mut self,
         id: &str,
@@ -767,14 +887,21 @@ impl Store {
             }
         };
         let mut kept_away = shown.away;
+        let under_far = |p: &Path| far.iter().any(|f| p.starts_with(f));
         let (far_off, near): (Vec<&Reference>, Vec<&Reference>) = shown
             .gone
             .iter()
-            .partition(|r| far.iter().any(|f| Path::new(&r.hint).starts_with(f)));
-        kept_away += far_off.len();
+            .partition(|r| under_far(Path::new(&r.hint)));
+        let (far_lost, lost): (Vec<_>, Vec<_>) =
+            shown.lost.iter().partition(|(_, at)| under_far(at));
+        kept_away += far_off.len() + far_lost.len();
         let mut folders: Vec<PathBuf> = Vec::new();
-        for r in &near {
-            if let Some(dir) = Path::new(&r.hint).parent()
+        let looked = near
+            .iter()
+            .map(|r| Path::new(&r.hint))
+            .chain(lost.iter().map(|(_, at)| at.as_path()));
+        for p in looked {
+            if let Some(dir) = p.parent()
                 && !folders.iter().any(|d| d == dir)
             {
                 folders.push(dir.to_path_buf());
@@ -785,26 +912,23 @@ impl Store {
         } else {
             answers(&folders)
         };
+        let answer_of = |p: &Path| p.parent().and_then(|d| answered.get(d)).copied().flatten();
         let mut on_disk = 0;
-        let mut gone: HashSet<&str> = HashSet::new();
+        let mut unsure = 0;
+        let mut gone: HashSet<Pair<'_>> = HashSet::new();
         for r in near {
             let hint = Path::new(&r.hint);
-            let folder = hint
-                .parent()
-                .and_then(|d| answered.get(d))
-                .copied()
-                .flatten();
             let absent = |p: &Path| {
                 matches!(
                     std::fs::symlink_metadata(p),
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound
                 )
             };
-            match folder {
+            match answer_of(hint) {
                 None => kept_away += 1,
                 // The folder not there at all: its files neither.
                 Some(false) if hint.parent().is_some_and(absent) => {
-                    gone.insert(r.hash.as_str());
+                    gone.insert(r.pair());
                 }
                 // Gone only when the disk says so of the file itself: a
                 // folder that cannot be read, a mount that has died
@@ -812,16 +936,38 @@ impl Store {
                 Some(_) => match std::fs::symlink_metadata(hint) {
                     Ok(_) => on_disk += 1,
                     Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                        gone.insert(r.hash.as_str());
+                        gone.insert(r.pair());
                     }
                     Err(_) => kept_away += 1,
                 },
             }
         }
-        let c = self.collection_mut(id)?;
-        let n = c.remove(&gone);
+        // A version whose file is there: gone only when the sidecar
+        // reads and lacks the id. One that will not read, or none where
+        // the version was, cannot tell, and keeps it.
+        for (r, at) in lost {
+            let Some(version) = r.version.as_deref() else {
+                continue;
+            };
+            match answer_of(at) {
+                None => kept_away += 1,
+                Some(_) => match crate::panel::export_queue::version_presence(at, version) {
+                    Presence::Deleted => {
+                        gone.insert(r.pair());
+                    }
+                    // In the sidecar after all: the index has yet to
+                    // read it.
+                    Presence::There => on_disk += 1,
+                    Presence::Unsure | Presence::Absent => unsure += 1,
+                },
+            }
+        }
+        let n = self.collection_mut(id)?.remove(&gone);
         if n > 0 {
-            tracing::info!("collection {}: {n} missing forgotten", c.name);
+            tracing::info!(
+                "collection {}: {n} missing forgotten",
+                self.collection(id).map_or("?", |c| c.name.as_str())
+            );
             self.save(id);
         }
         let forgot = Forgot {
@@ -829,6 +975,7 @@ impl Store {
             missing: shown.missing - n,
             away: kept_away,
             on_disk,
+            unsure,
         };
         self.missing = Some((id.to_string(), forgot.missing, 0));
         Some(forgot)
@@ -845,7 +992,7 @@ impl Store {
         // A read changes a reference's hash only when nothing of its own
         // is left in the index: no copy survives it.
         for ch in changes {
-            any |= c.take_hash(&ch.was, &ch.hash, &ch.hint, None);
+            any |= c.take_hash((&ch.was, ch.version.as_deref()), &ch.hash, &ch.hint, None);
         }
         if any {
             self.save(id);
@@ -870,13 +1017,17 @@ pub(crate) struct Forgot {
     pub(crate) missing: usize,
     pub(crate) away: usize,
     pub(crate) on_disk: usize,
+    /// Versions whose file is there and whose sidecar will not read, or
+    /// is not there: whether the version is gone cannot be told.
+    pub(crate) unsure: usize,
 }
 
 /// A reference that a read of its collection found somewhere else: the
-/// hash it had, and the hash and the hint it has now.
+/// hash it had and its version, and the hash and the hint it has now.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Change {
     pub(crate) was: String,
+    pub(crate) version: Option<String>,
     pub(crate) hash: String,
     pub(crate) hint: String,
 }
@@ -884,14 +1035,29 @@ pub(crate) struct Change {
 /// A collection read from the index for the browser.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Shown {
-    /// The frames to list, each hash once, in the collection's order
-    /// or by capture time.
+    /// The files to list, each once, in the order their first frame
+    /// comes.
     pub(crate) listed: Vec<(PathBuf, RowMeta)>,
-    /// References with nothing at their hash or their hint.
+    /// The frames to show, each file's path and the version of it, each
+    /// (hash, version) once, in the collection's order or by capture
+    /// time: two versions of one picture are two frames of one file. A
+    /// version the index does not list (`lost`) is among them too, at
+    /// the file it was looked for in when that file is listed: the
+    /// window shows it while the sidecar it holds has it.
+    pub(crate) frames: Vec<(PathBuf, Option<String>)>,
+    /// References with nothing at their hash or their hint, and
+    /// versions their file's row does not list.
     pub(crate) missing: usize,
     /// The missing whose hint is under no root that is away: what
     /// Forget missing may drop, once it has looked at the disk.
     pub(crate) gone: Vec<Reference>,
+    /// The versions whose file is found and whose sidecar, as the index
+    /// last read it, does not have them (deleted here or on another
+    /// machine): each with the file it was looked for in, under no root
+    /// that is away. Missing, and never dropped by a read, since a join
+    /// may bring the version back; Forget missing asks the sidecar
+    /// itself.
+    pub(crate) lost: Vec<(Reference, PathBuf)>,
     /// Of the missing, those hinted under a root that is away: perhaps
     /// only out of reach, and kept.
     pub(crate) away: usize,
@@ -906,9 +1072,11 @@ pub(crate) struct Shown {
 /// the first. A reference whose hash the index has nowhere takes the
 /// hash of the file at its hint, when there is one (a file rewritten
 /// while the editor was not looking). A hint with no file of the hash
-/// at it moves to the file shown. With `capture`, sorted by the time
-/// taken, those with none last, the collection's order kept among
-/// equals.
+/// at it moves to the file shown. A reference to a version is shown
+/// from a file whose sidecar has it, as the index's row lists it, and is
+/// missing when none has; each (hash, version) once. With `capture`,
+/// sorted by the time taken, those with none last, the collection's
+/// order kept among equals.
 pub(crate) fn resolve(
     lib: &Library,
     refs: &[Reference],
@@ -916,9 +1084,12 @@ pub(crate) fn resolve(
     archives: &[PathBuf],
     capture: bool,
 ) -> greycard_library::Result<Shown> {
+    // Each frame in order: its file, its row (none for a version the
+    // index does not list), its version and when it was taken.
+    type FoundFrame = (PathBuf, Option<RowMeta>, Option<String>, Option<String>);
     let mut shown = Shown::default();
-    let mut taken: Vec<Option<String>> = Vec::new();
-    let mut seen: HashSet<String> = HashSet::new();
+    let mut found: Vec<FoundFrame> = Vec::new();
+    let mut seen: HashSet<(String, Option<String>)> = HashSet::new();
     let is_away = |p: &Path| away.iter().any(|r| p.starts_with(r));
     let on_archive = |p: &Path| archives.iter().any(|r| p.starts_with(r));
     let held: HashSet<&str> = refs.iter().map(|r| r.hash.as_str()).collect();
@@ -936,17 +1107,75 @@ pub(crate) fn resolve(
             hash = at_hint.hash;
             rows = lib.rows_by_hash(&hash)?;
         }
-        if rows.is_empty() || !seen.insert(hash.clone()) {
-            if rows.is_empty() {
-                shown.missing += 1;
-                // The index alone: the disk is never asked here.
-                if is_away(Path::new(&r.hint)) {
-                    shown.away += 1;
-                } else {
-                    shown.gone.push(r.clone());
-                }
+        // Each frame once, missing or not: a picture's own and each of
+        // its versions.
+        if !seen.insert((hash.clone(), r.version.clone())) {
+            continue;
+        }
+        if rows.is_empty() {
+            shown.missing += 1;
+            // The index alone: the disk is never asked here.
+            if is_away(Path::new(&r.hint)) {
+                shown.away += 1;
+            } else {
+                shown.gone.push(r.clone());
             }
             continue;
+        }
+        // A version is in the sidecar of the copy it was made on, not
+        // in every copy of the picture: only the rows whose sidecar, as
+        // the index last read it, has the id can show it.
+        if let Some(id) = r.version.as_deref() {
+            let has = |h: &greycard_library::HashRow| h.row.versions.iter().any(|v| v.id == id);
+            let at_hint = rows.iter().position(|h| hint_of(&h.path) == r.hint);
+            // Where the version was to be: the hinted copy, or with none
+            // of the hash there, the file at the hint (rewritten in place
+            // beside a copy that survives, before any heal), never
+            // another copy, whose sidecar says nothing of it.
+            let (looked_in, taken) = match at_hint {
+                Some(i) => (rows[i].path.clone(), rows[i].taken.clone()),
+                None => (PathBuf::from(&r.hint), None),
+            };
+            rows.retain(has);
+            // The file at the hint rewritten and its sidecar keeping the
+            // version: shown from it, the reference taking its hash.
+            if rows.is_empty()
+                && at_hint.is_none()
+                && let Some(at) = lib.by_path(Path::new(&r.hint))?.filter(|e| !e.missing)
+                && at.hash != hash
+            {
+                let there: Vec<_> = lib
+                    .rows_by_hash(&at.hash)?
+                    .into_iter()
+                    .filter(|h| hint_of(&h.path) == r.hint && has(h))
+                    .collect();
+                if !there.is_empty() {
+                    hash = at.hash;
+                    rows = there;
+                }
+            }
+            if rows.is_empty() {
+                if hash != r.hash {
+                    shown.changes.push(Change {
+                        was: r.hash.clone(),
+                        version: r.version.clone(),
+                        hash,
+                        hint: r.hint.clone(),
+                    });
+                }
+                shown.missing += 1;
+                if is_away(&looked_in) {
+                    shown.away += 1;
+                } else {
+                    shown.lost.push((r.clone(), looked_in.clone()));
+                }
+                // Kept among the frames in its place: the window shows
+                // it while the sidecar it holds has the version (one just
+                // made, the index not caught up), and not once a read
+                // says it is gone.
+                found.push((looked_in, None, r.version.clone(), taken));
+                continue;
+            }
         }
         let hinted = rows.iter().position(|h| hint_of(&h.path) == r.hint);
         let pick = hinted
@@ -968,25 +1197,40 @@ pub(crate) fn resolve(
         if hash != r.hash || hint != r.hint {
             shown.changes.push(Change {
                 was: r.hash.clone(),
+                version: r.version.clone(),
                 hash,
                 hint,
             });
         }
-        taken.push(row.taken);
-        shown.listed.push((row.path, row.row));
+        found.push((row.path, Some(row.row), r.version.clone(), row.taken));
     }
     if capture {
-        let mut order: Vec<usize> = (0..shown.listed.len()).collect();
-        order.sort_by(|&a, &b| match (&taken[a], &taken[b]) {
+        // By the time taken, the undated last; the sort is stable, so
+        // the collection's order holds among equals.
+        found.sort_by(|a, b| match (&a.3, &b.3) {
             (Some(x), Some(y)) => x.cmp(y),
             (Some(_), None) => std::cmp::Ordering::Less,
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
         });
-        let mut listed: Vec<Option<(PathBuf, RowMeta)>> =
-            shown.listed.into_iter().map(Some).collect();
-        shown.listed = order.iter().filter_map(|&i| listed[i].take()).collect();
     }
+    // The files listed are those a frame was found in; a version the
+    // index does not list is kept among the frames only where its file
+    // is listed for another frame.
+    let mut files: HashSet<PathBuf> = HashSet::new();
+    let mut frames = Vec::with_capacity(found.len());
+    for (path, row, version, _) in found {
+        if let Some(row) = row
+            && files.insert(path.clone())
+        {
+            shown.listed.push((path.clone(), row));
+        }
+        frames.push((path, version));
+    }
+    shown.frames = frames
+        .into_iter()
+        .filter(|(p, _)| files.contains(p))
+        .collect();
     Ok(shown)
 }
 
@@ -1006,6 +1250,7 @@ mod tests {
         Reference {
             hash: hash.into(),
             hint: hint.into(),
+            version: None,
         }
     }
 
@@ -1045,8 +1290,8 @@ mod tests {
         assert!(store.list.is_empty() && store.smart.is_empty());
         let mut c = Collection::new("Clients/2026/Cover picks");
         c.add(&[
-            ("aa".into(), PathBuf::from("/shoot/a.CR3")),
-            ("bb".into(), PathBuf::from("/shoot/b.CR3")),
+            ("aa".into(), PathBuf::from("/shoot/a.CR3"), None),
+            ("bb".into(), PathBuf::from("/shoot/b.CR3"), None),
         ]);
         let filter = Filter {
             stars: crate::filter::Stars::AtLeast(4),
@@ -1104,20 +1349,20 @@ mod tests {
     fn an_add_appends_new_pictures_and_moves_the_hint_of_a_member() {
         let mut c = Collection::new("Picks");
         let added = c.add(&[
-            ("aa".into(), PathBuf::from("/shoot/a.CR3")),
-            ("bb".into(), PathBuf::from("/shoot/b.CR3")),
+            ("aa".into(), PathBuf::from("/shoot/a.CR3"), None),
+            ("bb".into(), PathBuf::from("/shoot/b.CR3"), None),
         ]);
         assert_eq!(added, Added { added: 2, moved: 0 });
         // The selects folder's copy of a: the same picture, no new
         // entry, and the hint is now the copy.
         let again = c.add(&[
-            ("cc".into(), PathBuf::from("/shoot/c.CR3")),
-            ("aa".into(), PathBuf::from("/selects/a.CR3")),
+            ("cc".into(), PathBuf::from("/shoot/c.CR3"), None),
+            ("aa".into(), PathBuf::from("/selects/a.CR3"), None),
         ]);
         assert_eq!(again, Added { added: 1, moved: 1 });
         assert_eq!(hashes(&c), ["aa", "bb", "cc"]);
         assert_eq!(c.refs[0].hint, "/selects/a.CR3");
-        assert_eq!(c.remove(&HashSet::from(["bb", "zz"])), 1);
+        assert_eq!(c.remove(&HashSet::from([("bb", None), ("zz", None)])), 1);
         assert_eq!(hashes(&c), ["aa", "cc"]);
     }
 
@@ -1125,15 +1370,18 @@ mod tests {
     fn a_reorder_puts_the_moving_frames_before_the_one_dropped_on() {
         let mut c = Collection::new("Order");
         c.refs = ["a", "b", "c", "d", "e"].map(|h| r(h, h)).to_vec();
-        assert!(c.reorder(&HashSet::from(["d"]), Some("b")));
+        assert!(c.reorder(&HashSet::from([("d", None)]), Some(("b", None))));
         assert_eq!(hashes(&c), ["a", "d", "b", "c", "e"]);
         // Two, keeping their own order, to the end.
-        assert!(c.reorder(&HashSet::from(["a", "b"]), None));
+        assert!(c.reorder(&HashSet::from([("a", None), ("b", None)]), None));
         assert_eq!(hashes(&c), ["d", "c", "e", "a", "b"]);
         // Dropped on one of themselves: before the next that is not.
-        assert!(!c.reorder(&HashSet::from(["d", "c"]), Some("c")));
+        assert!(!c.reorder(
+            &HashSet::from([("d", None), ("c", None)]),
+            Some(("c", None))
+        ));
         assert_eq!(hashes(&c), ["d", "c", "e", "a", "b"]);
-        assert!(!c.reorder(&HashSet::from(["e"]), Some("a")));
+        assert!(!c.reorder(&HashSet::from([("e", None)]), Some(("a", None))));
     }
 
     /// A pass that finds a file rewritten heals the reference whose hint
@@ -1214,7 +1462,7 @@ mod tests {
         let (h, hb) = (hash(&lib, &a), hash(&lib, &b));
         let mut store = Store::default();
         let mut c = Collection::new("Two");
-        c.add(&[(h.clone(), a.clone()), (hb.clone(), b.clone())]);
+        c.add(&[(h.clone(), a.clone(), None), (hb.clone(), b.clone(), None)]);
         store.list.push(c);
         std::thread::sleep(std::time::Duration::from_millis(20));
         std::fs::copy(&b, &a).unwrap();
@@ -1307,7 +1555,7 @@ mod tests {
         let dir = scratch("joined").join(DIR);
         let mut first = Store::load(dir.clone());
         let mut c = Collection::new("Shared");
-        c.add(&[("aa".into(), PathBuf::from("/s/a.CR3"))]);
+        c.add(&[("aa".into(), PathBuf::from("/s/a.CR3"), None)]);
         let id = c.id.clone();
         first.list.push(c);
         first.save(&id);
@@ -1316,13 +1564,13 @@ mod tests {
         second
             .collection_mut(&id)
             .unwrap()
-            .add(&[("bb".into(), PathBuf::from("/s/b.CR3"))]);
+            .add(&[("bb".into(), PathBuf::from("/s/b.CR3"), None)]);
         second.save(&id);
         // The first adds c and writes: b is joined, not lost.
         first
             .collection_mut(&id)
             .unwrap()
-            .add(&[("cc".into(), PathBuf::from("/s/c.CR3"))]);
+            .add(&[("cc".into(), PathBuf::from("/s/c.CR3"), None)]);
         first.save(&id);
         let back = Store::load(dir.clone());
         assert_eq!(hashes(back.collection(&id).unwrap()), ["aa", "cc", "bb"]);
@@ -1330,7 +1578,7 @@ mod tests {
         first
             .collection_mut(&id)
             .unwrap()
-            .remove(&HashSet::from(["cc"]));
+            .remove(&HashSet::from([("cc", None)]));
         first.save(&id);
         let back = Store::load(dir.clone());
         assert_eq!(hashes(back.collection(&id).unwrap()), ["aa", "bb"]);
@@ -1340,7 +1588,7 @@ mod tests {
         first
             .collection_mut(&id)
             .unwrap()
-            .remove(&HashSet::from(["bb"]));
+            .remove(&HashSet::from([("bb", None)]));
         let file = dir.join(format!("{id}.json"));
         let same = std::fs::read(&file).unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
@@ -1353,11 +1601,11 @@ mod tests {
         first
             .collection_mut(&id)
             .unwrap()
-            .add(&[("dd".into(), PathBuf::from("/s/d.CR3"))]);
+            .add(&[("dd".into(), PathBuf::from("/s/d.CR3"), None)]);
         second
             .collection_mut(&id)
             .unwrap()
-            .remove(&HashSet::from(["aa"]));
+            .remove(&HashSet::from([("aa", None)]));
         second.save(&id);
         first.save(&id);
         let back = Store::load(dir.clone());
@@ -1375,7 +1623,7 @@ mod tests {
         let dir = scratch("same-length").join(DIR);
         let mut store = Store::load(dir.clone());
         let mut c = Collection::new("Shared");
-        c.add(&[("aa".into(), PathBuf::from("/s/a.CR3"))]);
+        c.add(&[("aa".into(), PathBuf::from("/s/a.CR3"), None)]);
         let id = c.id.clone();
         store.list.push(c);
         store.save(&id);
@@ -1387,7 +1635,7 @@ mod tests {
         store
             .collection_mut(&id)
             .unwrap()
-            .add(&[("cc".into(), PathBuf::from("/s/c.CR3"))]);
+            .add(&[("cc".into(), PathBuf::from("/s/c.CR3"), None)]);
         store.save(&id);
         // Their removal of a and addition of b are both taken.
         let back = Store::load(dir.clone());
@@ -1399,7 +1647,7 @@ mod tests {
         let dir = scratch("broken").join(DIR);
         let mut store = Store::load(dir.clone());
         let mut c = Collection::new("Shared");
-        c.add(&[("aa".into(), PathBuf::from("/s/a.CR3"))]);
+        c.add(&[("aa".into(), PathBuf::from("/s/a.CR3"), None)]);
         let id = c.id.clone();
         store.list.push(c);
         store.save(&id);
@@ -1409,7 +1657,7 @@ mod tests {
         store
             .collection_mut(&id)
             .unwrap()
-            .add(&[("bb".into(), PathBuf::from("/s/b.CR3"))]);
+            .add(&[("bb".into(), PathBuf::from("/s/b.CR3"), None)]);
         store.save(&id);
         let aside = dir.join(format!("{id}.json.bad"));
         assert_eq!(std::fs::read_to_string(&aside).unwrap(), "{ not json");
@@ -1443,9 +1691,9 @@ mod tests {
         assert_eq!(ha, hash(&lib, &selects.join("a.tif")));
         let mut c = Collection::new("Mixed");
         c.add(&[
-            (hb.clone(), b.clone()),
-            (ha.clone(), selects.join("a.tif")),
-            ("feedface".into(), shoot.join("gone.tif")),
+            (hb.clone(), b.clone(), None),
+            (ha.clone(), selects.join("a.tif"), None),
+            ("feedface".into(), shoot.join("gone.tif"), None),
         ]);
         let shown = resolve(&lib, &c.refs, &[], &[], false).unwrap();
         let paths: Vec<&PathBuf> = shown.listed.iter().map(|(p, _)| p).collect();
@@ -1466,6 +1714,7 @@ mod tests {
             shown.changes,
             [Change {
                 was: ha.clone(),
+                version: None,
                 hash: ha.clone(),
                 hint: hint_of(&a)
             }]
@@ -1486,6 +1735,7 @@ mod tests {
             shown.changes,
             [Change {
                 was: hb.clone(),
+                version: None,
                 hash: hb2.clone(),
                 hint: hint_of(&b)
             }]
@@ -1545,11 +1795,11 @@ mod tests {
         assert!(lib.by_path(&lost).unwrap().unwrap().missing);
         let mut c = Collection::new("Picks");
         c.add(&[
-            (ha.clone(), a.clone()),
-            (hb.clone(), b.clone()),
-            (hc.clone(), on_drive.clone()),
-            (hd.clone(), lost.clone()),
-            ("feedface".into(), shoot.join("never.tif")),
+            (ha.clone(), a.clone(), None),
+            (hb.clone(), b.clone(), None),
+            (hc.clone(), on_drive.clone(), None),
+            (hd.clone(), lost.clone(), None),
+            ("feedface".into(), shoot.join("never.tif"), None),
         ]);
         let id = c.id.clone();
         let mut store = Store {
@@ -1576,7 +1826,8 @@ mod tests {
                 forgotten: 2,
                 missing: 1,
                 away: 1,
-                on_disk: 0
+                on_disk: 0,
+                unsure: 0,
             }
         );
         assert_eq!(store.missing, Some((id.clone(), 1, 0)));
@@ -1617,10 +1868,10 @@ mod tests {
         let lib = Library::open_in_memory().unwrap();
         let mut c = Collection::new("Unread");
         c.add(&[
-            ("0123456789abcdef".into(), a.clone()),
-            ("feedface".into(), dir.join("gone.tif")),
-            ("cafebabe".into(), nas.join("b.tif")),
-            ("deadbeef".into(), quiet.join("c.tif")),
+            ("0123456789abcdef".into(), a.clone(), None),
+            ("feedface".into(), dir.join("gone.tif"), None),
+            ("cafebabe".into(), nas.join("b.tif"), None),
+            ("deadbeef".into(), quiet.join("c.tif"), None),
         ]);
         let id = c.id.clone();
         let mut store = Store::default();
@@ -1644,7 +1895,8 @@ mod tests {
                 forgotten: 1,
                 missing: 3,
                 away: 2,
-                on_disk: 1
+                on_disk: 1,
+                unsure: 0,
             }
         );
         assert_eq!(
@@ -1686,8 +1938,8 @@ mod tests {
         let lib = Library::open_in_memory().unwrap();
         let mut c = Collection::new("Locked");
         c.add(&[
-            ("0123456789abcdef".into(), a.clone()),
-            ("feedface".into(), dir.join("gone").join("b.tif")),
+            ("0123456789abcdef".into(), a.clone(), None),
+            ("feedface".into(), dir.join("gone").join("b.tif"), None),
         ]);
         let id = c.id.clone();
         let mut store = Store::default();
@@ -1703,11 +1955,240 @@ mod tests {
                     forgotten: 1,
                     missing: 1,
                     away: 1,
-                    on_disk: 0
+                    on_disk: 0,
+                    unsure: 0,
                 }
             );
             assert_eq!(hashes(&store.list[0]), ["0123456789abcdef"]);
         }
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// A version of `path`'s picture named `name`, made in its sidecar
+    /// and written: its id.
+    fn version_in(path: &Path, name: &str) -> String {
+        let mut s = greycard_edit::Sidecar::load(path)
+            .unwrap()
+            .unwrap_or_default();
+        let id = s.new_version(None, Some(name)).unwrap();
+        s.save(path).unwrap();
+        id
+    }
+
+    /// A reference with a version keeps it through the file; the file
+    /// says shape 2 then, and 1 again once no reference has one, the
+    /// file's own frame writing no version at all. A build that reads
+    /// only shape 1 leaves a file at 2 alone, on disk as it was.
+    #[test]
+    fn a_reference_with_a_version_round_trips_and_raises_the_shape() {
+        let dir = scratch("version-file").join(DIR);
+        let mut store = Store::load(dir.clone());
+        let mut c = Collection::new("Warm ones");
+        c.add(&[
+            ("aa".into(), PathBuf::from("/shoot/a.CR3"), None),
+            (
+                "aa".into(),
+                PathBuf::from("/shoot/a.CR3"),
+                Some("0123456789abcdef".into()),
+            ),
+        ]);
+        let id = c.id.clone();
+        store.list.push(c.clone());
+        store.save(&id);
+        let file = dir.join(format!("{id}.json"));
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(v["version"], 2);
+        assert!(
+            v["refs"][0].get("version").is_none(),
+            "the file's own: no key"
+        );
+        assert_eq!(v["refs"][1]["version"], "0123456789abcdef");
+        assert_eq!(Store::load(dir.clone()).list, vec![c.clone()]);
+        // An older build: reads up to 1, and leaves the file alone.
+        let text = std::fs::read_to_string(&file).unwrap();
+        assert!(Store::load_reading(dir.clone(), 1).list.is_empty());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), text);
+        // The version taken out: the file is a plain one again.
+        let out = store
+            .collection_mut(&id)
+            .unwrap()
+            .remove(&HashSet::from([("aa", Some("0123456789abcdef"))]));
+        assert_eq!(out, 1);
+        store.save(&id);
+        let v: serde_json::Value = serde_json::from_slice(&std::fs::read(&file).unwrap()).unwrap();
+        assert_eq!(v["version"], 1);
+        assert_eq!(v["refs"].as_array().unwrap().len(), 1);
+        assert_eq!(Store::load_reading(dir.clone(), 1).list.len(), 1);
+        crate::testing::remove_dir_retry(dir.parent().unwrap());
+    }
+
+    /// Two versions of a picture are two frames: each added once, each
+    /// its own hint, each taken out alone; the file's own is a frame
+    /// apart from them.
+    #[test]
+    fn two_versions_of_a_picture_are_two_frames() {
+        let mut c = Collection::new("Pairs");
+        let warm = Some("1111111111111111".to_string());
+        let added = c.add(&[
+            ("aa".into(), PathBuf::from("/shoot/a.CR3"), warm.clone()),
+            ("aa".into(), PathBuf::from("/shoot/a.CR3"), None),
+            ("aa".into(), PathBuf::from("/shoot/a.CR3"), warm.clone()),
+        ]);
+        assert_eq!(added, Added { added: 2, moved: 0 });
+        assert!(c.has(("aa", warm.as_deref())) && c.has(("aa", None)));
+        assert!(!c.has(("aa", Some("2222222222222222"))));
+        // The selects' copy of the file's own: its hint alone moves.
+        let again = c.add(&[("aa".into(), PathBuf::from("/selects/a.CR3"), None)]);
+        assert_eq!(again, Added { added: 0, moved: 1 });
+        assert_eq!(c.refs[0].hint, "/shoot/a.CR3");
+        assert_eq!(c.refs[1].hint, "/selects/a.CR3");
+        // Reordered by the pair: the file's own before the version.
+        assert!(c.reorder(
+            &HashSet::from([("aa", None)]),
+            Some(("aa", warm.as_deref()))
+        ));
+        assert_eq!(c.refs[0].version, None);
+        // A version made beside the frame it came from.
+        let cool = (
+            "aa".to_string(),
+            PathBuf::from("/shoot/a.CR3"),
+            Some("3333333333333333".to_string()),
+        );
+        assert!(c.insert_after(("aa", None), &cool));
+        assert!(!c.insert_after(("aa", None), &cool), "once");
+        assert_eq!(c.refs[1].version.as_deref(), Some("3333333333333333"));
+        assert_eq!(c.remove(&HashSet::from([("aa", warm.as_deref())])), 1);
+        assert_eq!(c.refs.len(), 2);
+        assert!(c.has(("aa", None)));
+        // A frame named twice in the file (two editors' joined files)
+        // counts once, held and taken out.
+        let twice = c.refs[0].clone();
+        c.refs.push(twice);
+        assert_eq!(c.count(), 2);
+        assert_eq!(c.remove(&HashSet::from([("aa", None)])), 1);
+        assert_eq!(c.count(), 1);
+    }
+
+    /// A collection's read finds a version in the sidecar of the copy it
+    /// was made on, as the index read it: shown from that file even when
+    /// hinted at another copy, each (hash, version) once, the file listed
+    /// once for its two frames. A version the sidecar does not have is
+    /// missing, counted and kept, with the file it was looked for in; one
+    /// under a root that is away is counted as away.
+    #[test]
+    fn a_version_is_found_by_its_id_and_a_gone_one_is_missing() {
+        let dir = scratch("resolve-versions");
+        let (shoot, selects) = (dir.join("shoot"), dir.join("selects"));
+        std::fs::create_dir_all(&shoot).unwrap();
+        std::fs::create_dir_all(&selects).unwrap();
+        let a = shoot.join("a.tif");
+        write_frame(&a, &R5, 1);
+        write_frame(&shoot.join("b.tif"), &R6, 2);
+        std::fs::copy(&a, selects.join("a.tif")).unwrap();
+        write_frame(&selects.join("other.tif"), &A7, 9);
+        let warm = version_in(&a, "Warm");
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut |_| {}).unwrap();
+        let ha = lib.by_path(&a).unwrap().unwrap().hash;
+        let mut c = Collection::new("Versions");
+        c.add(&[
+            // Hinted at the selects' copy, whose sidecar has no Warm.
+            (ha.clone(), selects.join("a.tif"), Some(warm.clone())),
+            (ha.clone(), a.clone(), None),
+            (ha.clone(), a.clone(), Some("ffffffffffffffff".into())),
+        ]);
+        // A second reference to Warm, as a join of two files could make.
+        let mut refs = c.refs.clone();
+        refs.push(refs[0].clone());
+        let shown = resolve(&lib, &refs, &[], &[], false).unwrap();
+        // The gone one among them at its file, for the window to show
+        // while the sidecar it holds has it.
+        assert_eq!(
+            shown.frames,
+            [
+                (a.clone(), Some(warm.clone())),
+                (a.clone(), None),
+                (a.clone(), Some("ffffffffffffffff".into()))
+            ]
+        );
+        let listed: Vec<&PathBuf> = shown.listed.iter().map(|(p, _)| p).collect();
+        assert_eq!(listed, [&a], "the file once for its two frames");
+        assert_eq!(shown.missing, 1);
+        assert!(shown.gone.is_empty());
+        assert_eq!(shown.lost.len(), 1);
+        assert_eq!(shown.lost[0].0.version.as_deref(), Some("ffffffffffffffff"));
+        assert_eq!(shown.lost[0].1, a);
+        // Warm's hint follows to the copy that has it.
+        assert_eq!(
+            shown.changes,
+            [Change {
+                was: ha.clone(),
+                version: Some(warm.clone()),
+                hash: ha.clone(),
+                hint: hint_of(&a),
+            }]
+        );
+        // The shoot's root away: the version gone there is away, kept.
+        let shown = resolve(&lib, &refs, std::slice::from_ref(&shoot), &[], false).unwrap();
+        assert_eq!((shown.missing, shown.away), (1, 1));
+        assert!(shown.lost.is_empty());
+        crate::testing::remove_dir_retry(&dir);
+    }
+
+    /// Forget missing drops a version whose file is there only when its
+    /// sidecar reads and lacks the id. One the sidecar has (the index
+    /// behind it) is kept as on disk, and one whose sidecar will not
+    /// read cannot tell and is kept.
+    #[test]
+    fn forget_missing_drops_a_version_only_when_its_sidecar_reads_without_it() {
+        let dir = scratch("forget-versions");
+        let (a, b, d) = (dir.join("a.tif"), dir.join("b.tif"), dir.join("d.tif"));
+        write_frame(&a, &R5, 1);
+        write_frame(&b, &R6, 2);
+        write_frame(&d, &A7, 3);
+        for p in [&a, &b, &d] {
+            version_in(p, "Kept");
+        }
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_tree(&dir, &mut |_| {}).unwrap();
+        let hash = |p: &Path| lib.by_path(p).unwrap().unwrap().hash;
+        // a's version deleted (gone from a sidecar that reads); b's
+        // made after the pass (in the sidecar, not yet in the index);
+        // d's sidecar unreadable.
+        let gone_id = "aaaaaaaaaaaaaaaa".to_string();
+        let late = version_in(&b, "Late");
+        let mut c = Collection::new("Forget versions");
+        c.add(&[
+            (hash(&a), a.clone(), Some(gone_id)),
+            (hash(&b), b.clone(), Some(late)),
+            (hash(&d), d.clone(), Some("dddddddddddddddd".into())),
+        ]);
+        let gcd = greycard_edit::Sidecar::find(&d).unwrap();
+        std::fs::write(&gcd, b"{ not json").unwrap();
+        let id = c.id.clone();
+        let mut store = Store::default();
+        store.list.push(c);
+        let shown = resolve(&lib, &store.list[0].refs, &[], &[], false).unwrap();
+        assert_eq!((shown.missing, shown.lost.len()), (3, 3));
+        let forgot = store
+            .forget_missing(&id, Some(&lib), &[], &[], &answering)
+            .unwrap();
+        assert_eq!(
+            forgot,
+            Forgot {
+                forgotten: 1,
+                missing: 2,
+                away: 0,
+                on_disk: 1,
+                unsure: 1,
+            }
+        );
+        let left: Vec<PathBuf> = store.list[0]
+            .refs
+            .iter()
+            .map(|r| PathBuf::from(&r.hint))
+            .collect();
+        assert_eq!(left, [b, d]);
         crate::testing::remove_dir_retry(&dir);
     }
 }

@@ -1652,11 +1652,11 @@ pub(crate) fn move_back(st: &mut State, app: &App, worker: &Worker) {
     // its id and has the flag as written.
     let old: Vec<PathBuf> = moved.files.iter().map(|&i| st.files[i].clone()).collect();
     for (&i, to) in moved.files.iter().zip(&moved.to) {
-        st.files[i] = to.clone();
+        st.move_file(i, to.clone());
         unreject(st, i);
     }
     for (&i, from) in moved.files.iter().zip(old) {
-        st.files[i] = from;
+        st.move_file(i, from);
     }
     hand_moves(st, &moved);
     hand_folders(st, &moved);

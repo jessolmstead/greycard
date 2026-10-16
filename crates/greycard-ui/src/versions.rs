@@ -144,7 +144,90 @@ pub(crate) fn cells_of(sidecars: &[Sidecar]) -> Vec<Cell> {
     cells
 }
 
+/// The cells a collection's frames make over `files` and their
+/// `sidecars`, in the collection's order: each frame whose file is
+/// listed and whose version the sidecar has, each once. A file may have
+/// no cell (its one frame a version gone since), and its cells need not
+/// stand together or start with its own.
+pub(crate) fn cells_of_frames(
+    files: &[PathBuf],
+    sidecars: &[Sidecar],
+    frames: &[Key],
+) -> Vec<Cell> {
+    let at: HashMap<&Path, usize> = files
+        .iter()
+        .enumerate()
+        .map(|(i, p)| (p.as_path(), i))
+        .collect();
+    let mut seen: std::collections::HashSet<Cell> = std::collections::HashSet::new();
+    let mut cells = Vec::with_capacity(frames.len());
+    for k in frames {
+        let Some(&file) = at.get(k.path.as_path()) else {
+            continue;
+        };
+        if let Some(v) = k.version()
+            && sidecars.get(file).is_none_or(|s| s.version(v).is_none())
+        {
+            continue;
+        }
+        let cell = Cell {
+            file,
+            version: k.version.clone(),
+        };
+        if seen.insert(cell.clone()) {
+            cells.push(cell);
+        }
+    }
+    cells
+}
+
 impl State {
+    /// File `file`'s path changed to `to` (followed to an archive's copy,
+    /// found moved, a move made): in the list, and in a collection's
+    /// frames, which name their files by path, so its cells stay. The
+    /// one place a listed file's path is written.
+    pub(crate) fn move_file(&mut self, file: usize, to: PathBuf) {
+        let Some(at) = self.files.get_mut(file) else {
+            return;
+        };
+        let was = std::mem::replace(at, to.clone());
+        if let Some(frames) = self.collection_frames.as_mut() {
+            for k in frames.iter_mut().filter(|k| k.path == was) {
+                k.path = to.clone();
+            }
+        }
+    }
+
+    /// The cells the list wants now: a collection's frames while one is
+    /// the list, else each file's own and all its versions.
+    pub(crate) fn wanted_cells(&self) -> Vec<Cell> {
+        match &self.collection_frames {
+            Some(frames) => cells_of_frames(&self.files, &self.sidecars, frames),
+            None => cells_of(&self.sidecars),
+        }
+    }
+
+    /// The versions the list wants of file `file`, in its order: none
+    /// standing for the file's own.
+    pub(crate) fn wanted_of_file(&self, file: usize) -> Vec<Option<Arc<str>>> {
+        match &self.collection_frames {
+            Some(_) => self
+                .wanted_cells()
+                .into_iter()
+                .filter(|c| c.file == file)
+                .map(|c| c.version)
+                .collect(),
+            None => std::iter::once(None)
+                .chain(
+                    self.sidecars
+                        .get(file)
+                        .into_iter()
+                        .flat_map(|s| s.versions.iter().map(|v| Some(Arc::from(v.id.as_str())))),
+                )
+                .collect(),
+        }
+    }
+
     /// Cell `c`, when the list has one.
     pub(crate) fn cell(&self, c: usize) -> Option<&Cell> {
         self.cells.get(c)
@@ -227,25 +310,45 @@ impl State {
             .map(|v| v.name.clone())
     }
 
-    /// The cells of file `file`, its own first: they stand together in
-    /// the list. Empty for a file not listed.
-    pub(crate) fn cells_of_file(&self, file: usize) -> std::ops::Range<usize> {
-        let first = self.cells.partition_point(|c| c.file < file);
-        let end = self.cells.partition_point(|c| c.file <= file);
-        first..end
+    /// The cells of file `file`, in the list's order. Outside a
+    /// collection they stand together, its own first; in one they are
+    /// the collection's frames of it, wherever its order puts them.
+    /// Empty for a file not listed.
+    pub(crate) fn cells_of_file(&self, file: usize) -> Vec<usize> {
+        if self.collection_frames.is_none() {
+            let first = self.cells.partition_point(|c| c.file < file);
+            let end = self.cells.partition_point(|c| c.file <= file);
+            return (first..end).collect();
+        }
+        (0..self.cells.len())
+            .filter(|&c| self.cells[c].file == file)
+            .collect()
     }
 
     /// The cell of version `version` of file `file`, when the list has
     /// it.
     pub(crate) fn cell_of(&self, file: usize, version: Option<&str>) -> Option<usize> {
         self.cells_of_file(file)
+            .into_iter()
             .find(|&c| self.cells[c].version.as_deref() == version)
     }
 
-    /// The file's own cell of file `file`.
+    /// The file's own cell of file `file`, when the list has it: a
+    /// collection may hold a version of a file and not the file's own.
     pub(crate) fn own_cell(&self, file: usize) -> Option<usize> {
+        if self.collection_frames.is_some() {
+            return self.cell_of(file, None);
+        }
         let first = self.cells.partition_point(|c| c.file < file);
         (self.cells.get(first)?.file == file).then_some(first)
+    }
+
+    /// A cell to stand for file `file` where what is done is the file's
+    /// (its meta, its turn): its own, else the first of its versions the
+    /// list has.
+    pub(crate) fn file_cell(&self, file: usize) -> Option<usize> {
+        self.own_cell(file)
+            .or_else(|| self.cells_of_file(file).first().copied())
     }
 
     /// The cell `key` names, when the list has it.
@@ -300,7 +403,7 @@ impl State {
 /// version gone, its file's own cell is opened in its place, as a click
 /// on it would. True when the list moved.
 pub(crate) fn settle(st: &mut State, app: &App, worker: &Worker) -> bool {
-    let wanted = cells_of(&st.sidecars);
+    let wanted = st.wanted_cells();
     if wanted == st.cells {
         return false;
     }
@@ -315,7 +418,7 @@ pub(crate) fn settle(st: &mut State, app: &App, worker: &Worker) -> bool {
         // The version on screen went: its file's own cell opens in its
         // place, as a click on it would.
         let row = was_file
-            .and_then(|f| st.own_cell(f))
+            .and_then(|f| st.file_cell(f))
             .and_then(|c| crate::panel::browser::row_of(st, c))
             .or(next);
         if let Some(row) = row {
@@ -396,7 +499,7 @@ pub(crate) fn relist(
     to_new_file: &dyn Fn(usize) -> Option<usize>,
 ) -> bool {
     let old = std::mem::take(&mut st.cells);
-    let cells = cells_of(&st.sidecars);
+    let cells = st.wanted_cells();
     let at: HashMap<Cell, usize> = old
         .iter()
         .enumerate()
@@ -479,7 +582,7 @@ pub(crate) fn relist(
 /// The cells for a new list, nothing carried: the thumbnail vectors
 /// sized to them, every picture to be asked for.
 pub(crate) fn list(st: &mut State) {
-    st.cells = cells_of(&st.sidecars);
+    st.cells = st.wanted_cells();
     let count = st.cells.len();
     st.thumb_base = vec![None; count];
     st.thumb_shown = vec![None; count];
@@ -534,9 +637,9 @@ mod tests {
         let mut st = state.borrow_mut();
         let id = st.sidecars[1].new_version(None, Some("Warm")).unwrap();
         st.cells = cells_of(&st.sidecars);
-        assert_eq!(st.cells_of_file(1), 1..3);
-        assert_eq!(st.cells_of_file(2), 3..4);
-        assert_eq!(st.cells_of_file(7), 4..4);
+        assert_eq!(st.cells_of_file(1), (1..3).collect::<Vec<_>>());
+        assert_eq!(st.cells_of_file(2), (3..4).collect::<Vec<_>>());
+        assert_eq!(st.cells_of_file(7), (4..4).collect::<Vec<_>>());
         assert_eq!(st.own_cell(2), Some(3));
         assert_eq!(st.cell_of(1, Some(&id)), Some(2));
         assert_eq!(st.cell_of(1, Some("nope")), None);
@@ -555,6 +658,53 @@ mod tests {
         st.line_mut(2).unwrap().record(e);
         assert_eq!(st.line(2).unwrap().current.light.exposure, 0.5);
         assert_eq!(st.line(1).unwrap().current.light.exposure, 0.0);
+    }
+
+    /// A collection's cells are its frames in its order: a file's cells
+    /// need not stand together or start with its own, a version the
+    /// sidecar does not have and a file not listed make none, and each
+    /// frame comes once. The lookups find them where they stand.
+    #[test]
+    fn a_collection_s_cells_are_its_frames_in_its_order() {
+        let app = crate::testing::window(0);
+        let files = crate::testing::folder(3);
+        let (state, _worker) = crate::testing::state_for(&app, files.clone());
+        let mut st = state.borrow_mut();
+        let warm = st.sidecars[0].new_version(None, Some("Warm")).unwrap();
+        let cool = st.sidecars[2].new_version(None, Some("Cool")).unwrap();
+        st.collection_frames = Some(vec![
+            Key::of(&files[0], Some(&warm)),
+            Key::file(&files[1]),
+            Key::of(&files[0], None),
+            Key::of(&files[0], Some(&warm)),
+            Key::of(&files[1], Some("gone00000000000")),
+            Key::of(&files[2], Some(&cool)),
+            Key::file("/nowhere/else.CR3"),
+        ]);
+        st.cells = st.wanted_cells();
+        let cells: Vec<(usize, Option<&str>)> = st
+            .cells
+            .iter()
+            .map(|c| (c.file, c.version.as_deref()))
+            .collect();
+        assert_eq!(
+            cells,
+            [
+                (0, Some(warm.as_str())),
+                (1, None),
+                (0, None),
+                (2, Some(cool.as_str()))
+            ]
+        );
+        assert_eq!(st.cells_of_file(0), [0, 2]);
+        assert_eq!(st.own_cell(0), Some(2));
+        assert_eq!(st.cell_of(0, Some(&warm)), Some(0));
+        assert_eq!(st.own_cell(2), None, "the collection holds Cool alone");
+        assert_eq!(st.file_cell(2), Some(3));
+        assert_eq!(st.wanted_of_file(0), [Some(Arc::from(warm.as_str())), None]);
+        // Outside a collection: each file's own and all its versions.
+        st.collection_frames = None;
+        assert_eq!(st.wanted_cells(), cells_of(&st.sidecars));
     }
 
     /// A relist carries each cell's picture and its place in the
@@ -590,5 +740,26 @@ mod tests {
         assert_eq!(st.thumb_base[1].as_ref().unwrap().2, [1, 1, 1]);
         // Nothing changed: nothing moves.
         assert!(!relist(&mut st, &app, &worker, &Some));
+    }
+
+    /// A frame whose file's path changes (followed to its archive's
+    /// copy, or found moved by a merge) keeps its cells in a collection:
+    /// the frames follow the path with the list.
+    #[test]
+    fn a_followed_frame_keeps_its_cells_in_a_collection() {
+        let app = crate::testing::window(0);
+        let files = crate::testing::folder(2);
+        let (state, worker) = crate::testing::state_for(&app, files.clone());
+        let mut st = state.borrow_mut();
+        st.collection_frames = Some(vec![Key::file(&files[0]), Key::file(&files[1])]);
+        list(&mut st);
+        assert_eq!(st.cells.len(), 2);
+        let copy = PathBuf::from("/archive/shoot/a.tif");
+        st.move_file(0, copy.clone());
+        assert_eq!(st.files[0], copy);
+        assert!(!crate::rows::versions_differ(&st, 0));
+        assert!(!settle(&mut st, &app, &worker));
+        assert_eq!(st.cells.len(), 2, "the followed frame's cell stays");
+        assert_eq!(st.collection_frames.as_ref().unwrap()[0].path, copy);
     }
 }

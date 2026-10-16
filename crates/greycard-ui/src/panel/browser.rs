@@ -1057,10 +1057,9 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
             Thumb {
                 offline,
                 failed: st.thumb_failed[c] && st.thumb_base[c].is_none() && !offline,
-                // A collection names a file's own frame until a version
-                // can be put in one.
-                collected: st.cells[c].version.is_none()
-                    && crate::panel::collections::collected(st, file),
+                // The cell's own frame, by its file's hash and its
+                // version.
+                collected: crate::panel::collections::collected(st, c),
                 version: st.version_name(c).unwrap_or_default().into(),
                 ..thumb_for(&st.files[file], &st.sidecars[file].meta, frame_marks(st, c))
             }
@@ -1360,10 +1359,12 @@ pub(crate) fn open_loaded(
     st.sidecars = sidecars;
     st.from_row = from_row;
     let ids = ids_known.then_some(ids);
-    // The cells, each file's own and its versions', and their
-    // pictures' vectors, every one to be asked for. A folder of its
-    // own: the grid's zoom does not carry its appetite for large
+    // The cells, each file's own and its versions' (a collection's
+    // frames, found by their files' paths, so the files go in first),
+    // and their pictures' vectors, every one to be asked for. A folder
+    // of its own: the grid's zoom does not carry its appetite for large
     // pictures over to it.
+    st.files = files.clone();
     crate::versions::list(&mut st);
     st.thumb_want = worker::THUMB_WIDTH;
     st.grid_shown = None;
@@ -1385,7 +1386,6 @@ pub(crate) fn open_loaded(
             .cloned()
             .collect(),
     );
-    st.files = files.clone();
     // Which frames show their edit, before any picture is asked for.
     crate::edited::note_list(&st, worker);
     // The new folder's rows as the index has them now, and a pass
@@ -1420,7 +1420,7 @@ pub(crate) fn open_loaded(
     let listed = started.elapsed();
     // The file to open, its own cell, as a row of the list; hidden by
     // the filter, the nearest one shown.
-    let select = st.own_cell(select).unwrap_or(select);
+    let select = st.file_cell(select).unwrap_or(select);
     let mut row = row_of(&st, select).or_else(|| cull::nearest_row(&st.shown, select));
     // A list that arrives before the window has its device (the
     // all-roots view asked for on the command line, read in less time
@@ -1990,7 +1990,7 @@ pub(crate) fn step_tags(st: &mut State, app: &App, back: bool) -> Option<usize> 
     if !cells.iter().any(|&c| Some(c) == st.current)
         && let Some(row) = files
             .first()
-            .and_then(|&f| st.own_cell(f))
+            .and_then(|&f| st.file_cell(f))
             .and_then(|c| row_of(st, c))
     {
         return Some(row);

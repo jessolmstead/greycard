@@ -1566,6 +1566,9 @@ pub(crate) struct Found {
     /// missing, the hints of those under no offline root, and those
     /// found moved or rewritten.
     collection: Option<(String, usize, Vec<String>, Vec<crate::collections::Change>)>,
+    /// A collection's read: the frames it shows, each file and version,
+    /// in its order.
+    frames: Option<Vec<crate::versions::Key>>,
 }
 
 /// One root's look, out on a thread of its own: its answer when it has
@@ -1772,6 +1775,7 @@ impl Look {
         // window's thread, and listed from there as a view of the roots
         // is: each picture once already, so nothing is hidden.
         let mut collection = None;
+        let mut frames = None;
         let source = match self.source {
             Source::Collection {
                 id,
@@ -1799,8 +1803,21 @@ impl Look {
                     },
                 };
                 let listed = shown.map(|s| {
-                    let gone = s.gone.into_iter().map(|r| r.hint).collect();
+                    // What Forget missing may drop: the hints of those
+                    // found nowhere, and the files of the versions gone.
+                    let gone = s
+                        .gone
+                        .into_iter()
+                        .map(|r| r.hint)
+                        .chain(s.lost.iter().map(|(_, at)| crate::collections::hint_of(at)))
+                        .collect();
                     collection = Some((id, s.missing, gone, s.changes));
+                    frames = Some(
+                        s.frames
+                            .into_iter()
+                            .map(|(path, v)| crate::versions::Key::of(path, v.as_deref()))
+                            .collect(),
+                    );
                     s.listed
                 });
                 Source::Roots {
@@ -2071,6 +2088,7 @@ impl Look {
             on_screen,
             seconds,
             collection,
+            frames,
         }
     }
 }
@@ -2152,6 +2170,7 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
         on_screen,
         seconds,
         collection,
+        frames,
     } = found;
     {
         let st = state.borrow();
@@ -2163,6 +2182,15 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
         if given_up {
             tracing::debug!("library: a read given up on, or overtaken, came in; dropped");
             return;
+        }
+    }
+    // The frames a collection's read shows, for the cells: each file's
+    // versions that are in it, in its order. None for any other list,
+    // whose cells are each file's own and all its versions.
+    {
+        let mut st = state.borrow_mut();
+        if st.view_generation == generation && files.is_some() {
+            st.collection_frames = frames;
         }
     }
     // A collection's references found moved or rewritten: its file
@@ -2325,8 +2353,13 @@ fn land(state: &Rc<RefCell<State>>, app: &App, worker: &Rc<Worker>, found: Found
                     };
                     let (next, changed) =
                         merge(&mut state.borrow_mut(), app, worker, files, brought);
-                    rebuilt = changed;
-                    if let Some(row) = next {
+                    // A collection's frames may have moved where its
+                    // files did not (a version added to it, or taken
+                    // out): the cells follow, the frame on screen with
+                    // them.
+                    let settled = crate::versions::settle(&mut state.borrow_mut(), app, worker);
+                    rebuilt = changed || settled;
+                    if let Some(row) = next.filter(|_| !settled) {
                         app.invoke_select(row as i32);
                     }
                 } else {
@@ -2960,7 +2993,7 @@ pub(crate) fn follow_current(st: &mut State, seen: &OnScreen) -> bool {
         st.panel_stand_in = Some(to.clone());
     }
     // The file's path, which every cell of it reaches through its file.
-    st.files[file] = to.clone();
+    st.move_file(file, to.clone());
     true
 }
 

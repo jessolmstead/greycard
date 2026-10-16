@@ -67,7 +67,7 @@ pub(crate) fn write_file(st: &mut State, file: usize) {
         // whatever the file says about the orientation is left
         // alone and the rest of the meta still goes.
         let turn = st
-            .own_cell(file)
+            .file_cell(file)
             .and_then(|c| camera_tag(st, c))
             .map(|o| xmp::Turn::new(o, st.sidecars[file].turn));
         match xmp::save(&st.files[file], &st.sidecars[file].meta, turn) {

@@ -33,8 +33,6 @@ and export are smoothed.
 
 - [ ] Virtual copies, part 3: Compare versions side by side in cull mode
       (§309)
-- [ ] Virtual copies, part 5: a collection reference is hash plus version
-      id; the mark on the version's cell alone (§309)
 
 ## Tracks
 
