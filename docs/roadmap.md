@@ -24,18 +24,7 @@ None at present.
   and it seems to *roughly* match Lightroom's default exposure. Decides
   the feel track's baseline exposure item (§231)
 
-## Next: 0.7.0
-
-A frame has versions, each an edit of its own beside the first in the
-strip, compared side by side and put in a collection on its own; a set
-opens in a lightbox for judging it whole; frames gather into
-collections and smart collections that survive a move; a mask has its
-own Detail; Fujifilm X-Trans raws open; and the first testers' rough
-edges on masks, the touchpad, the window and export are smoothed.
-Everything for it is on master; what is left is the cut: the version
-bump and the tag.
-
-## Then: 0.8.0
+## Next: 0.8.0
 
 A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
