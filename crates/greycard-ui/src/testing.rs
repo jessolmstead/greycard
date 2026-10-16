@@ -115,18 +115,23 @@ pub(crate) fn retouch_state(app: &App) -> (Rc<RefCell<State>>, Rc<Worker>) {
     state_for(app, Vec::new())
 }
 
-/// A path under the system's temporary directory no test has used,
-/// named for `what`, not yet made; a test makes it and removes it with
-/// [`remove_dir_retry`].
+/// A folder under the system's temporary directory no test has used,
+/// named for `what`, made, and in its canonical form: on macOS the
+/// temporary directory is a symlink, and the index keys folders by
+/// their canonical path, so a test that lists a view from the index
+/// would find nothing under the spelling `temp_dir` gives. A test
+/// removes it with [`remove_dir_retry`].
 pub(crate) fn scratch_dir(what: &str) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!(
+    let dir = std::env::temp_dir().join(format!(
         "greycard-{what}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_nanos()
-    ))
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    dunce::canonicalize(&dir).unwrap()
 }
 
 /// A folder of `count` frames nothing has ever written, named as a
