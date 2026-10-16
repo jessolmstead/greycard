@@ -66,16 +66,18 @@ In **ROTATE**:
 
 ### Turning and mirroring
 
-The row of four icon buttons in **ROTATE**:
+The row of four icon buttons in **ROTATE** (rest the pointer on one
+for its name):
 
 - turn a quarter left
 - turn a quarter right
-- mirror left to right
-- mirror top to bottom
+- mirror left to right (**Flip**)
+- mirror top to bottom (**Flip vertical**)
 
 These are part of the edit, and **Reset all** undoes them.
 
-**Turn left** and **Turn right** are different. They fix a frame the
+The **Turn left** and **Turn right** buttons under the row are
+different. They fix a frame the
 camera recorded the wrong way up. They are not part of the edit:
 **Reset all** leaves them. They act on every selected frame. The **[** and **]** keys do the same.
 
@@ -122,7 +124,9 @@ after.
 2. Click on a spot, or drag over a longer flaw.
 3. Click the tool's button again when you are done.
 
-While a tool is in hand, the mouse wheel changes the size.
+While a tool is in hand, the mouse wheel changes the size, one step a
+click; a touchpad scroll changes it by as many steps as the same
+distance on a wheel.
 
 For **Heal** and **Clone**, greycard chooses where to copy from. To
 change it, choose the repair in the list with the tool in hand. Two

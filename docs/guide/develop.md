@@ -14,6 +14,31 @@ When you open a frame, you first see the camera's own JPEG, marked
 later. Droppers and drawing tools wait for the develop, but you can
 pan and zoom straight away.
 
+### Moving around the picture
+
+- A **click** on the picture zooms to 1:1 there, and another goes
+  back to fit. **Space** does the same, and **Z** zooms to 3:1.
+- **Drag** to move the picture when you are zoomed in.
+- A **mouse wheel** zooms a step in or out about the pointer with each
+  click. A tilted wheel moves the picture sideways.
+- A **two-finger scroll** on a touchpad moves the picture, in the
+  direction your system scrolls.
+- **Ctrl** with any scroll (⌘ on a Mac) zooms smoothly about the
+  pointer.
+- A **pinch** on a Mac trackpad, or on a Windows precision touchpad,
+  zooms about the pointer. On Linux a touchpad pinch does nothing yet;
+  use Ctrl and a scroll.
+
+A scroll over an open sheet stays with the sheet and never zooms the
+picture behind it.
+
+### Icon buttons
+
+A button that shows only an icon, such as undo and redo at the top of
+the panel, a bin, or the arrows that put a panel away, says its name
+in a word when you rest the pointer on it: "Undo", "Remove", "Hide
+panel". The word goes when you click, press a key or scroll.
+
 ### Sliders
 
 - **Drag** the handle, or click the track to jump there.
@@ -124,6 +149,12 @@ If you choose a profile made for another camera, a warning says so.
 **Highlights** and **Shadows** work on areas, not single pixels, so
 the texture inside a sky or a shadow keeps its contrast.
 
+**Highlights** and **Whites** read how bright the frame itself is.
+**Highlights** reaches down into the upper mid-tones, as Lightroom's
+does, and **Whites** works from the frame's middle tones upward rather
+than from a fixed mid grey, so a face under bright light answers both.
+A frame edited with either before 0.7 opens a little differently.
+
 ### Display curve
 
 At the foot of **LIGHT**, on a raw, the **Display curve** switch
@@ -188,7 +219,9 @@ swatches, then set:
 
 **Pick** gives you a dropper. Click a color in the picture to choose
 its swatch. Drag up or down to change its saturation, or sideways to
-change its hue. **Reset** clears every color.
+change its hue. The dropper is put down when you let go, as the white
+balance one is; press **Pick** again for another. **Esc** or **Pick**
+puts it down without picking. **Reset** clears every color.
 
 While **BLACK & WHITE** is on, the mixer has no effect. It is dimmed,
 and your settings come back when you turn black and white off.
@@ -248,6 +281,10 @@ greys take the tint's hue.
 ## Noise
 
 Raw only. Choose one of two kinds of noise reduction.
+
+On a Fujifilm X-Trans raw the section says "not on X-Trans yet" and
+its controls rest: neither denoiser works on that sensor yet, so a
+high ISO X-Trans frame stays noisy. See [Demosaic](#demosaic).
 
 ### The learned denoiser
 
@@ -376,6 +413,27 @@ another only if you see a problem in fine detail:
 When a learned denoiser is on, it does the demosaic itself and this
 choice has no effect.
 
+### Fujifilm X-Trans
+
+Fujifilm's X-series cameras (other than the GFX) use an X-Trans
+sensor, whose colors are laid out differently. On an X-Trans raw the
+menu lists only the methods made for it:
+
+- **markesteijn-3**, the default, makes three passes and keeps the
+  most detail.
+- **markesteijn-1** makes one pass and takes about half the time.
+- **bilinear** is the softest.
+
+A method made for the other kind of sensor, carried by a preset, a
+sync or a paste, is left off an X-Trans frame and the status line
+says so; the same goes the other way round.
+
+Some parts of the develop don't work on X-Trans yet: noise reduction,
+hot pixel repair, chromatic aberration correction, and the measured
+radius of **Auto radius** in **SHARPEN**, which uses its default
+radius instead. A high ISO X-Trans frame therefore stays noisy for
+now.
+
 ## What happens without a control
 
 Two repairs run on every raw. Neither has a setting:
@@ -383,6 +441,7 @@ Two repairs run on every raw. Neither has a setting:
 - **Hot pixels.** A sensor site stuck bright or dark is replaced from
   its neighbors. Only a site lit in one color counts, so stars, glints
   and catchlights stay. A stuck pixel on busy texture may be missed.
+  Not on X-Trans raws yet.
 - **Clipped highlights.** Where one or two color channels clipped,
   greycard rebuilds them from the channels that did not. A blown
   highlight then keeps a natural color instead of taking a cast.

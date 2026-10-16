@@ -1,8 +1,8 @@
 # Folders and the library
 
-This chapter covers finding your frames: opening a folder, the three
-ways of looking at it, the library of folders greycard keeps track of,
-the filter, and where your edits are saved.
+This chapter covers finding your frames: opening a folder, the ways
+of looking at it, the library of folders greycard keeps track of, the
+filter, collections, and where your edits are saved.
 
 A folder you open with **Open folder...** is enough to start. The
 library is for when your shoots live in a few big folders, on more
@@ -29,11 +29,14 @@ unplugged, "isn't reachable; is its drive connected?".
   along the bottom holds the rest of the folder.
 - The **grid** fills the window with thumbnails, for browsing and
   sorting a whole shoot.
+- The **lightbox** lays the frames out large and as edited on a dark
+  ground, for judging a set side by side. Press **L**. See
+  [the lightbox](culling.md#the-lightbox).
 
-Press **G** to switch between them. In the grid, **Loupe** in the
-header, a double-click on a frame, **Enter** or **Esc** also go back
-to the loupe. (With several frames selected, the first **Esc**
-clears the selection.)
+Press **G** to switch between the loupe and the grid. In the grid,
+**Loupe** in the header, a double-click on a frame, **Enter** or
+**Esc** also go back to the loupe. (With several frames selected, the
+first **Esc** clears the selection.)
 
 In the grid:
 
@@ -49,6 +52,9 @@ In the grid:
 - A color label tints the whole cell in the grid. In the filmstrip it
   shows as a thin colored line under the thumbnail.
 - A frame greycard can't read says **Unreadable**.
+- A version of a frame has a cell of its own right after the frame's,
+  with its name on a tag at the top left. See
+  [Versions of a frame](presets-and-history.md#versions-of-a-frame).
 
 **F7** puts the left pane away, **F6** the filmstrip and **F8** the
 right panel. **Tab** hides all of them, or over the grid, the left
@@ -69,14 +75,17 @@ screen, so your own develop comes first.
 
 ### Edited and exported marks
 
-Two small marks sit in the top right corner of a thumbnail, in the
-grid and the filmstrip:
+Small marks sit in the top right corner of a thumbnail, in the grid
+and the filmstrip:
 
 - a **pencil** on a frame whose edit is not the default;
-- a **picture with a down arrow** on a frame that has been exported.
+- a **picture with a down arrow** on a frame that has been exported;
+- a **bookmark** on a frame that is in a collection (see
+  [Collections](#collections)).
 
-A frame with both shows both. The exported mark stays after you undo
-past the export, or the export's row leaves the history.
+A frame shows every mark it has. The exported mark stays after you
+undo past the export, or the export's row leaves the history. A
+version wears its own pencil and exported mark, and its own bookmark.
 
 ## Roots: your library
 
@@ -149,6 +158,11 @@ seconds and carries on with your other roots. The status line says,
 for a root named Archive, "Archive isn't reachable; showing its last
 indexed frames".
 
+After you update to 0.7, the first look over each folder reads every
+raw in it once more, to learn what kind of sensor made it. That takes
+a millisecond or two a file on your own drives, and a while of quiet
+reading in the background on a share. It happens once.
+
 ### The loading bar
 
 A view that takes a moment to read shows a bar with what it is doing,
@@ -194,6 +208,13 @@ folder.
 
 The count at the end of the row says how many frames are shown, for
 example "120 of 640". **Clear** shows the whole folder again.
+**Save...**, beside it, keeps the filter as a smart collection (see
+[Collections](#collections)).
+
+When a rating, flag or label key makes the frame fall outside the
+filter, it leaves the view and the status line says why, such as
+"IMG_0001.CR3 rated 0 and hidden by the filter (1 star or more);
+Clear the filter to see it".
 
 ### Typing
 
@@ -213,6 +234,7 @@ You can also type tests, with no spaces inside them:
 | `date` | A year, month or day: `date:2026-09`, `date<=2026-09-21` |
 | `flag` | `pick`, `reject` or `none` |
 | `label` | `red`, `yellow`, `green`, `blue`, `purple` or `none` |
+| `has:versions` | Frames with at least one version |
 
 The tests are:
 
@@ -230,6 +252,94 @@ plain word, and the status line says what was wrong with it.
 frames. greycard remembers the filter when you quit and restores it
 next time.
 
+## Collections
+
+A **collection** gathers frames from anywhere in your library, from
+any root and any folder, into one list in an order you choose: a
+portfolio, a set for a client, the frames for a print sale. The frames
+stay where they are; a collection only points at them.
+
+The collections are in the left pane while the grid is up, under
+**COLLECTIONS**, below **ROOTS** and **FOLDERS**. Each row shows the
+collection's name and how many frames it holds. Click a row to open
+it; the grid, the filmstrip and the lightbox then show its frames.
+
+### Making one and filling it
+
+- **+ New collection...** at the foot of the section makes an empty
+  one.
+- Right-click a frame (or a selection) and choose **Add to
+  collection**, then a collection, or **New collection...** to make
+  one with those frames in it.
+- **B** adds the selected frames to the collection that is open, or
+  else to the last one you added to or made this session. When every
+  selected frame is in it already, **B** takes them out. With no
+  collection yet, it asks for a name for a new one.
+- While a collection is open, the frame menu has **Remove from**
+  *collection*. The frames themselves are not touched.
+
+A name with slashes, such as `Clients/2026/Cover`, puts the
+collection in a set: the list sorts by set, and shows the set muted
+before the name.
+
+### Order
+
+A collection opens in its own order. Drag a frame, or the selection,
+in the grid to move it; a bar marks where it will land. Right-click
+the collection's row for its menu:
+
+- **Rename...**
+- **Capture order** shows the frames by the time they were taken
+  instead, without changing the order you made. While it is on, a drag
+  does nothing.
+- **Delete...** deletes the collection after asking. Its frames stay
+  where they are.
+
+### Frames that move
+
+A collection knows a frame by what is in the file, not only by where
+it is. Move a shoot to another drive, rename it, or let another
+program rewrite its metadata, and the frame stays in the collection.
+
+A frame greycard can't find anywhere in the library is not shown, and
+the status line counts it when the collection opens, such as
+"Portfolio: 12 frames shown, 2 missing". It is kept, so it comes back
+when its shoot does. To let such frames go, right-click the open
+collection's row and choose **Forget 2 missing frames**. greycard
+looks again before it forgets anything, and keeps a frame on a drive
+that is offline or not answering, or one in a folder the library has
+not finished reading. The item is not offered while the library is
+being indexed.
+
+### Versions in a collection
+
+A [version of a frame](presets-and-history.md#versions-of-a-frame)
+can be in a collection on its own: **B** or **Add to collection** on a
+version's cell adds that version, and the bookmark shows on that cell
+alone. The original and its versions can sit in one collection side
+by side, each in its own place in the order.
+
+A collection that holds a version can't be read by greycard 0.6 or
+earlier, which leaves it alone rather than change it.
+
+### Smart collections
+
+A **smart collection** is a saved filter. Set up the grid's filter,
+press **Save...** beside **Clear** and give it a name. It covers what
+you were looking at: a root, a folder with the folders inside it, or
+every root, and the sheet says which before you save.
+
+A smart collection shows in the list with a sparkles mark and no
+count. Click it to put its filter back on the bar and open the place
+it covers. Its row stays lit while the bar shows its filter, and goes
+dark when you change a chip. Its frames are whatever the filter finds
+at the time, so it fills itself as you rate and label.
+
+### Where collections are kept
+
+Each collection is a small file in a `collections` folder beside the
+library index (see [Settings](settings.md#where-greycard-keeps-its-files)).
+
 ## Where your edits live
 
 Your edits are saved beside each raw in a `.gcd` file, so
@@ -238,6 +348,15 @@ labels and keywords are in it too. To move a shoot to another folder
 or machine, copy the `.gcd` files along with the raws. Delete a
 `.gcd` file to start that frame's edit over. greycard never changes
 a raw.
+
+A frame's versions live in the same `.gcd` (see
+[Versions of a frame](presets-and-history.md#versions-of-a-frame)).
+
+greycard 0.7 writes its `.gcd` files in a newer form, which 0.6 and
+earlier can't read. An older version leaves such a frame's edit alone
+rather than write over it: it shows the camera's picture with the
+pencil, and its log says why. Once 0.7 has saved a frame, open it with
+0.7 or later.
 
 ### A hidden folder instead
 

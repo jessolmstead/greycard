@@ -31,6 +31,8 @@ written under its own edit.
 | **Subfolder** | a folder name | empty | Where the file goes. See [Where the files go](#where-the-files-go). |
 | **If it exists** | **Increment**, **Overwrite**, **Skip** | Increment | What happens when a file of that name is already there. See [When a file is already there](#when-a-file-is-already-there). |
 | **Watermark** | **Off**, **Text**, **Image** | Off | A mark laid over the picture. See [Watermark](#watermark). |
+| **Border** | **Off**, four colors, **Match** | Off | A band of color around the picture. See [Border](#border). |
+| **Folder** | **Choose...** | the last folder chosen | Where **Export** writes, at the foot of the sheet. See [Where the files go](#where-the-files-go). |
 
 ### Metadata
 
@@ -66,6 +68,27 @@ The export stops, and says why, rather than write an unmarked file when:
 
 Text is set in the system's sans-serif font.
 
+### Border
+
+A border frames the picture in a band of one color, as a mat does a
+print. Click a swatch to turn it on: **White**, light grey, dark grey,
+**Black**, or **Match**, which takes the picture's own average color.
+**Off** takes it away.
+
+**Width** is a share of the picture's long side, 0.5 to 25 % (5 % by
+default), so a preset frames a 2048 px export and a full-size one
+alike. The border is added outside the picture, never cut into it,
+so the file is larger than **Long edge** by the band on each side. The
+line under the slider gives the file's size: "Added outside the
+picture; the file is 2252 × 1569."
+
+A watermark goes over the border, and its margin is measured from the
+file's edge, so a small margin puts it in the band, where a signature
+on a framed print goes. To keep it on the picture, make the margin
+wider than the border.
+
+The border is not shown in the viewport. An export preset keeps it.
+
 ## Export presets
 
 A preset keeps every choice on the sheet under a name, such as "Web
@@ -85,49 +108,66 @@ file.
 
 ## Where the files go
 
-### One frame
+### The Folder row
 
-With **Subfolder** empty, the sheet's button reads **Choose file...**.
-It opens your system's save dialog, with the raw's name filled in. The
-dialog asks before it replaces a file, so the sheet's **If it exists**
-does not apply here.
+At the foot of the sheet, above its buttons, **Folder** names the
+folder **Export** will write to, with **Choose...** beside it.
+**Export** writes there at once, with no dialog, for one frame or a
+set. The folder is the last one you chose, after a restart too, so a
+day's exports land in one place. Before you have chosen one, it is
+the frame's own folder.
 
-### Several frames
+**Choose...** opens on the folder shown. If that folder is gone, as on
+an unplugged drive, it opens on the nearest folder above it that is
+still there. A folder you choose is shown at once and kept. Choosing
+one while **Subfolder** has a name in it empties the field, since the
+field would otherwise win.
 
-With **Subfolder** empty, the button reads **Export 3 frames...** and
-asks for a folder. Each frame is written there under its own name with
-the format's extension: `IMG_0001.CR3` becomes `IMG_0001.jpg`. Two
-frames of one name, such as a raw and its camera JPEG, are told apart
-with `-1` on the second (`IMG_0001-1.jpg`), `-2` on a third.
+If the folder is missing or can't be written to when you press
+**Export**, the status line says so and the chooser opens. Choose
+another and the export goes there; cancel and nothing is exported.
 
-### Where the dialog opens
+### The file's name
 
-The save dialog and the folder dialog open where your last export
-went, after a restart too, so a day's exports land in one place
-without hunting for it. The first time, they open in the raw's own
-folder. If that folder is gone, as on an unplugged drive, the dialog
-opens on the nearest folder above it that is still there. A preset
-with its own **Subfolder** never asks, so its folder always wins.
+Each frame is written under its own name with the format's extension:
+`IMG_0001.CR3` becomes `IMG_0001.jpg`. Two frames of one name, such
+as a raw and its camera JPEG, are told apart with `-1` on the second
+(`IMG_0001-1.jpg`), `-2` on a third.
+
+Written into the frame's own folder, the name is
+`IMG_0001.greycard.jpg`, so an export can never be taken for, or
+written over, the camera's own `IMG_0001.JPG`.
+
+A file of that name already there follows **If it exists** (below),
+for one frame as for a set.
+
+### A version of a frame
+
+A [version](presets-and-history.md#versions-of-a-frame) is written
+with its name after the frame's: the version Warm of `IMG_0001.CR3`
+becomes `IMG_0001-Warm.jpg`, and `IMG_0001-Warm.greycard.jpg` in the
+frame's own folder. Characters a file name can't hold become `_`.
+The export is recorded in the version's own history, and the status
+line and the queue name it "IMG_0001 (Warm)".
 
 ### Into a subfolder
 
 Type a folder name in **Subfolder**, such as `export` or `export/web`,
-to skip the dialog. Each frame then goes into that folder inside its
-own raw's folder, made when needed. Frames from three shoots land in
-three `export` folders, one beside each shoot.
+and each frame goes into that folder inside its own raw's folder, made
+when needed. Frames from three shoots land in three `export` folders,
+one beside each shoot. A name in **Subfolder** wins over the folder
+chosen, so a preset with its own subfolder always writes there.
 
-The button says so: with `edited` typed it reads **Export to edited**
-(**Export 3 frames to edited** for a set), without an ellipsis because
-no dialog follows, and a line under the field reads "Saved in edited
-beside each original." The label shows the name as it will be used, so
-`./export//web/` shows as `export/web`: spaces around the name, a
-leading `./` and doubled slashes are cleaned away. A long name is cut at
-the front on the button to fit it; the line under the field has it
-whole.
+The **Folder** row says so, such as "edited beside each original",
+and so does a line under the field: "Saved in edited beside each
+original." Both show the name as it will be used, so `./export//web/`
+shows as `export/web`: spaces around the name, a leading `./` and
+doubled slashes are cleaned away. A long name is cut at the front in
+the row to fit it; the line under the field has it whole.
 
 The name must go down from the raw's folder. A full path, or one with
-`..`, is refused: the reason shows under the field in yellow, and the
-button is dimmed and reads plain **Export** until the name is fixed.
+`..`, is refused: the reason shows under the field in yellow, and
+**Export** is dimmed until the name is fixed.
 
 ## When a file is already there
 
@@ -161,8 +201,9 @@ The queue keeps exports to run later, such as a day's picks to send
 once you are done editing.
 
 1. Set up the sheet as for an export.
-2. Click **Add to queue...**. Choose a folder, or let **Subfolder**
-   decide. Nothing is exported yet.
+2. Click **Add to queue**. The set goes to the **Folder** row's
+   folder, or to **Subfolder** when it has a name. Nothing is exported
+   yet.
 3. Repeat for other frames or other presets.
 4. When ready, open the Export sheet and click **Export the queue**.
 
@@ -227,11 +268,15 @@ added to its history, as in the window.
 | `--export-preset NAME` | Uses a saved export preset. Without it, the sheet as you last left it. |
 | `--long-edge N` | Long side in pixels. Never enlarges. |
 | `--on-exists WHAT` | `increment`, `overwrite` or `skip`. |
+| `--version-name NAME` | Exports each frame's version of that name instead of the frame's own edit, named `IMG_0001-NAME.jpg` in a folder, and recorded in the version's history. A frame with no version of that name stops the run. |
 | `--preset NAME` | Applies a develop preset first, saved as a step in the frame's history. |
 | `--exposure EV`, `--develop-temperature K`, `--agx` | Change this export only. Not saved to the frame. |
 | `--no-sidecars` | Reads and writes no `.gcd`: each frame exports at its defaults, and nothing is recorded. |
 | `--sidecar-folder` | Writes the `.gcd` into the hidden `.greycard` folder for this run. |
 | `--xmp-sidecars` | Also writes an XMP beside the raw for this run. |
+
+An export preset with a border writes the border; there is no flag of
+its own for it.
 
 Give a folder as the path to open, rather than a file, to use `--also`.
 The **Subfolder** field is not used from the command line: the path you

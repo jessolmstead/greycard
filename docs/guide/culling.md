@@ -3,7 +3,7 @@
 Culling is the first pass over a shoot: rate the frames, pick the
 keepers, reject the rest, and clear the rejects out of the way. This
 chapter covers ratings, flags and color labels, culling mode, the
-rejects folder, and deleting frames.
+lightbox, the rejects folder, and deleting frames.
 
 ## Ratings, flags and labels
 
@@ -37,6 +37,10 @@ what the frames already have.
 The keys and the menu act on every selected frame (Ctrl+click or
 Shift+click to select more than one). A label key on a mixed selection
 sets the label on all of them; press it again to clear it from all.
+
+A rating, flag and label belong to the file, so a frame and its
+[versions](presets-and-history.md#versions-of-a-frame) share them: set
+one on a version and every cell of that file follows.
 
 ### How they show
 
@@ -76,6 +80,24 @@ They fill in once greycard has indexed the folder.
   develop the frame you are on. **C** leaves too.
 
 A word over the picture confirms each key, such as the new rating.
+When the key makes the frame fall outside the filter, the word says
+so too ("No stars; hidden by the filter").
+
+### Comparing versions
+
+To choose between a frame's
+[versions](presets-and-history.md#versions-of-a-frame), right-click it
+or one of its versions and choose **Compare versions**. Culling opens
+on the original and its versions alone, side by side, each tile its
+own edit: two up for one version, three up for two, four up for three
+or more. With more than three versions, the first three are shown and
+the status line says how many were left out. Each tile's name reads
+like "IMG_0001 (Warm)", and the status line names the chosen version.
+
+Press **Delete** on a version's tile to delete that version, after a
+confirmation; the view closes up on the rest. To keep a version as
+the frame's own edit, use **Swap with the original** on it. An arrow
+or a click past the file's cells, or **V**, ends the comparison.
 
 The status line says what you are looking at: "the camera JPEG",
 "a small camera preview" when the camera stored only a small one, or
@@ -96,6 +118,44 @@ that aren't reachable right now, or are slow to read.
   after each key, so rating a shoot is one key a frame. It is off
   until you turn it on, and acts only when one frame is selected.
 - The rejects buttons and **Delete selection...**, described below.
+
+## The lightbox
+
+The lightbox is for judging a set as a whole: whether a run of frames
+holds together in color and tone, before you send it out. It shows
+each frame large and as edited, on a dark ground, with nothing else
+drawn: no names, no badges, no marks, no header.
+
+Press **L** in the grid, the loupe or culling, or click **Lightbox**
+in the grid's header. The lightbox lays out whatever the grid shows,
+as the filter leaves it: a folder, a root, a
+[collection](library.md#collections) in its own order, or only your
+picks (the **Pick** chip, then **L**).
+
+- **+** and **−**, or **Ctrl+wheel**, set how many frames go across,
+  from two to six. It starts at four, and greycard keeps your choice
+  for the next session.
+- The arrow keys, **Home** and **End** move through the frames. A ring
+  marks the frame you are on, and a thinner one the rest of the
+  selection.
+- **Return**, or a double-click, opens the frame in the loupe.
+  **Return**, **Esc** or **L** there bring you back to the lightbox
+  where you were.
+- The rating, flag and label keys work as everywhere.
+- **Ctrl+Shift+S** syncs the frame you are on onto the rest of the
+  selection: choose the frame that is right, Ctrl+click the ones that
+  stand out, and sync. The frame menu has the same as **Sync settings
+  of** *frame* **onto 3 other frames...**.
+- In a collection, a drag still reorders it.
+- **Tab** shows or hides the left pane.
+- **Esc**, **G** or **L** leave for the grid, as does **Leave
+  lightbox** on the frame menu. With several frames selected, the
+  first **Esc** goes back to one.
+
+A frame you have edited shows its edit; one you haven't shows the
+camera's JPEG. While a new picture of an edit is being made, after a
+sync for example, the tile keeps its last picture dimmed. A tile with
+no picture yet says "Developing".
 
 ## The rejects folder
 
@@ -172,6 +232,10 @@ disk. On a Mac, the key marked delete (⌫) does the same.
 Both deletes ask first. The sheet names how many frames and sidecars,
 and from which folder. If you have an archive, it also says whether
 the frames have a copy there.
+
+Deleting a frame takes its versions with it. To delete one version
+and keep the frame, see
+[Versions of a frame](presets-and-history.md#versions-of-a-frame).
 
 - A frame's `.gcd` and its XMP go with it. Nothing else in the folder
   is touched. An XMP a raw shares with its JPEG (`IMG.xmp` beside

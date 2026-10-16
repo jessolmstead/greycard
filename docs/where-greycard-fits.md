@@ -178,7 +178,7 @@ is in `roadmap.md`; nothing planned is counted as done.
 | Working space | ProPhoto | proprietary | DxO wide | Rec.2020 | ProPhoto | linear Rec.2020 |
 | Color managed to the monitor | yes | yes | yes | yes | yes | yes, with soft proofing |
 | Camera color | Adobe's | in-house, the best | DxO's | matrix | matrix, DCP | matrix, DCP, and a look fitted from the camera's own JPEG |
-| Demosaic | Adobe's | proprietary | proprietary | RCD, AMaZE | AMaZE, RCD, dual | AMaZE, RCD, dual |
+| Demosaic | Adobe's | proprietary | proprietary | RCD, AMaZE | AMaZE, RCD, dual | AMaZE, RCD, dual; Markesteijn for X-Trans |
 | Denoise | AI, local | conventional | DeepPRIME | profiled | profiled | profiled, and a raw-domain network that runs locally |
 | Masks | AI people, sky, objects | layers | limited | parametric, drawn | local adjustments | gradient, radial, brush, by lightness and color; subject, object, sky and people's parts by model |
 | Retouch | remove, generative | heal, clone | limited | retouch | spot removal | heal, clone, learned fill |
@@ -259,7 +259,9 @@ three film looks among them; 3D LUT looks from `.cube` and HaldCLUT
 files; export with embedded profiles and EXIF; a filmstrip and a
 zoomable grid that show each frame as edited, a frame edited without
 being opened made in the background, with marks for edited and
-exported frames, and with ratings, flags and
+exported frames, a lightbox that lays a folder, a collection or the
+picks out as edited on a dark ground, two to six across, and with
+ratings, flags and
 color labels kept in the sidecar and set from the keyboard, and a
 folder filter on all of them with a count on every chip, and read from
 and written to XMP sidecars so stars, labels and keywords travel to
@@ -279,11 +281,16 @@ that opens the bug form with the version, the OS and the GPU filled in
 and the log beside it; several frames at once, with the settings of
 one synced across them, a preset laid over all of them and an export
 of all of them, and a copy sheet and presets that carry a single
-slider or a single mask; export presets, a watermark, a subfolder beside each raw and an
+slider or a single mask; named versions of a frame in the one sidecar,
+each with its own edit, history, thumbnail and export name, swapped
+with the original or compared side by side in culling; export
+presets, a watermark, a border, a folder named on the sheet, a
+subfolder beside each raw and an
 export queue that runs when you choose and keeps a set across a
 restart, each export a line in History, and a headless `--export`
 for the command line; masks by lightness and
-by color, and a white balance of a mask's own for mixed light; the Subject mask on the GPU, and a
+by color, a white balance of a mask's own for mixed light, and a
+mask's own texture, clarity and dehaze; the Subject mask on the GPU, and a
 Background shape that is its complement; a Sky mask that refuses a frame
 with no sky and takes its edge through hair and branches; a People
 mask of a whole person or a part of one (an iris, lips, hair, a top),
@@ -308,8 +315,9 @@ to the archive's copy when its own drive goes, and its copies of the
 culled rejects moved aside or deleted from the shoot's side; a library
 index that fills the grid's filter with chips for camera, lens, ISO,
 focal length, day and keyword, with a filter language behind the text
-field; collections and smart collections that hold a picture by its
-content and follow it through a move or a rewrite; a look fitted
+field; collections and smart collections that hold a picture, or one
+version of it, by its content and follow it through a move or a
+rewrite, with the missing forgotten on request; a look fitted
 from the camera's own JPEG per body and picture style, with a table
 for each display curve; an Auto white
 balance beside Neutral; a value typed into any slider; scopes that can

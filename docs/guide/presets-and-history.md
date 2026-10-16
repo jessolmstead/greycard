@@ -1,8 +1,8 @@
 # Presets, history and several frames
 
 This chapter covers the left panel's **NAVIGATOR**, **PRESETS**,
-**SNAPSHOTS** and **HISTORY** sections, and how to give one edit to
-many frames at once.
+**SNAPSHOTS** and **HISTORY** sections, versions of a frame, and how
+to give one edit to many frames at once.
 
 ## The navigator
 
@@ -140,11 +140,15 @@ something else and come back.
   click anywhere else to keep what you typed. Esc keeps the old name.
   While you type, moving the pointer over the picture doesn't take the
   keys away from the name.
-- **Click** a snapshot to go back to it. This is a new step in the
-  history, named "Snapshot: " and the name, so Ctrl+Z undoes it.
 - **Hover** over a snapshot to see it in the picture without changing
   anything.
-- **Double-click** to rename it, and click the bin to remove it.
+- Each row has three icons: the arrow restores the snapshot, the
+  pencil renames it, and the bin removes it. Rest the pointer on one
+  and the status line says what a click does.
+- Restoring is a new step in the history, named "Snapshot: " and the
+  name, so Ctrl+Z undoes it.
+- A **click** on the row restores it too, after a moment's pause, so
+  that a **double-click** can rename it without restoring it first.
 
 Snapshots are kept in the frame's `.gcd` with its edit, and they are
 never dropped as the history grows.
@@ -152,7 +156,9 @@ never dropped as the history grows.
 ## History
 
 **HISTORY** lists every step of the frame's edit, newest at the top.
-The bottom row, "Original", is the edit the frame started with.
+The bottom row, "Original", is the edit the frame started with. On a
+version, the section's head names the version, and the history is
+that version's own.
 
 Each step is named for what it did:
 
@@ -191,6 +197,67 @@ and date. Click it to go back to the edit that was sent out. An
 export row goes away with its state if that state leaves the history.
 The exported mark on the frame's thumbnail stays (see
 [the library](library.md#edited-and-exported-marks)).
+
+## Versions of a frame
+
+A **version** is a second edit of the same raw, kept beside the
+first: a warm one and a cool one, a color one and a black and white,
+a wide crop and a tight one. Where a snapshot is a state you can go
+back to inside one edit, a version is a picture of its own. It has its
+own cell in the filmstrip and the grid, its own thumbnail, its own
+history and snapshots, and its own export. The raw is not copied; the
+versions live in the frame's `.gcd`.
+
+### Making one
+
+Right-click a frame and choose **New version**, or press **Ctrl+'**
+(⌘' on a Mac). The new version starts as a copy of the edit you were
+on, opens at once, and asks for a name with "Version 2" filled in:
+type a name and press Enter, or press Esc to keep "Version 2". Its
+history starts with one row, "From the original" (or "From" the
+version it was copied from).
+
+**New version from the original** starts from greycard's defaults
+instead, for an edit that has nothing to do with the first.
+
+The version's cell sits right after the frame's, with its name on a
+tag at the top left. In the grid, the name under the cell is the
+version's.
+
+### What a version shares
+
+Everything in the edit is the version's own: the crop, the white
+balance, every slider, every mask. The rating, the flag, the label,
+the keywords and the quarter turn belong to the file, so the frame
+and all its versions share them. Choose between versions by deleting
+the ones you don't want, or by swapping the one you like into the
+frame's own place, not by rating them.
+
+### The version's menu
+
+Right-click a version's cell for:
+
+- **Rename version...**
+- **Swap with the original** trades the two edits whole, each with
+  its history and snapshots. The version keeps its name, and now holds
+  what the frame held.
+- **Delete version...** asks first ("Delete the version Warm of
+  IMG_0001.CR3?"), then removes that version alone. It can't be
+  undone. **Delete** over a selection of versions does the same; over
+  a frame, it deletes the file and its versions with it.
+- **Compare versions** puts the frame and its versions side by side
+  in culling (see [Comparing versions](culling.md#comparing-versions)).
+
+### Versions and everything else
+
+- A paste, a sync or a preset acts on the version you chose, and
+  leaves the frame's own edit alone.
+- An export of a version is named with the version's name, as
+  `IMG_0001-Warm.jpg`, and is recorded in that version's history. See
+  [Exporting](export.md#a-version-of-a-frame).
+- A version can be put in a collection on its own (see
+  [Collections](library.md#versions-in-a-collection)).
+- `has:versions` in the filter finds the frames that have one.
 
 ## Several frames at once
 
@@ -272,7 +339,17 @@ menu. On a Mac, Control+click does the same.
 
 - **Copy settings of** the frame you right-clicked
 - **Paste settings** (greyed until you have copied something)
+- **Sync settings of** the frame on screen **onto** the rest of the
+  selection, with more than one frame selected
+- **New version** and **New version from the original**, and on a
+  version **Rename version...**, **Swap with the original** and
+  **Delete version...**; **Compare versions** on a frame that has
+  versions (see [Versions of a frame](#versions-of-a-frame))
+- **Lightbox**, or **Leave lightbox** (see
+  [the lightbox](culling.md#the-lightbox))
 - **Rating**, **Pick**, **Reject**, **Unflag**, **Label**
+- **Add to collection**, and **Remove from** the collection that is
+  open (see [Collections](library.md#collections))
 - **Reveal in file manager** (on Linux it opens the folder without
   selecting the file)
 - **Export...**, or **Export N frames...** over a selection

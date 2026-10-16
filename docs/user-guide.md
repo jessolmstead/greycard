@@ -13,10 +13,12 @@ expect, please [report it](#reporting-a-problem).
 - **A GPU.** Vulkan on Linux and Windows, Metal on a Mac.
 - **A Mac with an Apple chip**, if you're on a Mac. There is no build
   for Intel Macs or Windows on ARM.
-- **Raw files.** Tested with Canon, Fujifilm GFX, Sony, Panasonic and
-  Nikon raws. Two kinds don't open yet: Fujifilm's X-Trans raws, and
-  Nikon's High Efficiency raws (TicoRAW), which only a build from
-  source with the `nikon-he` feature reads ([building.md](building.md)).
+- **Raw files.** Tested with Canon, Fujifilm GFX and X-Trans, Sony,
+  Panasonic and Nikon raws. X-Trans raws develop without noise
+  reduction for now ([Demosaic](guide/develop.md#fujifilm-x-trans)).
+  Nikon's High Efficiency raws (TicoRAW) don't open yet; only a build
+  from source with the `nikon-he` feature reads them
+  ([building.md](building.md)).
 - **Copies or a backup.** greycard never changes a raw file, but it is
   a test build.
 
@@ -49,15 +51,18 @@ unpack it.
 Your edits are saved as you go, in a `.gcd` file beside each raw. Copy
 those along with the raws to move a shoot.
 
+The window opens no taller than your screen, so on a 13 or 14 inch
+laptop the buttons of a sheet such as Export stay in reach.
+
 ## The chapters
 
 Working with your photos:
 
 - [Folders and the library](guide/library.md): opening folders, library
-  roots, the folder tree, filtering, where edits are kept
+  roots, the folder tree, filtering, collections, where edits are kept
 - [Importing from a card](guide/import.md)
 - [Culling and rating](guide/culling.md): ratings, flags, labels,
-  rejects and deleting
+  the lightbox, rejects and deleting
 - [Archives and backup](guide/archives.md)
 
 Editing:
@@ -66,7 +71,8 @@ Editing:
 - [Crop and retouch](guide/crop-and-retouch.md)
 - [Masks](guide/masks.md)
 - [Scopes and color](guide/scopes-and-color.md)
-- [Presets, history and several frames](guide/presets-and-history.md)
+- [Presets, history and several frames](guide/presets-and-history.md):
+  presets, snapshots, the history, versions of a frame, sync and paste
 - [Fitting your camera's look](guide/camera-match.md)
 
 Finishing and reference:
@@ -84,6 +90,9 @@ Finishing and reference:
 | Shift+click, Ctrl+Shift+click | Select every frame from the open one to this one; with Ctrl, add them instead |
 | G | Grid, and back (in the grid, Ctrl+wheel or + and − resize it) |
 | C | Culling mode |
+| L | The lightbox, and back (+ and − set how many frames go across) |
+| B | Add the selected frames to a collection, or take them out |
+| Ctrl+' | New version of the frame |
 | Tab | Hide the panels, the filmstrip and the status line, and bring them back |
 | Space | Fit or 1:1 |
 | Z | Fit or 3:1 |
@@ -109,9 +118,11 @@ right-click, and delete (⌫) opens the delete sheet.
 
 ## Known rough edges
 
-- The default look and the Highlights, Whites and Shadows sliders don't
-  match Lightroom's feel yet. That is the next release's work, so tell
-  us when a frame looks too dark, too flat or odd in a way you can name.
+- The default look and the tone sliders don't match Lightroom's feel
+  yet. Highlights and Whites came closer in 0.7; tell us when a frame
+  looks too dark, too flat or odd in a way you can name.
+- Fujifilm X-Trans raws get no noise reduction, hot pixel repair or
+  chromatic aberration correction yet.
 - The high-quality denoisers are slow, taking tens of seconds on a
   large frame.
 - On Windows and macOS the display is treated as sRGB unless you pick

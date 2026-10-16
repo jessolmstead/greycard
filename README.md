@@ -39,7 +39,8 @@ checked against it, and the viewport and the export agree to a
 fraction of a percent.
 
 **Built on the best published work.** AMaZE and RCD demosaicing,
-deconvolution sharpening and defringe from RawTherapee. Highlight
+Markesteijn's for Fujifilm X-Trans, deconvolution sharpening and
+defringe from RawTherapee. Highlight
 reconstruction and profiled denoising from darktable. greycard is
 GPL-3.0-or-later so that it can use these directly, with the source
 and the authors named in each file, instead of reinventing them
@@ -57,16 +58,23 @@ and read back before it counts and nothing ever written to the card.
 Culling is a keyboard job on the camera's own JPEG, with a side by
 side compare, and ratings, flags and labels travel to Lightroom and
 darktable through XMP. The filmstrip and the grid show each frame as
-edited, with a mark on the ones you have edited or exported. Select
-several frames and sync one's settings across them, down to one
-slider or one mask, lay a preset over all of them, or export them all
-with a saved export preset and a watermark, into a subfolder beside
-each raw, now or from a queue later, or from a script with no window.
+edited, with a mark on the ones you have edited or exported, and a
+lightbox lays a set out large on a dark ground to judge it as a
+whole. A frame can hold named versions, each its own edit, history
+and export, compared side by side. Select several frames and sync
+one's settings across them, down to one slider or one mask, lay a
+preset over all of them, or export them all with a saved export
+preset, a watermark and a border, into a folder of your choosing or
+a subfolder beside each raw, now or from a queue later, or from a
+script with no window.
 
 **Your library, wherever it is.** Your folders show as a tree with
 their counts. A shoot on a NAS is culled from local previews without
 reading a raw over the network, and a drive that is unplugged can
-still be browsed and filtered. Mark a drive as an archive and a shoot
+still be browsed and filtered. Collections gather frames from any
+drive in an order you set, and follow a frame through a move or a
+rewrite; a smart collection is a saved filter. Mark a drive as an
+archive and a shoot
 is backed up to it, each copy checked, with your edits kept in step
 on both copies.
 
@@ -80,9 +88,9 @@ correction and the display path all run on the GPU.
 
 **What is in it.** Gradient, radial, brush, subject, object and sky
 masks, and masks by lightness and by color, each with its own light,
-color and tint. A People mask of a whole person or one part of them,
-such as the eyes, the lips, the hair or a top, picked out of a group
-and found again when it is pasted onto the next frame. Heal, clone and a learned fill. A learned denoiser
+color, tint and detail. A People mask of a whole person or one part
+of them, such as the eyes, the lips, the hair or a top, picked out of
+a group and found again when it is pasted onto the next frame. Heal, clone and a learned fill. A learned denoiser
 trained on a measured noise model, mosaic in and color out, running on
 your machine with published weights, and a profiled denoiser beside
 it. Lens corrections from lensfun. Parametric and point curves, 3D LUT
@@ -96,8 +104,9 @@ away and rebuilt. Move a shoot to another drive and nothing breaks.
 
 ## What it does not do yet
 
-- Collections and a Lightroom catalog import are designed and not
-  built yet.
+- A Lightroom catalog import is designed and not built yet.
+- Fujifilm X-Trans raws develop without noise reduction, hot pixel
+  repair or chromatic aberration correction for now.
 - The tone controls are still being tuned: their ranges and response
   curves are being fitted so that a small move does what your hands
   expect. That work gets the same care as the color science under
@@ -277,7 +286,7 @@ Say which build you are on: `greycard --version` for the command
 line, `greycard-ui --version` for the editor; the log's first line
 says too. The most useful thing you can send is a raw file that
 renders wrong, along with the camera model; it is tested with Canon,
-Fujifilm GFX, Sony, Panasonic and Nikon bodies. [Open an
+Fujifilm GFX and X-Trans, Sony, Panasonic and Nikon bodies. [Open an
 issue](https://github.com/jessolmstead/greycard/issues/new/choose)
 and pick the bug report form.
 

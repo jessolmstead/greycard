@@ -21,7 +21,9 @@ Where a frame's edit file (its `.gcd`) is written.
 | **Hidden folder** | a hidden `.greycard` folder inside the shoot's folder |
 
 Both travel with the shoot when you copy the folder. greycard reads an
-edit from either place, so changing this loses nothing.
+edit from either place, so changing this loses nothing. An edit file
+saved by greycard 0.7 can't be read by 0.6 or earlier (see
+[Where your edits live](library.md#where-your-edits-live)).
 
 Changing it moves nothing by itself. Each frame's edit moves to the
 new place the next time it is saved, so a folder tidies itself as you
@@ -90,8 +92,10 @@ session to the next:
   tab ([Scopes and color](scopes-and-color.md))
 - **With subfolders**, in the left pane's folder tree
   ([Library](library.md))
-- the Export sheet's choices and export presets, and the folder the
-  export dialog opens in ([Exporting](export.md))
+- the Export sheet's choices and export presets, and the folder
+  exports go to ([Exporting](export.md))
+- how many frames go across the lightbox
+  ([Culling](culling.md#the-lightbox))
 
 ## Where greycard keeps its files
 
@@ -104,6 +108,7 @@ greycard makes it again, and downloads models again when needed.
 | Settings, export presets, the export queue | `~/.config/greycard` | `~/Library/Application Support/greycard` | `%APPDATA%\greycard` |
 | Develop presets | `~/.config/greycard/presets` | `~/Library/Application Support/greycard/presets` | `%APPDATA%\greycard\presets` |
 | Library index and its list of folders | `~/.local/share/greycard` | `~/Library/Application Support/greycard` | `%LOCALAPPDATA%\greycard` |
+| Collections | `~/.local/share/greycard/collections` | `~/Library/Application Support/greycard/collections` | `%LOCALAPPDATA%\greycard\collections` |
 | Fitted looks | `~/.local/share/greycard/looks` | `~/Library/Application Support/greycard/looks` | `%APPDATA%\greycard\looks` |
 | Camera profiles (`.dcp`) | `~/.local/share/greycard/profiles` | `~/Library/Application Support/greycard/profiles` | `%APPDATA%\greycard\profiles` |
 | Thumbnails and local previews (cache) | `~/.cache/greycard/thumbs` | `~/Library/Caches/greycard/thumbs` | `%LOCALAPPDATA%\greycard\thumbs` |

@@ -7,23 +7,31 @@ on the **Develop** tab stays under all of them.
 
 ## The Masks tab
 
-The **ADJUSTMENTS** section lists **Global** and then your masks.
-Click a row to choose it. The panel below edits what you chose.
+The **ADJUSTMENTS** list at the top of the tab holds **Global** and
+then your masks. Click a row to choose it. The sections below edit
+what you chose.
 
 - The dot before a mask switches it on and off.
 - The bin on the chosen row deletes that mask.
-- **New mask** adds an empty mask named "Mask 1", "Mask 2" and so on.
-  A frame can hold up to 16.
+- **New mask** adds an empty mask named "Mask 1", "Mask 2" and so on,
+  and takes the sections back to their top. A frame can hold up to 16.
+
+The list stays put while the sections scroll under it, so **Global**
+or another mask is one click away from any slider. It shows up to six
+rows, fewer in a short window, and scrolls inside itself past them.
+Click its title to fold it to one line, which names what you are
+editing.
 
 With a mask chosen, you see, top to bottom:
 
-1. **The mask's card:** its name, **Show mask** and **Invert**.
-2. **Shapes:** one row per shape in the mask.
-3. **The chosen shape's settings**, when it has any.
-4. **Add a shape:** the buttons that add another shape.
-5. **The mask's own sliders:** **WHITE BALANCE**, **LIGHT**,
-   **COLOR**, **CURVES**, **COLOR MIXER**, **COLOR GRADING** and
-   **TINT**, each headed with the mask's name ("SKY 1 · LIGHT").
+1. **MASK**, headed with the mask's name: its name field, **Show
+   mask** and **Invert**, then **Shapes**, one row per shape in the
+   mask, the chosen shape's settings when it has any, and **Add a
+   shape**, the buttons that add another shape.
+2. **The mask's own sliders:** **WHITE BALANCE**, **LIGHT**,
+   **COLOR**, **CURVES**, **COLOR MIXER**, **COLOR GRADING**,
+   **TINT** and **DETAIL**, each headed with the mask's name ("SKY 1 ·
+   LIGHT").
 
 ### Naming, Show mask and Invert
 
@@ -75,16 +83,19 @@ Press **Esc** to put a drawing tool down, or click its button again.
 ### Linear
 
 Drag across the picture. The adjustment is full where you start and
-fades to nothing where you let go. Afterwards, drag the middle line to
-move it, or an end line to turn and stretch it about the middle. Hold
-**Alt** while dragging an end line to move that end alone.
+fades to nothing where you let go. Afterwards, drag anywhere in the
+band between the end lines, or the middle line, to move it, or an end
+line to turn and stretch it about the middle. Hold **Alt** while
+dragging an end line to move that end alone. A drag outside the band
+moves the picture.
 
 ### Radial
 
-Press at the center and drag outward. Drag the center handle to move
-it. Drag a handle at the end of either axis to change that radius and
-turn the ellipse. **Feather** (50% to start) is how much of the
-ellipse fades out toward its edge.
+Press at the center and drag outward. Drag anywhere inside the
+ellipse, or its center handle, to move it; the pointer turns to a
+move arrow there. Drag a handle at the end of either axis to change
+that radius and turn the ellipse. **Feather** (50% to start) is how
+much of the ellipse fades out toward its edge.
 
 ### Brush
 
@@ -93,7 +104,7 @@ Click **Brush** and paint. While a brush is chosen, the button reads
 
 | Setting | Does |
 |---|---|
-| **Size** | the brush's radius, as a share of the picture's width; the scroll wheel changes it too |
+| **Size** | the brush's radius, as a share of the picture's width; the scroll wheel changes it too, one step a click, and a touchpad scroll by as many steps as the same distance on a wheel |
 | **Feather** | how much of the radius fades |
 | **Flow** | how much each stroke lays down |
 | **Add**, **Subtract**, **Erase** | paint, take paint away by the flow, or clear paint completely under the brush |
@@ -223,15 +234,29 @@ Exposure moves them; dehaze and clarity can move them a little.
 ## A mask's own sliders
 
 Under the mask, **LIGHT**, **COLOR**, **CURVES**, **COLOR MIXER**,
-**COLOR GRADING** and **TINT** work as they do on the Develop tab, but
-only where the mask reaches. **BLACK & WHITE** and the **Display
-curve** switch are global only. A mask's tone sliders act even when the
-global **LIGHT** section is switched off. Each of the mask's sections
-has its own switch, **TINT** included, so you can compare the mask
-with and without it.
+**COLOR GRADING**, **TINT** and **DETAIL** work as they do on the
+Develop tab, but only where the mask reaches. **BLACK & WHITE** and
+the **Display curve** switch are global only. A mask's tone sliders
+act even when the global **LIGHT** section is switched off. Each of
+the mask's sections has its own switch, **TINT** included, so you can
+compare the mask with and without it.
 
 A mask's curve editor shows the picture's histogram behind the curve,
 as the global one does.
+
+### Detail in a mask
+
+The mask's **DETAIL** has **Texture**, **Clarity** and **Dehaze**, as
+the Develop tab's does: smooth the skin of a face and leave the rest
+sharp, or clear the haze from a distant ridge and leave the
+foreground. It shows in the viewport, the export and the thumbnails
+alike, and its steps land in the history like any other.
+
+A mask over the whole frame gives the same picture as the global
+slider, one slider at a time. A mask's **Dehaze** used together with
+the same mask's **Texture** or **Clarity** comes out a little
+differently from the global pair, since the mask reads the haze
+before its own detail is applied.
 
 ### White balance in a mask
 
