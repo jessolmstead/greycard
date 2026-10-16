@@ -381,9 +381,9 @@ clears or a tester asks for it.
       `SPI_GETWORKAREA` or `rcWork`, X11 `_NET_WORKAREA` (§306). The
       guess held on a 14-inch MacBook with the default Dock (checked
       2026-10-13); a large or side Dock is the case this is for
-- [ ] `worker.rs` and `roots.rs` split into module directories as
-      `render.rs` was (§316), pure moves with the same public surface;
-      the long `run` and `develop_job` left whole for a later round
+- [ ] `roots.rs` split into a module directory as `render.rs` and
+      `worker.rs` were (§316, §318), a pure move with the same public
+      surface; the long `Look::run` left whole for a later round
 
 - [ ] The learned mask and fill caches keyed by the develop they were
       made from: the window's Export reuses the mask its viewport made

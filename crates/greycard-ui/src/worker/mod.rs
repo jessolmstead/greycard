@@ -33,6 +33,8 @@ mod handle;
 mod keep;
 mod masks;
 #[cfg(test)]
+mod samples;
+#[cfg(test)]
 mod tests;
 mod thumbs;
 
