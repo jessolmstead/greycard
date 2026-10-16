@@ -12,173 +12,104 @@ note a first tester reads.
 
 ## 0.7.0, 2026-10-15
 
-Versions of one frame: a second edit of the same raw sits beside the
-first in the strip and the grid as a cell of its own, with its own
-thumbnail, history and export, compared side by side in culling and
-put in a collection on its own. Around it, the library grows
-collections and smart collections that survive a move, a lightbox for
-judging a set whole, a mask with its own Detail, Fujifilm X-Trans
-raws, a border at export, Highlights and Whites that reach by the
-frame's own range, and the first testers' rough edges on masks, the
-touchpad, the window and the export sheet smoothed. Sidecars written
-by this build are refused by 0.6.x.
+Versions: a second edit of the same raw, beside the first in the strip,
+with its own history and export. Collections and smart collections, a
+lightbox, a mask with its own Detail, Fujifilm X-Trans raws, a border
+at export, and a round of fixes from the first testers. Sidecars
+written by this build are refused by 0.6.x.
 
 ### Versions
 
-- Versions of one frame: New version (Ctrl+', or the frame menu) puts a
-  copy of the frame's edit beside it in the strip and the grid as a
-  cell of its own, with its own thumbnail, pencil and export mark, a
-  name tag, and its own history; rating, flag, label and the turn stay
-  the file's. A version's menu has Rename, Swap with the original and
-  Delete version. Pasting, syncing, a preset and an export act on the
-  version chosen; the library's search takes `has:versions`
+- New version (Ctrl+' or the frame menu) puts a copy of a frame's edit
+  beside it in the strip and the grid, with its own thumbnail and
+  history; rating, flag and label stay the file's. Rename, Swap with
+  the original and Delete version in the menu
   ([§317](https://github.com/jessolmstead/greycard/blob/master/docs/notes/317-virtual-copies-part-2-the-index-and-the-window.md))
-- Compare versions, in the frame menu of a frame with versions: culling
-  opens on the original and its versions alone, side by side, each tile
-  its own edit, with the version's name on its tag and in the plate;
-  Delete on a tile removes that version and the view closes up. A
-  version's camera picture now shows while its edit is being made
+- Compare versions shows the original and its versions side by side
+  in culling; Delete on a tile removes that version
   ([§320](https://github.com/jessolmstead/greycard/blob/master/docs/notes/320-virtual-copies-part-3-compare.md))
-- A version can be put in a collection: B or Add to collection on a
-  version's cell adds that version, its tile shows in the collection
-  in its order beside the original's if that is in too, and the mark
-  sits on the version's cell alone. A collection file holding a
-  version is written at file version 2, which an older build leaves
-  alone; one without stays as it was
+- A version can be put in a collection on its own
   ([§319](https://github.com/jessolmstead/greycard/blob/master/docs/notes/319-virtual-copies-part-5-collections.md))
-- A version of a frame exports as `<name>-<version>.<ext>`, and the
-  headless `--export` takes `--version-name` to pick one; the export is
-  recorded on the version's own history
+- A version exports as `<name>-<version>.<ext>`; headless `--export`
+  takes `--version-name`
   ([§313](https://github.com/jessolmstead/greycard/blob/master/docs/notes/313-virtual-copies-part-4-the-version-s-name-in-the-export.md))
-- The sidecar carries a frame's versions, each with its own history
-  and snapshots; a sidecar written by this build is at schema 5 and is
-  refused whole by 0.6.x, and one from 0.6.x reads as before
+- Sidecars are at schema 5 and are refused by 0.6.x
   ([§312](https://github.com/jessolmstead/greycard/blob/master/docs/notes/312-virtual-copies-part-1-the-edit-crate.md))
 
 ### Culling and the grid
 
 - A lightbox: L over the grid, a collection or the picks shows the
-  frames as edited on a dark surround with nothing else drawn, two to
-  six across with + and - (the count kept for the next session),
-  Return into the loupe and back, the sync sheet from the frame menu,
-  and Escape or L back to the grid. A tile
-  keeps its last picture dimmed while a new one is made and says
-  "Developing" when it has none yet
+  frames as edited on a dark surround, two to six across
   ([§307](https://github.com/jessolmstead/greycard/blob/master/docs/notes/307-the-lightbox.md))
 
 ### Library
 
-- Forget missing: the open collection's menu offers to drop the
-  references whose files are gone for good, never one under an offline
-  root or a drive that is not answering, and never while the library
-  is being indexed
-  ([§310](https://github.com/jessolmstead/greycard/blob/master/docs/notes/310-forget-missing-built.md))
-- Collections: gather frames from anywhere in the library into a
-  collection from the frame menu or with B, open it from the left
-  pane's COLLECTIONS list, drag to reorder it; a frame stays in it
-  through a move or another tool's rewrite of the file, and a frame
-  that cannot be found is counted rather than dropped. The filter
-  bar's Save... keeps a filter as a smart collection
+- Collections: gather frames from anywhere in the library with B or the
+  frame menu, drag to reorder; a frame stays in through a move. The
+  filter bar's Save... keeps a filter as a smart collection
   ([§304](https://github.com/jessolmstead/greycard/blob/master/docs/notes/304-collections-and-smart-collections-built.md))
-- The first pass over each folder after the update reads every indexed
-  raw once more, to learn its sensor's pattern: a millisecond or two a
-  file locally, a stretch of background reading on a network drive. It
-  stops with the pass like any other and is not repeated
+- Forget missing: drop a collection's references whose files are gone
+  for good
+  ([§310](https://github.com/jessolmstead/greycard/blob/master/docs/notes/310-forget-missing-built.md))
+- The first pass over each folder after the update reads every raw once
+  more, to learn its sensor's pattern
   ([§322](https://github.com/jessolmstead/greycard/blob/master/docs/notes/322-x-trans-step-1-markesteijns-demosaic.md))
 
 ### Cameras
 
-- Fujifilm X-Trans raws open and develop, with Markesteijn's demosaic
-  in one or three passes (three by default) or bilinear; the DEMOSAIC
-  menu lists only the methods for the open raw's sensor. Denoising,
-  hot pixel repair and chromatic aberration correction are not on
-  X-Trans yet, and the panel says so, so high ISO frames stay noisy
+- Fujifilm X-Trans raws open and develop, with Markesteijn's demosaic.
+  Denoising, hot pixel repair and chromatic aberration correction are
+  not on X-Trans yet
   ([§322](https://github.com/jessolmstead/greycard/blob/master/docs/notes/322-x-trans-step-1-markesteijns-demosaic.md))
 
 ### Masks
 
 - A mask has its own Detail: Texture, Clarity and Dehaze beside its
-  Light and Color, so a face is smoothed or a distant ridge dehazed
-  without touching the rest. A DETAIL section on the Masks tab with its
-  switch, in the viewport, the export and the strip's pictures alike,
-  with a history row. A whole-frame mask matches the global Detail for
-  each slider on its own; a mask's Dehaze with its own Texture or
-  Clarity reads the haze from before them (the design's limit, §287)
+  Light and Color
   ([§302](https://github.com/jessolmstead/greycard/blob/master/docs/notes/302-detail-in-a-mask-built.md))
-- The Adjustments list (Global, each mask with its switch, New mask)
-  stays pinned above the Masks tab's sections, so Global or another
-  mask is one click away from any slider; it shows up to six rows as
-  the window's height allows and scrolls inside itself past them. The
-  chosen mask's name and switches are their own MASK section
+- The Adjustments list stays pinned above the Masks tab's sections
   ([§300](https://github.com/jessolmstead/greycard/blob/master/docs/notes/300-the-adjustments-list-stays-pinned.md))
 
 ### Editing
 
-- Highlights and Whites reach by the frame's own range: Highlights now
-  pulls into the upper midtones the way Lightroom's does, and Whites
-  pivots from the frame's median rather than mid grey, so a face under
-  bright light answers both. A stored highlights or whites opens a
-  little differently
+- Highlights reaches into the upper midtones the way Lightroom's does,
+  and Whites pivots from the frame's median. A stored highlights or
+  whites opens a little differently
   ([§315](https://github.com/jessolmstead/greycard/blob/master/docs/notes/315-highlights-and-whites-by-the-frames-own-range.md))
-- A word at the pointer over a button that shows only an icon (Undo,
-  Remove, Turn left, Hide panel...), after a short rest; it goes with a
-  press, a key or a scroll
+- Tooltips on the icon-only buttons
   ([§311](https://github.com/jessolmstead/greycard/blob/master/docs/notes/311-a-word-at-the-pointer.md))
-- A snapshot's row carries restore and rename icons beside the bin,
-  the status line names what a click does, and a double-click on the
-  row renames without restoring first
+- A snapshot's row has restore and rename icons; double-click renames
   ([§305](https://github.com/jessolmstead/greycard/blob/master/docs/notes/305-a-snapshots-row-says-what-a-click-does.md))
 
 ### Export
 
-- A border at export (#19): a Border row on the export sheet, its width
-  a share of the long edge, in white, light grey, dark grey, black or
-  the picture's own mean; added outside the picture, kept in presets
+- A border at export: width, and white, grey, black or the picture's
+  own mean (#19)
   ([§314](https://github.com/jessolmstead/greycard/blob/master/docs/notes/314-a-border-at-export.md))
-- The export sheet names the folder it will write to, the last one
-  chosen or the frame's own, with a Choose button beside it, and
-  Export writes there with no dialog; "Choose file..." is gone. A
-  frame exported into its own folder is named `X.greycard.jpg`, and a
-  name already taken follows the sheet's "If it exists" choice, where
-  the save dialog used to overwrite. A folder that is missing or not
-  writable says so and opens the chooser
+- The export sheet names the folder it will write to, with a Choose
+  button; Export writes there with no dialog (#22)
   ([§301](https://github.com/jessolmstead/greycard/blob/master/docs/notes/301-the-export-sheet-names-its-folder.md))
 
 ### Fixes
 
-- The window opens no taller than its screen: 1500 by 800 by default,
-  and smaller on a screen that has less room below the menu bar and
-  above the Dock or task bar, so the export sheet's buttons stay in
-  reach on a 13 or 14 inch laptop. On Wayland the compositor keeps the
-  say. The log's "window:" line says what was chosen
+- The window opens no taller than its screen, so the export sheet's
+  buttons stay in reach on a laptop
   ([§306](https://github.com/jessolmstead/greycard/blob/master/docs/notes/306-the-window-opens-no-taller-than-its-screen.md))
-- A rating, flag or label key that makes the frame fall out of the
-  filter says so on the status line ("rated 0 and hidden by the filter
-  (1 star or more); Clear the filter to see it") instead of the frame
-  vanishing without a word
+- A rating, flag or label key that hides the frame behind the filter
+  says so on the status line
   ([§305](https://github.com/jessolmstead/greycard/blob/master/docs/notes/305-a-snapshots-row-says-what-a-click-does.md))
-- The brush and the retouch patch size by the wheel's accumulated
-  delta, one step of 1.1x per wheel click's worth, so a touchpad
-  scroll no longer resizes them a dozen times a gesture
+- The brush and the retouch patch no longer resize a dozen times per
+  touchpad scroll
   ([§303](https://github.com/jessolmstead/greycard/blob/master/docs/notes/303-the-brush-and-the-patch-size-by-the-wheels-accumulated-delta.md))
-- A two-finger touchpad scroll over the picture pans it; a mouse
-  wheel's click still zooms a step, Ctrl with any scroll zooms
-  smoothly, and a Mac trackpad's pinch zooms about its center (the
-  pinch is untried on hardware). A tilted wheel's sideways click pans
-  instead of zooming out
+- A two-finger touchpad scroll pans the picture; a wheel click zooms a
+  step; Ctrl and a scroll zooms smoothly; a trackpad pinch zooms (#17)
   ([§299](https://github.com/jessolmstead/greycard/blob/master/docs/notes/299-a-two-finger-scroll-over-the-picture-pans.md))
-- A wheel or touchpad scroll over an open sheet, its dimmed surround,
-  its buttons or a list at its end no longer zooms the picture behind
-  it
+- A scroll over an open sheet no longer zooms the picture behind it
+  (#21)
   ([§298](https://github.com/jessolmstead/greycard/blob/master/docs/notes/298-a-sheet-keeps-the-wheel.md))
-- A drag anywhere on a radial or linear mask's body moves the mask;
-  before, only the center handle did and a drag elsewhere panned the
-  picture. The handles keep their meanings, a click on the body still
-  zooms, and the body stops at the picture's edge
+- A drag anywhere on a radial or linear mask moves it (#16)
   ([§297](https://github.com/jessolmstead/greycard/blob/master/docs/notes/297-a-drag-on-a-masks-body-moves-the-mask.md))
-- The color mixer's dropper puts itself down after one pick, as the
-  white balance and range droppers do; its button or Esc still puts
-  it down without a pick
+- The color mixer's dropper puts itself down after one pick (#20)
   ([§296](https://github.com/jessolmstead/greycard/blob/master/docs/notes/296-the-mixers-dropper-is-one-pick.md))
 
 ## 0.6.0, 2026-10-10
