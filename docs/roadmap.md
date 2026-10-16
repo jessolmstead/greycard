@@ -202,6 +202,11 @@ A camera's own profile and look are a picker away, and a chart shot
 makes a new one. This and the library can swap order on what testers
 ask for first.
 
+- [ ] A look previewed under the pointer: resting on a row of the Look
+      list shows the picture with that look, at the Strength set, until
+      the pointer leaves; a click keeps it. The viewport applies the
+      look at draw time from a table handed to the renderer, so the
+      preview is a swap of that table, no develop and no history step
 - [ ] Color accuracy against a chart: a 48-patch chart shot per camera in
       daylight and under tungsten, kept with the samples, and an ignored
       test that develops each at the default edit and prints the mean and
