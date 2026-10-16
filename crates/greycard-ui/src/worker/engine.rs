@@ -25,7 +25,11 @@ pub(super) fn left_out_of(outcome: &Outcome, base: Option<&Base>) -> Vec<String>
         LearnedReport::Failed(why) => out.push(format!(
             "the learned denoiser failed ({why}); the engine's denoise instead"
         )),
+        LearnedReport::Unavailable(why) => out.push(format!("the denoise: {why}; none ran")),
         _ => {}
+    }
+    if let Some(why) = base.and_then(|b| b.gave_way.as_ref()) {
+        out.push(why.clone());
     }
     for name in &fills.missing {
         out.push(format!(
@@ -399,7 +403,8 @@ pub(super) fn run(
                 generation,
                 seed_blend,
                 turn: wanted,
-            } => match timed_open(&path) {
+                stance_known,
+            } => match open_told(&path, stance_known, &deliver) {
                 Ok((opened, m)) => {
                     metadata = Some(Arc::new(m));
                     let blend = match &opened {

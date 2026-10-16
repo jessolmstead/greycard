@@ -1633,6 +1633,7 @@ mod tests {
             generation: 1,
             seed_blend: false,
             turn: 0,
+            stance_known: false,
         });
         let rig = Rig {
             worker,
@@ -1882,6 +1883,7 @@ mod tests {
             generation: 4,
             seed_blend: false,
             turn: 0,
+            stance_known: false,
         });
         rig.kept();
         let (_, _, left) = rig.thumb();
@@ -2211,6 +2213,7 @@ mod tests {
                 generation,
                 seed_blend: false,
                 turn: 0,
+                stance_known: false,
             });
         };
         opened(&files[0], 1);

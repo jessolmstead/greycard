@@ -144,8 +144,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(tab) = &cli.tab {
         app.set_panel_tab(tab.as_str().into());
     }
+    // The Bayer list until a raw is open; each open sets its mosaic's.
     app.set_demosaics(ModelRc::new(VecModel::from(
-        Demosaic::ALL
+        Demosaic::for_pattern(&greycard_core::raw::CfaPattern::rggb())
             .iter()
             .map(|d| slint::SharedString::from(d.name()))
             .collect::<Vec<_>>(),

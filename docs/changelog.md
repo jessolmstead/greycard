@@ -36,6 +36,20 @@ note a first tester reads.
   that cannot be found is counted rather than dropped. The filter
   bar's Save... keeps a filter as a smart collection
   ([§304](https://github.com/jessolmstead/greycard/blob/master/docs/notes/304-collections-and-smart-collections-built.md))
+- The first pass over each folder after the update reads every indexed
+  raw once more, to learn its sensor's pattern: a millisecond or two a
+  file locally, a stretch of background reading on a network drive. It
+  stops with the pass like any other and is not repeated
+  ([§322](https://github.com/jessolmstead/greycard/blob/master/docs/notes/322-x-trans-step-1-markesteijns-demosaic.md))
+
+### Cameras
+
+- Fujifilm X-Trans raws open and develop, with Markesteijn's demosaic
+  in one or three passes (three by default) or bilinear; the DEMOSAIC
+  menu lists only the methods for the open raw's sensor. Denoising,
+  hot pixel repair and chromatic aberration correction are not on
+  X-Trans yet, and the panel says so, so high ISO frames stay noisy
+  ([§322](https://github.com/jessolmstead/greycard/blob/master/docs/notes/322-x-trans-step-1-markesteijns-demosaic.md))
 
 ### Masks
 

@@ -142,8 +142,17 @@ pub(super) fn develop_job(
                 planes: None,
                 ca_on_gpu: false,
                 stand_in: None,
+                gave_way: None,
                 profile: None,
             }),
+            (Input::Raw(frame), tier)
+                if let Some(why) = denoise_unavailable(frame, &settings, tier.is_some()) =>
+            {
+                // Nothing to try, and nothing to fall back to: the
+                // engine's develop without a denoise, said so.
+                report = LearnedReport::Unavailable(why);
+                engine_base(frame, edit, turn, &settings, stamp, ca)
+            }
             (Input::Raw(frame), Some(model)) => {
                 match learned_base(
                     frame,
@@ -206,8 +215,13 @@ pub(super) fn develop_job(
                         .or_else(|| profile_from_frame(frame).ok())
                         .map(Arc::new);
                 }
-                b.stand_in = matches!(report, LearnedReport::Missing(_) | LearnedReport::Failed(_))
-                    .then(|| report.clone());
+                b.stand_in = matches!(
+                    report,
+                    LearnedReport::Missing(_)
+                        | LearnedReport::Failed(_)
+                        | LearnedReport::Unavailable(_)
+                )
+                .then(|| report.clone());
                 let corrects = !edit.lens.is_identity(lenses.is_some());
                 let defringe = edit.lens.defringe();
                 if corrects || defringe.is_some() {
@@ -804,6 +818,7 @@ fn note_developed(
         LearnedReport::Kept => parts.push("denoiser kept".into()),
         LearnedReport::Missing(_) => parts.push("denoiser missing".into()),
         LearnedReport::Failed(_) => parts.push("denoiser failed".into()),
+        LearnedReport::Unavailable(_) => parts.push("no denoiser for this mosaic".into()),
     }
     if !fills.made.is_empty() {
         parts.push(format!(

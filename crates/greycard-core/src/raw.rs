@@ -88,15 +88,47 @@ impl CfaPattern {
     pub fn is_rgb(&self) -> bool {
         self.colors.iter().all(|c| c.rgb_index().is_some())
     }
+
+    /// Fujifilm's 6x6 X-Trans layout as seen from its own origin: four
+    /// 3x3 blocks, each green at the corners and the center, the two
+    /// other colors on its edges, swapped from one block to the next.
+    pub fn xtrans() -> Self {
+        use CfaColor::{Blue as B, Green as G, Red as R};
+        Self {
+            width: 6,
+            height: 6,
+            colors: vec![
+                G, B, G, G, R, G, //
+                R, G, R, B, G, B, //
+                G, B, G, G, R, G, //
+                G, R, G, G, B, G, //
+                B, G, B, R, G, R, //
+                G, R, G, G, B, G, //
+            ],
+        }
+    }
+
+    /// True for the X-Trans layout at any of its 36 phases. Every
+    /// X-Trans camera has the one layout; a crop, or a camera that
+    /// reads its sensor from another corner, only moves its origin
+    /// (a mirror or a transpose of it is one of the shifts too).
+    pub fn is_xtrans(&self) -> bool {
+        if self.width != 6 || self.height != 6 {
+            return false;
+        }
+        let xtrans = Self::xtrans();
+        (0..6).any(|dy| (0..6).any(|dx| xtrans.shifted(dx, dy) == *self))
+    }
 }
 
 /// The pattern as a person would name it: `2x2 RGGB`, or `6x6
-/// (X-Trans)` for the one six-by-six layout in the wild. A `{:?}` of a
-/// 36-entry pattern is no use in a message a user reads.
+/// (X-Trans)` for Fujifilm's layout. A `{:?}` of a 36-entry pattern is
+/// no use in a message a user reads; a six-by-six pattern that is not
+/// X-Trans is spelled out, since that is the one worth reading.
 impl std::fmt::Display for CfaPattern {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}x{}", self.width, self.height)?;
-        if self.width == 6 && self.height == 6 {
+        if self.is_xtrans() {
             return write!(f, " (X-Trans)");
         }
         f.write_str(" ")?;
@@ -112,24 +144,30 @@ impl std::fmt::Display for CfaPattern {
     }
 }
 
-/// Fujifilm's 6x6 X-Trans layout, for the tests that check what is
-/// said about a mosaic this build does not develop.
-#[cfg(test)]
-pub(crate) fn xtrans() -> CfaPattern {
-    use CfaColor::{Blue as B, Green as G, Red as R};
-    CfaPattern::new(
-        6,
-        6,
-        vec![
-            G, B, G, G, R, G, //
-            R, G, R, B, G, B, //
-            G, B, G, G, R, G, //
-            G, R, G, G, B, G, //
-            B, G, B, R, G, R, //
-            G, R, G, G, B, G, //
-        ],
-    )
-    .unwrap()
+/// The kind of mosaic a pattern is, which is what decides the demosaics
+/// a frame takes: small and `Copy`, for what is read of a file without
+/// its pixels (`decode::Stance`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Mosaic {
+    /// A 2x2 Bayer pattern at any phase.
+    Bayer,
+    /// Fujifilm's 6x6 X-Trans at any phase.
+    XTrans,
+    /// Any other pattern: no demosaic of the engine's takes it.
+    Other,
+}
+
+impl CfaPattern {
+    /// The kind of mosaic this is.
+    pub fn mosaic(&self) -> Mosaic {
+        if self.is_xtrans() {
+            Mosaic::XTrans
+        } else if crate::develop::rcd::is_bayer(self) {
+            Mosaic::Bayer
+        } else {
+            Mosaic::Other
+        }
+    }
 }
 
 /// How the samples in a frame are laid out.
@@ -816,7 +854,7 @@ mod tests {
             "2x2 BGGR",
             "the colors come out in order"
         );
-        assert_eq!(xtrans().to_string(), "6x6 (X-Trans)");
+        assert_eq!(CfaPattern::xtrans().to_string(), "6x6 (X-Trans)");
         // Anything a 3x3 matrix does not model is a question mark; the
         // backend's own code stays in the Debug.
         let odd = CfaPattern::new(

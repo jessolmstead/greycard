@@ -196,8 +196,8 @@ Photographers who want correct color without learning darktable, and
 who would rather their editor read their folders than own them. On
 Linux, where there is nothing else like it, and on Windows and macOS
 as an alternative that costs nothing and does not hold your catalog
-hostage. It is tested with Canon, Fujifilm GFX, Sony, Panasonic and
-Nikon bodies. Anyone who wants the camera's own
+hostage. It is tested with Canon, Fujifilm GFX and X-Trans, Sony,
+Panasonic and Nikon bodies. Anyone who wants the camera's own
 rendering as a starting point rather than Adobe's, which camera match
 fits from the JPEG already in every raw file. People who print, since
 the display path is color managed with soft proofing. And developers
@@ -243,7 +243,8 @@ Built, as of October 2026: decoding through rawler; the color
 pipeline from camera matrix to monitor profile with soft proofing, and
 AgX, Blender's wide-gamut formation, as a second display curve beside
 the default;
-RCD, AMaZE and a dual demosaic; highlight reconstruction; chromatic
+RCD, AMaZE and a dual demosaic, and Markesteijn's for Fujifilm
+X-Trans; highlight reconstruction; chromatic
 aberration correction, on the GPU in the editor, and a defringe that
 acts on a fringe's hue; camera profiles from DCP files; a profiled
 denoiser and a learned one with published weights; deconvolution
@@ -318,7 +319,8 @@ release, which can be turned off.
 Planned, in order: the tone controls made to feel right; a generative
 fill; a Lightroom catalog
 import; HDR merge and panoramas, and the merges in the browser;
-tethering.
+tethering. Denoising, hot pixel repair and chromatic aberration
+correction for X-Trans, alongside these.
 
 The reasoning behind every choice is in `docs/notes/`, one numbered
 section a file with `docs/notes.md` as the index, and the list is

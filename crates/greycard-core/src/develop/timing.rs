@@ -71,7 +71,9 @@ fn ops_alone() {
     let (w, h) = (prepared.width, prepared.height);
     let pattern = prepared.pattern.clone().expect("a mosaic");
     let (camera, _, _) = demosaic_prepared(&prepared, &settings).expect("it demosaics");
-    let model = prepared.noise_model().expect("the noise was measured");
+    // Not measured on an X-Trans frame: the ops that need it are left
+    // out there.
+    let model = prepared.noise_model();
     let mut image = WorkingImage::from_data(w, h, camera.clone()).unwrap();
     apply_matrix(&mut image.data, prepared.white_balance.matrix_f32());
     println!("frame {w}x{h}, {} threads", rayon::current_num_threads());
@@ -98,7 +100,7 @@ fn ops_alone() {
             (t.elapsed(), out)
         });
     }
-    if wants("nlm") {
+    if let Some(model) = model.filter(|_| wants("nlm")) {
         time("nlm", runs, || {
             let mut rgb = camera.clone();
             let t = Instant::now();
@@ -221,7 +223,25 @@ fn ops_alone() {
             (t.elapsed(), out)
         });
     }
-    if wants("rcd") {
+    if pattern.is_xtrans() {
+        for (name, passes) in [
+            ("markesteijn1", xtrans::Passes::One),
+            ("markesteijn3", xtrans::Passes::Three),
+        ] {
+            if wants(name) {
+                time(name, runs, || {
+                    let t = Instant::now();
+                    let out =
+                        xtrans::demosaic_markesteijn(&prepared.samples, w, h, &pattern, passes)
+                            .unwrap();
+                    (t.elapsed(), out)
+                });
+            }
+        }
+    }
+    // RCD and the CA correction are Bayer only; on an X-Trans frame they
+    // are left out of `all`, and out when named.
+    if wants("rcd") && rcd::is_bayer(&pattern) {
         time("rcd", runs, || {
             let t = Instant::now();
             let out = rcd::demosaic_rcd(&prepared.samples, w, h, &pattern).unwrap();
@@ -257,7 +277,7 @@ fn ops_alone() {
             });
         }
     }
-    if wants("ca") {
+    if wants("ca") && ca::is_bayer(&pattern) {
         time("ca", runs, || {
             let t = Instant::now();
             let (out, _) =

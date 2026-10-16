@@ -1,5 +1,5 @@
-//! Turn a full-color reference image into what a Bayer sensor would have
-//! recorded of it, and the sRGB encoding the metrics score in.
+//! Turn a full-color reference image into what a Bayer or X-Trans sensor
+//! would have recorded of it, and the sRGB encoding the metrics score in.
 
 use greycard_core::raw::{CfaColor, CfaPattern};
 
@@ -11,15 +11,19 @@ pub fn mosaic(rgb: &[f32], width: usize, height: usize, pattern: &CfaPattern) ->
             let c = pattern
                 .color_at(y, x)
                 .rgb_index()
-                .expect("Bayer patterns are RGB");
+                .expect("the patterns are RGB");
             out.push(rgb[(y * width + x) * 3 + c]);
         }
     }
     out
 }
 
-/// A 2x2 Bayer pattern from its usual four-letter name.
-pub fn bayer_pattern(name: &str) -> Option<CfaPattern> {
+/// A 2x2 Bayer pattern from its usual four-letter name, or X-Trans from
+/// "xtrans" at its own phase.
+pub fn cfa_pattern(name: &str) -> Option<CfaPattern> {
+    if matches!(name.to_ascii_lowercase().as_str(), "xtrans" | "x-trans") {
+        return Some(CfaPattern::xtrans());
+    }
     let colors: Option<Vec<CfaColor>> = name
         .chars()
         .map(|c| match c.to_ascii_uppercase() {
@@ -60,12 +64,13 @@ mod tests {
     fn mosaic_picks_the_pattern_channel() {
         // 2x2 image, every pixel (1, 2, 3).
         let rgb: Vec<f32> = [1.0, 2.0, 3.0].repeat(4);
-        let cfa = mosaic(&rgb, 2, 2, &bayer_pattern("RGGB").unwrap());
+        let cfa = mosaic(&rgb, 2, 2, &cfa_pattern("RGGB").unwrap());
         assert_eq!(cfa, vec![1.0, 2.0, 2.0, 3.0]);
-        let cfa = mosaic(&rgb, 2, 2, &bayer_pattern("BGGR").unwrap());
+        let cfa = mosaic(&rgb, 2, 2, &cfa_pattern("BGGR").unwrap());
         assert_eq!(cfa, vec![3.0, 2.0, 2.0, 1.0]);
-        assert!(bayer_pattern("RGB").is_none());
-        assert!(bayer_pattern("RGGX").is_none());
+        assert!(cfa_pattern("RGB").is_none());
+        assert!(cfa_pattern("RGGX").is_none());
+        assert!(cfa_pattern("xtrans").unwrap().is_xtrans());
     }
 
     #[test]

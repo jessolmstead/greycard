@@ -31,6 +31,7 @@ use crate::panel::cull::leave_cull;
 use crate::panel::edit::{panel_state, read_edit, save_edit, write_sidecar};
 use crate::panel::history::{show_history, take_current, take_current_with};
 use crate::*;
+use greycard_core::raw::Mosaic;
 use greycard_edit::camera::{self, ProfileChoice};
 use greycard_edit::history::{preset_label, preset_over_set_label, sync_label};
 use greycard_edit::preset::Choice;
@@ -90,6 +91,55 @@ pub(crate) fn probe(st: &State, c: usize) -> Option<greycard_core::decode::Probe
     greycard_core::decode::probe_path(path)
         .inspect_err(|e| tracing::warn!("{}: metadata: {e}", file_name(path)))
         .ok()
+}
+
+/// Whether laying `preset` asks what mosaic each frame is: it carries
+/// the demosaic, and its method is not one every mosaic takes
+/// (bilinear goes anywhere).
+pub(crate) fn needs_mosaic(preset: &Preset) -> bool {
+    let method = preset.edit.demosaic.method();
+    preset.sections.contains(&Section::Demosaic)
+        && ![Mosaic::Bayer, Mosaic::XTrans]
+            .iter()
+            .all(|m| method.takes_kind(*m))
+}
+
+/// Whether `preset`'s demosaic may go to a frame of `mosaic`: a preset
+/// that does not carry the section, or a frame whose mosaic is not
+/// known (a picture, a file that will not say), takes it as it is; a
+/// method that mosaic does not take is left off, as a camera profile
+/// made for another body is.
+pub(crate) fn demosaic_fits(preset: &Preset, mosaic: Option<Mosaic>) -> bool {
+    !preset.sections.contains(&Section::Demosaic)
+        || mosaic.is_none_or(|m| preset.edit.demosaic.method().takes_kind(m))
+}
+
+/// `preset` as it reaches frame `file`, for its demosaic: itself, or
+/// with Demosaic taken out, and `true`, when the frame's mosaic does
+/// not take the method ([`demosaic_fits`]).
+pub(crate) fn preset_for_mosaic(st: &mut State, preset: &Preset, file: usize) -> (Preset, bool) {
+    if !needs_mosaic(preset) {
+        return (preset.clone(), false);
+    }
+    let mosaic = crate::panel::browser::mosaic_of(st, file);
+    if demosaic_fits(preset, mosaic) {
+        (preset.clone(), false)
+    } else {
+        let mut without = preset.clone();
+        without.sections.retain(|s| *s != Section::Demosaic);
+        (without, true)
+    }
+}
+
+/// `edit` as a source of a sync, a copy or a preset made on a frame of
+/// `mosaic`: its demosaic is the one the frame's develop runs, the one
+/// its menu shows, and not a choice stored for another mosaic and
+/// never picked here.
+pub(crate) fn as_source(mut edit: Edit, mosaic: Option<Mosaic>) -> Edit {
+    if let Some(m) = mosaic {
+        edit.demosaic = edit.demosaic.resolve(m);
+    }
+    edit
 }
 
 /// Whether a camera profile may go to a frame of `body` (make and
@@ -166,6 +216,9 @@ pub(crate) fn preset_fitted(
 pub(crate) struct Synced {
     pub(crate) moved: Vec<usize>,
     pub(crate) profile_left_off: Vec<usize>,
+    /// The frames the demosaic was left off: a method of the other
+    /// mosaic ([`demosaic_fits`]).
+    pub(crate) demosaic_left_off: Vec<usize>,
     /// The cells whose file was written: the moved and the seeded, each
     /// file once however many of its cells are among them.
     pub(crate) written: Vec<usize>,
@@ -228,8 +281,10 @@ pub(crate) fn lay_over_targets(
         _ => None,
     };
     let seeds = learned_from.is_none();
+    let wants_mosaic = needs_mosaic(preset);
     let mut fits = Vec::new();
     let mut left_off = Vec::new();
+    let mut demosaic_off = Vec::new();
     let mut seeded = Vec::new();
     for &f in targets {
         // The line's own wait for its ISO: a version made from the
@@ -239,6 +294,12 @@ pub(crate) fn lay_over_targets(
         let probed = (named.is_some() || wants_seed)
             .then(|| probe(st, f))
             .flatten();
+        // The mosaic only when the method is not every mosaic's, and
+        // through the session's cache: a frame read once is not read
+        // again.
+        if wants_mosaic && !demosaic_fits(preset, crate::panel::browser::mosaic_of(st, f)) {
+            demosaic_off.push(f);
+        }
         if wants_seed
             && let Some(p) = &probed
             && crate::rows::seed_landed(st, f, greycard_edit::Noise::blend_for_iso(p.iso))
@@ -270,11 +331,27 @@ pub(crate) fn lay_over_targets(
             })
             .collect()
     };
-    let mut moved = lay(st, &fits, preset);
-    if !left_off.is_empty() {
-        let mut without = preset.clone();
-        without.sections.retain(|s| *s != Section::Camera);
-        moved.extend(lay(st, &left_off, &without));
+    // Each target with the sections it cannot take left out: the
+    // camera profile for another body, the demosaic for another mosaic.
+    let without = |camera: bool, demosaic: bool| {
+        let mut p = preset.clone();
+        p.sections
+            .retain(|s| !(camera && *s == Section::Camera || demosaic && *s == Section::Demosaic));
+        p
+    };
+    let mut moved = Vec::new();
+    for camera in [false, true] {
+        for demosaic in [false, true] {
+            let cells: Vec<usize> = fits
+                .iter()
+                .chain(&left_off)
+                .copied()
+                .filter(|f| left_off.contains(f) == camera && demosaic_off.contains(f) == demosaic)
+                .collect();
+            if !cells.is_empty() {
+                moved.extend(lay(st, &cells, &without(camera, demosaic)));
+            }
+        }
     }
     moved.sort_unstable();
     let written = selection::union(&moved, &seeded);
@@ -291,6 +368,7 @@ pub(crate) fn lay_over_targets(
     Synced {
         moved,
         profile_left_off: left_off,
+        demosaic_left_off: demosaic_off,
         written,
     }
 }
@@ -343,6 +421,17 @@ pub(crate) fn sync_onto(
         return Synced::default();
     };
     let preset = Preset::from_choice("", &from_edit, choice);
+    // The source's frame is read for its mosaic only when the demosaic
+    // goes.
+    let preset = if preset.sections.contains(&Section::Demosaic) {
+        let mosaic = crate::panel::browser::mosaic_of(st, from);
+        Preset {
+            edit: as_source(preset.edit, mosaic),
+            ..preset
+        }
+    } else {
+        preset
+    };
     let learned_from = preset
         .sections
         .contains(&Section::Noise)
@@ -503,22 +592,27 @@ pub(crate) fn apply_preset_to(
     // hand from the CAMERA PROFILE section, which warns "Made for X,
     // not Y" rather than refusing it.
     let (current_preset, current_left_off) = preset_for_body(st, preset, c, profiles, &probe);
+    let (current_preset, current_demosaic_off) = preset_for_mosaic(st, &current_preset, c);
     // The same tail a set's report gives a left-off frame
     // (`preset_onto_words`, through `profile_left_off_words`), built
     // from a `Synced` of one frame so the words are exactly the same
     // whether the frame reached it alone or as part of a set.
-    let left_off_tail = if current_left_off {
-        profile_left_off_words(
-            st,
-            &Synced {
-                moved: Vec::new(),
-                profile_left_off: vec![c],
-                written: Vec::new(),
+    let left_off_tail = profile_left_off_words(
+        st,
+        &Synced {
+            profile_left_off: if current_left_off {
+                vec![c]
+            } else {
+                Vec::new()
             },
-        )
-    } else {
-        String::new()
-    };
+            demosaic_left_off: if current_demosaic_off {
+                vec![c]
+            } else {
+                Vec::new()
+            },
+            ..Synced::default()
+        },
+    );
     // With one frame selected, this is otherwise unchanged from
     // before the set existed: the current frame alone, on the panel
     // outside culling and on the sidecar under it.
@@ -623,6 +717,10 @@ pub(crate) fn apply_preset_to(
         synced.profile_left_off.push(c);
         synced.profile_left_off.sort_unstable();
     }
+    if current_demosaic_off {
+        synced.demosaic_left_off.push(c);
+        synced.demosaic_left_off.sort_unstable();
+    }
     // The current frame's step went to disk with the set's write when
     // a target shares its file (a version of it): one write, one
     // revision; else its own.
@@ -671,25 +769,33 @@ pub(crate) fn apply_preset_to(
 /// frames the camera profile was left off because it was made for
 /// another body, named up to three, the rest counted.
 fn profile_left_off_words(st: &State, synced: &Synced) -> String {
-    if synced.profile_left_off.is_empty() {
-        return String::new();
+    let named = |cells: &[usize]| {
+        let names: Vec<String> = cells.iter().take(3).map(|&f| frame_name(st, f)).collect();
+        let more = cells.len().saturating_sub(3);
+        format!(
+            "{}{}",
+            names.join(", "),
+            if more > 0 {
+                format!(" and {more} more")
+            } else {
+                String::new()
+            }
+        )
+    };
+    let mut said = String::new();
+    if !synced.profile_left_off.is_empty() {
+        said.push_str(&format!(
+            "; the camera profile left off {} (made for another camera)",
+            named(&synced.profile_left_off)
+        ));
     }
-    let names: Vec<String> = synced
-        .profile_left_off
-        .iter()
-        .take(3)
-        .map(|&f| frame_name(st, f))
-        .collect();
-    let more = synced.profile_left_off.len().saturating_sub(3);
-    format!(
-        "; the camera profile left off {}{} (made for another camera)",
-        names.join(", "),
-        if more > 0 {
-            format!(" and {more} more")
-        } else {
-            String::new()
-        }
-    )
+    if !synced.demosaic_left_off.is_empty() {
+        said.push_str(&format!(
+            "; the demosaic left off {} (a method of another mosaic)",
+            named(&synced.demosaic_left_off)
+        ));
+    }
+    said
 }
 
 /// The status line after a sync: how much went where, and which
@@ -773,6 +879,14 @@ pub(crate) fn copy_settings_of(st: &mut State, app: &App, cell: usize) {
     };
     let Some(from) = st.key_of(cell) else {
         return;
+    };
+    // The demosaic as this frame runs it, not a choice stored for
+    // another mosaic: a paste then leaves it off the other mosaic's
+    // frames.
+    let edit = if edit.demosaic.method() == greycard_core::develop::DemosaicMethod::Bilinear {
+        edit
+    } else {
+        as_source(edit, crate::panel::browser::mosaic_of(st, cell))
     };
     let clip = Clipboard::copy(edit, from, frame_name(st, cell));
     let name = clip.name();
@@ -880,9 +994,12 @@ pub(crate) fn paste_onto(
     });
     let mut current_changed = false;
     let mut current_left_off = false;
+    let mut current_demosaic_off = false;
     if let Some(c) = panel_frame {
         let (fits, left_off) = preset_for_body(st, &preset, c, profiles, &probe);
+        let (fits, demosaic_off) = preset_for_mosaic(st, &fits, c);
         current_left_off = left_off;
+        current_demosaic_off = demosaic_off;
         let edit = read_edit(app, &st.edit, st.target);
         let applied = clip.applied(&fits, &edit);
         if applied != edit {
@@ -925,6 +1042,10 @@ pub(crate) fn paste_onto(
         if current_left_off {
             synced.profile_left_off.push(c);
             synced.profile_left_off.sort_unstable();
+        }
+        if current_demosaic_off {
+            synced.demosaic_left_off.push(c);
+            synced.demosaic_left_off.sort_unstable();
         }
     }
     let plural = |n: usize| if n == 1 { "" } else { "s" };
@@ -1515,6 +1636,150 @@ mod tests {
             st.sidecars[2].current.noise.learned_strength,
             st.sidecars[0].current.noise.learned_strength
         );
+    }
+
+    /// The demosaic goes as the source frame runs it, and only to the
+    /// frames of a mosaic that takes it: an X-Trans frame's stored
+    /// Bayer choice, never picked there, travels as Markesteijn's three
+    /// passes and is left off a Bayer frame; a Bayer frame's RCD is left
+    /// off an X-Trans one.
+    #[test]
+    fn a_demosaic_syncs_as_it_runs_and_only_to_its_own_mosaic() {
+        use greycard_core::raw::Mosaic;
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        state.borrow_mut().sidecars[0].current.demosaic = greycard_edit::Demosaic::Amaze;
+        open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
+        state.borrow_mut().picked = vec![0, 1, 2];
+        // What the worker has said of each file's mosaic.
+        {
+            use crate::panel::browser::OpenMosaic;
+            let mut st = state.borrow_mut();
+            for (f, m) in [(0, Mosaic::XTrans), (1, Mosaic::XTrans), (2, Mosaic::Bayer)] {
+                let path = st.path_of(f).clone();
+                st.mosaics.insert(path, OpenMosaic::Known(m));
+            }
+        }
+        // The bodies are not asked about: no profile goes, and a
+        // frame waiting for its ISO's blend is left waiting.
+        let mosaics = |_: &State, _: usize| -> Option<greycard_core::decode::Probe> { None };
+        let synced = sync_selection(
+            &mut state.borrow_mut(),
+            &app,
+            &[Section::Demosaic],
+            &[],
+            mosaics,
+        );
+        assert_eq!(synced.demosaic_left_off, [2]);
+        {
+            let st = state.borrow();
+            assert_eq!(
+                st.sidecars[1].current.demosaic,
+                greycard_edit::Demosaic::Markesteijn3
+            );
+            assert_eq!(st.sidecars[2].current.demosaic, Edit::default().demosaic);
+            assert!(
+                profile_left_off_words(&st, &synced)
+                    .ends_with("; the demosaic left off IMG_0002.CR3 (a method of another mosaic)")
+            );
+        }
+
+        // From a Bayer frame: its RCD to the Bayer frame alone.
+        state.borrow_mut().sidecars[2].current.demosaic = greycard_edit::Demosaic::Rcd;
+        state.borrow_mut().sidecars[1] = Sidecar::default();
+        open_row(&mut state.borrow_mut(), &app, &worker, 2, false);
+        state.borrow_mut().picked = vec![2, 1, 0];
+        let synced = sync_selection(
+            &mut state.borrow_mut(),
+            &app,
+            &[Section::Demosaic],
+            &[],
+            mosaics,
+        );
+        assert_eq!(synced.demosaic_left_off, [0, 1]);
+        let st = state.borrow();
+        assert_eq!(st.sidecars[1].current.demosaic, Edit::default().demosaic);
+        assert_eq!(
+            st.sidecars[0].current.demosaic,
+            greycard_edit::Demosaic::Amaze
+        );
+        // And the rule alone.
+        let preset = Preset::from_edit(
+            "",
+            &Edit {
+                demosaic: greycard_edit::Demosaic::Markesteijn1,
+                ..Edit::default()
+            },
+            &[Section::Demosaic],
+        );
+        assert!(demosaic_fits(&preset, Some(Mosaic::XTrans)));
+        assert!(!demosaic_fits(&preset, Some(Mosaic::Bayer)));
+        assert!(demosaic_fits(&preset, None));
+    }
+
+    /// The library's index says each file's mosaic, so a sync over
+    /// frames never opened reads none of them: the files are gone from
+    /// the disk here, and the demosaic still goes only where it fits.
+    #[test]
+    fn a_sync_takes_the_mosaics_from_the_library_and_reads_no_file() {
+        use greycard_core::raw::Mosaic;
+        use greycard_library::fixture::write_mosaic_dng;
+        const XTRANS: &str = "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG";
+        let dir = crate::testing::scratch_dir("sync-mosaics");
+        std::fs::create_dir_all(&dir).unwrap();
+        let files: Vec<PathBuf> = (0..3)
+            .map(|i| dir.join(format!("IMG_{i:04}.dng")))
+            .collect();
+        write_mosaic_dng(&files[0], XTRANS);
+        write_mosaic_dng(&files[1], XTRANS);
+        write_mosaic_dng(&files[2], "RGGB");
+        let db = dir.join("library.sqlite");
+        greycard_library::Library::open(&db)
+            .unwrap()
+            .index_folder(&dir, &mut |_| {})
+            .unwrap();
+        for f in &files {
+            std::fs::remove_file(f).unwrap();
+        }
+        let app = window(3);
+        let (state, worker) = state_for(&app, files.clone());
+        state.borrow_mut().index_reader =
+            Some(greycard_library::Library::open_read_only(&db).unwrap());
+        {
+            let mut st = state.borrow_mut();
+            assert_eq!(
+                crate::panel::browser::mosaic_of(&mut st, 1),
+                Some(Mosaic::XTrans)
+            );
+            assert_eq!(
+                crate::panel::browser::mosaic_of(&mut st, 2),
+                Some(Mosaic::Bayer)
+            );
+            // From the index, not a read: nothing was kept as read.
+            assert!(st.mosaics.is_empty() && st.stances.is_empty());
+            st.sidecars[0].current.demosaic = greycard_edit::Demosaic::Amaze;
+        }
+        open_row(&mut state.borrow_mut(), &app, &worker, 0, false);
+        state.borrow_mut().picked = vec![0, 1, 2];
+        let synced = sync_selection(
+            &mut state.borrow_mut(),
+            &app,
+            &[Section::Demosaic],
+            &[],
+            |_: &State, _: usize| None,
+        );
+        assert_eq!(synced.demosaic_left_off, [2]);
+        let st = state.borrow();
+        assert_eq!(
+            st.sidecars[1].current.demosaic,
+            greycard_edit::Demosaic::Markesteijn3
+        );
+        assert!(
+            st.mosaics.is_empty() && st.stances.is_empty(),
+            "no file was read"
+        );
+        drop(st);
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     /// The sheet reads the frame behind it, so nothing under it may

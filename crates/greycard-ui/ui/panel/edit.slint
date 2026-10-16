@@ -114,12 +114,13 @@ export component NoiseSection inherits Section {
     in-out property <string> denoise-learned;
     in property <[string]> denoise-tiers;
     in-out property <float> denoise-learned-strength;
-    in property <bool> raw-input;
+    // Why the section rests, or "" when it does not.
+    in property <string> unavailable;
     callback develop-changed();
 
     title: "NOISE";
     icon: @image-url("../icons/sparkles.svg");
-    hint: root.raw-input ? "" : "raw only";
+    hint: root.unavailable;
     collapsed <=> root.collapsed-noise;
     switchable: true;
     on <=> root.noise-enabled;
@@ -128,13 +129,13 @@ export component NoiseSection inherits Section {
     // demosaic and the profiled denoise both.
     Segmented {
         options: root.denoise-tiers;
-        enabled: root.raw-input;
+        enabled: root.unavailable == "";
         current <=> root.denoise-learned;
         selected(v) => { root.develop-changed(); }
     }
     EditSlider {
         label: "Blend";
-        enabled: root.raw-input && root.denoise-learned != "off";
+        enabled: root.unavailable == "" && root.denoise-learned != "off";
         minimum: 0;
         maximum: 1;
         default: 1;
@@ -146,13 +147,13 @@ export component NoiseSection inherits Section {
     }
     Toggle {
         label: "Denoise";
-        enabled: root.raw-input && root.denoise-learned == "off";
+        enabled: root.unavailable == "" && root.denoise-learned == "off";
         checked <=> root.denoise;
         toggled => { root.develop-changed(); }
     }
     EditSlider {
         label: "Strength";
-        enabled: root.raw-input && root.denoise && root.denoise-learned == "off";
+        enabled: root.unavailable == "" && root.denoise && root.denoise-learned == "off";
         minimum: 0.5;
         maximum: 3;
         default: 1.5;
@@ -405,16 +406,20 @@ export component DemosaicSection inherits Section {
     in property <string> source-note;
     in-out property <string> demosaic;
     in property <[string]> demosaics;
-    callback develop-changed();
+    // Why the menu rests (the raw's mosaic not read yet), or "".
+    in property <string> menu-hint;
+    // A pick from the menu: the window stores it in the edit.
+    callback picked(string);
 
     title: "DEMOSAIC";
     icon: @image-url("../icons/grid-2x2.svg");
-    hint: root.raw-input ? "" : "raw only";
+    hint: root.raw-input ? root.menu-hint : "raw only";
     collapsed <=> root.collapsed-demosaic;
     if root.raw-input: Segmented {
         options: root.demosaics;
+        enabled: root.menu-hint == "";
         current <=> root.demosaic;
-        selected(v) => { root.develop-changed(); }
+        selected(v) => { root.picked(v); }
     }
     if !root.raw-input: Text {
         text: root.source-note;

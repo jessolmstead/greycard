@@ -51,8 +51,8 @@ use greycard_edit::{Placement, Sidecar};
 use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 use crate::{
-    Error, Exif, Library, Result, StyleTags, canonical, canonical_file, filter, hash, mtime_of,
-    now_secs, path_bytes, path_from_bytes, path_text,
+    Error, Exif, FileMosaic, Library, Result, StyleTags, canonical, canonical_file, filter, hash,
+    mtime_of, now_secs, path_bytes, path_from_bytes, path_text,
 };
 
 /// Files a transaction holds before it is committed.
@@ -238,6 +238,8 @@ struct Row {
     missing: bool,
     /// Whether the maker's tags have been read into the row.
     style_read: bool,
+    /// Whether the file's kind of mosaic has been read into the row.
+    mosaic_read: bool,
     /// The row says its sidecar holds a develop.
     edited: bool,
     /// The develop key of its edit, as last read; `None` until a pass
@@ -611,13 +613,14 @@ fn row_from(r: &rusqlite::Row<'_>, from: usize) -> rusqlite::Result<Row> {
         edited: r.get::<_, i64>(from + 7)? != 0,
         develop_key: r.get(from + 8)?,
         hash: r.get(from + 9)?,
+        mosaic_read: r.get::<_, i64>(from + 10)? != 0,
     })
 }
 
 fn rows_in_folder(conn: &Connection, folder: &[u8]) -> Result<HashMap<Vec<u8>, Row>> {
     let mut stmt = conn.prepare_cached(
         "SELECT path, id, size, mtime, sidecar, sidecar_hash, missing_since, style_read, \
-         edited, develop_key, hash FROM files WHERE folder = ?",
+         edited, develop_key, hash, mosaic IS NOT NULL FROM files WHERE folder = ?",
     )?;
     let rows = stmt.query_map(params![folder], |r| {
         Ok((r.get::<_, Vec<u8>>(0)?, row_from(r, 1)?))
@@ -630,7 +633,7 @@ fn row_at(conn: &Connection, path: &[u8]) -> Result<Option<Row>> {
     Ok(conn
         .prepare_cached(
             "SELECT id, size, mtime, sidecar, sidecar_hash, missing_since, style_read, \
-             edited, develop_key, hash FROM files WHERE path = ?",
+             edited, develop_key, hash, mosaic IS NOT NULL FROM files WHERE path = ?",
         )?
         .query_row(params![path], |r| row_from(r, 0))
         .optional()?)
@@ -805,8 +808,10 @@ fn begin(conn: &mut Connection) -> Result<Transaction<'_>> {
 /// write.
 enum Plan {
     /// The row's size and mtime match the file's; with the maker's
-    /// tags when the row had not had them read.
-    Same(Row, Option<StyleTags>),
+    /// tags when the row had not had them read, and its kind of mosaic
+    /// when the row had not had that read (the inner `None`: the file
+    /// would not say).
+    Same(Row, Option<StyleTags>, Option<Option<FileMosaic>>),
     /// The file changed on disk: hashed and probed again.
     Changed { row: Row, hash: String, exif: Exif },
     /// No row at this path when the folder's rows were read: hashed,
@@ -939,7 +944,8 @@ fn index_paths(
         let plan = match existing.remove(&key) {
             Some(row) if row.size == size && row.mtime == mtime => {
                 let style = (!row.style_read).then(|| read_style(path));
-                Plan::Same(row, style)
+                let mosaic = (!row.mosaic_read).then(|| read_mosaic(path));
+                Plan::Same(row, style, mosaic)
             }
             Some(row) => {
                 let Some(hash) = hashed(&mut report) else {
@@ -1077,12 +1083,16 @@ fn write_looked(
             summary: &summary,
         };
         match plan {
-            Plan::Same(row, style) => {
+            Plan::Same(row, style, mosaic) => {
                 let snapshot = row.clone();
                 let row = current(tx, &key, row)?;
                 if let Some(style) = style.filter(|_| !row.style_read) {
                     write_style(tx, row.id, &style)?;
                     report.styled += 1;
+                }
+                if let Some(mosaic) = mosaic.filter(|_| !row.mosaic_read) {
+                    tx.prepare_cached("UPDATE files SET mosaic = ? WHERE id = ?")?
+                        .execute(params![FileMosaic::text(mosaic), row.id])?;
                 }
                 settle_same(tx, &snapshot, row, seen, report)?;
             }
@@ -1149,8 +1159,8 @@ fn write_looked(
                     tx.prepare_cached(
                         "INSERT INTO files (path, folder, folder_text, name, size, mtime, hash, \
                          make, model, camera, lens, iso, focal, aperture, shutter, taken, \
-                         maker, style, style_fixed, peripheral, style_read) \
-                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)",
+                         maker, style, style_fixed, peripheral, style_read, mosaic) \
+                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)",
                     )?
                     .execute(params![
                         key,
@@ -1173,6 +1183,7 @@ fn write_looked(
                         exif.style.style,
                         exif.style.fixed,
                         exif.style.peripheral,
+                        FileMosaic::text(exif.mosaic),
                     ])?;
                     let id = tx.last_insert_rowid();
                     write_meta(tx, id, seen)?;
@@ -1260,7 +1271,7 @@ fn update_file(
         "UPDATE files SET size = ?, mtime = ?, hash = ?, make = ?, model = ?, \
          camera = ?, lens = ?, iso = ?, focal = ?, aperture = ?, shutter = ?, \
          taken = ?, maker = ?, style = ?, style_fixed = ?, peripheral = ?, style_read = 1, \
-         missing_since = NULL, whole_hash = NULL WHERE id = ?",
+         mosaic = ?, missing_since = NULL, whole_hash = NULL WHERE id = ?",
     )?
     .execute(params![
         size as i64,
@@ -1279,6 +1290,7 @@ fn update_file(
         exif.style.style,
         exif.style.fixed,
         exif.style.peripheral,
+        FileMosaic::text(exif.mosaic),
         id
     ])?;
     Ok(())
@@ -1401,15 +1413,28 @@ fn probe_now(path: &Path, report: &mut Report) -> Exif {
     disk_call();
     let probed = std::panic::catch_unwind(|| {
         if greycard_core::picture::is_picture_path(path) {
-            greycard_core::picture::probe_path(path)
+            greycard_core::picture::probe_path(path).map(|p| (p, Some(FileMosaic::NotMosaic)))
         } else {
-            greycard_core::decode::probe_path(path)
+            // The kind of mosaic on the same decoder as the EXIF: the
+            // image's description, no samples.
+            // A description that will not read costs the mosaic alone
+            // (stored unknown); the EXIF stands.
+            greycard_core::decode::probe_and_mosaic_path(path).map(|(p, m)| {
+                use greycard_core::decode::MosaicRead;
+                let mosaic = match m {
+                    MosaicRead::Mosaic(m) => Some(FileMosaic::Mosaic(m)),
+                    MosaicRead::NotMosaic => Some(FileMosaic::NotMosaic),
+                    MosaicRead::Unknown => None,
+                };
+                (p, mosaic)
+            })
         }
     });
     let failed = match probed {
-        Ok(Ok(p)) => {
+        Ok(Ok((p, mosaic))) => {
             return Exif {
                 style: read_style(path),
+                mosaic,
                 ..Exif::from_probe(&p)
             };
         }
@@ -1444,6 +1469,29 @@ fn read_style(path: &Path) -> StyleTags {
         Err(e) => {
             log::warn!("{}: the maker's tags: {e}", path.display());
             StyleTags::default()
+        }
+    }
+}
+
+/// A file's kind of mosaic alone, for a row from before the index kept
+/// it (schema 10): a picture is none; a raw's is its image's
+/// description, read without a sample; `None`, said in the log, for
+/// one that would not say. Not an error in the report, as the style's
+/// is not.
+fn read_mosaic(path: &Path) -> Option<FileMosaic> {
+    disk_call();
+    if greycard_core::picture::is_picture_path(path) {
+        return Some(FileMosaic::NotMosaic);
+    }
+    match std::panic::catch_unwind(|| greycard_core::decode::mosaic_path(path)) {
+        Ok(Ok(m)) => Some(m.map_or(FileMosaic::NotMosaic, FileMosaic::Mosaic)),
+        Ok(Err(e)) => {
+            log::warn!("{}: its mosaic: {e}", path.display());
+            None
+        }
+        Err(_) => {
+            log::warn!("{}: its mosaic: the decoder panicked", path.display());
+            None
         }
     }
 }
@@ -2215,6 +2263,123 @@ pub(crate) mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// The index keeps each file's kind of mosaic, read on the same
+    /// decoder as its EXIF: a Bayer DNG, an X-Trans DNG, a picture;
+    /// and a row from before the column (schema 10) gets it on the next
+    /// pass without its file being read again for anything else.
+    #[test]
+    fn the_index_keeps_each_files_mosaic() {
+        use crate::fixture::write_mosaic_dng;
+        use greycard_core::raw::Mosaic;
+        let dir = scratch("mosaic");
+        let (bayer, xtrans, picture) = (
+            dir.join("bayer.dng"),
+            dir.join("xtrans.dng"),
+            dir.join("r5.tif"),
+        );
+        write_mosaic_dng(&bayer, "RGGB");
+        write_mosaic_dng(&xtrans, "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG");
+        write_frame(&picture, &R5, 1);
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.added, 3, "{report:?}");
+        let mosaic = |lib: &Library, p: &Path| lib.mosaic(p).unwrap();
+        assert_eq!(
+            mosaic(&lib, &bayer),
+            Some(FileMosaic::Mosaic(Mosaic::Bayer))
+        );
+        assert_eq!(
+            mosaic(&lib, &xtrans),
+            Some(FileMosaic::Mosaic(Mosaic::XTrans))
+        );
+        assert_eq!(mosaic(&lib, &picture), Some(FileMosaic::NotMosaic));
+        assert_eq!(mosaic(&lib, &dir.join("absent.RAF")), None);
+        // A row from before the column: unread, and filled by the next
+        // pass, which otherwise finds nothing changed.
+        lib.conn
+            .execute("UPDATE files SET mosaic = NULL", [])
+            .unwrap();
+        assert_eq!(mosaic(&lib, &xtrans), None);
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!((report.added, report.changed), (0, 0), "{report:?}");
+        assert_eq!(
+            mosaic(&lib, &xtrans),
+            Some(FileMosaic::Mosaic(Mosaic::XTrans))
+        );
+        assert_eq!(
+            mosaic(&lib, &bayer),
+            Some(FileMosaic::Mosaic(Mosaic::Bayer))
+        );
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The upgrade's pass over rows from before the column reads each
+    /// file's description once, and stops between batches like the rest
+    /// of a pass: rows past the stop stay unread, and the next pass
+    /// takes them up.
+    #[test]
+    fn the_upgrades_mosaic_reads_stop_with_the_pass() {
+        use crate::fixture::write_mosaic_dng;
+        let dir = scratch("mosaic-upgrade");
+        for i in 0..(BATCH + 10) {
+            write_mosaic_dng(&dir.join(format!("f{i:03}.dng")), "RGGB");
+        }
+        let mut lib = Library::open_in_memory().unwrap();
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        lib.conn
+            .execute("UPDATE files SET mosaic = NULL", [])
+            .unwrap();
+        let unread = |lib: &Library| -> i64 {
+            lib.conn
+                .query_row("SELECT count(*) FROM files WHERE mosaic IS NULL", [], |r| {
+                    r.get(0)
+                })
+                .unwrap()
+        };
+        let first = lib
+            .index_folder_until(&dir, &mut quiet(), &|| true)
+            .unwrap();
+        assert!(first.stopped, "{first:?}");
+        assert_eq!(unread(&lib), 10, "a batch read, the rest left for later");
+        lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(unread(&lib), 0);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A DNG whose CFA repeat is out of shape (65535 a side, or none)
+    /// is a mosaic of no kind the engine takes, read without allocating
+    /// the repeat and without an error; its EXIF stands. (A raw whose
+    /// metadata reads and whose image description does not keeps its
+    /// EXIF too: `decode::MosaicRead::Unknown`, tested in the engine,
+    /// since no synthetic file breaks the one and not the other: a DNG
+    /// whose raw IFD rawler cannot find fails its metadata as well.)
+    #[test]
+    fn a_dng_with_a_cfa_out_of_shape_is_other() {
+        use crate::fixture::{patch_short_tag, write_mosaic_dng};
+        use greycard_core::raw::Mosaic;
+        let dir = scratch("mosaic-damaged");
+        let (huge, zero) = (dir.join("huge.dng"), dir.join("zero.dng"));
+        for p in [&huge, &zero] {
+            write_mosaic_dng(p, "RGGB");
+        }
+        assert!(patch_short_tag(&huge, 33421, &[65535, 65535]) >= 1);
+        assert!(patch_short_tag(&zero, 33421, &[0, 0]) >= 1);
+        let mut lib = Library::open_in_memory().unwrap();
+        let report = lib.index_folder(&dir, &mut quiet()).unwrap();
+        assert_eq!(report.added, 2, "{report:?}");
+        assert!(report.errors.is_empty(), "{:?}", report.errors);
+        for p in [&huge, &zero] {
+            assert_eq!(lib.by_path(p).unwrap().unwrap().exif.make, "Synthetic");
+            assert_eq!(
+                lib.mosaic(p).unwrap(),
+                Some(FileMosaic::Mosaic(Mosaic::Other)),
+                "{}",
+                p.display()
+            );
+        }
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// `!=` leaves a file that does not say out, on every kind of
     /// field: a JPEG with no EXIF is not "not ISO 100", it is
     /// unknown, and a listing of "everything but ISO 100" that
@@ -2229,7 +2394,14 @@ pub(crate) mod tests {
         let mut lib = Library::open_in_memory().unwrap();
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.added, 4, "{report:?}");
-        assert_eq!(lib.by_path(&bare).unwrap().unwrap().exif, Exif::default());
+        // Nothing of the EXIF; a picture is no mosaic.
+        assert_eq!(
+            lib.by_path(&bare).unwrap().unwrap().exif,
+            Exif {
+                mosaic: Some(FileMosaic::NotMosaic),
+                ..Exif::default()
+            }
+        );
         assert_eq!(names(&lib, "iso!=100"), ["a7.tif", "r6.tif"]);
         assert_eq!(names(&lib, "aperture!=2.8"), ["r5.tif", "r6.tif"]);
         assert_eq!(names(&lib, "focal!=50"), ["a7.tif", "r5.tif"]);
@@ -4119,7 +4291,7 @@ pub(crate) mod tests {
                      ALTER TABLE files DROP COLUMN turns;
                      ALTER TABLE files DROP COLUMN whole_hash;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
-                     PRAGMA user_version = 2;",
+                     ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 2;",
                 )
                 .unwrap();
         }
@@ -4417,7 +4589,7 @@ pub(crate) mod tests {
             assert_eq!(key_of(&mut lib, &plain), None, "no sidecar, no key");
             lib.conn_mut()
                 .execute_batch(
-                    "ALTER TABLE files DROP COLUMN develop_key; PRAGMA user_version = 8;",
+                    "ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 8;",
                 )
                 .unwrap();
         }
@@ -4575,7 +4747,7 @@ pub(crate) mod tests {
             let mut lib = Library::open(&db).unwrap();
             lib.index_folder(&dir, &mut quiet()).unwrap();
             lib.conn_mut()
-                .execute_batch("DROP TABLE versions; PRAGMA user_version = 9;")
+                .execute_batch("DROP TABLE versions; ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 9;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -4711,7 +4883,7 @@ pub(crate) mod tests {
                 )
                 .unwrap();
             lib.conn_mut()
-                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; PRAGMA user_version = 7;")
+                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 7;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -4774,7 +4946,7 @@ pub(crate) mod tests {
                      ALTER TABLE files DROP COLUMN turns;
                      ALTER TABLE files DROP COLUMN whole_hash;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
-                     PRAGMA user_version = 3;",
+                     ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 3;",
                 )
                 .unwrap();
         }
@@ -4993,7 +5165,7 @@ pub(crate) mod tests {
                 .execute_batch(
                     "DROP TABLE pending; DROP TABLE archive_writes;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
-                     PRAGMA user_version = 5;",
+                     ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 5;",
                 )
                 .unwrap();
         }
@@ -5042,7 +5214,7 @@ pub(crate) mod tests {
                 )
                 .unwrap();
             lib.conn_mut()
-                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; PRAGMA user_version = 6;")
+                .execute_batch("ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key; ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 6;")
                 .unwrap();
         }
         let mut lib = Library::open(&db).unwrap();
@@ -5288,6 +5460,8 @@ pub(crate) mod tests {
                 .unwrap();
             conn.pragma_update(None, "application_id", crate::APPLICATION_ID)
                 .unwrap();
+            conn.execute_batch("ALTER TABLE files DROP COLUMN mosaic;")
+                .unwrap();
             conn.pragma_update(None, "user_version", 5).unwrap();
         }
         let before = std::fs::read(&db).unwrap();
@@ -5339,7 +5513,7 @@ pub(crate) mod tests {
                 .execute_batch(
                     "ALTER TABLE files DROP COLUMN whole_hash;
                      ALTER TABLE files DROP COLUMN exported; ALTER TABLE files DROP COLUMN develop_key;
-                     PRAGMA user_version = 4;",
+                     ALTER TABLE files DROP COLUMN mosaic; PRAGMA user_version = 4;",
                 )
                 .unwrap();
         }

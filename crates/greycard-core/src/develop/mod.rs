@@ -25,6 +25,7 @@ pub mod retouch;
 pub mod segments;
 pub mod sharpen;
 pub mod vng4;
+pub mod xtrans;
 
 use std::sync::Arc;
 
@@ -33,7 +34,7 @@ use rayon::prelude::*;
 use crate::color::{self, WhitePoint};
 use crate::error::{Error, Result};
 use crate::image::{CameraImage, WorkingImage};
-use crate::raw::{CfaPattern, Orientation, RawFrame, Rect, SensorLayout};
+use crate::raw::{CfaPattern, Mosaic, Orientation, RawFrame, Rect, SensorLayout};
 
 /// What to develop a frame with.
 ///
@@ -167,6 +168,14 @@ impl std::str::FromStr for HighlightMode {
 
 /// The demosaic algorithms the engine has. Every one is a CPU reference
 /// with tests; the benchmark harness scores them against reference images.
+///
+/// Each is defined on a mosaic: bilinear on Bayer and X-Trans both, the
+/// Markesteijn pair on X-Trans alone, the rest on Bayer alone.
+/// [`DemosaicMethod::for_pattern`] lists a mosaic's, and
+/// [`demosaic_cfa_with`] refuses a method its mosaic does not take. A
+/// develop asked for a method of the other mosaic (a setting carried
+/// from another camera's frame) takes the mosaic's default instead, by
+/// [`DemosaicMethod::for_mosaic`], the one place that decides it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[non_exhaustive]
 pub enum DemosaicMethod {
@@ -191,6 +200,12 @@ pub enum DemosaicMethod {
     /// (notes §13m), for about twice the time. See [`dual`].
     #[default]
     AmazeVng4,
+    /// Markesteijn's X-Trans demosaic in one pass and four directions:
+    /// about half the time of three. See [`xtrans`].
+    Markesteijn1,
+    /// Markesteijn's X-Trans demosaic in three passes and eight
+    /// directions, the X-Trans default: the sharper. See [`xtrans`].
+    Markesteijn3,
 }
 
 impl DemosaicMethod {
@@ -201,7 +216,82 @@ impl DemosaicMethod {
         DemosaicMethod::Vng4,
         DemosaicMethod::RcdVng4,
         DemosaicMethod::AmazeVng4,
+        DemosaicMethod::Markesteijn1,
+        DemosaicMethod::Markesteijn3,
     ];
+
+    /// A Bayer mosaic's methods, the default first.
+    const BAYER: &[DemosaicMethod] = &[
+        DemosaicMethod::AmazeVng4,
+        DemosaicMethod::RcdVng4,
+        DemosaicMethod::Amaze,
+        DemosaicMethod::Rcd,
+        DemosaicMethod::Vng4,
+        DemosaicMethod::Bilinear,
+    ];
+
+    /// An X-Trans mosaic's methods, the default first.
+    const XTRANS: &[DemosaicMethod] = &[
+        DemosaicMethod::Markesteijn3,
+        DemosaicMethod::Markesteijn1,
+        DemosaicMethod::Bilinear,
+    ];
+
+    /// The methods defined on a `mosaic`, its default first; none for
+    /// a mosaic the engine does not demosaic.
+    pub fn for_kind(mosaic: Mosaic) -> &'static [DemosaicMethod] {
+        match mosaic {
+            Mosaic::XTrans => Self::XTRANS,
+            Mosaic::Bayer => Self::BAYER,
+            Mosaic::Other => &[],
+        }
+    }
+
+    /// [`DemosaicMethod::for_kind`] of `pattern`'s mosaic.
+    pub fn for_pattern(pattern: &CfaPattern) -> &'static [DemosaicMethod] {
+        Self::for_kind(pattern.mosaic())
+    }
+
+    /// The method a `mosaic` takes when nothing else is asked:
+    /// AMaZE+VNG4 on Bayer, Markesteijn's three passes on X-Trans.
+    pub fn default_for_kind(mosaic: Mosaic) -> DemosaicMethod {
+        Self::for_kind(mosaic).first().copied().unwrap_or_default()
+    }
+
+    /// [`DemosaicMethod::default_for_kind`] of `pattern`'s mosaic.
+    pub fn default_for(pattern: &CfaPattern) -> DemosaicMethod {
+        Self::default_for_kind(pattern.mosaic())
+    }
+
+    /// Whether this method is defined on a `mosaic`.
+    pub fn takes_kind(self, mosaic: Mosaic) -> bool {
+        Self::for_kind(mosaic).contains(&self)
+    }
+
+    /// Whether this method is defined on `pattern`'s mosaic.
+    pub fn takes(self, pattern: &CfaPattern) -> bool {
+        self.takes_kind(pattern.mosaic())
+    }
+
+    /// [`DemosaicMethod::for_mosaic`] by the mosaic's kind alone, for
+    /// what is known of a file before its pixels are read.
+    pub fn resolve(self, mosaic: Mosaic) -> DemosaicMethod {
+        if self.takes_kind(mosaic) {
+            self
+        } else {
+            Self::default_for_kind(mosaic)
+        }
+    }
+
+    /// The method a develop asked for this one runs on `pattern`'s
+    /// mosaic: this one where the mosaic takes it, else the mosaic's
+    /// default. A Bayer method stored for an X-Trans frame (an older
+    /// sidecar's default, a sync from another camera) and the reverse
+    /// resolve here, and only here: the develop and the editor's menu
+    /// both ask this.
+    pub fn for_mosaic(self, pattern: &CfaPattern) -> DemosaicMethod {
+        self.resolve(pattern.mosaic())
+    }
 
     /// Whether this blends two demosaics by contrast (see [`dual`]).
     pub fn is_dual(self) -> bool {
@@ -216,6 +306,8 @@ impl DemosaicMethod {
             DemosaicMethod::Vng4 => "vng4",
             DemosaicMethod::RcdVng4 => "rcd-vng4",
             DemosaicMethod::AmazeVng4 => "amaze-vng4",
+            DemosaicMethod::Markesteijn1 => "markesteijn-1",
+            DemosaicMethod::Markesteijn3 => "markesteijn-3",
         }
     }
 }
@@ -257,10 +349,15 @@ pub fn demosaic_cfa(
 /// What is said about a mosaic this build cannot demosaic, in one
 /// place, so the gate at the door and the demosaic's own backstop say
 /// the same thing.
-fn not_bayer(pattern: &CfaPattern) -> Error {
+fn unsupported_mosaic(pattern: &CfaPattern) -> Error {
     Error::Unsupported(format!(
-        "this build does not develop a {pattern} mosaic yet; it demosaics 2x2 Bayer only"
+        "this build does not develop a {pattern} mosaic; it demosaics 2x2 Bayer and 6x6 X-Trans"
     ))
+}
+
+/// Whether the engine demosaics this pattern: 2x2 Bayer, or X-Trans.
+pub fn demosaics(pattern: &CfaPattern) -> bool {
+    rcd::is_bayer(pattern) || pattern.is_xtrans()
 }
 
 /// [`demosaic_cfa`] with the dual methods' contrast threshold chosen, and
@@ -273,12 +370,21 @@ pub fn demosaic_cfa_with(
     method: DemosaicMethod,
     contrast: dual::DualContrast,
 ) -> Result<(Vec<f32>, Option<dual::DualStats>)> {
-    // The backstop for a consumer that comes straight here: [`prepare`]
-    // turns such a frame away first. Bilinear alone would run on a
-    // pattern that is not Bayer and make a mess of it, which is no
-    // kindness either.
-    if !rcd::is_bayer(pattern) {
-        return Err(not_bayer(pattern));
+    if !demosaics(pattern) {
+        return Err(unsupported_mosaic(pattern));
+    }
+    // Each method on its own mosaic; a consumer resolves a choice from
+    // the other one first ([`DemosaicMethod::for_mosaic`]).
+    if !method.takes(pattern) {
+        let kind = if pattern.is_xtrans() {
+            "a Bayer"
+        } else {
+            "an X-Trans"
+        };
+        return Err(Error::Unsupported(format!(
+            "{} is {kind} demosaic and this is a {pattern} mosaic",
+            method.name()
+        )));
     }
     let single = |rgb: Result<Vec<f32>>| rgb.map(|rgb| (rgb, None));
     let dual = |base| {
@@ -292,6 +398,20 @@ pub fn demosaic_cfa_with(
         DemosaicMethod::Vng4 => single(vng4::demosaic_vng4(samples, width, height, pattern)),
         DemosaicMethod::RcdVng4 => dual(DemosaicMethod::Rcd),
         DemosaicMethod::AmazeVng4 => dual(DemosaicMethod::Amaze),
+        DemosaicMethod::Markesteijn1 => single(xtrans::demosaic_markesteijn(
+            samples,
+            width,
+            height,
+            pattern,
+            xtrans::Passes::One,
+        )),
+        DemosaicMethod::Markesteijn3 => single(xtrans::demosaic_markesteijn(
+            samples,
+            width,
+            height,
+            pattern,
+            xtrans::Passes::Three,
+        )),
     }
 }
 
@@ -324,6 +444,9 @@ pub struct Developed {
     pub sharpen: Option<sharpen::SharpenStats>,
     /// What the dehaze did, when it ran.
     pub dehaze: Option<dehaze::DehazeStats>,
+    /// The demosaic that ran, resolved for the frame's mosaic; `None`
+    /// for a frame with no mosaic.
+    pub demosaic: Option<DemosaicMethod>,
 }
 
 /// A demosaiced frame in camera space plus the white balance it was
@@ -362,6 +485,9 @@ pub struct Prepared {
     pub chromatic_aberration: Option<ca::CaStats>,
     pub hot_pixels: Option<hotpixels::HotPixelStats>,
     pub sharpen_radius: Option<f32>,
+    /// The demosaic the frame takes: the settings' resolved for its
+    /// mosaic ([`resolve_settings`]).
+    pub demosaic: DemosaicMethod,
     orientation: Orientation,
 }
 
@@ -407,13 +533,17 @@ pub fn prepare_with(
     measure_noise: bool,
     ca: Option<CaCorrector<'_>>,
 ) -> Result<Prepared> {
+    let settings = &resolve_settings(frame, settings);
     // At the door, before the levels are normalized and the frame is
     // copied: preparing a 101 MP mosaic this build cannot demosaic
     // costs a gigabyte and several seconds to reach the same refusal.
-    if let SensorLayout::Cfa(pattern) = &frame.layout
-        && !rcd::is_bayer(pattern)
-    {
-        return Err(not_bayer(pattern));
+    if let SensorLayout::Cfa(pattern) = &frame.layout {
+        if !demosaics(pattern) {
+            return Err(unsupported_mosaic(pattern));
+        }
+        if pattern.is_xtrans() {
+            log_xtrans_skips(settings, measure_noise);
+        }
     }
     let white_balance = white_balance_for(frame, settings)?;
     let gains = white_balance.coefficients_f32();
@@ -493,8 +623,62 @@ pub fn prepare_with(
         chromatic_aberration: ca_stats,
         hot_pixels,
         sharpen_radius,
+        demosaic: settings.demosaic,
         orientation: settings.orientation.unwrap_or(frame.orientation),
     })
+}
+
+/// The stages of a develop under some settings that have no X-Trans
+/// version yet, which an X-Trans frame passes by: each is gated on a
+/// Bayer pattern where it is called.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct XtransSkips {
+    /// Stages on by default, or there for another's sake: said in the
+    /// log as a matter of record.
+    pub defaults: Vec<&'static str>,
+    /// Stages the user asked for (the profiled denoise): worth a
+    /// warning, since what was asked for does not happen.
+    pub requested: Vec<&'static str>,
+}
+
+/// What an X-Trans develop under `settings` leaves out; `measure_noise`
+/// as [`prepare`] takes it.
+pub fn xtrans_skips(settings: &DevelopSettings, measure_noise: bool) -> XtransSkips {
+    let mut skips = XtransSkips::default();
+    if measure_noise || wants_noise(settings) {
+        skips.defaults.push("the noise measurement");
+    }
+    if settings.hot_pixels.is_some() {
+        skips.defaults.push("the hot pixel repair");
+    }
+    if settings.chromatic_aberration.is_some() {
+        skips.defaults.push("the chromatic aberration correction");
+    }
+    skips
+        .defaults
+        .push("the capture sharpen's radius measurement");
+    if settings.denoise.is_some() {
+        skips.requested.push("the profiled denoise");
+    }
+    skips
+}
+
+/// Say what [`xtrans_skips`] finds, so the log says so rather than the
+/// stage going quietly.
+fn log_xtrans_skips(settings: &DevelopSettings, measure_noise: bool) {
+    let skips = xtrans_skips(settings, measure_noise);
+    if !skips.defaults.is_empty() {
+        log::info!(
+            "X-Trans mosaic: {} have no X-Trans version yet and are left out",
+            skips.defaults.join(", ")
+        );
+    }
+    if !skips.requested.is_empty() {
+        log::warn!(
+            "X-Trans mosaic: {} was asked for and does not run; it has no X-Trans version yet",
+            skips.requested.join(", ")
+        );
+    }
 }
 
 /// The engine's own demosaic and profiled denoise of a prepared frame:
@@ -515,7 +699,7 @@ pub fn demosaic_prepared(
             width,
             height,
             pattern,
-            settings.demosaic,
+            prepared.demosaic,
             dual_contrast(settings, prepared.noise.as_ref(), prepared.gains),
         )?,
         None => (prepared.samples.clone(), None),
@@ -580,6 +764,7 @@ pub fn finish(
         clip_level,
         sharpen: sharpen_stats,
         dehaze: dehaze_stats,
+        demosaic: prepared.pattern.as_ref().map(|_| prepared.demosaic),
     })
 }
 
@@ -616,6 +801,7 @@ pub(crate) const CLIP_FRACTION: f32 = 0.98;
 /// is clipped: a sample the sensor saturated comes out at 1.0 in its own
 /// channel, which is the fact a consumer's highlight handling needs.
 pub fn demosaic(frame: &RawFrame, settings: &DevelopSettings) -> Result<Demosaiced> {
+    let settings = &resolve_settings(frame, settings);
     let white_balance = white_balance_for(frame, settings)?;
     let gains = white_balance.coefficients_f32();
 
@@ -652,6 +838,29 @@ pub fn demosaic(frame: &RawFrame, settings: &DevelopSettings) -> Result<Demosaic
         image,
         white_balance,
     })
+}
+
+/// `settings` with the demosaic resolved for `frame`'s mosaic
+/// ([`DemosaicMethod::for_mosaic`]): the one resolve of a develop, made
+/// at its start, so everything after it (the noise it measures for a
+/// dual demosaic, the demosaic) reads the method that runs. A method
+/// that gives way is warned of, unless it is the engine's default,
+/// which is what an edit stores when nobody chose (every X-Trans frame
+/// under an edit from before X-Trans would warn otherwise).
+pub fn resolve_settings(frame: &RawFrame, settings: &DevelopSettings) -> DevelopSettings {
+    let mut resolved = settings.clone();
+    if let SensorLayout::Cfa(pattern) = &frame.layout {
+        let method = settings.demosaic.for_mosaic(pattern);
+        if method != settings.demosaic && settings.demosaic != DemosaicMethod::default() {
+            log::warn!(
+                "{} is not a demosaic for a {pattern} mosaic; {}, its default",
+                settings.demosaic.name(),
+                method.name()
+            );
+        }
+        resolved.demosaic = method;
+    }
+    resolved
 }
 
 /// Whether the pipeline needs the frame's noise measured: for denoising,
@@ -904,9 +1113,35 @@ pub(crate) fn bilinear_pixel(
         } else if count[c] > 0 {
             sum[c] / count[c] as f32
         } else {
-            0.0
+            wider_mean(samples, width, height, pattern, y, x, c)
         }
     })
+}
+
+/// The mean of color `c` in the 5x5 round (`y`, `x`), for a site whose
+/// 3x3 holds none of it: never in a Bayer frame of two rows and columns
+/// or more, but at a corner of an X-Trans frame, which can be all
+/// green. Zero where the 5x5 holds none either.
+fn wider_mean(
+    samples: &[f32],
+    width: usize,
+    height: usize,
+    pattern: &CfaPattern,
+    y: usize,
+    x: usize,
+    c: usize,
+) -> f32 {
+    let mut sum = 0.0f32;
+    let mut count = 0u32;
+    for ny in y.saturating_sub(2)..=(y + 2).min(height - 1) {
+        for nx in x.saturating_sub(2)..=(x + 2).min(width - 1) {
+            if pattern.color_at(ny, nx).rgb_index() == Some(c) {
+                sum += samples[ny * width + nx];
+                count += 1;
+            }
+        }
+    }
+    if count > 0 { sum / count as f32 } else { 0.0 }
 }
 
 /// `f` run on `row`, with `row` handed across a call.
@@ -1229,11 +1464,12 @@ pub(crate) mod tests {
         }
     }
 
-    /// An X-Trans frame goes no further than the demosaic, and what it
-    /// is refused with is a sentence, not a 36-entry pattern dump.
+    /// A mosaic of neither layout goes no further than the door, and
+    /// what it is refused with is a sentence, not a pattern dump.
     #[test]
-    fn an_xtrans_mosaic_is_refused_in_words() {
-        let pattern = crate::raw::xtrans();
+    fn a_mosaic_of_neither_layout_is_refused_in_words() {
+        use CfaColor::{Blue as B, Green as G, Red as R};
+        let pattern = CfaPattern::new(3, 3, vec![G, R, G, B, G, B, G, R, G]).unwrap();
         let mut frame = flat_frame();
         frame.width = 12;
         frame.height = 12;
@@ -1245,7 +1481,10 @@ pub(crate) mod tests {
                 ..Default::default()
             };
             let complaint = develop(&frame, &settings).unwrap_err().to_string();
-            assert!(complaint.contains("X-Trans"), "{method:?}: {complaint}");
+            assert!(
+                complaint.contains("3x3 GRGBGBGRG"),
+                "{method:?}: {complaint}"
+            );
             assert!(
                 complaint.contains("does not develop"),
                 "{method:?}: {complaint}"
@@ -1260,8 +1499,8 @@ pub(crate) mod tests {
             .to_string();
         assert_eq!(
             early,
-            "unsupported: this build does not develop a 6x6 (X-Trans) mosaic yet; \
-             it demosaics 2x2 Bayer only"
+            "unsupported: this build does not develop a 3x3 GRGBGBGRG mosaic; \
+             it demosaics 2x2 Bayer and 6x6 X-Trans"
         );
         // The demosaic keeps the same words for a consumer that comes
         // straight to it.
@@ -1270,15 +1509,197 @@ pub(crate) mod tests {
             .unwrap_err()
             .to_string();
         assert_eq!(late, early);
-        // And the sites that say "2x2 Bayer" name the pattern the same
+        // And the sites that say "2x2 Bayer" name an X-Trans pattern the
         // short way when they are reached on their own.
-        let complaint = rcd::demosaic_rcd(&samples, 12, 12, &pattern)
+        let complaint = rcd::demosaic_rcd(&samples, 12, 12, &CfaPattern::xtrans())
             .unwrap_err()
             .to_string();
         assert_eq!(
             complaint,
             "unsupported: RCD needs a 2x2 Bayer pattern, got 6x6 (X-Trans)"
         );
+    }
+
+    /// An X-Trans frame, cropped off its pattern's phase, under the
+    /// default settings and every method.
+    pub(crate) fn xtrans_frame() -> RawFrame {
+        let pattern = CfaPattern::xtrans();
+        let (w, h) = (80, 70);
+        let samples = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (y, x)))
+            .map(|(y, x)| match pattern.color_at(y, x) {
+                CfaColor::Red => 350u16,
+                CfaColor::Green => 600,
+                CfaColor::Blue => 225,
+                CfaColor::Other(_) => unreachable!(),
+            })
+            .collect();
+        RawFrame {
+            width: w,
+            height: h,
+            layout: SensorLayout::Cfa(pattern),
+            samples: Samples::U16(samples),
+            crop: Some(Rect {
+                x: 5,
+                y: 7,
+                width: 70,
+                height: 60,
+            }),
+            ..flat_frame()
+        }
+    }
+
+    /// Each mosaic lists its own methods, its default first, and every
+    /// method of the engine belongs to one of them.
+    #[test]
+    fn each_mosaic_lists_its_own_methods() {
+        let bayer = CfaPattern::rggb();
+        let xtrans = CfaPattern::xtrans().shifted(2, 5);
+        assert_eq!(
+            DemosaicMethod::default_for(&bayer),
+            DemosaicMethod::AmazeVng4
+        );
+        assert_eq!(
+            DemosaicMethod::default_for(&xtrans),
+            DemosaicMethod::Markesteijn3
+        );
+        assert_eq!(
+            DemosaicMethod::for_pattern(&xtrans),
+            &[
+                DemosaicMethod::Markesteijn3,
+                DemosaicMethod::Markesteijn1,
+                DemosaicMethod::Bilinear
+            ]
+        );
+        assert_eq!(DemosaicMethod::for_pattern(&bayer).len(), 6);
+        for method in DemosaicMethod::ALL {
+            assert!(method.takes(&bayer) || method.takes(&xtrans), "{method:?}");
+            assert_eq!(method.name().parse::<DemosaicMethod>().unwrap(), *method);
+        }
+        use CfaColor::{Blue as B, Green as G, Red as R};
+        let neither = CfaPattern::new(3, 3, vec![G, R, G, B, G, B, G, R, G]).unwrap();
+        assert!(DemosaicMethod::for_pattern(&neither).is_empty());
+    }
+
+    /// A method of the other mosaic resolves to the mosaic's default; a
+    /// method the mosaic takes is kept.
+    #[test]
+    fn a_method_of_the_other_mosaic_resolves_to_the_default() {
+        let bayer = CfaPattern::rggb().shifted(1, 0);
+        let xtrans = CfaPattern::xtrans();
+        use DemosaicMethod::*;
+        assert_eq!(Amaze.for_mosaic(&xtrans), Markesteijn3);
+        assert_eq!(AmazeVng4.for_mosaic(&xtrans), Markesteijn3);
+        assert_eq!(Markesteijn1.for_mosaic(&bayer), AmazeVng4);
+        assert_eq!(Markesteijn3.for_mosaic(&bayer), AmazeVng4);
+        assert_eq!(Markesteijn1.for_mosaic(&xtrans), Markesteijn1);
+        assert_eq!(Rcd.for_mosaic(&bayer), Rcd);
+        assert_eq!(Bilinear.for_mosaic(&xtrans), Bilinear);
+        assert_eq!(Bilinear.for_mosaic(&bayer), Bilinear);
+    }
+
+    /// The demosaic itself refuses a method of the other mosaic, in
+    /// words, both ways; bilinear takes both.
+    #[test]
+    fn a_method_of_the_other_mosaic_is_refused_by_the_demosaic() {
+        let samples = vec![0.5f32; 48 * 48];
+        let xtrans = CfaPattern::xtrans();
+        let bayer = CfaPattern::rggb();
+        let err = demosaic_cfa(&samples, 48, 48, &xtrans, DemosaicMethod::Amaze)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            "unsupported: amaze is a Bayer demosaic and this is a 6x6 (X-Trans) mosaic"
+        );
+        let err = demosaic_cfa(&samples, 48, 48, &bayer, DemosaicMethod::Markesteijn3)
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            err,
+            "unsupported: markesteijn-3 is an X-Trans demosaic and this is a 2x2 RGGB mosaic"
+        );
+        for pattern in [&xtrans, &bayer] {
+            assert!(demosaic_cfa(&samples, 48, 48, pattern, DemosaicMethod::Bilinear).is_ok());
+            let default = DemosaicMethod::default_for(pattern);
+            assert!(demosaic_cfa(&samples, 48, 48, pattern, default).is_ok());
+        }
+    }
+
+    /// What an X-Trans develop leaves out: the defaults as a record, the
+    /// denoise, which the user asked for, apart.
+    #[test]
+    fn the_xtrans_skips_put_a_requested_denoise_apart() {
+        let defaults = xtrans_skips(&DevelopSettings::default(), false);
+        assert!(defaults.requested.is_empty());
+        assert!(defaults.defaults.contains(&"the hot pixel repair"));
+        assert!(
+            defaults
+                .defaults
+                .contains(&"the chromatic aberration correction")
+        );
+        assert!(defaults.defaults.contains(&"the noise measurement"));
+        let bare = DevelopSettings {
+            hot_pixels: None,
+            chromatic_aberration: None,
+            demosaic: DemosaicMethod::Amaze,
+            ..Default::default()
+        };
+        assert_eq!(
+            xtrans_skips(&bare, false).defaults,
+            vec!["the capture sharpen's radius measurement"]
+        );
+        assert!(
+            xtrans_skips(&bare, true)
+                .defaults
+                .contains(&"the noise measurement")
+        );
+        let denoised = DevelopSettings {
+            denoise: Some(denoise::DenoiseOptions::default()),
+            ..bare
+        };
+        assert_eq!(
+            xtrans_skips(&denoised, false).requested,
+            vec!["the profiled denoise"]
+        );
+    }
+
+    /// The stages with no X-Trans version step aside, the demosaic is
+    /// Markesteijn's or bilinear, and a flat grey comes out flat and
+    /// grey whatever the method.
+    #[test]
+    fn an_xtrans_frame_develops_under_every_method() {
+        let frame = xtrans_frame();
+        for method in DemosaicMethod::ALL {
+            let settings = DevelopSettings {
+                demosaic: *method,
+                denoise: Some(denoise::DenoiseOptions::default()),
+                ..Default::default()
+            };
+            let d = develop(&frame, &settings).unwrap();
+            assert_eq!((d.image.width, d.image.height), (70, 60));
+            assert!(d.chromatic_aberration.is_none(), "{method:?}");
+            assert!(d.hot_pixels.is_none() && d.noise.is_none(), "{method:?}");
+            assert!(d.denoise.is_none() && d.dual.is_none(), "{method:?}");
+            let first = d.image.pixels().next().unwrap();
+            for px in d.image.pixels() {
+                for c in 0..3 {
+                    assert!(close(px[c], first[c]), "{method:?}: {px:?} vs {first:?}");
+                }
+            }
+        }
+        // The prepared frame carries the pattern from the crop's origin.
+        let prepared = prepare(&frame, &DevelopSettings::default(), true).unwrap();
+        assert_eq!(prepared.pattern, Some(CfaPattern::xtrans().shifted(5, 7)));
+        assert!(prepared.noise.is_none());
+        // The camera-space demosaic takes it too.
+        let out = demosaic(&frame, &DevelopSettings::default()).unwrap();
+        for px in out.image.pixels() {
+            assert!(
+                close(px[0], 0.25) && close(px[1], 0.5) && close(px[2], 0.125),
+                "{px:?}"
+            );
+        }
     }
 
     #[test]

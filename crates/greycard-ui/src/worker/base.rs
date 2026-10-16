@@ -89,6 +89,16 @@ pub(super) fn engine_base(
     ca: Option<CaCorrector<'_>>,
 ) -> anyhow::Result<Base> {
     let d = develop_with(frame, settings, ca)?;
+    let gave_way = d
+        .demosaic
+        .filter(|ran| *ran != settings.demosaic && settings.demosaic != DemosaicMethod::default())
+        .map(|ran| {
+            format!(
+                "the demosaic: {} is not one for this raw's mosaic; {} instead",
+                settings.demosaic.name(),
+                ran.name()
+            )
+        });
     Ok(Base {
         edit: edit.clone(),
         turn,
@@ -106,6 +116,7 @@ pub(super) fn engine_base(
         planes: None,
         ca_on_gpu: false,
         stand_in: None,
+        gave_way,
         profile: None,
     })
 }
@@ -169,6 +180,7 @@ pub(super) fn learned_base(
             planes: None,
             ca_on_gpu: l.ca_on_gpu,
             stand_in: None,
+            gave_way: None,
             profile: None,
         },
         report,
@@ -191,6 +203,11 @@ fn run_learned(
     ca: Option<CaCorrector<'_>>,
 ) -> anyhow::Result<(LearnedBase, LearnedReport)> {
     use anyhow::Context;
+    if let greycard_core::raw::SensorLayout::Cfa(p) = &frame.layout
+        && !greycard_core::develop::rcd::is_bayer(p)
+    {
+        anyhow::bail!("the learned denoiser needs a 2x2 Bayer mosaic, not a {p} one");
+    }
     let prepared = prepare_with(frame, settings, true, ca)?;
     let pattern = prepared
         .pattern

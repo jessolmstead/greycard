@@ -12,7 +12,9 @@
 //! (`greycard_core::develop::reduced`) while the frame, as the edit's
 //! crop and straighten leave it, keeps twice 2048 on its long edge; under
 //! that the mosaic is demosaiced as in a full develop ([`bin_under`]), so
-//! the 2048 picture is never brought up from fewer pixels. Then the
+//! the 2048 picture is never brought up from fewer pixels. An X-Trans
+//! mosaic is binned 3x3 to a third, under the same rule at three times
+//! 2048. Then the
 //! pipeline as it is on that picture: the lens, the defringe, the retouch, the local
 //! contrast, the dehaze, the guide plane; then the finish exactly as the
 //! open frame's pictures are finished (`edited::make`: the geometry, a
@@ -189,17 +191,20 @@ pub(crate) fn settings(
 }
 
 /// The bin for a frame whose full develop is `full` (oriented) under
-/// `geometry`: 2 only while the framed picture keeps at least twice
-/// [`crate::edited::BIG`] on its long edge, so the 2048 picture is
-/// always brought down to and never up; 1 (the demosaic, a full develop
-/// of the frame) under a tighter crop or a straighten that takes it
-/// there. A 24 MP frame is binned down to about two thirds of its width.
+/// `geometry`, binned by `cell` ([`reduced::cell_of`] its pattern: 2,
+/// or 3 for X-Trans): `cell` only while the framed picture keeps at
+/// least `cell` times [`crate::edited::BIG`] on its long edge, so the
+/// 2048 picture is always brought down to and never up; 1 (the
+/// demosaic, a full develop of the frame) under a tighter crop or a
+/// straighten that takes it there. A 24 MP Bayer frame is binned down
+/// to about two thirds of its width.
 pub(crate) fn bin_under(
     full: (usize, usize),
+    cell: usize,
     geometry: &greycard_edit::geometry::Geometry,
 ) -> usize {
     let (w, h) = crate::edited::framed_size((full.0 as u32, full.1 as u32), geometry);
-    reduced::bin_for(w as usize, h as usize)
+    reduced::bin_for_cell(cell, w as usize, h as usize)
 }
 
 /// What the frame at `path` is: a raw decoded, or a picture file.
@@ -249,7 +254,11 @@ pub(crate) fn develop(
             } else {
                 (crop.width, crop.height)
             };
-            let bin = bin_under(full, &edit.geometry);
+            let cell = match &frame.layout {
+                greycard_core::raw::SensorLayout::Cfa(pattern) => reduced::cell_of(pattern),
+                _ => reduced::BIN,
+            };
+            let bin = bin_under(full, cell, &edit.geometry);
             let r = reduced::develop_reduced_by(frame, &settings, None, bin)
                 .map_err(|e| Why::Failed(e.to_string()))?;
             let d = r.developed;
@@ -289,7 +298,7 @@ pub(crate) fn develop(
                 None => picture.image.clone(),
             };
             let full = (turned.width as u32, turned.height as u32);
-            let bin = bin_under((turned.width, turned.height), &edit.geometry);
+            let bin = bin_under((turned.width, turned.height), reduced::BIN, &edit.geometry);
             let image = if bin > 1 {
                 crate::edited::reduce(&turned, bin)
             } else {

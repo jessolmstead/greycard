@@ -23,7 +23,11 @@
 //! have no meaning at half size, so a consumer leaves them out of the
 //! settings and out of its reference alike.
 //!
-//! X-Trans is out of scope here as it is in the demosaic.
+//! An X-Trans mosaic is binned three photosites each way
+//! ([`XTRANS_BIN`]): its 2x2 cells include ones of four greens, and its
+//! 3x3 cells hold every color at any phase of the pattern. Its picture
+//! is a third of the size, which a frame of 26 MP and up still takes to
+//! 2048 on its long edge.
 
 use rayon::prelude::*;
 
@@ -33,6 +37,15 @@ use crate::raw::{CfaPattern, Orientation, RawFrame};
 
 /// The bin: two photosites each way, one Bayer cell.
 pub const BIN: usize = 2;
+
+/// The bin of an X-Trans mosaic: three photosites each way. Every 3x3
+/// window of X-Trans holds every color, five greens and two each of red
+/// and blue where it sits on one of the pattern's 3x3 blocks, one and
+/// three where it does not, so a cell is one RGB pixel at any phase of
+/// the crop. A cell off the blocks has its red and blue a photosite off
+/// its center, a third of a binned pixel; at two photosites a cell can
+/// be all green.
+pub const XTRANS_BIN: usize = 3;
 
 /// A frame whose binned long edge would fall under this is not binned
 /// at all: the pictures made from the reduced develop are 2048 on the
@@ -54,13 +67,35 @@ pub struct Reduced {
     pub bin: usize,
 }
 
-/// The bin for a mosaic of this size: [`BIN`] when its binned long edge
-/// is at least [`MIN_BINNED_EDGE`], else 1.
+/// The bin for a Bayer mosaic of this size: [`BIN`] when its binned
+/// long edge is at least [`MIN_BINNED_EDGE`], else 1.
 pub fn bin_for(width: usize, height: usize) -> usize {
-    if width.max(height) / BIN >= MIN_BINNED_EDGE {
-        BIN
+    bin_for_cell(BIN, width, height)
+}
+
+/// The smallest bin of `pattern`: [`XTRANS_BIN`] for X-Trans, [`BIN`]
+/// for anything else.
+pub fn cell_of(pattern: &CfaPattern) -> usize {
+    if pattern.is_xtrans() { XTRANS_BIN } else { BIN }
+}
+
+/// The bin `cell` for a mosaic of this size when its binned long edge
+/// is at least [`MIN_BINNED_EDGE`], else 1.
+pub fn bin_for_cell(cell: usize, width: usize, height: usize) -> usize {
+    if width.max(height) / cell >= MIN_BINNED_EDGE {
+        cell
     } else {
         1
+    }
+}
+
+/// A bin `pattern` can take: an X-Trans bin past one goes up to a
+/// multiple of [`XTRANS_BIN`], so no cell misses a color.
+fn fit_bin(pattern: &CfaPattern, bin: usize) -> usize {
+    if bin > 1 && pattern.is_xtrans() {
+        bin.div_ceil(XTRANS_BIN) * XTRANS_BIN
+    } else {
+        bin.max(1)
     }
 }
 
@@ -74,14 +109,16 @@ pub fn develop_reduced(
 ) -> Result<Reduced> {
     let prepared = super::prepare_with(frame, settings, false, ca)?;
     let bin = match &prepared.pattern {
-        Some(_) => bin_for(prepared.width, prepared.height),
+        Some(p) => bin_for_cell(cell_of(p), prepared.width, prepared.height),
         None => 1,
     };
     develop_prepared_binned(prepared, settings, bin)
 }
 
 /// [`develop_reduced`] with the bin given, for a frame of any size: the
-/// tests', and a consumer that has decided for itself.
+/// tests', and a consumer that has decided for itself. An X-Trans
+/// mosaic's bin is raised to a multiple of three; [`Reduced::bin`] says
+/// the bin it took.
 pub fn develop_reduced_by(
     frame: &RawFrame,
     settings: &DevelopSettings,
@@ -90,7 +127,7 @@ pub fn develop_reduced_by(
 ) -> Result<Reduced> {
     let prepared = super::prepare_with(frame, settings, false, ca)?;
     let bin = match &prepared.pattern {
-        Some(_) => bin.max(1),
+        Some(p) => fit_bin(p, bin),
         None => 1,
     };
     develop_prepared_binned(prepared, settings, bin)
@@ -115,7 +152,7 @@ fn develop_prepared_binned(
         .pattern
         .as_ref()
         .expect("a bin past one is a mosaic's");
-    let (rgb, width, height) = bin_bayer(
+    let (rgb, width, height) = bin_mosaic(
         &prepared.samples,
         prepared.width,
         prepared.height,
@@ -152,17 +189,17 @@ fn oriented((w, h): (usize, usize), orientation: Orientation) -> (usize, usize) 
     }
 }
 
-/// A Bayer mosaic (one sample a pixel, `pattern` from its origin)
-/// binned `bin` photosites each way into interleaved RGB: each output
-/// pixel is the mean of the cell's samples of each color. The rows and
-/// columns past the last whole cell are left out. Answers the RGB and
-/// its size.
+/// A mosaic (one sample a pixel, `pattern` from its origin) binned
+/// `bin` photosites each way into interleaved RGB: each output pixel is
+/// the mean of the cell's samples of each color. The rows and columns
+/// past the last whole cell are left out. Answers the RGB and its size.
 ///
 /// A cell of [`BIN`] holds every color of a 2x2 Bayer pattern once,
-/// green twice, whatever the pattern's phase; a larger bin holds each
-/// several times. A color a cell has none of (not a Bayer pattern) is
-/// left at zero.
-pub fn bin_bayer(
+/// green twice, whatever the pattern's phase, and a cell of
+/// [`XTRANS_BIN`] every color of X-Trans; a larger bin holds each
+/// several times. A color a cell has none of (a bin the pattern does
+/// not fit) is left at zero.
+pub fn bin_mosaic(
     samples: &[f32],
     width: usize,
     height: usize,
@@ -222,7 +259,7 @@ mod tests {
     fn a_bin_is_the_mean_of_each_color_in_its_cell() {
         // Every sample its own value: only the right cells can pass.
         let samples = mosaic(6, 4, |y, x| (y * 6 + x) as f32);
-        let (rgb, w, h) = bin_bayer(&samples, 6, 4, &CfaPattern::rggb(), 2);
+        let (rgb, w, h) = bin_mosaic(&samples, 6, 4, &CfaPattern::rggb(), 2);
         assert_eq!((w, h), (3, 2));
         for cy in 0..2 {
             for cx in 0..3 {
@@ -241,7 +278,7 @@ mod tests {
         let samples = mosaic(4, 4, |y, x| 1.0 + (y * 4 + x) as f32);
         for (dx, dy) in [(1, 0), (1, 1), (0, 1)] {
             let pattern = CfaPattern::rggb().shifted(dx, dy);
-            let (rgb, _, _) = bin_bayer(&samples, 4, 4, &pattern, 2);
+            let (rgb, _, _) = bin_mosaic(&samples, 4, 4, &pattern, 2);
             for (cell, px) in rgb.as_chunks::<3>().0.iter().enumerate() {
                 let (cy, cx) = (cell / 2, cell % 2);
                 let mut want = [0.0f32; 3];
@@ -273,7 +310,7 @@ mod tests {
             CfaColor::Blue => 0.25,
             CfaColor::Other(_) => unreachable!(),
         });
-        let (rgb, w, h) = bin_bayer(&samples, 7, 5, &CfaPattern::rggb(), 2);
+        let (rgb, w, h) = bin_mosaic(&samples, 7, 5, &CfaPattern::rggb(), 2);
         assert_eq!((w, h), (3, 2));
         for px in rgb.as_chunks::<3>().0 {
             assert_eq!(px, &[0.5, 1.0, 0.25]);
@@ -292,6 +329,54 @@ mod tests {
         for px in full.as_chunks::<3>().0 {
             assert!((px[0] - 0.5).abs() < 1e-6 && (px[1] - 1.0).abs() < 1e-6);
         }
+    }
+
+    /// Every 3x3 cell of X-Trans holds every color at every phase, and
+    /// a flat field bins to itself.
+    #[test]
+    fn an_xtrans_bin_of_three_holds_every_color() {
+        let want = [0.5, 1.0, 0.25];
+        for dy in 0..6 {
+            for dx in 0..6 {
+                let pattern = CfaPattern::xtrans().shifted(dx, dy);
+                let samples = mosaic(13, 10, |y, x| {
+                    want[pattern.color_at(y, x).rgb_index().unwrap()]
+                });
+                let (rgb, w, h) = bin_mosaic(&samples, 13, 10, &pattern, XTRANS_BIN);
+                assert_eq!((w, h), (4, 3));
+                for px in rgb.as_chunks::<3>().0 {
+                    assert_eq!(px, &want, "phase {dx},{dy}");
+                }
+            }
+        }
+        assert_eq!(cell_of(&CfaPattern::xtrans()), 3);
+        assert_eq!(cell_of(&CfaPattern::rggb()), 2);
+        assert_eq!(bin_for_cell(3, 7728, 5152), 3);
+        assert_eq!(bin_for_cell(3, 6143, 4000), 1);
+        assert_eq!(fit_bin(&CfaPattern::xtrans(), 2), 3);
+        assert_eq!(fit_bin(&CfaPattern::xtrans(), 1), 1);
+        assert_eq!(fit_bin(&CfaPattern::rggb(), 2), 2);
+    }
+
+    /// The reduced develop of an X-Trans frame is the full one's color
+    /// at a third of the size, whatever bin was asked.
+    #[test]
+    fn an_xtrans_frame_is_binned_by_three() {
+        let frame = crate::develop::tests::xtrans_frame();
+        let full = develop(&frame, &DevelopSettings::default()).unwrap();
+        let reduced = develop_reduced_by(&frame, &DevelopSettings::default(), None, 2).unwrap();
+        assert_eq!(reduced.bin, 3);
+        assert_eq!(reduced.full, (70, 60));
+        let image = &reduced.developed.image;
+        assert_eq!((image.width, image.height), (23, 20));
+        for px in image.pixels() {
+            for (i, v) in px.iter().enumerate() {
+                assert!((v - full.image.data[i]).abs() < 1e-4, "channel {i}: {v}");
+            }
+        }
+        // Too small to bin on its own: the full develop.
+        let plain = develop_reduced(&frame, &DevelopSettings::default(), None).unwrap();
+        assert_eq!(plain.bin, 1);
     }
 
     #[test]

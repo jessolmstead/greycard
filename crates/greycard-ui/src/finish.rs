@@ -1419,13 +1419,20 @@ pub fn finish_with<T: Copy + Default + Send>(
 
 /// The parts of `edit` the viewport cannot show over `shown`'s
 /// develop: everything the engine does, less the white balance,
-/// which the shader previews.
-pub fn not_previewed(edit: &Edit, shown: &Edit) -> Vec<&'static str> {
+/// which the shader previews. The demosaic is compared as it runs on
+/// a frame of `mosaic`: two choices that resolve to one method are
+/// the same picture.
+pub fn not_previewed(
+    edit: &Edit,
+    shown: &Edit,
+    mosaic: Option<greycard_core::raw::Mosaic>,
+) -> Vec<&'static str> {
     let mut out = Vec::new();
     if edit.noise != shown.noise {
         out.push("denoise");
     }
-    if edit.demosaic != shown.demosaic {
+    let runs = |e: &Edit| mosaic.map_or(e.demosaic, |m| e.demosaic.resolve(m));
+    if runs(edit) != runs(shown) {
         out.push("demosaic");
     }
     if edit.camera != shown.camera {
@@ -1451,6 +1458,28 @@ mod tests {
     use super::*;
     use greycard_edit::{Curves, Tone};
 
+    /// Two demosaic choices that run as one method on the frame's
+    /// mosaic are the same picture; two that do not, are not.
+    #[test]
+    fn a_peek_compares_the_demosaic_as_it_runs() {
+        use greycard_core::raw::Mosaic;
+        use greycard_edit::Demosaic;
+        let shown = Edit {
+            demosaic: Demosaic::Amaze,
+            ..Edit::default()
+        };
+        let edit = Edit {
+            demosaic: Demosaic::Markesteijn3,
+            ..Edit::default()
+        };
+        assert!(not_previewed(&edit, &shown, Some(Mosaic::XTrans)).is_empty());
+        assert_eq!(
+            not_previewed(&edit, &shown, Some(Mosaic::Bayer)),
+            ["demosaic"]
+        );
+        assert_eq!(not_previewed(&edit, &shown, None), ["demosaic"]);
+    }
+
     /// What the viewport can and cannot show over the develop it
     /// already has: the white balance the shader previews, so it is
     /// not named; everything the engine does is.
@@ -1458,7 +1487,7 @@ mod tests {
     fn a_peek_names_what_the_viewport_cannot_show() {
         let shown = Edit::default();
         let mut edit = shown.clone();
-        assert!(not_previewed(&edit, &shown).is_empty());
+        assert!(not_previewed(&edit, &shown, None).is_empty());
         // The shader's own: exposure, the curve, the mixer, the
         // white balance. None of them is named.
         edit.light.exposure = 1.0;
@@ -1467,7 +1496,7 @@ mod tests {
             temperature: 3200.0,
             tint: 0.01,
         };
-        assert!(not_previewed(&edit, &shown).is_empty());
+        assert!(not_previewed(&edit, &shown, None).is_empty());
         // The engine's: all seven, each named once and in the order
         // they are asked about, so the status line reads the same
         // way every time. One mutation apiece, and each one on its
@@ -1491,14 +1520,17 @@ mod tests {
         for (name, apply) in moves {
             let mut alone = shown.clone();
             apply(&mut alone);
-            assert_eq!(not_previewed(&alone, &shown), [name], "{name} alone");
+            assert_eq!(not_previewed(&alone, &shown, None), [name], "{name} alone");
         }
         // And all seven together come back in that order.
         let mut all = shown.clone();
         for (_, apply) in moves {
             apply(&mut all);
         }
-        assert_eq!(not_previewed(&all, &shown), moves.map(|(name, _)| name));
+        assert_eq!(
+            not_previewed(&all, &shown, None),
+            moves.map(|(name, _)| name)
+        );
     }
 
     /// The straight line, baked.

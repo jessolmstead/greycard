@@ -30,7 +30,7 @@ use greycard_core::{DemosaicMethod, HighlightMode};
 use rayon::prelude::*;
 
 use metrics::Scores;
-use mosaic::{bayer_pattern, mosaic, srgb_decode, srgb_encode};
+use mosaic::{cfa_pattern, mosaic, srgb_decode, srgb_encode};
 
 #[derive(Parser)]
 #[command(
@@ -41,10 +41,12 @@ use mosaic::{bayer_pattern, mosaic, srgb_decode, srgb_encode};
 struct Cli {
     /// Image files or directories of them; each directory is one data set
     inputs: Vec<PathBuf>,
-    /// Algorithms to run, by name, or "all"
+    /// Algorithms to run, by name, or "all": every one the pattern's
+    /// mosaic takes
     #[arg(long, default_value = "all")]
     method: String,
-    /// Bayer pattern to mosaic with
+    /// Pattern to mosaic with: a 2x2 Bayer pattern by its four letters,
+    /// or "xtrans"
     #[arg(long, default_value = "RGGB")]
     pattern: String,
     /// Mosaic the sRGB values as they are (the literature's convention), or
@@ -177,13 +179,31 @@ fn main() -> Result<()> {
     if cli.inputs.is_empty() {
         bail!("nothing to score: pass image files or directories");
     }
-    let pattern = bayer_pattern(&cli.pattern)
-        .with_context(|| format!("{:?} is not a 2x2 Bayer pattern", cli.pattern))?;
+    let pattern = cfa_pattern(&cli.pattern).with_context(|| {
+        format!(
+            "{:?} is neither a 2x2 Bayer pattern nor \"xtrans\"",
+            cli.pattern
+        )
+    })?;
+    if pattern.is_xtrans() {
+        // The CA correction and the noise estimate are Bayer only.
+        if cli.aberrate > 0.0 && !cli.no_ca {
+            bail!(
+                "--aberrate on X-Trans needs --no-ca: the CA correction has no X-Trans version yet"
+            );
+        }
+        if cli.denoise || cli.ai_model.is_some() || cli.dual_contrast == "noise" {
+            bail!(
+                "--denoise, --ai-model and --dual-contrast noise need a noise estimate, \
+                 which has no X-Trans version yet"
+            );
+        }
+    }
     let methods: Vec<DemosaicMethod> = if cli.ai_model.is_some() {
         // The network stands in for every method; one placeholder run.
         vec![DemosaicMethod::default()]
     } else if cli.method == "all" {
-        DemosaicMethod::ALL.to_vec()
+        DemosaicMethod::for_pattern(&pattern).to_vec()
     } else {
         cli.method
             .split(',')
@@ -321,7 +341,7 @@ fn run_one(
             let c = pattern
                 .color_at(i / w, i % w)
                 .rgb_index()
-                .expect("Bayer patterns are RGB");
+                .expect("the patterns are RGB");
             *v = (*v * boost).min(TEST_GAINS[c]);
         }
         match cli.highlights {
@@ -404,8 +424,8 @@ fn run_one(
         }
         None => (
             demosaic_cfa_with(&cfa, w, h, pattern, method, contrast)
-                .with_context(|| format!("{} on {}", method.name(), reference.name))?
-                .0,
+                .map(|(rgb, _)| rgb)
+                .with_context(|| format!("{} on {}", method.name(), reference.name))?,
             method.name(),
         ),
     };

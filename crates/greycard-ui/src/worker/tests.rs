@@ -1,5 +1,44 @@
 use super::*;
 
+/// An X-Trans frame asked for a denoise, learned or profiled, is
+/// told none runs, before anything is prepared; a Bayer one, or one
+/// asked for none, is not.
+#[test]
+fn a_denoise_on_x_trans_is_unavailable_and_said_so() {
+    use greycard_core::raw::{CfaPattern, LevelPattern, Levels, Samples, SensorLayout};
+    let mut frame = RawFrame {
+        make: "Test".into(),
+        model: "Cam".into(),
+        width: 2,
+        height: 2,
+        channels: 1,
+        layout: SensorLayout::Cfa(CfaPattern::rggb()),
+        samples: Samples::U16(vec![0; 4]),
+        levels: Levels {
+            black: LevelPattern::uniform(0.0, 1),
+            white: LevelPattern::uniform(1.0, 1),
+        },
+        as_shot_coefficients: None,
+        calibrations: Vec::new(),
+        crop: None,
+        orientation: greycard_core::raw::Orientation::Normal,
+        shot: Default::default(),
+    };
+    let profiled = DevelopSettings {
+        denoise: Some(Default::default()),
+        ..DevelopSettings::default()
+    };
+    let none = DevelopSettings {
+        denoise: None,
+        ..DevelopSettings::default()
+    };
+    assert_eq!(denoise_unavailable(&frame, &profiled, true), None);
+    frame.layout = SensorLayout::Cfa(CfaPattern::xtrans());
+    assert!(denoise_unavailable(&frame, &profiled, false).is_some());
+    assert!(denoise_unavailable(&frame, &none, true).is_some());
+    assert_eq!(denoise_unavailable(&frame, &none, false), None);
+}
+
 #[test]
 fn the_strip_s_own_frames_are_made_first_then_the_ones_beside_them() {
     let mut pending: Vec<(usize, PathBuf)> = (0..10)
@@ -71,6 +110,7 @@ fn run_fake_set(
                         generation: 7,
                         seed_blend: false,
                         turn: 0,
+                        stance_known: false,
                     });
                     cv.notify_one();
                 }
@@ -189,6 +229,7 @@ fn a_stop_that_finds_the_worker_in_a_job_keeps_it_until_it_ends() {
         generation: 1,
         seed_blend: false,
         turn: 0,
+        stance_known: false,
     });
     in_job
         .recv_timeout(std::time::Duration::from_secs(30))
@@ -520,6 +561,7 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
             planes: None,
             ca_on_gpu: false,
             stand_in: None,
+            gave_way: None,
             profile: None,
         };
         turn_base(&mut b, &mut learned, 1, 2, None);
@@ -563,6 +605,7 @@ fn a_turned_base_takes_the_learned_pair_with_it() {
         planes: None,
         ca_on_gpu: false,
         stand_in: None,
+        gave_way: None,
         profile: None,
     };
     turn_base(&mut b, &mut learned, 1, 2, None);
@@ -664,6 +707,7 @@ fn a_planes_thread_that_declines_or_dies_lands_the_develop_without_them() {
         planes: None,
         ca_on_gpu: false,
         stand_in: None,
+        gave_way: None,
         profile: None,
     };
     let wants = greycard_edit::DetailWants {

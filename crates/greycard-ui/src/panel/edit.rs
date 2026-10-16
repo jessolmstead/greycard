@@ -477,6 +477,54 @@ pub(crate) fn develop_soon(
     );
 }
 
+/// The DEMOSAIC menu for `stored`, the edit's choice, on a frame of
+/// `mosaic`: that mosaic's methods, and selected the one its develop
+/// runs (`Demosaic::resolve`, the engine's resolve). While the mosaic
+/// is not known the menu rests with the stored choice and says why,
+/// rather than offer another mosaic's methods.
+pub(crate) fn show_demosaic(
+    mosaic: crate::panel::browser::OpenMosaic,
+    stored: Demosaic,
+    app: &App,
+) {
+    let (choices, shown, hint) = demosaic_menu(mosaic, stored);
+    app.set_demosaics(ModelRc::new(VecModel::from(
+        choices
+            .iter()
+            .map(|d| slint::SharedString::from(d.name()))
+            .collect::<Vec<_>>(),
+    )));
+    app.set_demosaic(shown.name().into());
+    app.set_demosaic_hint(hint.into());
+    app.set_demosaic_stored(stored.name().into());
+}
+
+/// The menu's choices, its selection and its hint for `stored` on a
+/// frame of `mosaic`.
+pub(crate) fn demosaic_menu(
+    mosaic: crate::panel::browser::OpenMosaic,
+    stored: Demosaic,
+) -> (Vec<Demosaic>, Demosaic, &'static str) {
+    use crate::panel::browser::OpenMosaic;
+    match mosaic {
+        OpenMosaic::Known(m) if !Demosaic::for_kind(m).is_empty() => {
+            (Demosaic::for_kind(m), stored.resolve(m), "")
+        }
+        OpenMosaic::Known(_) => (vec![stored], stored, "no demosaic for this mosaic"),
+        OpenMosaic::NotMosaic => (vec![stored], stored, "not a mosaic"),
+        OpenMosaic::Unreadable => (vec![stored], stored, "the raw could not be read"),
+        OpenMosaic::Unknown => (vec![stored], stored, "reading the raw"),
+    }
+}
+
+/// The edit's choice as the menu leaves it: what the edit stores, which
+/// only a pick from the menu changes (`demosaic-picked` in the window
+/// sets it); opening a frame or moving another slider never rewrites a
+/// choice the menu shows resolved.
+pub(crate) fn read_demosaic(app: &App) -> Demosaic {
+    Demosaic::from_name(app.get_demosaic_stored().as_str()).unwrap_or_default()
+}
+
 pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
     let mut edit = base.clone();
     edit.set_target_look(target, read_look(app));
@@ -558,7 +606,7 @@ pub(crate) fn read_edit(app: &App, base: &Edit, target: Option<usize>) -> Edit {
     edit.sharpen.iterations = app.get_sharpen_iterations().round().max(1.0) as u32;
     edit.sharpen.auto_threshold = app.get_sharpen_auto_threshold();
     edit.sharpen.threshold = app.get_sharpen_threshold();
-    edit.demosaic = Demosaic::from_name(app.get_demosaic().as_str()).unwrap_or_default();
+    edit.demosaic = read_demosaic(app);
     // Global, as the black and white is: the curve under every look.
     edit.display_curve = greycard_edit::DisplayCurve::from_name(app.get_display_curve().as_str())
         .unwrap_or_default();
@@ -737,7 +785,7 @@ pub(crate) fn show_edit(st: &State, edit: &Edit, app: &App, target: Option<usize
     app.set_sharpen_iterations(edit.sharpen.iterations as f32);
     app.set_sharpen_auto_threshold(edit.sharpen.auto_threshold);
     app.set_sharpen_threshold(edit.sharpen.threshold);
-    app.set_demosaic(edit.demosaic.name().into());
+    show_demosaic(st.open_mosaic(), edit.demosaic, app);
     app.set_display_curve(edit.display_curve.name().into());
     // The list and its warning follow the choice, so an undo or a
     // preset that brings another camera's profile says so at once.
@@ -947,6 +995,58 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
 mod tests {
     use super::*;
     use crate::testing::window;
+
+    /// The DEMOSAIC menu lists the open raw's mosaic's methods and
+    /// selects what its develop runs; read back untouched it keeps the
+    /// stored choice; a pick through the window's callback is stored,
+    /// the method already shown included; while the mosaic is not
+    /// known the menu rests and offers no other mosaic's methods.
+    #[test]
+    fn the_demosaic_menu_follows_the_open_raw_s_mosaic() {
+        use crate::panel::browser::OpenMosaic;
+        use greycard_core::raw::Mosaic;
+        let app = window(1);
+        let names = |app: &App| -> Vec<String> {
+            app.get_demosaics().iter().map(|s| s.to_string()).collect()
+        };
+        show_demosaic(OpenMosaic::Known(Mosaic::XTrans), Demosaic::Amaze, &app);
+        assert_eq!(names(&app), ["markesteijn-3", "markesteijn-1", "bilinear"]);
+        assert_eq!(app.get_demosaic(), "markesteijn-3");
+        assert_eq!(app.get_demosaic_hint(), "");
+        // Opening, or another slider: the stored choice stays.
+        assert_eq!(read_demosaic(&app), Demosaic::Amaze);
+        // A click on the method already shown stores it.
+        app.invoke_demosaic_picked("markesteijn-3".into());
+        assert_eq!(read_demosaic(&app), Demosaic::Markesteijn3);
+        // One, then three: three.
+        app.invoke_demosaic_picked("markesteijn-1".into());
+        app.invoke_demosaic_picked("markesteijn-3".into());
+        assert_eq!(read_demosaic(&app), Demosaic::Markesteijn3);
+
+        // A frame opening whose mosaic is not known yet: no Bayer list
+        // to click, the stored choice as it is, and why.
+        show_demosaic(OpenMosaic::Unknown, Demosaic::Markesteijn1, &app);
+        assert_eq!(names(&app), ["markesteijn-1"]);
+        assert_eq!(app.get_demosaic(), "markesteijn-1");
+        assert_eq!(app.get_demosaic_hint(), "reading the raw");
+        assert_eq!(read_demosaic(&app), Demosaic::Markesteijn1);
+
+        // A raw that is no mosaic says so for good, not "reading".
+        show_demosaic(OpenMosaic::NotMosaic, Demosaic::Markesteijn1, &app);
+        assert_eq!(app.get_demosaic_hint(), "not a mosaic");
+
+        show_demosaic(
+            OpenMosaic::Known(Mosaic::Bayer),
+            Demosaic::Markesteijn1,
+            &app,
+        );
+        assert_eq!(names(&app).len(), 6);
+        assert_eq!(names(&app)[0], "amaze-vng4");
+        assert_eq!(app.get_demosaic(), "amaze-vng4");
+        assert_eq!(read_demosaic(&app), Demosaic::Markesteijn1);
+        app.invoke_demosaic_picked("rcd".into());
+        assert_eq!(read_demosaic(&app), Demosaic::Rcd);
+    }
 
     /// The defringe's dropper needs the fringes on screen to aim at,
     /// so while it is out the picture is developed with the pass off.

@@ -18,8 +18,8 @@ pub use ::rawler::decoders::RawMetadata;
 use super::Decoder;
 use crate::error::{Error, Result};
 use crate::raw::{
-    Calibration, CfaColor, CfaPattern, LevelPattern, Levels, Orientation, RawFrame, Rect, Samples,
-    SensorLayout, Shot,
+    Calibration, CfaColor, CfaPattern, LevelPattern, Levels, Mosaic, Orientation, RawFrame, Rect,
+    Samples, SensorLayout, Shot,
 };
 
 /// rawler's `Unsupported` prints all four of its fields whether or not
@@ -461,6 +461,63 @@ fn as_shot(wb: [f32; 4]) -> Option<[f64; 3]> {
 mod tests {
     use super::*;
 
+    /// A description that will not read, or a decoder that panics on
+    /// it, is an unknown mosaic and nothing worse.
+    #[test]
+    fn a_mosaic_read_that_fails_is_unknown() {
+        let path = Path::new("x.NEF");
+        assert_eq!(
+            mosaic_read(path, || Err(Error::Decode("no".into()))),
+            MosaicRead::Unknown
+        );
+        assert_eq!(mosaic_read(path, || panic!("rawler")), MosaicRead::Unknown);
+        assert_eq!(mosaic_read(path, || Ok(None)), MosaicRead::NotMosaic);
+        assert_eq!(
+            mosaic_read(path, || Ok(Some(Mosaic::XTrans))),
+            MosaicRead::Mosaic(Mosaic::XTrans)
+        );
+    }
+
+    /// A DNG's CFA tags out of shape are a mosaic of no kind the engine
+    /// takes, decided before a value past the repeat is read.
+    #[test]
+    fn a_dngs_cfa_tags_are_taken_only_in_shape() {
+        let rggb = [0, 1, 1, 2];
+        assert_eq!(mosaic_from_tags(&[2, 2], &rggb, None), Mosaic::Bayer);
+        let xtrans: Vec<u32> = "GGRGGBGGBGGRBRGRBGGGBGGRGGRGGBRBGBRG"
+            .chars()
+            .map(|c| match c {
+                'R' => 0,
+                'G' => 1,
+                _ => 2,
+            })
+            .collect();
+        assert_eq!(mosaic_from_tags(&[6, 6], &xtrans, None), Mosaic::XTrans);
+        // The planes map the pattern's values to colors: here blue's
+        // and red's are swapped, which is still Bayer; a value past the
+        // planes is out of shape.
+        assert_eq!(
+            mosaic_from_tags(&[2, 2], &rggb, Some(&[2, 1, 0])),
+            Mosaic::Bayer
+        );
+        assert_eq!(
+            mosaic_from_tags(&[2, 2], &[0, 1, 1, 3], Some(&[0, 1, 2])),
+            Mosaic::Other
+        );
+        // Out of shape: oversized, empty, short of the repeat, one
+        // dimension only.
+        assert_eq!(
+            mosaic_from_tags(&[65535, 65535], &rggb, None),
+            Mosaic::Other
+        );
+        assert_eq!(mosaic_from_tags(&[17, 1], &rggb, None), Mosaic::Other);
+        assert_eq!(mosaic_from_tags(&[0, 0], &rggb, None), Mosaic::Other);
+        assert_eq!(mosaic_from_tags(&[0, 2], &rggb, None), Mosaic::Other);
+        assert_eq!(mosaic_from_tags(&[2, 2], &[0, 1, 1], None), Mosaic::Other);
+        assert_eq!(mosaic_from_tags(&[2], &rggb, None), Mosaic::Other);
+        assert_eq!(mosaic_from_tags(&[], &[], None), Mosaic::Other);
+    }
+
     /// A panic inside the guard is the file's decode error, and says
     /// a copy in progress when the tail is zeros; the thread knows it
     /// is inside only while it is.
@@ -787,11 +844,14 @@ impl Probe {
 /// but the pixels, which is where the crop rectangle lives; the
 /// develop's picture is that rectangle, so this is the shape a mask's
 /// coordinates are in (see `mask::Turned`).
-pub fn stance_path(path: &Path) -> Result<(Orientation, Option<(u32, u32)>)> {
+/// The orientation tag, the size and the kind of mosaic.
+pub type RawStance = (Orientation, Option<(u32, u32)>, Option<Mosaic>);
+
+pub fn stance_path(path: &Path) -> Result<RawStance> {
     guarded(|| tail_of(path), || stance_unguarded(path))
 }
 
-fn stance_unguarded(path: &Path) -> Result<(Orientation, Option<(u32, u32)>)> {
+fn stance_unguarded(path: &Path) -> Result<RawStance> {
     let source = RawSource::new(path)?;
     let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
     let params = RawDecodeParams::default();
@@ -805,15 +865,220 @@ fn stance_unguarded(path: &Path) -> Result<(Orientation, Option<(u32, u32)>)> {
         .unwrap_or_default();
     // A frame whose size cannot be had this cheaply is not worth
     // decoding for: the caller has other pictures of it to measure by.
-    let size = decoder
-        .raw_image(&source, &params, true)
-        .ok()
+    let image = decoder.raw_image(&source, &params, true).ok();
+    let size = image
+        .as_ref()
         .map(|image| match image.crop_area.or(image.active_area) {
             Some(r) => (r.d.w as u32, r.d.h as u32),
             None => (image.width as u32, image.height as u32),
         })
         .filter(|(w, h)| *w > 0 && *h > 0);
-    Ok((orientation, size))
+    let mosaic = image.as_ref().and_then(mosaic_of);
+    Ok((orientation, size, mosaic))
+}
+
+/// The kind of mosaic in an image's description, which rawler's dummy
+/// read fills in without a sample; `None` for a raw that is not a
+/// mosaic.
+fn mosaic_of(image: &RawImage) -> Option<Mosaic> {
+    match &image.photometric {
+        RawPhotometricInterpretation::Cfa(config) => {
+            cfa_pattern(&config.cfa).ok().map(|p| p.mosaic())
+        }
+        _ => None,
+    }
+}
+
+/// What [`probe_and_mosaic_path`] says of a raw's mosaic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MosaicRead {
+    /// A mosaic of this kind.
+    Mosaic(Mosaic),
+    /// A raw that is not a mosaic (a linear DNG, a monochrome sensor).
+    NotMosaic,
+    /// The image's description would not read (a format the build's
+    /// decoder takes the metadata of and not the image, a damaged
+    /// file); the EXIF stands all the same.
+    Unknown,
+}
+
+/// [`probe_path`] and the kind of mosaic, on one decoder: the metadata
+/// read and then the image's description without a sample, the file
+/// opened and its format found once. What the library's index reads.
+/// A failed metadata read fails the whole, as `probe_path` does; a
+/// description that will not read costs only the mosaic
+/// ([`MosaicRead::Unknown`]), so a raw keeps its camera, ISO, date and
+/// lens in the index whatever its image says.
+pub fn probe_and_mosaic_path(path: &Path) -> Result<(Probe, MosaicRead)> {
+    guarded(|| tail_of(path), || probe_and_mosaic_unguarded(path))
+}
+
+/// What a read of the image's description says, with its failure and
+/// its panic both [`MosaicRead::Unknown`] and a line in the log: the
+/// probe beside it is in hand and is not given up for it.
+fn mosaic_read(path: &Path, read: impl FnOnce() -> Result<Option<Mosaic>>) -> MosaicRead {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(read)) {
+        Ok(Ok(Some(m))) => MosaicRead::Mosaic(m),
+        Ok(Ok(None)) => MosaicRead::NotMosaic,
+        Ok(Err(e)) => {
+            log::warn!("{}: its mosaic: {e}", path.display());
+            MosaicRead::Unknown
+        }
+        Err(_) => {
+            log::warn!("{}: its mosaic: the decoder panicked", path.display());
+            MosaicRead::Unknown
+        }
+    }
+}
+
+fn probe_and_mosaic_unguarded(path: &Path) -> Result<(Probe, MosaicRead)> {
+    let source = RawSource::new(path)?;
+    let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
+    let params = RawDecodeParams::default();
+    let metadata = decoder
+        .raw_metadata(&source, &params)
+        .map_err(decoder_error)?;
+    let probe = Probe::from_metadata(&metadata);
+    let mosaic = mosaic_read(path, || {
+        if is_dng(path) {
+            dng_mosaic(path)
+        } else {
+            decoder
+                .raw_image(&source, &params, true)
+                .map(|image| mosaic_of(&image))
+                .map_err(decoder_error)
+        }
+    });
+    Ok((probe, mosaic))
+}
+
+fn is_dng(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("dng"))
+}
+
+/// A DNG's kind of mosaic from its raw IFD's tags. rawler's dummy read
+/// of a DNG decodes every sample (its DNG decoder reads the image data
+/// whatever the flag), 20 ms and more a file, where the tags are a
+/// millisecond. The raw IFD is the one rawler takes: compressed as a
+/// raw is and not a reduced copy.
+fn dng_mosaic(path: &Path) -> Result<Option<Mosaic>> {
+    use ::rawler::formats::tiff::reader::{GenericTiffReader, TiffReader};
+    use ::rawler::tags::TiffCommonTag;
+    let source = RawSource::new(path)?;
+    let tiff = GenericTiffReader::new(&mut source.reader(), 0, 0, None, &[])
+        .map_err(|e| Error::Decode(e.to_string()))?;
+    let raw = tiff
+        .find_ifds_with_tag(TiffCommonTag::Compression)
+        .into_iter()
+        .find(|ifd| {
+            let reduced = ifd
+                .get_entry(TiffCommonTag::NewSubFileType)
+                .is_some_and(|e| e.force_u32(0) & 1 != 0);
+            let compression = ifd
+                .get_entry(TiffCommonTag::Compression)
+                .map_or(0, |e| e.force_u32(0));
+            !reduced && matches!(compression, 1 | 7 | 8 | 0x884c | 52546)
+        })
+        .ok_or_else(|| Error::Decode("DNG with no raw image".into()))?;
+    let photometric = raw
+        .get_entry(TiffCommonTag::PhotometricInt)
+        .map_or(0, |e| e.force_u32(0));
+    if photometric != 32803 {
+        return Ok(None);
+    }
+    // Every value read through `get_u32`, which says nothing of an
+    // index past the end, where rawler's `force_*` log a backtrace.
+    let values = |e: Option<&::rawler::formats::tiff::Entry>| -> Option<Vec<u32>> {
+        let e = e?;
+        (0..e.value.count())
+            .map(|i| e.value.get_u32(i).ok().flatten())
+            .collect()
+    };
+    let dims = raw.get_entry(TiffCommonTag::CFARepeatPatternDim);
+    let pattern = raw.get_entry(TiffCommonTag::CFAPattern);
+    // Counted before a value is read: a file's word for how many
+    // values there are is not taken on trust.
+    let (Some(dims), Some(pattern)) = (dims, pattern) else {
+        return Ok(Some(Mosaic::Other));
+    };
+    if dims.value.count() != 2 || pattern.value.count() > MAX_CFA * MAX_CFA {
+        return Ok(Some(Mosaic::Other));
+    }
+    let planes = raw
+        .get_entry(::rawler::tags::DngTag::CFAPlaneColor)
+        .filter(|e| e.value.count() <= 16);
+    Ok(Some(mosaic_from_tags(
+        &values(Some(dims)).unwrap_or_default(),
+        &values(Some(pattern)).unwrap_or_default(),
+        values(planes).as_deref(),
+    )))
+}
+
+/// The largest repeat a DNG's CFA is taken to have either way; X-Trans
+/// is 6, and DNG's own limit for a pattern is 16 a side, past which a
+/// file is damaged or not a mosaic this engine reads.
+const MAX_CFA: usize = 16;
+
+/// The kind of mosaic a DNG's tags describe: `dims` the
+/// `CFARepeatPatternDim` (rows, columns), `pattern` the `CFAPattern`
+/// row by row, `planes` the `CFAPlaneColor` when the file has one,
+/// mapping each value of the pattern to a color (0 red, 1 green, 2
+/// blue), the order of the planes otherwise. Anything out of shape,
+/// a repeat of nothing or past [`MAX_CFA`] a side, fewer values than
+/// the repeat, a color past the planes, is [`Mosaic::Other`].
+fn mosaic_from_tags(dims: &[u32], pattern: &[u32], planes: Option<&[u32]>) -> Mosaic {
+    let &[rows, cols] = dims else {
+        return Mosaic::Other;
+    };
+    let (rows, cols) = (rows as usize, cols as usize);
+    if !(1..=MAX_CFA).contains(&rows) || !(1..=MAX_CFA).contains(&cols) {
+        return Mosaic::Other;
+    }
+    let Some(n) = rows.checked_mul(cols).filter(|&n| pattern.len() >= n) else {
+        return Mosaic::Other;
+    };
+    let color = |v: u32| -> Option<u32> {
+        match planes {
+            Some(planes) => planes.get(v as usize).copied(),
+            None => Some(v),
+        }
+    };
+    let colors: Option<Vec<CfaColor>> = pattern[..n]
+        .iter()
+        .map(|&v| {
+            color(v).map(|c| match c {
+                0 => CfaColor::Red,
+                1 => CfaColor::Green,
+                2 => CfaColor::Blue,
+                other => CfaColor::Other(other.min(255) as u8),
+            })
+        })
+        .collect();
+    colors
+        .and_then(|colors| CfaPattern::new(cols, rows, colors).ok())
+        .map_or(Mosaic::Other, |p| p.mosaic())
+}
+
+/// The kind of mosaic alone: the image's description without a sample
+/// and without the metadata read. `Ok(None)` for a raw that is not a
+/// mosaic.
+pub fn mosaic_path(path: &Path) -> Result<Option<Mosaic>> {
+    guarded(
+        || tail_of(path),
+        || {
+            if is_dng(path) {
+                return dng_mosaic(path);
+            }
+            let source = RawSource::new(path)?;
+            let decoder = ::rawler::get_decoder(&source).map_err(decoder_error)?;
+            let image = decoder
+                .raw_image(&source, &RawDecodeParams::default(), true)
+                .map_err(decoder_error)?;
+            Ok(mosaic_of(&image))
+        },
+    )
 }
 
 pub fn probe_path(path: &Path) -> Result<Probe> {

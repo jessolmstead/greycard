@@ -214,9 +214,12 @@ enum Command {
         /// Exposure adjustment in stops, preview only
         #[arg(long, default_value_t = 0.0)]
         exposure: f64,
-        /// Demosaic algorithm: amaze-vng4, rcd-vng4, amaze, rcd, vng4 or bilinear
-        #[arg(long, default_value = "amaze-vng4")]
-        demosaic: DemosaicMethod,
+        /// Demosaic algorithm: amaze-vng4, rcd-vng4, amaze, rcd, vng4 or
+        /// bilinear for a Bayer raw; markesteijn-3, markesteijn-1 or bilinear
+        /// for X-Trans. Left out, the raw's mosaic's default (amaze-vng4,
+        /// markesteijn-3); one the mosaic does not take is refused
+        #[arg(long)]
+        demosaic: Option<DemosaicMethod>,
         /// Camera profile: a DCP in the profile directory by name, a path to
         /// one, or "embedded" for the file's own calibrations
         #[arg(long, default_value = "embedded")]
@@ -555,7 +558,9 @@ fn main() -> Result<()> {
             let settings = DevelopSettings {
                 white_point,
                 profile: chosen_profile(&camera_profile)?,
-                demosaic,
+                // Settled per file once its mosaic is known
+                // (`demosaic_for`).
+                demosaic: demosaic.unwrap_or_default(),
                 highlights,
                 segments: SegmentOptions {
                     combine,
@@ -624,6 +629,7 @@ fn main() -> Result<()> {
                 &file,
                 &outputs,
                 &settings,
+                demosaic,
                 exposure,
                 ai_denoise.as_ref(),
                 &lens,
@@ -719,6 +725,16 @@ fn develop_learned(
     settings: &DevelopSettings,
     (path, model): &(PathBuf, Option<&'static greycard_ai::Model>),
 ) -> Result<greycard_core::develop::Developed> {
+    // Before the model is loaded or the frame prepared: the network
+    // takes a 2x2 Bayer mosaic and nothing else.
+    if let SensorLayout::Cfa(p) = &frame.layout
+        && !greycard_core::develop::rcd::is_bayer(p)
+    {
+        return Err(greycard_core::error::Error::Unsupported(format!(
+            "the learned denoiser takes a 2x2 Bayer mosaic, not a {p} one"
+        ))
+        .into());
+    }
     let start = std::time::Instant::now();
     let providers = greycard_ai::Provider::available();
     // A registered tier goes through the store, so a provider's
@@ -1997,10 +2013,36 @@ impl Targets {
     }
 }
 
+/// The demosaic for a raw of `layout`: the one asked when its mosaic
+/// takes it, refused in words when it does not; the mosaic's default
+/// when none was asked.
+fn demosaic_for(layout: &SensorLayout, asked: Option<DemosaicMethod>) -> Result<DemosaicMethod> {
+    let SensorLayout::Cfa(pattern) = layout else {
+        return Ok(asked.unwrap_or_default());
+    };
+    match asked {
+        None => Ok(DemosaicMethod::default_for(pattern)),
+        Some(m) if m.takes(pattern) => Ok(m),
+        Some(m) => {
+            let takes: Vec<&str> = DemosaicMethod::for_pattern(pattern)
+                .iter()
+                .map(|m| m.name())
+                .collect();
+            anyhow::bail!(
+                "--demosaic {} is not a demosaic for this raw's {pattern} mosaic; it takes {}",
+                m.name(),
+                takes.join(", ")
+            )
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_develop(
     file: &std::path::Path,
     outputs: &Outputs<'_>,
     settings: &DevelopSettings,
+    demosaic_asked: Option<DemosaicMethod>,
     exposure: f64,
     ai_denoise: Option<&(PathBuf, Option<&'static greycard_ai::Model>)>,
     lens: &greycard_edit::Lens,
@@ -2041,6 +2083,7 @@ fn run_develop(
     let settings = &DevelopSettings {
         sharpen: None,
         dehaze: None,
+        demosaic: demosaic_for(&frame.layout, demosaic_asked)?,
         ..settings.clone()
     };
     let mut developed = match ai_denoise {
@@ -2515,6 +2558,36 @@ impl std::str::FromStr for AutoF32 {
 
 #[cfg(test)]
 mod tests {
+    /// Left out, the demosaic is the mosaic's default; asked, it is
+    /// taken where the mosaic takes it and refused where it does not.
+    #[test]
+    fn the_demosaic_flag_follows_the_raw_s_mosaic() {
+        use greycard_core::raw::CfaPattern;
+        let xtrans = SensorLayout::Cfa(CfaPattern::xtrans());
+        let bayer = SensorLayout::Cfa(CfaPattern::rggb());
+        assert_eq!(
+            demosaic_for(&xtrans, None).unwrap(),
+            DemosaicMethod::Markesteijn3
+        );
+        assert_eq!(
+            demosaic_for(&bayer, None).unwrap(),
+            DemosaicMethod::AmazeVng4
+        );
+        assert_eq!(
+            demosaic_for(&xtrans, Some(DemosaicMethod::Markesteijn1)).unwrap(),
+            DemosaicMethod::Markesteijn1
+        );
+        let refused = demosaic_for(&xtrans, Some(DemosaicMethod::Amaze))
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            refused,
+            "--demosaic amaze is not a demosaic for this raw's 6x6 (X-Trans) mosaic; \
+             it takes markesteijn-3, markesteijn-1, bilinear"
+        );
+        assert!(demosaic_for(&bayer, Some(DemosaicMethod::Markesteijn3)).is_err());
+    }
+
     use super::*;
     use greycard_core::develop::lens;
     use greycard_core::raw::Shot;

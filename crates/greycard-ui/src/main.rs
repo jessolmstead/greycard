@@ -764,6 +764,14 @@ pub(crate) struct State {
     pub(crate) base_white: Option<WhiteBase>,
     /// The open frame and its profile, for the white balance preview.
     pub(crate) frame: Option<(Arc<RawFrame>, Box<CameraProfile>)>,
+    /// The file the panel is for and what is known of its mosaic, set
+    /// by `browser::panel_frame` wherever the panel's file changes and
+    /// brought up to date by `browser::learn_mosaic` as the worker
+    /// finds out; read through [`State::open_mosaic`].
+    pub(crate) panel_mosaic: Option<(PathBuf, crate::panel::browser::OpenMosaic)>,
+    /// What the session has learned of files' mosaics from the worker:
+    /// its read ahead of a decode, and the decoded frames.
+    pub(crate) mosaics: HashMap<PathBuf, crate::panel::browser::OpenMosaic>,
     /// A raw's scene or a picture already rendered, from the open.
     pub(crate) source: finish::Source,
     /// The last preview matrix, keyed by what it was computed for.
@@ -1128,6 +1136,13 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// What is known of the mosaic of the file the panel is for.
+    pub(crate) fn open_mosaic(&self) -> crate::panel::browser::OpenMosaic {
+        self.panel_mosaic
+            .as_ref()
+            .map_or(crate::panel::browser::OpenMosaic::Unknown, |(_, m)| *m)
+    }
+
     /// A blank state for `files`, on `app`'s window: no picture
     /// chosen, no sidecar read, nothing running or remembered. The
     /// one place every field is named; `run` overlays what the
@@ -1239,6 +1254,8 @@ impl State {
             also_at_start: Vec::new(),
             base_white: None,
             frame: None,
+            panel_mosaic: None,
+            mosaics: HashMap::new(),
             source: finish::Source::Scene,
             white_cache: None,
             shown_white: None,

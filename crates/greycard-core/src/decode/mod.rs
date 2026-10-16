@@ -14,7 +14,7 @@ use crate::raw::{Orientation, RawFrame};
 pub mod rawler_backend;
 pub mod style;
 
-pub use rawler_backend::{Probe, RawMetadata, RawlerDecoder, inside_decoder};
+pub use rawler_backend::{MosaicRead, Probe, RawMetadata, RawlerDecoder, inside_decoder};
 pub use style::{Adaptive, AdaptiveKind, CameraStyle, Maker};
 
 pub trait Decoder {
@@ -53,6 +53,18 @@ pub fn probe_path(path: impl AsRef<Path>) -> Result<Probe> {
     rawler_backend::probe_path(path.as_ref())
 }
 
+/// [`probe_path`] and the raw's kind of mosaic in one read of the file:
+/// see `rawler_backend::probe_and_mosaic_path`.
+pub fn probe_and_mosaic_path(path: impl AsRef<Path>) -> Result<(Probe, MosaicRead)> {
+    rawler_backend::probe_and_mosaic_path(path.as_ref())
+}
+
+/// A raw's kind of mosaic alone, without a sample decoded; `Ok(None)`
+/// for a raw that is not a mosaic.
+pub fn mosaic_path(path: impl AsRef<Path>) -> Result<Option<crate::raw::Mosaic>> {
+    rawler_backend::mosaic_path(path.as_ref())
+}
+
 /// The extensions taken for a raw the decoder opens.
 pub const RAW_EXTENSIONS: [&str; 8] = ["cr3", "cr2", "dng", "nef", "arw", "raf", "orf", "rw2"];
 
@@ -74,6 +86,12 @@ pub struct Stance {
     /// The size a develop comes out at *before* the tag turns it;
     /// `None` when the file will not say this cheaply.
     pub size: Option<(u32, u32)>,
+    /// The kind of mosaic, read from the same description as the size
+    /// (rawler's metadata alone does not carry the pattern); `None`
+    /// for a picture, a raw that is not a mosaic, or one that will not
+    /// say. What the editor's demosaic menu and a sync's demosaic
+    /// check go by before the pixels are read.
+    pub mosaic: Option<crate::raw::Mosaic>,
 }
 
 impl Stance {
@@ -104,14 +122,19 @@ impl Stance {
 /// screen about which way up it is or what shape it is.
 pub fn stance_path(path: impl AsRef<Path>) -> Result<Stance> {
     let path = path.as_ref();
-    let (orientation, size) = if crate::picture::is_picture_path(path) {
+    let (orientation, size, mosaic) = if crate::picture::is_picture_path(path) {
         // The picture module's own reader, which is the one that
         // decides which way up the picture is drawn.
-        crate::picture::stance_path(path)?
+        let (orientation, size) = crate::picture::stance_path(path)?;
+        (orientation, size, None)
     } else {
         rawler_backend::stance_path(path)?
     };
-    Ok(Stance { orientation, size })
+    Ok(Stance {
+        orientation,
+        size,
+        mosaic,
+    })
 }
 
 /// The orientation tag a file carries, raw or picture, without

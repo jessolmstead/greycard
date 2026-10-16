@@ -2,6 +2,35 @@
 
 use super::*;
 
+/// [`timed_open`], with the file's kind of mosaic read beside it on a
+/// thread of its own and sent as soon as it is had, so the demosaic
+/// menu need not wait on the decode and the decode does not wait on
+/// it. A read of the image's description, a millisecond or so
+/// (`decode::mosaic_path`); not made when the window already knows the
+/// file's mosaic (`known`). `Opened` carries the decoded frame, whose
+/// pattern says the same, so a word that lands after it changes
+/// nothing.
+pub(super) fn open_told(
+    path: &std::path::Path,
+    known: bool,
+    deliver: &Deliver,
+) -> anyhow::Result<(Input, greycard_core::decode::RawMetadata)> {
+    if !known && greycard_core::decode::is_raw_path(path) {
+        let (path, deliver) = (path.to_path_buf(), deliver.clone());
+        let spawned = std::thread::Builder::new()
+            .name("greycard stance".into())
+            .spawn(move || {
+                if let Ok(mosaic) = greycard_core::decode::mosaic_path(&path) {
+                    deliver(Outcome::Mosaic { path, mosaic });
+                }
+            });
+        if let Err(e) = spawned {
+            tracing::warn!("the mosaic read beside the decode: {e}");
+        }
+    }
+    timed_open(path)
+}
+
 /// `open`, with a line in the log for what it was and how long it took.
 pub(super) fn timed_open(
     path: &std::path::Path,

@@ -87,7 +87,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 /// [`MIGRATIONS`] holds those, and a library they reach is brought up
 /// in place, its rows marked for the next pass to fill. A newer one
 /// is refused.
-pub const SCHEMA_VERSION: i32 = 10;
+pub const SCHEMA_VERSION: i32 = 11;
 
 /// The steps a library is brought up by in place rather than rebuilt:
 /// from the version on the left to the next, the statements on the
@@ -126,7 +126,13 @@ pub const SCHEMA_VERSION: i32 = 10;
 /// (a row for each version a sidecar keeps beside the file's
 /// own, keyed by the file's row and the version's id, going with the
 /// file's row), read by the same pass; every sidecar hash is cleared
-/// as schema 8 did, so the next pass over each folder fills it.
+/// as schema 8 did, so the next pass over each folder fills it. Schema
+/// 11 adds the file's kind of mosaic (`mosaic`: bayer, xtrans, other,
+/// none for a picture or a raw that is not a mosaic, unknown for one
+/// that would not say), which the editor's demosaic menu and a sync's
+/// demosaic check ask before reading the file; a schema 10 row has it
+/// NULL, and the next pass over its folder reads it (an image's
+/// description, no samples) and nothing else of the file.
 const MIGRATIONS: &[(i32, &str)] = &[
     (
         2,
@@ -174,6 +180,7 @@ const MIGRATIONS: &[(i32, &str)] = &[
          );
          UPDATE files SET sidecar_hash = NULL WHERE sidecar IS NOT NULL;",
     ),
+    (10, "ALTER TABLE files ADD COLUMN mosaic TEXT;"),
 ];
 
 /// The index's own facts about itself, by name: `develop_keys`, what
@@ -285,7 +292,8 @@ CREATE TABLE IF NOT EXISTS files (
     turns         INTEGER NOT NULL DEFAULT 0,
     whole_hash    TEXT,
     exported      INTEGER NOT NULL DEFAULT 0,
-    develop_key   INTEGER
+    develop_key   INTEGER,
+    mosaic        TEXT
 );
 CREATE INDEX IF NOT EXISTS files_folder ON files(folder);
 CREATE INDEX IF NOT EXISTS files_hash ON files(hash);
@@ -377,7 +385,7 @@ const COLUMNS: &str = "files.id, files.path, files.size, files.mtime, files.hash
     files.aperture, files.shutter, files.taken, files.sidecar, files.sidecar_mtime, \
     files.rating, files.flag, files.label, files.keywords, files.missing_since, \
     files.maker, files.style, files.style_fixed, files.peripheral, files.edited, \
-    files.turns, files.exported";
+    files.turns, files.exported, files.mosaic";
 
 /// The columns [`RowMeta`] is read from, in the order `row_meta`
 /// reads them, after the path.
@@ -477,6 +485,47 @@ pub struct Exif {
     /// maker note; empty for a picture and for a raw the reader does
     /// not know.
     pub style: StyleTags,
+    /// The file's kind of mosaic, read beside the EXIF; `None` when it
+    /// would not say.
+    pub mosaic: Option<FileMosaic>,
+}
+
+/// What the index keeps of a file's mosaic, which decides the
+/// demosaics it takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileMosaic {
+    Mosaic(greycard_core::raw::Mosaic),
+    /// A picture, or a raw that is not a mosaic (a linear DNG, a
+    /// monochrome sensor).
+    NotMosaic,
+}
+
+impl FileMosaic {
+    /// The column's word for it; `unknown` for a file read and found
+    /// to say nothing, which is not read again until it changes.
+    pub fn text(mosaic: Option<FileMosaic>) -> &'static str {
+        use greycard_core::raw::Mosaic;
+        match mosaic {
+            Some(FileMosaic::Mosaic(Mosaic::Bayer)) => "bayer",
+            Some(FileMosaic::Mosaic(Mosaic::XTrans)) => "xtrans",
+            Some(FileMosaic::Mosaic(Mosaic::Other)) => "other",
+            Some(FileMosaic::NotMosaic) => "none",
+            None => "unknown",
+        }
+    }
+
+    /// The column's word read back; `None` for unknown, or a word this
+    /// build does not know.
+    pub fn from_text(text: &str) -> Option<FileMosaic> {
+        use greycard_core::raw::Mosaic;
+        match text {
+            "bayer" => Some(FileMosaic::Mosaic(Mosaic::Bayer)),
+            "xtrans" => Some(FileMosaic::Mosaic(Mosaic::XTrans)),
+            "other" => Some(FileMosaic::Mosaic(Mosaic::Other)),
+            "none" => Some(FileMosaic::NotMosaic),
+            _ => None,
+        }
+    }
 }
 
 /// What a raw says of the rendering its camera JPEG was made with,
@@ -523,6 +572,7 @@ impl Exif {
             shutter: probe.exposure_time,
             taken: probe.taken.as_deref().and_then(normalize_taken),
             style: StyleTags::default(),
+            mosaic: None,
         }
     }
 
@@ -1186,6 +1236,19 @@ impl Library {
     pub fn set_busy_handler(&self, handler: fn(i32) -> bool) -> Result<()> {
         self.conn.busy_handler(Some(handler))?;
         Ok(())
+    }
+
+    /// The kind of mosaic the index knows of the file at `path`:
+    /// `None` when it has no row for it, or the row's file has not been
+    /// read for it yet or would not say.
+    pub fn mosaic(&self, path: &Path) -> Result<Option<FileMosaic>> {
+        use rusqlite::OptionalExtension;
+        let text: Option<Option<String>> = self
+            .conn
+            .prepare_cached("SELECT mosaic FROM files WHERE path = ?")?
+            .query_row(params![path_bytes(path)], |r| r.get(0))
+            .optional()?;
+        Ok(text.flatten().as_deref().and_then(FileMosaic::from_text))
     }
 
     /// How many files the index holds, the missing among them.
@@ -2398,6 +2461,10 @@ fn entry(row: &rusqlite::Row<'_>) -> rusqlite::Result<Entry> {
                 fixed: row.get::<_, i64>(23)? != 0,
                 peripheral: row.get::<_, Option<i64>>(24)?.map(|v| v != 0),
             },
+            mosaic: row
+                .get::<_, Option<String>>(28)?
+                .as_deref()
+                .and_then(FileMosaic::from_text),
         },
         meta,
         sidecar: row

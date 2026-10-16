@@ -1217,6 +1217,9 @@ export component App inherits Window {
     // Whether the open file is a raw: the sections before the lens
     // have nothing to act on in a picture that is not.
     in property <bool> raw-input: true;
+    // Why the noise section rests, or "" when it does not: a picture
+    // that is not a raw, or a mosaic no denoiser takes yet.
+    in property <string> noise-unavailable: "";
     // What a picture that is not a raw was taken to be.
     in property <string> source-note;
     in property <bool> lens-available: false;
@@ -1252,7 +1255,18 @@ export component App inherits Window {
     in property <float> sharpen-measured-radius: 0;
     in property <float> sharpen-measured-threshold: 0;
     in-out property <string> demosaic: "amaze-vng4";
+    // The open raw's mosaic's choices, its default first.
     in property <[string]> demosaics;
+    // What the edit stores. The menu shows the choice resolved for the
+    // open raw's mosaic; only a pick changes what is stored.
+    in-out property <string> demosaic-stored: "amaze-vng4";
+    // Why the menu rests while the open raw's mosaic is not known, or "".
+    in property <string> demosaic-hint: "";
+    callback demosaic-picked(string);
+    demosaic-picked(v) => {
+        root.demosaic-stored = v;
+        root.develop-changed();
+    }
     // The camera profile: what the edit stores ("embedded" or a DCP's
     // file name), the names and the labels of what the profile
     // directory holds, a word on the directory, and a warning when the
@@ -2651,7 +2665,7 @@ export component App inherits Window {
                             denoise-learned <=> root.denoise-learned;
                             denoise-tiers: root.denoise-tiers;
                             denoise-learned-strength <=> root.denoise-learned-strength;
-                            raw-input: root.raw-input;
+                            unavailable: root.noise-unavailable;
                             develop-changed => { root.develop-changed(); }
                         }
                         if root.panel-tab == "Develop": LensSection {
@@ -2804,7 +2818,8 @@ export component App inherits Window {
                             source-note: root.source-note;
                             demosaic <=> root.demosaic;
                             demosaics: root.demosaics;
-                            develop-changed => { root.develop-changed(); }
+                            menu-hint: root.demosaic-hint;
+                            picked(v) => { root.demosaic-picked(v); }
                         }
                         if root.panel-tab == "Retouch": RetouchSection {
                             retouch-enabled <=> root.retouch-enabled;

@@ -69,6 +69,7 @@ use greycard_core::develop::denoise::{DenoiseOptions, Strength};
 use greycard_core::develop::local_contrast::LocalContrastOptions;
 use greycard_core::develop::sharpen::{self, Radius, SharpenOptions, Threshold};
 use greycard_core::develop::{DemosaicMethod, DevelopSettings};
+use greycard_core::raw::{CfaPattern, Mosaic};
 
 /// The schema version this build writes.
 pub const VERSION: u32 = 5;
@@ -779,6 +780,15 @@ impl Sharpen {
 }
 
 /// The demosaic, by the engine's names.
+///
+/// What is stored is what was chosen, for whatever frame it was chosen
+/// on; a choice the open frame's mosaic does not take (a Bayer method
+/// on an X-Trans frame, from an older sidecar's default or a sync) is
+/// resolved to the mosaic's default by the engine at the develop, shown
+/// so in the editor's menu through [`Demosaic::resolve`], and never
+/// written back on its own. The Markesteijn names are schema 5's, which
+/// no released build reads (0.6 reads up to 4), so they took no bump of
+/// their own.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Demosaic {
@@ -789,6 +799,10 @@ pub enum Demosaic {
     Rcd,
     Vng4,
     Bilinear,
+    #[serde(rename = "markesteijn-1")]
+    Markesteijn1,
+    #[serde(rename = "markesteijn-3")]
+    Markesteijn3,
 }
 
 impl Demosaic {
@@ -799,6 +813,8 @@ impl Demosaic {
         Demosaic::Rcd,
         Demosaic::Vng4,
         Demosaic::Bilinear,
+        Demosaic::Markesteijn1,
+        Demosaic::Markesteijn3,
     ];
 
     pub fn method(self) -> DemosaicMethod {
@@ -809,7 +825,44 @@ impl Demosaic {
             Demosaic::Rcd => DemosaicMethod::Rcd,
             Demosaic::Vng4 => DemosaicMethod::Vng4,
             Demosaic::Bilinear => DemosaicMethod::Bilinear,
+            Demosaic::Markesteijn1 => DemosaicMethod::Markesteijn1,
+            Demosaic::Markesteijn3 => DemosaicMethod::Markesteijn3,
         }
+    }
+
+    /// The edit's name for an engine method.
+    pub fn from_method(method: DemosaicMethod) -> Self {
+        Self::from_name(method.name()).unwrap_or_default()
+    }
+
+    /// The choices for a frame of `pattern`'s mosaic, its default
+    /// first: what a menu offers.
+    pub fn for_pattern(pattern: &CfaPattern) -> Vec<Demosaic> {
+        DemosaicMethod::for_pattern(pattern)
+            .iter()
+            .map(|m| Self::from_method(*m))
+            .collect()
+    }
+
+    /// The choices for a frame of a `mosaic`, its default first.
+    pub fn for_kind(mosaic: Mosaic) -> Vec<Demosaic> {
+        DemosaicMethod::for_kind(mosaic)
+            .iter()
+            .map(|m| Self::from_method(*m))
+            .collect()
+    }
+
+    /// What a develop of a frame of a `mosaic` runs for this choice
+    /// ([`DemosaicMethod::resolve`]).
+    pub fn resolve(self, mosaic: Mosaic) -> Self {
+        Self::from_method(self.method().resolve(mosaic))
+    }
+
+    /// What a develop of a `pattern` frame runs for this choice: the
+    /// engine's resolve ([`DemosaicMethod::for_mosaic`]), for a menu to
+    /// show what will run.
+    pub fn for_mosaic(self, pattern: &CfaPattern) -> Self {
+        Self::from_method(self.method().for_mosaic(pattern))
     }
 
     /// The engine's name for it, which is also the serialized form.
@@ -3605,6 +3658,71 @@ mod tests {
             assert_eq!(json, format!("\"{}\"", d.name()));
         }
         assert_eq!(DemosaicMethod::ALL.len(), Demosaic::ALL.len());
+    }
+
+    /// The Markesteijn choices go into a sidecar by the engine's names
+    /// and come back; a Bayer frame's stored choice and an X-Trans
+    /// frame's show what the develop will run.
+    #[test]
+    fn x_trans_choices_round_trip_and_resolve_by_the_mosaic() {
+        for d in [Demosaic::Markesteijn1, Demosaic::Markesteijn3] {
+            let edit = Edit {
+                demosaic: d,
+                ..Edit::default()
+            };
+            let json = serde_json::to_string_pretty(&edit).unwrap();
+            assert!(
+                json.contains(&format!("\"demosaic\": \"{}\"", d.name())),
+                "{json}"
+            );
+            let back = Edit::from_json(&json).unwrap();
+            assert_eq!(back.demosaic, d);
+            assert_eq!(back.version, VERSION);
+        }
+        let xtrans = CfaPattern::xtrans();
+        let bayer = CfaPattern::rggb();
+        assert_eq!(
+            Demosaic::for_pattern(&xtrans),
+            vec![
+                Demosaic::Markesteijn3,
+                Demosaic::Markesteijn1,
+                Demosaic::Bilinear
+            ]
+        );
+        assert_eq!(Demosaic::for_pattern(&bayer)[0], Demosaic::AmazeVng4);
+        assert_eq!(
+            Demosaic::AmazeVng4.for_mosaic(&xtrans),
+            Demosaic::Markesteijn3
+        );
+        assert_eq!(
+            Demosaic::Markesteijn1.for_mosaic(&bayer),
+            Demosaic::AmazeVng4
+        );
+        assert_eq!(
+            Demosaic::Markesteijn1.for_mosaic(&xtrans),
+            Demosaic::Markesteijn1
+        );
+        assert_eq!(Demosaic::Rcd.for_mosaic(&bayer), Demosaic::Rcd);
+        // The engine is handed what was stored; it resolves at the
+        // develop, so the stored choice is never rewritten by a read.
+        let edit = Edit::default();
+        assert_eq!(edit.settings().demosaic, DemosaicMethod::AmazeVng4);
+    }
+
+    /// A Markesteijn name is written at schema 5 and read back; an
+    /// unknown name is an error rather than a wrong demosaic. That a
+    /// released build refuses the file is not tested here: 0.6 reads up
+    /// to schema 4, and every write of this build is at 5.
+    #[test]
+    fn a_markesteijn_sidecar_is_schema_five() {
+        assert_eq!(VERSION, 5);
+        let json = r#"{"version": 5, "demosaic": "markesteijn-3"}"#;
+        assert_eq!(
+            Edit::from_json(json).unwrap().demosaic,
+            Demosaic::Markesteijn3
+        );
+        let unknown = Edit::from_json(r#"{"version": 5, "demosaic": "markesteijn-9"}"#);
+        assert!(matches!(unknown, Err(Error::Json(_))));
     }
 
     #[test]

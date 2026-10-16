@@ -848,6 +848,123 @@ pub(crate) fn stance(st: &mut State, c: usize) -> Option<greycard_core::decode::
     }
 }
 
+/// What is known of a file's mosaic, which decides its demosaics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum OpenMosaic {
+    /// Not read yet: the demosaic menu rests rather than guess.
+    #[default]
+    Unknown,
+    Known(greycard_core::raw::Mosaic),
+    /// A picture, or a raw that is not a mosaic (a linear DNG, a
+    /// monochrome sensor): there is no demosaic to choose.
+    NotMosaic,
+    /// Neither the read ahead nor the decode could read the raw: the
+    /// open failed, and the menu says so rather than wait.
+    Unreadable,
+}
+
+impl OpenMosaic {
+    /// The mosaic, when it is known to be one.
+    pub(crate) fn kind(self) -> Option<greycard_core::raw::Mosaic> {
+        match self {
+            OpenMosaic::Known(m) => Some(m),
+            _ => None,
+        }
+    }
+}
+
+/// What the session knows of cell `c`'s mosaic without reading the
+/// file: a picture is none, then what the worker has said of it, then
+/// a stance already read, then the library's row, which its indexer
+/// filled in the background.
+pub(crate) fn known_mosaic(st: &State, c: usize) -> OpenMosaic {
+    let Some(path) = st.path_at(c) else {
+        return OpenMosaic::Unknown;
+    };
+    if greycard_core::picture::is_picture_path(path) {
+        return OpenMosaic::NotMosaic;
+    }
+    if let Some(m) = st.mosaics.get(path) {
+        return *m;
+    }
+    if let Some(m) = st.stances.get(path).and_then(|s| s.mosaic) {
+        return OpenMosaic::Known(m);
+    }
+    match st
+        .index_reader
+        .as_ref()
+        .and_then(|lib| lib.mosaic(path).ok().flatten())
+    {
+        Some(greycard_library::FileMosaic::Mosaic(m)) => OpenMosaic::Known(m),
+        Some(greycard_library::FileMosaic::NotMosaic) => OpenMosaic::NotMosaic,
+        None => OpenMosaic::Unknown,
+    }
+}
+
+/// The panel is cell `c`'s from here (or no file's): the one place the
+/// panel's mosaic is set, called wherever the panel's file changes
+/// (an open, a pick, an offline frame, leaving culling) before its
+/// edit is shown. Nothing is read: what the session knows, else
+/// unknown until the worker says ([`learn_mosaic`]).
+pub(crate) fn panel_frame(st: &mut State, c: Option<usize>) {
+    st.panel_mosaic = c.and_then(|c| {
+        let known = known_mosaic(st, c);
+        st.path_at(c).cloned().map(|p| (p, known))
+    });
+}
+
+/// Remember what the worker found of `path`'s mosaic and, when it is
+/// the panel's file, show the demosaic menu for it.
+pub(crate) fn learn_mosaic(st: &mut State, app: &App, path: &Path, mosaic: OpenMosaic) {
+    if mosaic == OpenMosaic::Unknown {
+        return;
+    }
+    st.mosaics.insert(path.to_path_buf(), mosaic);
+    if let Some((p, m)) = st.panel_mosaic.as_mut()
+        && p == path
+        && *m != mosaic
+    {
+        *m = mosaic;
+        // What the panel stores, which a pick may have changed since
+        // the edit was shown.
+        let stored = crate::panel::edit::read_demosaic(app);
+        crate::panel::edit::show_demosaic(mosaic, stored, app);
+    }
+}
+
+/// The panel's file failed to open while its mosaic was still unknown:
+/// the menu's last word is that the raw could not be read.
+pub(crate) fn mosaic_unreadable(st: &mut State, app: &App) {
+    if let Some((_, m)) = st.panel_mosaic.as_mut()
+        && *m == OpenMosaic::Unknown
+    {
+        *m = OpenMosaic::Unreadable;
+        let stored = crate::panel::edit::read_demosaic(app);
+        crate::panel::edit::show_demosaic(OpenMosaic::Unreadable, stored, app);
+    }
+}
+
+/// Cell `c`'s mosaic for a caller that needs it now (a sync carrying a
+/// demosaic): what is known ([`known_mosaic`], the library's row
+/// among it), else a read of the file's image description on this
+/// thread, a millisecond or so locally, kept for the session. Only a
+/// file the library has not indexed yet comes to the read.
+pub(crate) fn mosaic_of(st: &mut State, c: usize) -> Option<greycard_core::raw::Mosaic> {
+    match known_mosaic(st, c) {
+        OpenMosaic::Known(m) => Some(m),
+        OpenMosaic::NotMosaic | OpenMosaic::Unreadable => None,
+        OpenMosaic::Unknown => {
+            let path = st.path_at(c)?.clone();
+            let read = greycard_core::decode::mosaic_path(&path)
+                .inspect_err(|e| tracing::warn!("{}: its mosaic: {e}", file_name(&path)))
+                .ok()?;
+            st.mosaics
+                .insert(path, read.map_or(OpenMosaic::NotMosaic, OpenMosaic::Known));
+            read
+        }
+    }
+}
+
 /// A frame's own orientation tag. `None` when the file will not say,
 /// which is when nothing here writes or believes an XMP's
 /// orientation for it.
@@ -1705,6 +1822,7 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
         app.set_placing("".into());
         st.guiding.clear();
         st.overridden = None;
+        panel_frame(st, Some(i));
         show_edit(st, &edit, app, None);
         st.edit = edit;
         st.panel_stand_in = Some(path.clone());
@@ -1817,6 +1935,7 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
         st.placing = None;
         app.set_placing("".into());
         st.guiding.clear();
+        panel_frame(st, Some(i));
         show_edit(st, &edit, app, None);
         st.edit = edit;
         st.panel_stand_in = Some(file.clone());
@@ -1882,6 +2001,9 @@ pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     st.source_size = (0, 0);
     st.turn_pressed = None;
     app.set_guide_mode("".into());
+    // The frame's mosaic as far as the session knows it, with no read
+    // here: the worker says ahead of its decode.
+    panel_frame(st, Some(i));
     show_edit(st, &edit, app, st.target);
     st.edit = edit.clone();
     st.current = Some(i);
@@ -1926,6 +2048,7 @@ pub(crate) fn open_job(st: &mut State, i: usize, edit: Edit) -> Job {
         generation: st.generation,
         seed_blend: crate::rows::wants_seed(st, i),
         turn: st.sidecars[file].turn,
+        stance_known: known_mosaic(st, i) != OpenMosaic::Unknown,
     }
 }
 

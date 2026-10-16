@@ -478,7 +478,19 @@ clears or a tester asks for it.
 - [ ] `stack.rs` and `register.rs` warps: rows written the way the lens
       correction's were, with captured models re-read per pixel; the
       lens gain (§165) says they are the next place to look
-- [ ] X-Trans demosaic. Waits on an X-Trans frame to test against
+- [ ] X-Trans noise measurement, which brings back the hot pixel
+      repair, the profiled denoise and the dual threshold on X-Trans
+      (§322)
+- [ ] X-Trans chromatic aberration correction, CPU reference first,
+      then the GPU's (§322)
+- [ ] The capture sharpen's radius measured from an X-Trans mosaic
+      (§322)
+- [ ] A learned denoiser contract for X-Trans: a packing of its own and
+      training data (§322)
+- [ ] A GPU X-Trans demosaic, if the CPU's 0.6 s on 40 MP becomes what
+      a develop waits on (§322)
+- [ ] A sync's first read of frames the library has not indexed yet
+      runs on the window's thread, once a frame a session (§322)
 - [ ] Per-camera hot pixel defect map. Waits on a place for per-camera
       data and a way to take dark frames in (§13s)
 - [ ] A per-photo switch for the hot pixel repair in the edit schema,
@@ -586,6 +598,9 @@ release when the wait clears.
       on the release after 1.18.0 (§99)
 - [ ] Drop the rawler `[patch.crates-io]`. Waits on a rawler release
       carrying dnglab/dnglab#840 (§13j)
+- [ ] rawler's DNG decoder reads the image data on a dummy read, so a
+      DNG's `Stance` costs a decode; report and fix upstream, then
+      drop the tag reader in `dng_mosaic` (§322)
 - [ ] rawler's TIFF reader follows the next-IFD pointer with no cycle
       check when given no chain limit, so a file whose IFD0 points at
       itself grows memory until killed; its CR3 path parses the CMT

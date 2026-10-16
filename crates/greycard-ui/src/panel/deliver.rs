@@ -391,10 +391,31 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     st.source = finish::Source::Scene;
                     app.set_raw_input(true);
                     app.set_source_note("".into());
+                    // Neither denoiser has an X-Trans version yet: the
+                    // section says so and its controls rest.
+                    let xtrans = st.frame.as_ref().is_some_and(|(f, _)| {
+                        matches!(&f.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans())
+                    });
+                    app.set_noise_unavailable(
+                        if xtrans { "not on X-Trans yet" } else { "" }.into(),
+                    );
+                    // The raw's mosaic, now known from its pixels: the
+                    // menu, if the worker's read ahead had not said.
+                    let mosaic = match st.frame.as_ref().map(|(f, _)| &f.layout) {
+                        Some(greycard_core::raw::SensorLayout::Cfa(p)) => {
+                            crate::panel::browser::OpenMosaic::Known(p.mosaic())
+                        }
+                        Some(_) => crate::panel::browser::OpenMosaic::NotMosaic,
+                        None => crate::panel::browser::OpenMosaic::Unknown,
+                    };
+                    if let Some(path) = st.current.and_then(|c| st.path_at(c)).cloned() {
+                        crate::panel::browser::learn_mosaic(&mut st, app, &path, mosaic);
+                    }
                 }
                 SourceKind::Picture { space, bits } => {
                     st.source = finish::Source::Display;
                     app.set_raw_input(false);
+                    app.set_noise_unavailable("raw only".into());
                     app.set_source_note(
                         format!(
                             "{}-bit {} read as {space}; already rendered",
@@ -527,6 +548,7 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                     tracing::warn!("learned denoiser failed: {message}; the engine's denoise");
                     format!(", the engine's denoise: the learned one failed ({message})")
                 }
+                LearnedReport::Unavailable(why) => format!(", no denoise: {why}"),
             };
             // The fills: made, or left as they were and why. A missing
             // model is offered, as the denoiser's is.
@@ -630,6 +652,11 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
                 st.awaiting_turn = false;
             }
         }
+        Outcome::Mosaic { path, mosaic } => {
+            use crate::panel::browser::OpenMosaic;
+            let known = mosaic.map_or(OpenMosaic::NotMosaic, OpenMosaic::Known);
+            crate::panel::browser::learn_mosaic(&mut state.borrow_mut(), app, &path, known);
+        }
         Outcome::Filling { generation, name } => {
             // The outline on the viewport says where; this says why
             // the picture has not moved yet.
@@ -648,6 +675,9 @@ pub(crate) fn deliver(app: &App, outcome: Outcome) {
             if generation == st.generation {
                 app.set_status(format!("failed: {message}").into());
                 app.set_busy(false);
+                // An open that failed before anything said what the raw
+                // is: the demosaic menu stops waiting.
+                crate::panel::browser::mosaic_unreadable(&mut st, app);
                 // The planes it was asked for are not coming: a mask's
                 // Detail moved again asks for them again.
                 st.planes_asked = Default::default();

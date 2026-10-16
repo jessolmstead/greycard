@@ -806,7 +806,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 app.set_status("choose what the preset carries".into());
                 return;
             }
-            let edit = read_edit(&app, &st.edit, st.target);
+            // The demosaic as the open frame runs it, which is what its
+            // menu shows.
+            let edit = crate::panel::sync::as_source(
+                read_edit(&app, &st.edit, st.target),
+                st.open_mosaic().kind(),
+            );
             let preset = Preset::from_choice(&name, &edit, &choice);
             app.set_preset_open(false);
             match st.preset_store.as_ref().map(|s| s.save(&preset)) {

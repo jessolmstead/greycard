@@ -275,6 +275,7 @@ pub(crate) fn leave_cull(st: &mut State, app: &App, worker: &Worker, with: Optio
     } else {
         crate::panel::parts::another_picture(st);
     }
+    crate::panel::browser::panel_frame(st, Some(c));
     show_edit(st, &edit, app, None);
     // A control's change is a step of the frame's history, as it
     // would be out of the mode: written once the panel rests.
@@ -2443,6 +2444,85 @@ mod tests {
         assert!(st.part_asks.is_empty());
         assert!(st.part_dismissed.is_empty());
         assert_eq!(st.learned_of.as_ref(), Some(&st.files[2]));
+    }
+
+    /// Culling left on a frame of the other mosaic: the demosaic menu
+    /// is that frame's, from what the session knows of it, or resting
+    /// while nothing is known; never the frame before's list, enabled.
+    #[test]
+    fn leaving_culling_onto_an_x_trans_frame_shows_its_own_menu() {
+        use crate::panel::browser::OpenMosaic;
+        use greycard_core::raw::Mosaic;
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        let mut st = state.borrow_mut();
+        let (bayer, xtrans) = (st.files[0].clone(), st.files[2].clone());
+        st.mosaics.insert(bayer, OpenMosaic::Known(Mosaic::Bayer));
+        st.mosaics
+            .insert(xtrans.clone(), OpenMosaic::Known(Mosaic::XTrans));
+        drop(st);
+        app.invoke_select(0);
+        assert_eq!(app.get_demosaic(), "amaze-vng4");
+        assert_eq!(app.get_demosaics().row_count(), 6);
+        let mut st = state.borrow_mut();
+        // Into culling on the Bayer frame, across to the X-Trans one as
+        // a key in the mode does, and out there.
+        enter_cull(&mut st, &app, 1);
+        cull_select(&mut st, &app, 2);
+        leave_cull(&mut st, &app, &worker, None);
+        assert_eq!(st.open_mosaic(), OpenMosaic::Known(Mosaic::XTrans));
+        assert_eq!(app.get_demosaic(), "markesteijn-3");
+        let names: Vec<String> = app.get_demosaics().iter().map(|s| s.to_string()).collect();
+        assert_eq!(names, ["markesteijn-3", "markesteijn-1", "bilinear"]);
+        assert_eq!(app.get_demosaic_hint(), "");
+        // A frame nothing is known of yet: the menu rests.
+        st.mosaics.remove(&xtrans);
+        enter_cull(&mut st, &app, 1);
+        cull_select(&mut st, &app, 2);
+        leave_cull(&mut st, &app, &worker, None);
+        assert_eq!(st.open_mosaic(), OpenMosaic::Unknown);
+        assert_eq!(app.get_demosaic_hint(), "reading the raw");
+        assert_eq!(app.get_demosaics().row_count(), 1);
+        drop(st);
+        // The worker's word lands, through the hop from its thread to
+        // the window's: the menu fills.
+        crate::STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
+        crate::panel::deliver::deliver(
+            &app,
+            crate::worker::Outcome::Mosaic {
+                path: xtrans.clone(),
+                mosaic: Some(Mosaic::XTrans),
+            },
+        );
+        crate::STATE.with(|s| *s.borrow_mut() = None);
+        assert_eq!(app.get_demosaic_hint(), "");
+        assert_eq!(app.get_demosaic(), "markesteijn-3");
+        assert_eq!(
+            state.borrow().mosaics.get(&xtrans),
+            Some(&OpenMosaic::Known(Mosaic::XTrans))
+        );
+        // An open that fails while nothing has said what the raw is:
+        // the menu stops waiting and says so.
+        {
+            let mut st = state.borrow_mut();
+            st.mosaics.clear();
+            enter_cull(&mut st, &app, 1);
+            cull_select(&mut st, &app, 2);
+            leave_cull(&mut st, &app, &worker, None);
+            assert_eq!(app.get_demosaic_hint(), "reading the raw");
+        }
+        let generation = state.borrow().generation;
+        crate::STATE.with(|s| *s.borrow_mut() = Some(state.clone()));
+        crate::panel::deliver::deliver(
+            &app,
+            crate::worker::Outcome::Failed {
+                generation,
+                message: "not a raw this build reads".into(),
+            },
+        );
+        crate::STATE.with(|s| *s.borrow_mut() = None);
+        assert_eq!(app.get_demosaic_hint(), "the raw could not be read");
+        assert_eq!(state.borrow().open_mosaic(), OpenMosaic::Unreadable);
     }
 
     /// The frame's full-size copy held from 1:1 and no view-size one

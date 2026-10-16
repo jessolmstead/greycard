@@ -731,6 +731,7 @@ mod tests {
             generation: 1,
             seed_blend: frame.seed_blend,
             turn: frame.turn,
+            stance_known: false,
         });
         let mut edit = frame.edit.clone();
         let wait = Duration::from_secs(300);

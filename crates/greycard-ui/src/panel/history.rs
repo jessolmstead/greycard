@@ -334,7 +334,7 @@ pub(crate) fn peek(st: &mut State, app: &App, edit: Option<Edit>, what: &str) {
     match edit {
         Some(edit) => {
             let panel = read_edit(app, &st.edit, st.target);
-            let unseen = finish::not_previewed(&edit, &panel);
+            let unseen = finish::not_previewed(&edit, &panel, st.open_mosaic().kind());
             let note = if unseen.is_empty() {
                 String::new()
             } else {

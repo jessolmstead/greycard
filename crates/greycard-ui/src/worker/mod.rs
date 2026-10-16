@@ -42,7 +42,7 @@ mod thumbs;
 use self::{base::blend, decode::open};
 use self::{
     base::{engine_base, learned_base, turn_base, turns_exactly},
-    decode::{correct_lens, lens_report, timed_open},
+    decode::{correct_lens, lens_report, open_told, timed_open},
     develop::develop_job,
     engine::{left_out_of, run},
     export::{export_other, finish_export, open_picture, seeded, write_export},
@@ -149,6 +149,9 @@ pub enum Job {
         /// with the open file, so an export does not have to carry
         /// it as well.
         turn: u8,
+        /// The window knows the file's mosaic already (its library row,
+        /// an open before): no stance is read ahead of the decode.
+        stance_known: bool,
     },
     Develop {
         edit: Edit,
@@ -242,6 +245,23 @@ pub enum LearnedReport {
     Missing(&'static greycard_ai::Model),
     /// It could not run; the engine's own path stood in.
     Failed(String),
+    /// No denoiser takes this frame's mosaic (X-Trans, so far): the
+    /// edit asked for one, learned or profiled, and the develop ran
+    /// without any. Says why.
+    Unavailable(&'static str),
+}
+
+/// Why no denoiser runs on `frame`, when the edit asks for one: neither
+/// has an X-Trans version yet. Read from the layout before anything is
+/// prepared or loaded.
+fn denoise_unavailable(
+    frame: &RawFrame,
+    settings: &DevelopSettings,
+    learned: bool,
+) -> Option<&'static str> {
+    let xtrans = matches!(&frame.layout, greycard_core::raw::SensorLayout::Cfa(p) if p.is_xtrans());
+    (xtrans && (learned || settings.denoise.is_some()))
+        .then_some("no denoiser has an X-Trans version yet")
 }
 
 /// What the fill model did for a develop's Fill patches, by name.
@@ -368,6 +388,13 @@ pub enum Outcome {
         learned: LearnedReport,
         /// What the fill model did.
         fills: FillReport,
+    },
+    /// The kind of mosaic of a raw being opened (`None`: it is not a
+    /// mosaic), read beside its decode so the demosaic menu is the
+    /// file's before its pixels are.
+    Mosaic {
+        path: PathBuf,
+        mosaic: Option<greycard_core::raw::Mosaic>,
     },
     /// The fill model is at work on the patch named, for a develop
     /// still on its way.
@@ -857,6 +884,12 @@ struct Base {
     /// keeps the base reports `Kept`, and an export of it must still
     /// say what it went without (`left_out_of`).
     stand_in: Option<LearnedReport>,
+    /// Why the demosaic the edit chose did not run, when it was a
+    /// method of the other mosaic and the frame's default ran in its
+    /// place: said with what an export left out (`left_out_of`). Not
+    /// for the engine's own default, which an edit stores when nobody
+    /// chose.
+    gave_way: Option<String>,
     /// The camera profile a raw's white was resolved through, which a
     /// mask's own white balance is resolved through too
     /// ([`Base::white_shift`]); `None` for a picture that is not a raw.

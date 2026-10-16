@@ -123,7 +123,11 @@ pub fn inpaint_segments(
     let pw = round2(width / 3) + 2 * BORDER;
     let ph = round2(height / 3) + 2 * BORDER;
     let plane_index = |row: usize, col: usize| (BORDER + row / 3) * pw + col / 3 + BORDER;
-    let xshift = if pattern.color_at(0, 0) == CfaColor::Green {
+    // darktable's column phase of the blocks: 2 for X-Trans, and for
+    // Bayer 1 where the pattern starts on green, else 2.
+    let xshift = if pattern.is_xtrans() {
+        2
+    } else if pattern.color_at(0, 0) == CfaColor::Green {
         1
     } else {
         2
