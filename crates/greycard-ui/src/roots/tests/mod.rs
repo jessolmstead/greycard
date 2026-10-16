@@ -2,6 +2,9 @@
 //! helpers more than one file of tests uses.
 
 use super::*;
+// A glob, so a name reached only by the unix-only tests is no unused
+// import on Windows.
+use super::{kept_up::*, pane::*, view::*, watcher::*};
 use crate::testing::{state_for, window};
 use greycard_library::fixture::{A7, R5, R6, write_frame};
 use std::time::Duration;

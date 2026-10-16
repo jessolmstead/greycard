@@ -81,14 +81,6 @@ use self::{
     view::loading_done,
     watcher::{Poll, online, watch},
 };
-#[cfg(test)]
-use self::{
-    kept_up::{changed_rows, follow_current},
-    pane::{Check, checked_within},
-    view::{ask, grouped, loading_tick},
-    watcher::{Plan, WATCH_REMOTE, build_in_place, poll},
-};
-
 pub(crate) use self::{
     checks::{answer_of, answers, answers_of},
     kept_up::{ask_owed, background_done, folders_passed},
