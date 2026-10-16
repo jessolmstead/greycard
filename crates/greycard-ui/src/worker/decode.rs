@@ -1,0 +1,127 @@
+//! Decoding a frame, and the lens correction found for it.
+
+use super::*;
+
+/// `open`, with a line in the log for what it was and how long it took.
+pub(super) fn timed_open(
+    path: &std::path::Path,
+) -> anyhow::Result<(Input, greycard_core::decode::RawMetadata)> {
+    let started = Instant::now();
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let result = open(path);
+    match &result {
+        Ok((Input::Raw(f), _)) => tracing::info!(
+            "opened {name}: {} {} {}x{} in {:.2} s",
+            f.make,
+            f.model,
+            f.width,
+            f.height,
+            started.elapsed().as_secs_f64()
+        ),
+        Ok((Input::Picture { image, .. }, _)) => tracing::info!(
+            "opened {name}: picture {}x{} in {:.2} s",
+            image.width,
+            image.height,
+            started.elapsed().as_secs_f64()
+        ),
+        Err(e) => tracing::error!("open {name}: {e:#}"),
+    }
+    result
+}
+
+/// Read a file: a raw with its metadata, or a picture with its own.
+pub(super) fn open(
+    path: &std::path::Path,
+) -> anyhow::Result<(Input, greycard_core::decode::RawMetadata)> {
+    if is_picture_path(path) {
+        let mut picture = decode_picture_path(path)?;
+        let image = std::mem::replace(&mut picture.image, WorkingImage::new(0, 0));
+        let metadata = picture.metadata.clone();
+        return Ok((
+            Input::Picture {
+                image: Arc::new(image),
+                meta: Arc::new(picture),
+            },
+            metadata,
+        ));
+    }
+    let (f, m) = greycard_core::decode::decode_path_with_metadata(path)?;
+    Ok((Input::Raw(Arc::new(f)), m))
+}
+
+/// What the lens database says of a file.
+pub(super) fn lens_report(db: Option<&greycard_lens::Database>, input: &Input) -> LensReport {
+    let Some(db) = db else {
+        return LensReport::NoDatabase;
+    };
+    let (make, model, shot) = input.identity();
+    let Some(name) = shot.lens_model.as_deref() else {
+        return LensReport::NoLensName;
+    };
+    match db.profile_for(make, model, shot) {
+        Some(p) => {
+            tracing::info!(
+                "lens {name}: {}{}{}",
+                p.name(),
+                if p.camera.is_some() {
+                    ""
+                } else {
+                    ", body not in the database"
+                },
+                if p.measured_on_smaller_sensor() {
+                    format!(
+                        ", measured on a smaller sensor (the corners reach r={:.2}; the vignetting is held at its edge past r=1)",
+                        p.reach()
+                    )
+                } else {
+                    String::new()
+                }
+            );
+            LensReport::Found {
+                lens: p.name().to_string(),
+                camera: p.camera.is_some(),
+                smaller_sensor: p.measured_on_smaller_sensor(),
+            }
+        }
+        None => {
+            tracing::warn!("lens {name} on {make} {model}: not in the database");
+            LensReport::Unknown(name.to_string())
+        }
+    }
+}
+
+/// The developed picture with the edit's lens corrections: the
+/// profile's from the database, the manual one, in the order the edit
+/// gives them. The picture itself when there is nothing to do.
+pub(super) fn correct_lens(
+    image: WorkingImage,
+    input: &Input,
+    edit: &Edit,
+    db: Option<&greycard_lens::Database>,
+) -> WorkingImage {
+    let (make, model, shot) = input.identity();
+    correct_lens_of(image, make, model, shot, edit, db)
+}
+
+/// [`correct_lens`] for a frame named by its body and its shot: the
+/// reduced develop's, which has no `Input`.
+pub(crate) fn correct_lens_of(
+    image: WorkingImage,
+    make: &str,
+    model: &str,
+    shot: &Shot,
+    edit: &Edit,
+    db: Option<&greycard_lens::Database>,
+) -> WorkingImage {
+    let profile = db
+        .and_then(|db| db.profile_for(make, model, shot))
+        .map(|p| p.correction(image.width, image.height, shot, greycard_lens::Wanted::ALL));
+    let mut image = image;
+    for c in edit.lens.corrections(profile) {
+        image = greycard_core::develop::lens::correct(&image, &c).0;
+    }
+    image
+}
