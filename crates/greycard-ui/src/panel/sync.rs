@@ -1779,7 +1779,7 @@ mod tests {
             "no file was read"
         );
         drop(st);
-        std::fs::remove_dir_all(&dir).unwrap();
+        crate::testing::remove_scratch(state, &dir);
     }
 
     /// The sheet reads the frame behind it, so nothing under it may
