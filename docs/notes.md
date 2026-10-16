@@ -331,3 +331,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§318. Splitting worker.rs](notes/318-splitting-worker-rs.md) (2026-10-15)
 - [§319. Virtual copies, part 5: collections](notes/319-virtual-copies-part-5-collections.md) (2026-10-15)
 - [§320. Virtual copies, part 3: Compare](notes/320-virtual-copies-part-3-compare.md) (2026-10-15)
+- [§321. Splitting roots.rs](notes/321-splitting-roots-rs.md) (2026-10-15)
