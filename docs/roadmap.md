@@ -537,6 +537,7 @@ clears or a tester asks for it.
 - [ ] Zoom bar for grid and lightbox
 - [ ] Flexible dual monitor support
 - [ ] Reference view
+- [ ] MIDI Controller support
 - [ ] Different frameline options when cropping
 - [ ] Camera tethering. Low priority.
 - [ ] Idea: Show the R, G, B, and W points on the histogram when hovering
