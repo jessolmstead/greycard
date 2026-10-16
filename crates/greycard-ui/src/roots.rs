@@ -3165,6 +3165,7 @@ pub(crate) fn merge(
     // its place in the selection; a cell gone (its file, or a version
     // the read found taken out) takes nothing with it. The numbering
     // moved puts down what is keyed by it, asked for again below.
+    let compared = crate::versions::compared_file(st);
     let renumbered =
         crate::versions::relist(st, app, worker, &|i| new_of.get(i).copied().flatten());
     let current = st.current;
@@ -3190,6 +3191,7 @@ pub(crate) fn merge(
     {
         crate::panel::cull::cull_select(st, app, c);
     }
+    crate::versions::refit_compare(st, app, compared);
     let next = match (current, gone_row) {
         // The frame on screen is gone from the disk: the nearest row
         // is opened, and nothing is saved for the file that went.
@@ -4852,6 +4854,7 @@ pub(crate) mod tests {
             small: false,
             own: true,
             local: crate::cull::Origin::Local,
+            version: None,
         }];
         let line = crate::panel::cull::cull_status(
             state.borrow().cull.as_ref().unwrap(),

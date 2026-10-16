@@ -31,8 +31,6 @@ collections and smart collections that survive a move, a mask has its
 own Detail, and the first tester's rough edges on masks, the touchpad
 and export are smoothed.
 
-- [ ] Virtual copies, part 3: Compare versions side by side in cull mode
-      (§309)
 
 ## Tracks
 

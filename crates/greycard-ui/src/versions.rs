@@ -409,6 +409,7 @@ pub(crate) fn settle(st: &mut State, app: &App, worker: &Worker) -> bool {
     }
     let was_current = st.current;
     let was_file = was_current.and_then(|c| st.file_at(c));
+    let compared = compared_file(st);
     relist(st, app, worker, &Some);
     // Which cells show an edit, before any picture is asked for.
     crate::edited::note_list(st, worker);
@@ -432,7 +433,29 @@ pub(crate) fn settle(st: &mut State, app: &App, worker: &Worker) -> bool {
     {
         crate::panel::cull::cull_select(st, app, c);
     }
+    refit_compare(st, app, compared);
     true
+}
+
+/// The file a versions compare is on and how many tiles it shows, to
+/// be taken before a relist, which renumbers the cells under it.
+pub(crate) fn compared_file(st: &State) -> Option<(PathBuf, usize)> {
+    let cull = st.cull.as_ref()?;
+    Some((cull.versions_of.clone()?, cull.compare))
+}
+
+/// After a relist, a versions compare fitted to its file's cells as they
+/// are now (`compared`, from [`compared_file`] before it), so it closes
+/// up on them and never takes in a frame of another file; with the file
+/// gone, the view is no longer a versions compare. The zoom stands when
+/// the count comes back as it was. Every relist with a culling view calls
+/// it: `settle`, the list's merge, a drop of files.
+pub(crate) fn refit_compare(st: &mut State, app: &App, compared: Option<(PathBuf, usize)>) {
+    if let Some((path, was)) = compared
+        && st.cull.is_some()
+    {
+        crate::panel::versions::fit_compare(st, app, &path, Some(was));
+    }
 }
 
 /// [`settle`] at the next turn of the event loop, from a place that
@@ -558,6 +581,11 @@ pub(crate) fn relist(
             cull.textures.clear();
             cull.clear_failures();
             cull.full_asked = None;
+            // A count of the versions compare left out is not this
+            // list's, nor its set; a caller that relists takes the
+            // compared file first and fits the view to the new cells
+            // after (`refit_compare`).
+            cull.leave_versions(app);
         }
         crate::panel::cull::drop_placeholder(st, app);
         st.hold = None;

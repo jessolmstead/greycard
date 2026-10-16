@@ -1337,6 +1337,8 @@ pub(crate) fn open_loaded(
         cull.textures.clear();
         cull.clear_failures();
         cull.anchor = 0;
+        // A versions compare is of the last list's cells: not this one's.
+        cull.leave_versions(app);
     }
     // Another folder's files, and the pictures kept are keyed by the
     // last one's numbering.

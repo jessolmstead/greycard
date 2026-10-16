@@ -36,6 +36,12 @@ fn refused(st: &mut State, app: &App, c: usize) -> Option<String> {
     if st.cull.is_some() {
         return Some("a version is made from the editor, not while culling".into());
     }
+    unready(st, app, c)
+}
+
+/// [`refused`] less culling: a version's delete touches no panel, and
+/// under compare it is how the loser goes.
+fn unready(st: &mut State, app: &App, c: usize) -> Option<String> {
     if crate::panel::delete::held(st, c) {
         return Some("a delete is under way".into());
     }
@@ -362,7 +368,7 @@ pub(crate) fn answered(st: &mut State, app: &App, worker: &Worker, answer: i32) 
         let Some(c) = st.find_cell(key) else {
             continue;
         };
-        if let Some(why) = refused(st, app, c) {
+        if let Some(why) = unready(st, app, c) {
             app.set_status(why.into());
             continue;
         }
@@ -386,6 +392,139 @@ pub(crate) fn answered(st: &mut State, app: &App, worker: &Worker, answer: i32) 
     };
     tracing::info!("{said}");
     app.set_status(said.into());
+}
+
+/// The most cells compare shows at once, the compare grid's most.
+const COMPARE_MOST: usize = 4;
+
+/// The cells Compare versions shows for file `file`, in the list's
+/// order wherever they stand (in a folder the file's own first and its
+/// versions after it; in a collection as it lists them, perhaps apart),
+/// and how many of its cells were left out: all of them where they are
+/// two, three or four, else the first four. Only cells the browser
+/// lists count.
+pub(crate) fn compare_set(st: &State, file: usize) -> (Vec<usize>, usize) {
+    let all: Vec<usize> = st
+        .cells_of_file(file)
+        .into_iter()
+        .filter(|&c| row_of(st, c).is_some())
+        .collect();
+    let left = all.len().saturating_sub(COMPARE_MOST);
+    let set = all.into_iter().take(COMPARE_MOST).collect();
+    (set, left)
+}
+
+/// Compare versions on the cell the menu was opened on (or the frame
+/// on screen): culling with the file and its versions alone side by
+/// side, each its own picture, two, three or four up by how many they
+/// are (`fit_compare`). The focus is the cell right-clicked when it is
+/// in the set, else the file's own, and the selection collapses to it,
+/// so Delete there is that one frame's delete: a version's, by its
+/// sheet. A file with more than three versions shows its first three
+/// and the status line says how many were left out.
+pub(crate) fn compare(st: &mut State, app: &App, worker: &Worker, from_menu: bool) {
+    let Some(c) = cell_for(st, from_menu) else {
+        app.set_status("no frame to compare".into());
+        return;
+    };
+    let Some(file) = st.file_at(c) else {
+        return;
+    };
+    let path = st.files[file].clone();
+    let name = file_name(&path);
+    let (set, left) = compare_set(st, file);
+    if set.len() < 2 {
+        app.set_status(format!("{name} has no versions to compare").into());
+        return;
+    }
+    let focus = if set.contains(&c) { c } else { set[0] };
+    if st.cull.is_none() {
+        // At one up; the set's own count is put on it below.
+        crate::panel::cull::enter_cull(st, app, 1);
+    }
+    if st.current != Some(focus) {
+        if let Some(row) = row_of(st, focus) {
+            open_row(st, app, worker, row as i32, false);
+        }
+    } else {
+        st.picked = vec![focus];
+        crate::panel::browser::show_set(st, app);
+    }
+    fit_compare(st, app, &path, None);
+    let said = if left > 0 {
+        format!(
+            "comparing {name} and {} of its versions; {}",
+            set.len() - 1,
+            left_out(left, &name)
+        )
+    } else {
+        format!("comparing {name} and its versions")
+    };
+    tracing::info!("{said}");
+    app.set_status(said.into());
+}
+
+/// The status line's word for `left` versions of `name` that compare
+/// did not show.
+fn left_out(left: usize, name: &str) -> String {
+    format!(
+        "{left} more version{} of {name} left out",
+        if left == 1 { "" } else { "s" }
+    )
+}
+
+/// The culling view fitted to the file at `path` and its versions as
+/// the cells are now: as many tiles as there are of them, four at most,
+/// and the tiles those cells by name (`Cull::set`), wherever they stand
+/// in the list, so the view is those cells and no other frame's. With
+/// the versions gone (a delete under compare took the last) it is one
+/// up on the file. What the view is fitted to is kept
+/// (`Cull::versions_of`), so a later change to the list fits it again.
+/// `was` is the count the view had before a relist put it down, for a
+/// refit; the zoom stands when the count comes back the same.
+pub(crate) fn fit_compare(st: &mut State, app: &App, path: &Path, was: Option<usize>) {
+    // The file gone from the list, or every cell of it filtered out:
+    // the view is no longer its compare.
+    let first = st.file_by_path(path).and_then(|file| {
+        let (set, left) = compare_set(st, file);
+        let first = row_of(st, *set.first()?)?;
+        Some((set, left, first))
+    });
+    let Some((set, left, first)) = first else {
+        if let Some(cull) = st.cull.as_mut() {
+            cull.leave_versions(app);
+        }
+        // The set placed again about the frame on screen, as an arrow
+        // places it.
+        if let Some(c) = st.current {
+            crate::panel::cull::cull_select(st, app, c);
+        }
+        return;
+    };
+    // The tiles are the set's cells themselves, not a run of rows from
+    // an anchor: in a collection they may stand apart. The anchor is the
+    // first of them, where V's views start from if the compare is left.
+    let up = set.len().max(1);
+    let note = (left > 0).then(|| left_out(left, &file_name(path)));
+    let Some(cull) = st.cull.as_mut() else {
+        return;
+    };
+    let changed = was.unwrap_or(cull.compare) != up;
+    cull.compare = up;
+    cull.anchor = first;
+    cull.note = note;
+    cull.versions_of = (up > 1).then(|| path.to_path_buf());
+    cull.set = (up > 1).then_some(set);
+    cull.status.clear();
+    app.set_compare(up as i32);
+    app.set_compare_text(up.to_string().into());
+    if changed {
+        // The tiles are another size: fitted afresh.
+        st.zoom = 0.0;
+        st.image_size = (0, 0);
+    }
+    crate::panel::cull::cull_refresh(st);
+    app.window().request_redraw();
 }
 
 pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>) {
@@ -429,6 +568,30 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 };
                 ask_delete(&mut st, &app, &[c]);
             }
+        });
+    }
+    {
+        let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
+        app.on_version_compare_asked(move || {
+            let Some(app) = app_weak.upgrade() else {
+                return;
+            };
+            let has_versions = {
+                let st = state.borrow();
+                cell_for(&st, true)
+                    .and_then(|c| st.file_at(c))
+                    .is_some_and(|f| compare_set(&st, f).0.len() > 1)
+            };
+            if has_versions {
+                // The loupe is where compare shows: out of the lightbox
+                // and the grid first, before the state is held, since
+                // both answer the window's own callbacks.
+                if app.get_lightbox() {
+                    app.invoke_lightbox_leave();
+                }
+                app.set_grid_open(false);
+            }
+            compare(&mut state.borrow_mut(), &app, &worker, true);
         });
     }
 }
@@ -1542,5 +1705,487 @@ mod tests {
         assert_eq!((disk.meta.rating, disk.turn), (4, 1));
         assert!(disk.versions.is_empty(), "nothing of the version written");
         crate::testing::remove_scratch(state, &dir);
+    }
+
+    /// The cells the compare view shows now, in its order.
+    fn compared(st: &State) -> Vec<usize> {
+        let cull = st.cull.as_ref().expect("culling");
+        cull.rows(&st.shown)
+            .into_iter()
+            .map(|r| st.shown[r])
+            .collect()
+    }
+
+    /// Compare versions is offered on a file with versions and on each
+    /// of its versions' cells, and on no file without one.
+    #[test]
+    fn compare_versions_is_offered_on_a_file_with_versions_and_its_versions() {
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        version_of(&state, &app, &worker, 1, "Warm");
+        // Cells: 0, 1, 1 Warm, 2.
+        for (row, offered) in [(0, false), (1, true), (2, true), (3, false)] {
+            app.invoke_frame_menu_asked(row);
+            assert_eq!(app.get_menu_compare(), offered, "row {row}");
+        }
+        // The versions gone, the file is one without.
+        let id = state.borrow().version_of(2).unwrap().to_string();
+        {
+            let mut st = state.borrow_mut();
+            st.sidecars[1].delete_version(&id).unwrap();
+            crate::versions::settle(&mut st, &app, &worker);
+        }
+        app.invoke_frame_menu_asked(1);
+        assert!(!app.get_menu_compare());
+    }
+
+    /// Compare versions shows the file and its versions and no other
+    /// frame: from a file with one version, two up on the two, the file
+    /// in focus; from a version of a file with two, the last file of the
+    /// folder, three up on the three (the 2×2 with its fourth tile
+    /// empty), anchored on the file with no slide at the list's end, the
+    /// version in focus; V goes on from three to four, as from two. A
+    /// file with four versions compares its first three, four up, and the
+    /// status line says one was left out.
+    #[test]
+    fn compare_versions_sets_the_file_and_its_versions_side_by_side() {
+        let app = window(4);
+        let (state, worker) = state_for(&app, folder(4));
+        version_of(&state, &app, &worker, 1, "Warm");
+        version_of(&state, &app, &worker, 3, "Warm");
+        version_of(&state, &app, &worker, 3, "Cool");
+        // Cells: 0, 1, 1 Warm, 2, 3, 3 Warm, 3 Cool.
+        app.invoke_select(0);
+        app.invoke_frame_menu_asked(1);
+        app.invoke_version_compare_asked();
+        {
+            let st = state.borrow();
+            let cull = st.cull.as_ref().expect("culling entered");
+            assert_eq!(cull.compare, 2);
+            assert_eq!(cull.anchor, 1, "anchored on the file");
+            assert_eq!(compared(&st), [1, 2]);
+            assert_eq!(st.current, Some(1), "the file in focus");
+            assert_eq!(cull.note, None);
+        }
+        assert_eq!(app.get_compare(), 2);
+        assert!(app.get_culling());
+        // From a version, culling already on.
+        app.invoke_frame_menu_asked(5);
+        app.invoke_version_compare_asked();
+        {
+            let st = state.borrow();
+            let cull = st.cull.as_ref().unwrap();
+            assert_eq!(cull.compare, 3);
+            assert_eq!(cull.anchor, 4, "on the file's own cell, no slide");
+            assert_eq!(compared(&st), [4, 5, 6], "the three and no other");
+            assert_eq!(crate::cull::tile_grid(3), (2, 2), "the fourth empty");
+            assert_eq!(st.current, Some(5), "the version right-clicked in focus");
+            assert_eq!(crate::panel::browser::chosen_frames(&st), [5]);
+        }
+        assert_eq!(app.get_compare(), 3);
+        assert_eq!(app.get_compare_text(), "3");
+        // V from three is four, the next step of its cycle.
+        crate::testing::press(&app, "v");
+        {
+            let st = state.borrow();
+            let cull = st.cull.as_ref().unwrap();
+            assert_eq!(cull.compare, 4);
+            assert_eq!(cull.versions_of, None, "the view is V's now");
+        }
+        assert_eq!(app.get_compare_text(), "4");
+        // A file with four versions: the first three, and one left out.
+        for name in ["A", "B", "C", "D"] {
+            version_of(&state, &app, &worker, 0, name);
+        }
+        // Cells: 0, 0 A, 0 B, 0 C, 0 D, 1, ...
+        app.invoke_frame_menu_asked(4);
+        app.invoke_version_compare_asked();
+        let st = state.borrow();
+        let cull = st.cull.as_ref().unwrap();
+        assert_eq!(cull.compare, 4);
+        assert_eq!(compared(&st), [0, 1, 2, 3]);
+        assert_eq!(
+            st.current,
+            Some(0),
+            "D is out of the set: the file in focus"
+        );
+        assert_eq!(
+            cull.note.as_deref(),
+            Some("1 more version of IMG_0000.CR3 left out")
+        );
+        assert!(
+            app.get_status()
+                .contains("1 more version of IMG_0000.CR3 left out"),
+            "{}",
+            app.get_status()
+        );
+    }
+
+    /// A version's tile names the version on the plate, before what the
+    /// picture is, and at its top the frame's label; the file's own tile
+    /// keeps today's words.
+    #[test]
+    fn a_version_s_tile_names_the_version_and_the_file_s_does_not() {
+        use crate::panel::cull::{Cull, Named, cull_status, plate_words, tile_name};
+        let named = |file, version: Option<&str>| Named {
+            file,
+            size: (2048, 1365),
+            small: false,
+            own: false,
+            local: crate::cull::Origin::Edit,
+            version: version.map(str::to_string),
+        };
+        let names = [named(0, None), named(1, Some("Warm"))];
+        assert_eq!(plate_words(&names[1]), "Warm, the edit, 2048 \u{d7} 1365");
+        assert_eq!(plate_words(&names[0]), "the edit, 2048 \u{d7} 1365");
+        let mut cull = Cull::new("".into(), 2048);
+        cull.compare = 2;
+        assert_eq!(
+            cull_status(&cull, 1, 0.0, true, &names),
+            "culling, 2 up: Warm, the edit, 2048 \u{d7} 1365, fitted; Enter develops"
+        );
+        assert_eq!(
+            cull_status(&cull, 0, 0.0, true, &names),
+            "culling, 2 up: the edit, 2048 \u{d7} 1365, fitted; Enter develops"
+        );
+        // The camera's JPEG where the version's picture is not made yet.
+        let camera = Named {
+            local: crate::cull::Origin::Camera,
+            ..named(1, Some("Warm"))
+        };
+        assert_eq!(
+            plate_words(&camera),
+            "Warm, the camera JPEG, 2048 \u{d7} 1365"
+        );
+        cull.note = Some("1 more version of IMG_0001.CR3 left out".into());
+        assert!(
+            cull_status(&cull, 1, 0.0, true, &names)
+                .ends_with("; Enter develops; 1 more version of IMG_0001.CR3 left out")
+        );
+        let path = Path::new("/nowhere/IMG_0001.CR3");
+        let id: Arc<str> = Arc::from("0123456789abcdef");
+        assert_eq!(tile_name(path, None, None), "IMG_0001.CR3");
+        assert_eq!(tile_name(path, Some(&id), Some("Warm")), "IMG_0001 (Warm)");
+        // A version with no name says its id, as every other label does.
+        assert_eq!(
+            tile_name(path, Some(&id), Some("")),
+            "IMG_0001 (0123456789abcdef)"
+        );
+        // The state's own lookup of the name a tile carries.
+        let app = window(2);
+        let (state, worker) = state_for(&app, folder(2));
+        version_of(&state, &app, &worker, 0, "Warm");
+        let st = state.borrow();
+        assert_eq!(
+            crate::panel::cull::version_name_of(&st.sidecars, &st.cells, 1).as_deref(),
+            Some("Warm")
+        );
+        assert_eq!(
+            crate::panel::cull::version_name_of(&st.sidecars, &st.cells, 0),
+            None
+        );
+    }
+
+    /// Delete under compare on a version's tile is the version's delete,
+    /// by its sheet; after it the file's own cell is in focus, culling
+    /// stays, and the set closes up on the file's cells as they are now:
+    /// three up becomes two, never taking in the next frame; with the
+    /// last version gone it is one up on the file.
+    #[test]
+    fn delete_under_compare_takes_the_version_and_the_set_closes_up() {
+        let app = window(4);
+        let (state, worker) = state_for(&app, folder(4));
+        let warm = version_of(&state, &app, &worker, 1, "Warm");
+        let cool = version_of(&state, &app, &worker, 1, "Cool");
+        // Cells: 0, 1, 1 Warm, 1 Cool, 2, 3.
+        app.invoke_select(0);
+        app.invoke_frame_menu_asked(2);
+        app.invoke_version_compare_asked();
+        assert_eq!(compared(&state.borrow()), [1, 2, 3]);
+        assert_eq!(state.borrow().current, Some(2));
+        app.invoke_delete_asked("selection".into());
+        assert!(app.get_delete_open());
+        assert_eq!(
+            app.get_delete_title(),
+            "Delete the version Warm of IMG_0001.CR3?"
+        );
+        app.invoke_delete_answered(1);
+        let st = state.borrow();
+        assert!(st.sidecars[1].version(&warm).is_none(), "Warm went");
+        assert!(st.sidecars[1].version(&cool).is_some(), "Cool stays");
+        assert_eq!(
+            cells(&st),
+            [
+                (0, None),
+                (1, None),
+                (1, Some(cool.clone())),
+                (2, None),
+                (3, None)
+            ]
+        );
+        assert!(st.cull.is_some(), "still culling");
+        assert_eq!(st.current, Some(1), "the file's own frame in focus");
+        assert_eq!(st.cull.as_ref().unwrap().anchor, 1);
+        assert_eq!(st.cull.as_ref().unwrap().compare, 2);
+        assert_eq!(compared(&st), [1, 2], "the set closed up, no stranger");
+        assert_eq!(app.get_compare(), 2);
+        assert_eq!(app.get_status(), "deleted the version Warm of IMG_0001.CR3");
+        drop(st);
+        // The last version deleted from the menu: one up on the file.
+        app.invoke_frame_menu_asked(2);
+        app.invoke_version_delete_asked();
+        app.invoke_delete_answered(1);
+        let st = state.borrow();
+        assert!(st.sidecars[1].versions.is_empty());
+        let cull = st.cull.as_ref().expect("still culling");
+        assert_eq!(cull.compare, 1);
+        assert_eq!(cull.versions_of, None);
+        assert_eq!(st.current, Some(1));
+        assert_eq!(compared(&st), [1]);
+    }
+
+    /// The develop view's camera picture standing in for a version
+    /// cell is asked for that version's frame, so its delivery is kept
+    /// by the key check and does not hold a culling thread for nothing.
+    #[test]
+    fn a_version_s_placeholder_is_asked_for_the_version() {
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        let warm = version_of(&state, &app, &worker, 1, "Warm");
+        app.invoke_select(0);
+        app.invoke_select(2);
+        let st = state.borrow();
+        assert_eq!(st.current, Some(2));
+        let asked = st.prefetch.asked();
+        let w = asked.iter().find(|w| w.file == 2).expect("cell 2 asked");
+        assert_eq!(w.version.as_deref(), Some(warm.as_str()), "{asked:?}");
+        assert_eq!(Some(w.frame()), st.key_of(2), "the delivery is kept");
+    }
+
+    /// Three up stands through every culling key and a click on a tile
+    /// of the file; the field's 3 changes nothing and New version is
+    /// refused. An arrow off the file leaves the compare: three up
+    /// becomes four, the field no longer offers 3, and the set is placed
+    /// about the frame as V's four up places it.
+    #[test]
+    fn three_up_stands_through_the_culling_keys_and_leaves_with_the_file() {
+        let app = window(4);
+        let (state, worker) = state_for(&app, folder(4));
+        version_of(&state, &app, &worker, 3, "Warm");
+        version_of(&state, &app, &worker, 3, "Cool");
+        // Cells: 0, 1, 2, 3, 3 Warm, 3 Cool.
+        app.invoke_select(0);
+        app.invoke_frame_menu_asked(4);
+        app.invoke_version_compare_asked();
+        assert_eq!(compared(&state.borrow()), [3, 4, 5]);
+        for key in ["1", "3", "p", "x", "u", "6", "[", "]", " ", " ", "z", "z"] {
+            crate::testing::press(&app, key);
+            let st = state.borrow();
+            let cull = st.cull.as_ref().expect("culling");
+            assert_eq!(cull.compare, 3, "key {key}");
+            assert_eq!(compared(&st), [3, 4, 5], "key {key}");
+        }
+        app.invoke_select(3);
+        assert!(state.borrow().cull.as_ref().unwrap().versions_of.is_some());
+        app.invoke_compare_changed(3);
+        assert_eq!(state.borrow().cull.as_ref().unwrap().compare, 3);
+        app.invoke_version_new_asked(false, false);
+        assert_eq!(state.borrow().cells.len(), 6, "no version made in culling");
+        // The arrow off the file.
+        app.invoke_select(2);
+        let st = state.borrow();
+        let cull = st.cull.as_ref().unwrap();
+        assert_eq!(cull.versions_of, None);
+        assert_eq!(cull.note, None);
+        assert_eq!(cull.compare, 4, "three up is Compare versions' alone");
+        assert_eq!(compared(&st), [2, 3, 4, 5]);
+        assert_eq!(app.get_compare(), 4);
+        assert_eq!(app.get_compare_text(), "4");
+    }
+
+    /// A settle from another cause than a delete refits the compare: a
+    /// version of a file before the compared one (a join) moves the
+    /// cells by one, and one of the compared file makes it three up.
+    #[test]
+    fn a_settle_from_a_join_refits_the_compare() {
+        let app = window(4);
+        let (state, worker) = state_for(&app, folder(4));
+        version_of(&state, &app, &worker, 2, "Warm");
+        // Cells: 0, 1, 2, 2 Warm, 3.
+        app.invoke_select(0);
+        app.invoke_frame_menu_asked(3);
+        app.invoke_version_compare_asked();
+        assert_eq!(compared(&state.borrow()), [2, 3]);
+        version_of(&state, &app, &worker, 0, "Other");
+        {
+            let st = state.borrow();
+            assert_eq!(compared(&st), [3, 4]);
+            assert_eq!(st.current, Some(4));
+        }
+        version_of(&state, &app, &worker, 2, "Cool");
+        let st = state.borrow();
+        assert_eq!(compared(&st), [3, 4, 5]);
+        assert_eq!(st.cull.as_ref().unwrap().compare, 3);
+    }
+
+    /// Another file taken out of the list under a versions compare (a
+    /// reject moved out, a delete) renumbers the cells outside `settle`:
+    /// the set follows the file's cells to their new numbers. The
+    /// compared file itself taken out ends the compare, three up
+    /// becoming four.
+    #[test]
+    fn a_drop_of_files_under_compare_keeps_the_set_on_the_file() {
+        let app = window(4);
+        let (state, worker) = state_for(&app, folder(4));
+        version_of(&state, &app, &worker, 2, "Warm");
+        version_of(&state, &app, &worker, 2, "Cool");
+        // Cells: 0, 1, 2, 2 Warm, 2 Cool, 3.
+        app.invoke_select(0);
+        app.invoke_frame_menu_asked(3);
+        app.invoke_version_compare_asked();
+        assert_eq!(compared(&state.borrow()), [2, 3, 4]);
+        // At 1:1: the renumber under it keeps the zoom, the set coming
+        // back at the count it had.
+        state.borrow_mut().zoom = 1.0;
+        crate::panel::cull::drop_files(&mut state.borrow_mut(), &app, &worker, &[0], "gone".into());
+        {
+            let st = state.borrow();
+            // The file is file 1 now: its cells 1, 2, 3.
+            assert_eq!(compared(&st), [1, 2, 3]);
+            assert_eq!(st.cull.as_ref().unwrap().compare, 3);
+            assert_eq!(st.current, Some(2), "Warm still in focus");
+            assert_eq!(st.zoom, 1.0, "the zoom stands");
+        }
+        crate::panel::cull::drop_files(&mut state.borrow_mut(), &app, &worker, &[1], "gone".into());
+        let st = state.borrow();
+        let cull = st.cull.as_ref().unwrap();
+        assert_eq!(cull.versions_of, None);
+        assert_eq!(cull.compare, 4);
+        assert_eq!(app.get_compare_text(), "4");
+    }
+
+    /// Compare versions from the grid or the lightbox shows the compare:
+    /// the grid closes, and the lightbox is left first.
+    #[test]
+    fn compare_versions_from_the_grid_or_the_lightbox_closes_it() {
+        let app = window(3);
+        let (state, worker) = state_for(&app, folder(3));
+        version_of(&state, &app, &worker, 1, "Warm");
+        // Cells: 0, 1, 1 Warm, 2.
+        app.invoke_select(0);
+        app.set_grid_open(true);
+        app.invoke_frame_menu_asked(1);
+        app.invoke_version_compare_asked();
+        assert!(!app.get_grid_open(), "the grid closed");
+        assert!(app.get_culling());
+        assert_eq!(compared(&state.borrow()), [1, 2]);
+        app.invoke_cull_leave();
+        app.invoke_lightbox_enter();
+        assert!(app.get_lightbox() && app.get_grid_open());
+        app.invoke_frame_menu_asked(2);
+        app.invoke_version_compare_asked();
+        assert!(!app.get_lightbox(), "the lightbox left");
+        assert!(!app.get_grid_open());
+        assert!(app.get_culling());
+        assert_eq!(compared(&state.borrow()), [1, 2]);
+        assert_eq!(state.borrow().current, Some(2));
+    }
+
+    /// In a collection a file's cells need not stand together: one that
+    /// lists IMG_0000 (Warm), IMG_0001, IMG_0000 compares Warm and its
+    /// file in two tiles, with IMG_0001 between them in the list and in
+    /// none of the tiles. A click between the two keeps the set; an
+    /// arrow onto IMG_0001 leaves the compare. Delete under it takes the
+    /// version, and the file alone is one up.
+    #[test]
+    fn compare_in_a_collection_takes_the_file_s_cells_where_they_stand() {
+        use crate::versions::Key;
+        let app = window(3);
+        let files = folder(3);
+        let (state, worker) = state_for(&app, files.clone());
+        let warm = version_of(&state, &app, &worker, 0, "Warm");
+        {
+            let mut st = state.borrow_mut();
+            st.collection_frames = Some(vec![
+                Key::of(&files[0], Some(&warm)),
+                Key::file(&files[1]),
+                Key::of(&files[0], None),
+            ]);
+            crate::versions::settle(&mut st, &app, &worker);
+            assert_eq!(cells(&st), [(0, Some(warm.clone())), (1, None), (0, None)]);
+        }
+        app.invoke_select(0);
+        app.invoke_frame_menu_asked(0);
+        assert!(app.get_menu_compare());
+        app.invoke_version_compare_asked();
+        {
+            let st = state.borrow();
+            let cull = st.cull.as_ref().expect("culling");
+            assert_eq!(cull.compare, 2);
+            assert_eq!(compared(&st), [0, 2], "the file's cells and no other");
+            assert_eq!(st.current, Some(0), "Warm in focus");
+        }
+        // A click on the file's own tile: still its compare.
+        app.invoke_select(2);
+        assert_eq!(compared(&state.borrow()), [0, 2]);
+        assert!(state.borrow().cull.as_ref().unwrap().set.is_some());
+        // An arrow onto IMG_0001: the compare is left, V's two up.
+        app.invoke_select(1);
+        {
+            let st = state.borrow();
+            let cull = st.cull.as_ref().unwrap();
+            assert_eq!(cull.set, None);
+            assert_eq!(cull.versions_of, None);
+            assert_eq!(cull.compare, 2);
+            assert!(compared(&st).contains(&1));
+        }
+        // Back to a compare, and Warm deleted under it.
+        app.invoke_frame_menu_asked(0);
+        app.invoke_version_compare_asked();
+        assert_eq!(compared(&state.borrow()), [0, 2]);
+        app.invoke_delete_asked("selection".into());
+        assert_eq!(
+            app.get_delete_title(),
+            "Delete the version Warm of IMG_0000.CR3?"
+        );
+        app.invoke_delete_answered(1);
+        let st = state.borrow();
+        assert!(st.sidecars[0].versions.is_empty());
+        let cull = st.cull.as_ref().expect("still culling");
+        assert_eq!(cull.compare, 1);
+        assert_eq!(cull.set, None);
+        let own = st.cell_of(0, None).unwrap();
+        assert_eq!(st.current, Some(own), "the file's own frame in focus");
+    }
+
+    /// Another folder opened while a versions compare stands: culling
+    /// goes on over the new list, the compare does not. Its cells, its
+    /// file and its note go, and three up becomes four.
+    #[test]
+    fn a_new_list_ends_a_versions_compare() {
+        let app = window(4);
+        let (state, worker) = state_for(&app, folder(4));
+        version_of(&state, &app, &worker, 0, "Warm");
+        version_of(&state, &app, &worker, 0, "Cool");
+        // Cells: 0, 0 Warm, 0 Cool, 1, 2, 3.
+        app.invoke_select(0);
+        app.invoke_frame_menu_asked(1);
+        app.invoke_version_compare_asked();
+        assert_eq!(compared(&state.borrow()), [0, 1, 2]);
+        let files: Vec<PathBuf> = (0..5)
+            .map(|i| PathBuf::from(format!("/other/B_{i}.CR3")))
+            .collect();
+        let held = files
+            .iter()
+            .map(|f| crate::rows::from_disk(f, false))
+            .collect();
+        crate::panel::browser::open_loaded(&state, &app, &worker, files, held, true, 0);
+        let st = state.borrow();
+        let cull = st.cull.as_ref().expect("still culling");
+        assert_eq!(cull.versions_of, None);
+        assert_eq!(cull.set, None);
+        assert_eq!(cull.note, None);
+        assert_eq!(cull.compare, 4);
+        assert_eq!(app.get_compare_text(), "4");
     }
 }

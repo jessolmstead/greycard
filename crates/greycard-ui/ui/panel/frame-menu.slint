@@ -73,6 +73,10 @@ export component FrameMenu inherits Rectangle {
     callback rename-version();
     callback swap-version();
     callback delete-version();
+    /// Whether the frame right-clicked is a file with versions or a
+    /// version of one: Compare versions is offered on it.
+    in property <bool> can-compare;
+    callback compare-versions();
 
     // Nothing of its own to draw or to take a click: the menu is a
     // popup, placed from this corner, and a zero-sized area at the
@@ -127,6 +131,10 @@ export component FrameMenu inherits Rectangle {
             if root.version != "": MenuItem {
                 title: "Delete version...";
                 activated => { root.delete-version(); }
+            }
+            if root.can-compare: MenuItem {
+                title: "Compare versions";
+                activated => { root.compare-versions(); }
             }
             MenuSeparator { }
             MenuItem {

@@ -37,8 +37,8 @@ pub(crate) struct Cull {
     /// The previews on the GPU, by file: the number of the copy each
     /// was made from, and the texture.
     pub(crate) textures: HashMap<usize, (u64, gpu::Texture)>,
-    /// How many frames side by side, 1, 2 or 4, and the first row of
-    /// the set.
+    /// How many frames side by side, 1, 2 or 4 (3 from Compare versions
+    /// alone), and the first row of the set.
     pub(crate) compare: usize,
     pub(crate) anchor: usize,
     /// The panel's tab before the mode, put back on leaving.
@@ -58,15 +58,60 @@ pub(crate) struct Cull {
     pub(crate) turned: Option<std::time::Instant>,
     /// The status line as last set, so it is set only on a change.
     pub(crate) status: String,
+    /// A word the status line carries after its own while the compare
+    /// set stands where it was put: Compare versions' count of the
+    /// versions left out. Gone when the set moves or the view changes.
+    pub(crate) note: Option<String>,
+    /// The file Compare versions set the view on, by path, while the set
+    /// is its cells: a change to its versions fits the set to them again
+    /// (`versions::fit_compare`), so the view never takes in another
+    /// frame. Gone with the note.
+    pub(crate) versions_of: Option<PathBuf>,
+    /// The cells a versions compare shows, in list order, in place of
+    /// the run of rows from the anchor: in a collection a file's cells
+    /// need not stand together, and the run would take in another
+    /// file's frame. By cell, not by row, so a filter that moves the
+    /// rows does not move the set. Gone with the note.
+    pub(crate) set: Option<Vec<usize>>,
 }
 
 impl Cull {
+    /// The browser rows the view shows, in tile order: a versions
+    /// compare's own cells where they are listed, else the run of
+    /// `compare` rows from the anchor. `shown` is the browser's rows.
+    /// The one place the compare's rows are made.
+    pub(crate) fn rows(&self, shown: &[usize]) -> Vec<usize> {
+        match &self.set {
+            Some(set) => set
+                .iter()
+                .filter_map(|c| shown.binary_search(c).ok())
+                .collect(),
+            None => cull::compare_rows(self.anchor, self.compare, shown.len()),
+        }
+    }
+
     /// Another list, or the old one renumbered: what was learned of
     /// its files by their numbers goes.
     pub(crate) fn clear_failures(&mut self) {
         self.failed.clear();
         self.no_local.clear();
         self.file_failed.clear();
+    }
+
+    /// The view is no longer a versions compare: its note and its file
+    /// go, and three up, which is Compare versions' alone, becomes four,
+    /// the next step of V's cycle (the same 2×2, so nothing is fitted
+    /// afresh). For every way out but V and the compare field, which set
+    /// the count themselves.
+    pub(crate) fn leave_versions(&mut self, app: &App) {
+        self.note = None;
+        self.versions_of = None;
+        self.set = None;
+        if self.compare == 3 {
+            self.compare = 4;
+            app.set_compare(4);
+            app.set_compare_text("4".into());
+        }
     }
 
     /// Whether `file`'s own picture is still worth asking its file for.
@@ -91,6 +136,9 @@ impl Cull {
             switched: None,
             turned: None,
             status: String::new(),
+            note: None,
+            versions_of: None,
+            set: None,
         }
     }
 }
@@ -364,7 +412,17 @@ pub(crate) fn cull_select(st: &mut State, app: &App, cell: usize) {
     let count = st.shown.len();
     if let Some(cull) = st.cull.as_mut() {
         cull.forward = was.is_none_or(|w| cell >= w);
-        cull.anchor = cull::anchor_for(cull.anchor, row, cull.compare, count);
+        // A versions compare holds while the focus is one of its cells,
+        // wherever they stand in the list; off them it is no longer the
+        // file's compare, and the view is placed again as V's views are,
+        // at the count that leaves.
+        let in_set = cull.set.as_ref().map(|set| set.contains(&cell));
+        if in_set == Some(false) {
+            cull.leave_versions(app);
+        }
+        if in_set != Some(true) {
+            cull.anchor = cull::anchor_for(cull.anchor, row, cull.compare, count);
+        }
         cull.switched = Some(std::time::Instant::now());
         // A full-size copy is the frame's own; the next one asks for
         // its own if 1:1 is still on.
@@ -394,7 +452,7 @@ pub(crate) fn cull_refresh(st: &mut State) {
     let Some(cull) = st.cull.as_mut() else {
         return;
     };
-    let rows = cull::compare_rows(cull.anchor, cull.compare, count);
+    let rows = cull.rows(&st.shown);
     let mut order: Vec<usize> = rows.clone();
     for r in cull::order(row, count, cull.reach, cull.forward) {
         if !order.contains(&r) {
@@ -555,8 +613,12 @@ pub(crate) fn start_placeholder(st: &mut State, app: &App, cell: usize) {
         drop_placeholder(st, app);
         return;
     }
-    st.prefetch
-        .want(vec![cull::Want::of_file(cell, path, size)]);
+    st.prefetch.want(vec![
+        // The frame's own want, version and all: the delivery is
+        // checked against the cell's key, and a version's picture
+        // asked as its file's would be dropped there.
+        cull::Want::of_file(cell, path, size).of_version(st.cells[cell].version.clone()),
+    ]);
     // The frame before this one may have gone with the window — a
     // jump across the folder — and then there is nothing standing in
     // and the developed picture is what shows.
@@ -862,7 +924,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
     let rows = if holding {
         cull::row_of_shown(&st.shown, c).into_iter().collect()
     } else {
-        cull::compare_rows(cull.anchor, cull.compare, count)
+        cull.rows(&st.shown)
     };
     let rects = cull::tile_rects(vw, vh, rows.len().max(1));
     // The current frame's picture, which the others' centers follow.
@@ -916,12 +978,18 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
         let file = st.shown[row];
         let rect = rects[k];
         let meta = &st.sidecars[st.cells[file].file].meta;
+        let version = version_name_of(&st.sidecars, &st.cells, file);
         overlay.push(CompareTile {
             x: rect.0 as f32 / scale_factor,
             y: rect.1 as f32 / scale_factor,
             w: rect.2 as f32 / scale_factor,
             h: rect.3 as f32 / scale_factor,
-            name: file_name(&st.files[st.cells[file].file]).into(),
+            name: tile_name(
+                &st.files[st.cells[file].file],
+                st.cells[file].version.as_ref(),
+                version.as_deref(),
+            )
+            .into(),
             on: file == c,
             rating: meta.rating.min(meta::STARS) as i32,
             flag: meta.flag.code(),
@@ -1007,6 +1075,7 @@ pub(crate) fn cull_frame(st: &mut State, app: &App, state: &Rc<RefCell<State>>) 
             small: preview.small(),
             own: preview.own_size(),
             local: preview.origin(),
+            version,
         });
     }
     let drawn: Vec<render::Tile> = tiles
@@ -1224,6 +1293,46 @@ pub(crate) struct Named {
     pub(crate) small: bool,
     pub(crate) own: bool,
     pub(crate) local: cull::Origin,
+    /// The version's name, for a version's tile; none for the file's
+    /// own, whose words are as they always were.
+    pub(crate) version: Option<String>,
+}
+
+/// The name of the version cell `c` is, none for the file's own, with
+/// the state's fields borrowed apart.
+pub(crate) fn version_name_of(
+    sidecars: &[Sidecar],
+    cells: &[crate::versions::Cell],
+    c: usize,
+) -> Option<String> {
+    let cell = cells.get(c)?;
+    let id = cell.version.as_deref()?;
+    sidecars.get(cell.file)?.version(id).map(|v| v.name.clone())
+}
+
+/// A compare tile's name at its top: the file's name for the file's
+/// own frame, and the frame's label for a version, "IMG_0001 (Warm)",
+/// so two tiles of one file are told apart.
+/// `id` is the version's id, none for the file's own frame, and `name`
+/// its name, the id standing in where it is empty or not had.
+pub(crate) fn tile_name(path: &Path, id: Option<&Arc<str>>, name: Option<&str>) -> String {
+    crate::versions::Key {
+        path: path.to_path_buf(),
+        version: id.cloned(),
+        name: name.map(Arc::from),
+    }
+    .said()
+}
+
+/// What a tile shows in the plate's words: the picture's
+/// ([`picture_words`]), after the version's name for a version's tile,
+/// "Warm, the edit, 2048 × 1365".
+pub(crate) fn plate_words(named: &Named) -> String {
+    let what = picture_words(named.size, named.small, named.local);
+    match named.version.as_deref() {
+        Some(v) if !v.is_empty() => format!("{v}, {what}"),
+        _ => what,
+    }
 }
 
 /// The picture shown, in the status line's words: the camera's JPEG,
@@ -1267,9 +1376,12 @@ pub(crate) fn cull_status(
     if !shown {
         return format!("{mode}: decoding the camera JPEG...");
     }
-    let what = picture_words(named.size, named.small, named.local);
+    let what = plate_words(named);
     let at = zoom_words(zoom, named.own);
-    format!("{mode}: {what}, {at}; Enter develops")
+    match &cull.note {
+        Some(note) => format!("{mode}: {what}, {at}; Enter develops; {note}"),
+        None => format!("{mode}: {what}, {at}; Enter develops"),
+    }
 }
 
 /// At what a camera's picture is shown, in the status line: fitted,
@@ -1764,6 +1876,7 @@ pub(crate) fn drop_files(
     // its place in the selection; the pictures keyed by the old
     // numbering (the previews, the camera picture standing in) are put
     // down and asked for again.
+    let compared = crate::versions::compared_file(st);
     crate::versions::relist(st, app, worker, &|i| new_of.get(i).copied().flatten());
     crate::library::index_open_folder(st, None);
     // A rejects folder made or emptied under a folder of no root: its
@@ -1801,6 +1914,7 @@ pub(crate) fn drop_files(
             app.set_file_name("".into());
         }
     }
+    crate::versions::refit_compare(st, app, compared);
 }
 
 /// The filter's chips and what they count, on the grid's header and
@@ -1976,6 +2090,12 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
+            // Three is Compare versions' alone: the field offers it only
+            // while the view is at three, and a press on it changes
+            // nothing.
+            if n == 3 {
+                return;
+            }
             let n = match n {
                 2 | 4 => n as usize,
                 _ => 1,
@@ -1991,6 +2111,9 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             };
             cull.compare = n;
             cull.anchor = cull::anchor_for(cull.anchor, row, n, count);
+            cull.note = None;
+            cull.versions_of = None;
+            cull.set = None;
             // The tiles are another size: fitted afresh.
             st.zoom = 0.0;
             st.image_size = (0, 0);

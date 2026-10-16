@@ -157,6 +157,10 @@ export component App inherits Window {
     callback version-rename-asked();
     callback version-swap-asked();
     callback version-delete-asked();
+    /// Whether the frame right-clicked has versions or is one, and
+    /// the menu's Compare versions on it.
+    in property <bool> menu-compare: false;
+    callback version-compare-asked();
     /// The menu's Copy settings: the frame right-clicked, where Ctrl+C
     /// copies the frame on screen.
     callback menu-copy();
@@ -2004,7 +2008,9 @@ export component App inherits Window {
                 return accept;
             }
             if (root.culling && !root.sheet-open() && !e.modifiers.control && (e.text == "v" || e.text == "V")) {
-                root.compare-changed(root.compare == 1 ? 2 : root.compare == 2 ? 4 : 1);
+                // Three up is Compare versions' alone; V goes on from it
+                // to four, as from two.
+                root.compare-changed(root.compare == 1 ? 2 : root.compare == 2 || root.compare == 3 ? 4 : 1);
                 return accept;
             }
             if ((e.text == "c" || e.text == "C") && !e.modifiers.control && !root.sheet-open()) {
@@ -3634,6 +3640,8 @@ export component App inherits Window {
         rename-version => { root.version-rename-asked(); }
         swap-version => { root.version-swap-asked(); root.menu-done(); }
         delete-version => { root.version-delete-asked(); }
+        can-compare: root.menu-compare;
+        compare-versions => { root.version-compare-asked(); root.menu-done(); }
     }
 
     // Recently opened: one list for the window, opened below the

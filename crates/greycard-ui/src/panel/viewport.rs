@@ -1614,7 +1614,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             {
                 // As many tiles as the frame drew: a set of four at
                 // the end of a short folder is fewer.
-                let rows = cull::compare_rows(cull.anchor, cull.compare, st.shown.len());
+                let rows = cull.rows(&st.shown);
                 let tile = cull::tile_at(vw, vh, rows.len(), x * scale, y * scale);
                 let row = tile.and_then(|k| rows.get(k).copied());
                 drop(st);

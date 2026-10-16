@@ -81,6 +81,12 @@ note a first tester reads.
   version is written at file version 2, which an older build leaves
   alone; one without stays as it was
   ([§319](https://github.com/jessolmstead/greycard/blob/master/docs/notes/319-virtual-copies-part-5-collections.md))
+- Compare versions, in the frame menu of a frame with versions: culling
+  opens on the original and its versions alone, side by side, each tile
+  its own edit, with the version's name on its tag and in the plate;
+  Delete on a tile removes that version and the view closes up. A
+  version's camera picture now shows while its edit is being made
+  ([§320](https://github.com/jessolmstead/greycard/blob/master/docs/notes/320-virtual-copies-part-3-compare.md))
 - A word at the pointer over a button that shows only an icon (Undo,
   Remove, Turn left, Hide panel...), after a short rest; it goes with a
   press, a key or a scroll

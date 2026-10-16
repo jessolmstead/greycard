@@ -115,9 +115,11 @@ export component CullSection inherits Section {
         spacing: Theme.space-2;
         Text { text: "Compare"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
         Segmented {
-            options: ["1", "2", "4"];
+            // Three is shown only while Compare versions has put the
+            // view at three; it is never offered otherwise.
+            options: root.compare-text == "3" ? ["1", "2", "3", "4"] : ["1", "2", "4"];
             current <=> root.compare-text;
-            selected(c) => { root.compare-changed(c == "2" ? 2 : c == "4" ? 4 : 1); }
+            selected(c) => { root.compare-changed(c == "2" ? 2 : c == "3" ? 3 : c == "4" ? 4 : 1); }
         }
     }
     // One press instead of two: the key and then the arrow. Off
