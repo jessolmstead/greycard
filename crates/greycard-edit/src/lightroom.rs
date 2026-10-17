@@ -159,9 +159,11 @@ fn map(
         let chosen = named.or_else(|| {
             let temperature = num("Temperature")?;
             (1000.0..=50000.0).contains(&temperature).then(|| {
-                // Lightroom's tint runs -150 green to 150 magenta;
-                // Duv is positive toward green.
-                let tint = -num("Tint").unwrap_or(0.0) * 0.0002;
+                // Lightroom's tint names the light, as ours does: a
+                // positive tint is a green white point that renders
+                // magenta. The DNG SDK's `dng_temperature` sets it at
+                // about 3000 a unit of Duv.
+                let tint = num("Tint").unwrap_or(0.0) / 3000.0;
                 custom(
                     temperature.clamp(2000.0, 12000.0) as f64,
                     f64::from(tint.clamp(-0.05, 0.05)),
@@ -570,7 +572,7 @@ mod tests {
         match e.white_balance {
             WhiteBalance::Custom { temperature, tint } => {
                 assert_eq!(temperature, 4800.0);
-                assert!((tint + 0.003).abs() < 1e-6, "magenta is negative Duv");
+                assert!((tint - 0.005).abs() < 1e-6, "a green light is positive Duv");
             }
             _ => panic!("custom"),
         }

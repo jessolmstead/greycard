@@ -10,6 +10,15 @@ Everything before the first release is under its own heading at the
 end, in the same one-line-an-item form; 0.1.0's own section is the
 note a first tester reads.
 
+## 0.8.0, unreleased
+
+### Fixes
+
+- A Lightroom preset's Tint came in with the wrong sign and too small:
+  +15 in Lightroom landed as a magenta cast here. It now lands as the
+  green white point it was
+  ([§325](https://github.com/jessolmstead/greycard/blob/master/docs/notes/325-lightrooms-tint-came-in-backwards.md))
+
 ## 0.7.0, 2026-10-15
 
 Versions: a second edit of the same raw, beside the first in the strip,
