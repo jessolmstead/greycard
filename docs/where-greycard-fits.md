@@ -176,8 +176,7 @@ Sony, Panasonic and Nikon bodies.
 ## Who it is not for, yet
 
 Anyone on an Intel Mac or Windows on ARM: the ONNX runtime ships no
-WebGPU build for either. Anyone with a large rated and keyworded
-Lightroom library, until the catalog import exists. Anyone whose
+WebGPU build for either. Anyone whose
 camera rawler does not decode; support goes upstream to rawler, not
 into a fork. Anyone who wants a phone app, cloud sync or a preset
 marketplace, which are not planned.
@@ -230,6 +229,9 @@ Built, as of 0.7.0:
   Collections and smart collections that hold a picture or one
   version of it by content and follow it through a move. An import
   from a card with renaming, a preset and a verified backup.
+  A Lightroom Classic catalog brought across from a sheet: ratings,
+  labels, keywords, develop settings, crops, virtual copies,
+  collections and stacks.
 - **Culling.** The strip, a zoomable grid and a lightbox, each frame
   shown as edited and made in the background. Culling from the
   camera's JPEG or a local preview when the drive is offline, compare,
@@ -246,7 +248,7 @@ Built, as of 0.7.0:
   turned off.
 
 Planned, in order: the tone controls made to feel right; a generative
-fill; the Lightroom catalog import; HDR merge and panoramas, and the
+fill; HDR merge and panoramas, and the
 merges in the browser; tethering. The learned denoiser for X-Trans
 alongside these.
 

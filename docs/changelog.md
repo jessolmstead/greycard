@@ -15,10 +15,14 @@ design note behind it.
 - A camera's JPEG beside its raw is one frame, marked +JPEG: one
   rating, one move, one delete. A setting lists them apart again
   ([§332](https://github.com/jessolmstead/greycard/blob/master/docs/notes/332-raw-jpeg-pairs.md))
-- A Lightroom Classic catalog imports from the command line: ratings,
-  flags, labels, keywords, captions, develop settings, virtual copies
-  and collections. A dry run until you say write
-  ([§329](https://github.com/jessolmstead/greycard/blob/master/docs/notes/329-importing-a-lightroom-catalog-part-1-the-command.md))
+- A Lightroom Classic catalog imports from the window: Import a
+  Lightroom catalog... under the grid's Import, a sheet that asks where
+  each folder lives now, shows what the import would do, then writes.
+  Ratings, flags, labels, keywords, captions, develop settings, crops,
+  virtual copies, collections, smart collections on a camera or lens,
+  and stacks come across; the same from the command line
+  ([§329](https://github.com/jessolmstead/greycard/blob/master/docs/notes/329-importing-a-lightroom-catalog-part-1-the-command.md),
+  [§337](https://github.com/jessolmstead/greycard/blob/master/docs/notes/337-importing-a-lightroom-catalog-part-2-the-sheet-the-crop-the-camera-rules-and-the-stacks.md))
 - RawTherapee `.pp3` profiles beside the raws import from the command
   line: rank, label and trash mark, and the edits that have a place
   here as one history step

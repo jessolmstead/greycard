@@ -628,6 +628,11 @@ pub(crate) enum Shown {
     PresetReport,
     /// The lens profiles' download as the first launch offers it.
     Lenses,
+    /// The Lightroom catalog import's sheet over `--lightroom`'s
+    /// catalog, at its roots, its dry run's report, or written (the
+    /// write run as the Write button runs it, for a capture of a
+    /// scratch catalog's import).
+    Lightroom(LightroomStep),
     /// The settings sheet.
     Settings,
     /// The camera match's sheet, as the Look section's button opens it.
@@ -678,6 +683,14 @@ pub(crate) enum Shown {
     Part(&'static str),
 }
 
+/// Which step of the Lightroom import's sheet a capture shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LightroomStep {
+    Roots,
+    Report,
+    Written,
+}
+
 impl Shown {
     /// `--sheet`'s names.
     pub(crate) fn sheet(name: &str) -> Result<Self, String> {
@@ -707,11 +720,15 @@ impl Shown {
             "archive-rejects" => Ok(Self::ArchiveRejects),
             "parts" => Ok(Self::Parts),
             "landscape" => Ok(Self::Landscape),
+            "lightroom" => Ok(Self::Lightroom(LightroomStep::Roots)),
+            "lightroom-report" => Ok(Self::Lightroom(LightroomStep::Report)),
+            "lightroom-written" => Ok(Self::Lightroom(LightroomStep::Written)),
             _ => Err(format!(
                 "want export, preset, fetch, lenses, settings, sync, synced, \
                  preset-onto-set, preset-remove, preset-report, paste, pasted, import, \
                  imported, match, matched, refit, look-remove, look-rename, root-name, \
-                 delete, archive, archive-rejects, parts or landscape, not {name}"
+                 delete, archive, archive-rejects, parts, landscape, lightroom, \
+                 lightroom-report or lightroom-written, not {name}"
             )),
         }
     }
@@ -825,6 +842,22 @@ impl Shown {
                 }
             }
             Self::Settings => app.invoke_settings_asked(),
+            Self::Lightroom(step) => {
+                if let Some(state) = STATE.with(|s| s.borrow().clone()) {
+                    let mut st = state.borrow_mut();
+                    match st.lightroom.catalog.clone() {
+                        Some(catalog) => {
+                            st.lightroom.then = match step {
+                                LightroomStep::Roots => crate::panel::lightroom::Then::Nothing,
+                                LightroomStep::Report => crate::panel::lightroom::Then::Report,
+                                LightroomStep::Written => crate::panel::lightroom::Then::Write,
+                            };
+                            crate::panel::lightroom::open(&mut st, app, catalog);
+                        }
+                        None => tracing::warn!("--sheet lightroom wants --lightroom CATALOG"),
+                    }
+                }
+            }
             Self::Match => app.invoke_match_asked(),
             Self::Refit => app.invoke_look_refit_asked(),
             Self::LookRemove | Self::LookRename => {
@@ -894,7 +927,10 @@ pub(crate) static SNAPSHOT_KEYS: std::sync::OnceLock<String> = std::sync::OnceLo
 /// second later, for the frame that shows what came.
 fn when_quiet(state: Rc<RefCell<State>>, then: impl FnOnce() + 'static, tries: u32) {
     let quiet = state.try_borrow().is_ok_and(|st| {
-        st.asked.is_empty() && st.part_pending.is_none() && st.landscape_pending.is_none()
+        st.asked.is_empty()
+            && st.part_pending.is_none()
+            && st.landscape_pending.is_none()
+            && !st.lightroom.busy()
     });
     if quiet || tries == 0 {
         slint::Timer::single_shot(std::time::Duration::from_millis(500), then);
@@ -1917,6 +1953,13 @@ mod tests {
         assert_eq!(app.get_preset_confirm_remove(), 1);
         app.set_preset_confirm_remove(-1);
         assert_eq!(Shown::sheet("preset-report"), Ok(Shown::PresetReport));
+        assert_eq!(
+            Shown::sheet("lightroom-written"),
+            Ok(Shown::Lightroom(LightroomStep::Written))
+        );
+        // With no --lightroom catalog it opens nothing.
+        Shown::Lightroom(LightroomStep::Roots).open(&app);
+        assert!(!app.get_lr_open());
         Shown::PresetReport.open(&app);
         assert!(app.get_preset_report_open());
         assert_eq!(app.get_preset_report_title(), "Imported 2 of 3 presets");

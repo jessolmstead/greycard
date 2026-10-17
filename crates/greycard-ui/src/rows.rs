@@ -1134,6 +1134,14 @@ pub(crate) fn load_file(st: &mut State, app: &App, file: usize) -> bool {
     take(st, app, file, held)
 }
 
+/// File `file`'s sidecar read again from the disk and taken, whatever
+/// the window held of it: another writer (the Lightroom import) wrote
+/// it. False when the read did not take.
+pub(crate) fn reread_file(st: &mut State, app: &App, file: usize) -> bool {
+    let held = from_disk(&st.files[file], st.write_sidecars);
+    take(st, app, file, held)
+}
+
 /// Every cell of `cells` loaded, those under an offline root left out
 /// and said; the ones in hand, in the order given. A file is read once
 /// however many of its cells are named; more than one to read is read

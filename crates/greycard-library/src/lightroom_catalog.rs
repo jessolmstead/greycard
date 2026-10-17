@@ -21,22 +21,28 @@
 //! are the catalog's Lua table of Camera Raw keys, mapped by
 //! [`greycard_edit::lightroom::read_table`] and recorded as one named
 //! state over the frame's starting edit, for the user to see and
-//! redo; what the mapper has no place for is counted by name. A
+//! redo, the crop with them where the file says its size
+//! ([`greycard_edit::lightroom::crop`]); what the mapper has no place
+//! for is counted by name. A
 //! virtual copy becomes a version of its file under the copy's name;
 //! the meta is the file's, so a copy rated or labeled apart from its
 //! master keeps the master's, and is counted. Collections and sets go
 //! to the collections file under a set named for the catalog, a smart
-//! collection when every rule has a term in the filter language, and
-//! anything else is named in the report with why; Lightroom's six stock
-//! smart collections, as every catalog has them, are counted and left
-//! out. Stacks are counted and not carried.
+//! collection when every rule has a term in the filter language (a
+//! rule on the camera or the lens asked of the names the catalog's and
+//! the library's cameras and lenses go by), and anything else is named
+//! in the report with why; Lightroom's six stock smart collections, as
+//! every catalog has them, are counted and left out. Stacks go to the
+//! stacks' files beside the collections, a virtual copy in one as its
+//! version.
 //!
 //! **Where the files are now.** A root folder's path is the one it had
 //! on the machine the catalog lived on, so each is mapped to where it
 //! is now (`--root A:/Photos=/photos`, the catalog's path or a folder
 //! above it, or the root's name), and a mapping is taken only when
 //! some of the catalog's files are found under it. A root not mapped
-//! is looked for where the catalog says it is.
+//! is looked for where the catalog says it is, then in a folder of its
+//! name beside the catalog or under the library's roots.
 //!
 //! **A dry run first.** [`import`] without `write` reads everything,
 //! looks at the disk and the sidecars already there, and reports what
@@ -56,9 +62,12 @@ use greycard_edit::meta::{Flag, Label, Meta, STARS};
 use greycard_edit::{Edit, Placement, Sidecar};
 use rusqlite::{Connection, OpenFlags, OptionalExtension};
 
-use crate::collections::{self, Collection, Smart};
+use greycard_edit::lightroom::crop::Crop;
+
+use crate::collections::{self, Collection, Reference, Smart};
 use crate::filter::{Filter, Saved};
 use crate::roots::{self, Roots};
+use crate::stacks::{self, Stack};
 
 /// The catalog schemas this import was tested against: the number
 /// the catalog's `Adobe_DBVersion` holds, and which Lightroom wrote the
@@ -124,6 +133,36 @@ pub struct Options {
     /// folder's `.greycard` rather than beside the file. A folder that
     /// has a `.greycard` already gets its new sidecars there either way.
     pub sidecars_in_folder: bool,
+    /// Leave out the books, prints, slideshows and web pages; without
+    /// it, each comes as a collection of its frames.
+    pub no_creations: bool,
+}
+
+/// How far a long import has come, for a caller that shows it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Progress {
+    /// The catalog read; its files being looked for, and their
+    /// sidecars read.
+    Looking { done: usize, of: usize },
+    /// The sidecars being written, a file at a time.
+    Writing { done: usize, of: usize },
+    /// The collections, the stacks and the roots being written.
+    Finishing,
+}
+
+/// What the catalog keeps of a file's frame, which its crop is laid
+/// over: its size before any turn and Lightroom's orientation code.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Shape {
+    pub size: Option<(f64, f64)>,
+    pub orientation: Option<String>,
+}
+
+/// A stack of the catalog: its images, the top first.
+#[derive(Debug, Clone)]
+pub(crate) struct CatalogStack {
+    pub(crate) images: Vec<i64>,
+    pub(crate) collapsed: bool,
 }
 
 /// A root folder of the catalog.
@@ -152,6 +191,10 @@ pub(crate) struct Image {
     pub(crate) develop: Option<String>,
     pub(crate) process: Option<String>,
     pub(crate) edited: bool,
+    pub(crate) shape: Shape,
+    /// The file's size in bytes when it was imported, as the catalog's
+    /// `importHash` ends with it.
+    pub(crate) size: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -181,8 +224,38 @@ pub(crate) struct Catalog {
     pub(crate) roots: Vec<CatalogRoot>,
     pub(crate) images: Vec<Image>,
     nodes: Vec<Node>,
-    pub(crate) stacks: usize,
+    pub(crate) stacks: Vec<CatalogStack>,
     pub(crate) wal: Wal,
+    /// The cameras and the lenses its images name, as Lightroom spells
+    /// them (the files' EXIF), and which image names which.
+    pub(crate) cameras: Vec<String>,
+    pub(crate) lenses: Vec<String>,
+    pub(crate) exif: Vec<ExifNames>,
+}
+
+/// The camera and the lens an image of the catalog names.
+#[derive(Debug, Clone)]
+pub(crate) struct ExifNames {
+    pub(crate) image: i64,
+    pub(crate) camera: Option<String>,
+    pub(crate) lens: Option<String>,
+}
+
+/// How a root's folder here was found.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Found {
+    /// Not found, and not mapped.
+    #[default]
+    Not,
+    /// A mapping said so.
+    Given,
+    /// Where the catalog says.
+    AsCatalogSays,
+    /// A folder of the root's name beside the catalog, or the catalog's
+    /// own folder by that name.
+    BesideCatalog,
+    /// A folder of the root's name under this root of the library.
+    UnderRoot(PathBuf),
 }
 
 /// One root of the catalog: where it is now and what was found there.
@@ -191,9 +264,9 @@ pub struct RootReport {
     /// As the catalog has it.
     pub catalog: String,
     pub name: String,
-    /// Where it was looked for, and whether a `--root` said so.
+    /// Where it was looked for, and how that was found.
     pub local: Option<PathBuf>,
-    pub given: bool,
+    pub how: Found,
     /// Of the first few files looked for, how many were there.
     pub checked: usize,
     pub checked_found: usize,
@@ -201,6 +274,47 @@ pub struct RootReport {
     pub confirmed: bool,
     pub files: usize,
     pub found: usize,
+    /// The nearest a guess came when it took nothing: a folder of the
+    /// root's name holding some of the sample, short of all but one or
+    /// at other sizes.
+    pub near_miss: Option<NearMiss>,
+}
+
+/// A folder of a root's name a guess did not take, and why.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NearMiss {
+    pub dir: PathBuf,
+    /// Of the files looked for, how many it holds.
+    pub there: usize,
+    pub looked_for: usize,
+    /// Most of those whose size the catalog keeps are at another size.
+    pub other_sizes: bool,
+}
+
+impl NearMiss {
+    /// What a report says of it, a folder chosen being taken on any file.
+    pub fn said(&self, voice: Voice) -> String {
+        let take = match voice {
+            Voice::Command => "--root it to take it",
+            Voice::Sheet => "choose it to take it",
+        };
+        if self.other_sizes {
+            format!(
+                "{} holds {} of {} looked for, most at other sizes than the catalog's, \
+                 another shoot's files of the same names it may be; {take}",
+                self.dir.display(),
+                self.there,
+                self.looked_for
+            )
+        } else {
+            format!(
+                "{} holds {} of {} looked for; {take}",
+                self.dir.display(),
+                self.there,
+                self.looked_for
+            )
+        }
+    }
 }
 
 /// A collection as it is to land.
@@ -233,6 +347,22 @@ pub struct Written {
     /// A virtual copy in a collection whose version is not in the
     /// sidecar (left alone without one): the frame's own taken instead.
     pub copies_as_own: usize,
+    /// Crops carried, those drawn in to stay on the turned picture, and
+    /// those not carried by why.
+    pub crops: usize,
+    pub crops_drawn_in: usize,
+    pub crops_not_carried: BTreeMap<String, usize>,
+    /// Frames turned in Lightroom whose turn was carried; those Flipped
+    /// there, whose mirror is not; and orientation codes not read.
+    pub turned: usize,
+    pub flips: usize,
+    pub orientations_unread: BTreeMap<String, usize>,
+    /// The raws whose sidecars were written, as the import found them.
+    pub frames: Vec<PathBuf>,
+    /// Stacks written, there already, and not written by why.
+    pub stacks: usize,
+    pub stacks_there: usize,
+    pub stacks_not_written: BTreeMap<String, usize>,
 }
 
 /// What an import found, and what it would do or did.
@@ -264,7 +394,20 @@ pub struct Report {
     pub copies_apart: usize,
     pub keywords: usize,
     pub keyworded: usize,
+    /// The developed images with a crop, and those whose file was found:
+    /// each carried where the file says its size.
+    pub crops: usize,
+    pub crops_found: usize,
+    /// The images with Lightroom's orientation; those whose orientation
+    /// there is mirrored (a Flip), and those found; codes not read.
+    pub oriented: usize,
+    pub flipped: usize,
+    pub flipped_found: usize,
+    pub orientations_unread: BTreeMap<String, usize>,
     pub stacks: usize,
+    /// Stacks with at least two of their images' files found: what a
+    /// write can carry.
+    pub stacks_found: usize,
     pub sets: usize,
     pub collections: Vec<CollectionReport>,
     /// Each smart collection translated, as typed, with its filter.
@@ -273,6 +416,14 @@ pub struct Report {
     pub smart_skipped: Vec<(String, String)>,
     /// Lightroom's own six as every catalog has them, left out.
     pub smart_stock: usize,
+    /// The smart collections with a rule on a camera or a lens:
+    /// translated, and skipped for whatever reason (a rule matching no
+    /// camera or lens known, one matching several, or any other rule of
+    /// the collection with no term).
+    pub exif_rules: usize,
+    pub exif_rules_skipped: usize,
+    /// The books, prints, slideshows and web pages left out, by name.
+    pub creations_left: Vec<String>,
     /// Where a new sidecar goes, as the setting says.
     pub sidecars_in_folder: bool,
     /// What the catalog's write-ahead log says of how it was read.
@@ -303,23 +454,43 @@ pub enum Wal {
 /// Read the catalog at `path` and report what importing it would do;
 /// with `options.write`, do it.
 pub fn import(path: &Path, options: &Options) -> Result<Report, ImportError> {
+    import_with(path, options, &mut |_| {})
+}
+
+/// [`import`], saying how far it has come to `progress` as it goes.
+pub fn import_with(
+    path: &Path,
+    options: &Options,
+    progress: &mut dyn FnMut(Progress),
+) -> Result<Report, ImportError> {
     let catalog = read(path)?;
-    let (roots, local_roots) = map_roots(&catalog, &options.roots)?;
+    let near = Near::of(path, &options.library);
+    let (roots, local_roots) = map_roots(&catalog, &options.roots, &near)?;
     let mut report = Report {
         catalog: path.to_path_buf(),
         schema: catalog.schema,
         written_by: catalog.written_by.to_string(),
         images: catalog.images.len(),
-        stacks: catalog.stacks,
+        stacks: catalog.stacks.len(),
         sidecars_in_folder: options.sidecars_in_folder,
         wal: catalog.wal,
         ..Report::default()
     };
+    // Looking for each file, then reading each one's sidecar.
+    let looking = 2 * catalog.images.len();
+    let mut looked = 0;
     // Where each image's file is, when its root is mapped and it is
     // there.
     let mut at: HashMap<i64, PathBuf> = HashMap::new();
     let mut files: HashMap<i64, bool> = HashMap::new();
     for image in &catalog.images {
+        looked += 1;
+        if looked % 25 == 0 {
+            progress(Progress::Looking {
+                done: looked,
+                of: looking,
+            });
+        }
         let Some(local) = local_roots.get(&image.root) else {
             files.entry(image.file).or_insert(false);
             continue;
@@ -372,11 +543,33 @@ pub fn import(path: &Path, options: &Options) -> Result<Report, ImportError> {
                 .map(|t| lightroom::read_table(t, ""))
             {
                 Some(Ok(imported)) => {
-                    for name in imported.unmapped {
+                    // The crop is the frame's, carried beside the
+                    // mapper's preset where the file says its size.
+                    for name in imported.unmapped.into_iter().filter(|n| n != "crop") {
                         *report.not_carried.entry(name).or_default() += 1;
                     }
                 }
                 _ => report.unreadable_develop += 1,
+            }
+            if crop_of(image).is_some() {
+                report.crops += 1;
+                report.crops_found += usize::from(found);
+            }
+        }
+        if let Some(code) = image.shape.orientation.as_deref().map(str::trim) {
+            report.oriented += 1;
+            match lightroom::crop::orientation_of(code) {
+                Some(o) if lightroom::crop::mirrors(o) => {
+                    report.flipped += 1;
+                    report.flipped_found += usize::from(found);
+                }
+                Some(_) => {}
+                None => {
+                    *report
+                        .orientations_unread
+                        .entry(code.to_string())
+                        .or_default() += 1
+                }
             }
         }
         if let Some(label) = &image.odd_label {
@@ -407,6 +600,13 @@ pub fn import(path: &Path, options: &Options) -> Result<Report, ImportError> {
     // its file.
     let mut kept: HashMap<i64, bool> = HashMap::new();
     for image in catalog.images.iter().filter(|i| i.master.is_none()) {
+        looked += 1;
+        if looked % 25 == 0 {
+            progress(Progress::Looking {
+                done: looked,
+                of: looking,
+            });
+        }
         let Some(raw) = at.get(&image.id) else {
             continue;
         };
@@ -441,6 +641,7 @@ pub fn import(path: &Path, options: &Options) -> Result<Report, ImportError> {
         .map(|p| crate::canonical(p).unwrap_or_else(|_| p.clone()));
     let mut plain: Vec<(&Node, String)> = Vec::new();
     let mut smart: Vec<(String, Saved)> = Vec::new();
+    let known = Known::of(&catalog, &options.library, &at);
     for node in &catalog.nodes {
         let quick = node.system && node.kind == Kind::Plain;
         let own = if quick {
@@ -451,6 +652,7 @@ pub fn import(path: &Path, options: &Options) -> Result<Report, ImportError> {
         let name = collections::full_name(&set_of(&catalog.nodes, node, &top), &own);
         match &node.kind {
             Kind::Set => report.sets += 1,
+            Kind::Creation(_) if options.no_creations => report.creations_left.push(name),
             Kind::Plain | Kind::Creation(_) => {
                 if quick && node.members.is_empty() {
                     continue;
@@ -467,8 +669,9 @@ pub fn import(path: &Path, options: &Options) -> Result<Report, ImportError> {
                 plain.push((node, name));
             }
             Kind::Smart(rules) if is_stock(&node.name, rules) => report.smart_stock += 1,
-            Kind::Smart(rules) => match translate(rules) {
+            Kind::Smart(rules) => match translate(rules, &known) {
                 Ok(text) => {
+                    report.exif_rules += usize::from(asks_exif(rules));
                     report.smart.push((name.clone(), text.clone()));
                     smart.push((
                         name,
@@ -478,10 +681,18 @@ pub fn import(path: &Path, options: &Options) -> Result<Report, ImportError> {
                         },
                     ));
                 }
-                Err(why) => report.smart_skipped.push((name, why)),
+                Err(why) => {
+                    report.exif_rules_skipped += usize::from(asks_exif(rules));
+                    report.smart_skipped.push((name, why));
+                }
             },
         }
     }
+    report.stacks_found = catalog
+        .stacks
+        .iter()
+        .filter(|st| st.images.iter().filter(|i| at.contains_key(i)).count() >= 2)
+        .count();
 
     if !options.write {
         return Ok(report);
@@ -490,10 +701,21 @@ pub fn import(path: &Path, options: &Options) -> Result<Report, ImportError> {
 
     // The sidecars: each file once, its own image and its copies.
     let mut versions: HashMap<i64, Option<String>> = HashMap::new();
+    let writing = catalog
+        .images
+        .iter()
+        .filter(|i| i.master.is_none() && at.contains_key(&i.id))
+        .count();
+    let mut wrote = 0;
     for image in catalog.images.iter().filter(|i| i.master.is_none()) {
         let Some(raw) = at.get(&image.id) else {
             continue;
         };
+        wrote += 1;
+        progress(Progress::Writing {
+            done: wrote,
+            of: writing,
+        });
         let copies: Vec<&Image> = catalog
             .images
             .iter()
@@ -517,10 +739,17 @@ pub fn import(path: &Path, options: &Options) -> Result<Report, ImportError> {
             }
             continue;
         }
-        match write_frame(raw, image, &copies, options.sidecars_in_folder) {
+        match write_frame(
+            raw,
+            image,
+            &copies,
+            options.sidecars_in_folder,
+            &mut written,
+        ) {
             Ok((wrote, made)) => {
                 if let Some(placement) = wrote {
                     written.sidecars += 1;
+                    written.frames.push(raw.clone());
                     if placement == Placement::Folder {
                         written.in_folder += 1;
                     }
@@ -533,6 +762,7 @@ pub fn import(path: &Path, options: &Options) -> Result<Report, ImportError> {
         }
     }
 
+    progress(Progress::Finishing);
     // The collections, joined to one of the same name already there.
     let dir = collections::dir_beside(&options.library);
     let mut there = collections::read_folder(&dir, collections::VERSION);
@@ -603,6 +833,8 @@ pub fn import(path: &Path, options: &Options) -> Result<Report, ImportError> {
         there.smart.push(s);
         written.smart += 1;
     }
+
+    write_stacks(&catalog, &at, &versions, &mut hashes, &dir, &mut written)?;
 
     // The roots, through the library's list.
     let confirmed: Vec<PathBuf> = report
@@ -685,26 +917,164 @@ fn starting_edit(raw: &Path) -> Edit {
     edit
 }
 
-/// The catalog's develop settings for `image` laid over `base`; none
-/// when the image was never developed or the settings will not read.
-fn developed(image: &Image, base: &Edit) -> Option<Edit> {
+/// The crop an image's develop settings hold, and whether Lightroom
+/// held it to its shape; none when they hold none.
+fn crop_of(image: &Image) -> Option<(Crop, bool)> {
     if !image.edited {
         return None;
     }
-    let imported = lightroom::read_table(image.develop.as_deref()?, "").ok()?;
-    Some(imported.preset.applied(base))
+    crop_in(image.develop.as_deref()?)
+}
+
+/// The crop develop settings hold, and whether Lightroom held it to its
+/// shape (`CropConstrainAspectRatio`).
+fn crop_in(settings: &str) -> Option<(Crop, bool)> {
+    let words = crate::lightroom_exports::words(settings);
+    let constrained = words
+        .get("CropConstrainAspectRatio")
+        .is_some_and(|v| v.eq_ignore_ascii_case("true"));
+    Crop::of(&words).map(|c| (c, constrained))
+}
+
+/// What became of an image's crop.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Cropped {
+    /// The settings hold none.
+    None,
+    /// Carried, and whether drawn in to stay on the turned picture.
+    Carried { drawn_in: bool },
+    /// Not carried, and why.
+    Not(String),
+}
+
+/// The catalog's crop laid onto `edit`'s geometry, for the raw at `raw`
+/// whose frame is turned `turn` quarters over its tag: the settings'
+/// crop placed in the frame as the decoder reads its size and its tag,
+/// against the catalog's own size and orientation in `shape`.
+pub fn crop_onto(edit: &mut Edit, raw: &Path, settings: &str, shape: &Shape, turn: u8) -> Cropped {
+    let Some((crop, constrained)) = crop_in(settings) else {
+        return Cropped::None;
+    };
+    let no_size = || Cropped::Not("its file says no size".into());
+    let Ok(stance) = greycard_core::decode::stance_path(raw) else {
+        return no_size();
+    };
+    let Some((w, h)) = stance.size else {
+        return no_size();
+    };
+    let frame = lightroom::crop::Frame {
+        size: (f64::from(w), f64::from(h)),
+        catalog: shape.size,
+        tag: stance.orientation,
+        turn,
+        lightroom: shape
+            .orientation
+            .as_deref()
+            .and_then(lightroom::crop::orientation_of),
+    };
+    match lightroom::crop::place(&crop, constrained, &frame) {
+        Ok(placed) => {
+            edit.geometry = placed.applied(&edit.geometry);
+            Cropped::Carried {
+                drawn_in: placed.drawn_in,
+            }
+        }
+        Err(lightroom::crop::NotPlaced::Mirrored) => {
+            Cropped::Not("Lightroom's orientation mirrors the frame".into())
+        }
+        Err(lightroom::crop::NotPlaced::NoSize) => no_size(),
+    }
+}
+
+/// What Lightroom's orientation of an image did to its edit.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Turned {
+    /// It stands as the frame does here, or the catalog does not say.
+    Same,
+    /// Turned in Lightroom: the edit's quarter turns take the turn.
+    Turned,
+    /// Mirrored in Lightroom where the frame is not, or the other way:
+    /// a Flip, which no quarter turn carries.
+    Mirrored,
+    /// A code this import does not read, as the catalog spells it.
+    Unread(String),
+}
+
+/// Lightroom's orientation of the image laid onto `edit`'s quarter
+/// turns, for the raw at `raw` turned `turn` quarters over its tag:
+/// every frame written takes its turn in Lightroom, cropped or not.
+pub fn turn_onto(edit: &mut Edit, raw: &Path, shape: &Shape, turn: u8) -> Turned {
+    let Some(code) = shape.orientation.as_deref().map(str::trim) else {
+        return Turned::Same;
+    };
+    let Some(lightroom) = lightroom::crop::orientation_of(code) else {
+        return Turned::Unread(code.to_string());
+    };
+    let Ok(stance) = greycard_core::decode::stance_path(raw) else {
+        return Turned::Same;
+    };
+    let shown = stance.orientation.turned(i32::from(turn % 4));
+    match lightroom::crop::turns_for(shown, lightroom) {
+        Ok(turns) => {
+            edit.geometry.turns = turns;
+            if turns == 0 {
+                Turned::Same
+            } else {
+                Turned::Turned
+            }
+        }
+        Err(_) => Turned::Mirrored,
+    }
+}
+
+/// The catalog's develop settings for `image` laid over `base`, its crop
+/// and its turn in Lightroom with them, for the raw at `raw` turned
+/// `turn` over its tag; and what became of the crop and the turn. An
+/// image never developed takes only its turn, when it has one; there is
+/// no edit when it has neither or the settings will not read.
+fn developed(image: &Image, base: &Edit, raw: &Path, turn: u8) -> (Option<Edit>, Cropped, Turned) {
+    let mut edit = base.clone();
+    if !image.edited {
+        let turned = turn_onto(&mut edit, raw, &image.shape, turn);
+        let carried = (turned == Turned::Turned).then_some(edit);
+        return (carried, Cropped::None, turned);
+    }
+    let Some(imported) = image
+        .develop
+        .as_deref()
+        .and_then(|s| lightroom::read_table(s, "").ok())
+    else {
+        return (None, Cropped::None, Turned::Same);
+    };
+    let settings = image.develop.as_deref().unwrap_or_default();
+    let mut edit = imported.preset.applied(base);
+    let turned = turn_onto(&mut edit, raw, &image.shape, turn);
+    let cropped = crop_onto(&mut edit, raw, settings, &image.shape, turn);
+    (Some(edit), cropped, turned)
 }
 
 /// The edit an import writes for the raw at `raw` from the develop
 /// settings `settings` (a catalog's Lua table) when the frame has no
 /// sidecar yet: the settings mapped and laid over the frame's starting
-/// edit. Beside it, what the mapper had no place for.
-pub fn imported_edit(raw: &Path, settings: &str) -> greycard_edit::Result<(Edit, Vec<String>)> {
+/// edit, and with `shape` (the catalog's size and orientation of the
+/// file) its crop. Beside it, what the mapper had no place for, the
+/// crop among them when it was not carried. Without `shape` the crop is
+/// left off and named, for a caller that cuts Lightroom's crop itself.
+pub fn imported_edit(
+    raw: &Path,
+    settings: &str,
+    shape: Option<&Shape>,
+) -> greycard_edit::Result<(Edit, Vec<String>)> {
     let imported = lightroom::read_table(settings, "")?;
-    Ok((
-        imported.preset.applied(&starting_edit(raw)),
-        imported.unmapped,
-    ))
+    let mut edit = imported.preset.applied(&starting_edit(raw));
+    let mut unmapped = imported.unmapped;
+    if let Some(shape) = shape {
+        turn_onto(&mut edit, raw, shape, 0);
+        if let Cropped::Carried { .. } = crop_onto(&mut edit, raw, settings, shape, 0) {
+            unmapped.retain(|n| n != "crop");
+        }
+    }
+    Ok((edit, unmapped))
 }
 
 /// Where a frame's sidecar goes: where it is, when it has one; else
@@ -734,6 +1104,7 @@ fn write_frame(
     image: &Image,
     copies: &[&Image],
     in_folder: bool,
+    written: &mut Written,
 ) -> Result<FrameWritten, String> {
     let found = Sidecar::load(raw).map_err(|e| e.to_string())?;
     let starting = starting_edit(raw);
@@ -756,7 +1127,26 @@ fn write_frame(
         changed = true;
     }
     let label = greycard_edit::history::import_label("Lightroom");
-    if let Some(edit) = developed(image, &sidecar.current) {
+    let turn = sidecar.turn;
+    let mut tally = |cropped: Cropped, turned: Turned| {
+        match cropped {
+            Cropped::None => {}
+            Cropped::Carried { drawn_in } => {
+                written.crops += 1;
+                written.crops_drawn_in += usize::from(drawn_in);
+            }
+            Cropped::Not(why) => *written.crops_not_carried.entry(why).or_default() += 1,
+        }
+        match turned {
+            Turned::Same => {}
+            Turned::Turned => written.turned += 1,
+            Turned::Mirrored => written.flips += 1,
+            Turned::Unread(code) => *written.orientations_unread.entry(code).or_default() += 1,
+        }
+    };
+    let (edit, cropped, turned) = developed(image, &sidecar.current, raw, turn);
+    tally(cropped, turned);
+    if let Some(edit) = edit {
         changed |= sidecar.record_as(edit, Some(label.clone()));
     }
     let mut made = Vec::new();
@@ -778,10 +1168,12 @@ fn write_frame(
                 sidecar.new_version_from_original(starting.clone(), Some(&name))
             }
         };
-        if let Some(line) = sidecar.line_mut(Some(&id))
-            && let Some(edit) = developed(copy, &line.current)
-        {
-            changed |= line.record_as(edit, Some(label.clone()));
+        if let Some(line) = sidecar.line_mut(Some(&id)) {
+            let (edit, cropped, turned) = developed(copy, &line.current, raw, turn);
+            tally(cropped, turned);
+            if let Some(edit) = edit {
+                changed |= line.record_as(edit, Some(label.clone()));
+            }
         }
         made.push((copy.id, id));
     }
@@ -793,6 +1185,524 @@ fn write_frame(
     let placement = placement_for(raw, in_folder);
     sidecar.save_in(raw, placement).map_err(|e| e.to_string())?;
     Ok((Some(placement), made))
+}
+
+/// The catalog's stacks written as ours, each a file in the stacks'
+/// folder beside the collections: the members whose files were found,
+/// the top first, a virtual copy as the version made for it. A stack
+/// there already with every one of these members is left as it is; one
+/// with a member in another stack already is not written, since a frame
+/// is in one stack at most; one of fewer than two members found, or
+/// across folders (Lightroom's never are), is not a stack.
+fn write_stacks(
+    catalog: &Catalog,
+    at: &HashMap<i64, PathBuf>,
+    versions: &HashMap<i64, Option<String>>,
+    hashes: &mut HashMap<PathBuf, Option<String>>,
+    collections_dir: &Path,
+    written: &mut Written,
+) -> Result<(), ImportError> {
+    if catalog.stacks.is_empty() {
+        return Ok(());
+    }
+    let by_id: HashMap<i64, &Image> = catalog.images.iter().map(|i| (i.id, i)).collect();
+    let dir = stacks::dir_in(collections_dir);
+    let mut there = stacks::read_folder(&dir, stacks::VERSION);
+    let mut not = |why: &str| *written.stacks_not_written.entry(why.into()).or_default() += 1;
+    let key = |r: &Reference| (r.hint.clone(), r.version.clone());
+    let mut made = 0;
+    for st in &catalog.stacks {
+        let mut refs: Vec<Reference> = Vec::new();
+        let mut folders: Vec<PathBuf> = Vec::new();
+        for id in &st.images {
+            let Some(image) = by_id.get(id) else {
+                continue;
+            };
+            let own = image.master.unwrap_or(image.id);
+            let Some(raw) = at.get(&own) else {
+                continue;
+            };
+            let version = match image.master {
+                Some(_) => match versions.get(&image.id).cloned().flatten() {
+                    Some(v) => Some(v),
+                    // A copy whose version was not made (its file's
+                    // sidecar left alone without one) is not a frame.
+                    None => continue,
+                },
+                None => None,
+            };
+            let hash = hashes
+                .entry(raw.clone())
+                .or_insert_with(|| crate::hash_file(raw).ok())
+                .clone();
+            let Some(hash) = hash else {
+                continue;
+            };
+            let key_path = crate::key_path(raw);
+            if let Some(folder) = key_path.parent() {
+                folders.push(folder.to_path_buf());
+            }
+            refs.push(Reference {
+                hash,
+                hint: collections::hint_of(&key_path),
+                version,
+            });
+        }
+        folders.dedup();
+        if refs.len() < 2 {
+            not("fewer than two of its frames found");
+            continue;
+        }
+        if folders.len() > 1 {
+            not("its frames in more than one folder");
+            continue;
+        }
+        if there
+            .list
+            .iter()
+            .any(|t| refs.iter().all(|r| t.refs.iter().any(|q| key(q) == key(r))))
+        {
+            written.stacks_there += 1;
+            continue;
+        }
+        if there
+            .list
+            .iter()
+            .any(|t| t.refs.iter().any(|q| refs.iter().any(|r| key(q) == key(r))))
+        {
+            not("a frame of it in another stack already");
+            continue;
+        }
+        let mut stack = Stack::new(refs);
+        stack.open = !st.collapsed;
+        stack.write(&dir)?;
+        there.list.push(stack);
+        made += 1;
+    }
+    written.stacks += made;
+    Ok(())
+}
+
+/// Where a root not mapped may be now, beside where the catalog says:
+/// a folder of the root's name beside the catalog (a shoot's catalog
+/// usually sits beside its pictures' folder), or under one of the
+/// library's roots.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Near {
+    pub(crate) catalog_dir: Option<PathBuf>,
+    pub(crate) roots: Vec<PathBuf>,
+}
+
+/// How deep under a library's root a root's folder is looked for.
+const NEAR_DEPTH: usize = 3;
+
+impl Near {
+    /// Beside the catalog at `catalog`, and under the roots of the
+    /// library at `library`.
+    pub(crate) fn of(catalog: &Path, library: &Path) -> Near {
+        let roots = Roots::load(&Roots::path_beside(library))
+            .map(|r| r.locals())
+            .unwrap_or_default();
+        Near {
+            roots,
+            ..Near::beside(catalog)
+        }
+    }
+
+    /// Beside the catalog at `catalog` alone.
+    pub(crate) fn beside(catalog: &Path) -> Near {
+        Near {
+            catalog_dir: std::path::absolute(catalog)
+                .ok()
+                .and_then(|p| p.parent().map(Path::to_path_buf)),
+            roots: Vec::new(),
+        }
+    }
+
+    /// Every folder that may be the root named `name`, and how each was
+    /// found, nearest first: beside the catalog, then under each of the
+    /// library's roots a level at a time, three deep.
+    fn candidates(&self, name: &str) -> Vec<(PathBuf, Found)> {
+        let mut out: Vec<(PathBuf, Found)> = Vec::new();
+        if name.trim().is_empty() {
+            return out;
+        }
+        let named = |p: &Path| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name))
+        };
+        if let Some(dir) = &self.catalog_dir {
+            let mut beside = vec![dir.join(name)];
+            if named(dir) {
+                beside.push(dir.clone());
+            }
+            if let Some(up) = dir.parent() {
+                beside.push(up.join(name));
+            }
+            out.extend(
+                beside
+                    .into_iter()
+                    .filter(|d| d.is_dir())
+                    .map(|d| (d, Found::BesideCatalog)),
+            );
+        }
+        for root in &self.roots {
+            if named(root) && root.is_dir() {
+                out.push((root.clone(), Found::UnderRoot(root.clone())));
+            }
+            let mut level = vec![root.clone()];
+            for _ in 0..NEAR_DEPTH {
+                let mut next = Vec::new();
+                for dir in &level {
+                    let Ok(entries) = std::fs::read_dir(dir) else {
+                        continue;
+                    };
+                    let mut subs: Vec<PathBuf> = entries
+                        .flatten()
+                        .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+                        .map(|e| e.path())
+                        .filter(|p| {
+                            !p.file_name()
+                                .is_some_and(|n| n.to_string_lossy().starts_with('.'))
+                        })
+                        .collect();
+                    subs.sort();
+                    next.extend(subs);
+                }
+                out.extend(
+                    next.iter()
+                        .filter(|d| named(d))
+                        .map(|d| (d.clone(), Found::UnderRoot(root.clone()))),
+                );
+                level = next;
+            }
+        }
+        out.dedup_by(|a, b| a.0 == b.0);
+        out
+    }
+}
+
+/// How many of a root's files a guess at its folder looks for, spread
+/// through the catalog's order.
+const GUESS_CHECKED: usize = 25;
+
+/// What a folder holds of a sample of a root's files: how many are
+/// there, and of those whose size the catalog keeps, how many have it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct Held {
+    there: usize,
+    sized: usize,
+    same_size: usize,
+}
+
+impl Held {
+    /// What `dir` holds of `sample`.
+    fn of(dir: &Path, sample: &[&Image]) -> Held {
+        let mut held = Held::default();
+        for image in sample {
+            let Ok(meta) = std::fs::metadata(under(dir, &image.relative)) else {
+                continue;
+            };
+            held.there += 1;
+            if let Some(size) = image.size {
+                held.sized += 1;
+                held.same_size += usize::from(meta.len() == size);
+            }
+        }
+        held
+    }
+
+    /// Whether a guessed folder is the root's: every file of the sample
+    /// there, or all but one, and not most of those the catalog has the
+    /// size of at another size, which is another shoot's files of the
+    /// same names.
+    fn is_the_root(self, sampled: usize) -> bool {
+        let wanted = sampled.saturating_sub(1).max(1);
+        self.there >= wanted && !self.other_files()
+    }
+
+    /// Most of the files whose size the catalog keeps at another size.
+    fn other_files(self) -> bool {
+        self.sized >= 3 && 2 * self.same_size < self.sized
+    }
+}
+
+/// A camera or a lens as the index names it, and every spelling of it.
+pub(crate) type Named = (String, Vec<String>);
+
+/// The cameras and the lenses a smart collection's rule on either can
+/// name: the catalog's and the library's, each camera as the index
+/// names it with every spelling it goes by.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Known {
+    /// Each camera's name in the index, and its spellings: that name,
+    /// the EXIF models the decoder knows for it and the catalog's.
+    pub(crate) cameras: Vec<Named>,
+    pub(crate) lenses: Vec<Named>,
+}
+
+impl Known {
+    /// The catalog's cameras and lenses, and the library's beside
+    /// `library` when it has an index. Each name the catalog gives is
+    /// put to one of its files found (`at`), whose own reading is the
+    /// index's name for it: the camera's and the lens's both, since a
+    /// raw's lens is named by its decoder too ("RF50mm F1.2 L USM" in
+    /// the EXIF is "RF 50mm F1.2L USM" in the index). A name none of
+    /// whose files is here takes the decoder's table for a camera, and
+    /// stands as it is for a lens.
+    pub(crate) fn of(catalog: &Catalog, library: &Path, at: &HashMap<i64, PathBuf>) -> Known {
+        let (mut cameras, mut lenses) = (Vec::new(), Vec::new());
+        if library.is_file()
+            && let Ok(lib) = crate::Library::open_read_only(library)
+        {
+            let all = Filter::default();
+            for (facet, into) in [
+                (crate::Facet::Camera, &mut cameras),
+                (crate::Facet::Lens, &mut lenses),
+            ] {
+                if let Ok(counts) = lib.facet_counts(facet, None, &all) {
+                    into.extend(counts.into_iter().map(|c| c.value));
+                }
+            }
+        }
+        let mut known = Known::default();
+        // Lightroom's test is asked of the EXIF's spellings, which the
+        // catalog's own names are; a camera of the library's is known
+        // by the decoder's spellings of its name, or by that name when
+        // the decoder has none.
+        // One file a name, read as the index reads it.
+        let mut read: HashMap<PathBuf, Option<(String, Option<String>)>> = HashMap::new();
+        let mut ours = |spelled: &dyn Fn(&ExifNames) -> Option<&str>, value: &str| {
+            let raw = catalog
+                .exif
+                .iter()
+                .filter(|e| spelled(e) == Some(value))
+                .find_map(|e| at.get(&e.image))?;
+            read.entry(raw.clone())
+                .or_insert_with(|| named_as_indexed(raw))
+                .clone()
+        };
+        for model in &catalog.cameras {
+            let name = ours(&|e| e.camera.as_deref(), model)
+                .map(|(camera, _)| camera)
+                .filter(|c| !c.is_empty())
+                .or_else(|| greycard_core::decode::cleaned_camera(model))
+                .unwrap_or_else(|| model.trim().to_string());
+            known.add_camera(&name, Some(model));
+        }
+        for name in &cameras {
+            known.add_camera(name, None);
+        }
+        for lens in &catalog.lenses {
+            let name = ours(&|e| e.lens.as_deref(), lens)
+                .and_then(|(_, lens)| lens)
+                .filter(|l| !l.is_empty())
+                .unwrap_or_else(|| lens.trim().to_string());
+            known.add_lens(&name, Some(lens));
+        }
+        for name in &lenses {
+            known.add_lens(name, None);
+        }
+        known
+    }
+
+    /// A lens named `name` in the index, spelled `spelling` by a file
+    /// when one says, else known by its name.
+    pub(crate) fn add_lens(&mut self, name: &str, spelling: Option<&str>) {
+        let name = name.trim();
+        if name.is_empty() {
+            return;
+        }
+        let at = match self
+            .lenses
+            .iter()
+            .position(|(n, _)| n.eq_ignore_ascii_case(name))
+        {
+            Some(at) => at,
+            None => {
+                self.lenses.push((name.to_string(), Vec::new()));
+                self.lenses.len() - 1
+            }
+        };
+        let spelling = spelling.map(str::trim).unwrap_or(name);
+        let spellings = &mut self.lenses[at].1;
+        if !spellings.iter().any(|s| s.eq_ignore_ascii_case(spelling)) {
+            spellings.push(spelling.to_string());
+        }
+    }
+
+    /// A camera named `name` in the index, spelled `spelling` by a file
+    /// when one says. Its spellings are the EXIF's: the decoder's for
+    /// the name and the files', or the name itself when there are none.
+    pub(crate) fn add_camera(&mut self, name: &str, spelling: Option<&str>) {
+        if name.trim().is_empty() {
+            return;
+        }
+        let at = match self
+            .cameras
+            .iter()
+            .position(|(n, _)| n.eq_ignore_ascii_case(name))
+        {
+            Some(at) => at,
+            None => {
+                let mut spellings = greycard_core::decode::exif_models(name);
+                if spellings.is_empty() && spelling.is_none() {
+                    spellings.push(name.to_string());
+                }
+                self.cameras.push((name.to_string(), spellings));
+                self.cameras.len() - 1
+            }
+        };
+        let spellings = &mut self.cameras[at].1;
+        if let Some(spelling) = spelling
+            && !spellings.iter().any(|s| s.eq_ignore_ascii_case(spelling))
+        {
+            spellings.push(spelling.trim().to_string());
+        }
+    }
+}
+
+/// Whether a smart collection's rules ask anything of the camera or the
+/// lens.
+fn asks_exif(rules: &str) -> bool {
+    lightroom::parse_table(rules).is_ok_and(|entries| {
+        entries.iter().any(|(_, v)| match v {
+            Value::Table(fields) => fields.iter().any(|(k, v)| {
+                k.as_deref() == Some("criteria")
+                    && matches!(v, Value::Word(w) if w == "camera" || w == "lens")
+            }),
+            _ => false,
+        })
+    })
+}
+
+/// Lightroom's test on a text field, as it asks it of one spelling:
+/// case ignored, a word list split on spaces.
+fn lightroom_text(op: &str, value: &str, spelling: &str) -> Option<bool> {
+    let (v, s) = (value.trim().to_lowercase(), spelling.trim().to_lowercase());
+    let words: Vec<&str> = v.split_whitespace().collect();
+    Some(match op {
+        "==" => s == v,
+        "!=" => s != v,
+        "any" | "contains" => words.iter().any(|w| s.contains(w)),
+        "all" => !words.is_empty() && words.iter().all(|w| s.contains(w)),
+        // Every word as the start of one of the spelling's words.
+        "words" => {
+            !words.is_empty()
+                && words
+                    .iter()
+                    .all(|w| s.split_whitespace().any(|t| t.starts_with(w)))
+        }
+        "noneOf" => !words.iter().any(|w| s.contains(w)),
+        "beginsWith" => s.starts_with(&v),
+        "endsWith" => s.ends_with(&v),
+        _ => return None,
+    })
+}
+
+/// A rule on the camera or the lens as filter terms, through the names
+/// they go by: Lightroom's test asked of each known one's spellings,
+/// and the ones it passes said as the index names them.
+///
+/// - A test of words the index's names hold the same way (`lens any
+///   RF50mm`, passing just the lenses whose name has it) is those words
+///   (`lens:RF50mm`).
+/// - Else a test passing one is that one (`camera="Canon EOS R6 Mark
+///   II"`).
+/// - A test leaving some out (`!=`, `noneOf`) is each of those left out
+///   (`camera!=...`), since the terms are asked together.
+/// - A test passing several and failing others has no term: a filter's
+///   terms are asked together, and it has no "either".
+/// - One passing none matches nothing and is skipped.
+fn exif_terms(
+    criteria: &str,
+    op: &str,
+    value: &str,
+    known: &[Named],
+) -> Result<Vec<String>, String> {
+    let what = if criteria == "camera" {
+        "camera"
+    } else {
+        "lens"
+    };
+    let quoted = |v: &str| -> Result<String, String> {
+        if v.contains('"') {
+            return Err(format!("{criteria} names {v}, with a quote in it"));
+        }
+        Ok(format!("\"{v}\""))
+    };
+    if lightroom_text(op, value, "").is_none() {
+        return Err(format!("{criteria} {op} has no counterpart in the filter"));
+    }
+    let negative = matches!(op, "!=" | "noneOf");
+    // A positive test passes a known one when any of its spellings
+    // passes; a negative one, when none of its spellings is left out.
+    let passes = |spellings: &[String]| {
+        let mut each = spellings
+            .iter()
+            .map(|s| lightroom_text(op, value, s).unwrap_or(false));
+        if negative {
+            each.all(|p| p)
+        } else {
+            each.any(|p| p)
+        }
+    };
+    let (passed, failed): (Vec<&Named>, Vec<&Named>) = known.iter().partition(|(_, sp)| passes(sp));
+    if passed.is_empty() {
+        return Err(format!(
+            "its {what} rule matches no {what} the catalog or the library holds"
+        ));
+    }
+    if negative {
+        return failed
+            .iter()
+            .map(|(name, _)| Ok(format!("{criteria}!={}", quoted(name)?)))
+            .collect();
+    }
+    // Words the index's names answer as Lightroom's spellings do.
+    let words: Vec<String> = value.split_whitespace().map(str::to_lowercase).collect();
+    let as_words = match op {
+        "any" | "contains" if words.len() == 1 => Some(words.clone()),
+        "all" | "words" if !words.is_empty() => Some(words.clone()),
+        _ => None,
+    };
+    if let Some(words) = as_words {
+        let ours = |name: &str| {
+            let name = name.to_lowercase();
+            words.iter().all(|w| name.contains(w.as_str()))
+        };
+        let same = known.iter().all(|(name, sp)| ours(name) == passes(sp));
+        if same {
+            return words
+                .iter()
+                .map(|w| {
+                    Ok(if w.contains(char::is_whitespace) {
+                        format!("{criteria}:{}", quoted(w)?)
+                    } else {
+                        format!("{criteria}:{w}")
+                    })
+                })
+                .collect();
+        }
+    }
+    let whats = if criteria == "camera" {
+        "cameras"
+    } else {
+        "lenses"
+    };
+    match passed.as_slice() {
+        [(name, _)] => Ok(vec![format!("{criteria}={}", quoted(name)?)]),
+        _ if failed.is_empty() => Err(format!(
+            "its {what} rule matches every one of the {} {whats} known and names none of them, \
+             which no term of the filter says",
+            passed.len()
+        )),
+        _ => Err(format!(
+            "its {what} rule matches {} of the {whats} known and not the rest, and a \
+             filter's terms are asked together",
+            passed.len()
+        )),
+    }
 }
 
 /// A file under a folder, the relative path slash-separated as the
@@ -852,6 +1762,7 @@ fn components(path: &str) -> Vec<String> {
 pub(crate) fn map_roots(
     catalog: &Catalog,
     given: &[(String, PathBuf)],
+    near: &Near,
 ) -> Result<(Vec<RootReport>, HashMap<i64, PathBuf>), ImportError> {
     // Every mapping must name a root.
     for (from, _) in given {
@@ -899,42 +1810,126 @@ pub(crate) fn map_roots(
             })
             .max_by_key(|(n, _)| *n)
             .map(|(_, to)| to);
-        let given_one = mapped.is_some();
-        let local = mapped.or_else(|| {
-            let here = PathBuf::from(&root.path);
-            (here.is_absolute() && here.is_dir()).then_some(here)
-        });
+        let own: Vec<&Image> = catalog
+            .images
+            .iter()
+            .filter(|i| i.root == root.id && i.master.is_none())
+            .collect();
+        let sample: Vec<&Image> = own.iter().take(CHECKED).copied().collect();
+        let guess_sample: Vec<&Image> = evenly(own.len(), GUESS_CHECKED)
+            .into_iter()
+            .map(|i| own[i])
+            .collect();
+        let found_under = |dir: &Path| {
+            sample
+                .iter()
+                .filter(|i| under(dir, &i.relative).exists())
+                .count()
+        };
+        // Given, it is taken or not on its own word; where the catalog
+        // says, on any of its first files there. Else a guess: of the
+        // folders of its name near the catalog or under the library's
+        // roots, the one holding most of a sample spread through its
+        // files, every one of them or all but one at their sizes, the
+        // nearest of those holding as many. A folder of the name with a
+        // file or two of the same names is another shoot's, and is
+        // passed over.
+        let mut guessed: Option<Held> = None;
+        let mut missed: Option<NearMiss> = None;
+        let (local, how) = match mapped {
+            Some(to) => (Some(to), Found::Given),
+            None => {
+                let here = PathBuf::from(&root.path);
+                let as_said = (here.is_absolute() && here.is_dir()).then_some(here);
+                let holds = |dir: &Path| {
+                    if sample.is_empty() {
+                        dir.is_dir()
+                    } else {
+                        found_under(dir) > 0
+                    }
+                };
+                match as_said {
+                    Some(here) if holds(&here) => (Some(here), Found::AsCatalogSays),
+                    as_said => {
+                        let mut best: Option<(PathBuf, Found, Held)> = None;
+                        for (dir, how) in near.candidates(&root.name) {
+                            let held = Held::of(&dir, &guess_sample);
+                            if !guess_sample.is_empty() && !held.is_the_root(guess_sample.len()) {
+                                // The nearest miss, said if nothing is
+                                // taken.
+                                let nearer = missed
+                                    .as_ref()
+                                    .is_none_or(|m: &NearMiss| held.there > m.there);
+                                if held.there > 0 && nearer {
+                                    missed = Some(NearMiss {
+                                        dir: dir.clone(),
+                                        there: held.there,
+                                        looked_for: guess_sample.len(),
+                                        other_sizes: held.other_files(),
+                                    });
+                                }
+                                continue;
+                            }
+                            let better = best.as_ref().is_none_or(|(_, _, b)| {
+                                (held.there, held.same_size) > (b.there, b.same_size)
+                            });
+                            if better {
+                                best = Some((dir, how, held));
+                            }
+                        }
+                        match best {
+                            Some((dir, how, held)) => {
+                                guessed = Some(held);
+                                (Some(dir), how)
+                            }
+                            None => {
+                                let how = if as_said.is_some() {
+                                    Found::AsCatalogSays
+                                } else {
+                                    Found::Not
+                                };
+                                (as_said, how)
+                            }
+                        }
+                    }
+                }
+            }
+        };
         let mut report = RootReport {
             catalog: root.path.clone(),
             name: root.name.clone(),
             local: local.clone(),
-            given: given_one,
+            how,
             checked: 0,
             checked_found: 0,
             confirmed: false,
             files: 0,
             found: 0,
+            near_miss: None,
         };
-        if let Some(local) = &local {
-            let sample: Vec<&Image> = catalog
-                .images
-                .iter()
-                .filter(|i| i.root == root.id && i.master.is_none())
-                .take(CHECKED)
-                .collect();
-            report.checked = sample.len();
-            report.checked_found = sample
-                .iter()
-                .filter(|i| under(local, &i.relative).exists())
-                .count();
-            report.confirmed = if sample.is_empty() {
-                local.is_dir()
-            } else {
-                report.checked_found > 0
-            };
-            if report.confirmed {
+        match (&local, guessed) {
+            (Some(local), Some(held)) => {
+                report.checked = guess_sample.len();
+                report.checked_found = held.there;
+                report.confirmed = true;
                 taken.insert(root.id, local.clone());
             }
+            (Some(local), None) => {
+                report.checked = sample.len();
+                report.checked_found = found_under(local);
+                report.confirmed = if sample.is_empty() {
+                    local.is_dir()
+                } else {
+                    report.checked_found > 0
+                };
+                if report.confirmed {
+                    taken.insert(root.id, local.clone());
+                }
+            }
+            (None, _) => {}
+        }
+        if !report.confirmed {
+            report.near_miss = missed;
         }
         reports.push(report);
     }
@@ -1091,6 +2086,46 @@ pub(crate) fn read(path: &Path) -> Result<Catalog, ImportError> {
         })?
         .collect::<Result<_, _>>()?;
 
+    // The file's size and Lightroom's orientation, which its crop is
+    // laid over.
+    let shapes: HashMap<i64, Shape> = optional(
+        db.prepare("SELECT id_local, fileWidth, fileHeight, orientation FROM Adobe_images")
+            .and_then(|mut st| {
+                st.query_map([], |r| {
+                    let w = r.get::<_, Option<f64>>(1).ok().flatten();
+                    let h = r.get::<_, Option<f64>>(2).ok().flatten();
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        Shape {
+                            size: w.zip(h).filter(|(w, h)| *w >= 1.0 && *h >= 1.0),
+                            orientation: r
+                                .get::<_, Option<String>>(3)
+                                .ok()
+                                .flatten()
+                                .filter(|o| !o.trim().is_empty()),
+                        },
+                    ))
+                })?
+                .collect::<Result<Vec<_>, _>>()
+            }),
+    )?
+    .into_iter()
+    .collect();
+    // Each file's size when it was imported: Lightroom's `importHash` is
+    // its capture time, its name and its size, colons between.
+    let sizes: HashMap<i64, u64> = optional(
+        db.prepare("SELECT id_local, importHash FROM AgLibraryFile")
+            .and_then(|mut st| {
+                st.query_map([], |r| Ok((r.get::<_, i64>(0)?, text(r, 1)?)))?
+                    .collect::<Result<Vec<_>, _>>()
+            }),
+    )?
+    .into_iter()
+    .filter_map(|(id, hash)| {
+        let size = hash.rsplit(':').next()?.trim().parse::<u64>().ok()?;
+        Some((id, size))
+    })
+    .collect();
     let mut images = Vec::new();
     let mut stmt = db.prepare(
         "SELECT i.id_local, i.rootFile, i.masterImage, i.copyName, i.rating, i.pick, \
@@ -1131,6 +2166,7 @@ pub(crate) fn read(path: &Path) -> Result<Catalog, ImportError> {
         meta.set_title(titles.get(&id).map_or("", String::as_str));
         meta.set_caption(captions.get(&id).map_or("", String::as_str));
         let (develop_text, process, adjusted) = develop.get(&id).cloned().unwrap_or_default();
+        let shape = shapes.get(&id).cloned().unwrap_or_default();
         let edited = match adjusted {
             Some(flag) => flag > 0.0,
             // Lightroom's own mark missing: a step past the one the
@@ -1149,6 +2185,8 @@ pub(crate) fn read(path: &Path) -> Result<Catalog, ImportError> {
             develop: develop_text,
             process,
             edited,
+            shape,
+            size: sizes.get(&r.get::<_, i64>(1)?).copied(),
         });
     }
     drop(rows);
@@ -1207,18 +2245,115 @@ pub(crate) fn read(path: &Path) -> Result<Catalog, ImportError> {
             }
         })
         .collect();
-    let stacks: i64 = db.query_row("SELECT count(*) FROM AgLibraryFolderStack", [], |r| {
-        r.get(0)
-    })?;
+    // The stacks, their images in their order, the top first. A
+    // catalog's stack whose images will not read (a table missing from
+    // one we have not seen) is counted and carries none.
+    let ids: Vec<i64> = db
+        .prepare("SELECT id_local FROM AgLibraryFolderStack ORDER BY id_local")?
+        .query_map([], |r| r.get::<_, i64>(0))?
+        .collect::<Result<_, _>>()?;
+    let mut stacks: Vec<CatalogStack> = ids
+        .iter()
+        .map(|_| CatalogStack {
+            images: Vec::new(),
+            collapsed: false,
+        })
+        .collect();
+    let members = optional(
+        db.prepare(
+            "SELECT s.stack, s.image, f.collapsed FROM AgLibraryFolderStackImage s \
+             JOIN AgLibraryFolderStack f ON f.id_local = s.stack \
+             ORDER BY s.stack, CAST(s.position AS REAL), s.id_local",
+        )
+        .and_then(|mut st| {
+            st.query_map([], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, Option<f64>>(2).ok().flatten().unwrap_or(0.0) > 0.0,
+                ))
+            })?
+            .collect::<Result<Vec<_>, _>>()
+        }),
+    )?;
+    for (stack, image, collapsed) in members {
+        if let Some(at) = ids.iter().position(|&i| i == stack) {
+            stacks[at].images.push(image);
+            stacks[at].collapsed = collapsed;
+        }
+    }
+    // The camera and the lens each image names, as Lightroom spells
+    // them.
+    let named = |r: &rusqlite::Row, i: usize| -> rusqlite::Result<Option<String>> {
+        Ok(Some(text(r, i)?.trim().to_string()).filter(|n| !n.is_empty()))
+    };
+    let exif: Vec<ExifNames> = optional(
+        db.prepare(
+            "SELECT h.image, m.value, l.value FROM AgHarvestedExifMetadata h \
+             LEFT JOIN AgInternedExifCameraModel m ON m.id_local = h.cameraModelRef \
+             LEFT JOIN AgInternedExifLens l ON l.id_local = h.lensRef \
+             ORDER BY h.image",
+        )
+        .and_then(|mut st| {
+            st.query_map([], |r| {
+                Ok(ExifNames {
+                    image: r.get(0)?,
+                    camera: named(r, 1)?,
+                    lens: named(r, 2)?,
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()
+        }),
+    )?;
+    let distinct = |of: &dyn Fn(&ExifNames) -> Option<&String>| {
+        let set: std::collections::BTreeSet<String> = exif.iter().filter_map(of).cloned().collect();
+        set.into_iter().collect::<Vec<String>>()
+    };
+    let cameras = distinct(&|e| e.camera.as_ref());
+    let lenses = distinct(&|e| e.lens.as_ref());
     Ok(Catalog {
         schema,
         written_by,
         roots,
         images,
         nodes,
-        stacks: stacks.max(0) as usize,
+        stacks,
         wal,
+        cameras,
+        lenses,
+        exif,
     })
+}
+
+/// A file's camera and lens as the index names them: read as an index
+/// pass reads it, through the decoder for a raw.
+fn named_as_indexed(path: &Path) -> Option<(String, Option<String>)> {
+    let probe = if greycard_core::picture::is_picture_path(path) {
+        greycard_core::picture::probe_path(path).ok()?
+    } else {
+        greycard_core::decode::probe_path(path).ok()?
+    };
+    let exif = crate::Exif::from_probe(&probe);
+    Some((exif.camera, exif.lens))
+}
+
+/// `m` places spread evenly through `n`, all of them when `m` is as
+/// many.
+fn evenly(n: usize, m: usize) -> Vec<usize> {
+    if m >= n {
+        return (0..n).collect();
+    }
+    (0..m).map(|k| (2 * k + 1) * n / (2 * m)).collect()
+}
+
+/// A read of tables or columns a catalog may not have: none of them
+/// when the table or the column is not there, any other error as it is.
+fn optional<T>(read: rusqlite::Result<Vec<T>>) -> Result<Vec<T>, ImportError> {
+    match read {
+        Ok(v) => Ok(v),
+        Err(e) if e.to_string().contains("no such") => Ok(Vec::new()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 /// Whether the database at `path` is in write-ahead mode: its header's
@@ -1397,8 +2532,9 @@ fn is_stock(name: &str, rules: &str) -> bool {
 
 /// A smart collection's rules in the filter language, or why they have
 /// no counterpart there. Every rule must have a term, and the rules
-/// must all be asked together, since a filter's terms are.
-fn translate(rules: &str) -> Result<String, String> {
+/// must all be asked together, since a filter's terms are. A rule on
+/// the camera or the lens is asked of the cameras and lenses `known`.
+fn translate(rules: &str, known: &Known) -> Result<String, String> {
     let entries =
         lightroom::parse_table(rules).map_err(|e| format!("its rules will not read: {e}"))?;
     let mut combine = "intersect".to_string();
@@ -1434,7 +2570,11 @@ fn translate(rules: &str) -> Result<String, String> {
         let criteria = word("criteria").unwrap_or("");
         let op = word("operation").unwrap_or("");
         let value = word("value").unwrap_or("");
-        terms.extend(term(criteria, op, value, word("value2"))?);
+        terms.extend(match criteria {
+            "camera" => exif_terms(criteria, op, value, &known.cameras)?,
+            "lens" => exif_terms(criteria, op, value, &known.lenses)?,
+            _ => term(criteria, op, value, word("value2"))?,
+        });
     }
     let text = terms.join(" ");
     Filter::parse(&text).map_err(|e| format!("its filter would not read: {e}"))?;
@@ -1525,15 +2665,6 @@ fn term(
                 _ => none(),
             }
         }
-        // Lightroom names the camera and the lens as the file's EXIF
-        // spells them ("Canon EOS R5m2"); the index keeps the decoder's
-        // cleaned names ("EOS R5 Mark II"). A term on the one would
-        // match nothing of the other, and a smart collection that
-        // silently shows nothing is worse than one skipped and named.
-        "camera" | "lens" => Err(format!(
-            "Lightroom's {criteria} is the EXIF's name for it, which the index spells \
-             otherwise, so the filter could match nothing"
-        )),
         "captureTime" => {
             let day = |v: &str| v.get(..10).unwrap_or(v).to_string();
             match (op, value2) {
@@ -1555,11 +2686,45 @@ fn term(
     }
 }
 
+/// A report's lines as the command prints them: a word in a column,
+/// then what it says, a continuation with no word. The window's sheet
+/// shows the same lines, so the two never say different things.
+#[derive(Debug, Default)]
+struct Lines(Vec<(String, String)>);
+
+impl Lines {
+    fn line(&mut self, label: &str, text: &str) {
+        self.0.push((label.to_string(), text.to_string()));
+    }
+
+    fn more(&mut self, text: &str) {
+        self.0.push((String::new(), text.to_string()));
+    }
+}
+
 impl fmt::Display for Report {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let line =
-            |f: &mut fmt::Formatter<'_>, label: &str, text: &str| writeln!(f, "{label:<13} {text}");
-        let more = |f: &mut fmt::Formatter<'_>, text: &str| writeln!(f, "{:<13} {text}", "");
+        for (label, text) in self.lines(Voice::Command) {
+            writeln!(f, "{label:<13} {text}")?;
+        }
+        Ok(())
+    }
+}
+
+/// Who a report speaks to: the command line, whose user answers with
+/// its flags, or the window's sheet, whose user answers with its
+/// buttons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Voice {
+    Command,
+    Sheet,
+}
+
+impl Report {
+    /// What the report says, a line at a time: a word for the line, or
+    /// none for one that goes on from the line before, and the text.
+    pub fn lines(&self, voice: Voice) -> Vec<(String, String)> {
+        let mut out = Lines::default();
         let counted = |map: &BTreeMap<String, usize>| {
             let mut v: Vec<(&String, &usize)> = map.iter().collect();
             v.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
@@ -1568,134 +2733,158 @@ impl fmt::Display for Report {
                 .collect::<Vec<_>>()
                 .join(", ")
         };
-        line(f, "catalog", &self.catalog.display().to_string())?;
-        line(
-            f,
+        out.line("catalog", &self.catalog.display().to_string());
+        out.line(
             "written by",
             &format!("{} (schema {})", self.written_by, self.schema),
-        )?;
+        );
         match self.wal {
             Wal::Whole => {}
-            Wal::Read => line(f, "log", "read with the -wal beside it")?,
+            Wal::Read => out.line("log", "read with the -wal beside it"),
             Wal::Absent => {
-                line(
-                    f,
+                out.line(
                     "log",
                     "no -wal beside it: whole if Lightroom had quit before it was copied;",
-                )?;
-                more(
-                    f,
+                );
+                out.more(
                     "otherwise copy the catalog with its -wal, or quit Lightroom first, \
                      or the newest changes are not in it",
-                )?;
+                );
             }
         }
         for r in &self.roots {
-            line(f, "root", &format!("{} ({})", r.catalog, r.name))?;
+            out.line("root", &format!("{} ({})", r.catalog, r.name));
             match &r.local {
-                None => more(
-                    f,
-                    "not here, and not mapped: say where with --root <catalog path>=<folder>",
-                )?,
+                None if r.near_miss.is_some() => out.more(match voice {
+                    Voice::Command => "not here, and not mapped; nearest of its name:",
+                    Voice::Sheet => "not here; the nearest folder of its name:",
+                }),
+                None => out.more(match voice {
+                    Voice::Command => {
+                        "not here, and not mapped: say where with --root <catalog path>=<folder>"
+                    }
+                    Voice::Sheet => "not here, and not found near the catalog: choose its folder",
+                }),
                 Some(local) => {
-                    let how = if r.given {
-                        "as given"
-                    } else {
-                        "where the catalog says"
+                    let how = match &r.how {
+                        Found::Given => "as given".to_string(),
+                        Found::BesideCatalog => "found beside the catalog".to_string(),
+                        Found::UnderRoot(root) => {
+                            format!("found under the library's root {}", root.display())
+                        }
+                        Found::AsCatalogSays | Found::Not => "where the catalog says".to_string(),
                     };
                     let took = if r.confirmed { "taken" } else { "not taken" };
-                    more(
-                        f,
-                        &format!(
-                            "-> {} {how}: {} of {} files looked for found, {took}",
-                            local.display(),
-                            r.checked_found,
-                            r.checked
-                        ),
-                    )?;
+                    out.more(&format!(
+                        "-> {} {how}: {} of {} files looked for found, {took}",
+                        local.display(),
+                        r.checked_found,
+                        r.checked
+                    ));
                 }
             }
-            more(
-                f,
-                &format!(
-                    "{} files: {} found, {} missing",
-                    r.files,
-                    r.found,
-                    r.files - r.found
-                ),
-            )?;
+            if let Some(m) = &r.near_miss {
+                out.more(&m.said(voice));
+            }
+            out.more(&format!(
+                "{} files: {} found, {} missing",
+                r.files,
+                r.found,
+                r.files - r.found
+            ));
         }
-        line(
-            f,
+        out.line(
             "images",
             &format!(
                 "{}: {} files and {} virtual copies",
                 self.images, self.files, self.copies
             ),
-        )?;
-        line(
-            f,
+        );
+        out.line(
             "found",
             &format!("{} images, {} missing", self.found, self.missing),
-        )?;
+        );
         // A dry run says what a write would do, of the files found.
         let would = if self.written.is_some() {
             "is"
         } else {
             "would be"
         };
-        line(
-            f,
+        out.line(
             "with edits",
             &format!(
                 "{}, {} of them found: each found {would} written as one named state, \
                  its settings mapped as an approximation",
                 self.with_edits, self.with_edits_found
             ),
-        )?;
+        );
+        if self.crops > 0 {
+            out.line(
+                "crops",
+                &format!(
+                    "{}, {} of them found: each {would} carried with its angle where its file \
+                     says its size",
+                    self.crops, self.crops_found
+                ),
+            );
+        }
+        if self.oriented > 0 {
+            let mut turns = format!(
+                "each frame {would} stood as Lightroom shows it, a turn there taken as the \
+                 edit's quarter turns where its file's tag says otherwise"
+            );
+            if self.flipped > 0 {
+                turns.push_str(&format!(
+                    "; {} flipped there ({} found), the mirror and any crop not carried",
+                    self.flipped, self.flipped_found
+                ));
+            }
+            if !self.orientations_unread.is_empty() {
+                turns.push_str(&format!(
+                    "; orientation not read: {}",
+                    counted(&self.orientations_unread)
+                ));
+            }
+            out.line("turns", &turns);
+        }
         if !self.not_carried.is_empty() {
-            line(f, "not carried", &counted(&self.not_carried))?;
+            out.line("not carried", &counted(&self.not_carried));
         }
         if self.unreadable_develop > 0 {
-            line(
-                f,
+            out.line(
                 "unreadable",
                 &format!(
                     "{} images' develop settings will not read",
                     self.unreadable_develop
                 ),
-            )?;
+            );
         }
         if self.old_process > 0 {
-            line(
-                f,
+            out.line(
                 "old process",
                 &format!(
                     "{} edits on the 2003 or 2010 process, further off still",
                     self.old_process
                 ),
-            )?;
+            );
         }
-        line(
-            f,
+        out.line(
             "meta",
             &format!(
                 "{} files with a rating, flag, label, keyword, title or caption, {} of them found",
                 self.with_meta, self.with_meta_found
             ),
-        )?;
+        );
         if !self.odd_labels.is_empty() {
-            line(
-                f,
+            out.line(
                 "labels",
                 &format!("no color for {}: left unlabeled", counted(&self.odd_labels)),
-            )?;
+            );
         }
-        line(
-            f,
+        out.line(
             "keywords",
             &format!("{} keywords on {} files", self.keywords, self.keyworded),
-        )?;
+        );
         let apart = if self.copies_apart > 0 {
             format!(
                 "; {} whose rating, flag, label, keywords, title or caption differs from \
@@ -1705,8 +2894,7 @@ impl fmt::Display for Report {
         } else {
             String::new()
         };
-        line(
-            f,
+        out.line(
             "copies",
             &format!(
                 "{} virtual {}, {} of them found, each a version named for it{apart}",
@@ -1714,10 +2902,16 @@ impl fmt::Display for Report {
                 if self.copies == 1 { "copy" } else { "copies" },
                 self.copies_found
             ),
-        )?;
-        line(f, "stacks", &format!("{}, not carried", self.stacks))?;
-        line(
-            f,
+        );
+        out.line(
+            "stacks",
+            &format!(
+                "{}, {} with two frames or more found: each {would} a stack, open or closed \
+                 as Lightroom had it",
+                self.stacks, self.stacks_found
+            ),
+        );
+        out.line(
             "collections",
             &format!(
                 "{} and {} {}",
@@ -1725,23 +2919,25 @@ impl fmt::Display for Report {
                 self.sets,
                 if self.sets == 1 { "set" } else { "sets" }
             ),
-        )?;
+        );
         for c in &self.collections {
             let creation = c
                 .creation
                 .as_deref()
                 .map(|k| format!(" (a {k}: its frames, not its layout)"))
                 .unwrap_or_default();
-            more(
-                f,
-                &format!(
-                    "{}{creation}: {} frames, {} found",
-                    c.name, c.frames, c.found
-                ),
-            )?;
+            out.more(&format!(
+                "{}{creation}: {} frames, {} found",
+                c.name, c.frames, c.found
+            ));
         }
-        line(
-            f,
+        if !self.creations_left.is_empty() {
+            out.more(&format!(
+                "left out: {} (books, prints, slideshows and web pages, as asked)",
+                self.creations_left.join(", ")
+            ));
+        }
+        out.line(
             "smart",
             &format!(
                 "{} translated, {} skipped, {} of Lightroom's own six left out",
@@ -1749,83 +2945,128 @@ impl fmt::Display for Report {
                 self.smart_skipped.len(),
                 self.smart_stock
             ),
-        )?;
+        );
+        if self.exif_rules + self.exif_rules_skipped > 0 {
+            out.more(&format!(
+                "on a camera or a lens: {} translated, {} skipped",
+                self.exif_rules, self.exif_rules_skipped
+            ));
+        }
         for (name, text) in &self.smart {
-            more(f, &format!("{name}: {text}"))?;
+            out.more(&format!("{name}: {text}"));
         }
         for (name, why) in &self.smart_skipped {
-            more(f, &format!("{name}: skipped, {why}"))?;
+            out.more(&format!("{name}: skipped, {why}"));
         }
-        line(
-            f,
+        out.line(
             "sidecars",
             if self.sidecars_in_folder {
                 "a new one under its folder's .greycard/, as the editor's setting says"
             } else {
                 "a new one beside its file, or under the folder's .greycard/ where it has one"
             },
-        )?;
+        );
         if self.already > 0 {
-            line(
-                f,
+            out.line(
                 "",
                 &format!(
-                    "{} {} history, versions or meta already: left alone without --force",
+                    "{} {} history, versions or meta already: left alone {}",
                     self.already,
                     if self.already == 1 {
                         "file has"
                     } else {
                         "files have"
+                    },
+                    match voice {
+                        Voice::Command => "without --force",
+                        Voice::Sheet => "unless written over",
                     }
                 ),
-            )?;
+            );
         }
         for (path, why) in &self.unreadable_sidecars {
-            line(
-                f,
+            out.line(
                 "unreadable",
                 &format!("{}: {why}; left alone", path.display()),
-            )?;
+            );
         }
         match &self.written {
-            None => line(f, "dry run", "nothing written; --write to import")?,
+            None => out.line(
+                "dry run",
+                match voice {
+                    Voice::Command => "nothing written; --write to import",
+                    Voice::Sheet => "nothing written yet",
+                },
+            ),
             Some(w) => {
-                line(
-                    f,
+                out.line(
                     "written",
                     &format!(
                         "{} sidecars ({} under .greycard/), {} left alone",
                         w.sidecars, w.in_folder, w.left_alone
                     ),
-                )?;
+                );
                 for (path, why) in &w.failed {
-                    line(f, "not written", &format!("{}: {why}", path.display()))?;
+                    out.line("not written", &format!("{}: {why}", path.display()));
                 }
-                line(
-                    f,
+                out.line(
                     "collections",
                     &format!(
                         "{} written, {} joined to one of the same name, {} there already \
                          with every frame; {} smart written, {} there already",
                         w.collections, w.joined, w.collections_there, w.smart, w.smart_there
                     ),
-                )?;
+                );
+                let mut crops = format!("{} carried", w.crops);
+                if w.crops_drawn_in > 0 {
+                    crops.push_str(&format!(
+                        ", {} of them drawn in to stay on the turned picture",
+                        w.crops_drawn_in
+                    ));
+                }
+                if !w.crops_not_carried.is_empty() {
+                    crops.push_str(&format!("; not: {}", counted(&w.crops_not_carried)));
+                }
+                if w.crops + w.crops_not_carried.values().sum::<usize>() > 0 {
+                    out.line("crops", &crops);
+                }
+                let unread: usize = w.orientations_unread.values().sum();
+                if w.turned + w.flips + unread > 0 {
+                    let mut turns = format!("{} turned in Lightroom, the turn carried", w.turned);
+                    if w.flips > 0 {
+                        turns.push_str(&format!(
+                            "; {} flipped there, the mirror not carried",
+                            w.flips
+                        ));
+                    }
+                    if unread > 0 {
+                        turns.push_str(&format!(
+                            "; orientation not read: {}",
+                            counted(&w.orientations_unread)
+                        ));
+                    }
+                    out.line("turns", &turns);
+                }
+                let mut stacks = format!("{} written, {} there already", w.stacks, w.stacks_there);
+                if !w.stacks_not_written.is_empty() {
+                    stacks.push_str(&format!("; not: {}", counted(&w.stacks_not_written)));
+                }
+                if self.stacks > 0 {
+                    out.line("stacks", &stacks);
+                }
                 if w.copies_as_own > 0 {
-                    more(
-                        f,
-                        &format!(
-                            "{} virtual copies in them as their file's own frame: their \
+                    out.more(&format!(
+                        "{} virtual copies in them as their file's own frame: their \
                              sidecar was left alone",
-                            w.copies_as_own
-                        ),
-                    )?;
+                        w.copies_as_own
+                    ));
                 }
                 for (dir, said) in &w.roots {
-                    line(f, "root", &format!("{}: {said}", dir.display()))?;
+                    out.line("root", &format!("{}: {said}", dir.display()));
                 }
             }
         }
-        Ok(())
+        out.0
     }
 }
 
@@ -2093,7 +3334,8 @@ pub(crate) mod tests {
         assert_eq!(report.copies_found, 1);
         assert_eq!(report.wal, Wal::Whole);
         assert_eq!(report.not_carried.get("masks"), Some(&2));
-        assert_eq!(report.not_carried.get("crop"), Some(&2));
+        assert_eq!(report.not_carried.get("crop"), None, "the crop is carried");
+        assert_eq!((report.crops, report.crops_found), (2, 2));
         assert_eq!(report.old_process, 0);
         assert_eq!(report.with_meta, 3);
         assert_eq!(report.odd_labels.get("To Print"), Some(&1));
@@ -2103,7 +3345,7 @@ pub(crate) mod tests {
         assert_eq!(report.sets, 1);
         let r = &report.roots[0];
         assert_eq!(r.local.as_deref(), Some(s.here.as_path()));
-        assert!(r.given && r.confirmed);
+        assert!(r.how == Found::Given && r.confirmed);
         assert_eq!((r.checked, r.checked_found, r.files, r.found), (3, 2, 3, 2));
         // The empty quick collection is left out; the book comes as its
         // frames.
@@ -2364,11 +3606,11 @@ pub(crate) mod tests {
         assert_eq!((r.found, r.missing), (3, 1));
         // By its name.
         let r = with(vec![("Shoots".into(), up.join("Shoots"))]).unwrap();
-        assert!(r.roots[0].confirmed && r.roots[0].given);
+        assert!(r.roots[0].confirmed && r.roots[0].how == Found::Given);
         // None given: looked for where the catalog says, which is not
         // here.
         let r = with(Vec::new()).unwrap();
-        assert!(r.roots[0].local.is_none() && !r.roots[0].given);
+        assert!(r.roots[0].local.is_none() && r.roots[0].how == Found::Not);
         assert_eq!(r.found, 0);
         assert!(r.to_string().contains("--root"), "{r}");
         // A mapping that names no root is refused, naming them.
@@ -2379,11 +3621,15 @@ pub(crate) mod tests {
 
     #[test]
     fn smart_rules_translate_where_the_filter_has_them() {
+        let none = Known::default();
         let one = |c: &str, op: &str, v: &str| {
-            translate(&format!(
-                "s = {{ {{ criteria = \"{c}\", operation = \"{op}\", value = {v}, }}, \
-                 combine = \"intersect\", }}"
-            ))
+            translate(
+                &format!(
+                    "s = {{ {{ criteria = \"{c}\", operation = \"{op}\", value = {v}, }}, \
+                     combine = \"intersect\", }}"
+                ),
+                &none,
+            )
         };
         assert_eq!(one("rating", ">=", "3").unwrap(), "rating>=3");
         assert_eq!(one("rating", "==", "0").unwrap(), "rating=0");
@@ -2395,12 +3641,11 @@ pub(crate) mod tests {
             "keyword:skye keyword:harbor"
         );
         assert_eq!(one("keywords", "any", "\"skye\"").unwrap(), "keyword:skye");
-        // The camera and the lens as EXIF names them are not the
-        // index's names: skipped, and said why.
+        // A camera or a lens nothing known is: skipped, and said why.
         assert!(
             one("camera", "==", "\"Canon EOS R5m2\"")
                 .unwrap_err()
-                .contains("EXIF")
+                .contains("matches no camera")
         );
         assert!(one("lens", "any", "\"RF50mm\"").is_err());
         assert_eq!(
@@ -2410,7 +3655,8 @@ pub(crate) mod tests {
         assert_eq!(
             translate(
                 "s = { { criteria = \"captureTime\", operation = \"in\", \
-                 value = \"2026-05-01\", value2 = \"2026-05-31\", }, }"
+                 value = \"2026-05-01\", value2 = \"2026-05-31\", }, }",
+                &none
             )
             .unwrap(),
             "date>=2026-05-01 date<=2026-05-31"
@@ -2425,9 +3671,100 @@ pub(crate) mod tests {
         let union = "s = { { criteria = \"rating\", operation = \"==\", value = 5, },\n\
                      { criteria = \"pick\", operation = \"==\", value = 1, },\n\
                      combine = \"union\", }";
-        assert!(translate(union).unwrap_err().contains("any of"));
-        assert!(translate("s = { combine = \"intersect\", }").is_err());
-        assert!(translate("not a table").is_err());
+        assert!(translate(union, &none).unwrap_err().contains("any of"));
+        assert!(translate("s = { combine = \"intersect\", }", &none).is_err());
+        assert!(translate("not a table", &none).is_err());
+    }
+
+    /// The cameras and lenses of the catalogs we read, as Lightroom
+    /// spells them, put through the decoder's names.
+    fn known() -> Known {
+        let mut k = Known::default();
+        for model in [
+            "Canon EOS R5m2",
+            "Canon EOS R6m2",
+            "Canon EOS R6 Mark III",
+            "GFX100S II",
+        ] {
+            let name = greycard_core::decode::cleaned_camera(model).unwrap_or(model.into());
+            k.add_camera(&name, Some(model));
+        }
+        for lens in ["RF50mm F1.2 L USM", "RF50mm F1.8 STM", "GF110mmF2 R LM WR"] {
+            k.lenses.push((lens.into(), vec![lens.into()]));
+        }
+        k
+    }
+
+    #[test]
+    fn camera_and_lens_rules_are_asked_of_the_names_they_go_by() {
+        let k = known();
+        let one = |c: &str, op: &str, v: &str| {
+            translate(
+                &format!(
+                    "s = {{ {{ criteria = \"{c}\", operation = \"{op}\", value = \"{v}\", }}, \
+                     combine = \"intersect\", }}"
+                ),
+                &k,
+            )
+        };
+        // Lightroom's EXIF spelling is the index's cleaned name.
+        assert_eq!(
+            one("camera", "==", "Canon EOS R5m2").unwrap(),
+            "camera=\"Canon EOS R5 Mark II\""
+        );
+        assert_eq!(
+            one("camera", "==", "GFX100S II").unwrap(),
+            "camera=\"Fujifilm GFX 100S II\"",
+            "the decoder spaces the model"
+        );
+        // A word of one spelling, standing for one camera.
+        assert_eq!(
+            one("camera", "any", "R6m2").unwrap(),
+            "camera=\"Canon EOS R6 Mark II\""
+        );
+        // Words the index's names hold as Lightroom's do are those
+        // words: every Canon here is a "Canon" either way.
+        assert_eq!(one("camera", "any", "canon").unwrap(), "camera:canon");
+        // Lightroom asks its own spelling, not ours: "II" is in the
+        // R6 Mark III's and the GFX's EXIF names, two of the four,
+        // where all four of ours have it.
+        let err = one("camera", "any", "II").unwrap_err();
+        assert!(err.contains("matches 2 of the cameras"), "{err}");
+        assert_eq!(one("lens", "any", "RF50mm").unwrap(), "lens:rf50mm");
+        assert_eq!(
+            one("lens", "==", "RF50mm F1.2 L USM").unwrap(),
+            "lens=\"RF50mm F1.2 L USM\""
+        );
+        // "Is not" leaves each one out by its name.
+        assert_eq!(
+            one("camera", "!=", "Canon EOS R5m2").unwrap(),
+            "camera!=\"Canon EOS R5 Mark II\""
+        );
+        // A word that one spelling has and its cleaned name has not,
+        // passing two cameras of four: no filter says that.
+        let err = one("camera", "any", "m2").unwrap_err();
+        assert!(err.contains("matches 2 of the cameras"), "{err}");
+        // One passing every lens known names none of them.
+        let err = one("lens", "beginsWith", "").unwrap_err();
+        assert!(
+            err.contains("matches every one of the 3 lenses known"),
+            "{err}"
+        );
+        // A camera nothing here is.
+        assert!(
+            one("camera", "==", "NIKON Z 8")
+                .unwrap_err()
+                .contains("matches no camera")
+        );
+        // Each translation reads as a filter, and asks the index's
+        // column.
+        for text in [
+            one("camera", "==", "Canon EOS R5m2").unwrap(),
+            one("camera", "!=", "Canon EOS R5m2").unwrap(),
+            one("lens", "any", "RF50mm").unwrap(),
+        ] {
+            Filter::parse(&text).unwrap();
+        }
     }
 
     #[test]
@@ -2581,6 +3918,414 @@ pub(crate) mod tests {
         let covers: Vec<&Collection> = folder.list.iter().filter(|c| c.name == "Cover").collect();
         assert_eq!(covers.len(), 1, "the second Cover joined the first");
         assert_eq!(covers[0].refs.len(), 3);
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    /// A catalog of one picture and a virtual copy of it, both cropped
+    /// (the copy turned), the two stacked as Lightroom stacks a copy on
+    /// its master. The picture is a small TIFF whose size the decoder
+    /// reads, 4 by 3, as the catalog has it.
+    fn cropped_shoot(what: &str) -> Setup {
+        let dir = scratch(&format!("lrcat-{what}"));
+        let catalog = dir.join("Crops.lrcat");
+        let here = dir.join("photos");
+        std::fs::create_dir_all(&here).unwrap();
+        crate::fixture::write_frame(&here.join("frame.tif"), &crate::fixture::R5, 1);
+        let db = empty_catalog(&catalog, "1504001");
+        db.execute_batch(
+            "ALTER TABLE Adobe_images ADD COLUMN fileWidth;
+             ALTER TABLE Adobe_images ADD COLUMN fileHeight;
+             ALTER TABLE Adobe_images ADD COLUMN orientation;
+             ALTER TABLE AgLibraryFolderStack ADD COLUMN collapsed;
+             CREATE TABLE AgLibraryFolderStackImage (id_local INTEGER PRIMARY KEY,
+                 collapsed, image, position, stack);
+             INSERT INTO AgLibraryRootFolder VALUES (1, 'r', 'D:/Crops/', 'Crops', NULL);
+             INSERT INTO AgLibraryFolder VALUES (2, 'f', NULL, '', 1);
+             INSERT INTO AgLibraryFile VALUES (10, 'a', 'frame', 'tif', 2);
+             INSERT INTO Adobe_images (id_local, id_global, rootFile, masterImage, copyName,
+                 rating, pick, fileWidth, fileHeight, orientation)
+                 VALUES (100, 'i', 10, NULL, NULL, 0.0, 0.0, 4.0, 3.0, 'AB');
+             INSERT INTO Adobe_images (id_local, id_global, rootFile, masterImage, copyName,
+                 rating, pick, fileWidth, fileHeight, orientation)
+                 VALUES (101, 'j', 10, 100, 'Turned', 0.0, 0.0, 4.0, 3.0, 'AB');
+             INSERT INTO AgLibraryFolderStack VALUES (1, 's', 0);
+             INSERT INTO AgLibraryFolderStackImage VALUES (1, 0, 100, '1.0', 1);
+             INSERT INTO AgLibraryFolderStackImage VALUES (2, 0, 101, '2.0', 1);",
+        )
+        .unwrap();
+        let insert = "INSERT INTO Adobe_imageDevelopSettings (image, text, processVersion, \
+                      hasDevelopAdjustmentsEx) VALUES (?1, ?2, '15.4', 1.0)";
+        let master = "s = { Exposure2012 = 0.5, CropLeft = 0.25, CropRight = 0.75, \
+                      CropConstrainAspectRatio = false }";
+        let copy = "s = { Exposure2012 = -0.5, CropLeft = 0.2, CropTop = 0.2, \
+                    CropRight = 0.8, CropBottom = 0.8, CropAngle = 2, \
+                    CropConstrainAspectRatio = true }";
+        db.execute(insert, rusqlite::params![100, master]).unwrap();
+        db.execute(insert, rusqlite::params![101, copy]).unwrap();
+        drop(db);
+        let options = Options {
+            roots: vec![("D:/Crops".into(), here.clone())],
+            library: dir.join("library").join("library.sqlite"),
+            ..Options::default()
+        };
+        Setup {
+            dir,
+            catalog,
+            here,
+            options,
+        }
+    }
+
+    #[test]
+    fn a_write_carries_the_crop_and_the_stack() {
+        let s = cropped_shoot("crop");
+        let dry = import(&s.catalog, &s.options).unwrap();
+        assert_eq!((dry.crops, dry.crops_found), (2, 2), "{dry}");
+        assert_eq!((dry.stacks, dry.stacks_found), (1, 1));
+        assert!(!dry.not_carried.contains_key("crop"));
+        assert!(dry.to_string().contains("would be carried with its angle"));
+        let report = import(&s.catalog, &writing(&s)).unwrap();
+        let w = report.written.as_ref().unwrap();
+        assert_eq!((w.crops, w.crops_drawn_in), (2, 0), "{report}");
+        assert!(w.crops_not_carried.is_empty(), "{report}");
+        assert_eq!((w.stacks, w.stacks_there), (1, 0), "{report}");
+
+        // The master's: the middle half across, the whole height, no
+        // turn, its shape free as Lightroom had it.
+        let frame = s.here.join("frame.tif");
+        let side = Sidecar::load(&frame).unwrap().unwrap();
+        let g = &side.current.geometry;
+        let c = g.crop.unwrap();
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(near(c.x, 0.25) && near(c.y, 0.0), "{c:?}");
+        assert!(near(c.w, 0.5) && near(c.h, 1.0), "{c:?}");
+        assert_eq!((g.turns, g.angle), (0, 0.0));
+        assert_eq!(g.aspect, greycard_edit::geometry::Aspect::Free);
+        assert_eq!(side.current.light.exposure, 0.5);
+        // The copy's: turned 2 degrees, held to its shape, on the
+        // picture.
+        let v = &side.versions[0];
+        let g = &v.line.current.geometry;
+        assert_eq!(g.angle, 2.0);
+        assert!(g.fits(&g.crop.unwrap(), 4.0, 3.0));
+        assert!(matches!(
+            g.aspect,
+            greycard_edit::geometry::Aspect::Ratio { .. }
+        ));
+
+        // The stack: the master on top, the copy as its version, open
+        // as Lightroom had it.
+        let dir = stacks::dir_in(&collections::dir_beside(&s.options.library));
+        let folder = stacks::read_folder(&dir, stacks::VERSION);
+        assert_eq!(folder.list.len(), 1);
+        let st = &folder.list[0];
+        assert!(st.open);
+        assert_eq!(st.refs.len(), 2);
+        assert_eq!(st.refs[0].version, None);
+        assert_eq!(st.refs[1].version.as_deref(), Some(v.id.as_str()));
+        assert_eq!(
+            st.refs[0].hint,
+            collections::hint_of(&crate::key_path(&frame))
+        );
+
+        // Again: the stack is there, and no second one is made.
+        let again = import(&s.catalog, &writing(&s)).unwrap();
+        let w = again.written.unwrap();
+        assert_eq!((w.stacks, w.stacks_there), (0, 1));
+        assert_eq!(stacks::read_folder(&dir, stacks::VERSION).list.len(), 1);
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    #[test]
+    fn a_lens_rule_takes_the_name_the_index_reads_off_the_catalog_s_file() {
+        // Lightroom spells the lens one way, the file's reading another:
+        // the rule goes by the reading, which is the index's.
+        let s = cropped_shoot("lens-rule");
+        let db = Connection::open(&s.catalog).unwrap();
+        db.execute_batch(
+            "CREATE TABLE AgHarvestedExifMetadata (id_local INTEGER PRIMARY KEY, image,
+                 cameraModelRef, lensRef);
+             CREATE TABLE AgInternedExifCameraModel (id_local INTEGER PRIMARY KEY, value);
+             CREATE TABLE AgInternedExifLens (id_local INTEGER PRIMARY KEY, value);
+             INSERT INTO AgInternedExifCameraModel VALUES (1, 'Canon EOS R5');
+             INSERT INTO AgInternedExifLens VALUES (1, 'RF35mm F1.4L VCM');
+             INSERT INTO AgHarvestedExifMetadata VALUES (1, 100, 1, 1);
+             INSERT INTO AgLibraryCollection VALUES (20, 'com.adobe.ag.library.smart_collection',
+                 'The 35', NULL, 0.0);
+             INSERT INTO AgLibraryCollectionContent (collection, content, owningModule)
+                 VALUES (20, 's = { { criteria = \"lens\", operation = \"==\",
+                 value = \"RF35mm F1.4L VCM\", }, combine = \"intersect\", }',
+                 'ag.library.smart_collection');",
+        )
+        .unwrap();
+        drop(db);
+        let report = import(&s.catalog, &s.options).unwrap();
+        assert_eq!(
+            report.smart,
+            vec![(
+                "Crops/The 35".to_string(),
+                "lens=\"RF35mm F1.4 L VCM\"".to_string()
+            )],
+            "{report}"
+        );
+        assert_eq!((report.exif_rules, report.exif_rules_skipped), (1, 0));
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    #[test]
+    fn imported_edit_carries_the_crop_given_the_catalog_s_shape() {
+        let s = cropped_shoot("imported-edit");
+        let frame = s.here.join("frame.tif");
+        let settings = "s = { CropLeft = 0.25, CropRight = 0.75 }";
+        let shape = Shape {
+            size: Some((4.0, 3.0)),
+            orientation: Some("AB".into()),
+        };
+        let (edit, unmapped) = imported_edit(&frame, settings, Some(&shape)).unwrap();
+        assert!(edit.geometry.crop.is_some());
+        assert!(!unmapped.iter().any(|n| n == "crop"));
+        // Without the shape, left off and named, for a caller that cuts
+        // it itself.
+        let (edit, unmapped) = imported_edit(&frame, settings, None).unwrap();
+        assert!(edit.geometry.crop.is_none());
+        assert!(unmapped.iter().any(|n| n == "crop"));
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    #[test]
+    fn a_crop_on_a_file_that_says_no_size_is_counted_not_carried() {
+        // The shoot's files are not raws: no size, no crop.
+        let s = setup("crop-no-size");
+        let report = import(&s.catalog, &writing(&s)).unwrap();
+        let w = report.written.unwrap();
+        assert_eq!(w.crops, 0);
+        assert_eq!(w.crops_not_carried.get("its file says no size"), Some(&2));
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    #[test]
+    fn a_root_not_mapped_is_found_beside_the_catalog_or_under_a_library_root() {
+        // The shoot's root is named Shoots: a folder of that name beside
+        // the catalog.
+        let s = setup("near");
+        let beside = s.dir.join("Shoots");
+        std::fs::rename(&s.here, &beside).unwrap();
+        let none = Options {
+            roots: Vec::new(),
+            ..s.options.clone()
+        };
+        let r = import(&s.catalog, &none).unwrap();
+        assert_eq!(r.roots[0].how, Found::BesideCatalog, "{r}");
+        assert_eq!(r.roots[0].local.as_deref(), Some(beside.as_path()));
+        assert!(r.roots[0].confirmed);
+        assert!(r.to_string().contains("found beside the catalog"), "{r}");
+        // Under a root of the library, two folders down.
+        let library_root = s.dir.join("archive");
+        let deep = library_root.join("2026").join("Shoots");
+        std::fs::create_dir_all(deep.parent().unwrap()).unwrap();
+        std::fs::rename(&beside, &deep).unwrap();
+        Roots::edit(&Roots::path_beside(&s.options.library), |l| {
+            l.add(&library_root).unwrap();
+        })
+        .unwrap();
+        let r = import(&s.catalog, &none).unwrap();
+        assert!(matches!(r.roots[0].how, Found::UnderRoot(_)), "{r}");
+        assert!(r.roots[0].confirmed);
+        assert_eq!(r.found, 3);
+        // A folder of the name holding none of its files is passed over.
+        let decoy = s.dir.join("Shoots");
+        std::fs::create_dir_all(&decoy).unwrap();
+        let r = import(&s.catalog, &none).unwrap();
+        assert!(matches!(r.roots[0].how, Found::UnderRoot(_)), "{r}");
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    #[test]
+    fn a_guess_takes_the_folder_holding_the_root_s_files_not_the_first_of_its_name() {
+        // Two folders named for the root under a library root: another
+        // shoot's, the first in order, with one file of the same name;
+        // and the shoot's own, with both its files there.
+        let s = setup("decoy");
+        let library_root = s.dir.join("archive");
+        let decoy = library_root
+            .join("2025-a")
+            .join("Shoots")
+            .join("2026/harbor");
+        std::fs::create_dir_all(&decoy).unwrap();
+        std::fs::write(decoy.join("IMG_0002.CR3"), "another shoot's").unwrap();
+        let real = library_root.join("2026-b").join("Shoots");
+        std::fs::create_dir_all(library_root.join("2026-b")).unwrap();
+        std::fs::rename(&s.here, &real).unwrap();
+        Roots::edit(&Roots::path_beside(&s.options.library), |l| {
+            l.add(&library_root).unwrap();
+        })
+        .unwrap();
+        let none = Options {
+            roots: Vec::new(),
+            ..s.options.clone()
+        };
+        let r = import(&s.catalog, &none).unwrap();
+        let root = &r.roots[0];
+        assert!(
+            root.local
+                .as_deref()
+                .is_some_and(|l| l.ends_with("2026-b/Shoots")),
+            "{r}"
+        );
+        assert!(matches!(root.how, Found::UnderRoot(_)));
+        assert_eq!((root.checked, root.checked_found), (3, 2), "{r}");
+        // The shoot's own folder gone: the other shoot's is no guess.
+        std::fs::remove_dir_all(&real).unwrap();
+        let r = import(&s.catalog, &none).unwrap();
+        assert!(r.roots[0].local.is_none(), "{r}");
+        assert!(!r.roots[0].confirmed);
+        assert_eq!(r.found, 0);
+        // It is said as the nearest, to be chosen by hand.
+        let miss = r.roots[0].near_miss.as_ref().unwrap();
+        assert!(miss.dir.ends_with("2025-a/Shoots"), "{miss:?}");
+        assert_eq!((miss.there, miss.looked_for), (1, 3));
+        let said = r.to_string();
+        assert!(
+            said.contains("holds 1 of 3 looked for; --root it to take it"),
+            "{said}"
+        );
+        assert!(
+            r.lines(Voice::Sheet)
+                .iter()
+                .any(|(_, t)| t.ends_with("holds 1 of 3 looked for; choose it to take it")),
+            "{said}"
+        );
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    #[test]
+    fn a_guess_passes_over_files_of_the_root_s_names_at_other_sizes() {
+        // The catalog keeps each file's size in its import hash: a
+        // folder holding every name at another size is another shoot.
+        let s = setup("sizes");
+        let db = Connection::open(&s.catalog).unwrap();
+        db.execute_batch("ALTER TABLE AgLibraryFile ADD COLUMN importHash;")
+            .unwrap();
+        for (id, name) in [
+            (10, "IMG_0001.CR3"),
+            (11, "IMG_0002.CR3"),
+            (12, "IMG_0003.CR3"),
+        ] {
+            let size = format!("not a raw, {name}").len();
+            db.execute(
+                "UPDATE AgLibraryFile SET importHash = ?1 WHERE id_local = ?2",
+                rusqlite::params![format!("800960509.71:{name}:{size}"), id],
+            )
+            .unwrap();
+        }
+        drop(db);
+        let other = s.dir.join("Shoots").join("2026/harbor");
+        std::fs::create_dir_all(&other).unwrap();
+        for n in ["IMG_0001.CR3", "IMG_0002.CR3", "IMG_0003.CR3"] {
+            std::fs::write(other.join(n), "another shoot's frame, longer").unwrap();
+        }
+        let none = Options {
+            roots: Vec::new(),
+            ..s.options.clone()
+        };
+        let r = import(&s.catalog, &none).unwrap();
+        assert!(r.roots[0].local.is_none(), "{r}");
+        // At their sizes, beside the catalog: taken.
+        std::fs::remove_dir_all(s.dir.join("Shoots")).unwrap();
+        std::fs::rename(&s.here, s.dir.join("Shoots")).unwrap();
+        let r = import(&s.catalog, &none).unwrap();
+        assert_eq!(r.roots[0].how, Found::BesideCatalog, "{r}");
+        assert_eq!(r.found, 3);
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    #[test]
+    fn a_turn_in_lightroom_is_carried_on_every_frame_and_a_flip_is_counted() {
+        let s = cropped_shoot("turns");
+        let db = Connection::open(&s.catalog).unwrap();
+        // The master turned right in Lightroom, its crop taken off; the
+        // copy flipped there; a third file never developed, turned.
+        crate::fixture::write_frame(&s.here.join("other.tif"), &crate::fixture::R5, 2);
+        db.execute_batch(
+            "UPDATE Adobe_images SET orientation = 'BC' WHERE id_local = 100;
+             UPDATE Adobe_images SET orientation = 'BA' WHERE id_local = 101;
+             UPDATE Adobe_imageDevelopSettings SET text = 's = { Exposure2012 = 0.5 }'
+                 WHERE image = 100;
+             INSERT INTO AgLibraryFile VALUES (11, 'b', 'other', 'tif', 2);
+             INSERT INTO Adobe_images (id_local, id_global, rootFile, masterImage, copyName,
+                 rating, pick, fileWidth, fileHeight, orientation)
+                 VALUES (102, 'k', 11, NULL, NULL, 1.0, 0.0, 4.0, 3.0, 'DA');
+             INSERT INTO Adobe_images (id_local, id_global, rootFile, masterImage, copyName,
+                 rating, pick, fileWidth, fileHeight, orientation)
+                 VALUES (103, 'l', 11, NULL, NULL, 0.0, 0.0, 4.0, 3.0, 'ZZ');",
+        )
+        .unwrap();
+        drop(db);
+        // The dry run says what it can without the files' tags: the
+        // flip and the code it does not read.
+        let dry = import(&s.catalog, &s.options).unwrap();
+        assert_eq!((dry.oriented, dry.flipped, dry.flipped_found), (4, 1, 1));
+        assert_eq!(dry.orientations_unread.get("ZZ"), Some(&1));
+        let said = dry.to_string();
+        assert!(said.contains("1 flipped there (1 found)"), "{said}");
+        let report = import(&s.catalog, &writing(&s)).unwrap();
+        let w = report.written.as_ref().unwrap();
+        assert_eq!((w.turned, w.flips), (2, 1), "{report}");
+        assert_eq!(w.orientations_unread.get("ZZ"), Some(&1), "{report}");
+        assert_eq!(
+            w.crops_not_carried
+                .get("Lightroom's orientation mirrors the frame"),
+            Some(&1),
+            "{report}"
+        );
+        let side = Sidecar::load(&s.here.join("frame.tif")).unwrap().unwrap();
+        assert_eq!(
+            side.current.geometry.turns, 3,
+            "a quarter right is three of ours"
+        );
+        assert!(side.current.geometry.crop.is_none());
+        assert_eq!(side.versions[0].line.current.geometry.turns, 0);
+        // Never developed, turned left: one of ours, a state of its own.
+        let other = Sidecar::load(&s.here.join("other.tif")).unwrap().unwrap();
+        assert_eq!(other.current.geometry.turns, 1);
+        assert_eq!(other.history.len(), 1);
+        assert!(
+            report.to_string().contains("2 turned in Lightroom"),
+            "{report}"
+        );
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    #[test]
+    fn creations_are_left_out_when_asked() {
+        let s = setup("creations");
+        let options = Options {
+            no_creations: true,
+            ..writing(&s)
+        };
+        let report = import(&s.catalog, &options).unwrap();
+        let names: Vec<&str> = report.collections.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["Harbor/Clients/Cover"]);
+        assert_eq!(report.creations_left, ["Harbor/Album"]);
+        assert!(report.to_string().contains("left out: Harbor/Album"));
+        let folder = collections::read_folder(
+            &collections::dir_beside(&s.options.library),
+            collections::VERSION,
+        );
+        assert!(folder.list.iter().all(|c| c.name != "Album"));
+        std::fs::remove_dir_all(&s.dir).unwrap();
+    }
+
+    #[test]
+    fn progress_is_said_as_the_import_goes() {
+        let s = setup("progress");
+        let mut seen = Vec::new();
+        import_with(&s.catalog, &writing(&s), &mut |p| seen.push(p)).unwrap();
+        assert!(
+            seen.contains(&Progress::Writing { done: 2, of: 2 }),
+            "{seen:?}"
+        );
+        assert_eq!(seen.last(), Some(&Progress::Finishing));
         std::fs::remove_dir_all(&s.dir).unwrap();
     }
 }

@@ -19,6 +19,8 @@
 
 use std::collections::BTreeMap;
 
+pub mod crop;
+
 use crate::curve::Point;
 use crate::grading::Wheel;
 use crate::mixer::BANDS;

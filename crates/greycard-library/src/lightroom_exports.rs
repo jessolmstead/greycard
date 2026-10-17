@@ -95,6 +95,19 @@ pub struct Shot {
     pub exports: Vec<Step>,
     /// The file's size in pixels as the catalog has it, before any turn.
     pub size: Option<(f64, f64)>,
+    /// Lightroom's orientation code of the image (`AB`, `DA`).
+    pub orientation: Option<String>,
+}
+
+impl Shot {
+    /// What the catalog keeps of the file's frame, which its crop is
+    /// laid over.
+    pub fn shape(&self) -> crate::lightroom_catalog::Shape {
+        crate::lightroom_catalog::Shape {
+            size: self.size,
+            orientation: self.orientation.clone(),
+        }
+    }
 }
 
 impl Shot {
@@ -133,63 +146,7 @@ fn long_over_short(w: f64, h: f64) -> Option<f64> {
     (short > 0.0).then(|| long / short)
 }
 
-/// Lightroom's crop: two opposite corners of the cropped rectangle, as
-/// shares of the file's width and height before any turn, and the angle
-/// it is turned by, in degrees. The corner at `left`, `top` is the
-/// rectangle's own top left, and its sides run along the angle: the
-/// width along (cos, sin), the height along (-sin, cos), down being
-/// positive. Checked against the cropped sizes the catalog keeps beside
-/// the settings, to the pixel, at -0.24 and 1.1 degrees.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Crop {
-    pub left: f64,
-    pub top: f64,
-    pub right: f64,
-    pub bottom: f64,
-    pub angle: f64,
-}
-
-impl Crop {
-    /// The crop the settings hold, none when they hold none: the
-    /// catalog writes the edges only when the frame is cropped, an
-    /// absent edge at the file's own.
-    pub fn of(words: &BTreeMap<String, String>) -> Option<Crop> {
-        let num = |k: &str| words.get(k).and_then(|v| v.trim().parse::<f64>().ok());
-        let crop = Crop {
-            left: num("CropLeft").unwrap_or(0.0),
-            top: num("CropTop").unwrap_or(0.0),
-            right: num("CropRight").unwrap_or(1.0),
-            bottom: num("CropBottom").unwrap_or(1.0),
-            angle: num("CropAngle").unwrap_or(0.0),
-        };
-        let none = Crop {
-            left: 0.0,
-            top: 0.0,
-            right: 1.0,
-            bottom: 1.0,
-            angle: 0.0,
-        };
-        let cropped = words
-            .get("HasCrop")
-            .is_none_or(|v| !v.eq_ignore_ascii_case("false"));
-        (cropped && crop != none && crop.right > crop.left && crop.bottom > crop.top)
-            .then_some(crop)
-    }
-
-    /// The angle in radians.
-    pub fn radians(&self) -> f64 {
-        self.angle.to_radians()
-    }
-
-    /// The cropped rectangle's width and height in pixels, for a file of
-    /// `w` by `h` before any turn: the diagonal between the corners taken
-    /// along the turned sides.
-    pub fn size(&self, w: f64, h: f64) -> (f64, f64) {
-        let (dx, dy) = ((self.right - self.left) * w, (self.bottom - self.top) * h);
-        let (s, c) = self.radians().sin_cos();
-        ((dx * c + dy * s).abs(), (-dx * s + dy * c).abs())
-    }
-}
+pub use greycard_edit::lightroom::crop::Crop;
 
 /// The settings' top-level keys with their values as written; a nested
 /// table that holds anything (a curve, the masks) is its key with an
@@ -315,7 +272,8 @@ fn shots(
     given: &[(String, PathBuf)],
 ) -> Result<(Vec<Shot>, Vec<RootReport>, i64), ImportError> {
     let catalog = lightroom_catalog::read(path)?;
-    let (roots, local) = lightroom_catalog::map_roots(&catalog, given)?;
+    let (roots, local) =
+        lightroom_catalog::map_roots(&catalog, given, &lightroom_catalog::Near::beside(path))?;
     let (db, ..) = lightroom_catalog::open(path)?;
     let mut steps: HashMap<i64, Vec<Step>> = HashMap::new();
     {
@@ -391,6 +349,7 @@ fn shots(
                 imported,
                 exports,
                 size: sizes.get(&image.id).copied(),
+                orientation: image.shape.orientation.clone(),
             }
         })
         .collect();

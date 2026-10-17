@@ -368,6 +368,45 @@ fn add_checked(
     }
 }
 
+/// Roots another writer added to the roots file (the Lightroom
+/// catalog import, which writes it through the library's own
+/// `Roots::edit`): the list read again from the file, or, with no file
+/// this session, the folders added in memory; then each kept, watched
+/// and passed over, as an add from the pane is.
+pub(crate) fn taken_from_file(
+    state: &Rc<RefCell<State>>,
+    app: &App,
+    worker: Option<&Rc<Worker>>,
+    added: Vec<PathBuf>,
+) {
+    let mut st = state.borrow_mut();
+    match st.library.file.clone() {
+        Some(file) => match Roots::load(&file) {
+            Ok(roots) => st.library.roots = roots,
+            Err(e) => tracing::warn!("library: roots not read again: {e}"),
+        },
+        None => {
+            for dir in &added {
+                if let Err(e) = st.library.roots.add(dir) {
+                    tracing::warn!("library: {e}");
+                }
+            }
+        }
+    }
+    tracing::info!("library: {} roots added by the import", added.len());
+    if let Some(indexer) = &st.index {
+        indexer.roots(added);
+    }
+    watch(&mut st, app);
+    recount(&mut st);
+    show(&st, app);
+    let refresh = matches!(st.view, View::Roots(None));
+    drop(st);
+    if refresh && let Some(worker) = worker {
+        refresh_view(state, app, worker);
+    }
+}
+
 /// Take a folder out of the roots. The folder and its files are not
 /// touched, nor are their rows in the index; the all-roots view no
 /// longer lists them. A root named as the list has it (the chips' cross

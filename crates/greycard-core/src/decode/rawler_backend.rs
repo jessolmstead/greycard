@@ -55,6 +55,53 @@ fn decoder_error(e: ::rawler::RawlerError) -> Error {
     Error::Unsupported(format!("{camera}{mode}: {what}"))
 }
 
+/// The decoder's cameras, each model as the file's EXIF spells it
+/// beside the name the index gives it, read once from rawler's table
+/// of cameras (its aliases among them).
+fn camera_names() -> &'static [(String, String)] {
+    static NAMES: std::sync::OnceLock<Vec<(String, String)>> = std::sync::OnceLock::new();
+    NAMES.get_or_init(|| {
+        let mut names: Vec<(String, String)> = ::rawler::global_loader()
+            .get_cameras()
+            .values()
+            .map(|c| {
+                (
+                    c.model.trim().to_string(),
+                    crate::raw::camera_name(&c.clean_make, &c.clean_model),
+                )
+            })
+            .filter(|(m, n)| !m.is_empty() && !n.is_empty())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    })
+}
+
+/// The camera as the index names it for a model as its EXIF spells it;
+/// none for a model the decoder does not know. A model two makers share
+/// (none in the table as we read it) takes the first by name.
+pub fn cleaned_camera(exif_model: &str) -> Option<String> {
+    let model = exif_model.trim();
+    camera_names()
+        .iter()
+        .find(|(m, _)| m.eq_ignore_ascii_case(model))
+        .map(|(_, n)| n.clone())
+}
+
+/// Every EXIF spelling the decoder knows for a camera as the index
+/// names it.
+pub fn exif_models(camera: &str) -> Vec<String> {
+    let camera = camera.trim();
+    let mut out: Vec<String> = camera_names()
+        .iter()
+        .filter(|(_, n)| n.eq_ignore_ascii_case(camera))
+        .map(|(m, _)| m.clone())
+        .collect();
+    out.dedup();
+    out
+}
+
 /// What a Nikon High Efficiency raw says in a build without the
 /// decoder for it.
 const NIKON_HE: &str = "Nikon High Efficiency raw (HE or HE*), not supported in this build";
@@ -460,6 +507,26 @@ fn as_shot(wb: [f32; 4]) -> Option<[f64; 3]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_exif_model_cleans_to_the_index_s_camera_and_back() {
+        assert_eq!(
+            cleaned_camera("Canon EOS R6m2").as_deref(),
+            Some("Canon EOS R6 Mark II")
+        );
+        assert_eq!(
+            cleaned_camera("canon eos r6m2").as_deref(),
+            Some("Canon EOS R6 Mark II"),
+            "case ignored"
+        );
+        assert_eq!(cleaned_camera("No Such Camera 9000"), None);
+        assert!(
+            exif_models("Canon EOS R6 Mark II")
+                .iter()
+                .any(|m| m == "Canon EOS R6m2")
+        );
+        assert!(exif_models("No Such Camera 9000").is_empty());
+    }
 
     /// A description that will not read, or a decoder that panics on
     /// it, is an unknown mosaic and nothing worse.

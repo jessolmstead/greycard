@@ -41,6 +41,7 @@ mod library;
 mod lightbox;
 mod log;
 mod match_compare;
+mod measure_crop;
 mod measure_lightroom;
 mod mounts;
 mod naming;
@@ -254,10 +255,10 @@ struct Cli {
     /// compared block by block in Oklab. Writes nothing but --out
     #[arg(long, value_name = "CATALOG")]
     measure_lightroom: Option<PathBuf>,
-    /// With --measure-lightroom: where a root folder of the catalog is
-    /// now, as `library import-lightroom --root` takes it
-    #[arg(long, value_name = "CATALOG=HERE", value_parser = root_mapping,
-        requires = "measure_lightroom")]
+    /// With --measure-lightroom, or --lightroom for its sheet: where a
+    /// root folder of the catalog is now, as `library import-lightroom
+    /// --root` takes it (on the sheet, as if chosen there)
+    #[arg(long, value_name = "CATALOG=HERE", value_parser = root_mapping)]
     root: Vec<(String, PathBuf)>,
     /// With --measure-lightroom: another folder to look for exports
     /// in, beside the export folders found near the raws; repeatable
@@ -270,6 +271,13 @@ struct Cli {
     /// With --measure-lightroom: write the report as JSON here too
     #[arg(long, value_name = "FILE", requires = "measure_lightroom")]
     out: Option<PathBuf>,
+    /// With --measure-lightroom: measure the import's crop rather than
+    /// its color. Each cropped pair's raw is developed under the edit
+    /// the import writes, its crop with it, finished at the export's
+    /// long edge, and the export registered onto it: the sizes, the
+    /// scale, the shift and the farthest corner in the export's pixels
+    #[arg(long, requires = "measure_lightroom")]
+    crops: bool,
     /// Fill the export sheet from this export preset, by name, for
     /// this run: its size, format, metadata and watermark. The format
     /// is still the --export path's extension when it names one, and
@@ -319,9 +327,13 @@ struct Cli {
     /// (the grid header's Back up or Bring back; never answered),
     /// archive-rejects (Remove rejects from the first archive, over the
     /// open folder's rejects folder; never answered), parts (the
-    /// masks panel's People menu, over the mask --show-mask chooses)
-    /// or landscape (the masks panel's Landscape button pressed on the
-    /// mask --show-mask chooses, its menu of what was found)
+    /// masks panel's People menu, over the mask --show-mask chooses),
+    /// landscape (the masks panel's Landscape button pressed on the
+    /// mask --show-mask chooses, its menu of what was found), lightroom
+    /// (the Lightroom catalog import's sheet over --lightroom's
+    /// catalog, at its roots), lightroom-report (the same at its dry
+    /// run's report) or lightroom-written (the same, written as its
+    /// Write button writes it: point it at a scratch catalog)
     #[arg(long, value_name = "NAME", value_parser = panel::viewport::Shown::sheet, conflicts_with = "tool")]
     sheet: Option<panel::viewport::Shown>,
     /// Open the frame menu over this row of the strip (from 0), or of
@@ -500,6 +512,11 @@ struct Cli {
     /// With --sheet import, the import sheet's source instead
     #[arg(long, value_name = "SRC")]
     import: Option<PathBuf>,
+    /// The Lightroom catalog `--sheet lightroom` (and its -report and
+    /// -written steps) opens the import's sheet on, as the pane's
+    /// button would after the catalog is chosen
+    #[arg(long, value_name = "CATALOG")]
+    lightroom: Option<PathBuf>,
     /// Where --import copies the frames
     #[arg(long, value_name = "DEST")]
     to: Option<PathBuf>,
@@ -1187,6 +1204,8 @@ pub(crate) struct State {
     /// The import sheet's folders and what the source holds, and the
     /// import running.
     pub(crate) import: panel::import::Sheet,
+    /// The Lightroom catalog import's sheet.
+    pub(crate) lightroom: panel::lightroom::Sheet,
     /// The archive roots: the sheet's question, a copy under way, the
     /// header's count (`panel::archive`).
     pub(crate) archive: panel::archive::Archive,
@@ -1451,6 +1470,7 @@ impl State {
             batch: false,
             failed: false,
             import: panel::import::Sheet::default(),
+            lightroom: panel::lightroom::Sheet::default(),
             archive: panel::archive::Archive::default(),
         }
     }
@@ -1504,6 +1524,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::menu::install(app, &state, &worker);
     panel::versions::install(app, &state, &worker);
     panel::import::install(app, &state, &worker);
+    panel::lightroom::install(app, &state);
     panel::recent::install(app, &state, &worker);
     panel::camera_match::install(app, &state);
     roots::install(app, &state, &worker);

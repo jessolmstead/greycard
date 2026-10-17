@@ -31,6 +31,9 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     }
     // `--measure-lightroom` likewise: a catalog against its exports.
     if let Some(catalog) = cli.measure_lightroom.as_deref() {
+        if cli.crops {
+            return crate::measure_crop::headless(&cli, catalog);
+        }
         return crate::measure_lightroom::headless(&cli, catalog);
     }
     // `--import` with no sheet asked for is a run with no window.
@@ -454,6 +457,12 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
             settings::path().as_deref(),
             write,
         );
+    }
+    // `--sheet lightroom`: the catalog its sheet opens on.
+    if let Some(catalog) = &cli.lightroom {
+        let mut st = state.borrow_mut();
+        st.lightroom.catalog = Some(catalog.clone());
+        st.lightroom.seed = cli.root.clone();
     }
     // `--sheet import`: the sheet shows what the import flags name.
     if import_sheet {

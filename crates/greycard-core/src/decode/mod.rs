@@ -46,6 +46,22 @@ pub fn decode_path_with_metadata(path: impl AsRef<Path>) -> Result<(RawFrame, Ra
     RawlerDecoder.decode_path_with_metadata(path.as_ref())
 }
 
+/// The camera as the index names it ([`crate::raw::camera_name`] over
+/// the decoder's cleaned make and model) for a model as the file's EXIF
+/// spells it, the way Lightroom names a camera: "Canon EOS R6m2" is
+/// "Canon EOS R6 Mark II". Case is ignored. None for a model the
+/// decoder does not know; see `rawler_backend::cleaned_camera`.
+pub fn cleaned_camera(exif_model: &str) -> Option<String> {
+    rawler_backend::cleaned_camera(exif_model)
+}
+
+/// Every EXIF spelling of a model the decoder knows for a camera as the
+/// index names it: the other way of [`cleaned_camera`]. Empty for a
+/// camera it does not know.
+pub fn exif_models(camera: &str) -> Vec<String> {
+    rawler_backend::exif_models(camera)
+}
+
 /// Camera, lens, ISO, exposure and date from a raw's metadata,
 /// without decoding the samples; see `rawler_backend::probe_path`.
 /// A picture's is [`crate::picture::probe_path`].

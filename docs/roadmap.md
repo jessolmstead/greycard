@@ -30,16 +30,6 @@ A Lightroom catalog comes across whole: its folders as roots, its
 edits as sidecars, its ratings, labels, flags and collections as
 ours, so a tester brings a library over in one go.
 
-- [ ] The Lightroom catalog import, part 2: the command (§329) behind
-      a sheet in the window, asking where each root now lives and
-      showing the dry run's report before the write; Lightroom's crop
-      mapped (on the unrotated frame with an angle, ours on the leveled
-      plane), the most common edit the command names today; camera
-      and lens rules in a smart collection matched through rawler's
-      names; Lightroom's stacks brought across as ours (§334); a
-      catalog row for a camera's JPEG beside its raw mapped onto the
-      raw's frame, since the window never reads the JPEG while they
-      are paired (§332), and the same in the `.pp3` import
 - [ ] RawTherapee `.pp3` import on opening a folder (Library track)
 - [ ] A Sync button in the develop panel over a selection (Pool)
 - [ ] The crop's starting aspect as a setting (Pool)
@@ -394,6 +384,12 @@ comes across with its ratings and collections.
       rewrite of the raw, read by the index as the frame's time, sorted
       and filtered by, and written to the export's EXIF and XMP as the
       corrected time; a tester asked to change the shot time
+- [ ] Lightroom catalog import follow-ups (§337): a catalog row for a
+      camera's JPEG beside its raw mapped onto the raw's frame (wants a
+      catalog made with JPEGs as separate photos; none held has one); a
+      Flip and the Upright transforms carried, not counted; a camera
+      rule passing some cameras carried once the filter has a union of
+      terms; a root guessed from a folder holding part of a shoot
 - [ ] A map: the frames' EXIF GPS on tiles, a click to select them, a
       position given to a frame by hand. Low priority
 

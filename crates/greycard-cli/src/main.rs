@@ -449,9 +449,12 @@ enum LibraryAction {
     },
     /// Bring a Lightroom Classic catalog across: the ratings, flags,
     /// labels, keywords, titles and captions exactly, the develop
-    /// settings as an approximation in one named state, virtual
-    /// copies as versions, the collections and the smart collections
-    /// that translate, the root folders as roots. Without --write it
+    /// settings as an approximation in one named state with the crop,
+    /// virtual copies as versions, the collections and the smart
+    /// collections that translate, the stacks, the root folders as
+    /// roots (a root not mapped is looked for where the catalog says,
+    /// then in a folder of its name beside the catalog or under the
+    /// library's roots). Without --write it
     /// only reports what it would do. Work on a copy of the catalog,
     /// made after Lightroom quit or with the -wal beside it: without
     /// its -wal, a catalog copied while Lightroom ran lacks the newest
@@ -462,7 +465,8 @@ enum LibraryAction {
         /// Where a root folder of the catalog is now: its path as the
         /// catalog has it (or a folder above it, or its name), `=`,
         /// and the folder here. With none, each root is looked for
-        /// where the catalog says
+        /// where the catalog says, then beside the catalog and under
+        /// the library's roots by its name
         #[arg(long = "root", value_name = "CATALOG=HERE", value_parser = root_mapping)]
         roots: Vec<(String, PathBuf)>,
         /// Write the sidecars, the collections and the roots
@@ -475,6 +479,10 @@ enum LibraryAction {
         /// not given, none when empty
         #[arg(long, value_name = "NAME")]
         set: Option<String>,
+        /// Leave out the books, prints, slideshows and web pages, which
+        /// otherwise come as collections of their frames
+        #[arg(long)]
+        no_creations: bool,
     },
 }
 
@@ -1888,6 +1896,7 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
         write,
         force,
         set,
+        no_creations,
     } = action
     {
         let options = greycard_library::lightroom_catalog::Options {
@@ -1897,6 +1906,7 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
             set,
             library: path,
             sidecars_in_folder: editor_setting("sidecars_in_folder"),
+            no_creations,
         };
         let report = greycard_library::lightroom_catalog::import(&catalog, &options)
             .with_context(|| format!("importing {}", catalog.display()))?;

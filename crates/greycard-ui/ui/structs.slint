@@ -22,6 +22,26 @@ export struct CarryRow {
     sub: int,
 }
 
+/// A root of a Lightroom catalog on the import sheet: its path as the
+/// catalog spells it, its name, the folder here it was found in or
+/// mapped to (empty when none) and that folder's own name, and what was
+/// found there.
+export struct LightroomRoot {
+    catalog: string,
+    name: string,
+    local: string,
+    folder: string,
+    note: string,
+    taken: bool,
+}
+
+/// A line of the Lightroom import's report: its word, empty for a line
+/// going on from the one before, and what it says.
+export struct ReportLine {
+    label: string,
+    text: string,
+}
+
 /// A point on the view, logical pixels.
 export struct Pt {
     x: float,

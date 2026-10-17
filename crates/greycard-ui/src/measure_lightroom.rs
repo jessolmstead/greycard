@@ -1067,7 +1067,7 @@ fn frame(
         return line;
     };
     let (mut edit, unmapped) =
-        match greycard_library::lightroom_catalog::imported_edit(raw, &pair.settings) {
+        match greycard_library::lightroom_catalog::imported_edit(raw, &pair.settings, None) {
             Ok(e) => e,
             Err(e) => {
                 line.failed = Some(format!("the settings: {e}"));
@@ -1426,6 +1426,7 @@ mod tests {
             imported: Some("s = { Temperature = 5200, Tint = 3 }".into()),
             exports: Vec::new(),
             size: None,
+            orientation: None,
         };
         let pair = lx::Pair {
             shot: 0,
@@ -1607,7 +1608,8 @@ mod tests {
         dng(&raw, 840, 560);
         let settings = "s = { Exposure2012 = 0.3, Contrast2012 = 10, WhiteBalance = \"As Shot\",\n\
             CropLeft = 0.25, CropRight = 0.75 }";
-        let (edit, _) = greycard_library::lightroom_catalog::imported_edit(&raw, settings).unwrap();
+        let (edit, _) =
+            greycard_library::lightroom_catalog::imported_edit(&raw, settings, None).unwrap();
         assert!((edit.light.exposure - 0.3).abs() < 1e-6);
         let crop = Crop::of(&lx::words(settings));
         let mut developed = crate::worker::FrameDevelop::develop(&raw, &edit, None).unwrap();

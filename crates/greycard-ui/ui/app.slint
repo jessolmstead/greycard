@@ -10,7 +10,7 @@ import { Theme } from "theme.slint";
 import { Tips, EdgeArrow, PanelButton, Segmented, Typing } from "controls.slint";
 // The typed numbers are read on the Rust side (`entry.rs`).
 export { Typing, TypedNumber } from "controls.slint";
-import { Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow } from "structs.slint";
+import { LightroomRoot, ReportLine, Pt, Thumb, ThumbCell, MaskBox, MaskPick, PersonBox, CompareTile, FilterChip, FacetRow, FacetChip, RootChip, CollectionChip, RecentFolder, FolderRow, FolderTile, HistoryRow, LookRow, MatchGroup, CarryRow } from "structs.slint";
 import { CullSection } from "panel/cull.slint";
 import { AdjustmentsList, AdjustmentsSection } from "panel/mask.slint";
 import { CameraSection, LookSection } from "panel/assets.slint";
@@ -36,6 +36,7 @@ import { ArchiveRejectsSheet } from "panel/archive-rejects-sheet.slint";
 import { MatchSheet } from "panel/match-sheet.slint";
 import { PresetSheet } from "panel/preset-sheet.slint";
 import { PresetReportSheet } from "panel/preset-report-sheet.slint";
+import { LightroomSheet } from "panel/lightroom-sheet.slint";
 import { SyncSheet } from "panel/sync-sheet.slint";
 import { ExportSheet } from "panel/deliver.slint";
 import { ImportSheet } from "panel/import-sheet.slint";
@@ -1688,6 +1689,34 @@ export component App inherits Window {
     callback import-pattern-changed();
     changed import-subfolder => { root.import-pattern-changed(); }
     changed import-name => { root.import-pattern-changed(); }
+    // The Lightroom catalog import: a catalog chosen, its roots and
+    // its set asked, the dry run's report shown, then written on a
+    // thread of its own, its progress under the button and on the
+    // status line, and the report again. Through Rust throughout.
+    in-out property <bool> lr-open: false;
+    in property <int> lr-step: 0;
+    in property <string> lr-title: "";
+    in property <string> lr-subtitle: "";
+    in property <string> lr-note: "";
+    in property <[LightroomRoot]> lr-roots: [];
+    in-out property <string> lr-set: "";
+    in property <bool> lr-has-creations: false;
+    in-out property <bool> lr-creations: true;
+    in property <int> lr-already: 0;
+    in-out property <bool> lr-force: false;
+    in property <[ReportLine]> lr-lines: [];
+    in property <[ReportLine]> lr-done: [];
+    in property <bool> lr-busy: false;
+    in property <string> lr-busy-text: "";
+    in property <bool> lr-ready: false;
+    /// A write running, and what it has done, for the left pane.
+    in property <bool> lr-running: false;
+    in property <string> lr-status: "";
+    callback lr-asked();
+    callback lr-choose-root(int);
+    callback lr-check();
+    callback lr-back();
+    callback lr-write();
     // The settings sheet: what is the installation's and not a
     // picture's. Where a sidecar is written, "Beside the raw" or
     // "Hidden folder"; whether an XMP is written beside it; how many
@@ -1864,7 +1893,8 @@ export component App inherits Window {
         return root.export-open || root.fetch-open || root.preset-open || root.rejects-open
             || root.delete-open || root.look-remove-open || root.look-rename-open || root.overwrite-open || root.archive-open || root.archive-rejects-open
             || root.settings-open || root.sync-open || root.import-open || root.match-open
-            || root.root-sheet-open || root.collection-sheet-open || root.preset-report-open;
+            || root.root-sheet-open || root.collection-sheet-open || root.preset-report-open
+            || root.lr-open;
     }
 
     // A value typed into a field, set or let go: the keys are the
@@ -1892,6 +1922,9 @@ export component App inherits Window {
     changed preset-report-open => {
         if (!root.preset-report-open && !root.sheet-open()) { keys.focus(); }
     }
+    changed lr-open => {
+        if (!root.lr-open && !root.sheet-open()) { keys.focus(); }
+    }
 
     // Keys that are nobody's: arrows step files, ctrl+z undoes.
     forward-focus: keys;
@@ -1912,6 +1945,10 @@ export component App inherits Window {
             if (e.text == Key.Escape && root.fetch-open) { root.fetch-answered(false); return accept; }
             if (e.text == Key.Escape && root.preset-open) { root.preset-open = false; return accept; }
             if (e.text == Key.Escape && root.preset-report-open) { root.preset-report-open = false; return accept; }
+            if (e.text == Key.Escape && root.lr-open) {
+                if (!root.lr-busy) { root.lr-open = false; }
+                return accept;
+            }
             if (e.text == Key.Escape && root.root-sheet-open) { root.root-sheet-open = false; return accept; }
             if (e.text == Key.Escape && root.collection-sheet-open) { root.collection-sheet-open = false; return accept; }
             if (e.text == Key.Escape && root.rejects-open) { root.rejects-answered(false); return accept; }
@@ -3224,6 +3261,20 @@ export component App inherits Window {
                         font-size: Theme.font-xs;
                         wrap: word-wrap;
                     }
+                    // A Lightroom catalog brought across, the same way:
+                    // its progress under it while it writes.
+                    PanelButton {
+                        text: root.lr-running ? "Importing the catalog..." : "Import a Lightroom catalog...";
+                        icon: @image-url("icons/folder-open.svg");
+                        enabled: !root.lr-running;
+                        clicked => { keys.focus(); root.lr-asked(); }
+                    }
+                    if root.lr-status != "": Text {
+                        text: root.lr-status;
+                        color: Theme.text-secondary;
+                        font-size: Theme.font-xs;
+                        wrap: word-wrap;
+                    }
                 }
                 // The library's roots, with the grid: a row a root.
                 if root.grid-open: RootsSection {
@@ -3553,6 +3604,30 @@ export component App inherits Window {
         report-refusals: root.preset-report-refusals;
         report-lines: root.preset-report-lines;
         report-note: root.preset-report-note;
+    }
+
+    // The Lightroom catalog import's sheet.
+    if root.lr-open: LightroomSheet {
+        lr-open <=> root.lr-open;
+        lr-step: root.lr-step;
+        lr-title: root.lr-title;
+        lr-subtitle: root.lr-subtitle;
+        lr-note: root.lr-note;
+        lr-roots: root.lr-roots;
+        lr-set <=> root.lr-set;
+        lr-has-creations: root.lr-has-creations;
+        lr-creations <=> root.lr-creations;
+        lr-already: root.lr-already;
+        lr-force <=> root.lr-force;
+        lr-lines: root.lr-lines;
+        lr-done: root.lr-done;
+        lr-busy: root.lr-busy;
+        lr-busy-text: root.lr-busy-text;
+        lr-ready: root.lr-ready;
+        lr-choose-root(i) => { root.lr-choose-root(i); }
+        lr-check => { root.lr-check(); }
+        lr-back => { root.lr-back(); }
+        lr-write => { root.lr-write(); }
     }
 
     // The collection sheet: a name for a new collection, a smart one

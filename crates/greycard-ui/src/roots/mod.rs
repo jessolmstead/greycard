@@ -84,7 +84,7 @@ use self::{
 pub(crate) use self::{
     checks::{answer_of, answers, answers_of},
     kept_up::{ask_owed, background_done, folders_passed},
-    pane::{edit_roots, one_root_named, recount, root_name, said, show},
+    pane::{edit_roots, one_root_named, recount, root_name, said, show, taken_from_file},
     view::{loading_words, open_listing, open_view, refresh_view},
     watcher::{poll_every, restart_poll, start},
 };
