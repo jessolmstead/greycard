@@ -38,6 +38,10 @@ ours, so a tester brings a library over in one go.
 - [ ] A look previewed under the pointer (Color track)
 - [ ] X-Trans step 2: denoising, hot pixel repair and chromatic
       aberration correction on the X-Trans path (§322)
+- [ ] The camera match's folder survey over a NAS: the probe from the
+      file's two ends, a count while it reads, the empty text only once
+      it has finished, four reads at once (§324). After X-Trans step 2
+      if that changes `rawler_backend.rs`
 
 
 ## Tracks

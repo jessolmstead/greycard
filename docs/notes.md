@@ -333,3 +333,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§320. Virtual copies, part 3: Compare](notes/320-virtual-copies-part-3-compare.md) (2026-10-15)
 - [§321. Splitting roots.rs](notes/321-splitting-roots-rs.md) (2026-10-15)
 - [§322. X-Trans, step 1: Markesteijn's demosaic](notes/322-x-trans-step-1-markesteijns-demosaic.md) (2026-10-15)
+- [§324. The camera match's survey over a network share](notes/324-the-camera-matchs-survey-over-a-network-share.md) (2026-10-16)
