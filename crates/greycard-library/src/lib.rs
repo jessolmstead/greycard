@@ -40,6 +40,7 @@ pub mod fixture;
 pub mod hash;
 mod index;
 pub mod lightroom_catalog;
+pub mod lightroom_exports;
 pub mod pairs;
 pub mod roots;
 pub mod thumbs;

@@ -128,30 +128,30 @@ pub struct Options {
 
 /// A root folder of the catalog.
 #[derive(Debug, Clone)]
-struct CatalogRoot {
-    id: i64,
+pub(crate) struct CatalogRoot {
+    pub(crate) id: i64,
     /// As the catalog has it: absolute, on the machine it lived on.
-    path: String,
-    name: String,
+    pub(crate) path: String,
+    pub(crate) name: String,
 }
 
 /// One image of the catalog: a file's own, or a virtual copy of it.
 #[derive(Debug, Clone)]
-struct Image {
-    id: i64,
-    file: i64,
-    root: i64,
+pub(crate) struct Image {
+    pub(crate) id: i64,
+    pub(crate) file: i64,
+    pub(crate) root: i64,
     /// The file under its root, slash-separated.
-    relative: String,
+    pub(crate) relative: String,
     /// The image it is a virtual copy of.
-    master: Option<i64>,
-    copy_name: Option<String>,
-    meta: Meta,
+    pub(crate) master: Option<i64>,
+    pub(crate) copy_name: Option<String>,
+    pub(crate) meta: Meta,
     /// A label whose text is no color's (a renamed label set).
-    odd_label: Option<String>,
-    develop: Option<String>,
-    process: Option<String>,
-    edited: bool,
+    pub(crate) odd_label: Option<String>,
+    pub(crate) develop: Option<String>,
+    pub(crate) process: Option<String>,
+    pub(crate) edited: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -175,14 +175,14 @@ struct Node {
 }
 
 /// The catalog as read.
-struct Catalog {
-    schema: i64,
-    written_by: &'static str,
-    roots: Vec<CatalogRoot>,
-    images: Vec<Image>,
+pub(crate) struct Catalog {
+    pub(crate) schema: i64,
+    pub(crate) written_by: &'static str,
+    pub(crate) roots: Vec<CatalogRoot>,
+    pub(crate) images: Vec<Image>,
     nodes: Vec<Node>,
-    stacks: usize,
-    wal: Wal,
+    pub(crate) stacks: usize,
+    pub(crate) wal: Wal,
 }
 
 /// One root of the catalog: where it is now and what was found there.
@@ -695,6 +695,18 @@ fn developed(image: &Image, base: &Edit) -> Option<Edit> {
     Some(imported.preset.applied(base))
 }
 
+/// The edit an import writes for the raw at `raw` from the develop
+/// settings `settings` (a catalog's Lua table) when the frame has no
+/// sidecar yet: the settings mapped and laid over the frame's starting
+/// edit. Beside it, what the mapper had no place for.
+pub fn imported_edit(raw: &Path, settings: &str) -> greycard_edit::Result<(Edit, Vec<String>)> {
+    let imported = lightroom::read_table(settings, "")?;
+    Ok((
+        imported.preset.applied(&starting_edit(raw)),
+        imported.unmapped,
+    ))
+}
+
 /// Where a frame's sidecar goes: where it is, when it has one; else
 /// under the folder's `.greycard` when the folder has one, so a shoot
 /// whose sidecars live there keeps them together; else as the editor's
@@ -785,7 +797,7 @@ fn write_frame(
 
 /// A file under a folder, the relative path slash-separated as the
 /// catalog keeps it.
-fn under(dir: &Path, relative: &str) -> PathBuf {
+pub(crate) fn under(dir: &Path, relative: &str) -> PathBuf {
     let mut out = dir.to_path_buf();
     for part in relative.split('/').filter(|p| !p.is_empty()) {
         out.push(part);
@@ -837,7 +849,7 @@ fn components(path: &str) -> Vec<String> {
 
 /// Each root of the catalog with where it is looked for and what of it
 /// was found there, and the roots taken, by the catalog's id.
-fn map_roots(
+pub(crate) fn map_roots(
     catalog: &Catalog,
     given: &[(String, PathBuf)],
 ) -> Result<(Vec<RootReport>, HashMap<i64, PathBuf>), ImportError> {
@@ -929,8 +941,10 @@ fn map_roots(
     Ok((reports, taken))
 }
 
-/// Open the catalog read-only and read what the import carries.
-fn read(path: &Path) -> Result<Catalog, ImportError> {
+/// The catalog opened read-only, its schema one of [`KNOWN`]: the
+/// connection, the schema, which Lightroom wrote it, and how its log
+/// stood.
+pub(crate) fn open(path: &Path) -> Result<(Connection, i64, &'static str, Wal), ImportError> {
     let mut lock = path.as_os_str().to_owned();
     lock.push(".lock");
     if Path::new(&lock).exists() {
@@ -1006,7 +1020,12 @@ fn read(path: &Path) -> Result<Catalog, ImportError> {
                 .join(", "),
         });
     };
+    Ok((db, schema, written_by, wal))
+}
 
+/// Open the catalog read-only and read what the import carries.
+pub(crate) fn read(path: &Path) -> Result<Catalog, ImportError> {
+    let (db, schema, written_by, wal) = open(path)?;
     let roots: Vec<CatalogRoot> = db
         .prepare("SELECT id_local, absolutePath, name FROM AgLibraryRootFolder ORDER BY id_local")?
         .query_map([], |r| {
@@ -1301,14 +1320,20 @@ fn xmp_title(blob: &[u8]) -> Option<String> {
     let packet = if blob.first() == Some(&b'<') {
         String::from_utf8_lossy(blob).into_owned()
     } else {
-        let mut out = String::new();
-        flate2::read::ZlibDecoder::new(blob.get(4..)?)
-            .read_to_string(&mut out)
-            .ok()?;
-        out
+        inflated(blob)?
     };
     let title = greycard_edit::xmp::read(&packet).ok()?.meta.title;
     (!title.is_empty()).then_some(title)
+}
+
+/// Text the catalog keeps deflated: four bytes of its length, then the
+/// text through zlib. The XMP packets and the history steps' settings.
+pub(crate) fn inflated(blob: &[u8]) -> Option<String> {
+    let mut out = String::new();
+    flate2::read::ZlibDecoder::new(blob.get(4..)?)
+        .read_to_string(&mut out)
+        .ok()?;
+    Some(out)
 }
 
 /// Lightroom's six smart collections as every new catalog has them: the
@@ -1805,7 +1830,7 @@ impl fmt::Display for Report {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::index::tests::scratch;
     use std::io::Write;
@@ -1848,7 +1873,7 @@ mod tests {
 
     /// A catalog of the tables the import reads, in their columns, at
     /// `schema`, empty.
-    fn empty_catalog(path: &Path, schema: &str) -> Connection {
+    pub(crate) fn empty_catalog(path: &Path, schema: &str) -> Connection {
         let db = Connection::open(path).unwrap();
         db.execute_batch(
             "CREATE TABLE Adobe_variablesTable (id_local INTEGER PRIMARY KEY, name, value);

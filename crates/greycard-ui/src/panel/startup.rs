@@ -29,6 +29,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
     if let Some(out) = cli.match_compare.as_deref() {
         return crate::match_compare::headless(&cli, out);
     }
+    // `--measure-lightroom` likewise: a catalog against its exports.
+    if let Some(catalog) = cli.measure_lightroom.as_deref() {
+        return crate::measure_lightroom::headless(&cli, catalog);
+    }
     // `--import` with no sheet asked for is a run with no window.
     let import_sheet = matches!(
         cli.sheet,

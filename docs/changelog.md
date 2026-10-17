@@ -62,6 +62,11 @@ note a first tester reads.
 
 ### Cameras
 
+- `greycard-ui --measure-lightroom <catalog> --root A=B` pairs a
+  Lightroom catalog's images with Lightroom's own exports beside them,
+  develops each raw as the import would carry it, and reports how far
+  apart the two pictures are, by frame, profile and slider
+  ([§333](https://github.com/jessolmstead/greycard/blob/master/docs/notes/333-measuring-the-lightroom-mapper-against-its-exports.md))
 - Fujifilm X-Trans raws now get the hot pixel repair, the profiled
   **Denoise** and the chromatic aberration correction: a stuck colored
   dot goes, a high ISO frame can be denoised, and red fringes along

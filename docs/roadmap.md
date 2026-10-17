@@ -39,11 +39,15 @@ ours, so a tester brings a library over in one go.
       names
 - [ ] RawTherapee `.pp3` import on opening a folder (Library track)
 - [ ] Stacks (Library track). After the pairs
-- [ ] The Lightroom mapper measured, then fitted, against the
-      archive's exports with their settings read from the catalogs,
-      the camera's fitted look on first so the error left is the
-      sliders'; held out by shoot (§323). After the catalog import's
-      part 1
+- [ ] The Lightroom mapper fitted from the measurement (§323, §333):
+      the per-body baseline exposure first (the GFX 100S II renders
+      about a stop brighter than Lightroom under every profile, the
+      R5 Mark II within 0.05), then a within-body regression over
+      every history pair with the body's offset removed, masks
+      included, since almost no export is a global edit; history
+      pairs only; the fit-1 look tables for Provia, Reala Ace and R5
+      Mark II Faithful refitted first, and looks fitted for the
+      monochrome styles, which have none
 
 
 ## Tracks

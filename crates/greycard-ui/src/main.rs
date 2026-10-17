@@ -41,6 +41,7 @@ mod library;
 mod lightbox;
 mod log;
 mod match_compare;
+mod measure_lightroom;
 mod mounts;
 mod naming;
 mod outline;
@@ -243,6 +244,31 @@ struct Cli {
     /// analysis: after a change to the develop, let them be made again
     #[arg(long, value_name = "BUILD", requires = "match_compare")]
     match_reuse_records: Vec<String>,
+    /// Measure how close the Lightroom import's mapping lands on
+    /// Lightroom's own exports of this catalog, with no window, and
+    /// print the report: each image paired with its export (by the
+    /// export history's time, else by name), its raw developed under
+    /// the catalog's settings as the import maps them, through the
+    /// camera's fitted look where the profile is the camera's own, and
+    /// compared block by block in Oklab. Writes nothing but --out
+    #[arg(long, value_name = "CATALOG")]
+    measure_lightroom: Option<PathBuf>,
+    /// With --measure-lightroom: where a root folder of the catalog is
+    /// now, as `library import-lightroom --root` takes it
+    #[arg(long, value_name = "CATALOG=HERE", value_parser = root_mapping,
+        requires = "measure_lightroom")]
+    root: Vec<(String, PathBuf)>,
+    /// With --measure-lightroom: another folder to look for exports
+    /// in, beside the export folders found near the raws; repeatable
+    #[arg(long, value_name = "DIR", requires = "measure_lightroom")]
+    exports: Vec<PathBuf>,
+    /// With --measure-lightroom: measure this many pairs, spread
+    /// through the catalog, rather than all
+    #[arg(long, value_name = "N", requires = "measure_lightroom")]
+    limit: Option<usize>,
+    /// With --measure-lightroom: write the report as JSON here too
+    #[arg(long, value_name = "FILE", requires = "measure_lightroom")]
+    out: Option<PathBuf>,
     /// Fill the export sheet from this export preset, by name, for
     /// this run: its size, format, metadata and watermark. The format
     /// is still the --export path's extension when it names one, and
@@ -1400,6 +1426,20 @@ impl State {
             import: panel::import::Sheet::default(),
             archive: panel::archive::Archive::default(),
         }
+    }
+}
+
+/// A `--root` as typed: the catalog's side up to the first `=`, the
+/// folder here after it. The `greycard` command parses its own the
+/// same way; the two binaries share no crate for it.
+fn root_mapping(text: &str) -> Result<(String, PathBuf), String> {
+    match text.split_once('=') {
+        Some((from, to)) if !from.trim().is_empty() && !to.trim().is_empty() => {
+            Ok((from.trim().to_string(), PathBuf::from(to.trim())))
+        }
+        _ => Err(format!(
+            "want <catalog path>=<folder here>, as A:/Photos=/photos, not {text}"
+        )),
     }
 }
 
