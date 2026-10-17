@@ -178,6 +178,7 @@ pub(crate) fn menu_asked(state: &Rc<RefCell<State>>, app: &App, row: i32) {
         st.file_at(file)
             .is_some_and(|f| crate::panel::versions::compare_set(&st, f).0.len() > 1),
     );
+    crate::panel::stacks::menu_asked(&st, app, file);
     app.set_menu_can_meta(!frames.is_empty());
     app.set_menu_count(frames.len().max(1) as i32);
     app.set_menu_rating(shared(metas.iter().map(|m| i32::from(m.rating))));

@@ -1011,6 +1011,53 @@ export component ThumbMarks inherits Rectangle {
     }
 }
 
+// A stack on its picture's bottom right, the corner the badges, the
+// marks and a version's name leave free: the layers glyph and how many
+// frames it shows on a closed stack's top, "2/5" on an open one's
+// members. A click opens or closes the stack, as S does; it is drawn
+// over the cell's own press so the cell does not take it. In the
+// marks' quiet colors, lit while the pointer is on it.
+export component ThumbStack inherits Rectangle {
+    in property <int> count;
+    in property <int> place;
+    in property <bool> open;
+    in property <length> glyph: 9px;
+    callback clicked();
+    visible: root.count > 1;
+    width: row.preferred-width;
+    height: root.glyph + 6px;
+    border-radius: Theme.radius-sm;
+    background: touch.has-hover ? #000000cc : #00000080;
+    accessible-role: button;
+    accessible-label: root.open
+        ? "Frame " + root.place + " of a stack of " + root.count + ", open"
+        : "Stack of " + root.count;
+    accessible-action-default => { root.clicked(); }
+    row := HorizontalLayout {
+        padding-left: root.glyph / 3;
+        padding-right: root.glyph / 3;
+        spacing: root.glyph / 4.5;
+        alignment: center;
+        Image {
+            source: @image-url("icons/layers.svg");
+            colorize: touch.has-hover ? Theme.text : Theme.text-secondary;
+            width: root.glyph;
+            height: root.glyph;
+        }
+        Text {
+            text: root.open ? root.place + "/" + root.count : root.count;
+            color: touch.has-hover ? Theme.text : Theme.text-secondary;
+            font-size: root.glyph;
+            font-weight: Theme.weight-medium;
+            vertical-alignment: center;
+        }
+    }
+    touch := TouchArea {
+        mouse-cursor: MouseCursor.pointer;
+        clicked => { root.clicked(); }
+    }
+}
+
 // A version's name on the top left of its picture ("Warm"), so two
 // cells of one file can be told apart; the file's own wears none. In
 // the marks' quiet colors, on their scrim.

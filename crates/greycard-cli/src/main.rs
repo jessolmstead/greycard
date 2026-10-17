@@ -440,6 +440,12 @@ enum LibraryAction {
         /// Only how many
         #[arg(long)]
         count: bool,
+        /// A stack shows its top alone, `collapsed`, as the editor's
+        /// grid shows a closed one, or every frame of it, `expanded`;
+        /// either way its top says how many it holds
+        #[arg(long, value_name = "SHOWN", default_value = "collapsed",
+              value_parser = ["collapsed", "expanded"])]
+        stacks: String,
     },
     /// Bring a Lightroom Classic catalog across: the ratings, flags,
     /// labels, keywords, titles and captions exactly, the develop
@@ -1975,13 +1981,22 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
             filter,
             paths,
             count,
+            stacks,
         } => {
             let filter = Filter::from_terms(&filter)?;
-            if count {
+            let stacked = stacks_over(&lib, &path, stacks == "expanded");
+            if count && stacked.hidden.is_empty() {
                 println!("{}", lib.count(&filter)?);
                 return Ok(());
             }
-            let entries = lib.query(&filter)?;
+            let mut entries = lib.query(&filter)?;
+            // A closed stack's members are behind its top: a stack
+            // passes the filter when its top does.
+            entries.retain(|e| !stacked.hidden.contains(&e.path));
+            if count {
+                println!("{}", entries.len());
+                return Ok(());
+            }
             for e in &entries {
                 if paths {
                     print_path(&e.path)?;
@@ -2004,6 +2019,9 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
                 if e.missing {
                     marks.push("missing".into());
                 }
+                if let Some(n) = stacked.tops.get(&e.path) {
+                    marks.push(format!("stack of {n}"));
+                }
                 println!("{}", e.path.display());
                 let line: Vec<String> = [
                     e.exif.taken.clone().unwrap_or_default(),
@@ -2025,6 +2043,40 @@ fn library(db: Option<PathBuf>, action: LibraryAction) -> Result<()> {
         }
         LibraryAction::ImportLightroom { .. } => unreachable!("taken before the library opens"),
     }
+}
+
+/// The stacks kept beside the library at `library` over its rows, by
+/// the editor's rule (`stacks::shown`): a member is there when the
+/// index has a row at its path that is not missing and, for a version,
+/// when that row's sidecar keeps it. With `open`, every stack is taken
+/// as open.
+fn stacks_over(
+    lib: &greycard_library::Library,
+    library: &std::path::Path,
+    open: bool,
+) -> greycard_library::stacks::Collapsed {
+    let dir = greycard_library::stacks::dir_in(&greycard_library::collections::dir_beside(library));
+    let folder = greycard_library::stacks::read_folder(&dir, greycard_library::stacks::VERSION);
+    if folder.list.is_empty() {
+        return Default::default();
+    }
+    // Each member's folder read from the index once: its files there
+    // and the versions each sidecar keeps.
+    let folders: std::collections::BTreeSet<PathBuf> = folder
+        .list
+        .iter()
+        .flat_map(|s| s.refs.iter())
+        .filter_map(|r| std::path::Path::new(&r.hint).parent().map(PathBuf::from))
+        .collect();
+    let mut kept: std::collections::HashMap<String, Vec<String>> = Default::default();
+    for dir in &folders {
+        for (path, row) in lib.rows_in_canonical(dir).unwrap_or_default() {
+            let ids = row.versions.into_iter().map(|v| v.id).collect();
+            kept.insert(greycard_library::collections::hint_of(&path), ids);
+        }
+    }
+    let versions = |hint: &str| kept.get(hint).cloned();
+    greycard_library::stacks::collapsed(&folder.list, open, &versions)
 }
 
 /// A path on its own line, byte for byte on Unix so that a name that
@@ -2957,6 +3009,56 @@ impl std::str::FromStr for AutoF32 {
 
 #[cfg(test)]
 mod tests {
+    /// `library list` shows a closed stack's top alone, saying how many
+    /// it holds, and every frame with `--stacks expanded`; a member the
+    /// index has no file for is not counted, and the first member there
+    /// is the top.
+    #[test]
+    fn a_stack_lists_its_top_alone() {
+        use greycard_library::collections::{Reference, dir_beside, hint_of};
+        use greycard_library::stacks::{Stack, dir_in};
+        let d = std::env::temp_dir().join(format!("greycard-cli-stacks-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        let shoot = d.join("shoot");
+        std::fs::create_dir_all(&shoot).unwrap();
+        for (i, n) in ["a.jpg", "b.jpg", "c.jpg"].iter().enumerate() {
+            std::fs::write(shoot.join(n), vec![i as u8; 64]).unwrap();
+        }
+        let db = d.join("index").join("library.sqlite");
+        let mut lib = greycard_library::Library::open(&db).unwrap();
+        lib.index_folder(&shoot, &mut |_| {}).unwrap();
+        let key = |n: &str| lib.by_path(&shoot.join(n)).unwrap().unwrap().path;
+        // One hash for all: members are told apart by their paths, as
+        // two identical copies in one folder are two frames.
+        let r = |path: std::path::PathBuf| Reference {
+            hash: "h".into(),
+            hint: hint_of(&path),
+            version: None,
+        };
+        Stack::new(vec![
+            r(shoot.join("gone.jpg")),
+            r(key("b.jpg")),
+            r(key("a.jpg")),
+        ])
+        .write(&dir_in(&dir_beside(&db)))
+        .unwrap();
+        let shown = super::stacks_over(&lib, &db, false);
+        assert_eq!(shown.hidden, [key("a.jpg")].into());
+        assert_eq!(shown.tops, [(key("b.jpg"), 2)].into());
+        let all = super::stacks_over(&lib, &db, true);
+        assert!(all.hidden.is_empty());
+        assert_eq!(all.tops, shown.tops);
+        // A later stack claiming a, as another editor's file might: a is
+        // the first's, and the second, left with c alone, is none, as the
+        // window has it, so nothing more is hidden.
+        let mut later = Stack::new(vec![r(key("a.jpg")), r(key("c.jpg"))]);
+        later.made = u64::MAX;
+        later.write(&dir_in(&dir_beside(&db))).unwrap();
+        assert_eq!(super::stacks_over(&lib, &db, false), shown);
+        drop(lib);
+        std::fs::remove_dir_all(&d).unwrap();
+    }
+
     /// `--import` refuses a name the store has and says how to
     /// replace it, tries every file whatever is refused, and fails at
     /// the end; `--replace` writes over the one there, in its file.

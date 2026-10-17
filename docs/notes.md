@@ -344,3 +344,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§331. X-Trans, step 2: noise, hot pixels and chromatic aberration](notes/331-x-trans-step-2-noise-hot-pixels-and-chromatic-aberration.md) (2026-10-16)
 - [§332. RAW+JPEG pairs](notes/332-raw-jpeg-pairs.md) (2026-10-16)
 - [§333. Measuring the Lightroom mapper against its exports](notes/333-measuring-the-lightroom-mapper-against-its-exports.md) (2026-10-17)
+- [§334. Stacks](notes/334-stacks.md) (2026-10-17)

@@ -374,6 +374,8 @@ pub(crate) fn answered(st: &mut State, app: &App, worker: &Worker, answer: i32) 
         }
         let file = st.file_of(c);
         if let Some(taken) = st.sidecars[file].delete_version(id) {
+            // Gone from its sidecar, the version leaves its stack.
+            crate::stacks::version_left(st, file, id);
             gone.push(format!("{} of {}", taken.name, file_name(&key.path)));
             if !files.contains(&file) {
                 files.push(file);
@@ -514,6 +516,7 @@ pub(crate) fn fit_compare(st: &mut State, app: &App, path: &Path, was: Option<us
     cull.anchor = first;
     cull.note = note;
     cull.versions_of = (up > 1).then(|| path.to_path_buf());
+    cull.stack_of = None;
     cull.set = (up > 1).then_some(set);
     cull.status.clear();
     app.set_compare(up as i32);

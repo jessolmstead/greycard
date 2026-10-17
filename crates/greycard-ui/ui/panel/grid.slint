@@ -4,7 +4,7 @@
 
 import { Theme } from "../theme.slint";
 import { Thumb, ThumbCell, FilterChip, FacetRow, FolderTile } from "../structs.slint";
-import { PanelButton, ScrollBand, ThumbBadges, ThumbMarks, ThumbTag } from "../controls.slint";
+import { PanelButton, ScrollBand, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag } from "../controls.slint";
 import { FilterBar } from "filter.slint";
 import { LoadingCard } from "loading.slint";
 
@@ -20,6 +20,9 @@ export component GridSheet inherits Rectangle {
     /// A right-click on a frame (or, on a Mac, a Control+click), as
     /// the strip has it: the row and where, in the window's pixels.
     callback frame-menu(int, length, length);
+    /// A click on a stack's badge: the stack of that row opened or
+    /// closed.
+    callback stack-clicked(int);
     /// Whether the frame menu is up: a press that closes it reaches
     /// the cell under it too, and is not a click there.
     pure callback menu-shown() -> bool;
@@ -741,6 +744,52 @@ export component GridSheet inherits Rectangle {
                         }
                         // The frame under the pointer, in the loupe.
                         double-clicked => { if (!self.menu) { root.grid-open = false; } }
+                    }
+                    // The stack's badge on the picture's bottom right,
+                    // held inside the cell as the marks are; after the
+                    // cell's press, so a click on it is the badge's.
+                    if !root.lightbox: ThumbStack {
+                        x: clamp(
+                            Theme.space-1 + (parent.box + parent.shown-w) / 2
+                                - self.width - Theme.space-1,
+                            Theme.space-1,
+                            max(Theme.space-1, Theme.space-1 + parent.box - self.width));
+                        y: clamp(
+                            Theme.space-1 + (parent.box + parent.shown-h) / 2
+                                - self.height - Theme.space-1,
+                            Theme.space-1,
+                            max(Theme.space-1, Theme.space-1 + parent.box - self.height));
+                        count: t.stack;
+                        place: t.stack-place;
+                        open: t.stack-open;
+                        glyph: clamp(root.grid-cell / 16, 9px, 18px);
+                        clicked => {
+                            root.focus-keys();
+                            root.stack-clicked(i);
+                        }
+                    }
+                    // In the lightbox too, on its tile's picture, which
+                    // fills the cell: a closed stack's top is still a
+                    // stack there.
+                    if root.lightbox: ThumbStack {
+                        property <length> bw: parent.width - 2 * Theme.space-1;
+                        property <length> bh: parent.height - 2 * Theme.space-1;
+                        property <length> pw: t.big.width > 0 && t.big.height > 0
+                            ? min(self.bw, self.bh * t.big.width / t.big.height)
+                            : self.bw;
+                        property <length> ph: t.big.width > 0 && t.big.height > 0
+                            ? min(self.bh, self.bw * t.big.height / t.big.width)
+                            : self.bh;
+                        x: max(Theme.space-1, Theme.space-1 + (self.bw + self.pw) / 2 - self.width - Theme.space-1);
+                        y: max(Theme.space-1, Theme.space-1 + (self.bh + self.ph) / 2 - self.height - Theme.space-1);
+                        count: t.stack;
+                        place: t.stack-place;
+                        open: t.stack-open;
+                        glyph: clamp(parent.width / 24, 9px, 18px);
+                        clicked => {
+                            root.focus-keys();
+                            root.stack-clicked(i);
+                        }
                     }
                 }
                 // Where a dragged frame would land: a bar in the gap

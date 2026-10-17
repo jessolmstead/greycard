@@ -67,6 +67,10 @@ pub(crate) struct Cull {
     /// (`versions::fit_compare`), so the view never takes in another
     /// frame. Gone with the note.
     pub(crate) versions_of: Option<PathBuf>,
+    /// The stack Compare stack set the view on, by its id, while the
+    /// set is its members: kept to as `versions_of` keeps the view to a
+    /// file. Gone with the note.
+    pub(crate) stack_of: Option<String>,
     /// The cells a versions compare shows, in list order, in place of
     /// the run of rows from the anchor: in a collection a file's cells
     /// need not stand together, and the run would take in another
@@ -106,6 +110,7 @@ impl Cull {
     pub(crate) fn leave_versions(&mut self, app: &App) {
         self.note = None;
         self.versions_of = None;
+        self.stack_of = None;
         self.set = None;
         if self.compare == 3 {
             self.compare = 4;
@@ -138,6 +143,7 @@ impl Cull {
             status: String::new(),
             note: None,
             versions_of: None,
+            stack_of: None,
             set: None,
         }
     }
@@ -1894,6 +1900,8 @@ pub(crate) fn drop_files(
         app.set_status(status.into());
         return;
     }
+    // A frame deleted or moved out of its folder leaves its stack.
+    crate::stacks::left_files(st, gone);
     // The files that go take every cell of theirs, versions included.
     let keep = |i: &usize| !gone.contains(i);
     // Where the frame on screen would stand in the new list if it is
@@ -1983,7 +1991,15 @@ pub(crate) fn drop_files(
 /// would leave, are [`filter`]'s; this reads the answer onto the
 /// window.
 pub(crate) fn show_filter(st: &State, app: &App) {
-    let frames = filter_frames(st);
+    let mut frames = filter_frames(st);
+    // A closed stack is its top: the frames behind it are not counted.
+    if let Some(behind) = crate::stacks::behind(st) {
+        let mut f = 0;
+        frames.retain(|_| {
+            f += 1;
+            !behind.get(f - 1).copied().unwrap_or(false)
+        });
+    }
     let counts = filter::Counts::of(&st.filter, &frames);
     let exact = st.filter.stars.is_exact();
     let picked = st.filter.stars.count();
@@ -2174,6 +2190,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
             cull.anchor = cull::anchor_for(cull.anchor, row, n, count);
             cull.note = None;
             cull.versions_of = None;
+            cull.stack_of = None;
             cull.set = None;
             // The tiles are another size: fitted afresh.
             st.zoom = 0.0;

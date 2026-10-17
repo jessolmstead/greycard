@@ -22,6 +22,7 @@ pub(crate) mod parts;
 pub(crate) mod prefs;
 pub(crate) mod recent;
 pub(crate) mod retouch;
+pub(crate) mod stacks;
 pub(crate) mod startup;
 pub(crate) mod sync;
 pub(crate) mod versions;

@@ -558,6 +558,10 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                 crate::collections::Store::load(crate::collections::Store::dir_beside(path));
             (st.collections.rows, st.collections.names) = (rows, names);
             crate::panel::collections::show(&st, &app);
+            // The stacks, in their folder among the collections.
+            st.stacks = crate::stacks::Store::load(greycard_library::stacks::dir_in(
+                &crate::collections::Store::dir_beside(path),
+            ));
         }
         st.library.poll_every = crate::roots::poll_every(remembered.network_poll_minutes);
         if cli.roots.is_empty() {

@@ -233,8 +233,8 @@ Built, as of 0.7.0:
 - **Culling.** The strip, a zoomable grid and a lightbox, each frame
   shown as edited and made in the background. Culling from the
   camera's JPEG or a local preview when the drive is offline, compare,
-  versions side by side, a rejects folder with a way back, delete to
-  the trash.
+  versions side by side, stacks that fold a burst behind its best
+  frame, a rejects folder with a way back, delete to the trash.
 - **Export.** Embedded profiles and EXIF, presets, a watermark, a
   border, a named folder or a subfolder beside each raw, a queue that
   survives a restart, several frames at once, and a headless

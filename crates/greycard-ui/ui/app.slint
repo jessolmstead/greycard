@@ -162,6 +162,25 @@ export component App inherits Window {
     /// the menu's Compare versions on it.
     in property <bool> menu-compare: false;
     callback version-compare-asked();
+    /// Stacks: the stack the frame right-clicked is in (how many frames
+    /// it shows, 0 for none; open; the frame its top) and whether the
+    /// frames chosen can be stacked. Stack (Ctrl+G), Unstack
+    /// (Ctrl+Shift+G), open or close (S, or a click on the badge of
+    /// a row), Set as top (Shift+S; true from the menu), Remove from
+    /// stack and Compare stack.
+    in property <int> menu-stack: 0;
+    in property <bool> menu-stack-open: false;
+    in property <bool> menu-stack-top: false;
+    in property <bool> menu-can-stack: false;
+    /// How many frames the stack Stack would make holds.
+    in property <int> menu-stack-holds: 0;
+    callback stack-make();
+    callback stack-unmake();
+    callback stack-toggle();
+    callback stack-badge(int);
+    callback stack-top(bool);
+    callback stack-remove();
+    callback stack-compare();
     /// The menu's Copy settings: the frame right-clicked, where Ctrl+C
     /// copies the frame on screen.
     callback menu-copy();
@@ -2029,6 +2048,23 @@ export component App inherits Window {
                 root.grid-open = !root.grid-open;
                 return accept;
             }
+            // Stacks, as Lightroom has them: Ctrl+G the selection into
+            // a stack, Ctrl+Shift+G out of it.
+            if ((e.text == "g" || e.text == "G") && e.modifiers.control && !e.modifiers.alt
+                && !root.sheet-open()) {
+                if (e.modifiers.shift) { root.stack-unmake(); } else { root.stack-make(); }
+                return accept;
+            }
+            // S opens or closes the stack, Shift+S puts the frame on its
+            // top: in the grid, as Lightroom's Library has them.
+            // Elsewhere S is the proof, below; in culling a stack opens
+            // and closes by its badge on the strip.
+            if ((e.text == "s" || e.text == "S") && !e.modifiers.control && !e.modifiers.alt
+                && !e.modifiers.meta && root.grid-open && !root.lightbox
+                && !root.sheet-open()) {
+                if (e.modifiers.shift) { root.stack-top(false); } else { root.stack-toggle(); }
+                return accept;
+            }
             // B, as Lightroom has it for its quick collection: the
             // selection into the collection open, or the last one added
             // to, or out of it when it is all in it already.
@@ -2911,6 +2947,7 @@ export component App inherits Window {
             selected <=> root.selected;
             frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
             frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
+            stack-clicked(r) => { root.stack-badge(r); }
             menu-shown => { return root.menu-shown(); }
             ctrl-click-menu: root.ctrl-click-menu;
             menu-at: root.grid-open ? -1 : root.menu-at;
@@ -2991,6 +3028,7 @@ export component App inherits Window {
         selected <=> root.selected;
         frame-clicked(a, b, c) => { root.frame-clicked(a, b, c); }
         frame-menu(r, x, y) => { root.frame-menu-at(r, x, y); }
+        stack-clicked(r) => { root.stack-badge(r); }
         menu-shown => { return root.menu-shown(); }
         side-step(by) => { root.grid-step(by, 0, root.grid-cols, false); }
         ctrl-click-menu: root.ctrl-click-menu;
@@ -3704,6 +3742,17 @@ export component App inherits Window {
         delete-version => { root.version-delete-asked(); }
         can-compare: root.menu-compare;
         compare-versions => { root.version-compare-asked(); root.menu-done(); }
+        stack: root.menu-stack;
+        stack-open: root.menu-stack-open;
+        stack-top: root.menu-stack-top;
+        can-stack: root.menu-can-stack;
+        stack-holds: root.menu-stack-holds;
+        stack-make => { root.stack-make(); root.menu-done(); }
+        stack-unmake => { root.stack-unmake(); root.menu-done(); }
+        stack-toggle => { root.stack-toggle(); root.menu-done(); }
+        stack-top-asked => { root.stack-top(true); root.menu-done(); }
+        stack-remove => { root.stack-remove(); root.menu-done(); }
+        stack-compare => { root.stack-compare(); root.menu-done(); }
     }
 
     // Recently opened: one list for the window, opened below the

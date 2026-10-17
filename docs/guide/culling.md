@@ -124,7 +124,9 @@ that aren't reachable right now, or are slow to read.
 The lightbox is for judging a set as a whole: whether a run of frames
 holds together in color and tone, before you send it out. It shows
 each frame large and as edited, on a dark ground, with nothing else
-drawn: no names, no badges, no marks, no header.
+drawn: no names, no badges, no marks, no header. A
+[stack](#stacks)'s badge is the one exception, so a closed stack is not
+taken for a single frame.
 
 Press **L** in the grid, the loupe or culling, or click **Lightbox**
 in the grid's header. The lightbox lays out whatever the grid shows,
@@ -156,6 +158,43 @@ A frame you have edited shows its edit; one you haven't shows the
 camera's JPEG. While a new picture of an edit is being made, after a
 sync for example, the tile keeps its last picture dimmed. A tile with
 no picture yet says "Developing".
+
+## Stacks
+
+A stack puts several frames of one folder behind one: a burst, a
+bracket, five tries at one expression. The grid, the filmstrip,
+culling, the lightbox and the filter then see one frame, the stack's
+top, until you open it.
+
+- **Make one:** select the frames (Ctrl+click, Shift+click) and press
+  **Ctrl+G**, or choose **Stack 3 frames** on the frame menu. The frame
+  you are on goes on top. The frames must be in one folder, and a
+  collection's view makes none.
+- **The badge:** a closed stack's top carries a layers mark and how
+  many frames it holds, at its picture's bottom right. Click it, or
+  press **S** in the grid, to open the stack: its frames follow the top,
+  marked "2/5" and so on. Click or **S** again to close it. In culling
+  and the loupe **S** is the soft proof, so open a stack there by its
+  badge on the filmstrip.
+- **Set as top of stack** on the frame menu, or **Shift+S** in the
+  grid, puts a frame on top. **Remove from stack** takes the selected
+  frames out; a stack left with one frame is no stack. **Unstack**, or
+  **Ctrl+Shift+G**, undoes it.
+- **Compare stack** on the frame menu opens culling on the stack's
+  frames side by side, two, three or four up.
+- What you do to a closed stack, a rating, a flag, an export, a
+  delete, Add to collection, is done to its top alone. A closed stack
+  passes the filter when its top does, and the filter's counts leave
+  out the frames behind it.
+- **Move rejects** moves every rejected frame of the folder, including
+  rejected frames behind a closed top. A frame moved out, or deleted,
+  leaves its stack; Move back brings it back as a frame of its own.
+- Stacks are kept with your collections, on this machine. A stack
+  whose frame you rename in its folder follows it; a frame moved to
+  another folder leaves its stack.
+
+`greycard library list` shows a closed stack's top alone, marked
+"stack of 3"; `--stacks expanded` lists every frame.
 
 ## The rejects folder
 

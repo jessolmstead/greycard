@@ -208,32 +208,45 @@ impl State {
     }
 
     /// The cells the list wants now: a collection's frames while one is
-    /// the list, else each file's own and all its versions.
+    /// the list, else each file's own and all its versions, the stacks
+    /// laid over them (a closed one's members behind its top).
     pub(crate) fn wanted_cells(&self) -> Vec<Cell> {
+        self.wanted_cells_with(&crate::stacks::listed(self))
+    }
+
+    /// [`State::wanted_cells`] with the stacks `listed` as the list
+    /// shows them.
+    fn wanted_cells_with(&self, listed: &[crate::stacks::Listed]) -> Vec<Cell> {
         match &self.collection_frames {
             Some(frames) => cells_of_frames(&self.files, &self.sidecars, frames),
-            None => cells_of(&self.sidecars),
+            None => crate::stacks::arrange(cells_of(&self.sidecars), listed),
         }
     }
 
     /// The versions the list wants of file `file`, in its order: none
     /// standing for the file's own.
     pub(crate) fn wanted_of_file(&self, file: usize) -> Vec<Option<Arc<str>>> {
-        match &self.collection_frames {
-            Some(_) => self
-                .wanted_cells()
+        if self.collection_frames.is_some() {
+            self.wanted_cells()
                 .into_iter()
                 .filter(|c| c.file == file)
                 .map(|c| c.version)
-                .collect(),
-            None => std::iter::once(None)
+                .collect()
+        } else if self
+            .stacks_listed
+            .iter()
+            .any(|l| l.members.iter().any(|m| m.file == file))
+        {
+            crate::stacks::wanted_of_file(self, file)
+        } else {
+            std::iter::once(None)
                 .chain(
                     self.sidecars
                         .get(file)
                         .into_iter()
                         .flat_map(|s| s.versions.iter().map(|v| Some(Arc::from(v.id.as_str())))),
                 )
-                .collect(),
+                .collect()
         }
     }
 
@@ -320,10 +333,16 @@ impl State {
     }
 
     /// The cells of file `file`, in the list's order. Outside a
-    /// collection they stand together, its own first; in one they are
-    /// the collection's frames of it, wherever its order puts them.
-    /// Empty for a file not listed.
+    /// collection they stand together, its own first, unless an open
+    /// stack gathered one behind its top (`cells_by_file` says then); in
+    /// one they are the collection's frames of it, wherever its order
+    /// puts them. Empty for a file not listed.
     pub(crate) fn cells_of_file(&self, file: usize) -> Vec<usize> {
+        if self.collection_frames.is_none()
+            && let Some(by_file) = &self.cells_by_file
+        {
+            return by_file.get(file).cloned().unwrap_or_default();
+        }
         if self.collection_frames.is_none() {
             let first = self.cells.partition_point(|c| c.file < file);
             let end = self.cells.partition_point(|c| c.file <= file);
@@ -345,11 +364,13 @@ impl State {
     /// The file's own cell of file `file`, when the list has it: a
     /// collection may hold a version of a file and not the file's own.
     pub(crate) fn own_cell(&self, file: usize) -> Option<usize> {
-        if self.collection_frames.is_some() {
+        if self.collection_frames.is_some() || self.cells_by_file.is_some() {
             return self.cell_of(file, None);
         }
+        // A closed stack may keep the file's own out and its versions in.
         let first = self.cells.partition_point(|c| c.file < file);
-        (self.cells.get(first)?.file == file).then_some(first)
+        let cell = self.cells.get(first)?;
+        (cell.file == file && cell.version.is_none()).then_some(first)
     }
 
     /// A cell to stand for file `file` where what is done is the file's
@@ -446,24 +467,42 @@ pub(crate) fn settle(st: &mut State, app: &App, worker: &Worker) -> bool {
     true
 }
 
-/// The file a versions compare is on and how many tiles it shows, to
-/// be taken before a relist, which renumbers the cells under it.
-pub(crate) fn compared_file(st: &State) -> Option<(PathBuf, usize)> {
+/// What a named compare is fitted to: a file and its versions, by the
+/// file's path, or a stack's members, by the stack's id.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum Compared {
+    File(PathBuf),
+    Stack(String),
+}
+
+/// What a versions or a stack's compare is on and how many tiles it
+/// shows, to be taken before a relist, which renumbers the cells under
+/// it.
+pub(crate) fn compared_file(st: &State) -> Option<(Compared, usize)> {
     let cull = st.cull.as_ref()?;
-    Some((cull.versions_of.clone()?, cull.compare))
+    if let Some(id) = &cull.stack_of {
+        return Some((Compared::Stack(id.clone()), cull.compare));
+    }
+    Some((Compared::File(cull.versions_of.clone()?), cull.compare))
 }
 
 /// After a relist, a versions compare fitted to its file's cells as they
 /// are now (`compared`, from [`compared_file`] before it), so it closes
 /// up on them and never takes in a frame of another file; with the file
-/// gone, the view is no longer a versions compare. The zoom stands when
+/// gone, the view is no longer a versions compare. A stack's compare is
+/// fitted to its members the same way. The zoom stands when
 /// the count comes back as it was. Every relist with a culling view calls
 /// it: `settle`, the list's merge, a drop of files.
-pub(crate) fn refit_compare(st: &mut State, app: &App, compared: Option<(PathBuf, usize)>) {
-    if let Some((path, was)) = compared
-        && st.cull.is_some()
-    {
-        crate::panel::versions::fit_compare(st, app, &path, Some(was));
+pub(crate) fn refit_compare(st: &mut State, app: &App, compared: Option<(Compared, usize)>) {
+    match compared {
+        Some(_) if st.cull.is_none() => {}
+        Some((Compared::File(path), was)) => {
+            crate::panel::versions::fit_compare(st, app, &path, Some(was));
+        }
+        Some((Compared::Stack(id), was)) => {
+            crate::panel::stacks::fit_compare(st, app, &id, Some(was));
+        }
+        None => {}
     }
 }
 
@@ -531,7 +570,9 @@ pub(crate) fn relist(
     to_new_file: &dyn Fn(usize) -> Option<usize>,
 ) -> bool {
     let old = std::mem::take(&mut st.cells);
-    let cells = st.wanted_cells();
+    let listed = crate::stacks::listed(st);
+    let cells = st.wanted_cells_with(&listed);
+    st.stacks_listed = listed;
     let at: HashMap<Cell, usize> = old
         .iter()
         .enumerate()
@@ -612,6 +653,7 @@ pub(crate) fn relist(
     st.thumb_made = thumb_made;
     st.thumb_asked = thumb_asked;
     st.thumb_failed = thumb_failed;
+    st.cells_by_file = crate::stacks::by_file(&cells, st.files.len());
     st.cells = cells;
     renumbered
 }
@@ -619,7 +661,10 @@ pub(crate) fn relist(
 /// The cells for a new list, nothing carried: the thumbnail vectors
 /// sized to them, every picture to be asked for.
 pub(crate) fn list(st: &mut State) {
-    st.cells = st.wanted_cells();
+    let listed = crate::stacks::listed(st);
+    st.cells = st.wanted_cells_with(&listed);
+    st.stacks_listed = listed;
+    st.cells_by_file = crate::stacks::by_file(&st.cells, st.files.len());
     let count = st.cells.len();
     st.thumb_base = vec![None; count];
     st.thumb_shown = vec![None; count];

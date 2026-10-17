@@ -58,6 +58,7 @@ mod scope;
 mod selection;
 mod settings;
 mod sheet;
+mod stacks;
 mod sync;
 mod tags;
 #[cfg(test)]
@@ -561,6 +562,20 @@ pub(crate) struct State {
     /// file is listed and whose version its sidecar has, rather than
     /// every file's own and all its versions. None for any other list.
     pub(crate) collection_frames: Option<Vec<versions::Key>>,
+    /// Each file's cells, by file, while the cells do not stand as
+    /// `versions::cells_of` makes them (each file's together, its own
+    /// first, the files in order): an open stack gathers its members
+    /// behind its top, and the lookups by file then read this in place
+    /// of searching. None while they stand so, a closed stack only
+    /// leaving cells out.
+    pub(crate) cells_by_file: Option<Vec<Vec<usize>>>,
+    /// The stacks as the cells were last made from them: what a file's
+    /// own question (`versions::wanted_of_file`) is answered by, without
+    /// laying every stack over the whole list again.
+    pub(crate) stacks_listed: Vec<stacks::Listed>,
+    /// The stacks, kept beside the collections, and what the list
+    /// shows of them.
+    pub(crate) stacks: stacks::Store,
     /// The cell on screen.
     pub(crate) current: Option<usize>,
     /// The browser's selection, as cells: the current frame and
@@ -1202,6 +1217,9 @@ impl State {
                 })
                 .collect(),
             collection_frames: None,
+            cells_by_file: None,
+            stacks_listed: Vec::new(),
+            stacks: stacks::Store::default(),
             files,
             current: None,
             picked: Vec::new(),
@@ -1480,6 +1498,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::camera_match::install(app, &state);
     roots::install(app, &state, &worker);
     panel::collections::install(app, &state, &worker);
+    panel::stacks::install(app, &state, &worker);
     lightbox::install(app, &state, &worker);
     tree::install(app, &state, &worker);
     report::install(app, &state);

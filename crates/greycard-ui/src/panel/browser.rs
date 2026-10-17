@@ -410,6 +410,9 @@ pub(crate) fn thumb_for(path: &Path, meta: &Meta, marks: (bool, bool)) -> Thumb 
         collected: false,
         paired: false,
         version: Default::default(),
+        stack: 0,
+        stack_place: 0,
+        stack_open: false,
     }
 }
 
@@ -1189,13 +1192,20 @@ pub(crate) fn rebuild_browser(st: &mut State, app: &App) -> Option<usize> {
     // Under a root that is offline the tile is dimmed, and a picture
     // the cache did not have is no failure of the file's.
     let dimmed = !st.library.offline.is_empty();
+    // A closed stack's top wears its count, an open one's members their
+    // places in it.
+    let stacked = crate::stacks::marks(&crate::stacks::listed(st));
     let thumbs = st
         .shown
         .iter()
         .map(|&c| {
             let file = st.cells[c].file;
             let offline = dimmed && crate::rows::is_offline(st, c);
+            let stack = stacked.get(&st.cells[c]);
             Thumb {
+                stack: stack.map_or(0, |m| m.count as i32),
+                stack_place: stack.map_or(0, |m| m.place as i32),
+                stack_open: stack.is_some_and(|m| m.open),
                 offline,
                 failed: st.thumb_failed[c] && st.thumb_base[c].is_none() && !offline,
                 // The cell's own frame, by its file's hash and its

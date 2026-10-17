@@ -81,6 +81,9 @@ pub struct Report {
     pub added: usize,
     /// Files found under a new path by their hash.
     pub moved: usize,
+    /// Those files, by the path the row had and the one it has now: a
+    /// stack whose member was at the old path follows it.
+    pub moved_files: Vec<(PathBuf, PathBuf)>,
     /// Of those, the ones whose sidecar was left behind at the old
     /// path and carried to the new one by the pass.
     pub carried: usize,
@@ -144,6 +147,7 @@ impl Report {
     fn add(&mut self, other: Report) {
         self.added += other.added;
         self.moved += other.moved;
+        self.moved_files.extend(other.moved_files);
         self.carried += other.carried;
         self.changed += other.changed;
         self.changed_files.extend(other.changed_files);
@@ -1154,6 +1158,9 @@ fn write_looked(
                         path_from_bytes(&old_path).display()
                     );
                     report.moved += 1;
+                    report
+                        .moved_files
+                        .push((path_from_bytes(&old_path), path_from_bytes(&key)));
                 } else {
                     let exif = exif.unwrap_or_else(|| probe(path, report));
                     tx.prepare_cached(
@@ -2803,6 +2810,7 @@ pub(crate) mod tests {
 
         // Renamed within the folder, the sidecar with it.
         let renamed = dir.join("z_renamed.tif");
+        let was = canonical(&r5).unwrap();
         std::fs::rename(&r5, &renamed).unwrap();
         std::fs::rename(Sidecar::path_for(&r5), Sidecar::path_for(&renamed)).unwrap();
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
@@ -2810,6 +2818,7 @@ pub(crate) mod tests {
             report,
             Report {
                 moved: 1,
+                moved_files: vec![(was, canonical(&renamed).unwrap())],
                 unchanged: 2,
                 ..Report::default()
             }
@@ -2834,6 +2843,7 @@ pub(crate) mod tests {
         let sub = dir.join("picks");
         std::fs::create_dir(&sub).unwrap();
         let moved = sub.join("a7.tif");
+        let was = canonical(&a7).unwrap();
         std::fs::rename(&a7, &moved).unwrap();
         let report = lib.index_folder(&dir, &mut quiet()).unwrap();
         assert_eq!(report.missing, 1, "{report:?}");
@@ -2842,6 +2852,11 @@ pub(crate) mod tests {
         assert_eq!(names(&lib, "missing:yes"), ["a7.tif"]);
         let report = lib.index_folder(&sub, &mut quiet()).unwrap();
         assert_eq!(report.moved, 1, "{report:?}");
+        assert_eq!(
+            report.moved_files,
+            [(was, canonical(&moved).unwrap())],
+            "both paths as the index keys them"
+        );
         assert_eq!(report.added, 0);
         assert_eq!(lib.len().unwrap(), 3);
         let e = lib.by_path(&moved).unwrap().unwrap();

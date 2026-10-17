@@ -62,7 +62,7 @@ Working with your photos:
   roots, the folder tree, filtering, collections, where edits are kept
 - [Importing from a card](guide/import.md)
 - [Culling and rating](guide/culling.md): ratings, flags, labels,
-  the lightbox, rejects and deleting
+  the lightbox, stacks, rejects and deleting
 - [Archives and backup](guide/archives.md)
 
 Editing:
@@ -92,6 +92,8 @@ Finishing and reference:
 | C | Culling mode |
 | L | The lightbox, and back (+ and − set how many frames go across) |
 | B | Add the selected frames to a collection, or take them out |
+| Ctrl+G, Ctrl+Shift+G | Stack the selected frames; unstack them |
+| S, Shift+S (in the grid) | Open or close a stack; make the frame its top |
 | Ctrl+' | New version of the frame |
 | Tab | Hide the panels, the filmstrip and the status line, and bring them back |
 | Space | Fit or 1:1 |
@@ -102,7 +104,7 @@ Finishing and reference:
 | [ ] | Turn the frame a quarter left or right |
 | Delete | Delete the selected frames, after a confirmation |
 | J | Shadow and highlight clipping warnings |
-| S | Soft proof |
+| S | Soft proof (in the grid, a stack; see above) |
 | Ctrl+F or / | Filter the folder by rating, flag, label or words |
 | Ctrl+Z, Ctrl+Shift+Z or Ctrl+Y | Undo, redo |
 | Ctrl+O | Open a folder |

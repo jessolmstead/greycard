@@ -4,7 +4,7 @@
 
 import { Theme } from "../theme.slint";
 import { Thumb, ThumbCell } from "../structs.slint";
-import { ScrollBand, ThumbBadges, ThumbMarks, ThumbTag } from "../controls.slint";
+import { ScrollBand, ThumbBadges, ThumbMarks, ThumbStack, ThumbTag } from "../controls.slint";
 
 export component Filmstrip inherits Rectangle {
     /// Every row, for the strip's length; the cells are drawn from
@@ -19,6 +19,9 @@ export component Filmstrip inherits Rectangle {
     /// A right-click on a frame (or, on a Mac, a Control+click): the
     /// row and where, in the window's logical pixels.
     callback frame-menu(int, length, length);
+    /// A click on a stack's badge: the stack of that row opened or
+    /// closed.
+    callback stack-clicked(int);
     /// Whether the frame menu is up: a press that closes it reaches
     /// the cell under it too, and is not a click there.
     pure callback menu-shown() -> bool;
@@ -240,6 +243,19 @@ export component Filmstrip inherits Rectangle {
                         if (self.menu) { return; }
                         root.focus-keys();
                         root.frame-clicked(i, self.ctrl, self.shift);
+                    }
+                }
+                // The stack's badge on the picture's bottom right, over
+                // the cell's press so a click on it is the badge's.
+                ThumbStack {
+                    x: parent.width - Theme.space-2 - Theme.space-1 - self.width;
+                    y: Theme.space-2 + photo-h - self.height - Theme.space-1;
+                    count: t.stack;
+                    place: t.stack-place;
+                    open: t.stack-open;
+                    clicked => {
+                        root.focus-keys();
+                        root.stack-clicked(i);
                     }
                 }
             }

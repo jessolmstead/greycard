@@ -1788,9 +1788,17 @@ pub(crate) fn index_pass(st: &State) -> Vec<bool> {
 /// index's as the list was last made. The keyword's are from the
 /// sidecars, case folded, the chip showing the first spelling met in
 /// file order; the kind's are from the paths.
-fn counts_in_hand(st: &State, typed: &filter::Typed, facet: Facet) -> Vec<FacetCount> {
+fn counts_in_hand(
+    st: &State,
+    typed: &filter::Typed,
+    facet: Facet,
+    behind: Option<&[bool]>,
+) -> Vec<FacetCount> {
     let mut by: BTreeMap<String, (String, usize)> = BTreeMap::new();
     for (i, (path, s)) in st.files.iter().zip(&st.sidecars).enumerate() {
+        if behind.is_some_and(|b| b.get(i).copied().unwrap_or(false)) {
+            continue;
+        }
         let frame = filter::Frame {
             path,
             meta: &s.meta,
@@ -1837,10 +1845,12 @@ fn counts_in_hand(st: &State, typed: &filter::Typed, facet: Facet) -> Vec<FacetC
 /// keeps the last answer.
 pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
     let typed = st.filter.typed();
+    // A closed stack is its top: the frames behind it are not counted.
+    let behind = crate::stacks::behind(st);
     let in_hand: Vec<(Facet, Vec<FacetCount>)> = Facet::ALL
         .into_iter()
         .filter(|f| filter::in_hand(*f))
-        .map(|f| (f, counts_in_hand(st, &typed, f)))
+        .map(|f| (f, counts_in_hand(st, &typed, f, behind.as_deref())))
         .collect();
     let Some(lib) = &st.index_reader else {
         return in_hand;
@@ -1853,7 +1863,9 @@ pub(crate) fn facet_counts(st: &State) -> Vec<(Facet, Vec<FacetCount>)> {
         .iter()
         .zip(&st.sidecars)
         .zip(&st.index_ids)
-        .filter_map(|((path, s), id)| {
+        .enumerate()
+        .filter(|(i, _)| !behind.as_ref().is_some_and(|b| b[*i]))
+        .filter_map(|(_, ((path, s), id))| {
             let frame = filter::Frame {
                 path,
                 meta: &s.meta,
@@ -2033,7 +2045,7 @@ pub(crate) fn choose_wanted(st: &mut State) -> bool {
     let mut chose = false;
     for want in wanted {
         let counts = if filter::in_hand(want.facet) {
-            counts_in_hand(st, &filter::Typed::default(), want.facet)
+            counts_in_hand(st, &filter::Typed::default(), want.facet, None)
         } else {
             let Some(lib) = &st.index_reader else {
                 continue;
@@ -2132,6 +2144,7 @@ pub(crate) fn told(app: &App, told: Told) {
             // follow the rows the pass wrote.
             crate::panel::collections::healed(&state, app, &report.rehashed);
             crate::panel::collections::report_landed(&mut state.borrow_mut(), app, &report);
+            crate::panel::stacks::healed(&state, app, &report.moved_files, &report.rehashed);
             // What the window knew of the folders under the pass is
             // looked at again by the next read.
             crate::roots::folders_passed(&mut state.borrow_mut(), &path);
@@ -2239,6 +2252,7 @@ pub(crate) fn told(app: &App, told: Told) {
             // is still there.
             crate::panel::collections::healed(&state, app, &report.rehashed);
             crate::panel::collections::report_landed(&mut state.borrow_mut(), app, &report);
+            crate::panel::stacks::healed(&state, app, &report.moved_files, &report.rehashed);
             if generation != state.borrow().index_generation {
                 return;
             }
@@ -2306,6 +2320,7 @@ pub(crate) fn told(app: &App, told: Told) {
             if !rehashed.is_empty() {
                 crate::panel::collections::healed(&state, app, &rehashed);
                 crate::panel::collections::members_changed(&mut state.borrow_mut(), app);
+                crate::panel::stacks::healed(&state, app, &[], &rehashed);
             }
             reread(&state, app, false);
         }

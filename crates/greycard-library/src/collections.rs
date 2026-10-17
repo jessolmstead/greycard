@@ -168,7 +168,7 @@ pub fn full_name(set: &str, name: &str) -> String {
     }
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -177,7 +177,7 @@ fn now() -> u64 {
 
 /// A new id: 32 hex digits from the standard library's random hasher
 /// keys, the time and the process mixed in.
-fn new_id() -> String {
+pub(crate) fn new_id() -> String {
     use std::hash::{BuildHasher, Hasher};
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -449,7 +449,7 @@ pub fn file_of(dir: &Path, id: &str, smart: bool) -> PathBuf {
 /// Write `text` to `path` through a part file beside it, renamed over
 /// it, so a crash mid-write never leaves half a file. The part file
 /// carries the process's id, so two editors never write the same one.
-fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir)?;
     }

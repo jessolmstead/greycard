@@ -77,6 +77,22 @@ export component FrameMenu inherits Rectangle {
     /// version of one: Compare versions is offered on it.
     in property <bool> can-compare;
     callback compare-versions();
+    /// The stack the frame right-clicked is in: how many frames it
+    /// shows, 0 for none; whether it is open; whether the frame is its
+    /// top. And whether the frames chosen can be made a stack.
+    in property <int> stack;
+    in property <bool> stack-open;
+    in property <bool> stack-top;
+    in property <bool> can-stack;
+    /// How many frames that stack would hold: a closed stack's top
+    /// chosen brings its stack.
+    in property <int> stack-holds;
+    callback stack-make();
+    callback stack-unmake();
+    callback stack-toggle();
+    callback stack-top-asked();
+    callback stack-remove();
+    callback stack-compare();
 
     // Nothing of its own to draw or to take a click: the menu is a
     // popup, placed from this corner, and a zero-sized area at the
@@ -137,6 +153,33 @@ export component FrameMenu inherits Rectangle {
                 activated => { root.compare-versions(); }
             }
             MenuSeparator { }
+            // The stack's items, on Lightroom's keys where it has them
+            // (Ctrl+G, S, Shift+S, Ctrl+Shift+G).
+            if root.can-stack: MenuItem {
+                title: "Stack " + root.stack-holds + " frames";
+                activated => { root.stack-make(); }
+            }
+            if root.stack > 0: MenuItem {
+                title: root.stack-open ? "Collapse stack" : "Expand stack";
+                activated => { root.stack-toggle(); }
+            }
+            if root.stack > 0 && !root.stack-top: MenuItem {
+                title: "Set as top of stack";
+                activated => { root.stack-top-asked(); }
+            }
+            if root.stack > 0: MenuItem {
+                title: "Remove from stack";
+                activated => { root.stack-remove(); }
+            }
+            if root.stack > 0: MenuItem {
+                title: "Compare stack";
+                activated => { root.stack-compare(); }
+            }
+            if root.stack > 0: MenuItem {
+                title: "Unstack";
+                activated => { root.stack-unmake(); }
+            }
+            if root.can-stack || root.stack > 0: MenuSeparator { }
             MenuItem {
                 title: root.lightbox ? "Leave lightbox" : "Lightbox";
                 activated => { root.lightbox-toggled(); }

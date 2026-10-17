@@ -43,6 +43,7 @@ pub mod lightroom_catalog;
 pub mod lightroom_exports;
 pub mod pairs;
 pub mod roots;
+pub mod stacks;
 pub mod thumbs;
 
 pub use filter::{Facet, Filter, ParseError};

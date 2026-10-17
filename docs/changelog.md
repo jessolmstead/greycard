@@ -14,6 +14,18 @@ note a first tester reads.
 
 ### Library
 
+- Stacks: choose frames of one folder and press Ctrl+G (or Stack in
+  the frame menu) to put them behind the frame on screen. A closed
+  stack is its top alone in the grid, the strip, culling, the lightbox
+  and the filter, with the stack's size on a badge at its bottom
+  right; S in the grid, or a click on the badge (in culling too),
+  opens it with its frames after the top. Shift+S in the grid sets the
+  frame as the top, Remove from stack and Ctrl+Shift+G take frames out,
+  and Compare stack shows the frames side by side. Stacks are kept with
+  the collections.
+  ([§334](https://github.com/jessolmstead/greycard/blob/master/docs/notes/334-stacks.md))
+- `greycard library list` shows a closed stack's top alone, marked
+  "stack of N"; `--stacks expanded` lists every frame.
 - A camera's JPEG beside its raw of the same name is now the raw's
   companion: one frame in the grid and the strip, marked +JPEG, with one
   rating, flag and label, and a move or a delete of the raw takes the

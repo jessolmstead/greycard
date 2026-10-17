@@ -308,6 +308,12 @@ pub(crate) fn followed(st: &State, c: usize) -> bool {
         .is_some_and(|f| st.sync.followed.contains_key(f))
 }
 
+/// The local frame the window follows on the archive's copy at `path`,
+/// when it follows one there.
+pub(crate) fn local_of<'a>(st: &'a State, path: &Path) -> Option<&'a Path> {
+    st.sync.followed.get(path).map(|f| f.local.as_path())
+}
+
 /// Follow the frame at `copy`, an archive's copy of `local`, as an
 /// offline root does: for a test of what a save of it does.
 #[cfg(test)]

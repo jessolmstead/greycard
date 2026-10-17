@@ -70,6 +70,13 @@ export struct Thumb {
     /// tag on its picture, and the grid's label under it. Empty for
     /// the file's own.
     version: string,
+    /// The frame is in a stack the list shows: how many frames the
+    /// stack shows, 0 for none; its place in it from 1, the top's; and
+    /// whether the stack is open. A closed stack's top alone carries
+    /// it, and an open stack's every member.
+    stack: int,
+    stack-place: int,
+    stack-open: bool,
 }
 
 /// One of the strip's or the grid's cells: the browser's row it

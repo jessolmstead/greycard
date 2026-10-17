@@ -38,7 +38,6 @@ ours, so a tester brings a library over in one go.
       and lens rules in a smart collection matched through rawler's
       names
 - [ ] RawTherapee `.pp3` import on opening a folder (Library track)
-- [ ] Stacks (Library track). After the pairs
 - [ ] The Lightroom mapper fitted from the measurement (§323, §333):
       the per-body baseline exposure first (the GFX 100S II renders
       about a stop brighter than Lightroom under every profile, the
@@ -325,7 +324,6 @@ comes across with its ratings and collections.
       of a file, since a whole-file hash over 200 GB is a first pass
       measured in hours. The polling fallback for the watcher landed
       in §188
-- [ ] Stacks, in the collections file. Waits on collections
 - [ ] Collections carried across machines: the collections file is per
       machine, so a set gathered on the laptop is not on the desktop;
       carry it through the archive as the sidecars are (§243). Waits on
@@ -349,7 +347,7 @@ the user.
 
 - [ ] Bursts and near-duplicates grouped: frames seconds apart with
       near-identical previews put in one stack, its sharpest frame on
-      top. Waits on stacks (Library track)
+      top (§334)
 - [ ] A focus score for every frame from its embedded preview, on the
       subject where the Subject mask finds one and on the frame
       otherwise; a sort, a `focus:` term, and the order inside a burst
