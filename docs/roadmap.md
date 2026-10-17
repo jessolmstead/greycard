@@ -41,6 +41,9 @@ ours, so a tester brings a library over in one go.
       raw's frame, since the window never reads the JPEG while they
       are paired (§332), and the same in the `.pp3` import
 - [ ] RawTherapee `.pp3` import on opening a folder (Library track)
+- [ ] A Sync button in the develop panel over a selection (Pool)
+- [ ] The crop's starting aspect as a setting (Pool)
+- [ ] A keys sheet and a Help menu (Pool)
 - [ ] The Lightroom mapper fitted from the measurement (§323, §333):
       the per-body baseline exposure first (the GFX 100S II renders
       about a stop brighter than Lightroom under every profile, the
