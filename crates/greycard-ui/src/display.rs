@@ -179,7 +179,7 @@ impl MonitorProfile {
                     Green: point(0.21, 0.71),
                     Blue: point(0.15, 0.06),
                 },
-                ToneCurve::new(563.0 / 256.0),
+                ToneCurve::new(crate::export::ADOBE_RGB_GAMMA),
             ),
             // Display P3: DCI-P3's primaries under the sRGB curve.
             MonitorProfile::DisplayP3 => standard(
@@ -234,7 +234,7 @@ impl Lut3d {
         alarm[1] = 0x0042;
         alarm[2] = 0xf00d;
         ctx.set_alarm_codes(alarm);
-        let from = Profile::new_icc_context(&ctx, &output.icc()?)
+        let from = Profile::new_icc_context(&ctx, &output.finish_icc()?)
             .map_err(|e| anyhow::anyhow!("the {} profile: {e}", output.name()))?;
         let to = monitor.profile(&ctx)?;
         let input: Vec<[f32; 3]> = grid().collect();
@@ -472,6 +472,29 @@ mod tests {
         for i in ProofIntent::ALL {
             assert_eq!(ProofIntent::from_name(i.name()), Some(i));
         }
+    }
+
+    #[test]
+    fn the_table_for_adobe_rgb_shows_the_files_values() {
+        // On a monitor that is Adobe RGB, what the table shows for the
+        // finish's value is the value the file holds for it, at the
+        // grid's points (between them the table interpolates).
+        let lut = Lut3d::build(Space::AdobeRgb, &MonitorProfile::AdobeRgb, None).unwrap();
+        let mut worst = 0f32;
+        for c in [
+            [0.5; 3],
+            [0.25, 0.5, 0.75],
+            [0.875, 0.625, 0.125],
+            [0.0625; 3],
+        ] {
+            let (_, shown) = lut.at(c);
+            for k in 0..3 {
+                let want = Space::AdobeRgb.recode(c[k]);
+                worst = worst.max((shown[k] - want).abs());
+            }
+        }
+        eprintln!("adobe table against the file's values, worst {worst:e}");
+        assert!(worst < 2.0 / 255.0, "{worst}");
     }
 
     #[test]

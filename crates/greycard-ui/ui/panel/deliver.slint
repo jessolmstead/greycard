@@ -295,7 +295,7 @@ export component ExportSheet inherits Rectangle {
                     HorizontalLayout {
                         spacing: Theme.space-2;
                         Text { text: "Color"; width: 68px; color: Theme.text; font-size: Theme.font-sm; vertical-alignment: center; }
-                        Segmented { options: ["sRGB", "Display P3", "Rec.2020"]; current <=> root.export-space; }
+                        Segmented { options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"]; current <=> root.export-space; }
                     }
                     Toggle {
                         label: "Embed profile";

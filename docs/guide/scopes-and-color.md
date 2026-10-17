@@ -23,7 +23,9 @@ The scope you pick is remembered. The histogram also shows behind the
 curve in **CURVES**, on the Develop tab and in a mask.
 
 The scopes read the picture as it will be written, in the color space
-set in the export sheet, not the camera's raw data.
+set in the export sheet, not the camera's raw data. For Adobe RGB
+they read the value on the sRGB curve, not the file's own gamma, so
+the clipping ends are the same and the shadows read differently.
 
 ### Reading one mask: Selection
 
@@ -58,11 +60,11 @@ A soft proof shows how the picture will look in a narrower color
 space, or on a printer, before you export. Press **S**, or use the
 switch on **SOFT PROOF** at the end of the **Develop** tab.
 
-- **sRGB**, **Display P3**, **Rec.2020** or **File**: the space to
+- **sRGB**, **Display P3**, **Rec.2020**, **Adobe RGB** or **File**: the space to
   proof against. **File** takes an ICC profile, such as a printer's,
   through **Choose...**.
 - **Perceptual** or **Relative**: how colors outside the profile are
-  brought in. For sRGB, Display P3 and Rec.2020 the two look the same;
+  brought in. For sRGB, Display P3, Rec.2020 and Adobe RGB the two look the same;
   the choice matters for a printer profile.
 - **Gamut warning** paints grey where a color falls outside the
   profile.

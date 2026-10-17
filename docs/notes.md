@@ -346,3 +346,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§333. Measuring the Lightroom mapper against its exports](notes/333-measuring-the-lightroom-mapper-against-its-exports.md) (2026-10-17)
 - [§334. Stacks](notes/334-stacks.md) (2026-10-17)
 - [§335. The Landscape masks, as built](notes/335-the-landscape-masks-as-built.md) (2026-10-17)
+- [§336. Adobe RGB as an export space, and a curve per space](notes/336-adobe-rgb-as-an-export-space-and-a-curve-per-space.md) (2026-10-17)

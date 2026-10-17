@@ -1299,7 +1299,7 @@ pub fn encode(v: f32) -> f32 {
     }
 }
 
-fn decode(v: f32) -> f32 {
+pub(crate) fn decode(v: f32) -> f32 {
     if v <= 0.04045 {
         v / 12.92
     } else {

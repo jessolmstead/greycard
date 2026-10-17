@@ -52,10 +52,6 @@ ours, so a tester brings a library over in one go.
       arrows, the lightbox, Home and End and the headless list. Today
       the order is folder path then name, which over a whole archive
       is alphabetical by folder with two bodies' files interleaved
-- [ ] Adobe RGB as an export space: a fourth entry beside sRGB,
-      Display P3 and Rec.2020, encoded and profiled with its own gamma
-      (563/256) where the three share the sRGB curve; print labs and
-      album vendors still ask for it
 - [ ] The window's structure: the CLI split, `State` grouped by owner,
       the library views measured for a crate of their own (Pool)
 - [ ] The Lightroom mapper fitted from the measurement (§323, §333):

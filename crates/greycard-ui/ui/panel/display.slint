@@ -22,7 +22,7 @@ export component ProofSection inherits Section {
     on <=> root.proofing;
     switched => { root.proof-changed(); }
     Segmented {
-        options: ["sRGB", "Display P3", "Rec.2020", "File"];
+        options: ["sRGB", "Display P3", "Rec.2020", "Adobe RGB", "File"];
         current <=> root.proof-profile;
         selected(p) => { root.proof-changed(); }
     }

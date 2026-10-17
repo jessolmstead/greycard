@@ -79,23 +79,35 @@ impl Format {
     }
 }
 
-/// The output's primaries. The transfer function is sRGB's for all
-/// three, and the embedded profile says so.
+/// Adobe RGB (1998)'s transfer function: a pure power, 563/256. The
+/// monitor profile of the same name reads this too.
+pub const ADOBE_RGB_GAMMA: f64 = 563.0 / 256.0;
+
+/// The output's primaries and transfer function. sRGB, Display P3 and
+/// Rec.2020 take the sRGB curve; Adobe RGB takes its own gamma. The
+/// embedded profile says which.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Space {
     Srgb,
     DisplayP3,
     Rec2020,
+    AdobeRgb,
 }
 
 impl Space {
-    pub const ALL: [Space; 3] = [Space::Srgb, Space::DisplayP3, Space::Rec2020];
+    pub const ALL: [Space; 4] = [
+        Space::Srgb,
+        Space::DisplayP3,
+        Space::Rec2020,
+        Space::AdobeRgb,
+    ];
 
     pub fn name(self) -> &'static str {
         match self {
             Space::Srgb => "sRGB",
             Space::DisplayP3 => "Display P3",
             Space::Rec2020 => "Rec.2020",
+            Space::AdobeRgb => "Adobe RGB",
         }
     }
 
@@ -108,6 +120,28 @@ impl Space {
             Space::Srgb => RgbSpace::SRGB,
             Space::DisplayP3 => RgbSpace::DISPLAY_P3,
             Space::Rec2020 => RgbSpace::REC2020,
+            Space::AdobeRgb => RgbSpace::ADOBE_RGB,
+        }
+    }
+
+    /// The gamma of a space whose transfer function is a pure power;
+    /// `None` for the spaces under the sRGB curve.
+    fn gamma(self) -> Option<f64> {
+        match self {
+            Space::AdobeRgb => Some(ADOBE_RGB_GAMMA),
+            _ => None,
+        }
+    }
+
+    /// A value the finish encoded with the sRGB curve, recoded with
+    /// this space's own. The finish encodes every picture with the
+    /// sRGB curve (its curves and look tables work on that encoding);
+    /// the spaces under it keep the value as it is, so their files are
+    /// what they were.
+    pub fn recode(self, v: f32) -> f32 {
+        match self.gamma() {
+            None => v,
+            Some(g) => crate::finish::decode(v).max(0.0).powf((1.0 / g) as f32),
         }
     }
 
@@ -120,25 +154,39 @@ impl Space {
             .map(|row| row.map(|v| v as f32))
     }
 
-    /// An ICC profile for the space: its primaries and white, the sRGB
-    /// curve, and its name. Built once a process: lcms stamps the
+    /// An ICC profile for the space: its primaries and white, its
+    /// transfer curve, and its name. Built once a process: lcms stamps the
     /// header with the second the profile was made, so two builds
     /// straddling a tick differ in four bytes, and an export's profile
     /// and a check of it a moment later must be the same bytes.
     pub fn icc(self) -> Result<Vec<u8>> {
-        static BUILT: [std::sync::OnceLock<Vec<u8>>; 3] = [const { std::sync::OnceLock::new() }; 3];
-        let slot = &BUILT[Space::ALL
+        self.cached_icc(false)
+    }
+
+    /// The profile of the encoding the finish hands the display table:
+    /// the space's primaries under the sRGB curve, which is `icc()`
+    /// for the spaces that take it. For Adobe RGB it differs only in
+    /// the curve, and the table reading the finish's values through it
+    /// shows the colors the file's own values (`recode`) hold.
+    pub fn finish_icc(self) -> Result<Vec<u8>> {
+        self.cached_icc(true)
+    }
+
+    fn cached_icc(self, finish: bool) -> Result<Vec<u8>> {
+        static BUILT: [std::sync::OnceLock<Vec<u8>>; 8] = [const { std::sync::OnceLock::new() }; 8];
+        let at = Space::ALL
             .iter()
             .position(|s| *s == self)
-            .expect("every space")];
+            .expect("every space");
+        let slot = &BUILT[at * 2 + usize::from(finish)];
         if let Some(bytes) = slot.get() {
             return Ok(bytes.clone());
         }
-        let bytes = self.build_icc()?;
+        let bytes = self.build_icc(finish)?;
         Ok(slot.get_or_init(|| bytes).clone())
     }
 
-    fn build_icc(self) -> Result<Vec<u8>> {
+    fn build_icc(self, finish: bool) -> Result<Vec<u8>> {
         use lcms2::{CIExyY, CIExyYTRIPLE, Locale, MLU, Profile, Tag, TagSignature, ToneCurve};
         let s = self.rgb();
         let point = |x: f64, y: f64| CIExyY { x, y, Y: 1.0 };
@@ -148,14 +196,27 @@ impl Space {
             Green: point(s.green.x, s.green.y),
             Blue: point(s.blue.x, s.blue.y),
         };
-        // The sRGB transfer function, lcms's parametric type 4.
-        let curve =
-            ToneCurve::new_parametric(4, &[2.4, 1.0 / 1.055, 0.055 / 1.055, 1.0 / 12.92, 0.04045])
-                .map_err(|e| anyhow::anyhow!("the sRGB curve: {e}"))?;
+        // The sRGB transfer function, lcms's parametric type 4; or a
+        // gamma, type 1.
+        let curve = match self.gamma().filter(|_| !finish) {
+            Some(g) => ToneCurve::new_parametric(1, &[g])
+                .map_err(|e| anyhow::anyhow!("the {} curve: {e}", self.name()))?,
+            None => ToneCurve::new_parametric(
+                4,
+                &[2.4, 1.0 / 1.055, 0.055 / 1.055, 1.0 / 12.92, 0.04045],
+            )
+            .map_err(|e| anyhow::anyhow!("the sRGB curve: {e}"))?,
+        };
         let mut profile = Profile::new_rgb(&white, &primaries, &[&curve, &curve, &curve])
             .map_err(|e| anyhow::anyhow!("building the {} profile: {e}", self.name()))?;
         let mut description = MLU::new(1);
-        description.set_text_ascii(self.name(), Locale::none());
+        // Adobe's name is its mark: the profile says "compatible", as
+        // darktable's and RawTherapee's do.
+        let named = match self {
+            Space::AdobeRgb => "Adobe RGB (compatible)",
+            _ => self.name(),
+        };
+        description.set_text_ascii(named, Locale::none());
         profile.write_tag(TagSignature::ProfileDescriptionTag, Tag::MLU(&description));
         let mut copyright = MLU::new(1);
         copyright.set_text_ascii("No copyright, use freely", Locale::none());
@@ -517,7 +578,7 @@ pub(crate) fn render_framed(
             detail,
             look.as_ref(),
             &m,
-            |v| (v * 65535.0).round() as u16,
+            |v| (settings.space.recode(v) * 65535.0).round() as u16,
         )),
         Format::Jpeg | Format::Png => Pixels::Eight(finish::finish_with(
             image,
@@ -530,7 +591,7 @@ pub(crate) fn render_framed(
             detail,
             look.as_ref(),
             &m,
-            |v| (v * 255.0).round() as u8,
+            |v| (settings.space.recode(v) * 255.0).round() as u8,
         )),
     };
     Rendered {
@@ -551,12 +612,12 @@ pub fn border(rendered: &mut Rendered, settings: &Settings) {
     let (w, h) = (rendered.width, rendered.height);
     let (width, height) = match &mut rendered.pixels {
         Pixels::Eight(p) => {
-            let (out, ow, oh) = border.apply(p, w, h);
+            let (out, ow, oh) = border.apply_in(p, w, h, |l| settings.space.recode(l));
             *p = out;
             (ow, oh)
         }
         Pixels::Sixteen(p) => {
-            let (out, ow, oh) = border.apply(p, w, h);
+            let (out, ow, oh) = border.apply_in(p, w, h, |l| settings.space.recode(l));
             *p = out;
             (ow, oh)
         }
@@ -1231,7 +1292,7 @@ mod tests {
             .unwrap();
             let m = space.matrix();
             let lin = [0, 1, 2].map(|r| m[r][0] * rgb[0] + m[r][1] * rgb[1] + m[r][2] * rgb[2]);
-            let enc = lin.map(|v| finish::encode(v.clamp(0.0, 1.0)));
+            let enc = lin.map(|v| space.recode(finish::encode(v.clamp(0.0, 1.0))));
             let mut out = [[0f64; 3]];
             t.transform_pixels(&[enc], &mut out);
             out[0]
@@ -1239,7 +1300,7 @@ mod tests {
         // A color inside all three gamuts.
         let color = [0.4, 0.3, 0.2];
         let reference = to_xyz(Space::Srgb, color);
-        for space in [Space::DisplayP3, Space::Rec2020] {
+        for space in [Space::DisplayP3, Space::Rec2020, Space::AdobeRgb] {
             let xyz = to_xyz(space, color);
             for k in 0..3 {
                 assert!(
@@ -1257,6 +1318,266 @@ mod tests {
                 assert!((m[r][c] - want).abs() < 1e-5, "{m:?}");
             }
         }
+    }
+
+    #[test]
+    fn the_four_names_round_trip() {
+        let names = ["sRGB", "Display P3", "Rec.2020", "Adobe RGB"];
+        assert_eq!(Space::ALL.map(Space::name), names);
+        for name in names {
+            assert_eq!(Space::from_name(name).map(Space::name), Some(name));
+        }
+        assert_eq!(Space::from_name("Adobe"), None);
+    }
+
+    #[test]
+    fn the_spaces_under_the_srgb_curve_encode_as_they_did() {
+        // `recode` leaves the finish's value alone, bit for bit, and a
+        // render writes what the finish quantizes, as it did before
+        // there was a curve to choose.
+        for space in [Space::Srgb, Space::DisplayP3, Space::Rec2020] {
+            for i in 0..=65535u32 {
+                let v = i as f32 / 65535.0;
+                assert_eq!(space.recode(v).to_bits(), v.to_bits(), "{}", space.name());
+            }
+        }
+        let (w, h) = (24, 16);
+        let data: Vec<f32> = (0..w * h * 3)
+            .map(|i| ((i * 37) % 101) as f32 / 90.0)
+            .collect();
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data,
+        };
+        let edit = greycard_edit::Edit::default();
+        let source = (w as u32, h as u32);
+        for space in [Space::Srgb, Space::DisplayP3, Space::Rec2020] {
+            for format in [Format::Jpeg, Format::Tiff] {
+                let settings = Settings {
+                    format,
+                    space,
+                    ..Settings::default()
+                };
+                let rendered = render(
+                    &image,
+                    &edit,
+                    source,
+                    &settings,
+                    &Default::default(),
+                    1.0,
+                    None,
+                    finish::Source::Scene,
+                    None,
+                    None,
+                );
+                let global = finish::Baked::global(&edit, finish::Source::Scene);
+                let m = space.matrix();
+                let plain = |q: &(dyn Fn(f32) -> u32 + Sync)| -> Vec<u32> {
+                    finish::finish_with(
+                        &image,
+                        None,
+                        &global,
+                        &[],
+                        |x, y| (x as f32 / w as f32, y as f32 / w as f32),
+                        |_, _| (0.0, None),
+                        None,
+                        None,
+                        None,
+                        &m,
+                        q,
+                    )
+                };
+                match &rendered.pixels {
+                    Pixels::Eight(p) => {
+                        let want = plain(&|v| (v * 255.0).round() as u32);
+                        assert!(p.iter().zip(&want).all(|(a, b)| *a as u32 == *b));
+                    }
+                    Pixels::Sixteen(p) => {
+                        let want = plain(&|v| (v * 65535.0).round() as u32);
+                        assert!(p.iter().zip(&want).all(|(a, b)| *a as u32 == *b));
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_border_keeps_its_grey_on_every_curve() {
+        use crate::border::{Border, Color};
+        let (w, h) = (8usize, 6usize);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: vec![0.3; w * h * 3],
+        };
+        let edit = greycard_edit::Edit::default();
+        let render_with = |space: Space, color: Color| {
+            let settings = Settings {
+                format: Format::Tiff,
+                space,
+                border: Some(Border { width: 0.25, color }),
+                ..Settings::default()
+            };
+            let mut rendered = render(
+                &image,
+                &edit,
+                (w as u32, h as u32),
+                &settings,
+                &Default::default(),
+                1.0,
+                None,
+                finish::Source::Scene,
+                None,
+                None,
+            );
+            let plain = match &rendered.pixels {
+                Pixels::Sixteen(p) => p.clone(),
+                _ => unreachable!(),
+            };
+            border(&mut rendered, &settings);
+            (rendered, plain, settings)
+        };
+        // The old spaces: the border is what `apply` makes of the
+        // picture, with no recode.
+        for space in [Space::Srgb, Space::DisplayP3, Space::Rec2020] {
+            for color in Color::ALL {
+                let (rendered, plain, settings) = render_with(space, color);
+                let want = settings.border.unwrap().apply(&plain, w as u32, h as u32);
+                let Pixels::Sixteen(p) = &rendered.pixels else {
+                    unreachable!()
+                };
+                assert_eq!(p, &want.0, "{} {}", space.name(), color.name());
+            }
+        }
+        // Adobe RGB: the grey is the same light, so the same L*.
+        for (color, level) in [(Color::LightGrey, 0.8f32), (Color::DarkGrey, 0.2)] {
+            let (rendered, _, _) = render_with(Space::AdobeRgb, color);
+            let Pixels::Sixteen(p) = &rendered.pixels else {
+                unreachable!()
+            };
+            let v = p[0] as f64 / 65535.0;
+            let light = v.powf(ADOBE_RGB_GAMMA);
+            let want = finish::decode(level) as f64;
+            assert!((light - want).abs() < 1e-3, "{level}: {light} vs {want}");
+        }
+    }
+
+    #[test]
+    fn adobe_rgb_encodes_with_its_gamma_and_its_profile_says_so() {
+        // The profile read back by lcms: a grey's luminance is the
+        // value to the 563/256, and that is what a linear light
+        // recodes to, to within 1/4096.
+        use lcms2::{Intent, PixelFormat, Profile, Transform};
+        let profile = Profile::new_icc(&Space::AdobeRgb.icc().unwrap()).unwrap();
+        let xyz = Profile::new_xyz();
+        let t: Transform<[f32; 3], [f64; 3]> = Transform::new(
+            &profile,
+            PixelFormat::RGB_FLT,
+            &xyz,
+            PixelFormat::XYZ_DBL,
+            Intent::RelativeColorimetric,
+        )
+        .unwrap();
+        let mut worst = 0f64;
+        for lin in [0.0f32, 0.001, 0.01, 0.05, 0.18, 0.35, 0.6, 0.9, 1.0] {
+            let e = Space::AdobeRgb.recode(finish::encode(lin));
+            let mut out = [[0f64; 3]];
+            t.transform_pixels(&[[e; 3]], &mut out);
+            let off = (out[0][1] - lin as f64).abs();
+            worst = worst.max(off);
+            assert!(off < 1.0 / 4096.0, "{lin}: {out:?}");
+            // And the curve itself.
+            let want = (lin as f64).powf(1.0 / ADOBE_RGB_GAMMA);
+            assert!((e as f64 - want).abs() < 1e-6, "{lin}: {e} vs {want}");
+        }
+        eprintln!("adobe profile round trip, worst luminance error {worst:e}");
+        // The finish's own view of the space is the sRGB curve.
+        let view = Profile::new_icc(&Space::AdobeRgb.finish_icc().unwrap()).unwrap();
+        let t: Transform<[f32; 3], [f64; 3]> = Transform::new(
+            &view,
+            PixelFormat::RGB_FLT,
+            &xyz,
+            PixelFormat::XYZ_DBL,
+            Intent::RelativeColorimetric,
+        )
+        .unwrap();
+        let mut out = [[0f64; 3]];
+        t.transform_pixels(&[[finish::encode(0.18); 3]], &mut out);
+        assert!((out[0][1] - 0.18).abs() < 1.0 / 4096.0, "{out:?}");
+    }
+
+    #[test]
+    fn an_adobe_rgb_jpeg_embeds_adobe_rgb() {
+        use lcms2::{InfoType, Intent, Locale, PixelFormat, Profile, Transform};
+        let (w, h) = (16, 12);
+        let image = WorkingImage {
+            width: w,
+            height: h,
+            data: vec![0.2; w * h * 3],
+        };
+        let settings = Settings {
+            format: Format::Jpeg,
+            space: Space::AdobeRgb,
+            ..Settings::default()
+        };
+        let rendered = render(
+            &image,
+            &greycard_edit::Edit::default(),
+            (w as u32, h as u32),
+            &settings,
+            &Default::default(),
+            1.0,
+            None,
+            finish::Source::Scene,
+            None,
+            None,
+        );
+        let dir = std::env::temp_dir().join(format!("greycard-adobe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("a.jpg");
+        write(&rendered, &settings, &path, None, &Origin::default()).unwrap();
+        let mut decoder = image::ImageReader::open(&path)
+            .unwrap()
+            .into_decoder()
+            .unwrap();
+        let icc = image::ImageDecoder::icc_profile(&mut decoder)
+            .unwrap()
+            .expect("a profile");
+        assert_eq!(icc, Space::AdobeRgb.icc().unwrap());
+        let profile = Profile::new_icc(&icc).unwrap();
+        assert!(
+            profile
+                .info(InfoType::Description, Locale::none())
+                .unwrap_or_default()
+                .contains("Adobe RGB (compatible)")
+        );
+        // Its colorants, adapted to D50.
+        let xyz = Profile::new_xyz();
+        let t: Transform<[f32; 3], [f64; 3]> = Transform::new(
+            &profile,
+            PixelFormat::RGB_FLT,
+            &xyz,
+            PixelFormat::XYZ_DBL,
+            Intent::RelativeColorimetric,
+        )
+        .unwrap();
+        let mut out = [[0f64; 3]; 3];
+        t.transform_pixels(
+            &[[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            &mut out,
+        );
+        let want = [
+            [0.6097, 0.3111, 0.0195],
+            [0.2053, 0.6257, 0.0609],
+            [0.1492, 0.0632, 0.7446],
+        ];
+        for (got, want) in out.iter().zip(want) {
+            for k in 0..3 {
+                assert!((got[k] - want[k]).abs() < 1e-3, "{out:?}");
+            }
+        }
+        crate::testing::remove_dir_retry(&dir);
     }
 
     #[test]

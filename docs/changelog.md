@@ -36,6 +36,13 @@ design note behind it.
   move off and the kept look returns. A click keeps it
   ([§327](https://github.com/jessolmstead/greycard/blob/master/docs/notes/327-a-look-previewed-under-the-pointer.md))
 
+### Export
+
+- Adobe RGB as an export space beside sRGB, Display P3 and Rec.2020,
+  with its own gamma in the file and the profile; the soft proof offers
+  it too
+  ([§336](https://github.com/jessolmstead/greycard/blob/master/docs/notes/336-adobe-rgb-as-an-export-space-and-a-curve-per-space.md))
+
 ### Masks
 
 - Landscape: a button beside Sky runs the sky model once and offers

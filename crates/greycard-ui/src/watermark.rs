@@ -331,9 +331,9 @@ fn picture_mark(picture: &image::Rgba32FImage, target: u32, space: Space) -> Ras
         if let Some(m) = &convert {
             let lin = rgb.map(srgb_decode);
             rgb = [0, 1, 2].map(|r| {
-                srgb_encode(
+                space.recode(srgb_encode(
                     (m[r][0] * lin[0] + m[r][1] * lin[1] + m[r][2] * lin[2]).clamp(0.0, 1.0),
-                )
+                ))
             });
         }
         p.0 = [rgb[0] * a, rgb[1] * a, rgb[2] * a, a];
@@ -370,6 +370,7 @@ fn space_rgb(space: Space) -> RgbSpace {
         Space::Srgb => RgbSpace::SRGB,
         Space::DisplayP3 => RgbSpace::DISPLAY_P3,
         Space::Rec2020 => RgbSpace::REC2020,
+        Space::AdobeRgb => RgbSpace::ADOBE_RGB,
     }
 }
 

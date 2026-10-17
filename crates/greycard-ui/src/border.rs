@@ -64,9 +64,16 @@ impl Color {
 
     /// The color in a picture's channel type: the neutral's level, or
     /// the mean of `pixels` (interleaved RGB) for Match.
+    #[cfg(test)]
     pub fn fill<T: Channel>(self, pixels: &[T]) -> [T; 3] {
+        self.fill_in(pixels, |l| l)
+    }
+
+    /// As `fill`, with a neutral's level (given for the sRGB curve)
+    /// recoded for the picture's own curve by `recode`.
+    pub fn fill_in<T: Channel>(self, pixels: &[T], recode: impl Fn(f32) -> f32) -> [T; 3] {
         match self.level() {
-            Some(l) => [T::from_f32(l * T::MAX); 3],
+            Some(l) => [T::from_f32(recode(l) * T::MAX); 3],
             None => mean(pixels),
         }
     }
@@ -95,9 +102,22 @@ impl Border {
 
     /// `pixels`, `width` by `height`, with the border round it, and
     /// the new size.
+    #[cfg(test)]
     pub fn apply<T: Channel>(&self, pixels: &[T], width: u32, height: u32) -> (Vec<T>, u32, u32) {
+        self.apply_in(pixels, width, height, |l| l)
+    }
+
+    /// As `apply`, for a picture on another curve than sRGB's: see
+    /// `Color::fill_in`.
+    pub fn apply_in<T: Channel>(
+        &self,
+        pixels: &[T],
+        width: u32,
+        height: u32,
+        recode: impl Fn(f32) -> f32,
+    ) -> (Vec<T>, u32, u32) {
         let band = self.pixels(width, height);
-        let color = self.color.fill(pixels);
+        let color = self.color.fill_in(pixels, recode);
         let out = add(pixels, width, height, band, color);
         (out, width + 2 * band, height + 2 * band)
     }
