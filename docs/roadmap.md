@@ -33,8 +33,9 @@ ours, so a tester brings a library over in one go.
 - [ ] A Sync button in the develop panel over a selection (Pool)
 - [ ] The crop's starting aspect as a setting (Pool)
 - [ ] A keys sheet and a Help menu (Pool)
-- [ ] The window's structure: the CLI split, `State` grouped by owner,
-      the library views measured for a crate of their own (Pool)
+- [ ] The window's structure: `State` grouped by owner, the library
+      views measured for a crate of their own (Pool; the CLI split
+      landed, §341)
 - [ ] The Lightroom mapper fitted from the measurement (§323, §333):
       the per-body baseline exposure first (the GFX 100S II renders
       about a stop brighter than Lightroom under every profile, the
@@ -363,6 +364,9 @@ comes across with its ratings and collections.
 - [ ] macOS's `._` resource forks beside the raws on a share are not
       skipped: the browser lists them and the indexer reads them
       (found by the §324 survey)
+- [ ] `greycard develop --tint -4` is refused as an unexpected argument
+      (`--tint=-4` works): `tint` lacks `allow_hyphen_values`, unlike
+      texture, clarity and the lens flags (found by the §341 review)
 - [ ] darktable's XMP history imported as RawTherapee's profiles are
       (§328, §340), if a tester asks
 - [ ] The RawTherapee sheet: a menu entry back into it for a folder
@@ -468,7 +472,7 @@ clears or a tester asks for it.
 - [ ] The window's structure (0.8.0), in three mechanical passes
       each landing green, each alone with no other window branch in
       flight: the CLI's `main.rs` split one file a
-      subcommand; the window's `State` (about 216 fields in `main.rs`,
+      subcommand (landed, §341); the window's `State` (about 216 fields in `main.rs`,
       every panel reaching in) grouped into a few structs by owner
       (library, develop, culling, sheets, worker handles), the
       `st.cull` pattern made the rule; then the library views (the

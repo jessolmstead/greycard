@@ -351,3 +351,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§338. ONNX Runtime at first use, and the processors it cannot run on](notes/338-onnx-runtime-at-first-use-and-the-processors-it-cannot-run-on.md) (2026-10-17)
 - [§339. A sort order for the grid](notes/339-a-sort-order-for-the-grid.md) (2026-10-17)
 - [§340. Importing RawTherapee profiles, part 2: the offer, the sheet and the aberration by hand](notes/340-importing-rawtherapee-profiles-part-2-the-offer-the-sheet-and-the-aberration-by-hand.md) (2026-10-17)
+- [§341. The CLI's main.rs, one file a subcommand](notes/341-the-clis-main-rs-one-file-a-subcommand.md) (2026-10-17)
