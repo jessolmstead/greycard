@@ -1102,6 +1102,18 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                     if app.get_crop_mode() {
                         show_crop_on_view(st, &app, &edit.geometry);
                     }
+                    // The look table, read once per choice; the export
+                    // resolves the same name through the same cache and
+                    // the same gate, so the two agree: a table fitted
+                    // under another display curve than the picture's is
+                    // no look in either. A look previewed from the list
+                    // is drawn in its place while it stands.
+                    let look_key = (edit.look_lut.clone(), edit.display_curve);
+                    if st.look_for.as_ref() != Some(&look_key) {
+                        st.look = edit.look_lut.look_under(edit.display_curve);
+                        st.look_for = Some(look_key);
+                    }
+                    let look = crate::panel::look_preview::drawn(st, &app, &edit);
                     let Some(renderer) = st.renderer.as_mut() else {
                         return;
                     };
@@ -1120,18 +1132,7 @@ pub(crate) fn main() -> Result<std::process::ExitCode> {
                         &app,
                         renderer,
                     );
-                    // The look table, read once per choice and handed
-                    // to the renderer; the export resolves the same
-                    // name through the same cache and the same gate,
-                    // so the two agree: a table fitted under another
-                    // display curve than the picture's is no look in
-                    // either.
-                    let look_key = (edit.look_lut.clone(), edit.display_curve);
-                    if st.look_for.as_ref() != Some(&look_key) {
-                        st.look = edit.look_lut.look_under(edit.display_curve);
-                        st.look_for = Some(look_key);
-                    }
-                    renderer.set_look(st.look.as_ref());
+                    renderer.set_look(look.as_ref());
                     // The look's fields from `with_look`, the one place
                     // they are read from an edit, named one by one with
                     // every other field, so that a field added to `View`

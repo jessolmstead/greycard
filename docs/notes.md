@@ -337,3 +337,4 @@ in its section; the roadmap and the changelog only point at it.
 - [§324. The camera match's survey over a network share](notes/324-the-camera-matchs-survey-over-a-network-share.md) (2026-10-16)
 - [§325. Lightroom's tint came in backwards](notes/325-lightrooms-tint-came-in-backwards.md) (2026-10-16)
 - [§326. A file's kind as a facet and a term](notes/326-a-files-kind-as-a-facet-and-a-term.md) (2026-10-16)
+- [§327. A look previewed under the pointer](notes/327-a-look-previewed-under-the-pointer.md) (2026-10-16)

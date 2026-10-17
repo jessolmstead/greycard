@@ -1194,6 +1194,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             }
             crate::panel::mask::look_edited(&mut st, &app);
+            crate::panel::look_preview::panel_moved(&st, &app);
             // A mask's Detail that needs a plane the develop has not
             // made: the panel's edit is the develop's, once the
             // pointer has rested, as a develop slider's is.

@@ -154,6 +154,7 @@ pub(crate) fn enter_cull(st: &mut State, app: &App, compare: usize) {
         return;
     }
     st.turn_pressed = None;
+    crate::panel::look_preview::end(st, app);
     st.placing = None;
     app.set_placing("".into());
     st.retouching = None;

@@ -19,6 +19,13 @@ note a first tester reads.
   the field, in `greycard library list` and in `--filter` does the same
   ([§326](https://github.com/jessolmstead/greycard/blob/master/docs/notes/326-a-files-kind-as-a-facet-and-a-term.md))
 
+### Editing
+
+- Resting the pointer on a row of the Look list shows the picture with
+  that look at the Strength set, and moving off the list puts the kept
+  look back; a click keeps it. Hovering adds no history step
+  ([§327](https://github.com/jessolmstead/greycard/blob/master/docs/notes/327-a-look-previewed-under-the-pointer.md))
+
 ### Fixes
 
 - A Lightroom preset's Tint came in with the wrong sign and too small:

@@ -100,6 +100,9 @@ export component LookSection inherits Section {
     /// body than the open frame's.
     in property <string> look-fitted;
     callback look-picked();
+    /// A look's row the pointer came onto (true) or left (false), by
+    /// name: the picture shows that look while the pointer rests there.
+    callback look-hovered(string, bool);
     /// The chosen look has files in the look folder to remove; None
     /// has none.
     in property <bool> look-removable;
@@ -146,6 +149,11 @@ export component LookSection inherits Section {
                         } else {
                             root.look-name = row.name;
                             root.look-picked();
+                        }
+                    }
+                    changed has-hover => {
+                        if (!row.heading) {
+                            root.look-hovered(row.name, self.has-hover);
                         }
                     }
                 }

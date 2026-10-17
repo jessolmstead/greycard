@@ -398,6 +398,8 @@ pub(crate) fn show_looks(st: &State, chosen: &greycard_edit::look::LookLut, app:
             },
         })
         .collect();
+    // Rows put up again report no leave for the one under the pointer.
+    crate::panel::look_preview::forget(st, app);
     app.set_look_rows(ModelRc::new(VecModel::from(rows)));
     // No table for the picture's curve, or one an earlier fit wrote:
     // either way the line over the Refit button, which opens the
@@ -686,7 +688,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
     // A look chosen in the panel: the edit says so, the note and the
     // warning follow, and the viewport redraws. No develop — a look
     // is the finish, and the picture the engine hands over is the
-    // same one.
+    // same one. A look previewed from its row is the kept one now.
     {
         let (state, worker, app_weak) = (state.clone(), worker.clone(), app.as_weak());
         app.on_look_picked(move || {
@@ -694,6 +696,7 @@ pub(crate) fn install(app: &App, state: &Rc<RefCell<State>>, worker: &Rc<Worker>
                 return;
             };
             let mut st = state.borrow_mut();
+            crate::panel::look_preview::end(&st, &app);
             // A look reached in culling is the way out of it, as
             // every other look control is.
             if st.cull.is_some() {

@@ -977,6 +977,9 @@ pub(crate) struct State {
     /// The look list's groups the user has opened (true) or folded,
     /// by key (`greycard_edit::look::Listing::open`).
     pub(crate) look_groups_open: std::collections::BTreeMap<String, bool>,
+    /// The look list's row under the pointer and the look previewed
+    /// from it, drawn in place of `look` while it stands.
+    pub(crate) look_hover: RefCell<panel::look_preview::Hover>,
     /// The profile the white balance is solved through, and the name
     /// it was resolved for: the edit's DCP when it names one that
     /// reads, else the file's own. The develop converts temperature
@@ -1332,6 +1335,7 @@ impl State {
             look: None,
             look_for: None,
             look_groups_open: Default::default(),
+            look_hover: Default::default(),
             white_profile: None,
             mask_handles: Rc::new(VecModel::default()),
             mask_boxes: Rc::new(VecModel::default()),
@@ -1398,6 +1402,7 @@ pub(crate) fn install_callbacks(app: &App, state: Rc<RefCell<State>>, worker: Rc
     panel::delete::install(app, &state, &worker);
     panel::look_remove::install(app, &state);
     panel::look_rename::install(app, &state);
+    panel::look_preview::install(app, &state);
     panel::archive::install(app, &state, &worker);
     sync::install(app, &state);
     panel::mask::install(app, &state, &worker);

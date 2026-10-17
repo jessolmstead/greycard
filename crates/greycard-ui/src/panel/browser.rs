@@ -1463,6 +1463,7 @@ pub(crate) fn open_loaded(
     st.hold = None;
     st.prefetch.want(Vec::new());
     st.current = None;
+    crate::panel::look_preview::end(&st, app);
     st.picked.clear();
     // The requests for the old list's sidecars are dropped with it.
     crate::rows::list_replaced(&mut st, app);
@@ -1797,6 +1798,8 @@ pub(crate) fn open_row(st: &mut State, app: &App, worker: &Worker, row: i32, ext
 /// behind this one, and reach the frame once it is open; nothing
 /// reaches the frame that was current before the pick.
 fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
+    // A look previewed from the list was the last frame's.
+    crate::panel::look_preview::end(st, app);
     // Leaving the frame before: its panel saved, as an open saves it,
     // unless it was itself a pick whose panel was never its own.
     if st.cull.is_none()
@@ -1881,6 +1884,8 @@ fn pick_pending(st: &mut State, app: &App, i: usize, row: i32) {
 /// offline): the develop on the worker, or in culling its JPEG.
 pub(crate) fn open_frame(st: &mut State, app: &App, worker: &Worker, i: usize) {
     let row = row_of(st, i).map_or(-1, |r| r as i32);
+    // A look previewed from the list was the last frame's.
+    crate::panel::look_preview::end(st, app);
     let offline = !crate::rows::is_loaded(st, i);
     // The session's first open, whichever way it goes, is the one
     // the command line's mask, patch and zoom are for. A first file

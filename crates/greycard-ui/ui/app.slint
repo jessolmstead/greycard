@@ -691,7 +691,10 @@ export component App inherits Window {
     property <length> tip-x;
     property <length> tip-y;
     changed left-hidden => { root.tip-text = ""; }
-    changed right-hidden => { root.tip-text = ""; }
+    changed right-hidden => {
+        root.tip-text = "";
+        root.look-list-gone();
+    }
     changed strip-hidden => { root.tip-text = ""; }
     // What a TipArea has to say, from the controls' own global, and the
     // panel scrolled from under the pointer takes it down.
@@ -826,6 +829,7 @@ export component App inherits Window {
     changed panel-tab => {
         root.panel-scroll = 0px;
         Typing.close-all();
+        root.look-list-gone();
     }
     changed target => { Typing.close-all(); }
     changed curve-mode => { Typing.close-all(); }
@@ -1303,6 +1307,11 @@ export component App inherits Window {
     in property <string> look-warning;
     in property <string> look-fitted;
     callback look-picked();
+    callback look-hovered(string, bool);
+    /// The look list taken off the screen with the pointer on it, which
+    /// reports no leave: the panel hidden, another tab, the section
+    /// folded.
+    callback look-list-gone();
     /// The chosen look has files in the look folder to remove.
     in property <bool> look-removable: false;
     callback look-remove-asked();
@@ -1377,6 +1386,7 @@ export component App inherits Window {
     changed display-curve => { root.look-curve-changed(); }
     changed collapsed-look => {
         if (!root.collapsed-look) { root.looks-wanted(); }
+        root.look-list-gone();
     }
     callback view-changed();
     callback develop-changed();
@@ -2470,6 +2480,7 @@ export component App inherits Window {
                             look-warning: root.look-warning;
                             look-fitted: root.look-fitted;
                             look-picked => { root.look-picked(); }
+                            look-hovered(name, on) => { root.look-hovered(name, on); }
                             look-removable: root.look-removable;
                             look-remove-asked => { root.look-remove-asked(); }
                             look-renamable: root.look-renamable;
