@@ -14,94 +14,54 @@ note a first tester reads.
 
 ### Library
 
-- Stacks: choose frames of one folder and press Ctrl+G (or Stack in
-  the frame menu) to put them behind the frame on screen. A closed
-  stack is its top alone in the grid, the strip, culling, the lightbox
-  and the filter, with the stack's size on a badge at its bottom
-  right; S in the grid, or a click on the badge (in culling too),
-  opens it with its frames after the top. Shift+S in the grid sets the
-  frame as the top, Remove from stack and Ctrl+Shift+G take frames out,
-  and Compare stack shows the frames side by side. Stacks are kept with
-  the collections.
+- Stacks: select frames of one folder and press Ctrl+G to put them
+  behind one frame, with the count on a badge. S opens a stack,
+  Shift+S makes a frame the top, Ctrl+Shift+G takes frames out, and
+  Compare stack shows the members side by side
   ([§334](https://github.com/jessolmstead/greycard/blob/master/docs/notes/334-stacks.md))
-- `greycard library list` shows a closed stack's top alone, marked
-  "stack of N"; `--stacks expanded` lists every frame.
-- A camera's JPEG beside its raw of the same name is now the raw's
-  companion: one frame in the grid and the strip, marked +JPEG, with one
-  rating, flag and label, and a move or a delete of the raw takes the
-  JPEG with it. Culling shows the camera's JPEG for such a frame when it
-  is no smaller than the raw's own preview, and naming the JPEG (to open
-  it, with `--cull` or with `--export`) acts on its raw.
+- A camera's JPEG beside its raw is one frame, marked +JPEG: one
+  rating, one move, one delete. A setting lists them apart again
   ([§332](https://github.com/jessolmstead/greycard/blob/master/docs/notes/332-raw-jpeg-pairs.md))
-- Settings, RAW+JPEG: "Treat a JPEG beside its raw as a separate frame"
-  lists the JPEGs as frames of their own again; `--export` and `greycard
-  library list` follow it.
-- `greycard library import-lightroom <catalog>` brings a Lightroom
-  Classic catalog across: ratings, flags, labels, keywords, titles and
-  captions exactly, the develop settings as one "Imported from
-  Lightroom" step, virtual copies as versions, collections, the smart
-  collections that translate, and the root folders as roots (`--root
-  A:/Photos=/photos` for a catalog from another machine). Without `--write` it only
-  reports what it would do; point it at a copy made after Lightroom
-  quit, or with the `-wal` beside it
+- A Lightroom Classic catalog imports from the command line: ratings,
+  flags, labels, keywords, captions, develop settings, virtual copies
+  and collections. A dry run until you say write
   ([§329](https://github.com/jessolmstead/greycard/blob/master/docs/notes/329-importing-a-lightroom-catalog-part-1-the-command.md))
-- `greycard rawtherapee <raws or folders>` reads the RawTherapee
-  `.pp3` beside each raw: the rank, color label and trash mark come
-  into the meta exactly, and the white balance, exposure, crop,
-  rotation and lens settings land as one history state named
-  "Imported from RawTherapee"; what has no place here is listed. A
-  dry run until `--write`; a frame already developed here waits for
-  `--force`
+- RawTherapee `.pp3` profiles beside the raws import from the command
+  line: rank, label and trash mark, and the edits that have a place
+  here as one history step
   ([§328](https://github.com/jessolmstead/greycard/blob/master/docs/notes/328-importing-rawtherapee-profiles.md))
-- A Kind row in the filter bar, Raw, JPEG, PNG or TIFF, when the frames
-  shown hold more than one kind; `kind:raw` or `kind!=jpeg` typed in
-  the field, in `greycard library list` and in `--filter` does the same
+- A Kind row in the filter bar (Raw, JPEG, PNG, TIFF) when a folder
+  mixes them; `kind:raw` works in the field too
   ([§326](https://github.com/jessolmstead/greycard/blob/master/docs/notes/326-a-files-kind-as-a-facet-and-a-term.md))
 
 ### Editing
 
-- The presets' **Import...** takes several `.xmp` and `.gcp` files at
-  once; what a Lightroom preset had no place for (masks among them) is
-  named once, on the status line or a small sheet, and a file that is
-  not a preset, or names a preset you have, is left out with the reason.
-  `greycard presets --import` refuses a name you have too, unless given
-  `--replace`
+- Presets: Import... takes several `.xmp` or `.gcp` files at once and
+  says what a Lightroom preset could not bring (masks, mostly)
   ([§330](https://github.com/jessolmstead/greycard/blob/master/docs/notes/330-importing-presets-from-the-window.md))
-- Resting the pointer on a row of the Look list shows the picture with
-  that look at the Strength set, and moving off the list puts the kept
-  look back; a click keeps it. Hovering adds no history step
+- Rest the pointer on a look in the list to see it on the picture;
+  move off and the kept look returns. A click keeps it
   ([§327](https://github.com/jessolmstead/greycard/blob/master/docs/notes/327-a-look-previewed-under-the-pointer.md))
 
 ### Cameras
 
-- `greycard-ui --measure-lightroom <catalog> --root A=B` pairs a
-  Lightroom catalog's images with Lightroom's own exports beside them,
-  develops each raw as the import would carry it, and reports how far
-  apart the two pictures are, by frame, profile and slider
-  ([§333](https://github.com/jessolmstead/greycard/blob/master/docs/notes/333-measuring-the-lightroom-mapper-against-its-exports.md))
-- Fujifilm X-Trans raws now get the hot pixel repair, the profiled
-  **Denoise** and the chromatic aberration correction: a stuck colored
-  dot goes, a high ISO frame can be denoised, and red fringes along
-  high-contrast edges toward the corners are reduced (blue ones only a
-  little, for now). The learned denoiser is still not on X-Trans; its
-  tiers rest with "learned: not on X-Trans yet".
+- Fujifilm X-Trans raws get the hot pixel repair, Denoise and the
+  chromatic aberration correction. The learned denoiser is still not
+  on X-Trans
   ([§331](https://github.com/jessolmstead/greycard/blob/master/docs/notes/331-x-trans-step-2-noise-hot-pixels-and-chromatic-aberration.md))
-- "Fit this camera's look" on a folder with no library reads a CR3's
-  or RAF's metadata from the file's two ends rather than the whole file
-  (about 1.5 MB of a 27 MB CR3, 64 KB of a 100 MB RAF), four files at a
-  time, so a folder of them on a network share is surveyed in seconds;
-  NEF, ARW, RW2 and DNG are still read whole. The line under the groups
-  counts as it reads ("Reading picture styles: 120 of 800"), "No camera
-  with a fixed picture style here." shows only once the survey has
-  finished, reopening the sheet stops the survey it replaces, and
-  macOS's `._` files beside raws on exFAT and SMB volumes are skipped
+- "Fit this camera's look" on a folder on a network share surveys the
+  cameras in seconds rather than minutes, reading only the ends of
+  each CR3 and RAF, and says how far it has got. macOS `._` files
+  beside raws are skipped
   ([§324](https://github.com/jessolmstead/greycard/blob/master/docs/notes/324-the-camera-matchs-survey-over-a-network-share.md))
+- A measurement for us: `greycard-ui --measure-lightroom` compares a
+  catalog's imported edits against Lightroom's own exports
+  ([§333](https://github.com/jessolmstead/greycard/blob/master/docs/notes/333-measuring-the-lightroom-mapper-against-its-exports.md))
 
 ### Fixes
 
-- A Lightroom preset's Tint came in with the wrong sign and too small:
-  +15 in Lightroom landed as a magenta cast here. It now lands as the
-  green white point it was
+- A Lightroom preset's Tint came in backwards and too small, a
+  magenta cast where green was meant
   ([§325](https://github.com/jessolmstead/greycard/blob/master/docs/notes/325-lightrooms-tint-came-in-backwards.md))
 
 ## 0.7.0, 2026-10-15
